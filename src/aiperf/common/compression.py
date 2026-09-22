@@ -84,6 +84,7 @@ def select_encoding(
 
     Priority: zstd > gzip (if available and accepted by client).
     Respects quality values: q=0 means the encoding is explicitly rejected.
+    A wildcard accepts encodings without an explicit quality value.
 
     Args:
         accept_encoding: The Accept-Encoding header value from HTTP request.
@@ -97,9 +98,10 @@ def select_encoding(
 
     accepted = parse_accept_encoding(accept_encoding)
 
-    if accepted.get("zstd", 0) > 0 and is_zstd_available():
+    wildcard_quality = accepted.get("*", 0)
+    if accepted.get("zstd", wildcard_quality) > 0 and is_zstd_available():
         return CompressionEncoding.ZSTD
-    if accepted.get("gzip", 0) > 0:
+    if accepted.get("gzip", wildcard_quality) > 0:
         return CompressionEncoding.GZIP
     if accepted.get("identity", 1.0) > 0:
         return CompressionEncoding.IDENTITY

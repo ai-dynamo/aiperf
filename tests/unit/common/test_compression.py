@@ -63,6 +63,30 @@ class TestSelectEncoding:
         else:
             assert result == expected
 
+    @pytest.mark.parametrize(
+        "accept_encoding,zstd_available,expected",
+        [
+            param("*", True, CompressionEncoding.ZSTD, id="wildcard-prefers-zstd"),
+            param("*", False, CompressionEncoding.GZIP, id="wildcard-without-zstd"),
+            param("*;q=0.5, zstd;q=0", True, CompressionEncoding.GZIP, id="explicit-zstd-rejection"),
+            param("*;q=0.5, gzip;q=0", True, CompressionEncoding.ZSTD, id="explicit-gzip-rejection"),
+            param("*;q=0, gzip;q=1", True, CompressionEncoding.GZIP, id="explicit-gzip-overrides-wildcard"),
+            param("*;q=1, zstd;q=0, gzip;q=0", True, CompressionEncoding.IDENTITY, id="explicit-rejections-override-wildcard"),
+        ],
+    )  # fmt: skip
+    def test_select_encoding_wildcard(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        accept_encoding: str,
+        zstd_available: bool,
+        expected: CompressionEncoding,
+    ) -> None:
+        """A wildcard accepts unlisted encodings without overriding explicit values."""
+        monkeypatch.setattr(
+            "aiperf.common.compression.is_zstd_available", lambda: zstd_available
+        )
+        assert select_encoding(accept_encoding) == expected
+
     def test_select_encoding_custom_default(self) -> None:
         """Test that custom default is used when no encoding matches."""
         result = select_encoding("br, deflate", default=CompressionEncoding.IDENTITY)

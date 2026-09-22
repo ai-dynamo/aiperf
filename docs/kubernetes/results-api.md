@@ -474,7 +474,7 @@ The lookup tries `<filename>.zst` first, then `<filename>` as-is. `namespace` an
 
 **Content negotiation for stored raw files**
 
-The `common.compression.select_encoding` helper picks the best encoding the client accepts (default `IDENTITY`). `Content-Encoding` is set only if the server is recompressing; otherwise it's omitted.
+The `common.compression.select_encoding` helper picks the best encoding the client accepts (default `IDENTITY`). An `Accept-Encoding: *` wildcard accepts both zstd and gzip, with explicit encoding values taking precedence (for example, `*;q=1, zstd;q=0` selects gzip). `Content-Encoding` is set only if the server is recompressing; otherwise it's omitted.
 
 **Response headers (both paths)**
 
