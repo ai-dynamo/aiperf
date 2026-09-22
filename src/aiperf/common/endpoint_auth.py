@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
@@ -122,7 +123,25 @@ async def endpoint_signer(
     # and the finally is what guarantees those are torn down here rather than
     # via AIPerfLifecycleMixin internals.
     try:
-        await signer.initialize_and_start()
+        try:
+            await signer.initialize_and_start()
+        except asyncio.CancelledError as exc:
+            # AIPerfLifecycleMixin._fail() reports a start-up failure by raising
+            # CancelledError -- a BaseException, not an Exception. Callers guard
+            # control hooks with `except Exception` (see
+            # _single_run.maybe_reset_kv_cache_before_run), so left as-is a
+            # missing-credentials failure skips their error path entirely and
+            # surfaces as a raw traceback.
+            #
+            # Only normalize when this task was not actually cancelled: a real
+            # cancel must keep propagating or cooperative shutdown breaks.
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise
+            cause = exc.__cause__
+            if isinstance(cause, Exception):
+                raise cause from exc
+            raise
         yield signer
     finally:
         await signer.stop()

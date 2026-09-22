@@ -440,3 +440,75 @@ async def test_endpoint_signer_stops_a_signer_whose_start_failed() -> None:
             pass
 
     assert stopped, "a signer that failed during start was never stopped"
+
+
+@pytest.mark.asyncio
+async def test_a_lifecycle_failed_start_surfaces_as_an_ordinary_exception() -> None:
+    """``AIPerfLifecycleMixin._fail()`` re-raises a start-up error as
+    ``asyncio.CancelledError``, which is a ``BaseException``, not an
+    ``Exception``.
+
+    ``_single_run.maybe_reset_kv_cache_before_run`` is wrapped in
+    ``except Exception``, so missing AWS credentials skipped the dedicated
+    "Control Hook Error" panel entirely and printed the raw internal traceback
+    under a generic "Error Running AIPerf System" instead.
+
+    The sibling test above raises ``ValueError`` straight out of
+    ``initialize_and_start``, which no real lifecycle object does -- that is
+    why this gap stayed green.
+    """
+    import asyncio
+
+    class _LifecycleFailingSigner:
+        def __init__(self, **kwargs: Any) -> None:
+            del kwargs
+
+        async def initialize_and_start(self) -> None:
+            # Exactly what AIPerfLifecycleMixin._fail() does.
+            raise asyncio.CancelledError("Failed for signer") from ValueError(
+                "No AWS credentials found"
+            )
+
+        async def stop(self) -> None: ...
+
+    cfg = _config(auth_type="sigv4", aws_region="us-east-1", aws_service="execute-api")
+    with (
+        patch("aiperf.plugin.plugins.get_class", return_value=_LifecycleFailingSigner),
+        pytest.raises(ValueError, match="No AWS credentials"),
+    ):
+        async with endpoint_signer(cfg):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_genuine_task_cancellation_still_propagates() -> None:
+    """Normalizing lifecycle-generated cancellation must not swallow a real
+    ``task.cancel()``; doing so would break cooperative shutdown, turning Ctrl-C
+    into a hang.
+    """
+    import asyncio
+
+    started = asyncio.Event()
+
+    class _HangingSigner:
+        def __init__(self, **kwargs: Any) -> None:
+            del kwargs
+
+        async def initialize_and_start(self) -> None:
+            started.set()
+            await asyncio.sleep(3600)
+
+        async def stop(self) -> None: ...
+
+    cfg = _config(auth_type="sigv4", aws_region="us-east-1", aws_service="execute-api")
+
+    async def _run() -> None:
+        async with endpoint_signer(cfg):
+            pass
+
+    with patch("aiperf.plugin.plugins.get_class", return_value=_HangingSigner):
+        task = asyncio.create_task(_run())
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
