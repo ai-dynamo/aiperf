@@ -381,6 +381,58 @@ class TestMLflowDataExporter:
         ):
             exporter._build_metric_payload()
 
+    @pytest.mark.parametrize(
+        ("tag", "total_expected"),
+        [
+            param("aiperf.completed_requests", None, id="completed"),
+            param("aiperf.total_expected_requests", 12, id="total-expected"),
+        ],
+    )
+    def test_build_metric_payload_rejects_bookkeeping_key_collisions(
+        self,
+        tag: str,
+        total_expected: int | None,
+        sample_results: ProfileResults,
+        mlflow_cfg: BenchmarkConfig,
+    ) -> None:
+        sample_results.total_expected = total_expected
+        sample_results.records = [
+            MetricResult(tag=tag, header="Custom count", unit="requests", avg=42.0)
+        ]
+        exporter = MLflowDataExporter(
+            ExporterConfig(
+                results=sample_results, cfg=mlflow_cfg, telemetry_results=None
+            )
+        )
+
+        with pytest.raises(ValueError, match=rf"Duplicate MLflow metric key '{tag}'"):
+            exporter._build_metric_payload()
+
+    def test_build_metric_payload_allows_absent_bookkeeping_key(
+        self,
+        sample_results: ProfileResults,
+        mlflow_cfg: BenchmarkConfig,
+    ) -> None:
+        sample_results.total_expected = None
+        sample_results.records = [
+            MetricResult(
+                tag="aiperf.total_expected_requests",
+                header="Custom count",
+                unit="requests",
+                avg=42.0,
+            )
+        ]
+        exporter = MLflowDataExporter(
+            ExporterConfig(
+                results=sample_results, cfg=mlflow_cfg, telemetry_results=None
+            )
+        )
+
+        assert exporter._build_metric_payload() == {
+            "aiperf.completed_requests": 10.0,
+            "aiperf.total_expected_requests": 42.0,
+        }
+
     def test_disabled_without_tracking_uri(
         self, tmp_path: Path, sample_results: ProfileResults
     ) -> None:

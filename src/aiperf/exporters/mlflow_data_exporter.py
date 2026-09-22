@@ -417,8 +417,14 @@ class MLflowDataExporter(AIPerfLoggerMixin):
     _STAT_FIELDS = ("avg", "p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99", "min", "max", "std", "count", "sum")  # fmt: skip
 
     def _build_metric_payload(self) -> dict[str, float]:
-        payload: dict[str, float] = {}
-        sources: dict[str, str] = {}
+        payload: dict[str, float] = {
+            "aiperf.completed_requests": float(self._results.completed)
+        }
+        if self._results.total_expected is not None:
+            payload["aiperf.total_expected_requests"] = float(
+                self._results.total_expected
+            )
+        sources: dict[str, str] = dict.fromkeys(payload, "benchmark bookkeeping")
         for metric in self._results.records or []:
             tag = (
                 f"system/{metric.tag}"
@@ -446,11 +452,6 @@ class MLflowDataExporter(AIPerfLoggerMixin):
                     )
                 payload[key] = numeric_value
                 sources[key] = source
-        payload["aiperf.completed_requests"] = float(self._results.completed)
-        if self._results.total_expected is not None:
-            payload["aiperf.total_expected_requests"] = float(
-                self._results.total_expected
-            )
         return payload
 
     def _build_param_payload(self) -> dict[str, str]:
