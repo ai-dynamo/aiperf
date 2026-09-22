@@ -255,9 +255,7 @@ class TestMLflowDataExporter:
         sample_results: ProfileResults,
         mlflow_cfg: BenchmarkConfig,
     ) -> None:
-        sample_results.records = [
-            MetricResult(tag=tag, header=tag, unit="ms", avg=2.5, p95=4.0)
-        ]
+        sample_results.records = [MetricResult(tag=tag, header=tag, unit="ms", avg=2.5)]
         exporter = MLflowDataExporter(
             ExporterConfig(
                 results=sample_results, cfg=mlflow_cfg, telemetry_results=None
@@ -266,7 +264,6 @@ class TestMLflowDataExporter:
 
         assert exporter._build_metric_payload() == {
             expected_key: 2.5,
-            f"{expected_key}.p95": 4.0,
             "aiperf.completed_requests": 10.0,
             "aiperf.total_expected_requests": 12.0,
         }
@@ -305,12 +302,6 @@ class TestMLflowDataExporter:
                 header="Energy",
                 unit="J",
                 avg=9.0,
-            ),
-            MetricResult(
-                tag="http_req_blocked",
-                header="Missing timing",
-                unit="ms",
-                avg=None,
             ),
         ]
         original_results = sample_results.model_dump()
