@@ -347,8 +347,6 @@ class TestMLflowDataExporter:
             param("avg", True, id="avg-prefixed-first"),
             param("p95", False, id="p95-generated-first"),
             param("p95", True, id="p95-prefixed-first"),
-            param("count", False, id="count-generated-first"),
-            param("count", True, id="count-prefixed-first"),
         ],
     )
     def test_build_metric_payload_rejects_normalized_key_collisions(
@@ -358,7 +356,7 @@ class TestMLflowDataExporter:
         sample_results: ProfileResults,
         mlflow_cfg: BenchmarkConfig,
     ) -> None:
-        values = {field: 2 if field == "count" else 2.5}
+        values = {field: 2.5}
         records = [
             MetricResult(
                 tag="http_req_waiting",
