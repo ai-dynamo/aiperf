@@ -1,4 +1,6 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 name: aiperf-kube-run
 description: Use when running, deploying, submitting, attaching to, or retrieving results from a single AIPerf benchmark on a Kubernetes cluster with the aiperf kube CLI (AIPerfJob CR, operator mode or direct mode).
 ---

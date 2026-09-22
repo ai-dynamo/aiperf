@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 # Kind cluster config with GPU passthrough via nvidia-container-runtime.
 # The /dev/null sentinel mount triggers device injection by the nvidia runtime.
 kind: Cluster

@@ -1,4 +1,6 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 name: bump-version
 description: Bump the AIPerf package version (e.g. 0.10.0 -> 0.11.0) across pyproject.toml, the mock server, and the version strings shown in docs, then open a PR to main
 disable-model-invocation: true

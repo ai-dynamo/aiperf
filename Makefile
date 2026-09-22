@@ -27,7 +27,7 @@
 		kubernetes-chaos-aiperf-tests-ci test-kubernetes-chaos-aiperf-ci \
 		test-component-integration test-component-integration-ci test-component-integration-verbose \
 		ui-e2e-tests test-ui-e2e \
-		add-copyright generate-cli-docs generate-env-vars-docs generate-config-schema \
+		add-copyright check-spdx-headers generate-cli-docs generate-env-vars-docs generate-config-schema \
 		check-config-schema generate-plugin-enums generate-plugin-overloads \
 		check-plugin-overloads generate-plugin-schemas generate-all-plugin-files \
 		generate-all-docs test-stress stress-tests test-fern-docs fern-preview fern-release-dryrun internal-help help \
@@ -461,3 +461,6 @@ generate-all-docs: #? generate all documentation files.
 
 add-copyright: #? add the copyright header to the files.
 	$(activate_venv) && ./tools/add_copyright.py
+
+check-spdx-headers: #? validate SPDX headers on tracked first-party source files.
+	python3 tools/check_spdx_headers.py

@@ -1,0 +1,39 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: SPDX header compliance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - 'release/*'
+
+permissions:
+  contents: read
+
+jobs:
+  spdx_headers:
+    name: SPDX headers
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out AIPerf
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up uv and Python
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # v8.2.0
+        with:
+          python-version: "3.12"
+          activate-environment: true
+
+      - name: Install the checker test dependency
+        run: uv pip install 'pytest>=8,<10'
+
+      - name: Test the SPDX checker
+        run: uv run --no-sync pytest tests/unit/tools/test_check_spdx_headers.py
+
+      - name: Validate tracked files
+        run: uv run --no-sync python tools/check_spdx_headers.py

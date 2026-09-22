@@ -1,4 +1,6 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 name: cherry-pick
 description: Cherry-pick a commit from origin/main into a release branch using a temporary git worktree
 disable-model-invocation: true

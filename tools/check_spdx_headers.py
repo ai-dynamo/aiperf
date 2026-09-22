@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Validate NVIDIA Apache-2.0 headers on every tracked first-party source file."""
+
+from __future__ import annotations
+
+import argparse
+import re
+import subprocess
+import sys
+from collections.abc import Iterable, Sequence
+from pathlib import Path
+
+EXEMPT_PATHS = {
+    Path(".claude/skills"),
+    Path("LICENSE"),
+    Path("deploy/helm/aiperf-operator/LICENSE"),
+    Path("src/aiperf/analysis/fzstd.umd.js"),
+    Path("tools/COPYRIGHT"),
+}
+EXEMPT_PREFIXES = (
+    Path("src/aiperf/api/static/vendor"),
+    Path("src/aiperf/api/static-v2/vendor"),
+    Path("src/aiperf/operator/ui/vendor"),
+)
+EXEMPT_SUFFIXES = {
+    ".ipynb",
+    ".jpg",
+    ".json",
+    ".jsonl",
+    ".lock",
+    ".mock-server",
+    ".png",
+    ".svg",
+    ".txt",
+    ".wav",
+    ".woff2",
+    ".xlsx",
+}
+SOURCE_SUFFIXES = {
+    ".bash",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".css",
+    ".cu",
+    ".cuh",
+    ".h",
+    ".hpp",
+    ".html",
+    ".js",
+    ".md",
+    ".mdc",
+    ".mjs",
+    ".mmd",
+    ".proto",
+    ".py",
+    ".pyi",
+    ".rst",
+    ".sh",
+    ".toml",
+    ".tpl",
+    ".tmpl",
+    ".tsx",
+    ".yaml",
+    ".yml",
+}
+SOURCE_FILENAMES = {
+    ".dockerignore",
+    ".editorconfig",
+    ".gitignore",
+    ".helmignore",
+    "CMakeLists.txt",
+    "CODEOWNERS",
+    "Dockerfile",
+    "Makefile",
+}
+HEADER_SCAN_LINES = 10
+YEAR_PATTERN = r"\d{4}(?:-\d{4})?"
+COPYRIGHT_TEXT = (
+    r"SPDX-FileCopyrightText: Copyright \(c\) "
+    rf"{YEAR_PATTERN} NVIDIA CORPORATION & AFFILIATES\. All rights reserved\."
+)
+LICENSE_TEXT = r"SPDX-License-Identifier: Apache-2\.0"
+COPYRIGHT_RE = re.compile(rf"^[^A-Za-z0-9]*{COPYRIGHT_TEXT}[^A-Za-z0-9]*$")
+ANY_COPYRIGHT_RE = re.compile(r"^[^A-Za-z0-9]*SPDX-FileCopyrightText: .+[^A-Za-z0-9]*$")
+LICENSE_RE = re.compile(rf"^[^A-Za-z0-9]*{LICENSE_TEXT}[^A-Za-z0-9]*$")
+
+
+def is_under(path: Path, prefix: Path) -> bool:
+    """Return whether a repository-relative path is below a prefix."""
+    return path == prefix or prefix in path.parents
+
+
+def is_exempt(root: Path, relative_path: Path) -> bool:
+    """Return whether a tracked artifact is outside first-party header policy."""
+    path = root / relative_path
+    return (
+        relative_path in EXEMPT_PATHS
+        or relative_path.suffix.lower() in EXEMPT_SUFFIXES
+        or any(is_under(relative_path, prefix) for prefix in EXEMPT_PREFIXES)
+        or path.is_symlink()
+    )
+
+
+def requires_header(path: Path) -> bool:
+    """Return whether a supported first-party path requires an SPDX header."""
+    return path.suffix.lower() in SOURCE_SUFFIXES or path.name in SOURCE_FILENAMES
+
+
+def validate_file(root: Path, relative_path: Path) -> list[str]:
+    """Return every SPDX policy violation found in one repository file."""
+    if is_exempt(root, relative_path):
+        return []
+    if not requires_header(relative_path):
+        return [f"{relative_path}: unsupported tracked file type"]
+
+    path = root / relative_path
+    try:
+        contents = path.read_bytes()
+    except OSError as error:
+        return [f"{relative_path}: cannot read file: {error}"]
+    if not contents.strip():
+        return []
+    if b"\x00" in contents:
+        return [f"{relative_path}: binary files require an explicit policy exemption"]
+    try:
+        lines = contents.decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return [f"{relative_path}: file is not valid UTF-8 text"]
+
+    header = lines[:HEADER_SCAN_LINES]
+    copyright_index = next(
+        (
+            index
+            for index, line in enumerate(header)
+            if ANY_COPYRIGHT_RE.fullmatch(line)
+        ),
+        None,
+    )
+    if copyright_index is None:
+        return [f"{relative_path}: malformed or missing copyright header"]
+
+    license_index = copyright_index
+    while license_index < len(header) and ANY_COPYRIGHT_RE.fullmatch(
+        header[license_index]
+    ):
+        copyright_line = header[license_index]
+        if (
+            "NVIDIA CORPORATION" in copyright_line
+            and "Baseten.co, NVIDIA CORPORATION" not in copyright_line
+            and not COPYRIGHT_RE.fullmatch(copyright_line)
+        ):
+            return [f"{relative_path}: malformed NVIDIA copyright header"]
+        license_index += 1
+    if license_index >= len(header) or not LICENSE_RE.fullmatch(header[license_index]):
+        return [f"{relative_path}: malformed or missing Apache-2.0 header"]
+    return []
+
+
+def validate_paths(root: Path, paths: Iterable[Path]) -> list[str]:
+    """Return SPDX violations for all supplied repository-relative paths."""
+    violations: list[str] = []
+    for path in sorted(paths, key=lambda item: item.as_posix()):
+        violations.extend(validate_file(root, path))
+    return violations
+
+
+def tracked_files(root: Path) -> list[Path]:
+    """Return every path recorded in the repository index."""
+    result = subprocess.run(
+        ["git", "ls-files", "-z"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+    return [Path(path) for path in result.stdout.decode("utf-8").split("\0") if path]
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for the SPDX checker."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path.cwd(),
+        help="repository root containing the tracked files",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Validate the repository and return a process-compatible status code."""
+    args = parse_args(argv)
+    root = args.root.resolve()
+    try:
+        paths = tracked_files(root)
+    except (OSError, subprocess.CalledProcessError, UnicodeDecodeError) as error:
+        print(f"unable to enumerate tracked files: {error}", file=sys.stderr)
+        return 2
+
+    violations = validate_paths(root, paths)
+    if violations:
+        print("SPDX header violations:", file=sys.stderr)
+        for violation in violations:
+            print(f"- {violation}", file=sys.stderr)
+        return 1
+    print(f"Validated SPDX policy for {len(paths)} tracked files.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

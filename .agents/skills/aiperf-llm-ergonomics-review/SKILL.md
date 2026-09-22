@@ -1,4 +1,6 @@
 ---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 name: aiperf-llm-ergonomics-review
 description: Use when reviewing AIPerf code for the SEMANTIC qualities that mechanical linters cannot catch — error-message informativeness, type-hint descriptiveness, docstring example usefulness, naming disambiguation, convention explicitness, comment density, and reference-file exemplariness. Invoke after mechanical checks (`make check-ergonomics`, `make check-ruff-baselined`) are green, before shipping a branch or PR. Explicitly out of scope are correctness bugs, style (tabs/quotes), preferences, and anything the guardrails already catch.
 ---
