@@ -292,27 +292,22 @@ class PyNVMLTelemetryCollector(AIPerfLifecycleMixin):
         """
         try:
             pynvml.nvmlDeviceGetTotalEnergyConsumption(gpu.handle)
-        except pynvml.NVMLError_NotSupported as e:
-            # The device does not implement the counter. This is permanent, so
-            # the collection loop can stop asking.
+        except (
+            pynvml.NVMLError_NotSupported,
+            pynvml.NVMLError_FunctionNotFound,
+        ) as e:
+            # Either the device predates the counter, or libnvidia-ml does not
+            # export the symbol at all (pynvml raises FunctionNotFound from
+            # _nvmlGetFunctionPointer). Neither can start working later in the
+            # process, so the collection loop can stop asking; the NVML text in
+            # ``e`` says which of the two it was.
             gpu.energy_counter_supported = False
             self.warning(
                 f"GPU {gpu.metadata.gpu_index} ({gpu.metadata.gpu_model_name}): "
                 f"NVML total energy counter not available ({e}). Energy metrics "
                 f"will be absent for this GPU; the counter requires Volta or "
-                f"newer."
-            )
-        except pynvml.NVMLError_FunctionNotFound as e:
-            # libnvidia-ml does not export the symbol at all, which pynvml raises
-            # from _nvmlGetFunctionPointer. That cannot recover within the
-            # process, so it is permanent for the same reason NotSupported is,
-            # but the cause is the driver rather than the age of the device.
-            gpu.energy_counter_supported = False
-            self.warning(
-                f"GPU {gpu.metadata.gpu_index} ({gpu.metadata.gpu_model_name}): "
-                f"NVML total energy counter not available ({e}). Energy metrics "
-                f"will be absent for this GPU; the installed driver does not "
-                f"export nvmlDeviceGetTotalEnergyConsumption."
+                f"newer and a driver that exports "
+                f"nvmlDeviceGetTotalEnergyConsumption."
             )
         except pynvml.NVMLError as e:
             # Anything else may be transient, so leave the capability alone and
