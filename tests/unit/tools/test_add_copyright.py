@@ -3,14 +3,30 @@
 
 """Tests for SPDX header generation across every enforced source format."""
 
+import importlib.util
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
-from tools import add_copyright
-from tools import check_spdx_headers as checker
+ROOT = Path(__file__).parents[3]
 
-LICENSE_TEXT = (Path(__file__).parents[3] / "tools/COPYRIGHT").read_text().strip()
+
+def load_tool(name: str) -> ModuleType:
+    """Load a standalone tool without importing the dependency-bearing package."""
+    path = ROOT / f"tools/{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load tool from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+add_copyright = load_tool("add_copyright")
+checker = load_tool("check_spdx_headers")
+
+LICENSE_TEXT = (ROOT / "tools/COPYRIGHT").read_text().strip()
 
 
 @pytest.mark.parametrize(
