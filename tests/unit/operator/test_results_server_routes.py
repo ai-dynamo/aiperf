@@ -1,4 +1,4 @@
-# Copyright 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Smoke tests for FastAPI route registration in `results_server.create_app`."""
 

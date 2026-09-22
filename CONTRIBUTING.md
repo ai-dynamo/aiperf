@@ -113,7 +113,7 @@ The repository uses pre-commit hooks defined in `.pre-commit-config.yaml`:
 - `ruff-format` - Format with ruff
 
 **Project-specific hooks:**
-- `add-license` - Add SPDX copyright headers
+- `check-spdx-headers` - Validate SPDX headers on all tracked first-party source files
 - `generate-cli-docs` - Regenerate CLI documentation when Python files change
 - `generate-env-vars-docs` - Regenerate env var docs when environment.py changes
 - `generate-plugin-artifacts` - Regenerate plugin enums/overloads/schemas
