@@ -163,28 +163,74 @@ def prefix_lines(content: str, prefix: str) -> str:
     return prefix + f"\n{prefix}".join(content.splitlines())
 
 
-def insert_after_shebang(header: str, content: str) -> str:
-    """Insert header after shebang line if present, else at start."""
-    match = re.match(r"#!(.*)\n", content)
-    if match:
-        pos = match.end()
-        return content[:pos] + header + "\n" + content[pos:]
-    return header + "\n" + content
+def split_bom(content: str) -> tuple[str, str]:
+    """Separate a UTF-8 BOM so it remains the first character in the file."""
+    if content.startswith("\ufeff"):
+        return "\ufeff", content[1:]
+    return "", content
+
+
+def insert_after_script_preamble(header: str, content: str) -> str:
+    """Preserve a shebang and Python encoding cookie before the header."""
+    bom, content = split_bom(content)
+    lines = content.splitlines(keepends=True)
+    line_index = 0
+    if lines and lines[0].startswith("#!"):
+        line_index = 1
+    if line_index < min(2, len(lines)) and re.match(
+        r"^[ \t\f]*#.*?coding[:=][ \t]*[-_.a-zA-Z0-9]+", lines[line_index]
+    ):
+        line_index += 1
+    pos = sum(len(line) for line in lines[:line_index])
+    return bom + content[:pos] + header + "\n" + content[pos:]
 
 
 def prepend_header(header: str, content: str) -> str:
     """Insert header at the start of content."""
-    return header + "\n" + content
+    bom, content = split_bom(content)
+    return bom + header + "\n" + content
 
 
-def insert_mdc_header(license_text: str, content: str) -> str:
-    """Insert YAML comments into MDC frontmatter, or an HTML comment otherwise."""
+def insert_markdown_header(license_text: str, content: str) -> str:
+    """Keep YAML frontmatter first, or use an HTML comment for plain Markdown."""
+    bom, content = split_bom(content)
     if content.startswith("---\n"):
         pos = len("---\n")
         header = prefix_lines(license_text, "# ")
-        return content[:pos] + header + "\n" + content[pos:]
+        return bom + content[:pos] + header + "\n" + content[pos:]
     header = "<!--\n" + license_text + "\n-->"
-    return prepend_header(header, content)
+    return bom + header + "\n" + content
+
+
+def insert_after_docker_directives(header: str, content: str) -> str:
+    """Preserve leading Docker parser directives before the header."""
+    bom, content = split_bom(content)
+    lines = content.splitlines(keepends=True)
+    line_index = 0
+    while line_index < len(lines) and re.match(
+        r"^#\s*(?:syntax|escape|check)\s*=", lines[line_index], re.IGNORECASE
+    ):
+        line_index += 1
+    pos = sum(len(line) for line in lines[:line_index])
+    return bom + content[:pos] + header + "\n" + content[pos:]
+
+
+def insert_after_html_doctype(header: str, content: str) -> str:
+    """Preserve a leading HTML doctype before the header."""
+    bom, content = split_bom(content)
+    match = re.match(r"(?i:<!doctype\s+html[^>]*>)\s*\n?", content)
+    if match is None:
+        return bom + header + "\n" + content
+    return bom + content[: match.end()] + header + "\n" + content[match.end() :]
+
+
+def insert_after_css_charset(header: str, content: str) -> str:
+    """Preserve a leading CSS charset declaration before the header."""
+    bom, content = split_bom(content)
+    match = re.match(r"@charset\s+(['\"]).+?\1;\s*\n?", content, re.IGNORECASE)
+    if match is None:
+        return bom + header + "\n" + content
+    return bom + content[: match.end()] + header + "\n" + content[match.end() :]
 
 
 # =============================================================================
@@ -204,6 +250,11 @@ def has_ext(exts: Sequence[str]) -> Callable[[str], bool]:
 def basename_is(name: str) -> Callable[[str], bool]:
     """Match files by basename."""
     return lambda p: Path(p).name == name
+
+
+def basename_starts_with(prefix: str) -> Callable[[str], bool]:
+    """Match files whose basename starts with a prefix."""
+    return lambda p: Path(p).name.startswith(prefix)
 
 
 def any_of(*funcs: Callable[[str], bool]) -> Callable[[str], bool]:
@@ -242,11 +293,15 @@ register(
         basename_is(".helmignore"),
         basename_is("CMakeLists.txt"),
         basename_is("CODEOWNERS"),
-        basename_is("Dockerfile"),
         basename_is("Makefile"),
     ),
     lambda lic: prefix_lines(lic, "# "),
-    insert_after_shebang,
+    insert_after_script_preamble,
+)
+register(
+    any_of(basename_is("Dockerfile"), basename_starts_with("Dockerfile.")),
+    lambda lic: prefix_lines(lic, "# "),
+    insert_after_docker_directives,
 )
 register(
     has_ext(
@@ -265,21 +320,24 @@ register(
         ]
     ),
     lambda lic: prefix_lines(lic, "// "),
+    insert_after_script_preamble,
 )
 register(
     has_ext([".css"]),
     lambda lic: "/* " + lic.replace("\n", "\n   ") + " */",
+    insert_after_css_charset,
 )
 register(has_ext([".mmd"]), lambda lic: prefix_lines(lic, "%% "))
 register(has_ext([".tpl"]), lambda lic: "{{/*\n" + lic + "\n*/}}")
 register(
-    has_ext([".html", ".md"]),
+    has_ext([".html"]),
     lambda lic: "<!--\n" + lic + "\n-->",
+    insert_after_html_doctype,
 )
 register(
-    has_ext([".mdc"]),
+    has_ext([".md", ".mdc"]),
     lambda lic: lic,
-    insert_mdc_header,
+    insert_markdown_header,
 )
 register(has_ext([".rst"]), lambda lic: prefix_lines(lic, ".. "))
 

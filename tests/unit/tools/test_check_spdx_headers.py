@@ -140,23 +140,28 @@ def test_non_apache_identifier_is_rejected(tmp_path: Path) -> None:
     assert "malformed or missing Apache-2.0 header" in violations[0]
 
 
-def test_exempt_artifacts_and_empty_files_are_accepted(tmp_path: Path) -> None:
-    """Third-party, non-commentable, symlink, and empty artifacts are exempt."""
+def test_exempt_artifacts_are_accepted(tmp_path: Path) -> None:
+    """Third-party, non-commentable, and symlink artifacts are exempt."""
     vendor = tmp_path / "src/aiperf/api/static/vendor/prism-core.js"
     vendor.parent.mkdir(parents=True)
     vendor.write_text("vendor code\n", encoding="utf-8")
     (tmp_path / "data.json").write_text("{}\n", encoding="utf-8")
-    (tmp_path / "empty.py").touch()
     (tmp_path / "target.py").write_text(HASH_HEADER, encoding="utf-8")
     (tmp_path / "link.py").symlink_to("target.py")
 
     paths = [
         Path("src/aiperf/api/static/vendor/prism-core.js"),
         Path("data.json"),
-        Path("empty.py"),
         Path("link.py"),
     ]
     assert CHECKER.validate_paths(tmp_path, paths) == []
+
+
+def test_empty_source_file_is_rejected(tmp_path: Path) -> None:
+    """An empty source file cannot silently bypass the header policy."""
+    (tmp_path / "empty.py").touch()
+    violations = CHECKER.validate_file(tmp_path, Path("empty.py"))
+    assert "empty source file is missing an SPDX header" in violations[0]
 
 
 def test_binary_and_unknown_files_are_rejected(tmp_path: Path) -> None:
@@ -210,5 +215,13 @@ def test_cmake_lists_is_not_exempt_as_plain_text(tmp_path: Path) -> None:
     """The exact CMake source filename takes precedence over the text exemption."""
     path = Path("CMakeLists.txt")
     (tmp_path / path).write_text("project(aiperf)\n", encoding="utf-8")
+    violations = CHECKER.validate_file(tmp_path, path)
+    assert "malformed or missing copyright header" in violations[0]
+
+
+def test_dockerfile_variant_is_not_exempt_by_suffix(tmp_path: Path) -> None:
+    """Dockerfile variants are source even when their suffix looks unfamiliar."""
+    path = Path("Dockerfile.mock-server")
+    (tmp_path / path).write_text("FROM scratch\n", encoding="utf-8")
     violations = CHECKER.validate_file(tmp_path, path)
     assert "malformed or missing copyright header" in violations[0]

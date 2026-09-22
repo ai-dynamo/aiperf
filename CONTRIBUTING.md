@@ -135,6 +135,14 @@ The checker fails closed when it encounters a new file type. Add an appropriate
 comment-style handler to `tools/add_copyright.py` and classify the type in
 `tools/check_spdx_headers.py` before committing that file.
 
+The only exemptions are explicit third-party vendor trees, canonical license
+inputs and symlinks, and formats that cannot safely carry source comments:
+notebooks, JSON/JSONL and lock data, plain-text test data, and binary image,
+audio, font, and spreadsheet assets. Empty source files and all `Dockerfile.*`
+variants still require headers. The fixer preserves syntax-critical preambles,
+including shebangs and encoding cookies, Docker parser directives, Markdown
+frontmatter, HTML doctypes, and CSS charset declarations.
+
 Run pre-commit after every code change, even before creating commits. Do not wait until commit time to discover problems.
 
 ### Bundled Skills
