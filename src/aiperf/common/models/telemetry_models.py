@@ -135,7 +135,8 @@ class TelemetryMetrics(AIPerfBaseModel):
         "hotspot fallback)",
     )
     amd_memory_temperature: float | None = Field(
-        default=None, ge=0, description="AMD GPU memory temperature in °C"
+        default=None,
+        description="AMD GPU memory temperature in °C",
     )
     amd_ecc_uncorrectable: float | None = Field(
         default=None,

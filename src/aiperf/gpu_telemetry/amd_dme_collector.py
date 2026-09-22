@@ -1,6 +1,7 @@
 import time
 
 from prometheus_client.parser import text_string_to_metric_families
+from pydantic import ValidationError
 
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import (
@@ -9,6 +10,7 @@ from aiperf.common.mixins import (
     TRecordCallback,
 )
 from aiperf.common.models import GpuMetadata, TelemetryMetrics, TelemetryRecord
+from aiperf.gpu_telemetry.constants import AMD_GPU_TELEMETRY_PLATFORM
 
 __all__ = ["AMDDMETelemetryCollector"]
 
@@ -48,7 +50,7 @@ class AMDDMETelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
 
     @classmethod
     def validate_environment(cls) -> None:
-        """Remote HTTP collector GÇö no local environment to validate."""
+        """Remote HTTP collector, so there is no local environment to validate."""
 
     def __init__(
         self,
@@ -157,6 +159,7 @@ class AMDDMETelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
                 hostname=labels.get("hostname"),
                 namespace=labels.get("namespace"),
                 pod_name=labels.get("pod"),
+                platform=AMD_GPU_TELEMETRY_PLATFORM,
             )
 
         metrics = gpu_data.setdefault(gpu_index, {})
@@ -224,12 +227,22 @@ class AMDDMETelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
                 continue
             scaled_metrics = self._apply_scaling_factors(metrics)
 
-            record = TelemetryRecord(
-                timestamp_ns=current_timestamp,
-                telemetry_source_url=self.endpoint_url,
-                **metadata.model_dump(),
-                telemetry_data=TelemetryMetrics(**scaled_metrics),
-            )
+            # Per-GPU, not per-tick. Building every GPU's record inside one
+            # try block would mean a single malformed sample discards the
+            # whole node's already-valid records for this scrape.
+            try:
+                record = TelemetryRecord(
+                    timestamp_ns=current_timestamp,
+                    telemetry_source_url=self.endpoint_url,
+                    **metadata.model_dump(),
+                    telemetry_data=TelemetryMetrics(**scaled_metrics),
+                )
+            except ValidationError as e:
+                self.warning(
+                    f"Dropping GPU {gpu_index} from this sample; its metrics "
+                    f"failed validation: {e}"
+                )
+                continue
             records.append(record)
 
         return records

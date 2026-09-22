@@ -49,8 +49,8 @@ AIPerf provides GPU telemetry collection with the `--gpu-telemetry` flag. Here's
 | **pynvml mode** | `aiperf profile --model MODEL ... --gpu-telemetry pynvml` | Local GPUs via pynvml library ([see pynvml section](#3-using-pynvml-local-gpu-monitoring)) | ✅ Yes | ❌ No | ✅ Yes |
 | **pynvml + dashboard** | `aiperf profile --model MODEL ... --gpu-telemetry pynvml dashboard` | Local GPUs via pynvml library | ✅ Yes | ✅ Yes ([see dashboard](#real-time-dashboard-view)) | ✅ Yes |
 | **amdsmi mode** | `aiperf profile --model MODEL ... --gpu-telemetry amdsmi` | Local AMD ROCm GPUs via amdsmi library | ✅ Yes | ❌ No | ✅ Yes |
-| **AMD DME mode** | `aiperf profile --model MODEL ... --gpu-telemetry http://node:5000/metrics` | Remote AMD GPUs via AMD DME HTTP exporter ([see AMD DME section](#5-using-amd-dme-remote-amd-gpu-monitoring)) | G£à Yes | G¥î No | G£à Yes |
-| **AMD DME explicit** | `aiperf profile --model MODEL ... --gpu-telemetry amd_dme:http://node:5000/metrics` | Remote AMD GPUs via AMD DME (explicit collector type) | G£à Yes | G¥î No | G£à Yes |
+| **AMD DME mode** | `aiperf profile --model MODEL ... --gpu-telemetry http://node:5000/metrics` | Remote AMD GPUs via AMD DME HTTP exporter ([see AMD DME section](#5-using-amd-dme-remote-amd-gpu-monitoring)) | ✅ Yes | ❌ No | ✅ Yes |
+| **AMD DME explicit** | `aiperf profile --model MODEL ... --gpu-telemetry amd_dme:http://node:5000/metrics` | Remote AMD GPUs via AMD DME (explicit collector type) | ✅ Yes | ❌ No | ✅ Yes |
 | **Disabled** | `aiperf profile --model MODEL ... --no-gpu-telemetry` | None | ❌ No | ❌ No | ❌ No |
 
 > [!WARNING]
@@ -565,14 +565,14 @@ AMD DME collects metrics from the Prometheus exporter and emits them under vendo
 | Metric | Source | Notes |
 |---|---|---|
 | `amd_power` (W) | `gpu_package_power` | Current GPU package power draw. |
-| `amd_energy_consumption` (MJ) | `gpu_energy_consumed` | Cumulative energy consumption (-¦J GåÆ MJ). Accumulator computes delta against pre-profile baseline. |
+| `amd_energy_consumption` (MJ) | `gpu_energy_consumed` | Cumulative energy consumption (µJ → MJ). Accumulator computes delta against pre-profile baseline. |
 | `amd_gfx_activity` (%) | `gpu_gfx_activity` | Graphics engine activity percentage. |
 | `amd_umc_activity` (%) | `gpu_umc_activity` | Memory controller activity percentage. |
-| `amd_memory_used` (GB) | `gpu_used_vram` | VRAM memory used (MB GåÆ GB). |
-| `amd_memory_free` (GB) | `gpu_free_vram` | VRAM memory free (MB GåÆ GB). |
-| `amd_memory_total` (GB) | `gpu_total_vram` | Total VRAM capacity (MB GåÆ GB). |
-| `amd_temperature` (-¦C) | `gpu_junction_temperature` | GPU junction/hotspot temperature. |
-| `amd_memory_temperature` (-¦C) | `gpu_memory_temperature` | Memory temperature. |
+| `amd_memory_used` (GB) | `gpu_used_vram` | VRAM memory used (MB → GB). |
+| `amd_memory_free` (GB) | `gpu_free_vram` | VRAM memory free (MB → GB). |
+| `amd_memory_total` (GB) | `gpu_total_vram` | Total VRAM capacity (MB → GB). |
+| `amd_temperature` (°C) | `gpu_junction_temperature` | GPU junction/hotspot temperature. |
+| `amd_memory_temperature` (°C) | `gpu_memory_temperature` | Memory temperature. |
 | `amd_ecc_uncorrectable` (count) | `gpu_ecc_uncorrect_total` | Total uncorrectable ECC error count. |
 | `amd_sm_clock` (MHz) | `gpu_clock{clock_type="GPU_CLOCK_TYPE_SYSTEM",clock_index="0"}` | System clock frequency. |
 | `amd_mem_clock` (MHz) | `gpu_clock{clock_type="GPU_CLOCK_TYPE_MEMORY",clock_index="8"}` | Memory clock frequency. |
@@ -581,22 +581,22 @@ AMD DME collects metrics from the Prometheus exporter and emits them under vendo
 
 ```
                      <amd-exporter-ip>:5000 | GPU 7 | 102-G30213-0C
-GöÅGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGö¦GöüGöüGöüGöüGöüGöüGöüGöüGö¦GöüGöüGöüGöüGöüGöüGöüGöüGö¦GöüGöüGöüGöüGöüGöüGöüGöüGö¦GöüGöüGöüGöüGöüGöüGöüGöüGö¦GöüGöüGöüGöüGöüGöüGöüGöüGö¦GöüGöüGöüGöüGöüGöüGöüGöüGö¦GöüGöüGöüGöüGöüGöüGöô
-Göâ                           Metric Göâ    avg Göâ    min Göâ    max Göâ    p99 Göâ    p90 Göâ    p50 Göâ  std Göâ
-GöíGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGöüGòçGöüGöüGöüGöüGöüGöüGöüGöüGòçGöüGöüGöüGöüGöüGöüGöüGöüGòçGöüGöüGöüGöüGöüGöüGöüGöüGòçGöüGöüGöüGöüGöüGöüGöüGöüGòçGöüGöüGöüGöüGöüGöüGöüGöüGòçGöüGöüGöüGöüGöüGöüGöüGöüGòçGöüGöüGöüGöüGöüGöüGö¬
-Göé                AMD GPU Power (W) Göé 154.50 Göé 152.00 Göé 157.00 Göé 156.97 Göé 156.70 Göé 154.50 Göé 2.38 Göé
-Göé      AMD Energy Consumption (MJ) Göé   0.01 Göé    N/A Göé    N/A Göé    N/A Göé    N/A Göé    N/A Göé  N/A Göé
-Göé             AMD GFX Activity (%) Göé   0.00 Göé   0.00 Göé   0.00 Göé   0.00 Göé   0.00 Göé   0.00 Göé 0.00 Göé
-Göé             AMD UMC Activity (%) Göé   0.00 Göé   0.00 Göé   0.00 Göé   0.00 Göé   0.00 Göé   0.00 Göé 0.00 Göé
-Göé         AMD GPU Memory Used (GB) Göé   0.28 Göé   0.28 Göé   0.28 Göé   0.28 Göé   0.28 Göé   0.28 Göé 0.00 Göé
-Göé         AMD GPU Memory Free (GB) Göé 191.71 Göé 191.71 Göé 191.71 Göé 191.71 Göé 191.71 Göé 191.71 Göé 0.00 Göé
-Göé        AMD GPU Memory Total (GB) Göé 191.98 Göé 191.98 Göé 191.98 Göé 191.98 Göé 191.98 Göé 191.98 Göé 0.00 Göé
-Göé         AMD GPU Temperature (-¦C) Göé  43.50 Göé  41.00 Göé  46.00 Göé  45.97 Göé  45.70 Göé  43.50 Göé 2.38 Göé
-Göé      AMD Memory Temperature (-¦C) Göé  38.00 Göé  36.00 Göé  40.00 Göé  39.97 Göé  39.70 Göé  38.00 Göé 1.83 Göé
-Göé    AMD ECC Uncorrectable (count) Göé   0.00 Göé    N/A Göé    N/A Göé    N/A Göé    N/A Göé    N/A Göé  N/A Göé
-Göé     AMD SM Clock Frequency (MHz) Göé 132.00 Göé 132.00 Göé 132.00 Göé 132.00 Göé 132.00 Göé 132.00 Göé 0.00 Göé
-Göé AMD Memory Clock Frequency (MHz) Göé 900.00 Göé 900.00 Göé 900.00 Göé 900.00 Göé 900.00 Göé 900.00 Göé 0.00 Göé
-GööGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGö¦GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGö¦GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGö¦GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGö¦GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGö¦GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGö¦GöÇGöÇGöÇGöÇGöÇGöÇGöÇGöÇGö¦GöÇGöÇGöÇGöÇGöÇGöÇGöÿ
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━┓
+┃                           Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p90 ┃    p50 ┃  std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━┩
+│                AMD GPU Power (W) │ 154.50 │ 152.00 │ 157.00 │ 156.97 │ 156.70 │ 154.50 │ 2.38 │
+│      AMD Energy Consumption (MJ) │   0.01 │    N/A │    N/A │    N/A │    N/A │    N/A │  N/A │
+│             AMD GFX Activity (%) │   0.00 │   0.00 │   0.00 │   0.00 │   0.00 │   0.00 │ 0.00 │
+│             AMD UMC Activity (%) │   0.00 │   0.00 │   0.00 │   0.00 │   0.00 │   0.00 │ 0.00 │
+│         AMD GPU Memory Used (GB) │   0.28 │   0.28 │   0.28 │   0.28 │   0.28 │   0.28 │ 0.00 │
+│         AMD GPU Memory Free (GB) │ 191.71 │ 191.71 │ 191.71 │ 191.71 │ 191.71 │ 191.71 │ 0.00 │
+│        AMD GPU Memory Total (GB) │ 191.98 │ 191.98 │ 191.98 │ 191.98 │ 191.98 │ 191.98 │ 0.00 │
+│         AMD GPU Temperature (°C) │  43.50 │  41.00 │  46.00 │  45.97 │  45.70 │  43.50 │ 2.38 │
+│      AMD Memory Temperature (°C) │  38.00 │  36.00 │  40.00 │  39.97 │  39.70 │  38.00 │ 1.83 │
+│    AMD ECC Uncorrectable (count) │   0.00 │    N/A │    N/A │    N/A │    N/A │    N/A │  N/A │
+│     AMD SM Clock Frequency (MHz) │ 132.00 │ 132.00 │ 132.00 │ 132.00 │ 132.00 │ 132.00 │ 0.00 │
+│ AMD Memory Clock Frequency (MHz) │ 900.00 │ 900.00 │ 900.00 │ 900.00 │ 900.00 │ 900.00 │ 0.00 │
+└──────────────────────────────────┴────────┴────────┴────────┴────────┴────────┴────────┴──────┘
 ```
 
 > [!NOTE]

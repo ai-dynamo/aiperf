@@ -130,3 +130,43 @@ class TestLocalCollectorWithRemoteUrlsWarning:
         )
         build_gpu_telemetry(cli)
         assert "non-localhost" not in caplog.text.lower()
+
+
+class TestAmdAutoDetectRespectsAnExplicitPrefix:
+    """AMD auto-detection must never overrule a collector the user named.
+
+    The probe used to run over every URL whenever ``collector_type`` still
+    equalled the hardcoded DCGM default. That test cannot distinguish "the user
+    wrote ``dcgm:<url>``" from "nothing was specified", because both leave the
+    default in place, so an explicit prefix could be silently flipped to
+    ``amd_dme`` by the heuristic. Gating on whether the item was a bare URL is
+    what separates the two.
+
+    ``_detect_amd_exporter`` is forced True here: the point is that an explicit
+    prefix wins even when the endpoint really does look like an AMD exporter.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _always_detects_amd(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(
+            "aiperf.config.flags._converter_telemetry._detect_amd_exporter",
+            lambda url: True,
+        )
+
+    def test_explicit_dcgm_prefix_is_not_overridden(self):
+        cli = _make_cli(gpu_telemetry=["dcgm:http://node:9400/metrics"])
+        assert build_gpu_telemetry(cli)["collector"] == "dcgm"
+
+    def test_bare_url_still_auto_detects(self):
+        cli = _make_cli(gpu_telemetry=["http://node:5000/metrics"])
+        assert build_gpu_telemetry(cli)["collector"] == "amd_dme"
+
+    def test_explicit_amd_dme_prefix_is_honored(self):
+        cli = _make_cli(gpu_telemetry=["amd_dme:http://node:5000/metrics"])
+        assert build_gpu_telemetry(cli)["collector"] == "amd_dme"
+
+    def test_a_local_keyword_suppresses_detection_for_a_bare_url(self):
+        """`--gpu-telemetry amdsmi http://...` names a collector by keyword, so
+        the URL is a plain endpoint and must not re-decide the collector."""
+        cli = _make_cli(gpu_telemetry=["amdsmi", "http://node:5000/metrics"])
+        assert build_gpu_telemetry(cli)["collector"] == "amdsmi"
