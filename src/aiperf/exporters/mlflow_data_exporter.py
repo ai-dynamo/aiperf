@@ -85,6 +85,7 @@ class MLflowDataExporter(AIPerfLoggerMixin):
             "usage_completion_tokens_diff_pct",
             "usage_reasoning_tokens_diff_pct",
             "usage_discrepancy_count",
+            "requested_osl",
             "osl_mismatch_diff_pct",
             "osl_mismatch_count",
             "nvidia_energy_delay_product",

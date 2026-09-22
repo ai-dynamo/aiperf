@@ -148,7 +148,7 @@ MLflow's `system/` namespace so they appear in the System Metrics section:
 | HTTP transport timings and counters | `system/http_req_waiting.p95` |
 | Internal diagnostics and intermediate counts | `system/credit_drop_latency`, `system/num_images` |
 | Server-reported usage, usage totals, and cache statistics | `system/usage_completion_tokens`, `system/total_usage_prompt_tokens` |
-| Token-count discrepancies and output-length mismatches | `system/usage_prompt_tokens_diff_pct`, `system/osl_mismatch_count` |
+| Token-count discrepancies, output-length targets, and mismatches | `system/usage_prompt_tokens_diff_pct`, `system/requested_osl`, `system/osl_mismatch_count` |
 | NVIDIA and AMD power, energy, and efficiency metrics | `system/nvidia_total_gpu_power`, `system/amd_energy_delay_product` |
 
 The prefix applies to each exported statistic, including percentiles, counts,

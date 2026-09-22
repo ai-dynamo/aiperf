@@ -228,6 +228,7 @@ class TestMLflowDataExporter:
             param("total_usage_completion_tokens", "system/total_usage_completion_tokens", id="total-usage"),
             param("overall_usage_prompt_cache_read_pct", "system/overall_usage_prompt_cache_read_pct", id="cache-percent"),
             param("usage_prompt_tokens_diff_pct", "system/usage_prompt_tokens_diff_pct", id="usage-discrepancy"),
+            param("requested_osl", "system/requested_osl", id="output-target"),
             param("osl_mismatch_count", "system/osl_mismatch_count", id="output-mismatch"),
             param("nvidia_total_gpu_power", "system/nvidia_total_gpu_power", id="nvidia-power"),
             param("amd_energy_per_user", "system/amd_energy_per_user", id="amd-energy"),
