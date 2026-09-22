@@ -44,6 +44,26 @@ from aiperf.transports.base_transports import (
 
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
+# Only these survive a hop to an origin the benchmarked server chose. An
+# allowlist rather than a denylist because nothing marks "X-Acme-Token" as a
+# secret -- a name-based denylist can only catch the names it thought of. The
+# natural content_url is a presigned S3 URL, which authenticates through its own
+# query signature and needs no inherited headers at all.
+_FOREIGN_ORIGIN_HEADER_ALLOWLIST = frozenset({"user-agent"})
+
+
+def _strip_credentials_for_foreign_origin(headers: dict[str, str]) -> dict[str, str]:
+    """Keep only allowlisted headers, matching names case-insensitively.
+
+    HTTP header names are case-insensitive but these live in a plain dict, so a
+    lowercase ``authorization`` would otherwise slip past a literal comparison.
+    """
+    return {
+        name: value
+        for name, value in headers.items()
+        if name.lower() in _FOREIGN_ORIGIN_HEADER_ALLOWLIST
+    }
+
 
 def _origin_of(url: str) -> tuple[str, str | None, int | None] | None:
     """Scheme, host and normalized port, or None when the URL will not parse.
@@ -707,12 +727,25 @@ class AioHttpTransport(BaseTransport):
             signed = (
                 await self._sign_if_needed("GET", content_url, headers)
                 if sign_this
-                else SignedRequest(url=content_url, headers=headers, body=None)
+                else SignedRequest(
+                    url=content_url,
+                    # Not signing a foreign URL was only half the fix: the
+                    # endpoint's already-configured headers carry the user's
+                    # --api-key Bearer token and any -H secrets, and were
+                    # forwarded to whatever host the server named.
+                    headers=_strip_credentials_for_foreign_origin(headers),
+                    body=None,
+                )
             )
             record = await self.aiohttp_client.get_request(
                 signed.url,
                 signed.headers,
-                **(no_redirect_kwargs(self.request_signer) if sign_this else {}),
+                # Unconditional, not just for the signed same-origin case:
+                # content_url is server-selected, so its redirect target is the
+                # server's choice too, and following one re-delivers whatever
+                # headers survived to a second host. A 3xx now surfaces as a
+                # download error rather than silently fetching from elsewhere.
+                allow_redirects=False,
             )
             if record.error:
                 return ErrorDetails(

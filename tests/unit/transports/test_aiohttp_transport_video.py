@@ -1059,3 +1059,101 @@ class TestSameOriginPortHandling:
         assert not _same_origin(
             "https://example.com/a", "https://example.com:notaport/b"
         )
+
+
+class TestForeignDownloadDropsInheritedCredentials:
+    """``content_url`` comes out of the polled response body, so the
+    benchmarked server chooses the host. Not signing it was only half the
+    problem: the endpoint's *already configured* headers were forwarded
+    unchanged, so an `--api-key` Bearer token or any custom auth header the
+    user passed with `-H` was delivered to whatever host the server named.
+
+    A name-based denylist cannot fix this -- nothing marks ``X-Acme-Token`` as
+    a secret. The natural value for ``data["url"]`` is a presigned S3 URL,
+    which needs no inherited headers at all, so a foreign origin gets an
+    allowlist instead.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_foreign_download_drops_inherited_credential_headers(
+        self, transport
+    ):
+        transport.aiohttp_client.get_request.return_value = create_request_record(
+            status=200, body=b"video-bytes"
+        )
+
+        await transport._download_video_content(
+            "video-123",
+            "https://evil.example.com/collect",
+            {
+                "Authorization": "Bearer user-api-key",
+                "X-Acme-Token": "custom-secret",
+                "Cookie": "session=abc",
+                "X-Correlation-ID": "corr-1",
+                "User-Agent": "aiperf/1.0",
+            },
+            signing_origin_url="http://localhost/v1/videos/video-123",
+        )
+
+        _, headers = transport.aiohttp_client.get_request.call_args.args
+        assert "Authorization" not in headers
+        assert "X-Acme-Token" not in headers
+        assert "Cookie" not in headers
+        assert "X-Correlation-ID" not in headers
+        assert headers.get("User-Agent") == "aiperf/1.0"
+
+    @pytest.mark.asyncio
+    async def test_header_stripping_is_case_insensitive(self, transport):
+        """HTTP header names are case-insensitive, and these live in a plain
+        dict -- a lowercase ``authorization`` must not slip through."""
+        transport.aiohttp_client.get_request.return_value = create_request_record(
+            status=200, body=b"video-bytes"
+        )
+
+        await transport._download_video_content(
+            "video-123",
+            "https://evil.example.com/collect",
+            {"authorization": "Bearer user-api-key", "x-acme-token": "custom-secret"},
+            signing_origin_url="http://localhost/v1/videos/video-123",
+        )
+
+        _, headers = transport.aiohttp_client.get_request.call_args.args
+        assert not [k for k in headers if k.lower() != "user-agent"]
+
+    @pytest.mark.asyncio
+    async def test_a_foreign_download_never_follows_redirects(self, transport):
+        """Redirects were disabled only on the signed same-origin branch, which
+        is the case that needs it least. A server-selected URL is exactly the
+        one whose redirect target must not be followed."""
+        transport.aiohttp_client.get_request.return_value = create_request_record(
+            status=200, body=b"video-bytes"
+        )
+
+        await transport._download_video_content(
+            "video-123",
+            "https://evil.example.com/collect",
+            {"Authorization": "Bearer user-api-key"},
+            signing_origin_url="http://localhost/v1/videos/video-123",
+        )
+
+        kwargs = transport.aiohttp_client.get_request.call_args.kwargs
+        assert kwargs.get("allow_redirects") is False
+
+    @pytest.mark.asyncio
+    async def test_a_same_origin_download_still_sends_endpoint_headers(self, transport):
+        """The allowlist must not strip credentials from the legitimate
+        same-origin case, which is the endpoint we were already talking to."""
+        transport.aiohttp_client.get_request.return_value = create_request_record(
+            status=200, body=b"video-bytes"
+        )
+
+        await transport._download_video_content(
+            "video-123",
+            "http://localhost/v1/videos/video-123/content",
+            {"Authorization": "Bearer user-api-key", "X-Acme-Token": "custom-secret"},
+            signing_origin_url="http://localhost/v1/videos/video-123",
+        )
+
+        _, headers = transport.aiohttp_client.get_request.call_args.args
+        assert headers["Authorization"] == "Bearer user-api-key"
+        assert headers["X-Acme-Token"] == "custom-secret"
