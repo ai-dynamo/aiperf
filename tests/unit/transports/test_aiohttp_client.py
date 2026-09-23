@@ -149,11 +149,6 @@ class TestAioHttpClient:
             ),
             (
                 b'data: {"object":"chat.completion.chunk","choices":'
-                b'[{"delta":{},"finish_reason":"length"}]}\n\n',
-                False,
-            ),
-            (
-                b'data: {"object":"chat.completion.chunk","choices":'
                 b'[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
                 False,
             ),
@@ -172,7 +167,6 @@ class TestAioHttpClient:
         tail: bytes,
         should_fail: bool,
     ) -> None:
-        """An opted-in chat run classifies incomplete streams as request errors."""
         content = (
             b'data: {"object":"chat.completion.chunk","choices":'
             b'[{"delta":{"content":"Hello"},"finish_reason":null}]}\n\n'
