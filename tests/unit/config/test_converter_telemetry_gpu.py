@@ -170,3 +170,27 @@ class TestAmdAutoDetectRespectsAnExplicitPrefix:
         the URL is a plain endpoint and must not re-decide the collector."""
         cli = _make_cli(gpu_telemetry=["amdsmi", "http://node:5000/metrics"])
         assert build_gpu_telemetry(cli)["collector"] == "amdsmi"
+
+    @pytest.mark.parametrize(
+        "item",
+        [
+            "node:5000/metrics",
+            "10.0.0.1:5000/metrics",
+            "node:5000",
+        ],
+        ids=["host-port-path", "ip-port-path", "host-port"],
+    )
+    def test_a_scheme_less_url_still_auto_detects(self, item: str):
+        """A scheme-less endpoint is a bare URL, even though it contains a colon.
+
+        These reach the prefixed-item branch because of the colon, but the part
+        before it is not a collector name, so the user chose nothing and the URL
+        is still a detection candidate. Reported from a real MI300X run where
+        `--gpu-telemetry <ip>:5000/metrics` silently collected no AMD metrics.
+        """
+        cli = _make_cli(gpu_telemetry=[item])
+        assert build_gpu_telemetry(cli)["collector"] == "amd_dme"
+
+    def test_an_explicit_prefix_on_a_scheme_less_url_is_still_honoured(self):
+        cli = _make_cli(gpu_telemetry=["dcgm:node:9400/metrics"])
+        assert build_gpu_telemetry(cli)["collector"] == "dcgm"

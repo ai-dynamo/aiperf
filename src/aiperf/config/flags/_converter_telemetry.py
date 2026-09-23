@@ -119,16 +119,18 @@ def _resolve_metrics_file(item: str) -> Path:
     return csv_path
 
 
-def _resolve_prefixed_url(collector_type: Any, item: str) -> tuple[Any, str]:
-    """Resolve a ``collector:url`` item to ``(collector_type, url)``.
+def _resolve_prefixed_url(collector_type: Any, item: str) -> tuple[Any, str, bool]:
+    """Resolve a ``collector:url`` item to ``(collector_type, url, named)``.
 
     When the prefix does not name a collector the whole item is the URL, which
-    is what keeps bare ``host:port`` working.
+    is what keeps bare ``host:port`` working. ``named`` reports whether the user
+    actually chose a collector here, so the caller knows whether the URL is still
+    a candidate for auto-detection.
     """
     selected_collector, remainder = _split_collector_prefix(item)
     if selected_collector is None:
-        return collector_type, _url(item)
-    return selected_collector, _url(remainder)
+        return collector_type, _url(item), False
+    return selected_collector, _url(remainder), True
 
 
 def _classify_gpu_telemetry_items(
@@ -180,8 +182,13 @@ def _classify_gpu_telemetry_items(
             continue
 
         if ":" in item:
-            collector_type, url = _resolve_prefixed_url(collector_type, item)
+            collector_type, url, named = _resolve_prefixed_url(collector_type, item)
             urls.append(url)
+            # A scheme-less `host:port/path` reaches this branch because of the
+            # colon, but the user named no collector, so it is a bare URL for
+            # detection purposes just like an `http://` one.
+            if not named:
+                unprefixed_urls.append(url)
             continue
         valid_kw = ", ".join(f"'{k}'" for k in sorted(local_keywords))
         raise ValueError(
