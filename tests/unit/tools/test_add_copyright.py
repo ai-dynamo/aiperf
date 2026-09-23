@@ -168,6 +168,37 @@ def test_fixer_repairs_bare_spdx_header(tmp_path: Path) -> None:
     assert checker.validate_file(tmp_path, Path("invalid.yaml")) == []
 
 
+def test_fixer_repairs_only_spdx_lines_between_unrelated_blocks(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "invalid.cpp"
+    preserved = "int preserved = 1;\n/* later comment */\n"
+    path.write_text(
+        "/* unrelated comment */\n"
+        "// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION "
+        "& AFFILIATES. All rights reserved.\n"
+        "// SPDX-License-Identifier: MIT\n" + preserved,
+        encoding="utf-8",
+    )
+
+    changed, status = add_copyright.process_file(path, LICENSE_TEXT)
+
+    assert (changed, status) == (True, "repaired SPDX header")
+    assert preserved in path.read_text(encoding="utf-8")
+    assert checker.validate_file(tmp_path, Path("invalid.cpp")) == []
+
+
+def test_make_argument_string_preserves_shell_metacharacters(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AIPERF_COPYRIGHT_ARGS", "bad;command.py another.yaml")
+
+    assert add_copyright._files_to_process([], "AIPERF_COPYRIGHT_ARGS") == [
+        "bad;command.py",
+        "another.yaml",
+    ]
+
+
 @pytest.mark.parametrize(
     ("filename", "content", "critical_prefix"),
     [
