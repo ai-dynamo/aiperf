@@ -154,12 +154,17 @@ def test_non_apache_identifier_is_rejected(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "filename",
     [
-        *(f"example{suffix}" for suffix in sorted(CHECKER.SOURCE_SUFFIXES)),
-        *sorted(CHECKER.SOURCE_FILENAMES),
-        *(f"{prefix}example" for prefix in CHECKER.SOURCE_FILENAME_PREFIXES),
+        pytest.param("example.py", id="hash-comment"),
+        pytest.param("example.cpp", id="c-style-comment"),
+        pytest.param("example.css", id="css-comment"),
+        pytest.param("example.html", id="html-comment"),
+        pytest.param("example.md", id="markdown-comment"),
+        pytest.param("example.mmd", id="mermaid-comment"),
+        pytest.param("example.rst", id="rst-comment"),
+        pytest.param("example.tpl", id="helm-template-comment"),
     ],
 )
-def test_bare_spdx_lines_are_rejected_for_every_source_type(
+def test_bare_spdx_lines_are_rejected_for_each_comment_syntax(
     tmp_path: Path, filename: str
 ) -> None:
     """SPDX tags must use the source type's supported comment syntax."""

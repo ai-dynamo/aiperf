@@ -113,7 +113,6 @@ def is_under(path: Path, prefix: Path) -> bool:
 
 
 def is_exempt(root: Path, relative_path: Path) -> bool:
-    """Return whether a tracked artifact is outside first-party header policy."""
     path = root / relative_path
     return (
         relative_path in EXEMPT_PATHS
