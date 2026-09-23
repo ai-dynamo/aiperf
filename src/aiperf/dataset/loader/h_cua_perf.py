@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import orjson
+import psutil
 from pydantic import ValidationError
 
 from aiperf.common.enums import ConversationContextMode
@@ -28,6 +29,9 @@ from aiperf.plugin.enums import DatasetSamplingStrategy
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+
+LIVE_OBJECT_FACTOR = 2.0
+"""Live bytes per on-disk byte once a record is parsed; measured at 1.4 to 1.7, rounded up for text-heavy sessions."""
 
 
 class HCuaPerfDatasetLoader(BaseHFDatasetLoader):
@@ -118,10 +122,12 @@ class HCuaPerfDatasetLoader(BaseHFDatasetLoader):
         manifest, trace = (await super().load_dataset())["dataset"]
         loop = asyncio.get_running_loop()
         try:
-            session_turns = orjson.loads(manifest.read_bytes())["session_turns"]
+            meta = orjson.loads(manifest.read_bytes())
+            session_turns = meta["session_turns"]
             plan = select_trace_lengths(
                 self.filters, session_turns, first_n=self._explicit_entries()
             )
+            self._warn_if_selection_exceeds_memory(meta, plan)
             records = await loop.run_in_executor(None, self._read_records, trace, plan)
         except (KeyError, ValueError) as e:
             raise DatasetLoaderError(f"{self.tag}: {e}") from e
@@ -135,6 +141,24 @@ class HCuaPerfDatasetLoader(BaseHFDatasetLoader):
             f"({len(records):,} requests) from {self.hf_dataset_name}"
         )
         return data
+
+    def _warn_if_selection_exceeds_memory(
+        self, meta: dict[str, Any], plan: dict[str, int]
+    ) -> None:
+        """The whole corpus is parsed into memory; say so before the read when it will not fit."""
+        if not meta.get("size_mb") or not meta.get("num_turns"):
+            return
+        planned = sum(plan.values())
+        estimate = (
+            meta["size_mb"] * 1e6 * planned / meta["num_turns"] * LIVE_OBJECT_FACTOR
+        )
+        available = psutil.virtual_memory().available
+        if estimate > available:
+            self.warning(
+                f"{self.tag}: the {planned:,} selected requests need about "
+                f"{estimate / 1e9:.1f} GB of RAM once parsed and {available / 1e9:.1f} GB "
+                "is available; select fewer with --num-dataset-entries or --dataset-filter"
+            )
 
     async def convert_to_conversations(
         self, data: dict[str, list[MooncakeTrace]]
