@@ -1424,7 +1424,7 @@ class TestPerRequestBytesAgainstMeasuredHeap:
             param(512, 128, True, 200, id="streaming_isl512_osl128"),
             param(512, 128, False, 200, id="buffered_isl512_osl128"),
             param(1024, 1024, True, 50, id="streaming_isl1024_osl1024"),
-            param(1024, 1024, False, 200, id="buffered_isl1024_osl1024"),
+            param(1024, 1024, False, 1000, id="buffered_isl1024_osl1024"),
         ],
     )  # fmt: skip
     def test_prediction_is_conservative_against_tracemalloc(
