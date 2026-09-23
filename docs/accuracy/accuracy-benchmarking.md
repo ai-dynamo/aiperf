@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Accuracy Benchmarking
 
 Run accuracy evaluation alongside performance profiling using the `--accuracy-benchmark` flag.

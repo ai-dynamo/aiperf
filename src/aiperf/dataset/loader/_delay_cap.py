@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 """Inter-turn delay clamping + a sanity warning for absurd uncapped delays.
 
 The clamp is opt-in (``--inter-turn-delay-cap-seconds``). The sanity warning
