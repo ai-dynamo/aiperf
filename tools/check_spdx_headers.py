@@ -109,7 +109,6 @@ C_STYLE_SUFFIXES = {
 
 
 def is_under(path: Path, prefix: Path) -> bool:
-    """Return whether a repository-relative path is below a prefix."""
     return path == prefix or prefix in path.parents
 
 
@@ -128,19 +127,16 @@ def is_exempt(root: Path, relative_path: Path) -> bool:
 
 
 def requires_header(path: Path) -> bool:
-    """Return whether a supported first-party path requires an SPDX header."""
     return path.suffix.lower() in SOURCE_SUFFIXES or has_source_filename(path)
 
 
 def has_source_filename(path: Path) -> bool:
-    """Return whether a filename or filename prefix is covered by source policy."""
     return path.name in SOURCE_FILENAMES or path.name.startswith(
         SOURCE_FILENAME_PREFIXES
     )
 
 
 def has_ordered_year_range(match: re.Match[str]) -> bool:
-    """Return whether an SPDX year or year range is chronologically valid."""
     end_year = match.group("end_year")
     return end_year is None or int(match.group("start_year")) <= int(end_year)
 
@@ -197,7 +193,6 @@ def has_valid_comment_syntax(
 
 
 def validate_file(root: Path, relative_path: Path) -> list[str]:
-    """Return every SPDX policy violation found in one repository file."""
     if is_exempt(root, relative_path):
         return []
     if not requires_header(relative_path):
@@ -251,7 +246,6 @@ def validate_file(root: Path, relative_path: Path) -> list[str]:
 
 
 def validate_paths(root: Path, paths: Iterable[Path]) -> list[str]:
-    """Return SPDX violations for all supplied repository-relative paths."""
     violations: list[str] = []
     for path in sorted(paths, key=lambda item: item.as_posix()):
         violations.extend(validate_file(root, path))
@@ -259,7 +253,6 @@ def validate_paths(root: Path, paths: Iterable[Path]) -> list[str]:
 
 
 def tracked_files(root: Path) -> list[Path]:
-    """Return every path recorded in the repository index."""
     result = subprocess.run(
         ["git", "ls-files", "-z"],
         cwd=root,
@@ -270,7 +263,6 @@ def tracked_files(root: Path) -> list[Path]:
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """Parse command-line arguments for the SPDX checker."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--root",
@@ -282,7 +274,6 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """Validate the repository and return a process-compatible status code."""
     args = parse_args(argv)
     root = args.root.resolve()
     try:
@@ -304,10 +295,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             and not is_exempt(root, path)
             and requires_header(path)
         ]
-        fix_args = " ".join(shlex.quote(path) for path in fixable_paths)
+        fix_command = shlex.join(["./tools/add_copyright.py", "--", *fixable_paths])
         print(
-            "\nAdd or repair supported headers with:\n"
-            f"  make add-copyright args={shlex.quote(fix_args)}",
+            f"\nAdd or repair supported headers with:\n  {fix_command}",
             file=sys.stderr,
         )
         return 1

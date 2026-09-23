@@ -258,7 +258,6 @@ def basename_is(name: str) -> Callable[[str], bool]:
 
 
 def basename_starts_with(prefix: str) -> Callable[[str], bool]:
-    """Match files whose basename starts with a prefix."""
     return lambda p: Path(p).name.startswith(prefix)
 
 

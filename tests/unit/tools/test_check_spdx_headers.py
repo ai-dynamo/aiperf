@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import importlib.util
+import shlex
 import subprocess
 from pathlib import Path
 from types import ModuleType
@@ -230,7 +231,22 @@ def test_failure_output_points_to_fixer(
     assert CHECKER.main(["--root", str(tmp_path)]) == 1
 
     captured = capsys.readouterr()
-    assert "make add-copyright args=missing.py" in captured.err
+    assert "./tools/add_copyright.py -- missing.py" in captured.err
+
+
+def test_failure_output_shell_quotes_metacharacters(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The suggested repair command cannot execute path metacharacters."""
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    filename = "bad;command.py"
+    (tmp_path / filename).write_text("print('missing')\n", encoding="utf-8")
+    subprocess.run(["git", "add", filename], cwd=tmp_path, check=True)
+
+    assert CHECKER.main(["--root", str(tmp_path)]) == 1
+
+    command = capsys.readouterr().err.split("\n")[-2].strip()
+    assert shlex.split(command) == ["./tools/add_copyright.py", "--", filename]
 
 
 def test_cmake_lists_is_not_exempt_as_plain_text(tmp_path: Path) -> None:
