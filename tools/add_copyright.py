@@ -76,6 +76,11 @@ NVIDIA_COPYRIGHT_PAT = re.compile(
     r"(?:\.[ \t]*(?:All rights reserved\.)?)?",
     re.IGNORECASE,
 )
+LICENSE_IDENTIFIER_PAT = re.compile(
+    r"SPDX-License-Identifier:[ \t]*"
+    r"(?P<expression>[A-Za-z0-9.+-]+"
+    r"(?:[ \t]+(?:AND|OR|WITH)[ \t]+[A-Za-z0-9.+-]+)*)"
+)
 
 # =============================================================================
 # Copyright Utilities
@@ -182,10 +187,16 @@ def insert_after_script_preamble(header: str, content: str) -> str:
     line_index = 0
     if lines and lines[0].startswith("#!"):
         line_index = 1
-    if line_index < min(2, len(lines)) and re.match(
-        r"^[ \t\f]*#.*?coding[:=][ \t]*[-_.a-zA-Z0-9]+", lines[line_index]
-    ):
-        line_index += 1
+    encoding_index = next(
+        (
+            index
+            for index, line in enumerate(lines[:2])
+            if re.match(r"^[ \t\f]*#.*?coding[:=][ \t]*[-_.a-zA-Z0-9]+", line)
+        ),
+        None,
+    )
+    if encoding_index is not None:
+        line_index = max(line_index, encoding_index + 1)
     pos = sum(len(line) for line in lines[:line_index])
     return bom + content[:pos] + header + "\n" + content[pos:]
 
@@ -354,6 +365,76 @@ def get_handler(path: str) -> FileHandler | None:
     return None
 
 
+def _line_header_span(content: str, copyright_match: re.Match[str]) -> tuple[int, int]:
+    start = content.rfind("\n", 0, copyright_match.start()) + 1
+    newline = content.find("\n", copyright_match.end())
+    end = len(content) if newline < 0 else newline + 1
+    next_newline = content.find("\n", end)
+    next_end = len(content) if next_newline < 0 else next_newline + 1
+    if "SPDX-License-Identifier:" in content[end:next_end]:
+        end = next_end
+    return start, end
+
+
+def _spdx_header_span(
+    content: str, copyright_match: re.Match[str], rendered_header: str
+) -> tuple[int, int]:
+    delimiters = (
+        ("<!--", "-->"),
+        ("{{/*", "*/}}"),
+        ("/*", "*/"),
+    )
+    for opener, closer in delimiters:
+        if not rendered_header.startswith(opener):
+            continue
+        start = content.rfind(opener, 0, copyright_match.start())
+        close = content.find(closer, copyright_match.end())
+        if start >= 0 and close >= 0:
+            end = close + len(closer)
+            if end < len(content) and content[end] == "\n":
+                end += 1
+            return start, end
+    return _line_header_span(content, copyright_match)
+
+
+def _repair_spdx_license(
+    content: str,
+    formatter: Callable[[str], str],
+    inserter: Callable[[str, str], str],
+) -> tuple[str, bool]:
+    copyright_match = NVIDIA_COPYRIGHT_PAT.search(content)
+    if copyright_match is None:
+        return content, False
+
+    plain_header = copyright_match.group(0) + "\nSPDX-License-Identifier: Apache-2.0"
+    rendered_header = inserter(formatter(plain_header), "").rstrip("\n")
+    start, end = _spdx_header_span(content, copyright_match, rendered_header)
+    existing_header = content[start:end]
+    license_match = LICENSE_IDENTIFIER_PAT.search(existing_header)
+    if license_match is not None and license_match.group("expression") == "Apache-2.0":
+        return content, False
+
+    trailing_newline = "\n" if existing_header.endswith("\n") else ""
+    copyright_line_start = content.rfind("\n", 0, copyright_match.start()) + 1
+    copyright_line_end = content.find("\n", copyright_match.end())
+    if copyright_line_end < 0:
+        copyright_line_end = len(content)
+    copyright_line = content[copyright_line_start:copyright_line_end]
+    prefix = copyright_line[: copyright_match.start() - copyright_line_start]
+    suffix = copyright_line[copyright_match.end() - copyright_line_start :]
+    if prefix.strip() in {"#", "//", "%%", ".."}:
+        replacement = (
+            copyright_line
+            + "\n"
+            + prefix
+            + "SPDX-License-Identifier: Apache-2.0"
+            + suffix
+        )
+    else:
+        replacement = rendered_header
+    return content[:start] + replacement + trailing_newline + content[end:], True
+
+
 # =============================================================================
 # Main Processing
 # =============================================================================
@@ -381,7 +462,7 @@ def process_file(
     content = path.read_text()
     formatter, inserter = handler
 
-    # If file already has NVIDIA copyright, check if year update needed
+    # If file already has NVIDIA copyright, repair the complete header in place.
     if has_nvidia_copyright(content):
         legacy_match = NVIDIA_COPYRIGHT_PAT.search(content)
         canonical_match = CANONICAL_NVIDIA_COPYRIGHT_PAT.search(content)
@@ -394,20 +475,29 @@ def process_file(
                 or int(canonical_match.group(1)) <= int(canonical_match.group(2))
             )
         )
-        updated = update_copyright_year(content)
+        updated_year = update_copyright_year(content)
+        updated, repaired_license = _repair_spdx_license(
+            updated_year, formatter, inserter
+        )
         if content == updated:
             return False, "up-to-date"
 
         # Only update year if file was actually modified this year
-        if is_canonical and not was_modified_this_year(path):
+        if not repaired_license and is_canonical and not was_modified_this_year(path):
             return False, "up-to-date (not modified this year)"
 
         if check:
+            if repaired_license:
+                return True, "needs SPDX header repair"
             return True, "needs year update"
         if dry_run:
+            if repaired_license:
+                return True, "would repair SPDX header"
             return True, f"would update year to {CURRENT_YEAR}"
 
         path.write_text(updated)
+        if repaired_license:
+            return True, "repaired SPDX header"
         return True, "updated year"
 
     # Add new copyright header

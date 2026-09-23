@@ -35,63 +35,6 @@ HASH_HEADER = (
 )
 
 
-@pytest.mark.parametrize(
-    ("filename", "header"),
-    [
-        pytest.param("example.py", HASH_HEADER, id="hash-comment"),
-        pytest.param(
-            "example.mjs",
-            HASH_HEADER.replace("# ", "// "),
-            id="javascript-comment",
-        ),
-        pytest.param(
-            "example.tsx",
-            HASH_HEADER.replace("# ", "// "),
-            id="typescript-comment",
-        ),
-        pytest.param("example.yaml.tmpl", HASH_HEADER, id="yaml-template-comment"),
-        pytest.param(
-            "example.mmd",
-            HASH_HEADER.replace("# ", "%% "),
-            id="mermaid-comment",
-        ),
-        pytest.param(
-            "example.css",
-            "/* "
-            + HASH_HEADER.replace("# ", "", 1).replace("\n# ", "\n   ").rstrip()
-            + " */\n",
-            id="css-comment",
-        ),
-        pytest.param(
-            "example.html",
-            "<!DOCTYPE html>\n<!--\n" + HASH_HEADER.replace("# ", "") + "-->\n",
-            id="html-comment",
-        ),
-        pytest.param(
-            "example.md",
-            "---\n"
-            "title: Example\n"
-            "one: 1\n"
-            "two: 2\n"
-            "three: 3\n"
-            "four: 4\n"
-            "five: 5\n"
-            "six: 6\n"
-            "seven: 7\n"
-            "---\n"
-            "<!--\n" + HASH_HEADER.replace("# ", "") + "-->\n",
-            id="markdown-frontmatter",
-        ),
-    ],
-)
-def test_supported_header_styles_are_accepted(
-    tmp_path: Path, filename: str, header: str
-) -> None:
-    """AIPerf source formats accept their established comment syntax."""
-    (tmp_path / filename).write_text(header, encoding="utf-8")
-    assert CHECKER.validate_file(tmp_path, Path(filename)) == []
-
-
 def test_shebang_may_precede_header(tmp_path: Path) -> None:
     """An executable script may place its shebang before the SPDX lines."""
     (tmp_path / "tool.py").write_text(

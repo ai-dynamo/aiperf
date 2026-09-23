@@ -109,6 +109,37 @@ def test_fixer_normalizes_legacy_nvidia_headers(
 
 
 @pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        pytest.param(
+            "missing.py",
+            "# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION "
+            "& AFFILIATES. All rights reserved.\nprint('ok')\n",
+            id="missing-line-comment-license",
+        ),
+        pytest.param(
+            "invalid.css",
+            "/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION "
+            "& AFFILIATES. All rights reserved.\n"
+            "   SPDX-License-Identifier: MIT */\nbody {}\n",
+            id="invalid-block-comment-license",
+        ),
+    ],
+)
+def test_fixer_repairs_incomplete_spdx_header(
+    tmp_path: Path, filename: str, content: str
+) -> None:
+    path = tmp_path / filename
+    path.write_text(content, encoding="utf-8")
+
+    changed, status = add_copyright.process_file(path, LICENSE_TEXT)
+
+    assert (changed, status) == (True, "repaired SPDX header")
+    assert path.read_text(encoding="utf-8").count("NVIDIA CORPORATION") == 1
+    assert checker.validate_file(tmp_path, Path(filename)) == []
+
+
+@pytest.mark.parametrize(
     ("filename", "content", "critical_prefix"),
     [
         pytest.param(
@@ -116,6 +147,12 @@ def test_fixer_normalizes_legacy_nvidia_headers(
             "\ufeff#!/usr/bin/env python3\n# coding: utf-8\nprint('ok')\n",
             "\ufeff#!/usr/bin/env python3\n# coding: utf-8\n",
             id="bom-and-python-preamble",
+        ),
+        pytest.param(
+            "script.py",
+            "# ordinary comment\n# coding: latin-1\nprint('ok')\n",
+            "# ordinary comment\n# coding: latin-1\n",
+            id="python-line-two-encoding-cookie",
         ),
         pytest.param(
             "tool.mjs",
