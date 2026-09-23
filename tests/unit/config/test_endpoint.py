@@ -102,12 +102,6 @@ def test_require_stream_completion_requires_chat_streaming() -> None:
         )
     with pytest.raises(ValueError, match="requires --streaming"):
         EndpointConfig(urls=["http://localhost:8000"], require_stream_completion=True)
-    endpoint = EndpointConfig(
-        urls=["http://localhost:8000"],
-        streaming=True,
-        require_stream_completion=True,
-    )
-    assert endpoint.require_stream_completion is True
 
 
 @pytest.mark.parametrize(

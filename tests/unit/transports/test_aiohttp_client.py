@@ -153,12 +153,6 @@ class TestAioHttpClient:
                 b'[{"delta":{},"finish_reason":"stop"}]}\n\n',
                 False,
             ),
-            (
-                b'data: {"object":"chat.completion.chunk","choices":'
-                b'[{"delta":{},"finish_reason":"stop"}]}\n\n'
-                b'data: {"object":"chat.completion.chunk","choices":[',
-                True,
-            ),
         ],
     )
     async def test_optional_chat_stream_completion(
@@ -185,6 +179,27 @@ class TestAioHttpClient:
             assert record.error is not None
             assert record.error.type == "SSEResponseError"
             assert "completion" in record.error.message.lower()
+
+    async def test_chat_stream_completion_rejects_unterminated_malformed_tail_after_finish_reason(
+        self, aiohttp_client: AioHttpClient, mock_sse_response: Mock
+    ) -> None:
+        aiohttp_client.require_stream_completion = True
+        mock_sse_response.content = MockStreamReader(
+            [
+                b'data: {"object":"chat.completion.chunk","choices":'
+                b'[{"delta":{},"finish_reason":"stop"}]}\n\n'
+                b'data: {"object":"chat.completion.chunk","choices":['
+            ]
+        )
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream", b"{}", {"Accept": "text/event-stream"}
+            )
+
+        assert record.error is not None
+        assert record.error.type == "SSEResponseError"
+        assert "malformed SSE data" in record.error.message
 
     async def test_chat_stream_completion_is_opt_in(
         self, aiohttp_client: AioHttpClient, mock_sse_response: Mock
