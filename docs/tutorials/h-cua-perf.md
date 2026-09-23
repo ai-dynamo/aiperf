@@ -14,12 +14,13 @@ The server needs a vision model, a large context window and a tool parser; witho
 
 ```bash
 docker run --gpus all -p 8000:8000 -e HF_TOKEN vllm/vllm-openai:latest \
-  --model Qwen/Qwen2.5-VL-7B-Instruct --max-model-len 131072 \
+  Qwen/Qwen2.5-VL-7B-Instruct --max-model-len 128000 \
   --enable-auto-tool-choice --tool-call-parser hermes \
-  --limit-mm-per-prompt '{"image":3}'
+  --limit-mm-per-prompt '{"image":5}' \
+  --enable-prompt-tokens-details
 ```
 
-`--limit-mm-per-prompt` must allow as many images as the screenshot window below.
+`--limit-mm-per-prompt` must allow as many images as the screenshot window below, and `--enable-prompt-tokens-details` is what lets AIPerf report prompt-cache hits. Long trajectories contain a few memory-compressor requests whose prompt plus recorded completion exceeds 128k tokens: the server answers those with HTTP 400, AIPerf counts them as failed requests and the run completes. That is expected, not a misconfiguration.
 
 ## Replay
 
@@ -43,7 +44,7 @@ aiperf profile \
 
 Each trajectory is replayed as one multi-turn conversation: a step's request is sent, the response awaited, the recorded think time slept, then the next step's recorded `messages` are sent. `--concurrency` is the number of trajectories in flight and `--num-conversations` how many are played. Think times are respected by default and can reach tens of seconds; `--inter-turn-delay-cap-seconds` caps them, and a cap of `0` sends each trajectory's requests back to back (`--ignore-trace-delays` applies to the Weka loaders only). There are no absolute timestamps, so `--fixed-schedule` does not apply.
 
-`tools` is sent with the messages, `extra` is merged into the request body, and everything inside `messages` goes out untouched, including the `uuid` on image parts. Model responses are not fed into later requests and tools are not executed: the trajectory follows the recorded agent, not the model under test.
+`tools` is sent with the messages, `extra` is merged into the request body, and everything inside `messages` goes out untouched, including the `uuid` on image parts. Model responses are not fed into later requests and tools are not executed: the trajectory follows the recorded agent, not the model under test. Completions come from the model under test, capped at the recorded `output_length`, so their length rarely matches the recording and decode-side metrics say little about the agent's workload; prefill and prompt-cache metrics are what this dataset exercises.
 
 ## Screenshot Window
 
@@ -52,11 +53,11 @@ The published build keeps one screenshot per request, the latest; every earlier 
 - **Image load per request.** Screenshots dominate request bytes and multimodal prefill; N images per request is N times that cost, on every step of every trajectory.
 - **Where the shared prefix breaks.** Consecutive requests of a trajectory are identical up to the first screenshot the window has since dropped. With N=1 that is the previous step's observation, so nearly the whole prompt is a cache hit; with N=3 the placeholder lands three steps back, so the reusable prefix ends earlier and the server re-prefills the last three observations. Widening the window therefore trades prefix-cache hits for image tokens, which is the shape a real agent with a wider context window imposes.
 
-Unset, the loader replays the published single screenshot. The window multiplies memory and `inputs.json` size in proportion, so pair a wide one with `--num-dataset-entries` or `max_trace_length`.
+Unset, the loader replays the published single screenshot. A wider window multiplies `inputs.json` and the size of every request on the wire, not the loader's memory: restored screenshots are shared by reference, and RAM is driven by how many trajectories are loaded and how long they are. AIPerf's input sequence length counts client-tokenized text only, so it does not move with the window; read the effect in `Usage Prompt Tokens`, `Overall Usage Prompt Cache Read %` and TTFT instead.
 
 ## Selecting Trajectories
 
-Selection is planned from the manifest before any record is parsed, and reading stops after the last selected trajectory. `--num-dataset-entries N` keeps the first N trajectories in file order. Without it the full corpus is loaded, which needs RAM well above the 9.3 GB decompressed size.
+Selection is planned from the manifest before any record is parsed, and reading stops after the last selected trajectory. `--num-dataset-entries N` keeps the first N trajectories in file order. Without it the full corpus is loaded, about twice its 9.3 GB decompressed size once parsed; the loader warns before reading when the selection will not fit in the available memory.
 
 `--dataset-filter` reshapes the selection with the options of the dataset's `trace_processor.py`, applied in place, so a filter set yields the same records as the script run with the same options on the same trajectories. The script's seeded random sample (`--num-traces`) has no in-place equivalent.
 
