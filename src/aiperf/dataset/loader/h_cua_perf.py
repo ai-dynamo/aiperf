@@ -64,6 +64,10 @@ class HCuaPerfDatasetLoader(BaseHFDatasetLoader):
             streaming=False,
             **kwargs,
         )
+        if hf_subset is not None:
+            raise DatasetLoaderError(
+                f"{self.tag}: {hf_dataset_name} has no subsets; drop --hf-subset"
+            )
         dataset = run.cfg.get_default_dataset() if run is not None else None
         if getattr(dataset, "ignore_trace_delays", False):
             raise DatasetLoaderError(
