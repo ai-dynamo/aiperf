@@ -14,6 +14,8 @@ from urllib.parse import urlsplit, urlunsplit
 import aiohttp
 import orjson
 
+from aiperf.auth.base_signer import SignedRequest
+from aiperf.common.endpoint_auth import no_redirect_kwargs
 from aiperf.common.enums import (
     ConnectionReuseStrategy,
     RequestContentType,
@@ -39,6 +41,60 @@ from aiperf.transports.base_transports import (
     FirstTokenCallback,
     TransportMetadata,
 )
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+# Only these survive a hop to an origin the benchmarked server chose. An
+# allowlist rather than a denylist because nothing marks "X-Acme-Token" as a
+# secret -- a name-based denylist can only catch the names it thought of. The
+# natural content_url is a presigned S3 URL, which authenticates through its own
+# query signature and needs no inherited headers at all.
+_FOREIGN_ORIGIN_HEADER_ALLOWLIST = frozenset({"user-agent"})
+
+
+def _strip_credentials_for_foreign_origin(headers: dict[str, str]) -> dict[str, str]:
+    """Keep only allowlisted headers, matching names case-insensitively.
+
+    HTTP header names are case-insensitive but these live in a plain dict, so a
+    lowercase ``authorization`` would otherwise slip past a literal comparison.
+    """
+    return {
+        name: value
+        for name, value in headers.items()
+        if name.lower() in _FOREIGN_ORIGIN_HEADER_ALLOWLIST
+    }
+
+
+def _origin_of(url: str) -> tuple[str, str | None, int | None] | None:
+    """Scheme, host and normalized port, or None when the URL will not parse.
+
+    ``urlsplit`` accepts a malformed port and only raises when ``.port`` is
+    read, so the read happens here inside the guard; leaving it to the caller
+    lets ``ValueError`` escape the fail-closed contract.
+
+    An omitted port is normalized to the scheme default, so ``https://host``
+    and ``https://host:443`` compare equal. The scheme stays part of the tuple,
+    so ``http://host:443`` is still a different origin from ``https://host``.
+    """
+    try:
+        parts = urlsplit(url)
+        port = parts.port or _DEFAULT_PORTS.get(parts.scheme)
+        return parts.scheme, parts.hostname, port
+    except ValueError:
+        return None
+
+
+def _same_origin(url: str, reference: str) -> bool:
+    """Whether ``url`` targets the same scheme, host, and port as ``reference``.
+
+    Used to decide whether a URL the benchmarked server handed us may be signed
+    with the endpoint's AWS credentials, so it fails closed: a URL that does not
+    parse counts as foreign rather than raising into the caller.
+    """
+    origin = _origin_of(url)
+    # Explicit None check: two unparseable URLs must not compare equal and be
+    # read as "same origin".
+    return origin is not None and origin == _origin_of(reference)
 
 
 def _has_http_scheme(url: str) -> bool:
@@ -325,12 +381,28 @@ class AioHttpTransport(BaseTransport):
             )
             # Pre-encoded bytes (PAYLOAD_BYTES fast path / raw payload replay)
             # are sent verbatim; dicts are encoded here.
+            body: bytes | aiohttp.FormData
             if isinstance(payload, bytes):
-                body: bytes | aiohttp.FormData = payload
+                body = payload
             elif use_form_data:
                 body = self._build_form_data(payload)
             else:
                 body = orjson.dumps(payload)
+
+            # Request signers (SigV4) sign a fixed byte payload; multipart
+            # form-data bodies aren't signed. EndpointConfig rejects
+            # auth_type + multipart at config time, so an unsigned FormData
+            # body means no signer is configured.
+            if not isinstance(body, aiohttp.FormData):
+                signed = await self._sign_if_needed("POST", url, headers, body)
+                url, headers, body = signed.url, signed.headers, signed.body
+            elif self.request_signer is not None:
+                raise RuntimeError(
+                    "FormData body with a configured request_signer: signers "
+                    "sign a fixed byte payload and can't sign multipart "
+                    "form-data. EndpointConfig should have rejected "
+                    "auth_type + multipart at config time."
+                )
 
             match reuse_strategy:
                 case ConnectionReuseStrategy.NEVER:
@@ -367,6 +439,8 @@ class AioHttpTransport(BaseTransport):
                         f"Invalid connection reuse strategy: {self.model_endpoint.endpoint.connection_reuse_strategy}"
                     )
 
+            redirect_kwargs = no_redirect_kwargs(self.request_signer)
+
             record = await self.aiohttp_client.post_request(
                 url,
                 body,
@@ -375,8 +449,30 @@ class AioHttpTransport(BaseTransport):
                 first_token_callback=first_token_callback,
                 connector=connector,
                 connector_owner=connector_owner,
+                **redirect_kwargs,
             )
             record.request_headers = redact_headers(headers)
+
+            # SignatureDoesNotMatch is the most common SigV4 failure and AWS's
+            # own message never says why. The usual cause is --aws-service: the
+            # value is the signing name, not the API id, so SageMaker Runtime
+            # signs as 'sagemaker' rather than 'sagemaker-runtime'. Point at that
+            # here rather than only in a tutorial the user has to know to read.
+            if (
+                self.request_signer is not None
+                and record.error is not None
+                and "SignatureDoesNotMatch" in (record.error.message or "")
+            ):
+                record.error.message = (
+                    f"{record.error.message} "
+                    "(AWS rejected the signature. The most common cause is "
+                    "--aws-service: it takes the service's SigV4 signing name, "
+                    "which is not always its API id -- 'sagemaker-runtime' signs "
+                    "as 'sagemaker' and 'bedrock-runtime' as 'bedrock'. Also check "
+                    "that --aws-region matches the endpoint's region, and that the "
+                    "system clock is accurate: AWS rejects signatures more than "
+                    "five minutes out.)"
+                ).strip()
 
             # Release lease for sticky-user-sessions strategy if it's the final turn of the conversation,
             # or the request was cancelled (connection is now dirty/closed), or there was an error.
@@ -509,13 +605,27 @@ class AioHttpTransport(BaseTransport):
         """
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
+        body: bytes | aiohttp.FormData
         if isinstance(payload, bytes):
-            body: bytes | aiohttp.FormData = payload
+            body = payload
         elif use_form_data:
             body = self._build_form_data(payload)
         else:
             body = orjson.dumps(payload)
-        record = await self.aiohttp_client.post_request(url, body, headers)
+
+        if not isinstance(body, aiohttp.FormData):
+            signed = await self._sign_if_needed("POST", url, headers, body)
+            url, headers, body = signed.url, signed.headers, signed.body
+        elif self.request_signer is not None:
+            raise RuntimeError(
+                "FormData body with a configured request_signer: signers "
+                "sign a fixed byte payload and can't sign multipart "
+                "form-data. EndpointConfig should have rejected "
+                "auth_type + multipart at config time."
+            )
+        record = await self.aiohttp_client.post_request(
+            url, body, headers, **no_redirect_kwargs(self.request_signer)
+        )
         result = self._parse_video_response(record, "submit")
         if isinstance(result, ErrorDetails):
             return result
@@ -548,7 +658,12 @@ class AioHttpTransport(BaseTransport):
         poll_start = time.perf_counter_ns()
 
         while (time.perf_counter_ns() - poll_start) / 1e9 < timeout:
-            record = await self.aiohttp_client.get_request(poll_url, headers)
+            signed = await self._sign_if_needed("GET", poll_url, headers)
+            record = await self.aiohttp_client.get_request(
+                signed.url,
+                signed.headers,
+                **no_redirect_kwargs(self.request_signer),
+            )
             result = self._parse_video_response(record, "poll")
             if isinstance(result, ErrorDetails):
                 return result
@@ -589,16 +704,49 @@ class AioHttpTransport(BaseTransport):
         job_id: str,
         content_url: str,
         headers: dict[str, str],
+        *,
+        signing_origin_url: str,
     ) -> bytes | ErrorDetails:
         """Download video content via GET /v1/videos/{id}/content.
 
         Returns video bytes on success, ErrorDetails on failure.
         Used when --download-video-content is enabled.
+
+        ``content_url`` may come from the benchmarked server's own response
+        body, so it is signed only when it shares an origin with
+        ``signing_origin_url``. Signing it unconditionally would let that server
+        name any host and receive a fresh signature plus the raw session token;
+        it would also break the benign case, since the natural value is a
+        presigned S3 URL and S3 rejects a presigned request that also carries an
+        ``Authorization`` header.
         """
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
         try:
-            record = await self.aiohttp_client.get_request(content_url, headers)
+            sign_this = _same_origin(content_url, signing_origin_url)
+            signed = (
+                await self._sign_if_needed("GET", content_url, headers)
+                if sign_this
+                else SignedRequest(
+                    url=content_url,
+                    # Not signing a foreign URL was only half the fix: the
+                    # endpoint's already-configured headers carry the user's
+                    # --api-key Bearer token and any -H secrets, and were
+                    # forwarded to whatever host the server named.
+                    headers=_strip_credentials_for_foreign_origin(headers),
+                    body=None,
+                )
+            )
+            record = await self.aiohttp_client.get_request(
+                signed.url,
+                signed.headers,
+                # Unconditional, not just for the signed same-origin case:
+                # content_url is server-selected, so its redirect target is the
+                # server's choice too, and following one re-delivers whatever
+                # headers survived to a second host. A 3xx now surfaces as a
+                # download error rather than silently fetching from elsewhere.
+                allow_redirects=False,
+            )
             if record.error:
                 return ErrorDetails(
                     type="VideoDownloadError",
@@ -693,7 +841,7 @@ class AioHttpTransport(BaseTransport):
             if download_content:
                 content_url = data.get("url") or f"{poll_url}/content"
                 download_result = await self._download_video_content(
-                    job_id, content_url, headers
+                    job_id, content_url, headers, signing_origin_url=poll_url
                 )
                 if isinstance(download_result, ErrorDetails):
                     return make_record(error=download_result)
