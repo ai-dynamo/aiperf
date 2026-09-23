@@ -965,7 +965,7 @@ class TestPayloadBytesFastPath:
     async def test_fast_path_turn_carries_max_tokens_and_timestamp(
         self, mock_worker, sample_credit_context
     ):
-        """PAYLOAD_BYTES fast path must hoist turn scalars (max_tokens, timestamp) for metric enrichment, else OSL-mismatch and schedule-lag metrics go silent."""
+        """PAYLOAD_BYTES fast path must hoist turn scalars (max_tokens, timestamp, source_kind) for metric enrichment, else OSL-mismatch and schedule-lag metrics go silent and every record is attributed to the run-level label."""
         mock_worker._is_payload_bytes = True
         mock_worker._dataset_client = AsyncMock()
         payload = b'{"messages":[{"role":"user","content":"hi"}],"max_tokens":64}'
@@ -973,6 +973,7 @@ class TestPayloadBytesFastPath:
             payload_bytes=payload,
             max_tokens=64,
             timestamp=1234.5,
+            source_kind="coding",
         )
 
         success_record = RequestRecord(
@@ -995,17 +996,20 @@ class TestPayloadBytesFastPath:
         assert len(sent_request_info.turns) == 1
         assert sent_request_info.turns[0].max_tokens == 64
         assert sent_request_info.turns[0].timestamp == 1234.5
+        assert sent_request_info.turns[0].source_kind == "coding"
+        assert sent_request_info.source_kind == "coding"
 
     async def test_retrieve_conversation_for_session_restores_scalars(
         self, mock_worker, sample_credit_context
     ):
-        """Session-path reconstruction must restore max_tokens and timestamp."""
+        """Session-path reconstruction must restore max_tokens, timestamp, and source_kind."""
         mock_worker._is_payload_bytes = True
         mock_worker._dataset_client = AsyncMock()
         mock_worker._dataset_client.get_payload_turn.return_value = PayloadTurnData(
             payload_bytes=b'{"max_completion_tokens":32,"messages":[]}',
             max_tokens=32,
             timestamp=99,
+            source_kind="math",
         )
         mock_worker.session_manager = MagicMock()
         mock_worker.session_manager.default_context_mode = None
@@ -1017,6 +1021,7 @@ class TestPayloadBytesFastPath:
         assert len(conversation.turns) == 1
         assert conversation.turns[0].max_tokens == 32
         assert conversation.turns[0].timestamp == 99
+        assert conversation.turns[0].source_kind == "math"
         assert conversation.turns[0].raw_payload == {
             "max_completion_tokens": 32,
             "messages": [],

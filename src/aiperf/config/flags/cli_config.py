@@ -70,6 +70,7 @@ from aiperf.config.loader.parsing import (
     parse_str_or_dict_as_tuple_list,
     parse_str_or_list,
     parse_str_or_list_of_positive_values,
+    reject_moved_custom_dataset_type,
     require_turn_mean_at_least_one,
 )
 from aiperf.config.runtime import ServiceDefaults
@@ -642,6 +643,23 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    weka_nested_timestamp_basis: Annotated[
+        Literal["auto", "absolute", "relative"],
+        Field(
+            description="Interpretation of timestamps inside Weka subagent entries. "
+            "'absolute' treats them as root-trace timestamps, 'relative' adds the "
+            "subagent marker timestamp, and 'auto' selects relative for the entire "
+            "corpus if any child precedes its marker by more than 1 microsecond, "
+            "otherwise absolute. Full-input validation always runs; auto is a "
+            "heuristic and cannot detect every mixed or malformed convention. "
+            "Use an explicit basis when the producer convention is known.",
+        ),
+        CLIParameter(
+            name=("--weka-nested-timestamp-basis",),
+            group=Groups.INPUT,
+        ),
+    ] = "auto"
+
     dataset_filters: Annotated[
         list[str],
         Field(
@@ -658,6 +676,7 @@ class CLIConfig(BaseConfig):
 
     custom_dataset_type: Annotated[
         CustomDatasetType | None,
+        BeforeValidator(reject_moved_custom_dataset_type),
         Field(
             description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
             "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "

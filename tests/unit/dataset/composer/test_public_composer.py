@@ -121,6 +121,56 @@ class TestBuildLoaderKwargs:
         ):
             composer._build_loader_kwargs(PublicDatasetType.AIMO, ShareGPTLoader)
 
+    def test_category_forwarded_to_supporting_loader(self, aimo_config):
+        from aiperf.dataset.loader.speed_bench_public import SpeedBenchPublicLoader
+        from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
+
+        composer = PublicDatasetComposer(run=make_run(aimo_config), tokenizer=None)
+        with patch(
+            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
+            return_value=PublicDatasetLoaderMetadata(
+                hf_dataset_name="nvidia/SPEED-Bench",
+                hf_split="test",
+                hf_subset="qualitative",
+                category="coding",
+            ),
+        ):
+            kwargs = composer._build_loader_kwargs(
+                PublicDatasetType.AIMO, SpeedBenchPublicLoader
+            )
+
+        assert kwargs["category"] == "coding"
+        assert kwargs["hf_subset"] == "qualitative"
+
+    def test_category_raises_for_unsupported_loader(self, aimo_config):
+        """A loader without `category` must not swallow it via **kwargs."""
+        from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
+
+        composer = PublicDatasetComposer(run=make_run(aimo_config), tokenizer=None)
+        with (
+            patch(
+                "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
+                return_value=PublicDatasetLoaderMetadata(category="coding"),
+            ),
+            pytest.raises(ValueError, match="does not support the 'category'"),
+        ):
+            composer._build_loader_kwargs(PublicDatasetType.AIMO, ShareGPTLoader)
+
+    def test_category_none_does_not_validate_loader_support(self, aimo_config):
+        """category=None is the default for all but a handful of entries."""
+        from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
+
+        composer = PublicDatasetComposer(run=make_run(aimo_config), tokenizer=None)
+        with patch(
+            "aiperf.dataset.composer.public.plugins.get_public_dataset_loader_metadata",
+            return_value=PublicDatasetLoaderMetadata(category=None),
+        ):
+            kwargs = composer._build_loader_kwargs(
+                PublicDatasetType.AIMO, ShareGPTLoader
+            )
+
+        assert "category" not in kwargs
+
     def test_multi_turn_false_does_not_validate_loader_support(self, aimo_config):
         """multi_turn=False is the default; no need to gate it on loader support."""
         from aiperf.plugin.schema.schemas import PublicDatasetLoaderMetadata
@@ -166,6 +216,7 @@ class TestCreateDatasetAsync:
                     multi_turn=False,
                     streaming=False,
                     is_trace=False,
+                    category=None,
                 ),
             ),
         ):
@@ -210,6 +261,7 @@ class TestCreateDatasetAsync:
                     multi_turn=False,
                     streaming=False,
                     is_trace=False,
+                    category=None,
                 ),
             ),
         ):
