@@ -170,15 +170,15 @@ def test_fixer_repairs_incomplete_spdx_header(
     assert checker.validate_file(tmp_path, Path(filename)) == []
 
 
-def test_fixer_repairs_bare_spdx_header(tmp_path: Path) -> None:
+def test_fixer_preserves_bare_spdx_text(tmp_path: Path) -> None:
     path = tmp_path / "invalid.yaml"
-    path.write_text(
+    preserved = (
         "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION "
         "& AFFILIATES. All rights reserved.\n"
         "SPDX-License-Identifier: Apache-2.0\n"
-        "value: true\n",
-        encoding="utf-8",
+        "value: true\n"
     )
+    path.write_text(preserved, encoding="utf-8")
 
     assert checker.validate_file(tmp_path, Path("invalid.yaml")) == [
         "invalid.yaml: SPDX header uses invalid comment syntax"
@@ -186,7 +186,8 @@ def test_fixer_repairs_bare_spdx_header(tmp_path: Path) -> None:
 
     changed, status = add_copyright.process_file(path, LICENSE_TEXT)
 
-    assert (changed, status) == (True, "repaired SPDX header")
+    assert (changed, status) == (True, "added copyright")
+    assert preserved in path.read_text(encoding="utf-8")
     assert checker.validate_file(tmp_path, Path("invalid.yaml")) == []
 
 
@@ -222,6 +223,21 @@ def test_fixer_preserves_source_line_containing_license_text(tmp_path: Path) -> 
     changed, status = add_copyright.process_file(path, LICENSE_TEXT)
 
     assert (changed, status) == (True, "repaired SPDX header")
+    assert preserved in path.read_text(encoding="utf-8")
+    assert checker.validate_file(tmp_path, Path("invalid.py")) == []
+
+
+def test_fixer_preserves_source_line_containing_copyright_text(tmp_path: Path) -> None:
+    path = tmp_path / "invalid.py"
+    preserved = (
+        'message = "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA '
+        'CORPORATION & AFFILIATES. All rights reserved."\n'
+    )
+    path.write_text(preserved, encoding="utf-8")
+
+    changed, status = add_copyright.process_file(path, LICENSE_TEXT)
+
+    assert (changed, status) == (True, "added copyright")
     assert preserved in path.read_text(encoding="utf-8")
     assert checker.validate_file(tmp_path, Path("invalid.py")) == []
 
