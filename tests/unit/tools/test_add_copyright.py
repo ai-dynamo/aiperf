@@ -227,6 +227,24 @@ def test_fixer_preserves_source_line_containing_license_text(tmp_path: Path) -> 
     assert checker.validate_file(tmp_path, Path("invalid.py")) == []
 
 
+def test_fixer_preserves_yaml_list_item_containing_license_text(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "invalid.yaml"
+    preserved = "- SPDX-License-Identifier: MIT\n"
+    path.write_text(
+        "# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION "
+        "& AFFILIATES. All rights reserved.\n" + preserved,
+        encoding="utf-8",
+    )
+
+    changed, status = add_copyright.process_file(path, LICENSE_TEXT)
+
+    assert (changed, status) == (True, "repaired SPDX header")
+    assert preserved in path.read_text(encoding="utf-8")
+    assert checker.validate_file(tmp_path, Path("invalid.yaml")) == []
+
+
 def test_fixer_preserves_source_line_containing_copyright_text(tmp_path: Path) -> None:
     path = tmp_path / "invalid.py"
     preserved = (
