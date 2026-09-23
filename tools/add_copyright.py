@@ -373,7 +373,13 @@ def _line_header_span(content: str, copyright_match: re.Match[str]) -> tuple[int
     end = len(content) if newline < 0 else newline + 1
     next_newline = content.find("\n", end)
     next_end = len(content) if next_newline < 0 else next_newline + 1
-    if "SPDX-License-Identifier:" in content[end:next_end]:
+    copyright_prefix = content[start : copyright_match.start()].strip()
+    next_line = content[end:next_end]
+    license_match = LICENSE_IDENTIFIER_PAT.search(next_line)
+    if (
+        license_match is not None
+        and next_line[: license_match.start()].strip() == copyright_prefix
+    ):
         end = next_end
     return start, end
 
