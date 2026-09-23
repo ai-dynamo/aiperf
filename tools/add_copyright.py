@@ -372,7 +372,12 @@ def get_handler(path: str) -> FileHandler | None:
     return None
 
 
-def _line_header_span(content: str, copyright_match: re.Match[str]) -> tuple[int, int]:
+def _line_header_span(
+    path: Path,
+    content: str,
+    copyright_match: re.Match[str],
+    rendered_header: str,
+) -> tuple[int, int]:
     start = content.rfind("\n", 0, copyright_match.start()) + 1
     newline = content.find("\n", copyright_match.end())
     end = len(content) if newline < 0 else newline + 1
@@ -382,14 +387,19 @@ def _line_header_span(content: str, copyright_match: re.Match[str]) -> tuple[int
     license_match = LICENSE_IDENTIFIER_PAT.search(next_line)
     if (
         license_match is not None
-        and SPDX_COMMENT_AFFIX_PAT.fullmatch(next_line[: license_match.start()])
+        and _has_valid_match_syntax(path, next_line, license_match, rendered_header)
         and SPDX_COMMENT_AFFIX_PAT.fullmatch(next_line[license_match.end() :])
     ):
         end = next_end
     return start, end
 
 
-def _spdx_header_span(content: str, copyright_match: re.Match[str]) -> tuple[int, int]:
+def _spdx_header_span(
+    path: Path,
+    content: str,
+    copyright_match: re.Match[str],
+    rendered_header: str,
+) -> tuple[int, int]:
     delimiters = (
         ("<!--", "-->"),
         ("{{/*", "*/}}"),
@@ -404,7 +414,7 @@ def _spdx_header_span(content: str, copyright_match: re.Match[str]) -> tuple[int
             if end < len(content) and content[end] == "\n":
                 end += 1
             return start, end
-    return _line_header_span(content, copyright_match)
+    return _line_header_span(path, content, copyright_match, rendered_header)
 
 
 def _match_has_line_comment(content: str, match: re.Match[str], marker: str) -> bool:
@@ -526,7 +536,7 @@ def _repair_spdx_license(
 
     plain_header = copyright_match.group(0) + "\nSPDX-License-Identifier: Apache-2.0"
     rendered_header = inserter(formatter(plain_header), "").rstrip("\n")
-    start, end = _spdx_header_span(content, copyright_match)
+    start, end = _spdx_header_span(path, content, copyright_match, rendered_header)
     existing_header = content[start:end]
     license_match = LICENSE_IDENTIFIER_PAT.search(existing_header)
     if (
