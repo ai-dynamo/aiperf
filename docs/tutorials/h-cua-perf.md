@@ -32,6 +32,7 @@ aiperf profile \
     --url localhost:8000 \
     --endpoint-type chat \
     --streaming \
+    --use-server-token-count \
     --public-dataset h_cua_perf \
     --num-dataset-entries 20 \
     --dataset-filter n_screenshots=3 \
@@ -40,7 +41,7 @@ aiperf profile \
     --concurrency 4
 ```
 
-`--public-dataset h_cua_perf` downloads `h_cua.jsonl.zst` (2.5 GB) and its manifest into the HuggingFace Hub cache on first use. The two timeouts cover that first download and are unnecessary afterwards. An authenticated endpoint takes `--api-key`.
+`--public-dataset h_cua_perf` downloads `h_cua.jsonl.zst` (2.5 GB) and its manifest into the HuggingFace Hub cache on first use. The two timeouts cover that first download and are unnecessary afterwards. An authenticated endpoint takes `--api-key`. `--use-server-token-count` matters: AIPerf's built-in token count tokenizes text only and ignores images, so without it the input sequence length misses every screenshot.
 
 Each trajectory is replayed as one multi-turn conversation: a step's request is sent, the response awaited, the recorded think time slept, then the next step's recorded `messages` are sent. `--concurrency` is the number of trajectories in flight and `--num-conversations` how many are played. Think times are respected by default and can reach tens of seconds; `--inter-turn-delay-cap-seconds` caps them, and a cap of `0` sends each trajectory's requests back to back (`--ignore-trace-delays` applies to the Weka loaders only). There are no absolute timestamps, so `--fixed-schedule` does not apply.
 
@@ -53,7 +54,7 @@ The published build keeps one screenshot per request, the latest; every earlier 
 - **Image load per request.** Screenshots dominate request bytes and multimodal prefill; N images per request is N times that cost, on every step of every trajectory.
 - **Where the shared prefix breaks.** Consecutive requests of a trajectory are identical up to the first screenshot the window has since dropped. With N=1 that is the previous step's observation, so nearly the whole prompt is a cache hit; with N=3 the placeholder lands three steps back, so the reusable prefix ends earlier and the server re-prefills the last three observations. Widening the window therefore trades prefix-cache hits for image tokens, which is the shape a real agent with a wider context window imposes.
 
-Unset, the loader replays the published single screenshot. A wider window multiplies `inputs.json` and the size of every request on the wire, not the loader's memory: restored screenshots are shared by reference, and RAM is driven by how many trajectories are loaded and how long they are. AIPerf's input sequence length counts client-tokenized text only, so it does not move with the window; read the effect in `Usage Prompt Tokens`, `Overall Usage Prompt Cache Read %` and TTFT instead.
+Unset, the loader replays the published single screenshot. A wider window multiplies `inputs.json` and the size of every request on the wire, not the loader's memory: restored screenshots are shared by reference, and RAM is driven by how many trajectories are loaded and how long they are. Read the effect in the input sequence length, `Overall Usage Prompt Cache Read %` and TTFT.
 
 ## Selecting Trajectories
 
