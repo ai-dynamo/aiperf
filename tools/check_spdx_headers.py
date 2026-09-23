@@ -219,7 +219,7 @@ def validate_file(root: Path, relative_path: Path) -> list[str]:
     if b"\x00" in contents:
         return [f"{relative_path}: binary files require an explicit policy exemption"]
     try:
-        lines = contents.decode("utf-8").splitlines()
+        lines = contents.decode("utf-8-sig").splitlines()
     except UnicodeDecodeError:
         return [f"{relative_path}: file is not valid UTF-8 text"]
 
