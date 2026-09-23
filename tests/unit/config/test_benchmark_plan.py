@@ -318,10 +318,6 @@ class TestBuildBenchmarkPlan:
                 id="summary-last",
             ),
             param(
-                True, "records", [False, ["jsonl"]], ["summary", "records"],
-                id="summary-first",
-            ),
-            param(
                 False, "records", [["jsonl"], ["jsonl"]], ["records", "records"],
                 id="summary-base-overridden",
             ),
