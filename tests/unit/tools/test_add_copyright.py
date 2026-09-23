@@ -211,6 +211,50 @@ def test_fixer_repairs_only_spdx_lines_between_unrelated_blocks(
     assert checker.validate_file(tmp_path, Path("invalid.cpp")) == []
 
 
+@pytest.mark.parametrize(
+    ("filename", "opener", "closer"),
+    [
+        pytest.param("invalid.css", "/*", "*/", id="css"),
+        pytest.param("invalid.html", "<!--", "-->", id="html"),
+        pytest.param("invalid.tpl", "{{/*", "*/}}", id="helm"),
+    ],
+)
+def test_fixer_preserves_legal_notices_inside_spdx_comment_block(
+    tmp_path: Path,
+    filename: str,
+    opener: str,
+    closer: str,
+) -> None:
+    path = tmp_path / filename
+    attribution = "Third-party attribution: KEEP THIS NOTICE"
+    legal_term = "Additional legal term: KEEP THIS TOO"
+    path.write_text(
+        f"{opener}\n"
+        f"{attribution}\n"
+        "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION "
+        "& AFFILIATES. All rights reserved.\n"
+        "SPDX-License-Identifier: MIT\n"
+        f"{legal_term}\n"
+        f"{closer}\n",
+        encoding="utf-8",
+    )
+
+    changed, status = add_copyright.process_file(path, LICENSE_TEXT)
+
+    repaired = path.read_text(encoding="utf-8")
+    assert (changed, status) == (True, "repaired SPDX header")
+    assert repaired == (
+        f"{opener}\n"
+        f"{attribution}\n"
+        "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION "
+        "& AFFILIATES. All rights reserved.\n"
+        "SPDX-License-Identifier: Apache-2.0\n"
+        f"{legal_term}\n"
+        f"{closer}\n"
+    )
+    assert checker.validate_file(tmp_path, Path(filename)) == []
+
+
 def test_fixer_preserves_source_line_containing_license_text(tmp_path: Path) -> None:
     path = tmp_path / "invalid.py"
     preserved = 'message = "SPDX-License-Identifier: keep"\n'

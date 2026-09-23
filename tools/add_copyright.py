@@ -401,21 +401,85 @@ def _spdx_header_span(
     copyright_match: re.Match[str],
     rendered_header: str,
 ) -> tuple[int, int]:
+    bounds = _comment_block_bounds(content, copyright_match)
+    if bounds is not None:
+        start, end, _ = bounds
+        if end < len(content) and content[end] == "\n":
+            end += 1
+        return start, end
+    return _line_header_span(path, content, copyright_match, rendered_header)
+
+
+def _comment_block_bounds(
+    content: str,
+    match: re.Match[str],
+) -> tuple[int, int, str] | None:
     delimiters = (
         ("<!--", "-->"),
         ("{{/*", "*/}}"),
         ("/*", "*/"),
     )
     for opener, closer in delimiters:
-        start = content.rfind(opener, 0, copyright_match.start())
-        previous_close = content.rfind(closer, 0, copyright_match.start())
-        close = content.find(closer, copyright_match.end())
+        start = content.rfind(opener, 0, match.start())
+        previous_close = content.rfind(closer, 0, match.start())
+        close = content.find(closer, match.end())
         if start >= 0 and start > previous_close and close >= 0:
-            end = close + len(closer)
-            if end < len(content) and content[end] == "\n":
-                end += 1
-            return start, end
-    return _line_header_span(path, content, copyright_match, rendered_header)
+            return start, close + len(closer), opener
+    return None
+
+
+def _block_continuation_prefix(
+    content: str,
+    match: re.Match[str],
+    opener: str,
+) -> str:
+    line_start = content.rfind("\n", 0, match.start()) + 1
+    prefix = content[line_start : match.start()]
+    opener_index = prefix.rfind(opener)
+    if opener_index < 0:
+        return prefix
+    return (
+        prefix[:opener_index] + " " * len(opener) + prefix[opener_index + len(opener) :]
+    )
+
+
+def _repair_spdx_comment_block(
+    content: str,
+    copyright_match: re.Match[str],
+) -> str | None:
+    bounds = _comment_block_bounds(content, copyright_match)
+    if bounds is None:
+        return None
+
+    _, block_end, opener = bounds
+    license_match = LICENSE_IDENTIFIER_PAT.search(
+        content, copyright_match.end(), block_end
+    )
+    license_text = "SPDX-License-Identifier: Apache-2.0"
+    prefix = _block_continuation_prefix(content, copyright_match, opener)
+    if license_match is None:
+        return (
+            content[: copyright_match.end()]
+            + "\n"
+            + prefix
+            + license_text
+            + content[copyright_match.end() :]
+        )
+
+    between_tags = content[copyright_match.end() : license_match.start()]
+    preserved_content = (
+        "" if SPDX_COMMENT_AFFIX_PAT.fullmatch(between_tags) else between_tags
+    )
+    if preserved_content and not preserved_content.startswith("\n"):
+        preserved_content = "\n" + prefix + preserved_content
+    return (
+        content[: copyright_match.end()]
+        + "\n"
+        + prefix
+        + license_text
+        + preserved_content
+        + content[license_match.end() :]
+    )
 
 
 def _match_has_line_comment(content: str, match: re.Match[str], marker: str) -> bool:
@@ -546,6 +610,10 @@ def _repair_spdx_license(
         and _has_valid_spdx_syntax(path, existing_header, rendered_header)
     ):
         return content, False
+
+    repaired_block = _repair_spdx_comment_block(content, copyright_match)
+    if repaired_block is not None:
+        return repaired_block, True
 
     trailing_newline = "\n" if existing_header.endswith("\n") else ""
     return content[:start] + rendered_header + trailing_newline + content[end:], True
