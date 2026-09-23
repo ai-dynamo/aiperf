@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # AIPerf Kubernetes E2E Test Suite
 
 Async pytest-based end-to-end test suite for AIPerf Kubernetes deployments. The trusted local gate uses Kind and the mock server; GPU, audit, slow, and cluster chaos scenarios are opt-in. Hermetic `chaos_common` injector-contract tests run in the trusted gate.

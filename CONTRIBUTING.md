@@ -113,12 +113,35 @@ The repository uses pre-commit hooks defined in `.pre-commit-config.yaml`:
 - `ruff-format` - Format with ruff
 
 **Project-specific hooks:**
-- `add-license` - Add SPDX copyright headers
+- `check-spdx-headers` - Validate SPDX headers on all tracked first-party source files
 - `generate-cli-docs` - Regenerate CLI documentation when Python files change
 - `generate-env-vars-docs` - Regenerate env var docs when environment.py changes
 - `generate-plugin-artifacts` - Regenerate plugin enums/overloads/schemas
 - `validate-plugin-schemas` - Validate plugin YAML against schemas
 - `test-imports` - Verify all modules can be imported
+
+#### SPDX headers
+
+Every tracked first-party source file must carry an SPDX copyright line and
+`SPDX-License-Identifier: Apache-2.0` within its first 10 lines, using valid
+comment syntax for that file type. Add or repair headers with:
+
+```bash
+make add-copyright args="path/to/file.py path/to/another-file.yaml"
+make check-spdx-headers
+```
+
+The checker fails closed when it encounters a new file type. Add an appropriate
+comment-style handler to `tools/add_copyright.py` and classify the type in
+`tools/check_spdx_headers.py` before committing that file.
+
+The only exemptions are explicit third-party vendor trees, canonical license
+inputs and symlinks, and formats that cannot safely carry source comments:
+notebooks, JSON/JSONL and lock data, plain-text test data, and binary image,
+audio, font, and spreadsheet assets. Empty source files and all `Dockerfile.*`
+variants still require headers. The fixer preserves syntax-critical preambles,
+including shebangs and encoding cookies, Docker parser directives, Markdown
+frontmatter, HTML doctypes, and CSS charset declarations.
 
 Run pre-commit after every code change, even before creating commits. Do not wait until commit time to discover problems.
 
