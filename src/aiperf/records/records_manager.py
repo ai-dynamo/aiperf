@@ -2406,10 +2406,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         phase_records = await RecordsManager._build_phase_profile_results(
             self, phase, cancelled
         )
-        # Snapshot count BEFORE extending with derived aggregates (efficiency,
-        # analyzers) — `completed` reports request-derived records only.
-        records_completed = len(records_results)
-
         # Cross-accumulator analyzer plugins (e.g. energy efficiency) run after
         # all accumulators have summarized, reading peers via the SummaryContext.
         records_results.extend(await self._run_analyzers(summary_ctx))
@@ -2425,7 +2421,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 records=records_results,
                 warmup_records=warmup_records_results,
                 timeslices=timeslices or None,
-                completed=records_completed,
+                completed=phase_stats.total_records,
                 start_ns=phase_stats.start_ns or time.time_ns(),
                 end_ns=phase_stats.requests_end_ns or time.time_ns(),
                 error_summary=self._error_tracker.get_error_summary_for_phase(phase),

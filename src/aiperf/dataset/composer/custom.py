@@ -72,6 +72,15 @@ class CustomDatasetComposer(BaseDatasetComposer):
             dataset_type = self._infer_dataset_type(self._file_path)
             self.info(f"Auto-detected dataset type: {dataset_type}")
 
+        if (
+            self._file_dataset.weka_nested_timestamp_basis is not None
+            and dataset_type != CustomDatasetType.WEKA_TRACE
+        ):
+            raise ValueError(
+                "weka_nested_timestamp_basis (--weka-nested-timestamp-basis) "
+                f"only applies to Weka traces; resolved format is {dataset_type}."
+            )
+
         # Validate synthesis options are only used with mooncake_trace
         self._validate_synthesis_config(dataset_type)
 

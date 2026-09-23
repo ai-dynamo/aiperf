@@ -257,6 +257,7 @@ _VERBATIM_DATASET_FIELDS = (
     ("public_dataset", "dataset", True),
     ("hf_dataset_subset", "hf_subset", False),
     ("hf_weka_dataset", "hf_weka_dataset", False),
+    ("weka_nested_timestamp_basis", "weka_nested_timestamp_basis", False),
     ("custom_dataset_type", "format", False),
     ("dataset_sampling_strategy", "sampling", False),
     ("conversation_num_dataset_entries", "entries", True),
