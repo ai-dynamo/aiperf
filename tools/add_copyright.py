@@ -214,10 +214,11 @@ def insert_markdown_header(license_text: str, content: str) -> str:
     """Keep complete YAML frontmatter ahead of an HTML SPDX comment."""
     bom, content = split_bom(content)
     header = "<!--\n" + license_text + "\n-->"
-    frontmatter = re.match(r"^---\n.*?^---\n", content, re.MULTILINE | re.DOTALL)
+    frontmatter = re.match(r"^---\n.*?^---(?:\n|$)", content, re.MULTILINE | re.DOTALL)
     if frontmatter is not None:
         pos = frontmatter.end()
-        return bom + content[:pos] + header + "\n" + content[pos:]
+        separator = "" if content[:pos].endswith("\n") else "\n"
+        return bom + content[:pos] + separator + header + "\n" + content[pos:]
     return bom + header + "\n" + content
 
 

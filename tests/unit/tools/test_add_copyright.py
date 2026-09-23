@@ -78,6 +78,21 @@ def test_fixer_preserves_markdown_frontmatter(tmp_path: Path) -> None:
     assert checker.validate_file(tmp_path, Path("rule.md")) == []
 
 
+def test_fixer_preserves_markdown_frontmatter_ending_at_eof(tmp_path: Path) -> None:
+    """A closing frontmatter delimiter at EOF remains the first construct."""
+    path = tmp_path / "rule.md"
+    frontmatter = "---\ndescription: Example rule\n---"
+    path.write_text(frontmatter, encoding="utf-8")
+
+    changed, status = add_copyright.process_file(path, LICENSE_TEXT)
+
+    assert (changed, status) == (True, "added copyright")
+    assert path.read_text(encoding="utf-8") == (
+        frontmatter + "\n<!--\n" + LICENSE_TEXT + "\n-->\n"
+    )
+    assert checker.validate_file(tmp_path, Path("rule.md")) == []
+
+
 @pytest.mark.parametrize(
     "legacy_copyright",
     [
