@@ -1,9 +1,11 @@
 ---
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
 name: docs-to-fern
 description: Migrate a plain Markdown docs/ folder to a Fern documentation site from scratch. Use this skill when a project has no existing publishing framework and needs to scaffold Fern config, migrate content, and build navigation.
 ---
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
 
 # Docs to Fern Migration
 

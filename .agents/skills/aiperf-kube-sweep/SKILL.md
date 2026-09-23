@@ -1,9 +1,11 @@
 ---
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
 name: aiperf-kube-sweep
 description: Use when running a parameter sweep, multi-run confidence trial, or adaptive/Bayesian search on Kubernetes with aiperf kube sweep and the AIPerfSweep CR - authoring sweep parameter axes, addressing child variations, or collecting sweep aggregates.
 ---
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
 
 # Sweeps on Kubernetes
 

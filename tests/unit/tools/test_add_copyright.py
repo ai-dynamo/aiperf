@@ -51,19 +51,29 @@ def test_fixer_generates_every_required_header(tmp_path: Path, filename: str) ->
 def test_fixer_preserves_markdown_frontmatter(tmp_path: Path) -> None:
     """Markdown metadata remains the first construct in frontmatter files."""
     path = tmp_path / "rule.md"
+    frontmatter = (
+        "---\n"
+        "description: Example rule\n"
+        "alwaysApply: true\n"
+        "one: 1\n"
+        "two: 2\n"
+        "three: 3\n"
+        "four: 4\n"
+        "five: 5\n"
+        "six: 6\n"
+        "seven: 7\n"
+        "---\n"
+    )
     path.write_text(
-        "---\ndescription: Example rule\nalwaysApply: true\n---\n\n# Rule\n",
+        frontmatter + "\n# Rule\n",
         encoding="utf-8",
     )
 
     changed, status = add_copyright.process_file(path, LICENSE_TEXT)
 
     assert (changed, status) == (True, "added copyright")
-    assert path.read_text(encoding="utf-8").startswith("---\n")
-    assert (
-        path.read_text(encoding="utf-8")
-        .splitlines()[1]
-        .startswith("# SPDX-FileCopyrightText:")
+    assert path.read_text(encoding="utf-8").startswith(
+        frontmatter + "<!--\n" + LICENSE_TEXT + "\n-->\n"
     )
     assert checker.validate_file(tmp_path, Path("rule.md")) == []
 

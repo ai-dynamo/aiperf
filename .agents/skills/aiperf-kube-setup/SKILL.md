@@ -1,9 +1,11 @@
 ---
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
 name: aiperf-kube-setup
 description: Use when preparing a real multi-node Kubernetes cluster for AIPerf - installing or upgrading the aiperf-operator Helm chart, installing JobSet, wiring a private registry pull secret, choosing node placement and a storage class for the results PVC, or scoping the operator to namespaces.
 ---
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
 
 # Preparing a Real Cluster for AIPerf
 

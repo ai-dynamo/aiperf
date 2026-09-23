@@ -1,11 +1,13 @@
 ---
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
 name: bump-version
 description: Bump the AIPerf package version (e.g. 0.10.0 -> 0.11.0) across pyproject.toml, the mock server, and the version strings shown in docs, then open a PR to main
 disable-model-invocation: true
 allowed-tools: Bash(git fetch *), Bash(git checkout *), Bash(git branch *), Bash(git status *), Bash(git add *), Bash(git commit *), Bash(git push *), Bash(git log *), Bash(git diff *), Bash(grep *), Bash(uv lock *), Bash(pre-commit run *), Bash(gh pr create *), Read, Edit, AskUserQuestion
 ---
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
 
 # Bump AIPerf Version
 

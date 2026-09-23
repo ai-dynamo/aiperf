@@ -1,9 +1,11 @@
 ---
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
 name: linear-issue
 description: This skill should be used when the user asks to "create a linear issue", "add a linear issue", "track this in linear", "open a linear ticket", "log this in linear", "create a ticket", or mentions creating an issue for tracking work in Linear.
 ---
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
 
 # Linear Issue Creator
 

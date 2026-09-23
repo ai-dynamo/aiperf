@@ -1,11 +1,13 @@
 ---
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
 name: cherry-pick
 description: Cherry-pick a commit from origin/main into a release branch using a temporary git worktree
 disable-model-invocation: true
 allowed-tools: Bash(git fetch *), Bash(git log *), Bash(git branch *), Bash(git worktree *), Bash(git cherry-pick *), Bash(git -C * status), Bash(git -C * cherry-pick *), Bash(git -C * checkout *), Bash(git -C * push *), Bash(git -C * branch *), Bash(git push *), Bash(git commit *), Bash(git checkout *), Bash(mktemp *), Bash(make *), Bash(gh pr create *), Bash(gh api *), AskUserQuestion
 ---
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
 
 # Cherry-Pick to Release Branch
 
