@@ -699,7 +699,8 @@ class CLIConfig(BaseConfig):
             description="Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, "
             "Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back "
             "instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode "
-            "before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors).",
+            "before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors). "
+            "No effect on non-weka trace loaders.",
         ),
         CLIParameter(
             name=("--ignore-trace-delays",),
@@ -1056,9 +1057,10 @@ class CLIConfig(BaseConfig):
             default=None,
             ge=0.0,
             description="Clamp per-turn replay delays to at most this many "
-            "seconds; ``None`` disables the cap. Honored by the DAG JSONL loader "
-            "and the baseten_trace loader's closed-loop think-times; the clamp "
-            "count is reported at end of load. Maps to FileDataset "
+            "seconds; ``None`` disables the cap. Honored by every trace loader "
+            "(mooncake_trace, baseten_trace, bailian_trace, burst_gpt_trace and "
+            "the Weka loaders) and by the DAG JSONL loader; the clamp count is "
+            "reported at end of load. Maps to FileDataset "
             "``inter_turn_delay_cap_seconds``.",
         ),
         CLIParameter(

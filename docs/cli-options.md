@@ -681,7 +681,7 @@ Format specification for custom dataset provided via `--input-file`. Determines 
 
 #### `--ignore-trace-delays`
 
-Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors).
+Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors). No effect on non-weka trace loaders.
 <br/>_Flag (no value required)_
 
 #### `--use-think-time-only`
@@ -792,7 +792,7 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 #### `--inter-turn-delay-cap-seconds` `<float>`
 
-Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
+Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by every trace loader (mooncake_trace, baseten_trace, bailian_trace, burst_gpt_trace and the Weka loaders) and by the DAG JSONL loader; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
 #### `--max-idle-gap-cap-seconds` `<float>`
@@ -2278,7 +2278,7 @@ Format specification for custom dataset provided via `--input-file`. Determines 
 
 #### `--ignore-trace-delays`
 
-Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors).
+Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors). No effect on non-weka trace loaders.
 <br/>_Flag (no value required)_
 
 #### `--use-think-time-only`
@@ -2389,7 +2389,7 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 #### `--inter-turn-delay-cap-seconds` `<float>`
 
-Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
+Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by every trace loader (mooncake_trace, baseten_trace, bailian_trace, burst_gpt_trace and the Weka loaders) and by the DAG JSONL loader; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
 #### `--max-idle-gap-cap-seconds` `<float>`
@@ -3870,7 +3870,7 @@ Format specification for custom dataset provided via `--input-file`. Determines 
 
 #### `--ignore-trace-delays`
 
-Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors).
+Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors). No effect on non-weka trace loaders.
 <br/>_Flag (no value required)_
 
 #### `--use-think-time-only`
@@ -3981,7 +3981,7 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 #### `--inter-turn-delay-cap-seconds` `<float>`
 
-Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
+Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by every trace loader (mooncake_trace, baseten_trace, bailian_trace, burst_gpt_trace and the Weka loaders) and by the DAG JSONL loader; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
 #### `--max-idle-gap-cap-seconds` `<float>`
@@ -5969,7 +5969,7 @@ Format specification for custom dataset provided via `--input-file`. Determines 
 
 #### `--ignore-trace-delays`
 
-Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors).
+Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors). No effect on non-weka trace loaders.
 <br/>_Flag (no value required)_
 
 #### `--use-think-time-only`
@@ -6080,7 +6080,7 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 #### `--inter-turn-delay-cap-seconds` `<float>`
 
-Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
+Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by every trace loader (mooncake_trace, baseten_trace, bailian_trace, burst_gpt_trace and the Weka loaders) and by the DAG JSONL loader; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
 #### `--max-idle-gap-cap-seconds` `<float>`
