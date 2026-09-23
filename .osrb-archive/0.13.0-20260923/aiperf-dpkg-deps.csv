@@ -1,0 +1,11 @@
+dependency_type,name,version,spdx_license
+dpkg,bash,5.2.15-2+b10,GPL-3.0-or-later
+dpkg,libogg-dev,1.3.5-3,BSD-3-Clause
+dpkg,libogg0,1.3.5-3,BSD-3-Clause
+dpkg,libopus-dev,1.3.1-3,BSD-3-Clause
+dpkg,libopus0,1.3.1-3,BSD-3-Clause
+dpkg,libvorbis-dev,1.3.7-1,BSD-3-Clause
+dpkg,libvorbis0a,1.3.7-1,BSD-3-Clause
+dpkg,libvorbisenc2,1.3.7-1,BSD-3-Clause
+dpkg,libvpx-dev,1.12.0-1+deb12u5,BSD-3-Clause
+dpkg,libvpx7,1.12.0-1+deb12u5,BSD-3-Clause
