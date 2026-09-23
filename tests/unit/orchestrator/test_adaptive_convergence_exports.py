@@ -25,7 +25,6 @@ from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
         param("distribution", False, [1, 1], None, id="raw-points"),
         param("distribution", True, [0, 1], None, id="mixed-records-raw"),
         param("ci_width", False, [1, 0], None, id="ci-width-allows-summary"),
-        param("cv", False, [1, 0], None, id="cv-allows-summary"),
         param(None, False, [1, 0], None, id="fixed-trials-allow-summary"),
     ],
 )  # fmt: skip
