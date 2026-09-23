@@ -26,6 +26,23 @@ from aiperf.config.flags._converter_telemetry import (
 from aiperf.config.flags.cli_config import CLIConfig
 
 
+@pytest.fixture(autouse=True)
+def _no_network_probe(monkeypatch: pytest.MonkeyPatch):
+    """Keep the AMD exporter probe off the network for every test in this module.
+
+    ``build_gpu_telemetry`` probes each bare URL with a synchronous
+    ``httpx.get``. Left alone, a test passing a bare URL makes a genuine
+    outbound request; it currently returns fast only because the hostnames do
+    not resolve, and would block for the full timeout behind a resolving
+    wildcard DNS or a proxy. Defaulting to "not an AMD exporter" keeps the
+    suite hermetic. Tests that need detection to fire override this.
+    """
+    monkeypatch.setattr(
+        "aiperf.config.flags._converter_telemetry._detect_amd_exporter",
+        lambda url: False,
+    )
+
+
 def _make_cli(**overrides) -> CLIConfig:
     base = {
         "url": "http://localhost:8000/test",
