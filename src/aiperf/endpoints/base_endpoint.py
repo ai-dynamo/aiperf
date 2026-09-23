@@ -115,22 +115,46 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
 
     @staticmethod
     def extract_spec_decode_stats(json_obj: dict[str, Any]) -> dict[str, Any] | None:
-        """Capture the raw speculative-decoding payload from the response root.
+        """Capture the raw speculative-decoding payload, wherever the engine put it.
 
-        vLLM nests it at ``metrics.speculative_decoding`` -- on the response body
-        non-streaming, or on the trailing usage chunk (empty ``choices``)
-        streaming -- when the server runs with ``--per-request-spec-decode-metrics``.
-        Captured verbatim and uninterpreted so a ``SpecDecodeAdapterProtocol``
-        owns the engine-specific interpretation downstream; None when absent.
+        Two placements are recognized, because the engines genuinely differ:
 
-        vLLM populates it only for single-sequence requests (``n == 1``), leaving
-        it ``null`` otherwise, so no client-side ``n > 1`` suppression is needed:
-        a mixed per-request record can never arise here.
+        - **Response root** ``metrics.speculative_decoding`` (vLLM), on the body
+          non-streaming or on the trailing usage chunk (empty ``choices``)
+          streaming, when the server runs with
+          ``--per-request-spec-decode-metrics``.
+        - **Per choice** ``choices[0].speculative_decoding`` (TensorRT-LLM), on
+          the body non-streaming or on the terminal chunk's choice (the one
+          carrying ``finish_reason``) streaming, when the server sets
+          ``per_request_spec_decode_stats``.
+
+        Root wins when both somehow appear. Captured verbatim and uninterpreted
+        so a ``SpecDecodeAdapterProtocol`` owns the engine-specific
+        interpretation downstream; None when absent.
+
+        A response with more than one choice is an ``n > 1`` non-streaming
+        request; its per-choice payload is suppressed because a single
+        per-request record cannot attribute request-level usage to one sequence
+        -- reporting one choice's acceptance alongside all choices' token count
+        would be a mixed, misleading record. (``n > 1`` streaming is suppressed
+        in the parser, where each sequence's stats arrive on separate chunks.)
+        The root placement needs no such guard: vLLM populates it only for
+        single-sequence requests, leaving it ``null`` otherwise.
         """
         metrics = json_obj.get("metrics")
-        if not isinstance(metrics, dict):
+        if isinstance(metrics, dict):
+            stats = metrics.get("speculative_decoding")
+            if isinstance(stats, dict):
+                return stats
+
+        choices = json_obj.get("choices")
+        if (
+            not isinstance(choices, list)
+            or len(choices) != 1
+            or not isinstance(choices[0], dict)
+        ):
             return None
-        stats = metrics.get("speculative_decoding")
+        stats = choices[0].get("speculative_decoding")
         return stats if isinstance(stats, dict) else None
 
     def build_assistant_turn(self, record: RequestRecord) -> Turn | None:
