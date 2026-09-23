@@ -130,7 +130,7 @@ async def _stream_dataset_file(
 
     if compressed:
         accepted = parse_accept_encoding(accept_encoding or "")
-        if accepted.get("zstd", 0) <= 0:
+        if accepted.get("zstd", accepted.get("*", 0)) <= 0:
             raise HTTPException(
                 status_code=406,
                 detail=f"{file_type} is pre-compressed with zstd. Client must accept zstd encoding.",

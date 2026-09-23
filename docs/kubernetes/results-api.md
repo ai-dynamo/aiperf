@@ -468,9 +468,10 @@ The lookup tries `<filename>.zst` first, then `<filename>` as-is. `namespace` an
 
 | Client `Accept-Encoding` | Response `Content-Encoding` | Server action |
 |--------------------------|-----------------------------|---------------|
-| `zstd` (substring match) | `zstd` | Stream raw bytes unmodified |
-| `gzip` (no zstd)         | `gzip` | Decompress zstd, recompress as gzip on the fly |
-| anything else / absent   | absent | Decompress zstd to identity |
+| `zstd` or a wildcard that allows it | `zstd` | Stream raw bytes unmodified |
+| `gzip` or a wildcard that allows it, when zstd is not accepted | `gzip` | Decompress zstd, recompress as gzip on the fly |
+| identity allowed, or header absent | absent | Decompress zstd to identity |
+| all available encodings refused | n/a | Return `406 Not Acceptable` |
 
 **Content negotiation for stored raw files**
 

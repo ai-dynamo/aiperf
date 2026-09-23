@@ -469,6 +469,8 @@ def _accepts_encoding(accept_encoding: str | None, encoding: str) -> bool:
         return False
 
     accepted = parse_accept_encoding(accept_encoding)
+    if encoding == "identity":
+        return accepted.get("identity", 0.0 if accepted.get("*") == 0 else 1.0) > 0
     if encoding in accepted:
         return accepted[encoding] > 0
     return accepted.get("*", 0.0) > 0
@@ -497,6 +499,9 @@ def _serve_zst_file(
             media_type=_artifact_media_type(display_name),
             headers=headers,
         )
+
+    if accept and not _accepts_encoding(accept, "identity"):
+        raise HTTPException(status_code=406, detail="No acceptable content encoding")
 
     return StreamingResponse(
         _stream_zstd_decompress(zst_path),

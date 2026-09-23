@@ -188,6 +188,7 @@ class TestDatasetEndpoints:
             param("gzip", id="no-zstd"),
             param("zstd;q=0, gzip", id="zstd-rejected-q0"),
             param("zstd;q=0", id="zstd-rejected-q0-only"),
+            param("*;q=1, zstd;q=0", id="explicit-zstd-rejection-overrides-wildcard"),
             param("", id="empty-header"),
         ],
     )
@@ -284,8 +285,15 @@ class TestDatasetEndpointSuccessfulStreaming:
         assert response.content == b"test index content"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "accept_encoding",
+        [
+            param("zstd, gzip", id="explicit-zstd"),
+            param("*", id="wildcard-zstd"),
+        ],
+    )  # fmt: skip
     async def test_dataset_compress_only_mode_accepts_zstd(
-        self, dataset_router: DatasetRouter, tmp_path
+        self, dataset_router: DatasetRouter, tmp_path, accept_encoding: str
     ) -> None:
         original_data = b"test dataset content for zstd"
         cctx = zstandard.ZstdCompressor()
@@ -309,7 +317,7 @@ class TestDatasetEndpointSuccessfulStreaming:
         ) as raw_client:
             response = await raw_client.get(
                 "/api/dataset/data",
-                headers={"Accept-Encoding": "zstd, gzip"},
+                headers={"Accept-Encoding": accept_encoding},
             )
         assert response.status_code == 200
         assert response.content == original_data
