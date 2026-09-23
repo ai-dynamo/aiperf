@@ -55,6 +55,15 @@ def _local_collector_keywords() -> dict[str, Any]:
     }
 
 
+_DETECT_TIMEOUT_SEC = 1.0
+"""Per-URL budget for the AMD exporter probe.
+
+This runs on the main thread during CLI conversion, so every unreachable URL
+costs the user this much before the benchmark starts. An exporter that cannot
+answer a metrics scrape within a second is not one the run can use anyway.
+"""
+
+
 def _detect_amd_exporter(url: str) -> bool:
     """Check if URL points to an AMD GPU exporter by inspecting metrics.
 
@@ -63,19 +72,29 @@ def _detect_amd_exporter(url: str) -> bool:
     The call happens once at startup and does not affect benchmark
     measurement accuracy. A future improvement could move detection into
     the async ``GPUTelemetryManager`` warmup phase to eliminate the
-    blocking startup cost (up to ``timeout`` seconds per URL).
+    blocking startup cost (up to ``_DETECT_TIMEOUT_SEC`` per URL).
 
     Returns True if AMD-specific metrics are found (gpu_package_power, gpu_gfx_activity).
     """
     import httpx
 
+    from aiperf.common.aiperf_logger import AIPerfLogger
+
     try:
-        response = httpx.get(url, timeout=5.0)
+        response = httpx.get(url, timeout=_DETECT_TIMEOUT_SEC)
         if response.status_code != 200:
             return False
         content = response.text
         return "gpu_package_power" in content or "gpu_gfx_activity" in content
-    except Exception:
+    except Exception as e:
+        # Not silent: a probe that fails for any reason leaves the endpoint on
+        # the DCGM default, and an AMD exporter treated as DCGM collects
+        # nothing. Say so rather than let the run start quietly wrong.
+        AIPerfLogger(__name__).warning(
+            f"Could not probe {url} for AMD GPU telemetry metrics ({e}). "
+            f"Treating it as a DCGM endpoint. Pass 'amd_dme:{url}' to select "
+            f"the AMD collector explicitly."
+        )
         return False
 
 

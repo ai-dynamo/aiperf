@@ -20,6 +20,9 @@ import logging
 import pytest
 
 from aiperf.config.flags._converter_telemetry import (
+    _detect_amd_exporter as _real_detect,
+)
+from aiperf.config.flags._converter_telemetry import (
     _is_localhost_url,
     build_gpu_telemetry,
 )
@@ -211,3 +214,36 @@ class TestAmdAutoDetectRespectsAnExplicitPrefix:
     def test_an_explicit_prefix_on_a_scheme_less_url_is_still_honoured(self):
         cli = _make_cli(gpu_telemetry=["dcgm:node:9400/metrics"])
         assert build_gpu_telemetry(cli)["collector"] == "dcgm"
+
+
+class TestAmdProbeFailureIsNotSilent:
+    """A probe that cannot reach the endpoint must say so.
+
+    The probe swallows every exception and returns False, which leaves the URL
+    on the DCGM default. An AMD exporter collected as DCGM produces a run with
+    no GPU metrics, so the downgrade needs to be visible in the log rather than
+    inferred from an empty table afterwards.
+    """
+
+    def test_probe_failure_warns_and_names_the_explicit_form(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ):
+        import httpx
+
+        def _unreachable(*args, **kwargs):
+            raise httpx.ConnectError("connection refused")
+
+        monkeypatch.setattr(
+            "aiperf.config.flags._converter_telemetry._detect_amd_exporter",
+            _real_detect,
+        )
+        monkeypatch.setattr(httpx, "get", _unreachable)
+        caplog.set_level(
+            logging.WARNING, logger="aiperf.config.flags._converter_telemetry"
+        )
+
+        cli = _make_cli(gpu_telemetry=["http://node:5000/metrics"])
+        assert build_gpu_telemetry(cli)["collector"] == "dcgm"
+
+        assert "could not probe" in caplog.text.lower()
+        assert "amd_dme:http://node:5000/metrics" in caplog.text
