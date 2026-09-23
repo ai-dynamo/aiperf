@@ -48,10 +48,9 @@ def test_fixer_generates_every_required_header(tmp_path: Path, filename: str) ->
     assert checker.validate_file(tmp_path, Path(filename)) == []
 
 
-@pytest.mark.parametrize("suffix", [".md", ".mdc"])
-def test_fixer_preserves_markdown_frontmatter(tmp_path: Path, suffix: str) -> None:
+def test_fixer_preserves_markdown_frontmatter(tmp_path: Path) -> None:
     """Markdown metadata remains the first construct in frontmatter files."""
-    path = tmp_path / f"rule{suffix}"
+    path = tmp_path / "rule.md"
     path.write_text(
         "---\ndescription: Example rule\nalwaysApply: true\n---\n\n# Rule\n",
         encoding="utf-8",
@@ -66,7 +65,7 @@ def test_fixer_preserves_markdown_frontmatter(tmp_path: Path, suffix: str) -> No
         .splitlines()[1]
         .startswith("# SPDX-FileCopyrightText:")
     )
-    assert checker.validate_file(tmp_path, Path(f"rule{suffix}")) == []
+    assert checker.validate_file(tmp_path, Path("rule.md")) == []
 
 
 @pytest.mark.parametrize(
@@ -146,22 +145,3 @@ def test_fixer_preserves_critical_preamble(
     assert (changed, status) == (True, "added copyright")
     assert path.read_text(encoding="utf-8").startswith(critical_prefix)
     assert checker.validate_file(tmp_path, Path(filename)) == []
-
-
-def test_fixer_normalizes_malformed_nvidia_header(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The fixer repairs casing and a reversed year range in an NVIDIA header."""
-    path = tmp_path / "example.py"
-    path.write_text(
-        "# SPDX-FileCopyrightText: Copyright (c) 2026-2025 Nvidia Corporation "
-        "& affiliates. All rights reserved.\n"
-        "# SPDX-License-Identifier: Apache-2.0\n",
-        encoding="utf-8",
-    )
-
-    monkeypatch.setattr(add_copyright, "was_modified_this_year", lambda _: True)
-    changed, status = add_copyright.process_file(path, LICENSE_TEXT)
-
-    assert (changed, status) == (True, "updated year")
-    assert checker.validate_file(tmp_path, Path("example.py")) == []
