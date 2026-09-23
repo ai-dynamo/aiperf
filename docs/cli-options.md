@@ -489,6 +489,11 @@ The API endpoint type to benchmark. Determines request/response format and suppo
 Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. Automatically disabled if the selected endpoint type does not support streaming. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
 <br/>_Flag (no value required)_
 
+#### `--require-stream-completion`
+
+Fail incomplete OpenAI-compatible chat streams. Requires --streaming and --endpoint-type chat; accepts [DONE] or a nonempty finish_reason as the completion signal. Malformed chunks fail the request.
+<br/>_Flag (no value required)_
+
 #### `-u`, `--url` `<list>`
 
 Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified for load balancing across multiple instances (e.g., `--url http://server1:8000 --url http://server2:8000`). The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`). URLs that do not include a scheme (no `://`) have `http://` prepended automatically.
@@ -2103,6 +2108,11 @@ The API endpoint type to benchmark. Determines request/response format and suppo
 Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. Automatically disabled if the selected endpoint type does not support streaming. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
 <br/>_Flag (no value required)_
 
+#### `--require-stream-completion`
+
+Fail incomplete OpenAI-compatible chat streams. Requires --streaming and --endpoint-type chat; accepts [DONE] or a nonempty finish_reason as the completion signal. Malformed chunks fail the request.
+<br/>_Flag (no value required)_
+
 #### `-u`, `--url` `<list>`
 
 Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified for load balancing across multiple instances (e.g., `--url http://server1:8000 --url http://server2:8000`). The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`). URLs that do not include a scheme (no `://`) have `http://` prepended automatically.
@@ -3710,6 +3720,11 @@ The API endpoint type to benchmark. Determines request/response format and suppo
 #### `--streaming`
 
 Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. Automatically disabled if the selected endpoint type does not support streaming. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
+<br/>_Flag (no value required)_
+
+#### `--require-stream-completion`
+
+Fail incomplete OpenAI-compatible chat streams. Requires --streaming and --endpoint-type chat; accepts [DONE] or a nonempty finish_reason as the completion signal. Malformed chunks fail the request.
 <br/>_Flag (no value required)_
 
 #### `-u`, `--url` `<list>`
@@ -5826,6 +5841,11 @@ The API endpoint type to benchmark. Determines request/response format and suppo
 #### `--streaming`
 
 Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. Automatically disabled if the selected endpoint type does not support streaming. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
+<br/>_Flag (no value required)_
+
+#### `--require-stream-completion`
+
+Fail incomplete OpenAI-compatible chat streams. Requires --streaming and --endpoint-type chat; accepts [DONE] or a nonempty finish_reason as the completion signal. Malformed chunks fail the request.
 <br/>_Flag (no value required)_
 
 #### `-u`, `--url` `<list>`

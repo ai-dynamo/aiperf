@@ -9,8 +9,10 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
 import pytest
+from aiohttp import web
 
-from aiperf.common.models import SSEField, SSEMessage
+from aiperf.common.models import ParsedResponseRecord, SSEField, SSEMessage
+from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.transports.aiohttp_client import AioHttpClient
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
 from tests.unit.transports.conftest import (
@@ -117,6 +119,173 @@ class TestAioHttpClient:
             assert_successful_request_record(
                 record, expected_response_count=2, expected_response_type=SSEMessage
             )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "tail,should_fail",
+        [
+            (b"", True),
+            (b"data: [DONE]\n\n", False),
+            (
+                b'data: [DONE]\n\ndata: {"choices":[{"finish_reason":null}]}\n\n',
+                True,
+            ),
+            (b"data: [DONE]\n\ndata: [DONE]\n\n", True),
+            (b"data: [DONE]\n\ndata:\n\n", True),
+            (b"data: [DONE]\n\n: keepalive\n\nid: 7\n\n", False),
+            (b"data:\n\ndata: [DONE]\n\n", True),
+            (b'data: {"choices":[]}\n\ndata: [DONE]\n\n', False),
+            (b'data: {"choices":[]}\n\n', True),
+            (b'data: {"choices":{}}\n\ndata: [DONE]\n\n', True),
+            (b'data: {"choices":[{"finish_reason":5}]}\n\ndata: [DONE]\n\n', True),
+            (
+                b'data: {"choices":[{"index":0,"finish_reason":"stop"},'
+                b'{"index":1,"finish_reason":null}]}\n\n',
+                True,
+            ),
+            (
+                b'data: {"choices":[{"index":0,"finish_reason":"stop"},'
+                b'{"index":1,"finish_reason":"stop"}]}\n\n',
+                False,
+            ),
+            (b"data: {broken}\n\ndata: [DONE]\n\n", True),
+            (
+                b'data: {"object":"chat.completion.chunk","choices":'
+                b'[{"delta":{},"finish_reason":"stop"}]}\n\n',
+                False,
+            ),
+        ],
+    )
+    async def test_optional_chat_stream_completion(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_sse_response: Mock,
+        tail: bytes,
+        should_fail: bool,
+    ) -> None:
+        content = (
+            b'data: {"object":"chat.completion.chunk","choices":'
+            b'[{"delta":{"content":"Hello"},"finish_reason":null}]}\n\n'
+        )
+        aiohttp_client.require_stream_completion = True
+        mock_sse_response.content = MockStreamReader([content + tail])
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream", b"{}", {"Accept": "text/event-stream"}
+            )
+
+        assert (record.error is not None) is should_fail
+        if should_fail:
+            assert record.error is not None
+            assert record.error.type == "SSEResponseError"
+            assert "completion" in record.error.message.lower()
+
+    async def test_chat_stream_completion_rejects_unterminated_malformed_tail_after_finish_reason(
+        self, aiohttp_client: AioHttpClient, mock_sse_response: Mock
+    ) -> None:
+        aiohttp_client.require_stream_completion = True
+        mock_sse_response.content = MockStreamReader(
+            [
+                b'data: {"object":"chat.completion.chunk","choices":'
+                b'[{"delta":{},"finish_reason":"stop"}]}\n\n'
+                b'data: {"object":"chat.completion.chunk","choices":['
+            ]
+        )
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream", b"{}", {"Accept": "text/event-stream"}
+            )
+
+        assert record.error is not None
+        assert record.error.type == "SSEResponseError"
+        assert "malformed SSE data" in record.error.message
+
+    async def test_chat_stream_completion_is_opt_in(
+        self, aiohttp_client: AioHttpClient, mock_sse_response: Mock
+    ) -> None:
+        mock_sse_response.content = MockStreamReader(
+            [b'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n']
+        )
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream", b"{}", {"Accept": "text/event-stream"}
+            )
+        assert record.error is None
+
+    async def test_required_chat_stream_rejects_non_sse_response(
+        self, aiohttp_client: AioHttpClient, mock_aiohttp_response: Mock
+    ) -> None:
+        aiohttp_client.require_stream_completion = True
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            setup_mock_session(mock_session_class, mock_aiohttp_response, ["request"])
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream", b"{}", {"Accept": "text/event-stream"}
+            )
+        assert record.error is not None
+        assert record.error.type == "SSEResponseError"
+
+    async def test_incomplete_stream_does_not_poison_next_request(self) -> None:
+        async def handler(request: web.Request) -> web.StreamResponse:
+            if request.match_info["case"] == "json":
+                return web.json_response(
+                    {"choices": [{"message": {"content": "Hello"}}]}
+                )
+            response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
+            await response.prepare(request)
+            await response.write(
+                b'data: {"object":"chat.completion.chunk","choices":'
+                b'[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}\n\n'
+            )
+            if request.match_info["case"] == "complete":
+                await response.write(b"data: [DONE]\n\n")
+            await response.write_eof()
+            return response
+
+        app = web.Application()
+        app.router.add_post("/{case}", handler)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        assert site._server is not None
+        port = site._server.sockets[0].getsockname()[1]
+        client = AioHttpClient(timeout=3, require_stream_completion=True)
+        try:
+            failed = await asyncio.wait_for(
+                client.post_request(f"http://127.0.0.1:{port}/incomplete", b"{}", {}),
+                timeout=5,
+            )
+            assert failed.error is not None
+            assert failed.error.type == "SSEResponseError"
+            endpoint = ChatEndpoint(model_endpoint=None)
+            parsed, _ = endpoint.process_responses(failed, capture_assistant_turn=False)
+            assert ParsedResponseRecord(request=failed, responses=parsed).has_error
+            succeeded = await asyncio.wait_for(
+                client.post_request(f"http://127.0.0.1:{port}/complete", b"{}", {}),
+                timeout=5,
+            )
+            assert succeeded.error is None
+            parsed, _ = endpoint.process_responses(
+                succeeded, capture_assistant_turn=False
+            )
+            assert ParsedResponseRecord(request=succeeded, responses=parsed).valid
+            non_streaming = await asyncio.wait_for(
+                client.post_request(
+                    f"http://127.0.0.1:{port}/json",
+                    b'{"stream":false}',
+                    {},
+                    cancel_after_ns=3_000_000_000,
+                    require_stream_completion=False,
+                ),
+                timeout=5,
+            )
+            assert non_streaming.error is None
+        finally:
+            await client.close()
+            await runner.cleanup()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

@@ -21,7 +21,10 @@ from aiperf.common.models import (
 )
 from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
 from aiperf.transports.http_defaults import AioHttpDefaults, SocketDefaults
-from aiperf.transports.sse_utils import AsyncSSEStreamReader
+from aiperf.transports.sse_utils import (
+    AsyncSSEStreamReader,
+    _validate_chat_stream_completion,
+)
 
 if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
@@ -59,6 +62,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         timeout: float | None = None,
         tcp_kwargs: dict[str, Any] | None = None,
         collect_trace_chunks: bool = False,
+        require_stream_completion: bool = False,
         **kwargs,
     ) -> None:
         """Initialize the AioHttpClient."""
@@ -66,6 +70,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         self.tcp_connector = create_tcp_connector(**tcp_kwargs or {})
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.collect_trace_chunks = collect_trace_chunks
+        self.require_stream_completion = require_stream_completion
 
     async def close(self) -> None:
         """Close the client."""
@@ -85,6 +90,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         trace_data: AioHttpTraceData | None = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
+        require_stream_completion: bool | None = None,
         **kwargs: Any,
     ) -> RequestRecord:
         """Generic request method that handles common logic for all HTTP methods.
@@ -101,12 +107,18 @@ class AioHttpClient(AIPerfLoggerMixin):
                 If None, uses self.tcp_connector (shared pool).
             connector_owner: If True, the session will close the connector when done.
                 Use True for per-request connections that should be closed after use.
+            require_stream_completion: Override completion validation for this request.
             **kwargs: Additional arguments to pass to the request
 
         Returns:
             RequestRecord with the response data
         """
         self.debug(lambda: f"Sending {method} request to {url}")
+        check_completion = (
+            self.require_stream_completion
+            if require_stream_completion is None
+            else require_stream_completion
+        )
 
         # Use provided trace_data or create new one
         if trace_data is None:
@@ -230,8 +242,15 @@ class AioHttpClient(AIPerfLoggerMixin):
                             ):
                                 AsyncSSEStreamReader.inspect_message_for_error(message)
                                 record.responses.append(message)
+                        if check_completion:
+                            _validate_chat_stream_completion(record.responses)
                         record.end_perf_ns = time.perf_counter_ns()
                     else:
+                        if check_completion:
+                            raise SSEResponseError(
+                                "Chat stream completion could not be verified: response is not SSE",
+                                error_code=502,
+                            )
                         # Non-SSE response (e.g., JSON or binary)
                         response_start_ns = time.perf_counter_ns()
 
@@ -313,6 +332,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         first_token_callback: "FirstTokenCallback | None" = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
+        require_stream_completion: bool | None = None,
         **kwargs: Any,
     ) -> RequestRecord:
         """Send a POST request to the specified URL.
@@ -326,6 +346,7 @@ class AioHttpClient(AIPerfLoggerMixin):
             first_token_callback: Optional callback fired on first SSE message with ttft_ns
             connector: Optional TCP connector to use instead of the shared pool.
             connector_owner: If True, the session will close the connector when done.
+            require_stream_completion: Override completion validation for this request.
             **kwargs: Additional arguments passed to aiohttp
 
         Returns:
@@ -340,6 +361,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                 first_token_callback=first_token_callback,
                 connector=connector,
                 connector_owner=connector_owner,
+                require_stream_completion=require_stream_completion,
                 **kwargs,
             )
         return await self._request_with_cancellation(
@@ -350,6 +372,7 @@ class AioHttpClient(AIPerfLoggerMixin):
             first_token_callback=first_token_callback,
             connector=connector,
             connector_owner=connector_owner,
+            require_stream_completion=require_stream_completion,
             **kwargs,
         )
 
@@ -363,6 +386,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         first_token_callback: "FirstTokenCallback | None" = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
+        require_stream_completion: bool | None = None,
         **kwargs: Any,
     ) -> RequestRecord:
         """Send POST request with cancellation after specified delay.
@@ -395,6 +419,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                 trace_data=trace_data,
                 connector=connector,
                 connector_owner=connector_owner,
+                require_stream_completion=require_stream_completion,
                 **kwargs,
             )
         )

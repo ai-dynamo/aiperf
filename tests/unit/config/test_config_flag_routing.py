@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags._section_fields import (
     ACCURACY_FIELDS,
@@ -83,6 +84,19 @@ def test_unrouted_input_flag_raises_naming_the_flag(base_yaml: Path) -> None:
     """
     with pytest.raises(ConfigurationError, match=r"--public-dataset"):
         resolve_config(cli(public_dataset="sharegpt"), base_yaml)
+
+
+def test_stream_completion_flag_routes_under_config(base_yaml: Path) -> None:
+    resolved = resolve_config(
+        cli(streaming=True, require_stream_completion=True), base_yaml
+    )
+    assert resolved.benchmark.endpoint.require_stream_completion is True
+    assert (
+        ModelEndpointInfo.from_config(
+            resolved.benchmark
+        ).endpoint.require_stream_completion
+        is True
+    )
 
 
 def test_unrouted_sweeping_flag_raises(base_yaml: Path) -> None:

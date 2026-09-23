@@ -5,6 +5,8 @@
 import time
 from collections.abc import AsyncIterator
 
+import orjson
+
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.models import SSEMessage
@@ -14,6 +16,64 @@ _SSE_COMMENT_FIELD_NAME = "comment"
 _SSE_DATA_FIELD_NAME = "data"
 _SSE_ERROR_EVENT_VALUE = "error"
 _SSE_EVENT_FIELD_NAME = "event"
+
+
+def _parse_chat_chunk_choices(data: str) -> list[dict[str, object]]:
+    try:
+        chunk = orjson.loads(data)
+    except orjson.JSONDecodeError as e:
+        raise SSEResponseError(
+            "Chat stream completion could not be verified: malformed SSE data",
+            error_code=502,
+        ) from e
+    if (
+        not isinstance(chunk, dict)
+        or not isinstance(choices := chunk.get("choices"), list)
+        or any(not isinstance(choice, dict) for choice in choices)
+        or any(
+            (reason := choice.get("finish_reason")) is not None
+            and (not isinstance(reason, str) or not reason)
+            for choice in choices
+        )
+    ):
+        raise SSEResponseError(
+            "Chat stream completion could not be verified: unsupported chunk shape",
+            error_code=502,
+        )
+    return choices
+
+
+def _validate_chat_stream_completion(messages: list[SSEMessage]) -> None:
+    saw_done = False
+    seen_choices: set[int] = set()
+    finished_choices: set[int] = set()
+    for message in messages:
+        if not any(packet.name == _SSE_DATA_FIELD_NAME for packet in message.packets):
+            continue
+        if saw_done:
+            raise SSEResponseError(
+                "Chat stream completion marker [DONE] was followed by SSE data",
+                error_code=502,
+            )
+        data = message.extract_data_content()
+        if data == "[DONE]":
+            saw_done = True
+            continue
+        for position, choice in enumerate(_parse_chat_chunk_choices(data)):
+            index = choice.get("index", position)
+            if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+                raise SSEResponseError(
+                    "Chat stream completion could not be verified: invalid choice index",
+                    error_code=502,
+                )
+            seen_choices.add(index)
+            if choice.get("finish_reason") is not None:
+                finished_choices.add(index)
+    if not saw_done and (not seen_choices or not seen_choices <= finished_choices):
+        raise SSEResponseError(
+            "Chat stream ended without a completion signal ([DONE] or finish_reason)",
+            error_code=502,
+        )
 
 
 class AsyncSSEStreamReader:
