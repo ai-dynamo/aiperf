@@ -124,6 +124,15 @@ def test_fixer_normalizes_legacy_nvidia_headers(
             "   SPDX-License-Identifier: MIT */\nbody {}\n",
             id="invalid-block-comment-license",
         ),
+        pytest.param(
+            "invalid.cpp",
+            "/*\n"
+            "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION "
+            "& AFFILIATES. All rights reserved.\n"
+            "SPDX-License-Identifier: MIT\n"
+            "*/\nint main() {}\n",
+            id="c-style-block-comment-license",
+        ),
     ],
 )
 def test_fixer_repairs_incomplete_spdx_header(

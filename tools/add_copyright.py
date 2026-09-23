@@ -376,17 +376,13 @@ def _line_header_span(content: str, copyright_match: re.Match[str]) -> tuple[int
     return start, end
 
 
-def _spdx_header_span(
-    content: str, copyright_match: re.Match[str], rendered_header: str
-) -> tuple[int, int]:
+def _spdx_header_span(content: str, copyright_match: re.Match[str]) -> tuple[int, int]:
     delimiters = (
         ("<!--", "-->"),
         ("{{/*", "*/}}"),
         ("/*", "*/"),
     )
     for opener, closer in delimiters:
-        if not rendered_header.startswith(opener):
-            continue
         start = content.rfind(opener, 0, copyright_match.start())
         close = content.find(closer, copyright_match.end())
         if start >= 0 and close >= 0:
@@ -408,7 +404,7 @@ def _repair_spdx_license(
 
     plain_header = copyright_match.group(0) + "\nSPDX-License-Identifier: Apache-2.0"
     rendered_header = inserter(formatter(plain_header), "").rstrip("\n")
-    start, end = _spdx_header_span(content, copyright_match, rendered_header)
+    start, end = _spdx_header_span(content, copyright_match)
     existing_header = content[start:end]
     license_match = LICENSE_IDENTIFIER_PAT.search(existing_header)
     if license_match is not None and license_match.group("expression") == "Apache-2.0":

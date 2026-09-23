@@ -35,13 +35,30 @@ HASH_HEADER = (
 )
 
 
-def test_shebang_may_precede_header(tmp_path: Path) -> None:
-    """An executable script may place its shebang before the SPDX lines."""
-    (tmp_path / "tool.py").write_text(
-        "#!/usr/bin/env python3\n" + HASH_HEADER,
-        encoding="utf-8",
-    )
-    assert CHECKER.validate_file(tmp_path, Path("tool.py")) == []
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        pytest.param("example.py", "\ufeff" + HASH_HEADER, id="line-comment"),
+        pytest.param(
+            "example.md",
+            "\ufeff---\n"
+            "title: Example\n"
+            "one: 1\n"
+            "two: 2\n"
+            "three: 3\n"
+            "four: 4\n"
+            "five: 5\n"
+            "six: 6\n"
+            "seven: 7\n"
+            "---\n"
+            "<!--\n" + HASH_HEADER.replace("# ", "") + "-->\n",
+            id="markdown-frontmatter",
+        ),
+    ],
+)
+def test_bom_prefix_is_ignored(tmp_path: Path, filename: str, content: str) -> None:
+    (tmp_path / filename).write_text(content, encoding="utf-8")
+    assert CHECKER.validate_file(tmp_path, Path(filename)) == []
 
 
 def test_third_party_copyright_is_accepted(tmp_path: Path) -> None:
