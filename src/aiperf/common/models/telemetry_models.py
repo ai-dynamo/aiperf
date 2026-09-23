@@ -8,6 +8,7 @@ from numpy.typing import NDArray
 from pydantic import AliasChoices, ConfigDict, Field
 
 from aiperf.common.exceptions import NoMetricValue
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.record_models import MetricResult
@@ -134,7 +135,7 @@ class TelemetryMetrics(AIPerfBaseModel):
         description="AMD GPU temperature in °C (junction sensor preferred, "
         "hotspot fallback)",
     )
-    amd_memory_temperature: float | None = Field(
+    amd_memory_temperature: FiniteFloat | None = Field(
         default=None,
         description="AMD GPU memory temperature in °C",
     )
