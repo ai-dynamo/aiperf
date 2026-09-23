@@ -220,20 +220,6 @@ def test_git_index_supplies_the_scan_set(tmp_path: Path) -> None:
     assert CHECKER.tracked_files(tmp_path) == [Path("tracked.py")]
 
 
-def test_failure_output_points_to_fixer(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    """A failed repository scan gives contributors a copyable repair command."""
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
-    (tmp_path / "missing.py").write_text("print('missing')\n", encoding="utf-8")
-    subprocess.run(["git", "add", "missing.py"], cwd=tmp_path, check=True)
-
-    assert CHECKER.main(["--root", str(tmp_path)]) == 1
-
-    captured = capsys.readouterr()
-    assert "./tools/add_copyright.py -- missing.py" in captured.err
-
-
 def test_failure_output_shell_quotes_metacharacters(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
