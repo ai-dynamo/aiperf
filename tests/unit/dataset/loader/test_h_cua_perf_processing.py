@@ -143,6 +143,37 @@ class TestScreenshotWindow:
         assert parts[idx - 1] == {"type": "text", "text": "obs 1 before"}
         assert parts[idx + 1] == {"type": "text", "text": "obs 1 after"}
 
+    def test_window_does_not_restore_across_a_history_reset(self) -> None:
+        before_reset = [_record(0), _record(1), _record(2)]
+        after_reset = [record("traj-reset", 0), record("traj-reset", 1)]
+        records = before_reset + after_reset
+        apply_screenshot_window(records, 3)
+
+        assert [_image_slots(r) for r in records] == [
+            [0],
+            [0, 1],
+            [0, 1, 2],
+            [0],
+            [0, 1],
+        ]
+        parts, idx = screenshot_slots(records[4]["messages"])[0]
+        assert parts[idx] == image("traj-reset", 0)
+
+    def test_restored_screenshot_leaves_no_empty_text_parts(self) -> None:
+        system = {"role": "system", "content": "sys"}
+        placeholder = {"type": "text", "text": IMAGE_OMITTED_TEXT}
+        first = {"messages": [system, {"role": "user", "content": [_image(0)]}]}
+        second = {
+            "messages": [
+                system,
+                {"role": "user", "content": [placeholder]},
+                {"role": "user", "content": [_image(1)]},
+            ]
+        }
+        apply_screenshot_window([first, second], 2)
+
+        assert second["messages"][1]["content"] == [_image(0)]
+
     def test_narrower_window_drops_screenshots(self) -> None:
         records = [_record(2, image_slots={0, 1, 2})]
         apply_screenshot_window(records, 1)

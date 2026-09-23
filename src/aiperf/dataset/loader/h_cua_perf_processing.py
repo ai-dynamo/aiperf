@@ -187,7 +187,37 @@ def iter_selected_records(
 def apply_screenshot_window(records: list[dict[str, Any]], n_screenshots: int) -> None:
     """Resize the screenshot window of every record of one trajectory, in place, to its last n_screenshots slots."""
     slots_per_record = [screenshot_slots(record["messages"]) for record in records]
+    for start, stop in _history_segments(records, slots_per_record):
+        _window_segment(slots_per_record[start:stop], n_screenshots)
 
+
+def _history_segments(
+    records: list[dict[str, Any]],
+    slots_per_record: list[list[tuple[list[dict[str, Any]], int]]],
+) -> Iterator[tuple[int, int]]:
+    """Spans of records whose slot indexes refer to the same observations.
+
+    Message and slot counts only grow while a trajectory's history is
+    append-only, so a drop in either means the history was reset: the agent
+    compacted its context, or an auxiliary model was invoked under the same
+    session id. Slot indexes restart there, so windowing across the boundary
+    would restore a screenshot from before the reset into a slot that now
+    stands for a different observation.
+    """
+    start = 0
+    for idx in range(1, len(records)):
+        if len(slots_per_record[idx]) < len(slots_per_record[idx - 1]) or len(
+            records[idx]["messages"]
+        ) < len(records[idx - 1]["messages"]):
+            yield start, idx
+            start = idx
+    yield start, len(records)
+
+
+def _window_segment(
+    slots_per_record: list[list[tuple[list[dict[str, Any]], int]]],
+    n_screenshots: int,
+) -> None:
     images_by_slot: dict[int, dict[str, Any]] = {}
     for slots in slots_per_record:
         for slot_idx, (parts, part_idx) in enumerate(slots):
@@ -238,10 +268,12 @@ def _restore_screenshot(
     text = parts[part_idx]["text"]
     marker = IMAGE_OMITTED_TEXT if IMAGE_OMITTED_TEXT in text else IMAGE_PLACEHOLDER
     before, _, after = text.partition(marker)
+    # Empty sides are dropped: the placeholder often begins or ends its text
+    # part, and a zero-length text part is a malformed content part on the wire.
     parts[part_idx : part_idx + 1] = [
-        {"type": "text", "text": before},
+        *([{"type": "text", "text": before}] if before else []),
         image,
-        {"type": "text", "text": after},
+        *([{"type": "text", "text": after}] if after else []),
     ]
 
 
