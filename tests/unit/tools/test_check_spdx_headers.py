@@ -140,6 +140,28 @@ def test_non_apache_identifier_is_rejected(tmp_path: Path) -> None:
     assert "malformed or missing Apache-2.0 header" in violations[0]
 
 
+@pytest.mark.parametrize(
+    "filename",
+    [
+        *(f"example{suffix}" for suffix in sorted(CHECKER.SOURCE_SUFFIXES)),
+        *sorted(CHECKER.SOURCE_FILENAMES),
+        *(f"{prefix}example" for prefix in CHECKER.SOURCE_FILENAME_PREFIXES),
+    ],
+)
+def test_bare_spdx_lines_are_rejected_for_every_source_type(
+    tmp_path: Path, filename: str
+) -> None:
+    """SPDX tags must use the source type's supported comment syntax."""
+    (tmp_path / filename).write_text(
+        HASH_HEADER.replace("# ", "") + "key: value\n",
+        encoding="utf-8",
+    )
+
+    violations = CHECKER.validate_file(tmp_path, Path(filename))
+
+    assert "invalid comment syntax" in violations[0]
+
+
 def test_exempt_artifacts_are_accepted(tmp_path: Path) -> None:
     """Third-party, non-commentable, and symlink artifacts are exempt."""
     vendor = tmp_path / "src/aiperf/api/static/vendor/prism-core.js"

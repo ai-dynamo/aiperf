@@ -70,6 +70,36 @@ def test_fixer_preserves_markdown_frontmatter(tmp_path: Path, suffix: str) -> No
 
 
 @pytest.mark.parametrize(
+    "legacy_copyright",
+    [
+        "SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION",
+        "SPDX-FileCopyrightText: Copyright 2025 NVIDIA CORPORATION",
+        "SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION.",
+        "SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES",
+        "SPDX-FileCopyrightText: Copyright (c) 2026-2025 NVIDIA CORPORATION "
+        "& AFFILIATES. All rights reserved.",
+        "SPDX-FileCopyrightText: Copyright (c) 2025 Nvidia Corporation "
+        "& Affiliates. All rights reserved.",
+    ],
+)
+def test_fixer_normalizes_legacy_nvidia_headers(
+    tmp_path: Path, legacy_copyright: str
+) -> None:
+    """Legacy NVIDIA SPDX forms are repaired without adding a second header."""
+    path = tmp_path / "legacy.py"
+    path.write_text(
+        f"# {legacy_copyright}\n# SPDX-License-Identifier: Apache-2.0\n",
+        encoding="utf-8",
+    )
+
+    changed, status = add_copyright.process_file(path, LICENSE_TEXT)
+
+    assert (changed, status) == (True, "updated year")
+    assert path.read_text(encoding="utf-8").count("NVIDIA CORPORATION") == 1
+    assert checker.validate_file(tmp_path, Path("legacy.py")) == []
+
+
+@pytest.mark.parametrize(
     ("filename", "content", "critical_prefix"),
     [
         pytest.param(
