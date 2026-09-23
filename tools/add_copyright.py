@@ -12,7 +12,9 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import re
+import shlex
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
@@ -384,8 +386,9 @@ def _spdx_header_span(content: str, copyright_match: re.Match[str]) -> tuple[int
     )
     for opener, closer in delimiters:
         start = content.rfind(opener, 0, copyright_match.start())
+        previous_close = content.rfind(closer, 0, copyright_match.start())
         close = content.find(closer, copyright_match.end())
-        if start >= 0 and close >= 0:
+        if start >= 0 and start > previous_close and close >= 0:
             end = close + len(closer)
             if end < len(content) and content[end] == "\n":
                 end += 1
@@ -461,6 +464,12 @@ def _repair_spdx_license(
 
     trailing_newline = "\n" if existing_header.endswith("\n") else ""
     return content[:start] + rendered_header + trailing_newline + content[end:], True
+
+
+def _files_to_process(files: Sequence[str], args_env: str | None) -> list[str]:
+    if args_env is None:
+        return list(files)
+    return [*files, *shlex.split(os.environ.get(args_env, ""))]
 
 
 # =============================================================================
@@ -557,9 +566,15 @@ def main() -> int:
         "--dry-run", "-n", action="store_true", help="Show what would change"
     )
     parser.add_argument("--verbose", "-v", action="store_true", help="Show all files")
+    parser.add_argument("--args-env", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
-    if not args.files:
+    try:
+        files = _files_to_process(args.files, args.args_env)
+    except ValueError as error:
+        parser.error(f"invalid argument string: {error}")
+
+    if not files:
         parser.print_help()
         return 0
 
@@ -572,7 +587,7 @@ def main() -> int:
     changed_count = 0
     error_count = 0
 
-    for file_path in args.files:
+    for file_path in files:
         path = Path(file_path)
         changed, status = process_file(
             path, license_text, check=args.check, dry_run=args.dry_run

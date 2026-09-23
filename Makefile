@@ -459,8 +459,9 @@ generate-all-docs: #? generate all documentation files.
 	$(activate_venv) && ./tools/generate_cli_docs.py
 	$(activate_venv) && ./tools/generate_env_vars_docs.py
 
+add-copyright: export AIPERF_COPYRIGHT_ARGS := $(value args)
 add-copyright: #? add the copyright header to the files.
-	$(activate_venv) && ./tools/add_copyright.py $(args)
+	$(activate_venv) && ./tools/add_copyright.py --args-env AIPERF_COPYRIGHT_ARGS
 
 check-spdx-headers: #? validate SPDX headers on tracked first-party source files.
 	$(activate_venv) && python tools/check_spdx_headers.py
