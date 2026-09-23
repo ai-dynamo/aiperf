@@ -23,7 +23,7 @@ from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
 from aiperf.transports.http_defaults import AioHttpDefaults, SocketDefaults
 from aiperf.transports.sse_utils import (
     AsyncSSEStreamReader,
-    validate_chat_stream_completion,
+    _validate_chat_stream_completion,
 )
 
 if TYPE_CHECKING:
@@ -243,7 +243,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                                 AsyncSSEStreamReader.inspect_message_for_error(message)
                                 record.responses.append(message)
                         if check_completion:
-                            validate_chat_stream_completion(record.responses)
+                            _validate_chat_stream_completion(record.responses)
                         record.end_perf_ns = time.perf_counter_ns()
                     else:
                         if check_completion:

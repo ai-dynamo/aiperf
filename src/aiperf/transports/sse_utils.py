@@ -18,7 +18,7 @@ _SSE_ERROR_EVENT_VALUE = "error"
 _SSE_EVENT_FIELD_NAME = "event"
 
 
-def validate_chat_stream_completion(messages: list[SSEMessage]) -> None:
+def _validate_chat_stream_completion(messages: list[SSEMessage]) -> None:
     saw_done = False
     seen_choices: set[int] = set()
     finished_choices: set[int] = set()
