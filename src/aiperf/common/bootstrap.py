@@ -188,6 +188,22 @@ def bootstrap_and_run_service(
             await service.initialize()
             await service.start()
             await service.stopped_event.wait()
+        except asyncio.CancelledError:
+            # AIPerfLifecycleMixin._fail() reports a start-up failure by raising
+            # CancelledError -- a BaseException, so `except Exception` below
+            # never sees it, the contextlib.suppress() around the event loop
+            # swallows it, and _exit_if_service_failed further down never runs.
+            # The service then exits cleanly without reporting anything and the
+            # controller times out waiting for a registration that never comes:
+            # 35s and "No workers registered with the credit router" instead of
+            # 1s and the real cause.
+            #
+            # Converted only for a service that actually failed. A genuine
+            # cancellation -- Ctrl-C, cooperative shutdown -- must keep
+            # propagating, or every clean interrupt becomes a non-zero exit.
+            if service.state != LifecycleState.FAILED:
+                raise
+            service.exception("Service failed during start-up")
         except Exception as e:
             service.exception(f"Unhandled exception in service: {e}")
 

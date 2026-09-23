@@ -154,6 +154,31 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             await self._set_state(final_state)
             self.debug(lambda: f"{self} is now {final_state.title()}")
             event.set()
+        except asyncio.CancelledError as e:
+            # A *child* lifecycle reports its own start-up failure by raising
+            # CancelledError from _fail() -- a BaseException, so it slips past
+            # the `except Exception` below and this parent never reaches
+            # _fail(), never becoming FAILED. Nothing upstream can then tell a
+            # failed start from a clean stop: bootstrap's
+            # _exit_if_service_failed sees a healthy service and the process
+            # exits 0, so a worker whose request signer could not resolve
+            # credentials surfaces 30s later as "No workers registered with the
+            # credit router" instead of the real cause.
+            #
+            # Genuine cancellation must still propagate untouched, or a
+            # cooperative shutdown turns into a spurious failure.
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise
+            # Prefer the child's underlying error: _fail() raises
+            # `CancelledError(...) from e`, so __cause__ carries the diagnosis
+            # a user can act on.
+            cause = e.__cause__
+            await self._fail(
+                cause
+                if isinstance(cause, Exception)
+                else RuntimeError(str(e) or repr(e))
+            )
         except Exception as e:
             await self._fail(e)
 
