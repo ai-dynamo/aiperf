@@ -126,6 +126,13 @@ class TestAioHttpClient:
         [
             (b"", True),
             (b"data: [DONE]\n\n", False),
+            (
+                b'data: [DONE]\n\ndata: {"choices":[{"finish_reason":null}]}\n\n',
+                True,
+            ),
+            (b"data: [DONE]\n\ndata: [DONE]\n\n", True),
+            (b"data: [DONE]\n\ndata:\n\n", True),
+            (b"data: [DONE]\n\n: keepalive\n\nid: 7\n\n", False),
             (b'data: {"choices":[]}\n\ndata: [DONE]\n\n', False),
             (b'data: {"choices":[]}\n\n', True),
             (b'data: {"choices":{}}\n\ndata: [DONE]\n\n', True),
