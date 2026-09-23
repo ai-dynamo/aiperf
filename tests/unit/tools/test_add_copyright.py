@@ -148,6 +148,26 @@ def test_fixer_repairs_incomplete_spdx_header(
     assert checker.validate_file(tmp_path, Path(filename)) == []
 
 
+def test_fixer_repairs_bare_spdx_header(tmp_path: Path) -> None:
+    path = tmp_path / "invalid.yaml"
+    path.write_text(
+        "SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION "
+        "& AFFILIATES. All rights reserved.\n"
+        "SPDX-License-Identifier: Apache-2.0\n"
+        "value: true\n",
+        encoding="utf-8",
+    )
+
+    assert checker.validate_file(tmp_path, Path("invalid.yaml")) == [
+        "invalid.yaml: SPDX header uses invalid comment syntax"
+    ]
+
+    changed, status = add_copyright.process_file(path, LICENSE_TEXT)
+
+    assert (changed, status) == (True, "repaired SPDX header")
+    assert checker.validate_file(tmp_path, Path("invalid.yaml")) == []
+
+
 @pytest.mark.parametrize(
     ("filename", "content", "critical_prefix"),
     [

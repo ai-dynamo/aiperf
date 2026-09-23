@@ -393,7 +393,52 @@ def _spdx_header_span(content: str, copyright_match: re.Match[str]) -> tuple[int
     return _line_header_span(content, copyright_match)
 
 
+def _has_line_comment(line: str, marker: str) -> bool:
+    tag_index = line.find("SPDX-")
+    return tag_index >= 0 and line[:tag_index].strip() == marker
+
+
+def _is_inside_comment_block(content: str, tag: str, opener: str, closer: str) -> bool:
+    tag_position = content.find(tag)
+    if tag_position < 0:
+        return False
+    open_position = content.rfind(opener, 0, tag_position)
+    close_position = content.rfind(closer, 0, tag_position)
+    return open_position > close_position and content.find(closer, tag_position) >= 0
+
+
+def _has_valid_spdx_syntax(path: Path, header: str, rendered_header: str) -> bool:
+    tags = ("SPDX-FileCopyrightText:", "SPDX-License-Identifier:")
+    lines = header.splitlines()
+    tag_lines = [next((line for line in lines if tag in line), "") for tag in tags]
+    if rendered_header.startswith("// "):
+        return all(_has_line_comment(line, "//") for line in tag_lines) or all(
+            _is_inside_comment_block(header, tag, "/*", "*/") for tag in tags
+        )
+    if rendered_header.startswith("/* "):
+        return all(_is_inside_comment_block(header, tag, "/*", "*/") for tag in tags)
+    if rendered_header.startswith("<!--"):
+        valid = all(
+            _is_inside_comment_block(header, tag, "<!--", "-->") for tag in tags
+        )
+        return valid or (
+            path.suffix.lower() in {".md", ".mdc"}
+            and all(_has_line_comment(line, "#") for line in tag_lines)
+        )
+    if rendered_header.startswith("{{/*"):
+        return all(
+            _is_inside_comment_block(header, tag, "{{/*", "*/}}") for tag in tags
+        ) or all(_has_line_comment(line, "#") for line in tag_lines)
+
+    rendered_line = next(
+        line for line in rendered_header.splitlines() if tags[0] in line
+    )
+    marker = rendered_line[: rendered_line.find(tags[0])].strip()
+    return all(_has_line_comment(line, marker) for line in tag_lines)
+
+
 def _repair_spdx_license(
+    path: Path,
     content: str,
     formatter: Callable[[str], str],
     inserter: Callable[[str, str], str],
@@ -407,28 +452,15 @@ def _repair_spdx_license(
     start, end = _spdx_header_span(content, copyright_match)
     existing_header = content[start:end]
     license_match = LICENSE_IDENTIFIER_PAT.search(existing_header)
-    if license_match is not None and license_match.group("expression") == "Apache-2.0":
+    if (
+        license_match is not None
+        and license_match.group("expression") == "Apache-2.0"
+        and _has_valid_spdx_syntax(path, existing_header, rendered_header)
+    ):
         return content, False
 
     trailing_newline = "\n" if existing_header.endswith("\n") else ""
-    copyright_line_start = content.rfind("\n", 0, copyright_match.start()) + 1
-    copyright_line_end = content.find("\n", copyright_match.end())
-    if copyright_line_end < 0:
-        copyright_line_end = len(content)
-    copyright_line = content[copyright_line_start:copyright_line_end]
-    prefix = copyright_line[: copyright_match.start() - copyright_line_start]
-    suffix = copyright_line[copyright_match.end() - copyright_line_start :]
-    if prefix.strip() in {"#", "//", "%%", ".."}:
-        replacement = (
-            copyright_line
-            + "\n"
-            + prefix
-            + "SPDX-License-Identifier: Apache-2.0"
-            + suffix
-        )
-    else:
-        replacement = rendered_header
-    return content[:start] + replacement + trailing_newline + content[end:], True
+    return content[:start] + rendered_header + trailing_newline + content[end:], True
 
 
 # =============================================================================
@@ -458,7 +490,6 @@ def process_file(
     content = path.read_text()
     formatter, inserter = handler
 
-    # If file already has NVIDIA copyright, repair the complete header in place.
     if has_nvidia_copyright(content):
         legacy_match = NVIDIA_COPYRIGHT_PAT.search(content)
         canonical_match = CANONICAL_NVIDIA_COPYRIGHT_PAT.search(content)
@@ -473,7 +504,7 @@ def process_file(
         )
         updated_year = update_copyright_year(content)
         updated, repaired_license = _repair_spdx_license(
-            updated_year, formatter, inserter
+            path, updated_year, formatter, inserter
         )
         if content == updated:
             return False, "up-to-date"
