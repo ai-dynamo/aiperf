@@ -19,7 +19,6 @@ _SSE_EVENT_FIELD_NAME = "event"
 
 
 def validate_chat_stream_completion(messages: list[SSEMessage]) -> None:
-    """Require an OpenAI chat stream to finish before treating EOF as success."""
     saw_done = False
     seen_choices: set[int] = set()
     finished_choices: set[int] = set()
