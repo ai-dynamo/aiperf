@@ -178,6 +178,38 @@ class TestExtractMetrics:
         assert metrics["initial_context"].tolist() == [1000.0]
         assert metrics["new_tokens_per_turn"].tolist() == [75.0, 125.0]
 
+    def test_total_isl_reconstructs_cumulative_context_across_turns(self) -> None:
+        sessions = {
+            "s1": [
+                ParsedTurn(
+                    session_id="s1",
+                    input_length=1000,
+                    output_length=20,
+                    hash_ids=[],
+                    delay_ms=0.0,
+                ),
+                ParsedTurn(
+                    session_id="s1",
+                    input_length=75,
+                    output_length=10,
+                    hash_ids=[],
+                    delay_ms=1.0,
+                ),
+                ParsedTurn(
+                    session_id="s1",
+                    input_length=125,
+                    output_length=10,
+                    hash_ids=[],
+                    delay_ms=1.0,
+                ),
+            ]
+        }
+
+        metrics = extract_metrics(sessions)
+
+        # turn0: 1000. turn1: 1000 + 20 + 75. turn2: 1095 + 10 + 125.
+        assert metrics["total_isl"].tolist() == [1000.0, 1095.0, 1230.0]
+
 
 class TestBuildReportData:
     def test_comparisons_include_target_metrics(self, run_dir: Path) -> None:

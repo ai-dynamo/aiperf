@@ -155,6 +155,38 @@ The current schema version is exported as the top-level `schema_version` field o
 
 The `schema_version` documented on this page applies only to `profile_export_aiperf.json`. The other files evolve on their own cadence.
 
+### `outputs.json` schema
+
+`outputs.json` holds the generated response text for each request. It is written when `--export-outputs-json` is set, which `--export-level raw` implies (pass `--no-export-outputs-json` to opt out). With `--profile-export-prefix foo` the file is named `foo_outputs.json`.
+
+It carries its own `schema_version` (`OutputsJsonExporter.SCHEMA_VERSION`, currently `"1.1"`), independent of the one documented on this page.
+
+```json
+{
+  "schema_version": "1.1",
+  "data": [
+    {
+      "session_num": 0,
+      "conversation_id": "964a5c5e-9415-4a69-8c81-6ab51671ff39",
+      "turn_index": 0,
+      "x_request_id": "ebeeb5d1-2afa-4d58-bacf-2866e69d28e2",
+      "benchmark_phase": "profiling",
+      "request_start_ns": 1788226305237111762,
+      "request_end_ns": 1788226305315824596,
+      "metrics": {"input_sequence_length": 20, "output_token_count": 10},
+      "response_text": "tys field Thy youths proud livery so gazed"
+    }
+  ],
+  "warmup": []
+}
+```
+
+- **`data` is profiling-only.** Warmup responses live in the separate top-level `warmup` array, so consumers that aggregate over `data` never count warmup traffic. Both arrays are sorted by `(session_num, turn_index)`.
+- **`benchmark_phase`** is `profiling` or `warmup` and matches the array the entry sits in. Only a known-warmup phase is routed to `warmup`; an unrecognized phase stays in `data`.
+- **`response_text`** is the concatenated generated text. For models that emit a separate reasoning channel, reasoning and answer are concatenated. It is `null` when the response carried no content.
+- **`metrics`** holds an allowlisted subset in display units (`input_sequence_length`, `output_token_count`, `output_sequence_length`, `request_latency`, `time_to_first_token`, `inter_token_latency`). Streaming-only metrics are absent from non-streaming records.
+- Schema `1.1` added `warmup` and `benchmark_phase`; both are additive over `1.0`.
+
 ### Named phase artifacts
 
 Named multi-phase workflows keep the root exports (`profile_export_aiperf.{json,csv}`, `server_metrics_export.{json,csv}`, and related files) as backward-compatible aggregate artifacts. Phase-scoped artifacts are additive and are referenced from `phase_manifest.json`, for example `phases/<phase_name>/profile_export_aiperf.json`, `phases/<phase_name>/profile_export_aiperf.csv`, and, when server metrics produced data for that phase, `phases/<phase_name>/server_metrics.json`.

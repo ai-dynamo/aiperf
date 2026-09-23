@@ -23,6 +23,7 @@ from aiperf.cli_commands.kube.cleanup import _is_terminal, cleanup
 from aiperf.cli_commands.kube.delete import delete
 from aiperf.cli_commands.kube.shutdown import shutdown
 from aiperf.kubernetes.environment import K8sEnvironment
+from tests.harness.k8s import strict_patch_mock
 
 
 @asynccontextmanager
@@ -90,7 +91,7 @@ def _custom(*, get: Any = None, listing: dict | None = None) -> MagicMock:
         get_namespaced_custom_object=AsyncMock(side_effect=get),
         list_namespaced_custom_object=AsyncMock(side_effect=_list),
         delete_namespaced_custom_object=AsyncMock(),
-        patch_namespaced_custom_object=AsyncMock(),
+        patch_namespaced_custom_object=strict_patch_mock(),
     )
 
 
@@ -240,9 +241,9 @@ class TestCleanup:
         with _patched(custom):
             await cleanup(force=True, all_benchmarks=True)
         custom.patch_namespaced_custom_object.assert_awaited()
-        assert custom.patch_namespaced_custom_object.await_args.kwargs["body"] == {
-            "spec": {"cancel": True}
-        }
+        kwargs = custom.patch_namespaced_custom_object.await_args.kwargs
+        assert kwargs["body"] == {"spec": {"cancel": True}}
+        assert kwargs["_content_type"] == "application/merge-patch+json"
         custom.delete_namespaced_custom_object.assert_awaited()
 
     @pytest.mark.asyncio
