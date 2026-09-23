@@ -256,11 +256,21 @@ def validate_file(root: Path, relative_path: Path) -> list[str]:
     return []
 
 
+def validation_results(
+    root: Path, paths: Iterable[Path]
+) -> list[tuple[Path, list[str]]]:
+    return [
+        (path, validate_file(root, path))
+        for path in sorted(paths, key=lambda item: item.as_posix())
+    ]
+
+
 def validate_paths(root: Path, paths: Iterable[Path]) -> list[str]:
-    violations: list[str] = []
-    for path in sorted(paths, key=lambda item: item.as_posix()):
-        violations.extend(validate_file(root, path))
-    return violations
+    return [
+        violation
+        for _, path_violations in validation_results(root, paths)
+        for violation in path_violations
+    ]
 
 
 def tracked_files(root: Path) -> list[Path]:
@@ -293,18 +303,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"unable to enumerate tracked files: {error}", file=sys.stderr)
         return 2
 
-    violations = validate_paths(root, paths)
+    results = validation_results(root, paths)
+    violations = [
+        violation for _, path_violations in results for violation in path_violations
+    ]
     if violations:
         print("SPDX header violations:", file=sys.stderr)
         for violation in violations:
             print(f"- {violation}", file=sys.stderr)
-        violation_paths = {Path(violation.split(":", 1)[0]) for violation in violations}
         fixable_paths = [
             str(path)
-            for path in paths
-            if path in violation_paths
-            and not is_exempt(root, path)
-            and requires_header(path)
+            for path, path_violations in results
+            if path_violations and not is_exempt(root, path) and requires_header(path)
         ]
         fix_command = shlex.join(["./tools/add_copyright.py", "--", *fixable_paths])
         print(
