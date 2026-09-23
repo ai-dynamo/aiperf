@@ -7,6 +7,7 @@ Publishes phase events (start, progress, complete) to message bus.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -41,6 +42,7 @@ class PhasePublisher:
         pub_client: PubClientProtocol,
         service_id: str,
         profile_cancel_sender: Callable[[], Awaitable[None]],
+        warmup_boundary_ready: asyncio.Event | None = None,
     ):
         """Initialize publisher with message bus client.
 
@@ -49,10 +51,14 @@ class PhasePublisher:
         a command to the controller, which relays it to the peer services. The
         publisher stays transport-agnostic and the owning service supplies its
         own control-channel send.
+
+        ``warmup_boundary_ready`` is set by TimingManager when
+        ServerMetricsManager publishes the warmup boundary acknowledgment.
         """
         self._pub_client = pub_client
         self._service_id = service_id
         self._profile_cancel_sender = profile_cancel_sender
+        self._warmup_boundary_ready = warmup_boundary_ready
 
     async def publish_phases_configured(self, configs: list[CreditPhaseConfig]) -> None:
         """Publish phases configured event."""
@@ -144,3 +150,22 @@ class PhasePublisher:
         cancel its own orchestrator locally.
         """
         await self._profile_cancel_sender()
+
+    def clear_warmup_boundary_ready(self) -> None:
+        """Reset before publishing CREDIT_PHASE_COMPLETE for a warmup phase."""
+        if self._warmup_boundary_ready is not None:
+            self._warmup_boundary_ready.clear()
+
+    async def wait_for_warmup_boundary_ready(self, timeout: float) -> bool:
+        """Wait for ServerMetricsManager's warmup boundary acknowledgment.
+
+        Returns True when the ready event fires, False on timeout or when no
+        event was wired (server metrics disabled / tests without TimingManager).
+        """
+        if self._warmup_boundary_ready is None:
+            return True
+        try:
+            await asyncio.wait_for(self._warmup_boundary_ready.wait(), timeout=timeout)
+            return True
+        except TimeoutError:
+            return False
