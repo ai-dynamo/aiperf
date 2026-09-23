@@ -227,41 +227,6 @@ This document provides attribution information for public domain assets used in 
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
 
-### PrismJS (syntax highlighting)
-
-**Asset Information:**
-- **File(s)**: [`src/aiperf/api/static/vendor/prism-core.js`](src/aiperf/api/static/vendor/prism-core.js), [`src/aiperf/api/static/vendor/prism-python.js`](src/aiperf/api/static/vendor/prism-python.js), [`src/aiperf/api/static/vendor/prism-bash.js`](src/aiperf/api/static/vendor/prism-bash.js), and [`src/aiperf/api/static/vendor/prism-tomorrow.css`](src/aiperf/api/static/vendor/prism-tomorrow.css) (vendored files, v1.30.0)
-- **Source**: [PrismJS/prism](https://github.com/PrismJS/prism/tree/v1.30.0) (npm: `prismjs`)
-- **Author**: Lea Verou and PrismJS contributors
-- **Copyright**: Copyright (c) 2012 Lea Verou
-- **License**: MIT License
-- **Usage**: Same-origin syntax highlighting for Python and Bash snippets in the legacy API dashboard.
-- **Upstream notices**: `prism-tomorrow.css` identifies Rose Pritchard as its author and states that the theme is based on Chris Kempson's Tomorrow Night Eighties theme. `prism-core.js` identifies Lea Verou as its author.
-
-**License Text:**
-
-> MIT LICENSE
->
-> Copyright (c) 2012 Lea Verou
->
-> Permission is hereby granted, free of charge, to any person obtaining a copy
-> of this software and associated documentation files (the "Software"), to deal
-> in the Software without restriction, including without limitation the rights
-> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-> copies of the Software, and to permit persons to whom the Software is
-> furnished to do so, subject to the following conditions:
->
-> The above copyright notice and this permission notice shall be included in
-> all copies or substantial portions of the Software.
->
-> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-> THE SOFTWARE.
-
 ### Preact (browser runtime)
 
 **Asset Information:**
@@ -595,11 +560,13 @@ This document provides attribution information for public domain assets used in 
 ### PrismJS (syntax highlighting)
 
 **Asset Information:**
-- **File(s)**: [`src/aiperf/api/static/vendor/prism-core.js`](src/aiperf/api/static/vendor/prism-core.js), [`prism-python.js`](src/aiperf/api/static/vendor/prism-python.js), [`prism-bash.js`](src/aiperf/api/static/vendor/prism-bash.js), [`prism-tomorrow.css`](src/aiperf/api/static/vendor/prism-tomorrow.css) (vendored builds, v1.30.0)
-- **Source**: [PrismJS/prism](https://github.com/PrismJS/prism) (npm: `prismjs`)
-- **Author**: Lea Verou
+- **File(s)**: [`src/aiperf/api/static/vendor/prism-core.js`](src/aiperf/api/static/vendor/prism-core.js), [`src/aiperf/api/static/vendor/prism-python.js`](src/aiperf/api/static/vendor/prism-python.js), [`src/aiperf/api/static/vendor/prism-bash.js`](src/aiperf/api/static/vendor/prism-bash.js), and [`src/aiperf/api/static/vendor/prism-tomorrow.css`](src/aiperf/api/static/vendor/prism-tomorrow.css) (vendored files, v1.30.0)
+- **Source**: [PrismJS/prism](https://github.com/PrismJS/prism/tree/v1.30.0) (npm: `prismjs`)
+- **Author**: Lea Verou and PrismJS contributors
+- **Copyright**: Copyright (c) 2012 Lea Verou
 - **License**: MIT License
 - **Usage**: Same-origin syntax highlighting (Python/Bash) for the local `aiperf profile` HTML dashboard.
+- **Upstream notices**: `prism-tomorrow.css` identifies Rose Pritchard as its author and states that the theme is based on Chris Kempson's Tomorrow Night Eighties theme. `prism-core.js` identifies Lea Verou as its author.
 
 **License Text:**
 

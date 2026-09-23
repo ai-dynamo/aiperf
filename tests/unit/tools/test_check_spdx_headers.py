@@ -143,12 +143,16 @@ def test_exempt_artifacts_are_accepted(tmp_path: Path) -> None:
     vendor = tmp_path / "src/aiperf/api/static/vendor/prism-core.js"
     vendor.parent.mkdir(parents=True)
     vendor.write_text("vendor code\n", encoding="utf-8")
+    pinned_vendor = tmp_path / "src/aiperf/dataset/loader/vendor/source.py"
+    pinned_vendor.parent.mkdir(parents=True)
+    pinned_vendor.write_text("verbatim vendor code\n", encoding="utf-8")
     (tmp_path / "data.json").write_text("{}\n", encoding="utf-8")
     (tmp_path / "target.py").write_text(HASH_HEADER, encoding="utf-8")
     (tmp_path / "link.py").symlink_to("target.py")
 
     paths = [
         Path("src/aiperf/api/static/vendor/prism-core.js"),
+        Path("src/aiperf/dataset/loader/vendor/source.py"),
         Path("data.json"),
         Path("link.py"),
     ]

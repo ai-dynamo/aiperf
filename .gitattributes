@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
 # Normalize line endings to LF on checkout, including on Windows, where
 # git's default core.autocrlf=true otherwise converts text files to CRLF.
 # tests/ui/test_operator_*.py string/regex-strips import lines out of

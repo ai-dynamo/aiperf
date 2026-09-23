@@ -311,6 +311,7 @@ register(
         ),
         basename_is(".dockerignore"),
         basename_is(".editorconfig"),
+        basename_is(".gitattributes"),
         basename_is(".gitignore"),
         basename_is(".helmignore"),
         basename_is("CMakeLists.txt"),

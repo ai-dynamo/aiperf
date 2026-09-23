@@ -23,6 +23,7 @@ EXEMPT_PATHS = {
 EXEMPT_PREFIXES = (
     Path("src/aiperf/api/static/vendor"),
     Path("src/aiperf/api/static-v2/vendor"),
+    Path("src/aiperf/dataset/loader/vendor"),
     Path("src/aiperf/operator/ui/vendor"),
 )
 EXEMPT_SUFFIXES = {
@@ -69,6 +70,7 @@ SOURCE_SUFFIXES = {
 SOURCE_FILENAMES = {
     ".dockerignore",
     ".editorconfig",
+    ".gitattributes",
     ".gitignore",
     ".helmignore",
     "CMakeLists.txt",
