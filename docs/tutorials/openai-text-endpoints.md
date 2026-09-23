@@ -54,6 +54,8 @@ When the server streams multiple choices, every observed choice must finish
 unless the stream sends `[DONE]`.
 The check requires `--streaming --endpoint-type chat`; default runs retain their
 existing stream handling.
+If an individual request overrides `stream` to `false`, the check is skipped for
+that request's non-streaming response.
 
 **Sample Output (Successful Run):**
 ```

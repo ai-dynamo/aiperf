@@ -235,6 +235,33 @@ class TestAioHttpTransport:
         assert record.error is None
         transport.aiohttp_client.post_request.assert_called_once()
 
+    @pytest.mark.parametrize(
+        "payload,expected",
+        [
+            ({"stream": True}, True),
+            ({"stream": False}, False),
+            (b'{"stream":true}', True),
+            (b'{"stream":false}', False),
+        ],
+    )
+    async def test_stream_completion_uses_effective_payload(
+        self, payload: dict | bytes, expected: bool
+    ) -> None:
+        model_endpoint = create_model_endpoint_info(streaming=True)
+        model_endpoint.endpoint.require_stream_completion = True
+        transport = AioHttpTransport(model_endpoint=model_endpoint)
+        await self._setup_initialized_transport_with_mock(transport)
+        try:
+            await transport.send_request(create_request_info(model_endpoint), payload)
+            assert (
+                transport.aiohttp_client.post_request.call_args.kwargs[
+                    "require_stream_completion"
+                ]
+                is expected
+            )
+        finally:
+            await transport.stop()
+
     @pytest.mark.asyncio
     async def test_send_request_builds_correct_url(
         self, transport, model_endpoint_non_streaming

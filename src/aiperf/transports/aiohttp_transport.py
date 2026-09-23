@@ -390,6 +390,20 @@ class AioHttpTransport(BaseTransport):
             else:
                 body = orjson.dumps(payload)
 
+            require_stream_completion = False
+            if request_info.model_endpoint.endpoint.require_stream_completion:
+                if isinstance(payload, bytes):
+                    try:
+                        effective_payload = orjson.loads(payload)
+                    except orjson.JSONDecodeError:
+                        effective_payload = None
+                else:
+                    effective_payload = payload
+                require_stream_completion = (
+                    isinstance(effective_payload, dict)
+                    and effective_payload.get("stream") is True
+                )
+
             # Request signers (SigV4) sign a fixed byte payload; multipart
             # form-data bodies aren't signed. EndpointConfig rejects
             # auth_type + multipart at config time, so an unsigned FormData
@@ -450,6 +464,7 @@ class AioHttpTransport(BaseTransport):
                 first_token_callback=first_token_callback,
                 connector=connector,
                 connector_owner=connector_owner,
+                require_stream_completion=require_stream_completion,
                 **redirect_kwargs,
             )
             record.request_headers = redact_headers(headers)

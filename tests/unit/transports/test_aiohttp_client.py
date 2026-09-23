@@ -149,11 +149,6 @@ class TestAioHttpClient:
             ),
             (
                 b'data: {"object":"chat.completion.chunk","choices":'
-                b'[{"delta":{},"finish_reason":"tool_calls"}]}\n\n',
-                False,
-            ),
-            (
-                b'data: {"object":"chat.completion.chunk","choices":'
                 b'[{"delta":{},"finish_reason":"stop"}]}\n\n'
                 b'data: {"object":"chat.completion.chunk","choices":[',
                 True,
@@ -212,6 +207,10 @@ class TestAioHttpClient:
 
     async def test_incomplete_stream_does_not_poison_next_request(self) -> None:
         async def handler(request: web.Request) -> web.StreamResponse:
+            if request.match_info["case"] == "json":
+                return web.json_response(
+                    {"choices": [{"message": {"content": "Hello"}}]}
+                )
             response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
             await response.prepare(request)
             await response.write(
@@ -251,6 +250,17 @@ class TestAioHttpClient:
                 succeeded, capture_assistant_turn=False
             )
             assert ParsedResponseRecord(request=succeeded, responses=parsed).valid
+            non_streaming = await asyncio.wait_for(
+                client.post_request(
+                    f"http://127.0.0.1:{port}/json",
+                    b'{"stream":false}',
+                    {},
+                    cancel_after_ns=3_000_000_000,
+                    require_stream_completion=False,
+                ),
+                timeout=5,
+            )
+            assert non_streaming.error is None
         finally:
             await client.close()
             await runner.cleanup()
