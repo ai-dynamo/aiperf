@@ -59,6 +59,13 @@ class HCuaPerfDatasetLoader(BaseHFDatasetLoader):
             streaming=False,
             **kwargs,
         )
+        dataset = run.cfg.get_default_dataset() if run is not None else None
+        if getattr(dataset, "ignore_trace_delays", False):
+            raise DatasetLoaderError(
+                f"{self.tag}: --ignore-trace-delays applies to the Weka loaders only; "
+                "use --inter-turn-delay-cap-seconds 0 to send each session's turns "
+                "back to back"
+            )
         try:
             self.filters = HCuaPerfFilters.model_validate(filters or {})
         except ValidationError as e:
