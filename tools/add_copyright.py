@@ -65,10 +65,15 @@ except ImportError:
 CURRENT_YEAR = str(datetime.now().year)
 COPYRIGHT_FILE = Path(__file__).parent / "COPYRIGHT"
 
-# Match NVIDIA copyright lines specifically (not third-party copyrights)
+CANONICAL_NVIDIA_COPYRIGHT_PAT = re.compile(
+    r"SPDX-FileCopyrightText: Copyright \(c\) "
+    r"(?:(\d{4})-)?(\d{4}) NVIDIA CORPORATION & AFFILIATES\. All rights reserved\."
+)
 NVIDIA_COPYRIGHT_PAT = re.compile(
-    r"SPDX-FileCopyrightText: Copyright(?: \(c\))? "
-    r"(?:(\d{4})-)?(\d{4}) NVIDIA CORPORATION & AFFILIATES\. All rights reserved\.",
+    r"SPDX-FileCopyrightText:[ \t]*Copyright(?:[ \t]+\(c\))?[ \t]+"
+    r"(?:(\d{4})-)?(\d{4})[ \t]+NVIDIA CORPORATION"
+    r"(?:[ \t]*&[ \t]*AFFILIATES)?"
+    r"(?:\.[ \t]*(?:All rights reserved\.)?)?",
     re.IGNORECASE,
 )
 
@@ -379,12 +384,23 @@ def process_file(
 
     # If file already has NVIDIA copyright, check if year update needed
     if has_nvidia_copyright(content):
+        legacy_match = NVIDIA_COPYRIGHT_PAT.search(content)
+        canonical_match = CANONICAL_NVIDIA_COPYRIGHT_PAT.search(content)
+        is_canonical = (
+            legacy_match is not None
+            and canonical_match is not None
+            and legacy_match.span() == canonical_match.span()
+            and (
+                canonical_match.group(1) is None
+                or int(canonical_match.group(1)) <= int(canonical_match.group(2))
+            )
+        )
         updated = update_copyright_year(content)
         if content == updated:
             return False, "up-to-date"
 
         # Only update year if file was actually modified this year
-        if not was_modified_this_year(path):
+        if is_canonical and not was_modified_this_year(path):
             return False, "up-to-date (not modified this year)"
 
         if check:

@@ -93,6 +93,19 @@ BASETEN_COPYRIGHT_RE = re.compile(
 ANY_COPYRIGHT_RE = re.compile(r"^[^A-Za-z0-9]*SPDX-FileCopyrightText: .+[^A-Za-z0-9]*$")
 LICENSE_RE = re.compile(rf"^[^A-Za-z0-9]*{LICENSE_TEXT}[^A-Za-z0-9]*$")
 NVIDIA_ORG_RE = re.compile(r"\bNVIDIA CORPORATION\b", re.IGNORECASE)
+C_STYLE_SUFFIXES = {
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cu",
+    ".cuh",
+    ".h",
+    ".hpp",
+    ".js",
+    ".mjs",
+    ".proto",
+    ".tsx",
+}
 
 
 def is_under(path: Path, prefix: Path) -> bool:
@@ -130,6 +143,57 @@ def has_ordered_year_range(match: re.Match[str]) -> bool:
     """Return whether an SPDX year or year range is chronologically valid."""
     end_year = match.group("end_year")
     return end_year is None or int(match.group("start_year")) <= int(end_year)
+
+
+def has_line_comment(line: str, marker: str) -> bool:
+    tag_index = line.find("SPDX-")
+    return tag_index >= 0 and line[:tag_index].strip() == marker
+
+
+def is_inside_comment_block(
+    lines: Sequence[str], line_index: int, opener: str, closer: str
+) -> bool:
+    text = "\n".join(lines)
+    line_offset = sum(len(line) + 1 for line in lines[:line_index])
+    tag_position = text.find("SPDX-", line_offset)
+    if tag_position < 0:
+        return False
+    open_position = text.rfind(opener, 0, tag_position)
+    close_position = text.rfind(closer, 0, tag_position)
+    return open_position > close_position and text.find(closer, tag_position) >= 0
+
+
+def has_valid_comment_syntax(
+    path: Path, header: Sequence[str], line_indices: Iterable[int]
+) -> bool:
+    suffix = path.suffix.lower()
+    for line_index in line_indices:
+        line = header[line_index]
+        if suffix in C_STYLE_SUFFIXES:
+            valid = has_line_comment(line, "//") or is_inside_comment_block(
+                header, line_index, "/*", "*/"
+            )
+        elif suffix == ".css":
+            valid = is_inside_comment_block(header, line_index, "/*", "*/")
+        elif suffix == ".html":
+            valid = is_inside_comment_block(header, line_index, "<!--", "-->")
+        elif suffix in {".md", ".mdc"}:
+            valid = has_line_comment(line, "#") or is_inside_comment_block(
+                header, line_index, "<!--", "-->"
+            )
+        elif suffix == ".mmd":
+            valid = has_line_comment(line, "%%")
+        elif suffix == ".rst":
+            valid = has_line_comment(line, "..")
+        elif suffix == ".tpl":
+            valid = has_line_comment(line, "#") or is_inside_comment_block(
+                header, line_index, "{{/*", "*/}}"
+            )
+        else:
+            valid = has_line_comment(line, "#")
+        if not valid:
+            return False
+    return True
 
 
 def validate_file(root: Path, relative_path: Path) -> list[str]:
@@ -179,6 +243,10 @@ def validate_file(root: Path, relative_path: Path) -> list[str]:
         license_index += 1
     if license_index >= len(header) or not LICENSE_RE.fullmatch(header[license_index]):
         return [f"{relative_path}: malformed or missing Apache-2.0 header"]
+    if not has_valid_comment_syntax(
+        relative_path, header, range(copyright_index, license_index + 1)
+    ):
+        return [f"{relative_path}: SPDX header uses invalid comment syntax"]
     return []
 
 
