@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 import orjson
 import psutil
+import zstandard
 from pydantic import ValidationError
 
 from aiperf.common.enums import ConversationContextMode
@@ -129,7 +130,7 @@ class HCuaPerfDatasetLoader(BaseHFDatasetLoader):
             )
             self._warn_if_selection_exceeds_memory(meta, plan)
             records = await loop.run_in_executor(None, self._read_records, trace, plan)
-        except (KeyError, ValueError) as e:
+        except (KeyError, ValueError, zstandard.ZstdError) as e:
             raise DatasetLoaderError(f"{self.tag}: {e}") from e
 
         self._mooncake = MooncakeTraceDatasetLoader(
