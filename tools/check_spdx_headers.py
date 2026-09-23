@@ -192,6 +192,18 @@ def has_valid_comment_syntax(
     return True
 
 
+def header_lines(path: Path, lines: Sequence[str]) -> Sequence[str]:
+    scan_limit = HEADER_SCAN_LINES
+    if path.suffix.lower() in {".md", ".mdc"} and lines[:1] == ["---"]:
+        closing_index = next(
+            (index for index, line in enumerate(lines[1:], start=1) if line == "---"),
+            None,
+        )
+        if closing_index is not None:
+            scan_limit += closing_index + 1
+    return lines[:scan_limit]
+
+
 def validate_file(root: Path, relative_path: Path) -> list[str]:
     if is_exempt(root, relative_path):
         return []
@@ -212,7 +224,7 @@ def validate_file(root: Path, relative_path: Path) -> list[str]:
     except UnicodeDecodeError:
         return [f"{relative_path}: file is not valid UTF-8 text"]
 
-    header = lines[:HEADER_SCAN_LINES]
+    header = header_lines(relative_path, lines)
     copyright_index = next(
         (
             index

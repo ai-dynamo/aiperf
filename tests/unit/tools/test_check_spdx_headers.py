@@ -69,7 +69,17 @@ HASH_HEADER = (
         ),
         pytest.param(
             "example.md",
-            "---\n" + HASH_HEADER + "title: Example\n---\n",
+            "---\n"
+            "title: Example\n"
+            "one: 1\n"
+            "two: 2\n"
+            "three: 3\n"
+            "four: 4\n"
+            "five: 5\n"
+            "six: 6\n"
+            "seven: 7\n"
+            "---\n"
+            "<!--\n" + HASH_HEADER.replace("# ", "") + "-->\n",
             id="markdown-frontmatter",
         ),
     ],

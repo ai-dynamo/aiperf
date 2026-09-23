@@ -1,9 +1,11 @@
 ---
-# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-# SPDX-License-Identifier: Apache-2.0
 name: aiperf-kube-triage
 description: Use when an AIPerf benchmark on Kubernetes is stuck, failing, crash-looping, OOM-killed, pending, queued, stalled, showing a high error rate, or its results cannot be retrieved - diagnosing an AIPerfJob or AIPerfSweep from CR status, pod state, and logs.
 ---
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
 
 # Triaging an AIPerf Kubernetes Run
 
