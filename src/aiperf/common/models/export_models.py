@@ -99,7 +99,7 @@ class GpuSummary(AIPerfBaseModel):
         default=UNKNOWN_GPU_TELEMETRY_PLATFORM,
         description="GPU telemetry platform namespace, e.g. 'nvidia', 'amd', or 'unknown'",
     )
-    hostname: str | None
+    hostname: str | None = None
     namespace: str | None = None
     pod_name: str | None = None
     metrics: dict[str, JsonMetricResult]  # metric_key -> {stat_key -> value}

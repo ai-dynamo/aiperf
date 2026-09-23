@@ -132,8 +132,9 @@ class TestRunBenchmarkAutoPlotWiring:
         from aiperf.cli_runner import run_benchmark
 
         plan = _make_plan()
-        # default for ArtifactsConfig.auto_plot is False
-        assert plan.configs[0].artifacts.auto_plot is False
+        # auto_plot is tri-state and unset here: this plan is built directly
+        # rather than through AIPerfConfig, which is what resolves it to a bool.
+        assert not plan.configs[0].artifacts.auto_plot
 
         run_benchmark(plan)
 

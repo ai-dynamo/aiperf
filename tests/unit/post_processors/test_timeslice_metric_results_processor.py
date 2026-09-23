@@ -9,6 +9,10 @@ import pytest
 
 from aiperf.common.constants import NANOS_PER_MILLIS, NANOS_PER_SECOND
 from aiperf.metrics.accumulator import MetricsAccumulator
+from aiperf.metrics.types.e2e_normalized_interactivity_metrics import (
+    E2ENormalizedInteractivityP75Metric,
+    E2ENormalizedInteractivityP90Metric,
+)
 from aiperf.metrics.types.max_response_metric import MaxResponseTimestampMetric
 from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
 from aiperf.metrics.types.replay_sched_lag_metrics import (
@@ -272,20 +276,26 @@ class TestMetricsAccumulatorRunScopedDerivedMetrics:
     accumulator excludes it from per-slice derivation while keeping it in the
     overall summary."""
 
+    # Every run-scoped derived tag (``timeslice_derivable = False``): derived at
+    # run level, excluded from per-slice derivation. Shared by both tests so a
+    # new run-scoped metric is covered by both without updating them separately.
+    _RUN_SCOPED_TAGS = {
+        ReplaySchedLagP50Metric.tag,
+        ReplaySchedLagP90Metric.tag,
+        ReplaySchedLagP99Metric.tag,
+        ReplaySchedDegradedMetric.tag,
+        E2ENormalizedInteractivityP90Metric.tag,
+        E2ENormalizedInteractivityP75Metric.tag,
+    }
+
     def test_run_scoped_tags_excluded_from_timeslice_derivation(
         self, fixed_schedule_slice_run
     ) -> None:
         accumulator = MetricsAccumulator(fixed_schedule_slice_run)
 
-        run_scoped_tags = {
-            ReplaySchedLagP50Metric.tag,
-            ReplaySchedLagP90Metric.tag,
-            ReplaySchedLagP99Metric.tag,
-            ReplaySchedDegradedMetric.tag,
-        }
         # The run-scoped family derives at run level but is skipped per slice.
-        assert run_scoped_tags <= set(accumulator._derive_funcs)
-        assert accumulator._non_timeslice_derived_tags == run_scoped_tags
+        assert set(accumulator._derive_funcs) >= self._RUN_SCOPED_TAGS
+        assert accumulator._non_timeslice_derived_tags == self._RUN_SCOPED_TAGS
 
     @pytest.mark.asyncio
     async def test_run_scoped_tags_never_derived_in_timeslice_results(
@@ -310,8 +320,19 @@ class TestMetricsAccumulatorRunScopedDerivedMetrics:
 
         assert summary.timeslices is not None
         assert len(summary.timeslices) >= 1
+        # Only the send-lag family is asserted here. These records carry no
+        # request_latency/output_sequence_length, so the interactivity tags
+        # would be absent whether or not they were excluded -- asserting them
+        # would look like coverage while proving nothing. Their run-scoped
+        # contract is enforced at the metadata level by
+        # test_run_scoped_tags_excluded_from_timeslice_derivation, which does
+        # fail if the exclusion is removed.
+        replay_tags = {
+            ReplaySchedLagP50Metric.tag,
+            ReplaySchedLagP90Metric.tag,
+            ReplaySchedLagP99Metric.tag,
+            ReplaySchedDegradedMetric.tag,
+        }
         for ts in summary.timeslices:
-            assert ReplaySchedLagP50Metric.tag not in ts.metric_results
-            assert ReplaySchedLagP90Metric.tag not in ts.metric_results
-            assert ReplaySchedLagP99Metric.tag not in ts.metric_results
-            assert ReplaySchedDegradedMetric.tag not in ts.metric_results
+            for tag in replay_tags:
+                assert tag not in ts.metric_results

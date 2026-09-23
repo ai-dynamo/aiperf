@@ -379,6 +379,9 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
+      # A bare `uv sync` re-locks silently; fail fast on a stale lockfile instead.
+      - name: Check uv.lock is up to date
+        run: uv lock --check
       - name: Validate dependency resolution against required-environments
         run: uv sync --active --no-install-project
 
@@ -422,10 +425,14 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@v7
 
-      - name: Patch version in pyproject.toml
+      - name: Patch version in pyproject.toml and uv.lock
         uses: ./.github/actions/update-pyproject-version
         with:
           version: ${{ needs.prepare-nightly.outputs.wheel_version }}
+
+      # Catch a bad version patch here, not ten minutes into the Docker build.
+      - name: Verify uv.lock matches the patched pyproject.toml
+        run: uv lock --check
 
       # Embed the commit SHA two ways for redundant discoverability:
       #   1. [project.urls] Repository = <commit URL> in pyproject.toml →
@@ -593,6 +600,9 @@ jobs:
       # advisory; this gate sits inside the publish path.
       - name: Run unit tests against installed nightly wheel (amd64 only)
         if: matrix.arch == 'amd64'
+        timeout-minutes: 45
+        env:
+          MALLOC_ARENA_MAX: "2"
         run: |
           set -euo pipefail
           NIGHTLY=$(find dist/ -maxdepth 1 -name "aiperf_nightly-*.whl" -type f | head -1)
@@ -620,8 +630,9 @@ jobs:
           # package is on sys.path via the venv; src/ is NOT on sys.path,
           # so `import aiperf` resolves to the installed wheel rather than
           # the source tree.
+          # -n auto on the many-core builder starved the runner of memory.
           .venv-wheel-tests/bin/pytest tests/unit \
-            -n auto \
+            -n 8 --dist=worksteal \
             -m 'not performance and not stress' \
             --tb=short
 

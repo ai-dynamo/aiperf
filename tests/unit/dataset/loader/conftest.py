@@ -76,6 +76,7 @@ def make_weka_run(
     use_think_time_only: bool = False,
     inter_turn_delay_cap_seconds: float | None = None,
     trace_idle_gap_cap_seconds: float | None = None,
+    weka_nested_timestamp_basis: str = "absolute",
     fixed_schedule_start_offset: int | None = None,
     fixed_schedule_end_offset: int | None = None,
     random_seed: int | None = 0,
@@ -112,6 +113,7 @@ def make_weka_run(
         # weka_trace so max_context_length / weka-only knobs pass FileDataset
         # validation; the loader is still constructed with filename= directly.
         "format": "weka_trace",
+        "weka_nested_timestamp_basis": weka_nested_timestamp_basis,
     }
     if synthesis:
         dataset["synthesis"] = synthesis
@@ -188,8 +190,8 @@ def stub_hash_id_corpus_rng(prompt_generator) -> None:
         state["h"] = h
 
     prompt_generator._hash_id_corpus_rng.reseed_for_hash_id.side_effect = _reseed
-    prompt_generator._hash_id_corpus_rng.randrange.side_effect = (
-        lambda n: state["h"] % n
+    prompt_generator._hash_id_corpus_rng.randrange.side_effect = lambda n: (
+        state["h"] % n
     )
 
 
