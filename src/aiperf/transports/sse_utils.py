@@ -48,16 +48,14 @@ def _validate_chat_stream_completion(messages: list[SSEMessage]) -> None:
     seen_choices: set[int] = set()
     finished_choices: set[int] = set()
     for message in messages:
-        if saw_done and any(
-            packet.name == _SSE_DATA_FIELD_NAME for packet in message.packets
-        ):
+        if not any(packet.name == _SSE_DATA_FIELD_NAME for packet in message.packets):
+            continue
+        if saw_done:
             raise SSEResponseError(
                 "Chat stream completion marker [DONE] was followed by SSE data",
                 error_code=502,
             )
         data = message.extract_data_content()
-        if not data:  # SSE comments and metadata are not chat chunks.
-            continue
         if data == "[DONE]":
             saw_done = True
             continue
