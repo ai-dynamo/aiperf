@@ -201,6 +201,7 @@ class AioHttpTransport(BaseTransport):
             timeout=self.model_endpoint.endpoint.timeout,
             tcp_kwargs=self.tcp_kwargs,
             collect_trace_chunks=self.model_endpoint.endpoint.collect_trace_chunks,
+            require_stream_completion=self.model_endpoint.endpoint.require_stream_completion,
         )
         if (
             self.model_endpoint.endpoint.connection_reuse_strategy

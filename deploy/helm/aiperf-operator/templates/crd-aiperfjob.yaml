@@ -220,6 +220,11 @@ spec:
                         description: Enable streaming (Server-Sent Events) responses. Required for accurate TTFT (time to
                           first token) measurement. Server must support streaming for this to work.
                         default: false
+                      requireStreamCompletion:
+                        type: boolean
+                        description: Treat a streaming chat response as failed unless it ends with [DONE] or a chunk with
+                          finish_reason. Malformed chunks also fail the request.
+                        default: false
                       transport:
                         type: string
                         enum:

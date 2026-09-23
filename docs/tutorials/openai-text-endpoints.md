@@ -45,6 +45,16 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
+For OpenAI-compatible **streaming chat** runs, add
+`--require-stream-completion` to count an abruptly ended stream as a failed
+request. With this opt-in check, AIPerf accepts a `[DONE]` event or a chat chunk
+with a nonempty `finish_reason` as completion. Malformed JSON chunks and
+unsupported chunk shapes fail the request even if a completion marker follows.
+When the server streams multiple choices, every observed choice must finish
+unless the stream sends `[DONE]`.
+The check requires `--streaming --endpoint-type chat`; default runs retain their
+existing stream handling.
+
 **Sample Output (Successful Run):**
 ```
 INFO     Starting AIPerf System

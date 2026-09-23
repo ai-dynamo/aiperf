@@ -181,6 +181,19 @@ class CLIConfig(BaseConfig):
         ),
     ] = EndpointDefaults.STREAMING
 
+    require_stream_completion: Annotated[
+        bool,
+        Field(
+            description="Fail incomplete OpenAI-compatible chat streams. Requires "
+            "--streaming and --endpoint-type chat; accepts [DONE] or a nonempty "
+            "finish_reason as the completion signal. Malformed chunks fail the request."
+        ),
+        CLIParameter(
+            name=("--require-stream-completion",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.REQUIRE_STREAM_COMPLETION
+
     urls: Annotated[
         list[str],
         Field(

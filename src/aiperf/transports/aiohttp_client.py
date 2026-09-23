@@ -21,7 +21,10 @@ from aiperf.common.models import (
 )
 from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
 from aiperf.transports.http_defaults import AioHttpDefaults, SocketDefaults
-from aiperf.transports.sse_utils import AsyncSSEStreamReader
+from aiperf.transports.sse_utils import (
+    AsyncSSEStreamReader,
+    validate_chat_stream_completion,
+)
 
 if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
@@ -59,6 +62,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         timeout: float | None = None,
         tcp_kwargs: dict[str, Any] | None = None,
         collect_trace_chunks: bool = False,
+        require_stream_completion: bool = False,
         **kwargs,
     ) -> None:
         """Initialize the AioHttpClient."""
@@ -66,6 +70,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         self.tcp_connector = create_tcp_connector(**tcp_kwargs or {})
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.collect_trace_chunks = collect_trace_chunks
+        self.require_stream_completion = require_stream_completion
 
     async def close(self) -> None:
         """Close the client."""
@@ -230,8 +235,15 @@ class AioHttpClient(AIPerfLoggerMixin):
                             ):
                                 AsyncSSEStreamReader.inspect_message_for_error(message)
                                 record.responses.append(message)
+                        if self.require_stream_completion:
+                            validate_chat_stream_completion(record.responses)
                         record.end_perf_ns = time.perf_counter_ns()
                     else:
+                        if self.require_stream_completion:
+                            raise SSEResponseError(
+                                "Chat stream completion could not be verified: response is not SSE",
+                                error_code=502,
+                            )
                         # Non-SSE response (e.g., JSON or binary)
                         response_start_ns = time.perf_counter_ns()
 

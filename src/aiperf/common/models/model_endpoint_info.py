@@ -78,6 +78,10 @@ class EndpointInfo(AIPerfBaseModel):
         default=EndpointDefaults.STREAMING,
         description="Whether the endpoint supports streaming.",
     )
+    require_stream_completion: bool = Field(
+        default=EndpointDefaults.REQUIRE_STREAM_COMPLETION,
+        description="Require an explicit completion signal in streamed chat responses.",
+    )
     headers: list[tuple[str, str]] = Field(
         default=[],
         description="Custom URL headers to use for the endpoint.",
@@ -238,6 +242,7 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 type=ep.type,
                 custom_endpoint=getattr(ep, "path", None),
                 streaming=ep.streaming,
+                require_stream_completion=ep.require_stream_completion,
                 base_urls=list(ep.urls),
                 headers=list((getattr(ep, "headers", {}) or {}).items()),
                 extra=list((getattr(ep, "extra", {}) or {}).items()),

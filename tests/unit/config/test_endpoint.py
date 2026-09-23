@@ -92,6 +92,24 @@ def test_per_chunk_usage_with_server_token_count_is_valid() -> None:
     assert endpoint.per_chunk_usage is True
 
 
+def test_require_stream_completion_requires_chat_streaming() -> None:
+    with pytest.raises(ValueError, match="requires endpoint type 'chat'"):
+        EndpointConfig(
+            urls=["http://localhost:8000"],
+            type=EndpointType.COMPLETIONS,
+            streaming=True,
+            require_stream_completion=True,
+        )
+    with pytest.raises(ValueError, match="requires --streaming"):
+        EndpointConfig(urls=["http://localhost:8000"], require_stream_completion=True)
+    endpoint = EndpointConfig(
+        urls=["http://localhost:8000"],
+        streaming=True,
+        require_stream_completion=True,
+    )
+    assert endpoint.require_stream_completion is True
+
+
 @pytest.mark.parametrize(
     "store_value",
     [
