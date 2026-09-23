@@ -148,6 +148,13 @@ def test_fixer_normalizes_legacy_nvidia_headers(
             "*/\nint main() {}\n",
             id="c-style-block-comment-license",
         ),
+        pytest.param(
+            "same-line.cpp",
+            "/* SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION "
+            "& AFFILIATES. All rights reserved. "
+            "SPDX-License-Identifier: Apache-2.0 */\nint main() {}\n",
+            id="same-line-spdx-tags",
+        ),
     ],
 )
 def test_fixer_repairs_incomplete_spdx_header(

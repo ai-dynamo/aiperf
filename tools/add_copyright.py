@@ -421,7 +421,13 @@ def _is_inside_comment_block(content: str, tag: str, opener: str, closer: str) -
 def _has_valid_spdx_syntax(path: Path, header: str, rendered_header: str) -> bool:
     tags = ("SPDX-FileCopyrightText:", "SPDX-License-Identifier:")
     lines = header.splitlines()
-    tag_lines = [next((line for line in lines if tag in line), "") for tag in tags]
+    tag_indices = [
+        next((index for index, line in enumerate(lines) if tag in line), None)
+        for tag in tags
+    ]
+    if tag_indices[0] is None or tag_indices[1] != tag_indices[0] + 1:
+        return False
+    tag_lines = [lines[index] for index in tag_indices if index is not None]
     if rendered_header.startswith("// "):
         return all(_has_line_comment(line, "//") for line in tag_lines) or all(
             _is_inside_comment_block(header, tag, "/*", "*/") for tag in tags
