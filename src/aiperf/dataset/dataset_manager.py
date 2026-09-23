@@ -732,6 +732,53 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 "dataset cache directory."
             )
 
+    def _reject_system_prompt_for_raw_payload(self, has_raw_payload: bool) -> None:
+        """Refuse a verbatim system prompt when the dataset authors its own payloads.
+
+        ``inference_client`` ships ``Turn.raw_payload`` verbatim and never calls
+        ``format_payload``, which is the only place a conversation-level
+        ``system_message`` becomes wire bytes. The prompt would therefore be
+        composed, stored, and silently never sent -- measuring prefix-cache hit
+        rate and TTFT against a system prompt the server never saw.
+
+        Two call sites compute ``has_raw_payload`` from what they have:
+
+        - The cache-miss path passes ``any(turn.raw_payload)`` over the loaded
+          conversations. ``any`` rather than ``all``: a dataset where only some
+          conversations carry ``raw_payload`` falls back to the CONVERSATION
+          mmap format and never reaches ``_select_mmap_format``'s
+          PAYLOAD_BYTES guard, but its raw turns are still dispatched verbatim.
+          Must run BEFORE ``_preformat_payloads`` -- payloads synthesized there
+          go through ``format_payload`` with ``system_message`` attached, so
+          checking afterwards cannot tell an authored ``raw_payload`` from a
+          pre-formatted one and would reject a run that works.
+        - The cache-hit path passes ``manifest.all_turns_source_loaded_payloads``.
+          Conversations are never loaded on a HIT, so this is the only signal
+          available; it is ``all`` rather than ``any``, but a mixed dataset
+          cannot be populated with a system prompt in the first place because
+          the miss path rejects it before ``mmap_cache.populate``.
+
+        ``get_system_prompt()`` (--system-prompt / --system-prompt-file) is the
+        only carrier checked because it is the only one that can coexist with
+        authored payloads. The other source of ``conversation.system_message``,
+        ``prefix_prompts.shared_system_length`` (--shared-system-prompt-length),
+        is a ``SyntheticDataset``-only field: every loader that emits
+        ``raw_payload`` is file-backed, and the CLI converter rejects the flag
+        on file/public datasets (``_FILE_DATASET_INCOMPATIBLE_TRIGGERS``).
+        """
+        if self.run.cfg.get_system_prompt() is None or not has_raw_payload:
+            return
+        raise ValueError(
+            "--system-prompt/--system-prompt-file is incompatible with a dataset "
+            "whose turns carry their own raw_payload (raw_payload, inputs_json, "
+            "and mooncake_trace in payload mode). Those payloads are sent to the "
+            "server byte-for-byte, bypassing the payload formatting that puts the "
+            "system message on the wire, so the prompt would be silently dropped. "
+            "Either author the system message directly into the trace payloads, or "
+            "use a dataset type that produces structured turns (e.g. single_turn / "
+            "multi_turn / dag_jsonl)."
+        )
+
     def _select_mmap_format(self, conversations: list[Conversation]) -> MemoryMapFormat:
         """Pick the dataset mmap format and refuse PAYLOAD_BYTES for body-mutators.
 
@@ -831,6 +878,12 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         manifest, falls back to a MISS (``_cache_hit_used`` stays False).
         """
         self._reject_body_mutators_for_payload_bytes(hit.manifest.mmap_format)
+        # Conversations are never loaded on a HIT, so the composition-path
+        # guard in _configure_dataset never runs; re-check from the manifest
+        # before adopting the cached bytes.
+        self._reject_system_prompt_for_raw_payload(
+            hit.manifest.all_turns_source_loaded_payloads
+        )
 
         run_data_path, run_index_path = self._run_mmap_paths()
         await asyncio.to_thread(
@@ -971,6 +1024,17 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             turn.raw_payload is not None
             for conv in conversations
             for turn in conv.turns
+        )
+
+        # Same pre-preformat window as the capture above, for the same reason:
+        # once _preformat_payloads runs, a synthesized raw_payload (which does
+        # carry the system message) is indistinguishable from an authored one.
+        self._reject_system_prompt_for_raw_payload(
+            any(
+                turn.raw_payload is not None
+                for conv in conversations
+                for turn in conv.turns
+            )
         )
 
         endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(

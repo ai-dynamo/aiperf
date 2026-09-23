@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+from aiperf.common.constants import SYSTEM_PROMPT_JOIN_SEP
 from aiperf.common.enums import MediaType
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
@@ -355,6 +356,48 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
                 if not content:
                     continue
                 parts.append(render_fn(content))
+
+    def _prepend_system_text(self, prefix: str, content: Any) -> Any:
+        """Return ``content`` with ``prefix`` prepended, preserving its shape.
+
+        System-message content is normally a plain string, but the chat and
+        Responses schemas also permit a list of content parts; a raw-payload
+        dataset may author either. Both branches join with
+        ``SYSTEM_PROMPT_JOIN_SEP`` so the two shapes tokenize identically --
+        servers that concatenate content parts would otherwise see the verbatim
+        prompt run into the dataset's own text with no separator.
+
+        The list branch renders through ``_render_text_part`` so each caller
+        contributes its own part shape (``text`` for chat, ``input_text`` for
+        Responses) without a shape table here. A single dict is treated as a
+        one-part list. ``MessagesEndpoint`` does not use this helper: Anthropic's
+        ``system`` is already a block list, so it prepends the prompt as its
+        own block with no separator.
+
+        Content of any other shape (a number, a nested structure the schema
+        does not allow) cannot be preserved; it is dropped with a warning so a
+        malformed dataset is visible rather than silently rewritten. Empty
+        string content carries nothing to preserve and is not warned about.
+
+        Returns a new object in both cases -- callers pass content that aliases
+        reusable turn state.
+        """
+        if isinstance(content, dict):
+            content = [content]
+        if isinstance(content, list):
+            return [
+                self._render_text_part(prefix + SYSTEM_PROMPT_JOIN_SEP),
+                *content,
+            ]
+        if isinstance(content, str):
+            return f"{prefix}{SYSTEM_PROMPT_JOIN_SEP}{content}" if content else prefix
+        if content is not None:
+            self.warning(
+                f"Dropping authored system content of unsupported type "
+                f"{type(content).__name__} while merging the verbatim system "
+                "prompt; expected str, dict, or list of content parts."
+            )
+        return prefix
 
     # --- Content-part hooks: override per endpoint to change type names ------
 
