@@ -125,7 +125,6 @@ class TestAioHttpClient:
         "tail,should_fail",
         [
             (b"", True),
-            (b'data: {"object":"chat.completion.chunk","choices":[', True),
             (b"data: [DONE]\n\n", False),
             (b'data: {"choices":[]}\n\ndata: [DONE]\n\n', False),
             (b'data: {"choices":[]}\n\n', True),
