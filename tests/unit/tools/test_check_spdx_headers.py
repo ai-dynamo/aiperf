@@ -210,6 +210,27 @@ def test_failure_output_shell_quotes_metacharacters(
     assert shlex.split(command) == ["./tools/add_copyright.py", "--", filename]
 
 
+def test_failure_output_preserves_colon_in_path(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = Path("bad:name.py")
+    violation = f"{path}: malformed or missing copyright header"
+    monkeypatch.setattr(CHECKER, "tracked_files", lambda root: [path])
+    monkeypatch.setattr(
+        CHECKER,
+        "validation_results",
+        lambda root, paths: [(path, [violation])],
+    )
+    monkeypatch.setattr(CHECKER, "is_exempt", lambda root, relative_path: False)
+
+    assert CHECKER.main(["--root", str(tmp_path)]) == 1
+
+    command = capsys.readouterr().err.split("\n")[-2].strip()
+    assert shlex.split(command) == ["./tools/add_copyright.py", "--", str(path)]
+
+
 def test_cmake_lists_is_not_exempt_as_plain_text(tmp_path: Path) -> None:
     """The exact CMake source filename takes precedence over the text exemption."""
     path = Path("CMakeLists.txt")
