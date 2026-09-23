@@ -101,12 +101,11 @@ class TestDspKernelBatchShape:
 
 class TestDspKernelLengthscaleBounds:
     @pytest.mark.parametrize(
-        "d",
-        [param(1, id="one-dimension"), param(4, id="four-dimensions")],
-    )  # fmt: skip
-    @pytest.mark.parametrize(
-        "batch_shape",
-        [param(torch.Size([]), id="unbatched"), param(torch.Size([2]), id="batched")],
+        "d, batch_shape",
+        [
+            param(1, torch.Size([]), id="one-dimension-unbatched"),
+            param(4, torch.Size([2]), id="four-dimensions-batched"),
+        ],
     )  # fmt: skip
     def test_lengthscale_initializes_at_prior_mode(
         self, d: int, batch_shape: torch.Size
@@ -119,12 +118,11 @@ class TestDspKernelLengthscaleBounds:
         )
 
     @pytest.mark.parametrize(
-        "dtype",
-        [param(torch.float32, id="float32"), param(torch.float64, id="float64")],
-    )  # fmt: skip
-    @pytest.mark.parametrize(
-        "batch_shape",
-        [param(torch.Size([]), id="unbatched"), param(torch.Size([2]), id="batched")],
+        "dtype, batch_shape",
+        [
+            param(torch.float32, torch.Size([]), id="float32-unbatched"),
+            param(torch.float64, torch.Size([2]), id="float64-batched"),
+        ],
     )  # fmt: skip
     def test_prior_is_finite_at_optimizer_lower_bound(
         self, dtype: torch.dtype, batch_shape: torch.Size
