@@ -70,6 +70,7 @@ from aiperf.common.models.progress_models import (
     WorkerStats,
 )
 from aiperf.common.models.record_models import (
+    AwsEventStreamMessage,
     BaseResponseData,
     BinaryResponse,
     EmbeddingResponseData,
@@ -252,6 +253,7 @@ __all__ = [
     "RequestRecord",
     "SSEField",
     "SSEMessage",
+    "AwsEventStreamMessage",
     "SequenceLengthDistribution",
     "SequenceLengthPair",
     "ServerMetricsEndpointInfo",
