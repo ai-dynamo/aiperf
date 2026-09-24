@@ -448,7 +448,9 @@ class BenchmarkWatchdog:
             else:
                 status = e.status
                 self._log.debug(
-                    lambda status=status: f"[WATCHDOG] _check_stale_namespaces API error: {status}",
+                    lambda status=status: (
+                        f"[WATCHDOG] _check_stale_namespaces API error: {status}"
+                    ),
                     exc_info=True,
                 )
         except Exception:  # noqa: BLE001 - watchdog must never die on a single-check failure
