@@ -167,6 +167,8 @@ Raw payload conversations use `message_array_with_responses` [context mode](../r
 
 This is the correct behavior because raw payloads already contain the complete message history for each turn. In directory mode, each line in a session file should include all prior context needed for that point in the conversation (see the multi-turn examples above).
 
+To retain live model responses (including tool calls) between structured-message turns, use `--custom-dataset-type mooncake_trace` with `"assistant_responses": "live"` on every row in the session. The first row carries the initial history, which may include earlier recorded assistant messages; later rows carry only new messages. See [Live Responses for Structured Messages](../benchmark-modes/trace-replay.md#live-responses-for-structured-messages).
+
 ---
 
 ## Tips

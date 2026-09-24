@@ -20,6 +20,7 @@ from aiperf.operator.namespace_claim import (
     NamespaceClaimConflict,
     watched_namespaces_from_argv,
 )
+from tests.harness.k8s import decode_patch_like_apiserver
 
 
 class FakeCoordinationApi:
@@ -30,6 +31,7 @@ class FakeCoordinationApi:
         self.creates: list[str] = []
         self.replaces: list[str] = []
         self.patches: list[str] = []
+        self.patch_content_types: list[str | None] = []
 
     async def create_namespaced_lease(
         self, *, namespace: str, body: V1Lease
@@ -56,11 +58,18 @@ class FakeCoordinationApi:
         return body
 
     async def patch_namespaced_lease(
-        self, *, name: str, namespace: str, body: dict[str, Any]
+        self,
+        *,
+        name: str,
+        namespace: str,
+        body: dict[str, Any],
+        _content_type: str | None = None,
     ) -> V1Lease:
+        decode_patch_like_apiserver(body, _content_type)
         if namespace not in self.leases:
             raise ApiException(status=404, reason="Not Found")
         self.patches.append(namespace)
+        self.patch_content_types.append(_content_type)
         return self.leases[namespace]
 
     async def list_lease_for_all_namespaces(self, **_: Any) -> Any:
@@ -201,6 +210,7 @@ async def test_renew_refreshes_owned_leases() -> None:
     await claim.renew()
 
     assert api.patches == ["aiperf-test"]
+    assert api.patch_content_types == ["application/merge-patch+json"]
 
 
 @pytest.mark.asyncio
@@ -454,9 +464,17 @@ async def test_renew_patch_carries_the_resource_version_it_read() -> None:
     bodies: list[dict[str, Any]] = []
     original = api.patch_namespaced_lease
 
-    async def recording_patch(*, name: str, namespace: str, body: dict[str, Any]):
+    async def recording_patch(
+        *,
+        name: str,
+        namespace: str,
+        body: dict[str, Any],
+        _content_type: str | None = None,
+    ) -> V1Lease:
         bodies.append(body)
-        return await original(name=name, namespace=namespace, body=body)
+        return await original(
+            name=name, namespace=namespace, body=body, _content_type=_content_type
+        )
 
     api.patch_namespaced_lease = recording_patch  # type: ignore[method-assign]
     await claim.renew()
@@ -470,7 +488,12 @@ async def test_renew_releases_the_namespace_on_a_conflicting_patch() -> None:
 
     class ConflictingApi(FakeCoordinationApi):
         async def patch_namespaced_lease(
-            self, *, name: str, namespace: str, body: dict[str, Any]
+            self,
+            *,
+            name: str,
+            namespace: str,
+            body: dict[str, Any],
+            _content_type: str | None = None,
         ) -> V1Lease:
             raise ApiException(status=409, reason="Conflict")
 

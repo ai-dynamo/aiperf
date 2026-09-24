@@ -19,7 +19,10 @@ from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.kubernetes.client import k8s_client
-from aiperf.kubernetes.constants import Annotations
+from aiperf.kubernetes.constants import (
+    JSON_PATCH_CONTENT_TYPE,
+    Annotations,
+)
 from aiperf.kubernetes.cr_refs import (
     AIPERF_JOB_GROUP,
     AIPERF_JOB_PLURAL,
@@ -578,7 +581,7 @@ async def _submit_claim_patch(
                 namespace=namespace,
                 name=name,
                 body=patch_ops,
-                _content_type="application/json-patch+json",
+                _content_type=JSON_PATCH_CONTENT_TYPE,
             )
     except ApiException as e:
         status_code = e.status or 0
