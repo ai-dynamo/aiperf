@@ -130,6 +130,11 @@ The Records Manager handles the collection, organization, and storage of benchma
 - Supporting the generation of reports and artifacts for performance evaluation
 - Managing the final export of aggregated performance summaries and per-request details
 
+`ProfileResults.completed` counts requests processed for the result's phase
+(successful plus failed), independently of how many metric summaries accumulators
+or analyzers produce. Profiling counts exclude warmup requests, and cancelled
+summaries count the requests processed so far.
+
 #### Record-Type Channels
 
 The Records Manager does not hard-wire one handler per producer. Instead, every typed record carries a `record_type` class attribute and is fanned out through a metadata-driven routing table: each accumulator and stream exporter declares the record types it consumes via `record_types` in `plugins.yaml`, and `_dispatch_record` routes each record by `getattr(record, "record_type")` to all registered handlers. This makes each record type a dedicated channel.
