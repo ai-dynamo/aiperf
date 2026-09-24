@@ -681,7 +681,7 @@ Format specification for custom dataset provided via `--input-file`. Determines 
 
 #### `--ignore-trace-delays`
 
-Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors). No effect on non-weka trace loaders.
+Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors). Honored by the Weka loaders, including tracelab which replays through them; other trace loaders ignore it.
 <br/>_Flag (no value required)_
 
 #### `--use-think-time-only`
@@ -2278,7 +2278,7 @@ Format specification for custom dataset provided via `--input-file`. Determines 
 
 #### `--ignore-trace-delays`
 
-Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors). No effect on non-weka trace loaders.
+Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors). Honored by the Weka loaders, including tracelab which replays through them; other trace loaders ignore it.
 <br/>_Flag (no value required)_
 
 #### `--use-think-time-only`
@@ -3870,7 +3870,7 @@ Format specification for custom dataset provided via `--input-file`. Determines 
 
 #### `--ignore-trace-delays`
 
-Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors). No effect on non-weka trace loaders.
+Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors). Honored by the Weka loaders, including tracelab which replays through them; other trace loaders ignore it.
 <br/>_Flag (no value required)_
 
 #### `--use-think-time-only`
@@ -5969,7 +5969,7 @@ Format specification for custom dataset provided via `--input-file`. Determines 
 
 #### `--ignore-trace-delays`
 
-Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors). No effect on non-weka trace loaders.
+Strip per-turn timestamps and inter-turn delays from trace datasets at load time. With this flag, Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors). Honored by the Weka loaders, including tracelab which replays through them; other trace loaders ignore it.
 <br/>_Flag (no value required)_
 
 #### `--use-think-time-only`

@@ -700,7 +700,7 @@ class CLIConfig(BaseConfig):
             "Turn.timestamp and Turn.delay are emitted as None so concurrency / request-rate timing modes dispatch turns back-to-back "
             "instead of reproducing the recorded user think-time gaps. No effect under `--fixed-schedule` (timestamps drive that mode "
             "before they could be ignored -- combine with `--no-fixed-schedule` if you want both behaviors). "
-            "No effect on non-weka trace loaders.",
+            "Honored by the Weka loaders, including tracelab which replays through them; other trace loaders ignore it.",
         ),
         CLIParameter(
             name=("--ignore-trace-delays",),
