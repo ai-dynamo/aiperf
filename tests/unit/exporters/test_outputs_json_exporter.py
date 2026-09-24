@@ -1,14 +1,20 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+import os
+import threading
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import orjson
 import pytest
+from aiofiles.threadpool.binary import AsyncBufferedIOBase
 
 from aiperf.common.exceptions import DataExporterDisabled
 from aiperf.config.artifacts import OutputDefaults
+from aiperf.exporters import outputs_json_exporter
 from aiperf.exporters.outputs_json_exporter import OutputsJsonExporter
 
 
@@ -74,6 +80,13 @@ class TestOutputsJsonExporter:
 
         outputs_file = tmp_path / "outputs.json"
         assert not outputs_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_export_empty_fragments_dir_skips(self, tmp_path: Path) -> None:
+        (tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER).mkdir()
+        await _make_exporter(tmp_path).export()
+        assert not (tmp_path / "outputs.json").exists()
+        assert not list(tmp_path.glob(".outputs-json-*"))
 
     @pytest.mark.asyncio
     async def test_export_skips_unparseable_fragment_line(self, tmp_path: Path) -> None:
@@ -379,72 +392,275 @@ class TestOutputsJsonWarmupPartition:
         assert [r["session_num"] for r in data["warmup"]] == [2, 9]
 
 
-class TestLargeExportWarning:
-    """The large-export warning fires on the record count, not the file size.
-
-    outputs.json is sorted, so it cannot stream and holds the whole document in
-    memory. The warning is the only signal a user gets that a run is paying that
-    cost, so pin the boundary rather than leaving log-only behavior untested.
-    """
-
-    @staticmethod
-    def _prepare(
-        tmp_path: Path, record_count: int, threshold: int
-    ) -> tuple[list[str], OutputsJsonExporter]:
-        """Build an exporter over ``record_count`` fragments, capturing warnings."""
+class TestBoundedOutputsExport:
+    @pytest.mark.asyncio
+    async def test_many_runs_preserve_order_and_partition(self, tmp_path: Path) -> None:
         fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
-        fragments_dir.mkdir(parents=True, exist_ok=True)
-        _write_jsonl(
-            fragments_dir / "output_fragments_proc1.jsonl",
-            [_make_fragment(session_num=i) for i in range(record_count)],
+        rows = []
+        for index in range(31):
+            row = _make_fragment(
+                session_num=index % 4,
+                turn_index=0 if index % 3 else -1,
+                response_text=f"original-{index}",
+                benchmark_phase="warmup" if index % 5 == 0 else "profiling",
+            )
+            if index == 7:
+                del row["benchmark_phase"]
+            if index == 8:
+                row["benchmark_phase"] = "future"
+            rows.append(row)
+        _write_jsonl(fragments_dir / "output_fragments_a.jsonl", rows[:15])
+        _write_jsonl(fragments_dir / "output_fragments_b.jsonl", rows[15:])
+        traversal = [
+            orjson.loads(line)
+            for entry in os.scandir(fragments_dir)
+            if entry.name.startswith("output_fragments_")
+            and entry.name.endswith(".jsonl")
+            for line in Path(entry.path).read_bytes().splitlines()
+        ]
+        exporter = _make_exporter(tmp_path)
+        exporter.CHUNK_RECORDS = 2
+        exporter.CHUNK_BYTES = 100
+        exporter.MERGE_FAN_IN = 3
+        await exporter.export()
+
+        document = orjson.loads((tmp_path / "outputs.json").read_bytes())
+        assert document["schema_version"] == "1.1"
+        assert sorted(
+            row["response_text"] for row in document["data"] + document["warmup"]
+        ) == sorted(row["response_text"] for row in rows)
+        for name in ("data", "warmup"):
+            expected = [
+                row["response_text"]
+                for row in sorted(
+                    (
+                        r
+                        for r in traversal
+                        if (r.get("benchmark_phase") == "warmup") == (name == "warmup")
+                    ),
+                    key=lambda r: (r["session_num"], r.get("turn_index") or 0),
+                )
+            ]
+            assert [row["response_text"] for row in document[name]] == expected
+        assert document["data"][0]["benchmark_phase"] in {"profiling", "future", None}
+        assert not list(tmp_path.glob(".outputs-json-*"))
+
+    @pytest.mark.asyncio
+    async def test_empty_file_exports_empty_arrays(self, tmp_path: Path) -> None:
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        fragments_dir.mkdir()
+        (fragments_dir / "output_fragments_empty.jsonl").touch()
+        await _make_exporter(tmp_path).export()
+        assert orjson.loads((tmp_path / "outputs.json").read_bytes()) == {
+            "schema_version": "1.1",
+            "data": [],
+            "warmup": [],
+        }
+        assert not (fragments_dir / "output_fragments_empty.jsonl").exists()
+
+    @pytest.mark.asyncio
+    async def test_fragment_scan_consumes_directory_in_bounded_batches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        for index in range(130):
+            _write_jsonl(
+                fragments_dir / f"output_fragments_{index:03}.jsonl",
+                [_make_fragment(session_num=index)],
+            )
+        exporter = _make_exporter(tmp_path)
+        actual_scandir = os.scandir
+        scanned = 0
+        scanned_at_first_read: list[int] = []
+
+        class TrackedEntries:
+            def __init__(self, entries: Iterator[os.DirEntry[str]]) -> None:
+                self._entries = entries
+
+            def __iter__(self) -> "TrackedEntries":
+                return self
+
+            def __next__(self) -> os.DirEntry[str]:
+                nonlocal scanned
+                scanned += 1
+                return next(self._entries)
+
+            def close(self) -> None:
+                self._entries.close()
+
+        def tracked_scandir(path: Path) -> Iterator[os.DirEntry[str]]:
+            entries = actual_scandir(path)
+            if path == fragments_dir:
+                return TrackedEntries(entries)
+            return entries
+
+        original_lines = exporter._lines
+
+        async def tracked_lines(path: Path) -> AsyncIterator[bytes]:
+            if not scanned_at_first_read:
+                scanned_at_first_read.append(scanned)
+            async for line in original_lines(path):
+                yield line
+
+        monkeypatch.setattr(os, "scandir", tracked_scandir)
+        monkeypatch.setattr(exporter, "_lines", tracked_lines)
+        await exporter.export()
+        assert scanned_at_first_read == [exporter.FRAGMENT_SCAN_BATCH]
+        assert scanned >= 130
+        assert (
+            len(orjson.loads((tmp_path / "outputs.json").read_bytes())["data"]) == 130
         )
 
-        exporter = _make_exporter(tmp_path)
-        exporter.LARGE_EXPORT_RECORD_WARNING_THRESHOLD = threshold
-
-        warnings: list[str] = []
-        exporter.warning = warnings.append  # type: ignore[method-assign]
-        return warnings, exporter
-
     @pytest.mark.asyncio
-    async def test_export_record_count_at_threshold_warns(self, tmp_path: Path) -> None:
-        warnings, exporter = self._prepare(tmp_path, 3, threshold=2)
-        await exporter.export()
-
-        assert len(warnings) == 1
-        assert "3 records" in warnings[0]
-        assert "--no-export-outputs-json" in warnings[0]
-
-    @pytest.mark.asyncio
-    async def test_export_record_count_below_threshold_does_not_warn(
-        self, tmp_path: Path
+    async def test_cleanup_preserves_fragment_created_after_ingestion(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        warnings, exporter = self._prepare(tmp_path, 2, threshold=3)
-        await exporter.export()
-
-        assert warnings == []
-
-    @pytest.mark.asyncio
-    async def test_export_warmup_records_count_toward_threshold_warns(
-        self, tmp_path: Path
-    ) -> None:
-        """Warmup records are held in memory too, so they count."""
         fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
-        fragments_dir.mkdir(parents=True)
-        _write_jsonl(
-            fragments_dir / "output_fragments_proc1.jsonl",
-            [
-                _make_fragment(session_num=0),
-                _make_fragment(session_num=1, benchmark_phase="warmup"),
-            ],
-        )
-
+        consumed = fragments_dir / "output_fragments_old.jsonl"
+        late = fragments_dir / "output_fragments_late.jsonl"
+        _write_jsonl(consumed, [_make_fragment(session_num=1, response_text="old")])
         exporter = _make_exporter(tmp_path)
-        exporter.LARGE_EXPORT_RECORD_WARNING_THRESHOLD = 2
-        warnings: list[str] = []
-        exporter.warning = warnings.append  # type: ignore[method-assign]
+        original_write = exporter._write_document
 
+        async def write_then_add(staged: Path, run: Path | None) -> None:
+            await original_write(staged, run)
+            _write_jsonl(late, [_make_fragment(session_num=2, response_text="late")])
+
+        monkeypatch.setattr(exporter, "_write_document", write_then_add)
         await exporter.export()
+        assert not consumed.exists()
+        assert late.exists()
+        assert [
+            row["response_text"]
+            for row in orjson.loads((tmp_path / "outputs.json").read_bytes())["data"]
+        ] == ["old"]
 
-        assert len(warnings) == 1
-        assert "2 records" in warnings[0]
+    @pytest.mark.asyncio
+    async def test_large_unicode_record(self, tmp_path: Path) -> None:
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        row = _make_fragment(
+            session_num=1,
+            response_text="雪🎵" * 100_000,
+            metrics={"request_latency": None, "nested": [None, 3]},
+        )
+        _write_jsonl(fragments_dir / "output_fragments_a.jsonl", [row])
+        exporter = _make_exporter(tmp_path)
+        exporter.CHUNK_BYTES = 100
+        await exporter.export()
+        actual = orjson.loads((tmp_path / "outputs.json").read_bytes())["data"][0]
+        assert actual["response_text"] == row["response_text"]
+        assert actual["metrics"] == {"request_latency": None, "nested": [None, 3]}
+
+    def test_entry_scrubs_non_finite_metrics(self) -> None:
+        entry = OutputsJsonExporter._entry(
+            {
+                "session_num": 1,
+                "metrics": {"request_latency": float("nan"), "nested": [float("inf")]},
+            }
+        )
+        assert entry["metrics"] == {"request_latency": None, "nested": [None]}
+
+    @pytest.mark.asyncio
+    async def test_replace_error_retains_sources_and_old_final(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        source = fragments_dir / "output_fragments_a.jsonl"
+        _write_jsonl(source, [_make_fragment(session_num=1)])
+        final = tmp_path / "outputs.json"
+        final.write_bytes(b"old final")
+
+        def fail_replace(_source: Path, _target: Path) -> None:
+            raise OSError("replace denied")
+
+        monkeypatch.setattr(outputs_json_exporter.os, "replace", fail_replace)
+        with pytest.raises(OSError, match="replace denied"):
+            await _make_exporter(tmp_path).export()
+        assert source.exists()
+        assert final.read_bytes() == b"old final"
+        assert not list(tmp_path.glob(".outputs-json-*"))
+
+    @pytest.mark.asyncio
+    async def test_merge_error_retains_sources_and_old_final(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        source = fragments_dir / "output_fragments_a.jsonl"
+        _write_jsonl(source, [_make_fragment(session_num=i) for i in range(5)])
+        final = tmp_path / "outputs.json"
+        final.write_bytes(b"old final")
+        exporter = _make_exporter(tmp_path)
+        exporter.CHUNK_RECORDS = 1
+        original = exporter._merge_group
+
+        async def fail_after_merge(sources: list[Path], target: Path) -> None:
+            await original(sources, target)
+            raise OSError("merge failed")
+
+        monkeypatch.setattr(exporter, "_merge_group", fail_after_merge)
+        with pytest.raises(OSError, match="merge failed"):
+            await exporter.export()
+        assert source.exists()
+        assert final.read_bytes() == b"old final"
+        assert not list(tmp_path.glob(".outputs-json-*"))
+
+    @pytest.mark.asyncio
+    async def test_write_error_closes_file_before_scratch_cleanup(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        source = fragments_dir / "output_fragments_a.jsonl"
+        _write_jsonl(source, [_make_fragment(session_num=1)])
+        final = tmp_path / "outputs.json"
+        final.write_bytes(b"old final")
+        opened: list[AsyncBufferedIOBase] = []
+        original_write = AsyncBufferedIOBase.write
+
+        async def fail_during_write(handle: AsyncBufferedIOBase, data: bytes) -> int:
+            opened.append(handle)
+            await original_write(handle, data[:7])
+            raise OSError("write failed")
+
+        monkeypatch.setattr(AsyncBufferedIOBase, "write", fail_during_write)
+        with pytest.raises(OSError, match="write failed"):
+            await _make_exporter(tmp_path).export()
+        assert opened and opened[0].closed
+        assert source.exists()
+        assert final.read_bytes() == b"old final"
+        assert not list(tmp_path.glob(".outputs-json-*"))
+
+    @pytest.mark.asyncio
+    async def test_cancelled_export_retains_sources_and_old_final(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        source = fragments_dir / "output_fragments_a.jsonl"
+        _write_jsonl(source, [_make_fragment(session_num=1)])
+        final = tmp_path / "outputs.json"
+        final.write_bytes(b"old final")
+        entered = threading.Event()
+        proceed = threading.Event()
+
+        async def delayed_write(handle: AsyncBufferedIOBase, data: bytes) -> int:
+            def write_and_wait() -> int:
+                written = handle._file.write(data)
+                entered.set()
+                assert proceed.wait(timeout=2)
+                return written
+
+            return await asyncio.to_thread(write_and_wait)
+
+        monkeypatch.setattr(AsyncBufferedIOBase, "write", delayed_write)
+        exporter = _make_exporter(tmp_path)
+        exporter.CHUNK_RECORDS = 1
+        task = asyncio.create_task(exporter.export())
+        await asyncio.wait_for(asyncio.to_thread(entered.wait, 2), timeout=3)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+        proceed.set()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=2)
+        assert source.exists()
+        assert final.read_bytes() == b"old final"
+        assert not list(tmp_path.glob(".outputs-json-*"))
