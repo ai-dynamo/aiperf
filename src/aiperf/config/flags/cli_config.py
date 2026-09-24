@@ -1058,8 +1058,7 @@ class CLIConfig(BaseConfig):
             ge=0.0,
             description="Clamp per-turn replay delays to at most this many "
             "seconds; ``None`` disables the cap. Honored by every trace loader "
-            "(mooncake_trace, baseten_trace, bailian_trace, burst_gpt_trace and "
-            "the Weka loaders) and by the DAG JSONL loader; the clamp count is "
+            "and by the dag_jsonl and multi_turn loaders; the clamp count is "
             "reported at end of load. Maps to FileDataset "
             "``inter_turn_delay_cap_seconds``.",
         ),

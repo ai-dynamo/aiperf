@@ -792,7 +792,7 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 #### `--inter-turn-delay-cap-seconds` `<float>`
 
-Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by every trace loader (mooncake_trace, baseten_trace, bailian_trace, burst_gpt_trace and the Weka loaders) and by the DAG JSONL loader; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
+Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by every trace loader and by the dag_jsonl and multi_turn loaders; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
 #### `--max-idle-gap-cap-seconds` `<float>`
@@ -2389,7 +2389,7 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 #### `--inter-turn-delay-cap-seconds` `<float>`
 
-Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by every trace loader (mooncake_trace, baseten_trace, bailian_trace, burst_gpt_trace and the Weka loaders) and by the DAG JSONL loader; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
+Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by every trace loader and by the dag_jsonl and multi_turn loaders; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
 #### `--max-idle-gap-cap-seconds` `<float>`
@@ -3981,7 +3981,7 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 #### `--inter-turn-delay-cap-seconds` `<float>`
 
-Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by every trace loader (mooncake_trace, baseten_trace, bailian_trace, burst_gpt_trace and the Weka loaders) and by the DAG JSONL loader; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
+Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by every trace loader and by the dag_jsonl and multi_turn loaders; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
 #### `--max-idle-gap-cap-seconds` `<float>`
@@ -6080,7 +6080,7 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 #### `--inter-turn-delay-cap-seconds` `<float>`
 
-Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by every trace loader (mooncake_trace, baseten_trace, bailian_trace, burst_gpt_trace and the Weka loaders) and by the DAG JSONL loader; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
+Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by every trace loader and by the dag_jsonl and multi_turn loaders; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
 #### `--max-idle-gap-cap-seconds` `<float>`
