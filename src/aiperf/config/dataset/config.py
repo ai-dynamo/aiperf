@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
+    BeforeValidator,
     ConfigDict,
     Discriminator,
     Field,
@@ -49,6 +50,7 @@ from aiperf.config.dataset.video import (
     VideoConfig,
 )
 from aiperf.config.loader.normalizers import _hoist_synthetic_prompt_fields
+from aiperf.config.loader.parsing import reject_moved_custom_dataset_type
 from aiperf.config.types import SamplingDistribution
 from aiperf.plugin.enums import DatasetSamplingStrategy, PublicDatasetType
 
@@ -327,6 +329,7 @@ class FileDataset(SystemPromptMixin):
 
     format: Annotated[
         DatasetFormat,
+        BeforeValidator(reject_moved_custom_dataset_type),
         Field(
             default=DatasetFormat.SINGLE_TURN,
             description="Dataset file format determining parsing logic and expected file structure. "
@@ -337,6 +340,18 @@ class FileDataset(SystemPromptMixin):
             "timestamped trace files for replay. "
             "sagemaker_data_capture: JSONL captured by SageMaker DataCapture. "
             "random_pool: directory of reusable prompts.",
+        ),
+    ]
+
+    weka_nested_timestamp_basis: Annotated[
+        Literal["auto", "absolute", "relative"] | None,
+        Field(
+            default=None,
+            description="Corpus-wide interpretation of timestamps nested inside "
+            "Weka subagent markers. Unset uses auto for Weka inputs. Auto selects "
+            "relative if any child precedes its marker by more than 1 microsecond, "
+            "otherwise absolute; this heuristic cannot certify uniform conventions. "
+            "Absolute uses root-trace time and relative adds the marker time.",
         ),
     ]
 
@@ -695,6 +710,18 @@ class FileDataset(SystemPromptMixin):
         return self
 
     @model_validator(mode="after")
+    def _validate_weka_timestamp_basis_scope(self) -> FileDataset:
+        """Reject an explicit Weka timestamp policy on a known non-Weka format."""
+        if self.weka_nested_timestamp_basis is None:
+            return self
+        if self.format not in (DatasetFormat.WEKA_TRACE, DatasetFormat.SINGLE_TURN):
+            raise ValueError(
+                "weka_nested_timestamp_basis (--weka-nested-timestamp-basis) "
+                f"only applies to Weka traces; got format {self.format}."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_source_xor(self) -> FileDataset:
         path_set = self.path is not None
         records_set = self.records is not None
@@ -871,6 +898,18 @@ class PublicDataset(SystemPromptMixin):
         ),
     ]
 
+    weka_nested_timestamp_basis: Annotated[
+        Literal["auto", "absolute", "relative"] | None,
+        Field(
+            default=None,
+            description="Corpus-wide interpretation of timestamps nested inside "
+            "Weka subagent markers. Unset uses auto for Weka inputs. Auto selects "
+            "relative if any child precedes its marker by more than 1 microsecond, "
+            "otherwise absolute; this heuristic cannot certify uniform conventions. "
+            "Absolute uses root-trace time and relative adds the marker time.",
+        ),
+    ]
+
     inter_turn_delay_cap_seconds: Annotated[
         float | None,
         Field(
@@ -1043,6 +1082,18 @@ class PublicDataset(SystemPromptMixin):
                 "max_context_length (--max-context-length) only applies to "
                 f"Weka public datasets; got dataset {self.dataset}. It filters "
                 "by recorded peak prompt+output length at load time."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_weka_timestamp_basis_scope(self) -> PublicDataset:
+        """Reject an explicit Weka timestamp policy on non-Weka datasets."""
+        if self.weka_nested_timestamp_basis is None:
+            return self
+        if "weka" not in str(self.dataset).lower():
+            raise ValueError(
+                "weka_nested_timestamp_basis (--weka-nested-timestamp-basis) "
+                f"only applies to Weka public datasets; got dataset {self.dataset}."
             )
         return self
 

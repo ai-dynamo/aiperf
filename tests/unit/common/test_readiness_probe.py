@@ -9,6 +9,7 @@ from typing import Any, cast
 import orjson
 import pytest
 
+from aiperf.auth.base_signer import SignedRequest
 from aiperf.common import readiness_probe
 from aiperf.config.flags.cli_config import CLIConfig
 
@@ -19,9 +20,10 @@ class _FakeRecord:
 
 
 class _FakeClient:
-    def __init__(self) -> None:
+    def __init__(self, status: int = 400) -> None:
         self.posted_urls: list[str] = []
         self.payloads: list[dict[str, Any]] = []
+        self._status = status
 
     async def post_request(
         self,
@@ -29,13 +31,16 @@ class _FakeClient:
         payload: bytes,
         headers: dict[str, str],
         timeout: object,
+        **kwargs: Any,
     ) -> _FakeRecord:
-        del headers, timeout
+        del headers, timeout, kwargs
         decoded_payload = orjson.loads(payload)
         assert isinstance(decoded_payload, dict)
         self.posted_urls.append(request_url)
         self.payloads.append(decoded_payload)
-        return _FakeRecord()
+        record = _FakeRecord()
+        record.status = self._status
+        return record
 
 
 def test_wait_inference_warns_on_endpoint_type_fallback(
@@ -54,6 +59,7 @@ def test_wait_inference_warns_on_endpoint_type_fallback(
             timeout_s=1.0,
             interval_s=0.1,
             headers={},
+            signer=None,
         )
     )
 
@@ -80,6 +86,7 @@ def test_wait_inference_dedicated_template_does_not_warn(
             timeout_s=1.0,
             interval_s=0.1,
             headers={},
+            signer=None,
         )
     )
 
@@ -104,6 +111,7 @@ def test_wait_inference_messages_uses_dedicated_template(
             timeout_s=1.0,
             interval_s=0.1,
             headers={},
+            signer=None,
         )
     )
 
@@ -119,6 +127,63 @@ def test_wait_inference_messages_uses_dedicated_template(
             "model": "claude-sonnet-4-20250514",
         }
     ]
+
+
+class _FakeSigner:
+    """Minimal stand-in for a configured RequestSignerProtocol."""
+
+    async def sign(
+        self, method: str, url: str, headers: dict[str, str], body: bytes | None
+    ) -> SignedRequest:
+        return SignedRequest(headers=headers)
+
+
+@pytest.mark.parametrize("status", [401, 403])
+def test_wait_inference_signed_401_403_raises_instead_of_ready(status: int) -> None:
+    """A signed probe rejected with 401/403 must not be treated as ready.
+
+    Unlike the unsigned case (any status < 500 counts as ready), a rejected
+    *signed* request almost always means the signature itself is
+    misconfigured (bad credentials/region/service), so the probe should
+    fail fast with a clear error rather than silently reporting ready.
+    """
+    client = _FakeClient(status=status)
+
+    with pytest.raises(RuntimeError, match=str(status)):
+        asyncio.run(
+            readiness_probe._wait_inference(
+                client=cast(Any, client),
+                url="http://server",
+                model_name="model-a",
+                endpoint_type="chat",
+                custom_endpoint=None,
+                timeout_s=1.0,
+                interval_s=0.1,
+                headers={},
+                signer=cast(Any, _FakeSigner()),
+            )
+        )
+
+
+def test_wait_inference_unsigned_403_still_counts_as_ready() -> None:
+    """Without a signer, 401/403 keeps the documented < 500 behavior."""
+    client = _FakeClient(status=403)
+
+    asyncio.run(
+        readiness_probe._wait_inference(
+            client=cast(Any, client),
+            url="http://server",
+            model_name="model-a",
+            endpoint_type="chat",
+            custom_endpoint=None,
+            timeout_s=1.0,
+            interval_s=0.1,
+            headers={},
+            signer=None,
+        )
+    )
+
+    assert client.posted_urls == ["http://server/v1/chat/completions"]
 
 
 class _FakeReadyRecord:
@@ -143,9 +208,9 @@ class _FakeMultiClient:
         )
 
     async def get_request(
-        self, url: str, headers: dict[str, str], timeout: object
+        self, url: str, headers: dict[str, str], timeout: object, **kwargs: Any
     ) -> _FakeReadyRecord:
-        del headers, timeout
+        del headers, timeout, kwargs
         self.urls.append(url)
         return _FakeReadyRecord(self._models_payload.decode("utf-8"))
 
@@ -155,8 +220,9 @@ class _FakeMultiClient:
         payload: bytes,
         headers: dict[str, str],
         timeout: object,
+        **kwargs: Any,
     ) -> _FakeRecord:
-        del payload, headers, timeout
+        del payload, headers, timeout, kwargs
         self.urls.append(request_url)
         return _FakeRecord()
 
@@ -204,6 +270,7 @@ def test_wait_for_endpoint_receives_normalized_urls_from_endpoint_config(
             timeout_s=2.0,
             interval_s=0.1,
             headers={},
+            signer=None,
         )
     )
 
@@ -251,6 +318,7 @@ def test_readiness_preserves_query_while_appending_endpoint(
         timeout_s=1.0,
         interval_s=0.1,
         headers={},
+        signer=None,
     )
     if mode == "both":
         asyncio.run(readiness_probe._wait_models(**common))
@@ -262,3 +330,176 @@ def test_readiness_preserves_query_while_appending_endpoint(
         )
     )
     assert client.urls == ["http://server" + path + query for path in expected_paths]
+
+
+class _KwargCapturingClient:
+    """Records the keyword arguments each probe request was issued with."""
+
+    def __init__(self, models_body: str | None = None) -> None:
+        self._models_body = models_body or orjson.dumps(
+            {"data": [{"id": "model-a"}]}
+        ).decode("utf-8")
+        self.get_kwargs: list[dict[str, Any]] = []
+        self.post_kwargs: list[dict[str, Any]] = []
+
+    async def get_request(
+        self, url: str, headers: dict[str, str], **kwargs: Any
+    ) -> _FakeReadyRecord:
+        del url, headers
+        self.get_kwargs.append(kwargs)
+        return _FakeReadyRecord(self._models_body)
+
+    async def post_request(
+        self, request_url: str, payload: bytes, headers: dict[str, str], **kwargs: Any
+    ) -> _FakeRecord:
+        del request_url, payload, headers
+        self.post_kwargs.append(kwargs)
+        return _FakeRecord()
+
+    async def close(self) -> None:
+        return None
+
+
+class TestSignedProbesDoNotFollowRedirects:
+    """These signed probe requests exist only because SigV4 support was added,
+    so the exposure is introduced here rather than inherited. A redirect would
+    hand ``x-amz-security-token`` -- a bearer credential -- to whatever origin
+    the benchmarked endpoint names.
+    """
+
+    def test_signed_models_probe_refuses_redirects(self) -> None:
+        client = _KwargCapturingClient()
+
+        asyncio.run(
+            readiness_probe._wait_models(
+                client=cast(Any, client),
+                url="http://server",
+                model_name="model-a",
+                timeout_s=1.0,
+                interval_s=0.1,
+                headers={},
+                signer=cast(Any, _FakeSigner()),
+            )
+        )
+
+        assert client.get_kwargs
+        assert all(k.get("allow_redirects") is False for k in client.get_kwargs)
+
+    def test_signed_inference_probe_refuses_redirects(self) -> None:
+        client = _KwargCapturingClient()
+
+        asyncio.run(
+            readiness_probe._wait_inference(
+                client=cast(Any, client),
+                url="http://server",
+                model_name="model-a",
+                endpoint_type="chat",
+                custom_endpoint=None,
+                timeout_s=1.0,
+                interval_s=0.1,
+                headers={},
+                signer=cast(Any, _FakeSigner()),
+            )
+        )
+
+        assert client.post_kwargs
+        assert all(k.get("allow_redirects") is False for k in client.post_kwargs)
+
+    def test_unsigned_probes_still_follow_redirects(self) -> None:
+        client = _KwargCapturingClient()
+
+        asyncio.run(
+            readiness_probe._wait_inference(
+                client=cast(Any, client),
+                url="http://server",
+                model_name="model-a",
+                endpoint_type="chat",
+                custom_endpoint=None,
+                timeout_s=1.0,
+                interval_s=0.1,
+                headers={},
+                signer=None,
+            )
+        )
+
+        assert client.post_kwargs
+        assert all("allow_redirects" not in k for k in client.post_kwargs)
+
+
+class _RejectingRecord:
+    """A probe response carrying an upstream rejection body."""
+
+    def __init__(self, status: int, message: str) -> None:
+        self.status = status
+        self.error = type("_Err", (), {"message": message})()
+        self.responses: list[Any] = []
+
+
+class _RejectingClient:
+    def __init__(self, status: int, message: str = "") -> None:
+        self._status = status
+        self._message = message
+
+    async def post_request(
+        self, request_url: str, payload: bytes, headers: dict[str, str], **kwargs: Any
+    ) -> _RejectingRecord:
+        del request_url, payload, headers, kwargs
+        return _RejectingRecord(self._status, self._message)
+
+
+class TestSignedRejectionDiagnosisIsHonest:
+    """A 401/403 on a signed probe still stops preflight -- retrying fixes none
+    of the plausible causes -- but the message must not assert a signature
+    mismatch. API Gateway answers an unrouted path with 403 ``Missing
+    Authentication Token``, and ``execute-api`` is this feature's headline
+    target, so a correctly signed run can land here with nothing whatsoever
+    wrong with its signature.
+    """
+
+    def test_a_plain_403_lists_alternatives_rather_than_asserting_a_cause(
+        self,
+    ) -> None:
+        client = _RejectingClient(status=403)
+
+        with pytest.raises(RuntimeError) as excinfo:
+            asyncio.run(
+                readiness_probe._wait_inference(
+                    client=cast(Any, client),
+                    url="http://server",
+                    model_name="model-a",
+                    endpoint_type="chat",
+                    custom_endpoint=None,
+                    timeout_s=1.0,
+                    interval_s=0.1,
+                    headers={},
+                    signer=cast(Any, _FakeSigner()),
+                )
+            )
+
+        message = str(excinfo.value)
+        assert "may mean" in message
+        assert "IAM" in message
+        assert "does not route" in message
+
+    def test_api_gateway_unrouted_path_is_named_as_such(self) -> None:
+        client = _RejectingClient(status=403, message="Missing Authentication Token")
+
+        with pytest.raises(RuntimeError) as excinfo:
+            asyncio.run(
+                readiness_probe._wait_inference(
+                    client=cast(Any, client),
+                    url="http://server",
+                    model_name="model-a",
+                    endpoint_type="chat",
+                    custom_endpoint=None,
+                    timeout_s=1.0,
+                    interval_s=0.1,
+                    headers={},
+                    signer=cast(Any, _FakeSigner()),
+                )
+            )
+
+        message = str(excinfo.value)
+        assert "does not route" in message
+        # The signature is fine in this case; do not send the user chasing it.
+        assert "--aws-region" not in message

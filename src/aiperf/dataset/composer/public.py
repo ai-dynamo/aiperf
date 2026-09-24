@@ -111,16 +111,27 @@ class PublicDatasetComposer(BaseDatasetComposer):
             kwargs["message_content_key"] = loader_metadata.message_content_key
 
         if loader_metadata.multi_turn:
-            if not self._loader_accepts_kwarg(loader_class, "multi_turn"):
-                raise ValueError(
-                    f"Loader {loader_class.__name__} for dataset {dataset_type!r} "
-                    "does not support the 'multi_turn' metadata flag. Remove "
-                    "'multi_turn: true' from this loader's plugin metadata, or "
-                    "use a loader that declares 'multi_turn' on its constructor "
-                    "(e.g. HFConversationDatasetLoader, SpeedBenchLoader, "
-                    "SpecBenchLoader)."
-                )
-            kwargs["multi_turn"] = True
+            self._set_opt_in_kwarg(
+                kwargs,
+                loader_class,
+                dataset_type,
+                name="multi_turn",
+                value=True,
+                supporting_loaders=(
+                    "HFConversationDatasetLoader, SpeedBenchPublicLoader, "
+                    "SpecBenchLoader"
+                ),
+            )
+
+        if loader_metadata.category is not None:
+            self._set_opt_in_kwarg(
+                kwargs,
+                loader_class,
+                dataset_type,
+                name="category",
+                value=loader_metadata.category,
+                supporting_loaders="SpeedBenchPublicLoader",
+            )
 
         if loader_metadata.streaming:
             kwargs["streaming"] = loader_metadata.streaming
@@ -136,6 +147,34 @@ class PublicDatasetComposer(BaseDatasetComposer):
             kwargs["filters"] = self._public_dataset.filters
 
         return kwargs
+
+    def _set_opt_in_kwarg(
+        self,
+        kwargs: dict[str, Any],
+        loader_class: type,
+        dataset_type: str,
+        *,
+        name: str,
+        value: Any,
+        supporting_loaders: str,
+    ) -> None:
+        """Forward an opt-in metadata field, rejecting loaders that can't take it.
+
+        These fields are declared per-entry in plugins.yaml but only a handful of
+        loaders accept them, so a typo would otherwise surface as a TypeError
+        from the loader constructor rather than a message naming the entry.
+
+        Raises:
+            ValueError: If ``loader_class.__init__`` does not declare ``name``.
+        """
+        if not self._loader_accepts_kwarg(loader_class, name):
+            raise ValueError(
+                f"Loader {loader_class.__name__} for dataset {dataset_type!r} does "
+                f"not support the {name!r} metadata field. Remove {name!r} from "
+                f"this loader's plugin metadata, or use a loader that declares "
+                f"{name!r} on its constructor (e.g. {supporting_loaders})."
+            )
+        kwargs[name] = value
 
     def _inject_trace_kwargs(
         self, loader_metadata: Any, kwargs: dict[str, Any]
