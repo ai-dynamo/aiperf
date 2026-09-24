@@ -8,6 +8,7 @@ actual GPU hardware.
 """
 
 import asyncio
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -28,8 +29,19 @@ def mock_pynvml():
     """Create a mock pynvml module with typical NVML responses."""
     mock_module = MagicMock()
 
-    # NVML error class and constants
+    # NVML error class and constants. NVMLError_NotSupported is a real
+    # subclass in pynvml and code distinguishes it from transient failures, so
+    # the mock mirrors that rather than collapsing both into one type.
     mock_module.NVMLError = Exception
+
+    class _NVMLErrorNotSupported(Exception):
+        pass
+
+    class _NVMLErrorFunctionNotFound(Exception):
+        pass
+
+    mock_module.NVMLError_NotSupported = _NVMLErrorNotSupported
+    mock_module.NVMLError_FunctionNotFound = _NVMLErrorFunctionNotFound
     mock_module.NVML_TEMPERATURE_GPU = 0
     mock_module.NVML_PERF_POLICY_POWER = 0
 
@@ -340,6 +352,123 @@ class TestPyNVMLLifecycle:
 # ---------------------------------------------------------------------------
 # Test Metrics Collection
 # ---------------------------------------------------------------------------
+
+
+def _energy_warnings(caplog) -> list[str]:
+    """Warning-level records from the energy-counter probe."""
+    return [
+        record.message
+        for record in caplog.records
+        if record.levelno == logging.WARNING and "energy counter" in record.message
+    ]
+
+
+class TestPyNVMLEnergyCounterProbe:
+    """The energy counter exists only on Volta and newer.
+
+    Before the probe, an unsupported device raised NVMLError_NotSupported on
+    every sample, the collection loop suppressed it, and the user got a run
+    with no energy metrics and no explanation. These tests pin all three parts
+    of the fix: the probe warns, it records support once, and the collection
+    loop honours that.
+    """
+
+    @pytest.mark.asyncio
+    async def test_supported_device_is_marked_supported(self, initialized_collector):
+        """A device that answers the query is used normally."""
+        assert all(gpu.energy_counter_supported for gpu in initialized_collector._gpus)
+
+    @pytest.mark.asyncio
+    async def test_unsupported_device_warns_then_is_not_queried_again(
+        self, patch_pynvml, caplog
+    ):
+        """A pre-Volta device warns once at init, then the loop stops asking.
+
+        The warning is what the probe is for: without it the run reports no
+        energy and says nothing about why. Asserting only on
+        ``energy_counter_supported`` would stay green if it were downgraded to
+        debug.
+        """
+        mock_pynvml, PyNVMLTelemetryCollector = patch_pynvml
+        mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.side_effect = (
+            mock_pynvml.NVMLError_NotSupported("Not Supported")
+        )
+
+        collector = PyNVMLTelemetryCollector()
+        with caplog.at_level(logging.WARNING):
+            await collector.initialize()
+
+        warnings = _energy_warnings(caplog)
+        assert len(warnings) == 2, "one per GPU in the fixture"
+        assert all("Volta" in message for message in warnings)
+
+        assert all(not gpu.energy_counter_supported for gpu in collector._gpus)
+
+        calls_after_init = mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.call_count
+        collector._collect_gpu_metrics()
+        collector._collect_gpu_metrics()
+
+        assert (
+            mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.call_count
+            == calls_after_init
+        )
+
+    @pytest.mark.asyncio
+    async def test_function_not_found_disables_energy_permanently(
+        self, patch_pynvml, caplog
+    ):
+        """A driver that does not export the symbol is permanent, not transient.
+
+        pynvml raises NVMLError_FunctionNotFound from _nvmlGetFunctionPointer
+        when libnvidia-ml has no such symbol, which cannot start working later
+        in the same process. Treating it as transient left the collection loop
+        making a doomed call per GPU per sample.
+        """
+        mock_pynvml, PyNVMLTelemetryCollector = patch_pynvml
+        mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.side_effect = (
+            mock_pynvml.NVMLError_FunctionNotFound("Function Not Found")
+        )
+
+        collector = PyNVMLTelemetryCollector()
+        with caplog.at_level(logging.WARNING):
+            await collector.initialize()
+
+        assert len(_energy_warnings(caplog)) == 2
+        assert all(not gpu.energy_counter_supported for gpu in collector._gpus)
+
+        calls_after_init = mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.call_count
+        collector._collect_gpu_metrics()
+        collector._collect_gpu_metrics()
+        assert (
+            mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.call_count
+            == calls_after_init
+        )
+
+    @pytest.mark.asyncio
+    async def test_transient_probe_error_does_not_disable_energy(self, patch_pynvml):
+        """A non-NotSupported error must not cost the run its energy metrics.
+
+        Only NVMLError_NotSupported means the device lacks the counter. Any
+        other NVML failure at init may be transient, so the capability stays
+        enabled and the collection loop tries again.
+        """
+        mock_pynvml, PyNVMLTelemetryCollector = patch_pynvml
+        mock_pynvml.nvmlDeviceGetTotalEnergyConsumption.side_effect = [
+            mock_pynvml.NVMLError("Unknown Error"),  # GPU 0 probe
+            mock_pynvml.NVMLError("Unknown Error"),  # GPU 1 probe
+            5_000_000,  # collection succeeds afterwards
+            6_000_000,
+        ]
+
+        collector = PyNVMLTelemetryCollector()
+        await collector.initialize()
+
+        assert all(gpu.energy_counter_supported for gpu in collector._gpus)
+
+        records = collector._collect_gpu_metrics()
+        assert all(
+            r.telemetry_data.nvidia_energy_consumption is not None for r in records
+        )
 
 
 class TestPyNVMLMetricsCollection:
