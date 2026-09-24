@@ -2728,6 +2728,23 @@ public_dataset_loader:
       multi_turn: true
       category: high_entropy
 
+  h_cua_perf:
+    class: aiperf.dataset.loader.h_cua_perf:HCuaPerfDatasetLoader
+    description: |
+      H CUA Perf computer-use agent traces — hosted on HuggingFace as
+      Hcompany/h_cua_perf (477 trajectories, 18,224 requests, CC BY 4.0):
+      https://huggingface.co/datasets/Hcompany/h_cua_perf
+      One Mooncake record per step of a tool-calling, screenshot-driven agent
+      on CUA-Gym desktop tasks: full text history, 10 tool definitions and one
+      screenshot per request. Delegates to the mooncake_trace loader, replaying
+      the recorded inter-request delays. --dataset-filter reshapes the corpus in
+      place: n_screenshots, min_trace_length, max_trace_length, avg_trace_length.
+      Usage: --public-dataset h_cua_perf --dataset-filter n_screenshots=3
+    metadata:
+      hf_dataset_name: Hcompany/h_cua_perf
+      hf_split: train
+      is_trace: true
+
 # =============================================================================
 # ZMQ Proxies
 # =============================================================================
