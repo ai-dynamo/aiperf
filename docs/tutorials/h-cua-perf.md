@@ -57,7 +57,7 @@ aiperf profile \
 | `--concurrency N` | Sessions in flight at once. The turns of a session are sequential, so this is the number of agents working at the same time. Always set it, the default is 1. |
 | `--inter-turn-delay-cap-seconds` | Caps the recorded wait between two turns of a session. Unset, the waits are replayed as recorded; `0` sends each session's requests back to back and the run becomes a plain concurrency test. |
 | `--num-conversations N` | Stops after N whole sessions. |
-| `--request-count N` | Stops after N requests, cutting the last sessions short. Without either cap, AIPerf stops after 10 requests. |
+| `--request-count N` | Stops after N requests, cutting the last sessions short. |
 | `--use-server-token-count` | Takes token counts from the server's usage. AIPerf's own count tokenizes text only and ignores images, so without it the input sequence length misses every screenshot. |
 | `--extra-inputs ignore_eos:true` | Makes the model generate exactly the recorded completion length, which the loader passes as `max_tokens`. Without it a model that did not produce the traces stops early on most requests and AIPerf prints an output-length mismatch warning. |
 
