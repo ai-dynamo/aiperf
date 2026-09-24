@@ -16,6 +16,7 @@ from aiperf.common.enums import ServiceRegistrationStatus
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError
 from aiperf.common.types import ServiceTypeT
+from aiperf.plugin.enums import ServiceType
 
 if IS_WINDOWS:
     # Windows multiprocessing has no fork context — ``ForkProcess`` is
@@ -68,6 +69,10 @@ class MultiProcessServiceManager(BaseServiceManager):
         super().__init__(required_services, **kwargs)
         self.multi_process_info: list[MultiProcessRunInfo] = []
         self.log_queue = log_queue
+        # Exit codes of workers reaped before registering, across every poll of
+        # the registration wait. Workers failing on configuration usually die
+        # together, but not necessarily within one 0.5s tick.
+        self._workers_lost_before_registering: list[int | None] = []
 
     async def run_service(
         self, service_type: ServiceTypeT, num_replicas: int = 1
@@ -231,6 +236,19 @@ class MultiProcessServiceManager(BaseServiceManager):
 
             raise AIPerfError("Some services failed to register within timeout") from e
 
+    def spawned_worker_ids(self) -> frozenset[str]:
+        """Workers spawned here and not yet reaped.
+
+        Answers the question the SystemController needs when a worker reports a
+        start-up failure before registering: is there any other worker that
+        could still start?
+        """
+        return frozenset(
+            info.service_id
+            for info in self.multi_process_info
+            if info.service_type == ServiceType.WORKER
+        )
+
     def get_service_liveness(self, service_id: str) -> bool | None:
         """Answer liveness from the real ``multiprocessing.Process`` handle.
 
@@ -273,13 +291,54 @@ class MultiProcessServiceManager(BaseServiceManager):
                     f"Required service {info.service_id} died before "
                     f"registering (exit code {exit_code})"
                 )
-            self.warning(
-                f"Optional service {info.service_id!r} exited before "
-                f"registering (exit code {exit_code}); continuing "
-                f"benchmark without it."
-            )
             required_counts[info.service_type] -= 1
             self.multi_process_info.remove(info)
+            if info.service_type == ServiceType.WORKER:
+                # Not "continuing without it": whether that is true depends on
+                # whether any worker is left, which is decided below.
+                self._workers_lost_before_registering.append(exit_code)
+                self.warning(
+                    f"Worker {info.service_id!r} exited before registering "
+                    f"(exit code {exit_code})."
+                )
+            else:
+                self.warning(
+                    f"Optional service {info.service_id!r} exited before "
+                    f"registering (exit code {exit_code}); continuing "
+                    f"benchmark without it."
+                )
+
+        self._raise_if_no_worker_remains()
+
+    def _raise_if_no_worker_remains(self) -> None:
+        """Fail fast once the *last* worker has died before registering.
+
+        Workers are not in ``required_services`` in multi-process mode -- they
+        are spawned later through ``SPAWN_WORKERS`` -- so each dead one is
+        reaped like an optional service. That is right for a partial loss. But
+        losing the last one drives its expected count to 0, the registration
+        wait then sees every count satisfied (``0 >= 0``) and reports success,
+        and start-up carries on into ``PhaseOrchestrator``'s wait for a worker
+        that will never register: 30s, then "No workers registered with the
+        credit router" in place of the workers' own error.
+
+        Start-up failures from configuration -- missing credentials, a bad
+        request signer -- are deterministic, so every worker fails the same way
+        and continuing can never succeed. How many were lost, and with which
+        exit codes, is what tells the user that.
+        """
+        lost = self._workers_lost_before_registering
+        if not lost or any(
+            info.service_type == ServiceType.WORKER for info in self.multi_process_info
+        ):
+            return
+        codes = sorted({str(code) for code in lost})
+        label = "exit code" if len(codes) == 1 else "exit codes"
+        raise AIPerfError(
+            f"Every worker exited before registering ({len(lost)} of {len(lost)}; "
+            f"{label} {', '.join(codes)}). No worker is left to send requests, so "
+            f"the benchmark cannot run. The workers' own errors are logged above."
+        )
 
     async def _wait_for_process(self, info: MultiProcessRunInfo) -> None:
         """Force-kill a service process that is still alive after bus shutdown.

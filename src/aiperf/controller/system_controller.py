@@ -221,6 +221,11 @@ class SystemController(
         self._stop_tasks: set[asyncio.Task] = set()
         self._profile_results: ProcessRecordsResult | None = None
         self._exit_errors: list[ExitErrorInfo] = []
+        # Start-up failures reported by workers that never registered, keyed by
+        # service ID. The first report per worker is kept: it is the cause, and
+        # a later one (``_kill``'s "entered FAILED state") is a consequence.
+        self._worker_startup_failures: dict[str, ErrorDetails] = {}
+        self._all_workers_failed_to_start = False
         self._export_failed = False
         self._failed_exporters: list[str] = []
         self._raw_artifacts_finalized = False
@@ -852,6 +857,10 @@ class SystemController(
         an hour-long benchmark that could have completed with rows missing.
         A sender we cannot identify is treated as required.
         """
+        if self._is_unregistered_local_worker(message.service_id):
+            await self._on_worker_startup_failure(message)
+            return
+
         self.error(
             f"Received service error from '{message.service_id}': "
             f"{message.error.message}"
@@ -872,6 +881,70 @@ class SystemController(
             await self._cancel_profiling()
             return
         await self._check_and_trigger_shutdown()
+
+    def _is_unregistered_local_worker(self, service_id: str) -> bool:
+        """Whether the sender is a worker spawned here that has not registered.
+
+        Workers report a start-up failure before registering, so they are
+        absent from ``service_id_map`` and ``_is_required_service`` would count
+        them as required -- cancelling the run over a single flaky worker.
+        """
+        return (
+            service_id not in self.service_manager.service_id_map
+            and service_id in self.service_manager.spawned_worker_ids()
+        )
+
+    async def _on_worker_startup_failure(
+        self, message: BaseServiceErrorMessage
+    ) -> None:
+        """Cancel once no spawned worker can still start; tolerate a partial loss.
+
+        In multi-process mode workers are not required services, so one failing
+        while another can still start is a degraded run, and keeps today's
+        behavior. But with none left nothing will ever send a request, and
+        waiting out PhaseOrchestrator's credit-router timeout would only bury
+        the workers' own error under "No workers registered with the credit
+        router". Liveness is ground truth here, so a worker that died without
+        reporting does not hold the run open either.
+        """
+        self._worker_startup_failures.setdefault(message.service_id, message.error)
+        self._result_join_coordinator.unregister_service(message.service_id)
+        if self._all_workers_failed_to_start:
+            return
+
+        viable = [
+            service_id
+            for service_id in self.service_manager.spawned_worker_ids()
+            if service_id not in self._worker_startup_failures
+            and self.service_manager.get_service_liveness(service_id) is not False
+        ]
+        if viable:
+            self.warning(
+                f"Worker '{message.service_id}' failed to start: "
+                f"{message.error.message} Continuing with {len(viable)} other "
+                f"worker(s)."
+            )
+            await self._check_and_trigger_shutdown()
+            return
+
+        self._all_workers_failed_to_start = True
+        self.error(
+            f"Every worker failed to start ({len(self._worker_startup_failures)}), "
+            f"so no worker is left to send requests. '{message.service_id}': "
+            f"{message.error.message}"
+        )
+        # One entry per worker; the exit-errors panel groups identical errors
+        # across services, so N workers failing the same way render once.
+        self._exit_errors.extend(
+            ExitErrorInfo(
+                error_details=error,
+                operation="worker_startup",
+                service_id=service_id,
+            )
+            for service_id, error in self._worker_startup_failures.items()
+        )
+        if self._system_state not in {SystemState.STOPPING, SystemState.SHUTDOWN}:
+            await self._cancel_profiling()
 
     def _is_required_service(self, service_id: str) -> bool:
         """Whether losing this service invalidates the run.

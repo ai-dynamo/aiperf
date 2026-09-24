@@ -57,6 +57,14 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
             Callable[[str, str, int | None], Awaitable[None]] | None
         ) = None
 
+    def spawned_worker_ids(self) -> frozenset[str]:
+        """IDs of workers this manager spawned as local processes.
+
+        Empty here: only managers that own the worker processes can answer, and
+        the SystemController reads an empty set as "no local workers to judge".
+        """
+        return frozenset()
+
     def get_service_liveness(self, service_id: str) -> bool | None:
         """Report authoritative liveness for a service, when the manager knows it.
 

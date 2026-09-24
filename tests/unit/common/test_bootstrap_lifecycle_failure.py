@@ -234,3 +234,100 @@ class TestChildLifecycleFailureIsSurfaced:
         assert exc_info.value.code == 1
         assert captured[0].state == LifecycleState.FAILED
         assert "No AWS credentials found" in str(captured[0]._exit_errors)
+
+
+class TestStartupFailureIsReportedToTheController:
+    """A service that opts in publishes its start-up failure as SERVICE_ERROR
+    before the lifecycle tears its comms down.
+
+    Workers need this: they are not in ``required_services`` in multi-process
+    mode, so a worker that dies before registering is otherwise invisible to
+    the controller -- it waits out ``PhaseOrchestrator``'s 30s credit-router
+    timeout and reports that instead of the worker's own error. Publishing lets
+    the controller both see the real cause and decide whether any worker is
+    left.
+
+    Opt-in rather than universal: optional collectors (GPU telemetry, server
+    metrics) failing at start-up must stay a degraded run, and every
+    SERVICE_ERROR the controller receives lands in its exit errors.
+    """
+
+    @pytest.fixture(autouse=True)
+    def setup_bootstrap_mocks(
+        self,
+        mock_psutil_process,
+        mock_setup_child_process_logging,
+        register_dummy_services,
+    ):
+        pass
+
+    @staticmethod
+    def _run_and_capture(service_cls, run, mock_log_queue) -> list:
+        published: list = []
+
+        class _Recording(service_cls):
+            async def publish(self, message, *args, **kwargs):
+                published.append(message)
+
+        with (
+            mock_plugin(
+                "service",
+                "test_reporting",
+                _Recording,
+                metadata={"required": False, "auto_start": False, "disable_gc": False},
+            ),
+            pytest.raises(SystemExit),
+        ):
+            bootstrap_and_run_service(
+                "test_reporting",
+                run=run,
+                log_queue=mock_log_queue,
+                service_id="test_reporting",
+            )
+        return published
+
+    def test_an_opted_in_service_publishes_its_startup_failure(
+        self,
+        service_config_no_uvloop: CLIConfig,
+        cli_config: CLIConfig,
+        mock_log_queue,
+    ) -> None:
+        from aiperf.common.messages import BaseServiceErrorMessage
+
+        class _Reporting(_ServiceWithFailingChild):
+            reports_startup_failure = True
+
+        published = self._run_and_capture(
+            _Reporting, make_run_from_cli(cli_config), mock_log_queue
+        )
+
+        errors = [m for m in published if isinstance(m, BaseServiceErrorMessage)]
+        assert len(errors) == 1, published
+        assert errors[0].service_id == "test_reporting"
+        # The child's underlying cause, not "Failed for <service>": this string
+        # is what ends up as the headline in the exit-errors panel.
+        assert "No AWS credentials found" in errors[0].error.message
+
+    def test_a_service_that_has_not_opted_in_stays_silent(
+        self,
+        service_config_no_uvloop: CLIConfig,
+        cli_config: CLIConfig,
+        mock_log_queue,
+    ) -> None:
+        """The default must not change: an optional collector failing at
+        start-up would otherwise land in the controller's exit errors and turn
+        a degraded run into a failed one."""
+        from aiperf.common.messages import BaseServiceErrorMessage
+
+        published = self._run_and_capture(
+            _ServiceWithFailingChild, make_run_from_cli(cli_config), mock_log_queue
+        )
+
+        assert not [m for m in published if isinstance(m, BaseServiceErrorMessage)]
+
+    def test_workers_opt_in(self) -> None:
+        """Pins the one production opt-in, so removing it is a visible change
+        rather than a silent return to the 30s credit-router timeout."""
+        from aiperf.workers.worker import Worker
+
+        assert Worker.reports_startup_failure is True
