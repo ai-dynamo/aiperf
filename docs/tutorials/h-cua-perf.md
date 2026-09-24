@@ -43,6 +43,7 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --use-server-token-count \
+    --extra-inputs ignore_eos:true \
     --public-dataset h_cua_perf \
     --num-dataset-entries 20 \
     --dataset-filter n_screenshots=3 \
@@ -58,6 +59,7 @@ aiperf profile \
 | `--num-conversations N` | Stops after N whole sessions. |
 | `--request-count N` | Stops after N requests, cutting the last sessions short. Without either cap, AIPerf stops after 10 requests. |
 | `--use-server-token-count` | Takes token counts from the server's usage. AIPerf's own count tokenizes text only and ignores images, so without it the input sequence length misses every screenshot. |
+| `--extra-inputs ignore_eos:true` | Makes the model generate exactly the recorded completion length, which the loader passes as `max_tokens`. Without it a model that did not produce the traces stops early on most requests and AIPerf prints an output-length mismatch warning. |
 
 Some requests are larger than the 128k-token context of the example server; `max_trace_length=40` and the small screenshot window keep the example's requests under it.
 
