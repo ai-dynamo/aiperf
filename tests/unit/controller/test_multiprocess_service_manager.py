@@ -361,6 +361,152 @@ class TestMultiProcessServiceManager:
         )
 
 
+class TestLosingEveryWorkerBeforeRegistrationIsFatal:
+    """Workers are not in ``required_services`` in multi-process mode -- they
+    are spawned later through ``SPAWN_WORKERS`` -- so a worker that dies before
+    registering is reaped as optional and dropped.
+
+    That is right for a partial loss, but when the *last* worker goes, its
+    expected count reaches 0, the wait loop sees every count satisfied
+    (``0 >= 0``) and reports registration as a success. Start-up then carries
+    on into ``PhaseOrchestrator``'s 30s wait for a worker that will never
+    register, and the user sees "No workers registered with the credit router"
+    instead of the workers' own error.
+
+    Worker start-up failures that come from configuration -- missing AWS
+    credentials, a bad signer -- are deterministic: every worker fails the
+    same way, so continuing can never succeed.
+    """
+
+    @pytest.fixture
+    def service_manager(self, benchmark_run) -> MultiProcessServiceManager:
+        return MultiProcessServiceManager(
+            required_services={
+                ServiceType.DATASET_MANAGER: 1,
+                ServiceType.TIMING_MANAGER: 1,
+            },
+            run=benchmark_run,
+        )
+
+    @staticmethod
+    def _process(*, alive: bool, exitcode: int | None = None) -> MagicMock:
+        process = MagicMock(spec=Process)
+        process.is_alive.return_value = alive
+        process.exitcode = exitcode
+        return process
+
+    @staticmethod
+    def _info(service_type, service_id: str, process) -> MultiProcessRunInfo:
+        return MultiProcessRunInfo.model_construct(
+            process=process, service_type=service_type, service_id=service_id
+        )
+
+    @staticmethod
+    def _mark_registered(manager, *infos) -> None:
+        from aiperf.common.enums import ServiceRegistrationStatus
+
+        for info in infos:
+            registered = MagicMock()
+            registered.service_type = info.service_type
+            registered.registration_status = ServiceRegistrationStatus.REGISTERED
+            manager.service_id_map[info.service_id] = registered
+
+    def _core(self, manager) -> tuple[MultiProcessRunInfo, MultiProcessRunInfo]:
+        dataset = self._info(
+            ServiceType.DATASET_MANAGER, "dataset", self._process(alive=True)
+        )
+        timing = self._info(
+            ServiceType.TIMING_MANAGER, "timing", self._process(alive=True)
+        )
+        self._mark_registered(manager, dataset, timing)
+        return dataset, timing
+
+    @pytest.mark.asyncio
+    async def test_the_only_worker_dying_before_registering_is_fatal(
+        self, service_manager: MultiProcessServiceManager
+    ):
+        dataset, timing = self._core(service_manager)
+        dead_worker = self._info(
+            ServiceType.WORKER, "worker_a", self._process(alive=False, exitcode=1)
+        )
+        service_manager.multi_process_info = [dataset, timing, dead_worker]
+
+        with pytest.raises(AIPerfError) as exc_info:
+            await service_manager.wait_for_all_services_registration(
+                stop_event=asyncio.Event(), timeout_seconds=2.0
+            )
+
+        message = str(exc_info.value)
+        assert "worker" in message.lower()
+        assert "exited before registering" in message
+        assert "exit code 1" in message
+
+    @pytest.mark.asyncio
+    async def test_every_worker_dying_reports_how_many_were_lost(
+        self, service_manager: MultiProcessServiceManager
+    ):
+        """All N failing the same way is the signal that the cause is
+        configuration rather than a flaky process, so the count is part of the
+        diagnosis, not decoration."""
+        dataset, timing = self._core(service_manager)
+        workers = [
+            self._info(
+                ServiceType.WORKER,
+                f"worker_{i}",
+                self._process(alive=False, exitcode=1),
+            )
+            for i in range(3)
+        ]
+        service_manager.multi_process_info = [dataset, timing, *workers]
+
+        with pytest.raises(AIPerfError, match="3 of 3"):
+            await service_manager.wait_for_all_services_registration(
+                stop_event=asyncio.Event(), timeout_seconds=2.0
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_worker_dying_while_another_lives_is_still_tolerated(
+        self, service_manager: MultiProcessServiceManager
+    ):
+        """The fix is scoped to losing the *last* worker. One flaky worker
+        while another is healthy keeps the existing drop-and-continue
+        behavior."""
+        dataset, timing = self._core(service_manager)
+        dead_worker = self._info(
+            ServiceType.WORKER, "worker_dead", self._process(alive=False, exitcode=1)
+        )
+        live_worker = self._info(
+            ServiceType.WORKER, "worker_live", self._process(alive=True)
+        )
+        self._mark_registered(service_manager, live_worker)
+        service_manager.multi_process_info = [dataset, timing, dead_worker, live_worker]
+
+        await service_manager.wait_for_all_services_registration(
+            stop_event=asyncio.Event(), timeout_seconds=2.0
+        )
+
+        assert dead_worker not in service_manager.multi_process_info
+        assert live_worker in service_manager.multi_process_info
+
+    @pytest.mark.asyncio
+    async def test_losing_every_replica_of_an_optional_service_is_still_tolerated(
+        self, service_manager: MultiProcessServiceManager
+    ):
+        """Only workers are fatal to lose entirely. GPU telemetry or server
+        metrics disappearing must not abort a benchmark that can still run."""
+        dataset, timing = self._core(service_manager)
+        dead_metrics = self._info(
+            ServiceType.SERVER_METRICS_MANAGER,
+            "server_metrics",
+            self._process(alive=False, exitcode=1),
+        )
+        service_manager.multi_process_info = [dataset, timing, dead_metrics]
+
+        await service_manager.wait_for_all_services_registration(
+            stop_event=asyncio.Event(), timeout_seconds=2.0
+        )
+
+
 class TestWaitForProcess:
     """Test _wait_for_process force-kill after bus shutdown grace.
 

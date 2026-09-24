@@ -623,6 +623,12 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     - StickyCreditRouter ensures all turns route to same worker for cache hits
     """
 
+    # In multi-process mode workers are not required services, so a worker that
+    # dies before registering is otherwise invisible to the SystemController:
+    # it waits out PhaseOrchestrator's credit-router timeout and reports that
+    # instead of this worker's own error.
+    reports_startup_failure = True
+
     def __init__(
         self,
         run: BenchmarkRun,

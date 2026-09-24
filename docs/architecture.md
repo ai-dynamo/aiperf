@@ -50,6 +50,14 @@ Shutdown begins only after profiling has started and every registered domain has
 either completed or been evicted after a confirmed service failure. This lifecycle
 gate prevents an empty startup barrier from being mistaken for completed results.
 
+When services run as local processes, workers are not required services: they are
+spawned on demand after the core services register, and losing one while others
+can still start is a degraded run rather than a failed one. A worker that fails
+during start-up reports the failure to the System Controller before exiting. Once
+no spawned worker can still start, the controller cancels the run and surfaces the
+workers' own error, since nothing will ever send a request, instead of waiting out
+the credit router's registration timeout (`AIPERF_SERVICE_START_TIMEOUT`).
+
 Kubernetes result publication is a fail-closed filesystem transaction. Before
 a controller starts benchmark work, and again immediately before export, it
 durably removes any stale ready marker and atomically installs a processing
