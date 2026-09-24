@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import os
 import threading
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -78,6 +80,13 @@ class TestOutputsJsonExporter:
 
         outputs_file = tmp_path / "outputs.json"
         assert not outputs_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_export_empty_fragments_dir_skips(self, tmp_path: Path) -> None:
+        (tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER).mkdir()
+        await _make_exporter(tmp_path).export()
+        assert not (tmp_path / "outputs.json").exists()
+        assert not list(tmp_path.glob(".outputs-json-*"))
 
     @pytest.mark.asyncio
     async def test_export_skips_unparseable_fragment_line(self, tmp_path: Path) -> None:
@@ -404,8 +413,10 @@ class TestBoundedOutputsExport:
         _write_jsonl(fragments_dir / "output_fragments_b.jsonl", rows[15:])
         traversal = [
             orjson.loads(line)
-            for path in fragments_dir.glob("output_fragments_*.jsonl")
-            for line in path.read_bytes().splitlines()
+            for entry in os.scandir(fragments_dir)
+            if entry.name.startswith("output_fragments_")
+            and entry.name.endswith(".jsonl")
+            for line in Path(entry.path).read_bytes().splitlines()
         ]
         exporter = _make_exporter(tmp_path)
         exporter.CHUNK_RECORDS = 2
@@ -445,6 +456,84 @@ class TestBoundedOutputsExport:
             "data": [],
             "warmup": [],
         }
+        assert not (fragments_dir / "output_fragments_empty.jsonl").exists()
+
+    @pytest.mark.asyncio
+    async def test_fragment_scan_consumes_directory_in_bounded_batches(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        for index in range(130):
+            _write_jsonl(
+                fragments_dir / f"output_fragments_{index:03}.jsonl",
+                [_make_fragment(session_num=index)],
+            )
+        exporter = _make_exporter(tmp_path)
+        actual_scandir = os.scandir
+        scanned = 0
+        scanned_at_first_read: list[int] = []
+
+        class TrackedEntries:
+            def __init__(self, entries: Iterator[os.DirEntry[str]]) -> None:
+                self._entries = entries
+
+            def __iter__(self) -> "TrackedEntries":
+                return self
+
+            def __next__(self) -> os.DirEntry[str]:
+                nonlocal scanned
+                scanned += 1
+                return next(self._entries)
+
+            def close(self) -> None:
+                self._entries.close()
+
+        def tracked_scandir(path: Path) -> Iterator[os.DirEntry[str]]:
+            entries = actual_scandir(path)
+            if path == fragments_dir:
+                return TrackedEntries(entries)
+            return entries
+
+        original_lines = exporter._lines
+
+        async def tracked_lines(path: Path) -> AsyncIterator[bytes]:
+            if not scanned_at_first_read:
+                scanned_at_first_read.append(scanned)
+            async for line in original_lines(path):
+                yield line
+
+        monkeypatch.setattr(os, "scandir", tracked_scandir)
+        monkeypatch.setattr(exporter, "_lines", tracked_lines)
+        await exporter.export()
+        assert scanned_at_first_read == [exporter.FRAGMENT_SCAN_BATCH]
+        assert scanned >= 130
+        assert (
+            len(orjson.loads((tmp_path / "outputs.json").read_bytes())["data"]) == 130
+        )
+
+    @pytest.mark.asyncio
+    async def test_cleanup_preserves_fragment_created_after_ingestion(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fragments_dir = tmp_path / OutputDefaults.OUTPUT_FRAGMENTS_FOLDER
+        consumed = fragments_dir / "output_fragments_old.jsonl"
+        late = fragments_dir / "output_fragments_late.jsonl"
+        _write_jsonl(consumed, [_make_fragment(session_num=1, response_text="old")])
+        exporter = _make_exporter(tmp_path)
+        original_write = exporter._write_document
+
+        async def write_then_add(staged: Path, run: Path | None) -> None:
+            await original_write(staged, run)
+            _write_jsonl(late, [_make_fragment(session_num=2, response_text="late")])
+
+        monkeypatch.setattr(exporter, "_write_document", write_then_add)
+        await exporter.export()
+        assert not consumed.exists()
+        assert late.exists()
+        assert [
+            row["response_text"]
+            for row in orjson.loads((tmp_path / "outputs.json").read_bytes())["data"]
+        ] == ["old"]
 
     @pytest.mark.asyncio
     async def test_large_unicode_record(self, tmp_path: Path) -> None:

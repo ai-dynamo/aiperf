@@ -6,7 +6,7 @@ import asyncio
 import heapq
 import os
 import tempfile
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
 from contextlib import AsyncExitStack, aclosing, asynccontextmanager
 from pathlib import Path
 from typing import Any, TypeVar
@@ -35,6 +35,7 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
     MERGE_FAN_IN = 32
     READ_BYTES = 64 * 1024
     WRITE_BYTES = 1024 * 1024
+    FRAGMENT_SCAN_BATCH = 64
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -57,32 +58,95 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
 
     async def export(self) -> None:
         """Publish a sorted document, retaining source fragments on failure."""
-        fragment_files = list(self._fragments_dir.glob("output_fragments_*.jsonl"))
-        if not fragment_files:
-            self.debug("No output fragment files found, skipping outputs.json export")
-            return
+        async with aclosing(self._fragment_files()) as fragments:
+            first = await anext(fragments, None)
+            if first is None:
+                self.debug(
+                    "No output fragment files found, skipping outputs.json export"
+                )
+                return
 
-        self._file_path.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(
-            prefix=".outputs-json-", dir=self._file_path.parent
-        ) as scratch_name:
-            scratch = Path(scratch_name)
-            run_count, data_count, warmup_count = await self._make_runs(
-                fragment_files, scratch
-            )
-            final_run = await self._merge_runs(scratch, run_count)
-            staged = scratch / "outputs.json"
-            await self._write_document(staged, final_run)
-            await asyncio.sleep(0)
-            # A synchronous rename is the commit point: cancellation cannot land
-            # between replacing the old artifact and retiring its fragments.
-            os.replace(staged, self._file_path)
+            self._file_path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(
+                prefix=".outputs-json-", dir=self._file_path.parent
+            ) as scratch_name:
+                scratch = Path(scratch_name)
+                consumed = scratch / "consumed.jsonl"
+                run_count, data_count, warmup_count = await self._make_runs(
+                    self._prepend_first(first, fragments), scratch, consumed
+                )
+                final_run = await self._merge_runs(scratch, run_count)
+                staged = scratch / "outputs.json"
+                await self._write_document(staged, final_run)
+                await asyncio.sleep(0)
+                # A synchronous rename is the commit point: cancellation cannot land
+                # between replacing the old artifact and retiring its fragments.
+                os.replace(staged, self._file_path)
+                self._cleanup_fragments(consumed)
 
         self.info(
             f"Exported {data_count} records ({warmup_count} warmup) "
             f"to {self._file_path}"
         )
-        self._cleanup_fragments(fragment_files)
+
+    @staticmethod
+    def _next_fragment_batch(
+        entries: Iterator[os.DirEntry[str]], limit: int
+    ) -> tuple[list[Path], bool]:
+        paths: list[Path] = []
+        for _ in range(limit):
+            try:
+                entry = next(entries)
+            except StopIteration:
+                return paths, True
+            if entry.name.startswith("output_fragments_") and entry.name.endswith(
+                ".jsonl"
+            ):
+                paths.append(Path(entry.path))
+        return paths, False
+
+    async def _fragment_files(self) -> AsyncIterator[Path]:
+        opening = asyncio.ensure_future(
+            asyncio.to_thread(os.scandir, self._fragments_dir)
+        )
+        try:
+            entries = await self._settled(opening)
+        except asyncio.CancelledError:
+            if (
+                opening.done()
+                and not opening.cancelled()
+                and opening.exception() is None
+            ):
+                await self._settled(asyncio.to_thread(opening.result().close))
+            raise
+        except OSError:
+            return
+        try:
+            while True:
+                paths, finished = await self._settled(
+                    asyncio.to_thread(
+                        self._next_fragment_batch, entries, self.FRAGMENT_SCAN_BATCH
+                    )
+                )
+                for path in paths:
+                    yield path
+                if finished:
+                    break
+        finally:
+            await self._settled(asyncio.to_thread(entries.close))
+
+    @staticmethod
+    async def _prepend_first(
+        first: Path, remaining: AsyncIterator[Path]
+    ) -> AsyncIterator[Path]:
+        yield first
+        async for path in remaining:
+            yield path
+
+    @staticmethod
+    def _record_consumed(manifest: Path, file: Path) -> None:
+        with manifest.open("ab") as output:
+            output.write(orjson.dumps(file.name) + b"\n")
 
     @staticmethod
     async def _settled(operation: Awaitable[T]) -> T:
@@ -143,12 +207,12 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
                     yield line
 
     async def _make_runs(
-        self, fragment_files: list[Path], scratch: Path
+        self, fragment_files: AsyncIterator[Path], scratch: Path, consumed: Path
     ) -> tuple[int, int, int]:
         chunk: list[SortRow] = []
         chunk_bytes = 0
         run_count = data_count = warmup_count = ordinal = 0
-        for file in fragment_files:
+        async for file in fragment_files:
             async with aclosing(self._lines(file)) as lines:
                 async for line in lines:
                     if not line.strip():
@@ -188,6 +252,9 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
                         run_count += 1
                         chunk = []
                         chunk_bytes = 0
+            await self._settled(
+                asyncio.to_thread(self._record_consumed, consumed, file)
+            )
         if chunk:
             await self._write_run(scratch / f"run-0-{run_count}", chunk)
             run_count += 1
@@ -298,10 +365,11 @@ class OutputsJsonExporter(AIPerfLoggerMixin):
                 previous_phase = phase
         return previous_phase
 
-    def _cleanup_fragments(self, fragment_files: list[Path]) -> None:
+    def _cleanup_fragments(self, consumed: Path) -> None:
         """Remove source fragments only after the final document is published."""
-        for file in fragment_files:
-            file.unlink(missing_ok=True)
+        with consumed.open("rb") as source:
+            for line in source:
+                (self._fragments_dir / orjson.loads(line)).unlink(missing_ok=True)
         try:
             self._fragments_dir.rmdir()
         except OSError:
