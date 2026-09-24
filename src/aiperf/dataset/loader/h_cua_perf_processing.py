@@ -153,35 +153,22 @@ def iter_selected_records(
 ) -> Iterator[dict[str, Any]]:
     """Yield the planned prefix of every selected trajectory, re-windowed, in file order.
 
-    Trajectories are contiguous in the source, so each is consumed as a group
-    and iteration stops after the last planned one; the rest of the file is
-    never read.
+    The plan comes from the manifest and the file is verified against the
+    manifest's sha256 before this runs, so the plan is trusted. Trajectories
+    are contiguous in the source, so each is consumed as a group and iteration
+    stops after the last planned one; the rest of the file is never read.
     """
     remaining = dict(plan)
-    seen: set[str] = set()
     for session_id, session in groupby(records, key=itemgetter("session_id")):
-        if session_id in seen:
-            raise ValueError(f"trajectory {session_id!r} is not contiguous")
-        seen.add(session_id)
         kept_n = remaining.pop(session_id, None)
         if kept_n is None:
             continue
         kept = list(islice(session, kept_n))
-        if len(kept) < kept_n:
-            raise ValueError(
-                f"trajectory {session_id!r} has {len(kept)} requests but the "
-                f"manifest lists at least {kept_n}; the file may be truncated"
-            )
         if n_screenshots is not None:
             apply_screenshot_window(kept, n_screenshots)
         yield from kept
         if not remaining:
             return
-    if remaining:
-        raise ValueError(
-            f"{len(remaining)} selected trajectories are missing from the file "
-            f"(first: {next(iter(remaining))!r}); the file may be truncated"
-        )
 
 
 def apply_screenshot_window(records: list[dict[str, Any]], n_screenshots: int) -> None:

@@ -99,25 +99,6 @@ class TestIterSelectedRecords:
         list(iter_selected_records(records(), {"traj-a": 3, "traj-b": 1}, None))
         assert consumed == ["traj-a"] * 3 + ["traj-b"]
 
-    def test_non_contiguous_trajectory_is_rejected(self) -> None:
-        records = RECORDS[:4] + [RECORDS[0]] + RECORDS[4:]
-        with pytest.raises(ValueError, match="not contiguous"):
-            list(iter_selected_records(iter(records), TURNS, None))
-
-    def test_short_trajectory_reports_truncation(self) -> None:
-        with pytest.raises(
-            ValueError, match="has 2 requests but the manifest lists at least 3"
-        ):
-            list(iter_selected_records(iter(RECORDS[:2]), {"traj-a": 3}, None))
-
-    def test_missing_trajectory_reports_truncation(self) -> None:
-        with pytest.raises(ValueError, match="1 selected trajectories are missing"):
-            list(
-                iter_selected_records(
-                    iter(RECORDS[:4]), {"traj-a": 3, "traj-d": 1}, None
-                )
-            )
-
 
 class TestScreenshotWindow:
     def test_slots_span_user_and_tool_observations(self) -> None:

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -133,6 +134,7 @@ class HCuaPerfDatasetLoader(BaseHFDatasetLoader):
                 self.filters, session_turns, first_n=self._explicit_entries()
             )
             self._warn_if_selection_exceeds_memory(meta, plan)
+            await loop.run_in_executor(None, self._verify_trace, meta, trace)
             records = await loop.run_in_executor(None, self._read_records, trace, plan)
         except (KeyError, ValueError, zstandard.ZstdError) as e:
             raise DatasetLoaderError(f"{self.tag}: {e}") from e
@@ -146,6 +148,23 @@ class HCuaPerfDatasetLoader(BaseHFDatasetLoader):
             f"({len(records):,} requests) from {self.hf_dataset_name}"
         )
         return data
+
+    def _verify_trace(self, meta: dict[str, Any], trace: Path) -> None:
+        """The manifest names the sha256 of the trace it describes; any other file is refused."""
+        digests = meta.get("sha256")
+        expected = digests.get(self.hf_filename) if isinstance(digests, dict) else None
+        if not expected:
+            raise DatasetLoaderError(
+                f"{self.tag}: the manifest carries no sha256 for {self.hf_filename}"
+            )
+        with open(trace, "rb") as f:
+            actual = hashlib.file_digest(f, "sha256").hexdigest()
+        if actual != expected:
+            raise DatasetLoaderError(
+                f"{self.tag}: {self.hf_filename} does not match the manifest "
+                f"(sha256 {actual[:12]}, manifest says {expected[:12]}); "
+                "delete it from the Hub cache and download again"
+            )
 
     def _warn_if_selection_exceeds_memory(
         self, meta: dict[str, Any], plan: dict[str, int]

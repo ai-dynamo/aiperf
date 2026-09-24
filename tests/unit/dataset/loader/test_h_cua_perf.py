@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import hashlib
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -34,10 +35,15 @@ def hub(tmp_path: Path):
         "h_cua.meta.json": tmp_path / "h_cua.meta.json",
         "h_cua.jsonl.zst": tmp_path / "h_cua.jsonl.zst",
     }
-    files["h_cua.meta.json"].write_bytes(orjson.dumps({"session_turns": SESSION_TURNS}))
     with zstandard.open(files["h_cua.jsonl.zst"], "wb") as f:
         for r in RECORDS:
             f.write(orjson.dumps(r) + b"\n")
+    digest = hashlib.sha256(files["h_cua.jsonl.zst"].read_bytes()).hexdigest()
+    files["h_cua.meta.json"].write_bytes(
+        orjson.dumps(
+            {"session_turns": SESSION_TURNS, "sha256": {"h_cua.jsonl.zst": digest}}
+        )
+    )
     with patch(
         "huggingface_hub.hf_hub_download",
         side_effect=lambda repo_id, filename, repo_type, revision: str(files[filename]),
@@ -130,4 +136,18 @@ class TestLoader:
     ) -> None:
         (tmp_path / "h_cua.meta.json").write_bytes(orjson.dumps({"num_traces": 3}))
         with pytest.raises(DatasetLoaderError, match="session_turns"):
+            await _loader().load_dataset()
+
+    async def test_trace_not_matching_the_manifest_hash_is_rejected(
+        self, hub: MagicMock, tmp_path: Path
+    ) -> None:
+        (tmp_path / "h_cua.meta.json").write_bytes(
+            orjson.dumps(
+                {
+                    "session_turns": SESSION_TURNS,
+                    "sha256": {"h_cua.jsonl.zst": "0" * 64},
+                }
+            )
+        )
+        with pytest.raises(DatasetLoaderError, match="does not match the manifest"):
             await _loader().load_dataset()
