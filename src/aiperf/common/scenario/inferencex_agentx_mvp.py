@@ -28,6 +28,7 @@ INFERENCEX_AGENTX_MVP = ScenarioSpec(
         "semianalysis_cc_traces_weka_062126_256k",
         "weka_trace",
         "weka_hf",
+        "mooncake_trace",
     ),
     min_benchmark_duration_seconds=900,
     default_benchmark_duration_seconds=1800,
