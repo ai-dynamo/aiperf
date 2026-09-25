@@ -982,6 +982,7 @@ class TestServerMetricsDataCollectorCredentialRedaction:
         )
 
         mock_response = MagicMock()
+        mock_response.status = 200
         mock_response.raise_for_status = MagicMock()
         mock_response.headers = {"content-type": "text/plain"}
         mock_response.text = AsyncMock(
@@ -1002,6 +1003,49 @@ class TestServerMetricsDataCollectorCredentialRedaction:
         assert request_kwargs["headers"] == headers
         assert request_kwargs["allow_redirects"] is False
         assert request_kwargs["trace_request_ctx"] is not None
+
+    @pytest.mark.asyncio
+    async def test_fetch_allows_redirects_without_configured_headers(self) -> None:
+        collector = ServerMetricsDataCollector(
+            endpoint_url="http://localhost:8081/metrics"
+        )
+
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.headers = {"content-type": "text/plain"}
+        mock_response.text = AsyncMock(return_value="requests_total 1\n")
+        response_cm = MagicMock()
+        response_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        response_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_session = MagicMock()
+        mock_session.closed = False
+        mock_session.get = MagicMock(return_value=response_cm)
+        collector._session = mock_session
+
+        await collector._fetch_metrics_text()
+
+        assert mock_session.get.call_args.kwargs["allow_redirects"] is True
+
+    @pytest.mark.asyncio
+    async def test_reachability_allows_redirects_without_configured_headers(
+        self,
+    ) -> None:
+        collector = ServerMetricsDataCollector(
+            endpoint_url="http://localhost:8081/metrics"
+        )
+
+        response = MagicMock(status=200)
+        response_cm = MagicMock()
+        response_cm.__aenter__ = AsyncMock(return_value=response)
+        response_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_session = MagicMock()
+        mock_session.head = MagicMock(return_value=response_cm)
+
+        assert await collector._check_reachability_with_session(mock_session)
+        mock_session.head.assert_called_once_with(
+            collector._endpoint_url, headers={}, allow_redirects=True
+        )
 
     @pytest.mark.asyncio
     async def test_reachability_sends_configured_headers(self) -> None:

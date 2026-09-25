@@ -487,13 +487,17 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         try:
             # Try HEAD first for efficiency
             async with session.head(
-                self._endpoint_url, headers=self._headers, allow_redirects=False
+                self._endpoint_url,
+                headers=self._headers,
+                allow_redirects=not self._headers,
             ) as response:
                 if response.status == 200:
                     return True
             # Fall back to GET if HEAD is not supported
             async with session.get(
-                self._endpoint_url, headers=self._headers, allow_redirects=False
+                self._endpoint_url,
+                headers=self._headers,
+                allow_redirects=not self._headers,
             ) as response:
                 return response.status == 200
         except (TimeoutError, aiohttp.ClientError):
@@ -627,9 +631,17 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             async with session.get(
                 self._endpoint_url,
                 headers=self._headers,
-                allow_redirects=False,
+                allow_redirects=not self._headers,
                 trace_request_ctx=trace_ctx,
             ) as response:
+                if 300 <= response.status < 400:
+                    raise aiohttp.ClientResponseError(
+                        response.request_info,
+                        response.history,
+                        status=response.status,
+                        message="Unexpected redirect response",
+                        headers=response.headers,
+                    )
                 response.raise_for_status()
                 content_type = response.headers.get("content-type", "").lower()
                 # Prometheus exposition is text/plain; servers like TRT-LLM

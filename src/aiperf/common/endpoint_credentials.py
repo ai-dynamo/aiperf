@@ -472,16 +472,13 @@ def _credential_values_from_endpoint(endpoint: Any) -> list[str]:
     api_key = getattr(endpoint, "api_key", None)
     if isinstance(api_key, str):
         values.append(api_key)
-    for headers in (
-        getattr(endpoint, "headers", None),
-        getattr(getattr(endpoint, "server_metrics", None), "headers", None),
-    ):
-        if isinstance(headers, dict):
-            values.extend(
-                value
-                for value in extract_sensitive_headers(headers).values()
-                if isinstance(value, str)
-            )
+    headers = getattr(endpoint, "headers", None)
+    if isinstance(headers, dict):
+        values.extend(
+            value
+            for value in extract_sensitive_headers(headers).values()
+            if isinstance(value, str)
+        )
     urls = getattr(endpoint, "urls", None)
     if isinstance(urls, list | tuple):
         values.extend(
