@@ -70,6 +70,7 @@ from aiperf.config.loader.parsing import (
     parse_str_or_dict_as_tuple_list,
     parse_str_or_list,
     parse_str_or_list_of_positive_values,
+    reject_moved_custom_dataset_type,
     require_turn_mean_at_least_one,
 )
 from aiperf.config.runtime import ServiceDefaults
@@ -83,6 +84,7 @@ from aiperf.plugin.enums import (
     EndpointType,
     GPUTelemetryCollectorType,
     PublicDatasetType,
+    RequestSignerType,
     SearchPlannerType,
     TransportType,
     UIType,
@@ -345,6 +347,59 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--transport", "--transport-type"),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    aws_region: Annotated[
+        str | None,
+        Field(
+            description="AWS region for SigV4-signed requests (e.g. `us-east-1`). Required when "
+            "`--auth-type sigv4`.",
+        ),
+        CLIParameter(
+            name=("--aws-region",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    aws_profile: Annotated[
+        str | None,
+        Field(
+            description="Named AWS credentials profile. Unset uses botocore's default credential chain "
+            "(environment variables, EC2/ECS instance role, `~/.aws/credentials` default profile).",
+        ),
+        CLIParameter(
+            name=("--aws-profile",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    auth_type: Annotated[
+        RequestSignerType | None,
+        Field(
+            description="Request signing method for authentication. When set, the selected `request_signer` "
+            "plugin signs every HTTP request. Replaces Bearer token auth (`--api-key` is ignored when "
+            "`--auth-type` is set).",
+        ),
+        CLIParameter(
+            name=("--auth-type",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    aws_service: Annotated[
+        str | None,
+        Field(
+            description="SigV4 signing name -- the credential scope the signature is bound to "
+            "(e.g. `execute-api`, `sagemaker`, `bedrock`). This is the service's *signing name*, "
+            "which is not always its API id: the `sagemaker-runtime` API signs as `sagemaker`, and "
+            "`bedrock-runtime` signs as `bedrock`. Required when `--auth-type sigv4`, unless the "
+            "selected transport declares which AWS API it speaks -- then the scope is resolved "
+            "from botocore's own service model and this flag is only an override.",
+        ),
+        CLIParameter(
+            name=("--aws-service",),
             group=Groups.ENDPOINT,
         ),
     ] = None
@@ -642,6 +697,23 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    weka_nested_timestamp_basis: Annotated[
+        Literal["auto", "absolute", "relative"],
+        Field(
+            description="Interpretation of timestamps inside Weka subagent entries. "
+            "'absolute' treats them as root-trace timestamps, 'relative' adds the "
+            "subagent marker timestamp, and 'auto' selects relative for the entire "
+            "corpus if any child precedes its marker by more than 1 microsecond, "
+            "otherwise absolute. Full-input validation always runs; auto is a "
+            "heuristic and cannot detect every mixed or malformed convention. "
+            "Use an explicit basis when the producer convention is known.",
+        ),
+        CLIParameter(
+            name=("--weka-nested-timestamp-basis",),
+            group=Groups.INPUT,
+        ),
+    ] = "auto"
+
     dataset_filters: Annotated[
         list[str],
         Field(
@@ -658,6 +730,7 @@ class CLIConfig(BaseConfig):
 
     custom_dataset_type: Annotated[
         CustomDatasetType | None,
+        BeforeValidator(reject_moved_custom_dataset_type),
         Field(
             description="Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. "
             "Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), "
@@ -2694,12 +2767,13 @@ class CLIConfig(BaseConfig):
         Field(
             description="Base filename for ALL exported files. With prefix='foo' every "
             "output becomes `foo.csv`, `foo.json`, `foo_timeslices.{csv,json}`, "
-            "`foo.jsonl`, `foo_raw.jsonl`, `foo_gpu_telemetry.jsonl`, and "
-            "`foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), "
+            "`foo.jsonl`, `foo_raw.jsonl`, `foo_outputs.json`, `foo_gpu_telemetry.jsonl`, "
+            "and `foo_server_metrics.{jsonl,json,csv,parquet}`. When unset (the default), "
             "historical per-file names are used: `profile_export_aiperf.{csv,json}` "
             "for the summary, `profile_export.jsonl` and `profile_export_raw.jsonl` "
-            "for records, `gpu_telemetry_export.jsonl`, and `server_metrics_export.*`. "
-            "Known suffixes (e.g. `_raw.jsonl`, `_timeslices.csv`, `_server_metrics.parquet`) "
+            "for records, `outputs.json`, `gpu_telemetry_export.jsonl`, and "
+            "`server_metrics_export.*`. Known suffixes (e.g. `_raw.jsonl`, "
+            "`_outputs.json`, `_timeslices.csv`, `_server_metrics.parquet`) "
             "are stripped from the supplied value.",
         ),
         CLIParameter(
@@ -2717,7 +2791,9 @@ class CLIConfig(BaseConfig):
             description="Controls which output files are generated. "
             "`summary`: Only aggregate metrics files (`.csv`, `.json`). "
             "`records`: Includes per-request metrics (`.jsonl`). "
-            "`raw`: Includes raw request/response data (`_raw.jsonl`).",
+            "`raw`: Includes raw request/response data (`_raw.jsonl`) and, unless "
+            "`--no-export-outputs-json` is passed, the generated text "
+            "(`_outputs.json`).",
         ),
         CLIParameter(
             name=("--export-level", "--profile-export-level"),
@@ -2776,14 +2852,19 @@ class CLIConfig(BaseConfig):
         bool,
         Field(
             description=(
-                "Export generated response text to outputs.json after the run. "
-                "When enabled, the raw generated-text payload for each request is "
-                "written to an outputs.json file in the artifact directory."
+                "Export generated response text after the run. When enabled, the "
+                "raw generated-text payload for each request is written to "
+                "`outputs.json` in the artifact directory, or to "
+                "`<prefix>_outputs.json` when `--profile-export-prefix` is set "
+                "(prefix `foo` gives `foo_outputs.json`). Implied by "
+                "`--export-level raw`; pass `--no-export-outputs-json` to opt out "
+                "of the extra file while keeping raw export."
             ),
         ),
         CLIParameter(
             name=("--export-outputs-json",),
             group=Groups.OUTPUT,
+            negative="--no-export-outputs-json",
         ),
     ] = False
 

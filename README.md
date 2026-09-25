@@ -147,6 +147,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [User Interface](docs/tutorials/ui-types.md) - Dashboard, simple, or headless
 - [Hugging Face TGI](docs/tutorials/huggingface-tgi.md) - Profile Hugging Face TGI models
 - [OpenAI Text Endpoints](docs/tutorials/openai-text-endpoints.md) - Profile OpenAI-compatible text APIs
+- [AWS SigV4 Authentication](docs/tutorials/aws-sigv4-auth.md) - Benchmark AWS endpoints (API Gateway, SageMaker, Bedrock) protected by IAM auth
 
 ### Load Control and Timing
 - [Request Rate with Max Concurrency](docs/tutorials/request-rate-concurrency.md) - Dual request control
@@ -260,6 +261,10 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding conventions, and contribution guidelines.
+
+## License
+
+AIPerf is licensed under the [Apache License 2.0](LICENSE). Because `helm package` only includes files beneath the chart directory, the [aiperf-operator Helm chart](deploy/helm/aiperf-operator) contains a [symlink to the repository's top-level license](deploy/helm/aiperf-operator/LICENSE) solely so the license is included in the packaged chart archive. Helm dereferences the symlink at packaging time, so the archive contains a regular `LICENSE` file with the top-level license contents.
 
 ## Known Issues
 
