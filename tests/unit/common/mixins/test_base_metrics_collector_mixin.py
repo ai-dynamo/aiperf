@@ -4,7 +4,9 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import aiohttp
 import pytest
+from aiohttp import web
 
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import IncompatibleMetricsEndpointError
@@ -73,6 +75,92 @@ class TestTrustEnvPassedToSessions:
             assert mock_session_class.call_count == 2
             for call in mock_session_class.call_args_list:
                 assert call[1]["trust_env"] == trust_env_value
+
+
+class TestMetricsRedirectHandling:
+    @pytest.mark.asyncio
+    async def test_uncredentialed_collector_follows_redirects(self) -> None:
+        async def redirect(_request: web.Request) -> web.StreamResponse:
+            raise web.HTTPMovedPermanently(location="/metrics/")
+
+        async def metrics(_request: web.Request) -> web.Response:
+            return web.Response(
+                text="# TYPE requests_total counter\nrequests_total 1\n",
+                content_type="text/plain",
+            )
+
+        app = web.Application()
+        app.router.add_route("*", "/metrics", redirect)
+        app.router.add_get("/metrics/", metrics)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        assert site._server is not None
+        port = site._server.sockets[0].getsockname()[1]
+        collector = ConcreteCollector(
+            endpoint_url=f"http://127.0.0.1:{port}/metrics",
+            collection_interval=1.0,
+            reachability_timeout=2.0,
+        )
+
+        try:
+            assert await collector.is_url_reachable()
+            await collector._initialize_http_client()
+            result = await collector._fetch_metrics_text()
+            assert result.text == "# TYPE requests_total counter\nrequests_total 1\n"
+        finally:
+            await collector._cleanup_http_client()
+            await runner.cleanup()
+
+    @pytest.mark.asyncio
+    async def test_credentialed_collector_does_not_follow_redirects(self) -> None:
+        target_requests = 0
+        source_headers: list[str | None] = []
+
+        async def redirect(request: web.Request) -> web.StreamResponse:
+            source_headers.append(request.headers.get("Authorization"))
+            raise web.HTTPMovedPermanently(location="/metrics/")
+
+        async def metrics(_request: web.Request) -> web.Response:
+            nonlocal target_requests
+            target_requests += 1
+            return web.Response(
+                text="# TYPE requests_total counter\nrequests_total 1\n",
+                content_type="text/plain",
+            )
+
+        app = web.Application()
+        app.router.add_route("*", "/metrics", redirect)
+        app.router.add_get("/metrics/", metrics)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "127.0.0.1", 0)
+        await site.start()
+        assert site._server is not None
+        port = site._server.sockets[0].getsockname()[1]
+        collector = ConcreteCollector(
+            endpoint_url=f"http://127.0.0.1:{port}/metrics",
+            headers={"Authorization": "Bearer metrics-secret"},
+            collection_interval=1.0,
+            reachability_timeout=2.0,
+        )
+
+        try:
+            assert not await collector.is_url_reachable()
+            await collector._initialize_http_client()
+            with pytest.raises(aiohttp.ClientResponseError) as exc_info:
+                await collector._fetch_metrics_text()
+            assert exc_info.value.status == 301
+            assert source_headers == [
+                "Bearer metrics-secret",
+                "Bearer metrics-secret",
+                "Bearer metrics-secret",
+            ]
+            assert target_requests == 0
+        finally:
+            await collector._cleanup_http_client()
+            await runner.cleanup()
 
 
 class TestReadTimeoutSanityWarning:
@@ -243,6 +331,7 @@ class TestFetchRejectsJsonContentType:
         # Build a mock aiohttp response context manager whose `headers` mimics
         # TRT-LLM's `/metrics` (Content-Type: application/json, body `[]`).
         mock_response = MagicMock()
+        mock_response.status = 200
         mock_response.raise_for_status = MagicMock()
         mock_response.headers = {"content-type": "application/json"}
         mock_response.text = AsyncMock(return_value="[]")

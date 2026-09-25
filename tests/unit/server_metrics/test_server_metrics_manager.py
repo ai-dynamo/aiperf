@@ -104,6 +104,22 @@ class TestServerMetricsManagerInitialization:
             "http://another-endpoint:8081/metrics" in manager._server_metrics_endpoints
         )
 
+    def test_custom_server_metrics_url_preserves_explicit_path(self):
+        cfg = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            urls=["http://localhost:8000/v1/chat"],
+            server_metrics=["https://metrics.example/prometheus"],
+        )
+
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg))
+
+        assert "https://metrics.example/prometheus" in manager._server_metrics_endpoints
+        assert (
+            "https://metrics.example/prometheus/metrics"
+            not in manager._server_metrics_endpoints
+        )
+
     def test_duplicate_urls_avoided(
         self,
         cli_config: CLIConfig,
@@ -148,6 +164,31 @@ class TestProfileConfigure:
             )
 
             assert len(manager._collectors) > 0
+
+    @pytest.mark.asyncio
+    async def test_configure_passes_server_metrics_headers_to_collector(self):
+        cfg = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=EndpointType.CHAT,
+            urls=["http://localhost:8000/v1/chat"],
+            server_metrics_headers=[("Authorization", "Bearer metrics-secret")],
+        )
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg))
+
+        with patch(
+            "aiperf.server_metrics.manager.ServerMetricsDataCollector"
+        ) as mock_collector_class:
+            mock_collector = AsyncMock()
+            mock_collector.is_url_reachable = AsyncMock(return_value=True)
+            mock_collector_class.return_value = mock_collector
+
+            await manager._profile_configure_command(
+                Command(cid="c-headers", cmd=CommandType.PROFILE_CONFIGURE)
+            )
+
+            assert mock_collector_class.call_args.kwargs["headers"] == {
+                "Authorization": "Bearer metrics-secret"
+            }
 
     @pytest.mark.asyncio
     async def test_configure_with_unreachable_endpoints(

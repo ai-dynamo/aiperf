@@ -242,6 +242,7 @@ variables at startup. A credentialed endpoint without the matching
 |---|---|
 | `endpoint.apiKey` | `AIPERF_INJECTED_API_KEY` or `OPENAI_API_KEY` |
 | Sensitive headers such as `Authorization` or `X-API-Key` | `AIPERF_INJECTED_HEADERS` containing a JSON object of header strings |
+| Sensitive `server_metrics.headers` | `AIPERF_INJECTED_SERVER_METRICS_HEADERS` containing a JSON object of header strings |
 | URL userinfo such as `https://user:password@host` | `AIPERF_INJECTED_ENDPOINT_URLS` containing a JSON list of full URL strings |
 
 Do not use `--env-vars` for these values: literal pod environment values are

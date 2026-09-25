@@ -170,7 +170,8 @@ skipped for that file only). Bare AIPerf configs skip steps 3 and 4 (see
    `podTemplate`, invalid `resourceMode`, bad `scheduling` blocks, etc.
 9. **Endpoint credential transport** — credential-bearing endpoint fields
    must have the matching Secret-backed pod environment (`AIPERF_INJECTED_API_KEY`,
-   `AIPERF_INJECTED_HEADERS`, or `AIPERF_INJECTED_ENDPOINT_URLS`). Literal
+   `AIPERF_INJECTED_HEADERS`, `AIPERF_INJECTED_SERVER_METRICS_HEADERS`, or
+   `AIPERF_INJECTED_ENDPOINT_URLS`). Literal
    secrets and plain-value environment variables fail before deployment. This
    check is skipped when steps 6–8 already produced an error, since it needs a
    well-formed config and deployment to inspect.

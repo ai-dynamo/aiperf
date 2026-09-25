@@ -103,6 +103,7 @@ _ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
         "gpu_telemetry",
         "no_gpu_telemetry",
         "server_metrics",
+        "server_metrics_headers",
         "no_server_metrics",
         "server_metrics_formats",
         # wandb, via build_wandb (the non-project flags are guarded loudly
