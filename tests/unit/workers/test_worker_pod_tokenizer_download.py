@@ -283,6 +283,36 @@ def test_extract_rejects_path_traversal(tmp_path: Path) -> None:
     assert not (tmp_path / "escaped.txt").exists()
 
 
+def test_extract_rejects_hard_link(tmp_path: Path) -> None:
+    """A hard-link member must be rejected outright (CVE-2026-82049).
+
+    The ``data`` filter's own hard-link handling has a hard-link-to-symlink
+    bypass on every Python version below 3.14. Tokenizer bundles have no
+    legitimate use for hard links, so ``_safe_extractall`` blocks any hard
+    link member before the filter ever runs, regardless of what it points at.
+    """
+    dest = tmp_path / "dest"
+    dest.mkdir()
+
+    tar_buf = io.BytesIO()
+    with tarfile.open(fileobj=tar_buf, mode="w") as tf:
+        data = b'{"v":1}'
+        info = tarfile.TarInfo(name="tokenizer.json")
+        info.size = len(data)
+        tf.addfile(info, io.BytesIO(data))
+
+        link_info = tarfile.TarInfo(name="linked.json")
+        link_info.type = tarfile.LNKTYPE
+        link_info.linkname = "tokenizer.json"
+        tf.addfile(link_info)
+    bundle = zstandard.ZstdCompressor().compress(tar_buf.getvalue())
+
+    with pytest.raises(tarfile.TarError, match="hard link"):
+        _extract_bundle(bundle, dest)
+
+    assert not (dest / "linked.json").exists()
+
+
 def test_extract_rejects_path_traversal_pre_pep706_fallback(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
