@@ -1536,6 +1536,18 @@ Server metrics collection (ENABLED BY DEFAULT). Automatically collects from infe
 
 Disable server metrics collection entirely.
 
+#### `--server-metrics-discovery-mode` `<str>`
+
+Kubernetes server metrics discovery mode. Use 'auto' to discover only when running in Kubernetes, 'kubernetes' to require Kubernetes discovery, or 'disabled' to use only URL-derived and explicit endpoints.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `auto` | _default_ | Automatically detect environment and use appropriate discovery method. |
+| `kubernetes` |  | Use Kubernetes API to discover inference-server pods. |
+| `disabled` |  | Disable automatic discovery. Only use explicitly provided URLs. |
+
 #### `--server-metrics-formats` `<list>`
 
 Specify which output formats to generate for server metrics. Multiple formats can be specified (e.g., `--server-metrics-formats json csv parquet`).
@@ -3150,6 +3162,18 @@ Server metrics collection (ENABLED BY DEFAULT). Automatically collects from infe
 
 Disable server metrics collection entirely.
 
+#### `--server-metrics-discovery-mode` `<str>`
+
+Kubernetes server metrics discovery mode. Use 'auto' to discover only when running in Kubernetes, 'kubernetes' to require Kubernetes discovery, or 'disabled' to use only URL-derived and explicit endpoints.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `auto` | _default_ | Automatically detect environment and use appropriate discovery method. |
+| `kubernetes` |  | Use Kubernetes API to discover inference-server pods. |
+| `disabled` |  | Disable automatic discovery. Only use explicitly provided URLs. |
+
 #### `--server-metrics-formats` `<list>`
 
 Specify which output formats to generate for server metrics. Multiple formats can be specified (e.g., `--server-metrics-formats json csv parquet`).
@@ -4758,6 +4782,18 @@ Server metrics collection (ENABLED BY DEFAULT). Automatically collects from infe
 #### `--no-server-metrics`
 
 Disable server metrics collection entirely.
+
+#### `--server-metrics-discovery-mode` `<str>`
+
+Kubernetes server metrics discovery mode. Use 'auto' to discover only when running in Kubernetes, 'kubernetes' to require Kubernetes discovery, or 'disabled' to use only URL-derived and explicit endpoints.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `auto` | _default_ | Automatically detect environment and use appropriate discovery method. |
+| `kubernetes` |  | Use Kubernetes API to discover inference-server pods. |
+| `disabled` |  | Disable automatic discovery. Only use explicitly provided URLs. |
 
 #### `--server-metrics-formats` `<list>`
 
@@ -6874,6 +6910,18 @@ Server metrics collection (ENABLED BY DEFAULT). Automatically collects from infe
 #### `--no-server-metrics`
 
 Disable server metrics collection entirely.
+
+#### `--server-metrics-discovery-mode` `<str>`
+
+Kubernetes server metrics discovery mode. Use 'auto' to discover only when running in Kubernetes, 'kubernetes' to require Kubernetes discovery, or 'disabled' to use only URL-derived and explicit endpoints.
+
+**Choices:**
+
+| | | |
+|-------|:-------:|-------------|
+| `auto` | _default_ | Automatically detect environment and use appropriate discovery method. |
+| `kubernetes` |  | Use Kubernetes API to discover inference-server pods. |
+| `disabled` |  | Disable automatic discovery. Only use explicitly provided URLs. |
 
 #### `--server-metrics-formats` `<list>`
 
