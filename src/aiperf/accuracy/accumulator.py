@@ -17,6 +17,7 @@ from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 if TYPE_CHECKING:
     from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
     from aiperf.common.enums import CreditPhase
+    from aiperf.common.models import DatasetMetadata
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
@@ -25,9 +26,9 @@ class AccuracyAccumulator(BaseMetricsProcessor):
 
     Ingests per-graded-response ``AccuracyRecordsData`` and rolls them up into an
     ``AccuracySummary`` (overall + per-task pass rates and unparsed counts).
-    Because each record carries its own ``task`` label, this accumulator needs no
-    ``on_dataset_configured`` hook — task bucketing is read straight off the
-    record.
+    Records are bucketed by their own ``task`` field; the zero-fill task
+    universe instead comes from ``on_dataset_configured``, the benchmark's
+    resolved/canonical labels rather than the raw ``--accuracy-tasks`` input.
 
     Phase scoping mirrors ``ServerMetricsAccumulator``: ``export_results(ctx)``
     filters records to ``ctx.phase`` so warmup grades never leak into the
@@ -49,10 +50,21 @@ class AccuracyAccumulator(BaseMetricsProcessor):
         super().__init__(run=run, **kwargs)
         self.run = run
         self._records: list[AccuracyRecordsData] = []
+        self._configured_tasks: set[str] = set()
 
     async def process_record(self, record: AccuracyRecordsData) -> None:
         """Append a graded record in arrival order."""
         self._records.append(record)
+
+    def on_dataset_configured(self, metadata: DatasetMetadata) -> None:
+        """Capture the resolved task universe from the full (pre-truncation) dataset.
+
+        ``accuracy_task`` is the benchmark's canonical, already-resolved label —
+        never the ``"all"`` sentinel or a raw alias — regardless of ``--num-requests``.
+        """
+        self._configured_tasks = {
+            c.accuracy_task for c in metadata.conversations if c.accuracy_task
+        }
 
     def query_time_range(self, start_ns: int, end_ns: int) -> list[AccuracyRecordsData]:
         """Return records whose ``timestamp_ns`` is in ``[start_ns, end_ns)``.
@@ -64,24 +76,29 @@ class AccuracyAccumulator(BaseMetricsProcessor):
         return [r for r in self._records if start_ns <= r.timestamp_ns < end_ns]
 
     def _build_summary(self, phase: CreditPhase | None) -> AccuracySummary | None:
-        """Roll scoped records into an ``AccuracySummary`` (None when empty).
+        """Roll scoped records into an ``AccuracySummary``.
 
         ``phase`` selects one phase; ``None`` is phase-agnostic (all records).
         Records with ``task is None`` count toward the overall totals but are
-        absent from ``per_task``.
+        absent from ``per_task``. Returns ``None`` only when there are no
+        records in scope and no configured tasks to zero-fill.
+
+        Every task in ``_configured_tasks`` gets a ``per_task`` entry even with
+        zero dispatched requests (e.g. ``--num-requests`` was too small to reach
+        it), so it stays visible instead of vanishing from the output.
         """
         scoped = (
             self._records
             if phase is None
             else [r for r in self._records if r.benchmark_phase == phase]
         )
-        if not scoped:
+        if not scoped and not self._configured_tasks:
             return None
 
         total_evaluated = len(scoped)
         total_passed = sum(1 for r in scoped if r.passed)
         overall_unparsed = sum(1 for r in scoped if r.unparsed)
-        accuracy_rate = total_passed / total_evaluated if total_evaluated else 0.0
+        accuracy_rate = total_passed / total_evaluated if total_evaluated else None
 
         task_total: dict[str, int] = defaultdict(int)
         task_passed: dict[str, int] = defaultdict(int)
@@ -103,8 +120,20 @@ class AccuracyAccumulator(BaseMetricsProcessor):
                 total=total,
                 passed=passed,
                 unparsed=unparsed,
-                accuracy_rate=passed / total if total else 0.0,
-                unparsed_rate=unparsed / total if total else 0.0,
+                accuracy_rate=passed / total if total else None,
+                unparsed_rate=unparsed / total if total else None,
+            )
+
+        for task in self._configured_tasks:
+            per_task.setdefault(
+                task,
+                TaskAccuracyStats(
+                    total=0,
+                    passed=0,
+                    unparsed=0,
+                    accuracy_rate=None,
+                    unparsed_rate=None,
+                ),
             )
 
         return AccuracySummary(
@@ -112,15 +141,16 @@ class AccuracyAccumulator(BaseMetricsProcessor):
             total_passed=total_passed,
             accuracy_rate=accuracy_rate,
             overall_unparsed=overall_unparsed,
-            grader_name=scoped[0].grader_name,
+            grader_name=scoped[0].grader_name if scoped else None,
             per_task=per_task,
         )
 
     async def export_results(self, ctx: ExportContext) -> AccuracySummary | None:
         """Return an ``AccuracySummary`` scoped to ``ctx.phase`` (all if None).
 
-        Returns None when no records fall in scope so RecordsManager can skip
-        publishing, mirroring ``ServerMetricsAccumulator.export_results``.
+        Returns None only when no records fall in scope and no tasks are
+        configured; otherwise returns a zero-filled summary so RecordsManager
+        still publishes the configured tasks.
         """
         return self._build_summary(ctx.phase)
 

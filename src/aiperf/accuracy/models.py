@@ -9,6 +9,7 @@ from pydantic import Field
 from typing_extensions import TypedDict
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models import RecordData
 from aiperf.common.models.base_models import AIPerfBaseModel
 
@@ -166,11 +167,17 @@ class TaskAccuracyStats(AIPerfBaseModel):
     unparsed: int = Field(
         ge=0, description="Number that needed a regex fallback for this task"
     )
-    accuracy_rate: float = Field(
-        ge=0, le=1, description="passed/total for this task, 0.0 when total==0"
+    accuracy_rate: FiniteFloat | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="passed/total for this task, None when total==0",
     )
-    unparsed_rate: float = Field(
-        ge=0, le=1, description="unparsed/total for this task, 0.0 when total==0"
+    unparsed_rate: FiniteFloat | None = Field(
+        default=None,
+        ge=0,
+        le=1,
+        description="unparsed/total for this task, None when total==0",
     )
 
 
@@ -183,10 +190,11 @@ class AccuracySummary(AIPerfBaseModel):
     total_passed: int = Field(
         ge=0, description="Total responses graded correct across all tasks"
     )
-    accuracy_rate: float = Field(
+    accuracy_rate: FiniteFloat | None = Field(
+        default=None,
         ge=0,
         le=1,
-        description="total_passed/total_evaluated, 0.0 when total_evaluated==0",
+        description="total_passed/total_evaluated, None when total_evaluated==0",
     )
     overall_unparsed: int = Field(
         ge=0,
@@ -209,20 +217,25 @@ class AccuracySummary(AIPerfBaseModel):
 
         Emitted in this exact order (load-bearing for byte-exact JSON/CSV):
         overall, tasks sorted, unparsed overall, unparsed tasks sorted.
+
+        A zero-total task or overall gets ``current=None`` instead of ``0.0``, so
+        exporters render N/A instead of a misleading 0% accuracy.
         """
         from aiperf.common.enums import MetricConsoleGroup
         from aiperf.common.models import MetricResult
 
         results: list[MetricResult] = []
 
-        if self.total_evaluated > 0:
+        if self.total_evaluated > 0 or self.per_task:
             results.append(
                 MetricResult(
                     tag=ACCURACY_OVERALL_TAG,
                     header="Accuracy (Overall)",
                     unit="ratio",
                     count=self.total_evaluated,
-                    current=self.total_passed / self.total_evaluated,
+                    current=self.total_passed / self.total_evaluated
+                    if self.total_evaluated
+                    else None,
                     sum=self.total_passed,
                     console_group=MetricConsoleGroup.NONE,
                 )
@@ -236,20 +249,22 @@ class AccuracySummary(AIPerfBaseModel):
                     header=f"Accuracy ({task})",
                     unit="ratio",
                     count=stats.total,
-                    current=stats.passed / stats.total if stats.total else 0.0,
+                    current=stats.passed / stats.total if stats.total else None,
                     sum=stats.passed,
                     console_group=MetricConsoleGroup.NONE,
                 )
             )
 
-        if self.total_evaluated > 0:
+        if self.total_evaluated > 0 or self.per_task:
             results.append(
                 MetricResult(
                     tag=ACCURACY_UNPARSED_TAG,
                     header="Accuracy Unparsed (Overall)",
                     unit="ratio",
                     count=self.total_evaluated,
-                    current=self.overall_unparsed / self.total_evaluated,
+                    current=self.overall_unparsed / self.total_evaluated
+                    if self.total_evaluated
+                    else None,
                     sum=self.overall_unparsed,
                     console_group=MetricConsoleGroup.NONE,
                 )
@@ -263,7 +278,7 @@ class AccuracySummary(AIPerfBaseModel):
                     header=f"Accuracy Unparsed ({task})",
                     unit="ratio",
                     count=stats.total,
-                    current=stats.unparsed / stats.total if stats.total else 0.0,
+                    current=stats.unparsed / stats.total if stats.total else None,
                     sum=stats.unparsed,
                     console_group=MetricConsoleGroup.NONE,
                 )
