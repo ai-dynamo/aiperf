@@ -21,8 +21,11 @@ If you're using **any other inference backend**, you'll need to set up DCGM sepa
 ### Path 3: Local GPU Monitoring (pynvml)
 If you want **simple local GPU monitoring without DCGM**, use `--gpu-telemetry pynvml`. This uses NVIDIA's nvidia-ml-py Python library (commonly known as pynvml) to collect metrics directly from the GPU driver. No HTTP endpoints or additional containers required.
 
-### Path 4: AMD ROCm GPUs (amdsmi)
-If you're benchmarking against an inference server running on **AMD ROCm GPUs** (Instinct MI300X, MI355X, etc.), use `--gpu-telemetry amdsmi`. This uses the `amdsmi` Python bindings shipped with ROCm to collect metrics directly from the AMD driver. No HTTP endpoints required. Install the bindings via `pip install /opt/rocm/share/amd_smi/amdsmi-*.whl` if not already present (they ship with ROCm).
+### Path 4: AMD ROCm GPUs (amdsmi - Local)
+If you're benchmarking against an inference server running on **AMD ROCm GPUs** (Instinct MI300X, MI355X, etc.) **on the same machine**, use `--gpu-telemetry amdsmi`. This uses the `amdsmi` Python bindings shipped with ROCm to collect metrics directly from the AMD driver. No HTTP endpoints required. Install the bindings via `pip install /opt/rocm/share/amd_smi/amdsmi-*.whl` if not already present (they ship with ROCm).
+
+### Path 5: AMD ROCm GPUs (AMD DME - Remote)
+If you're benchmarking against an inference server running on **AMD ROCm GPUs on a different machine** or in a **multi-node cluster**, use AMD's Device Metrics Exporter (DME). This provides HTTP-based telemetry collection similar to NVIDIA DCGM. Just provide the exporter URL: `--gpu-telemetry http://node:5000/metrics`. AIPerf automatically detects AMD exporters.
 
 ## Prerequisites
 
@@ -46,6 +49,8 @@ AIPerf provides GPU telemetry collection with the `--gpu-telemetry` flag. Here's
 | **pynvml mode** | `aiperf profile --model MODEL ... --gpu-telemetry pynvml` | Local GPUs via pynvml library ([see pynvml section](#3-using-pynvml-local-gpu-monitoring)) | ✅ Yes | ❌ No | ✅ Yes |
 | **pynvml + dashboard** | `aiperf profile --model MODEL ... --gpu-telemetry pynvml dashboard` | Local GPUs via pynvml library | ✅ Yes | ✅ Yes ([see dashboard](#real-time-dashboard-view)) | ✅ Yes |
 | **amdsmi mode** | `aiperf profile --model MODEL ... --gpu-telemetry amdsmi` | Local AMD ROCm GPUs via amdsmi library | ✅ Yes | ❌ No | ✅ Yes |
+| **AMD DME mode** | `aiperf profile --model MODEL ... --gpu-telemetry http://node:5000/metrics` | Remote AMD GPUs via AMD DME HTTP exporter ([see AMD DME section](#5-using-amd-dme-remote-amd-gpu-monitoring)) | ✅ Yes | ❌ No | ✅ Yes |
+| **AMD DME explicit** | `aiperf profile --model MODEL ... --gpu-telemetry amd_dme:http://node:5000/metrics` | Remote AMD GPUs via AMD DME (explicit collector type) | ✅ Yes | ❌ No | ✅ Yes |
 | **Disabled** | `aiperf profile --model MODEL ... --no-gpu-telemetry` | None | ❌ No | ❌ No | ❌ No |
 
 > [!WARNING]
@@ -56,6 +61,8 @@ AIPerf provides GPU telemetry collection with the `--gpu-telemetry` flag. Here's
 > **Platform naming:** NVIDIA metrics from DCGM and pynvml are emitted under `nvidia_*` field names. AMD metrics from amdsmi are emitted under `amd_*` field names. Final GPU summaries include a `platform` field. Metric semantics are platform-specific; do not compare telemetry across NVIDIA and AMD platforms without validating the workload, collector behavior, and metric definitions.
 >
 > **amdsmi mode:** When using `--gpu-telemetry amdsmi`, DCGM endpoints are NOT used. Metrics are collected directly from local AMD GPUs via the amdsmi library and emitted under vendor-namespaced `amd_*` field names (`amd_power`, `amd_gfx_activity`, `amd_temperature`, etc.) rather than NVML-shaped names. On Instinct datacenter parts `amd_mm_activity` is generally absent (sensor returns `'N/A'`); `amd_throttle_status` is a 0.0/1.0 snapshot per scrape (amdsmi exposes a boolean state, not a duration counter).
+>
+> **AMD DME mode:** When providing AMD DME HTTP endpoints (e.g., `http://node:5000/metrics`), AIPerf automatically detects AMD exporters and uses the AMD DME collector. Metrics are emitted under vendor-namespaced `amd_*` field names. Auto-detection checks for AMD-specific metrics like `gpu_package_power` and `gpu_gfx_activity`.
 >
 > To completely disable GPU telemetry collection, use `--no-gpu-telemetry`.
 
@@ -490,6 +497,150 @@ AMD signals are emitted under their own vendor-namespaced field names (not alias
 | Encoder/decoder util | Yes | Yes | No (Instinct GPUs report `'N/A'`) |
 | Error reporting | XID errors | (none) | ECC uncorrectable count (`amd_ecc_uncorrectable`) |
 | SM-level utilization | Yes (DCGM_FI_PROF_SM_ACTIVE) | Yes (GPM API) | Aliased to `gfx_activity` |
+
+---
+
+## 5. Using AMD DME (Remote AMD GPU Monitoring)
+
+For **remote AMD GPU monitoring** across multiple nodes or when AIPerf runs on a different machine than the inference server, use AMD's Device Metrics Exporter (DME) via `gpu-operator-metrics-exporter`. This provides HTTP-based telemetry collection similar to NVIDIA DCGM.
+
+### When to Use AMD DME
+
+| Scenario | Recommended Approach |
+|----------|---------------------|
+| AIPerf on different machine than inference server | AMD DME (HTTP) |
+| Multi-node AMD GPU clusters | AMD DME (HTTP) |
+| Kubernetes/containerized AMD workloads | AMD DME (HTTP) |
+| Local single-node AMD monitoring | amdsmi (local) |
+
+### Setup AMD DME Exporter
+
+The AMD GPU Operator includes a Prometheus metrics exporter that exposes GPU telemetry over HTTP. Here's how to set it up:
+
+```bash
+# Deploy AMD GPU Operator with metrics exporter
+# The exporter runs as a DaemonSet and exposes metrics on port 5000
+kubectl apply -f https://raw.githubusercontent.com/ROCm/gpu-operator/main/deploy/gpu-operator.yaml
+
+# Verify the exporter is running
+kubectl get pods -n gpu-operator-resources | grep metrics-exporter
+
+# Port-forward to access metrics (if needed)
+kubectl port-forward -n gpu-operator-resources \
+  $(kubectl get pods -n gpu-operator-resources -l app=gpu-operator-metrics-exporter -o name | head -1) \
+  5000:5000
+```
+
+### Run AIPerf with AMD DME
+
+AIPerf automatically detects AMD DME exporters. Just provide the HTTP endpoint:
+
+```bash
+# Auto-detection (recommended)
+aiperf profile \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --endpoint-type chat \
+    --url http://<inference-server-ip>:8000 \
+    --concurrency 100 \
+    --request-count 500 \
+    --gpu-telemetry http://<amd-exporter-ip>:5000/metrics
+
+# Explicit collector type
+aiperf profile \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --endpoint-type chat \
+    --url http://<inference-server-ip>:8000 \
+    --concurrency 100 \
+    --request-count 500 \
+    --gpu-telemetry amd_dme:http://<amd-exporter-ip>:5000/metrics
+```
+
+> [!TIP]
+> AIPerf automatically detects AMD exporters by checking for AMD-specific metrics like `gpu_package_power` and `gpu_gfx_activity`. No need to specify `amd_dme:` prefix unless you want to be explicit.
+
+### Metrics Collected via AMD DME
+
+AMD DME collects metrics from the Prometheus exporter and emits them under vendor-namespaced field names:
+
+| Metric | Source | Notes |
+|---|---|---|
+| `amd_power` (W) | `gpu_package_power` | Current GPU package power draw. |
+| `amd_energy_consumption` (MJ) | `gpu_energy_consumed` | Cumulative energy consumption (µJ → MJ). Accumulator computes delta against pre-profile baseline. |
+| `amd_gfx_activity` (%) | `gpu_gfx_activity` | Graphics engine activity percentage. |
+| `amd_umc_activity` (%) | `gpu_umc_activity` | Memory controller activity percentage. |
+| `amd_memory_used` (GB) | `gpu_used_vram` | VRAM memory used (MB → GB). |
+| `amd_memory_free` (GB) | `gpu_free_vram` | VRAM memory free (MB → GB). |
+| `amd_memory_total` (GB) | `gpu_total_vram` | Total VRAM capacity (MB → GB). |
+| `amd_temperature` (°C) | `gpu_junction_temperature` | GPU junction/hotspot temperature. |
+| `amd_memory_temperature` (°C) | `gpu_memory_temperature` | Memory temperature. |
+| `amd_ecc_uncorrectable` (count) | `gpu_ecc_uncorrect_total` | Total uncorrectable ECC error count. |
+| `amd_sm_clock` (MHz) | `gpu_clock{clock_type="GPU_CLOCK_TYPE_SYSTEM",clock_index="0"}` | System clock frequency. |
+| `amd_mem_clock` (MHz) | `gpu_clock{clock_type="GPU_CLOCK_TYPE_MEMORY",clock_index="8"}` | Memory clock frequency. |
+
+**Example Console Output:**
+
+```
+                     <amd-exporter-ip>:5000 | GPU 7 | 102-G30213-0C
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━┓
+┃                           Metric ┃    avg ┃    min ┃    max ┃    p99 ┃    p90 ┃    p50 ┃  std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━┩
+│                AMD GPU Power (W) │ 154.50 │ 152.00 │ 157.00 │ 156.97 │ 156.70 │ 154.50 │ 2.38 │
+│      AMD Energy Consumption (MJ) │   0.01 │    N/A │    N/A │    N/A │    N/A │    N/A │  N/A │
+│             AMD GFX Activity (%) │   0.00 │   0.00 │   0.00 │   0.00 │   0.00 │   0.00 │ 0.00 │
+│             AMD UMC Activity (%) │   0.00 │   0.00 │   0.00 │   0.00 │   0.00 │   0.00 │ 0.00 │
+│         AMD GPU Memory Used (GB) │   0.28 │   0.28 │   0.28 │   0.28 │   0.28 │   0.28 │ 0.00 │
+│         AMD GPU Memory Free (GB) │ 191.71 │ 191.71 │ 191.71 │ 191.71 │ 191.71 │ 191.71 │ 0.00 │
+│        AMD GPU Memory Total (GB) │ 191.98 │ 191.98 │ 191.98 │ 191.98 │ 191.98 │ 191.98 │ 0.00 │
+│         AMD GPU Temperature (°C) │  43.50 │  41.00 │  46.00 │  45.97 │  45.70 │  43.50 │ 2.38 │
+│      AMD Memory Temperature (°C) │  38.00 │  36.00 │  40.00 │  39.97 │  39.70 │  38.00 │ 1.83 │
+│    AMD ECC Uncorrectable (count) │   0.00 │    N/A │    N/A │    N/A │    N/A │    N/A │  N/A │
+│     AMD SM Clock Frequency (MHz) │ 132.00 │ 132.00 │ 132.00 │ 132.00 │ 132.00 │ 132.00 │ 0.00 │
+│ AMD Memory Clock Frequency (MHz) │ 900.00 │ 900.00 │ 900.00 │ 900.00 │ 900.00 │ 900.00 │ 0.00 │
+└──────────────────────────────────┴────────┴────────┴────────┴────────┴────────┴────────┴──────┘
+```
+
+> [!NOTE]
+> AMD DME now provides comprehensive metrics including temperatures, memory details, and ECC errors. For local monitoring with additional metrics like throttle status and per-block ECC counters, use `--gpu-telemetry amdsmi`.
+
+### Multi-Node AMD DME Example
+
+Collect telemetry from multiple AMD GPU nodes:
+
+```bash
+aiperf profile \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --endpoint-type chat \
+    --url http://<inference-server-ip>:8000 \
+    --concurrency 100 \
+    --request-count 500 \
+    --gpu-telemetry \
+      http://node1:5000/metrics \
+      http://node2:5000/metrics \
+      http://node3:5000/metrics
+```
+
+### Comparing AMD Telemetry Options
+
+| Feature | AMD DME (HTTP) | amdsmi (local) |
+|---|---|---|
+| Setup | Requires GPU Operator / metrics exporter | Ships with ROCm |
+| Multi-node support | Yes (HTTP endpoints) | No (local only) |
+| Metrics available | Power, energy, GFX/UMC activity, memory (used/free/total), temperatures (GPU/memory), ECC errors, clocks | Power, energy, GFX/UMC/MM activity, memory, temperatures, per-block ECC, throttle status, clocks |
+| Use case | Remote monitoring, multi-node, Kubernetes | Local single-node, per-block ECC details |
+| Auto-detection | Yes (checks for AMD metrics) | N/A |
+
+### Comparing All GPU Telemetry Options
+
+| Feature | DCGM | pynvml | amdsmi | AMD DME |
+|---|---|---|---|---|
+| Hardware | NVIDIA | NVIDIA | AMD ROCm | AMD ROCm |
+| Setup | Container/service | `pip install nvidia-ml-py` | Ships with ROCm | GPU Operator exporter |
+| Multi-node | Yes (HTTP) | No (local) | No (local) | Yes (HTTP) |
+| Field naming | `gpu_*` | `gpu_*` | `amd_*` | `amd_*` |
+| Temperature | Yes (GPU + memory) | Yes (GPU) | Yes (GPU) | Yes (GPU + memory) |
+| Memory free/total | Yes | Yes | Yes | Yes |
+| ECC errors | Yes (XID) | No | Yes (per-block + total) | Yes (total uncorrectable) |
+| Throttle status | Yes | Yes | Yes | No |
 
 ---
 

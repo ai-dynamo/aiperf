@@ -20,10 +20,30 @@ import logging
 import pytest
 
 from aiperf.config.flags._converter_telemetry import (
+    _detect_amd_exporter as _real_detect,
+)
+from aiperf.config.flags._converter_telemetry import (
     _is_localhost_url,
     build_gpu_telemetry,
 )
 from aiperf.config.flags.cli_config import CLIConfig
+
+
+@pytest.fixture(autouse=True)
+def _no_network_probe(monkeypatch: pytest.MonkeyPatch):
+    """Keep the AMD exporter probe off the network for every test in this module.
+
+    ``build_gpu_telemetry`` probes each bare URL with a synchronous
+    ``httpx.get``. Left alone, a test passing a bare URL makes a genuine
+    outbound request; it currently returns fast only because the hostnames do
+    not resolve, and would block for the full timeout behind a resolving
+    wildcard DNS or a proxy. Defaulting to "not an AMD exporter" keeps the
+    suite hermetic. Tests that need detection to fire override this.
+    """
+    monkeypatch.setattr(
+        "aiperf.config.flags._converter_telemetry._detect_amd_exporter",
+        lambda url: False,
+    )
 
 
 def _make_cli(**overrides) -> CLIConfig:
@@ -130,3 +150,100 @@ class TestLocalCollectorWithRemoteUrlsWarning:
         )
         build_gpu_telemetry(cli)
         assert "non-localhost" not in caplog.text.lower()
+
+
+class TestAmdAutoDetectRespectsAnExplicitPrefix:
+    """AMD auto-detection must never overrule a collector the user named.
+
+    The probe used to run over every URL whenever ``collector_type`` still
+    equalled the hardcoded DCGM default. That test cannot distinguish "the user
+    wrote ``dcgm:<url>``" from "nothing was specified", because both leave the
+    default in place, so an explicit prefix could be silently flipped to
+    ``amd_dme`` by the heuristic. Gating on whether the item was a bare URL is
+    what separates the two.
+
+    ``_detect_amd_exporter`` is forced True here: the point is that an explicit
+    prefix wins even when the endpoint really does look like an AMD exporter.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _always_detects_amd(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(
+            "aiperf.config.flags._converter_telemetry._detect_amd_exporter",
+            lambda url: True,
+        )
+
+    def test_explicit_dcgm_prefix_is_not_overridden(self):
+        cli = _make_cli(gpu_telemetry=["dcgm:http://node:9400/metrics"])
+        assert build_gpu_telemetry(cli)["collector"] == "dcgm"
+
+    def test_bare_url_still_auto_detects(self):
+        cli = _make_cli(gpu_telemetry=["http://node:5000/metrics"])
+        assert build_gpu_telemetry(cli)["collector"] == "amd_dme"
+
+    def test_explicit_amd_dme_prefix_is_honored(self):
+        cli = _make_cli(gpu_telemetry=["amd_dme:http://node:5000/metrics"])
+        assert build_gpu_telemetry(cli)["collector"] == "amd_dme"
+
+    def test_a_local_keyword_suppresses_detection_for_a_bare_url(self):
+        """`--gpu-telemetry amdsmi http://...` names a collector by keyword, so
+        the URL is a plain endpoint and must not re-decide the collector."""
+        cli = _make_cli(gpu_telemetry=["amdsmi", "http://node:5000/metrics"])
+        assert build_gpu_telemetry(cli)["collector"] == "amdsmi"
+
+    @pytest.mark.parametrize(
+        "item",
+        [
+            "node:5000/metrics",
+            "10.0.0.1:5000/metrics",
+            "node:5000",
+        ],
+        ids=["host-port-path", "ip-port-path", "host-port"],
+    )
+    def test_a_scheme_less_url_still_auto_detects(self, item: str):
+        """A scheme-less endpoint is a bare URL, even though it contains a colon.
+
+        These reach the prefixed-item branch because of the colon, but the part
+        before it is not a collector name, so the user chose nothing and the URL
+        is still a detection candidate. Reported from a real MI300X run where
+        `--gpu-telemetry <ip>:5000/metrics` silently collected no AMD metrics.
+        """
+        cli = _make_cli(gpu_telemetry=[item])
+        assert build_gpu_telemetry(cli)["collector"] == "amd_dme"
+
+    def test_an_explicit_prefix_on_a_scheme_less_url_is_still_honoured(self):
+        cli = _make_cli(gpu_telemetry=["dcgm:node:9400/metrics"])
+        assert build_gpu_telemetry(cli)["collector"] == "dcgm"
+
+
+class TestAmdProbeFailureIsNotSilent:
+    """A probe that cannot reach the endpoint must say so.
+
+    The probe swallows every exception and returns False, which leaves the URL
+    on the DCGM default. An AMD exporter collected as DCGM produces a run with
+    no GPU metrics, so the downgrade needs to be visible in the log rather than
+    inferred from an empty table afterwards.
+    """
+
+    def test_probe_failure_warns_and_names_the_explicit_form(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ):
+        import httpx
+
+        def _unreachable(*args, **kwargs):
+            raise httpx.ConnectError("connection refused")
+
+        monkeypatch.setattr(
+            "aiperf.config.flags._converter_telemetry._detect_amd_exporter",
+            _real_detect,
+        )
+        monkeypatch.setattr(httpx, "get", _unreachable)
+        caplog.set_level(
+            logging.WARNING, logger="aiperf.config.flags._converter_telemetry"
+        )
+
+        cli = _make_cli(gpu_telemetry=["http://node:5000/metrics"])
+        assert build_gpu_telemetry(cli)["collector"] == "dcgm"
+
+        assert "could not probe" in caplog.text.lower()
+        assert "amd_dme:http://node:5000/metrics" in caplog.text
