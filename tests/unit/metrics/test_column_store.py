@@ -4,6 +4,10 @@
 
 from __future__ import annotations
 
+import sys
+import tomllib
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -11,8 +15,18 @@ from aiperf.metrics.column_store import (
     _BOOL_MISSING,
     _CATEGORICAL_MISSING,
     ColumnStore,
+    _resolve_list_backend_class,
 )
 from aiperf.metrics.ragged_series import RaggedSeries
+
+
+def _find_pyproject() -> Path | None:
+    """The repo's pyproject.toml, or None when running from an installed wheel."""
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "pyproject.toml"
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _make_store(initial_capacity: int = 8) -> ColumnStore:
@@ -529,3 +543,104 @@ def test_numeric_column_slice_to_mask_length_prevents_index_error() -> None:
     # Post-fix: col[:len(mask)][mask] is [0.0, 2.0].
     selected = col[: len(mask)][mask]
     np.testing.assert_array_equal(selected, [0.0, 2.0])
+
+
+class TestResolveListBackendClass:
+    """``_resolve_list_backend_class`` picks the backend and, for tdigest,
+    turns an absent ``crick`` into an actionable message.
+
+    The friendly message is only reachable when ``crick`` is genuinely missing,
+    which no CI job reproduces: the test extra installs it. These tests make it
+    reachable by blocking the import, so a drift in either half of that branch
+    (the ``exc.name`` discrimination, or the extra named in the message) fails
+    here rather than reaching a user on arm64.
+    """
+
+    @staticmethod
+    def _blocking_finder(blocked: str, raises_name: str | None = None):
+        """A meta_path finder that makes ``blocked`` unimportable.
+
+        ``raises_name`` overrides the ``name`` carried on the raised
+        ``ModuleNotFoundError``, which is the attribute the resolver branches on.
+        """
+
+        class _Finder:
+            @staticmethod
+            def find_spec(fullname, path=None, target=None):
+                if fullname != blocked:
+                    return None
+                raise ModuleNotFoundError(
+                    f"No module named {fullname!r}", name=raises_name or fullname
+                )
+
+        return _Finder()
+
+    @pytest.fixture
+    def block_import(self, monkeypatch: pytest.MonkeyPatch):
+        """Install a blocking finder and force a fresh import of the aggregator.
+
+        ``list_metric_aggregation`` imports ``crick`` at module scope, so the
+        module has to leave ``sys.modules`` for the import to run again and reach
+        the finder.
+        """
+
+        def _block(name: str, raises_name: str | None = None) -> None:
+            for cached in ("aiperf.metrics.list_metric_aggregation", name):
+                monkeypatch.delitem(sys.modules, cached, raising=False)
+            monkeypatch.setattr(
+                sys,
+                "meta_path",
+                [self._blocking_finder(name, raises_name), *sys.meta_path],
+            )
+
+        return _block
+
+    @pytest.fixture
+    def tdigest_backend(self, monkeypatch: pytest.MonkeyPatch):
+        from aiperf.common.environment import Environment
+
+        monkeypatch.setattr(Environment.METRICS, "LIST_BACKEND", "tdigest")
+
+    def test_absent_crick_names_the_install_command(
+        self, block_import, tdigest_backend
+    ) -> None:
+        block_import("crick")
+
+        with pytest.raises(ImportError) as excinfo:
+            _resolve_list_backend_class()
+
+        assert 'pip install "aiperf[tdigest]"' in str(excinfo.value)
+        assert isinstance(excinfo.value.__cause__, ModuleNotFoundError)
+        assert excinfo.value.__cause__.name == "crick"
+
+    def test_the_named_extra_is_one_the_package_actually_declares(self) -> None:
+        """Guards the message against a rename of the extra in pyproject.toml."""
+        pyproject = _find_pyproject()
+        if pyproject is None:
+            pytest.skip("not running from a source checkout")
+
+        extras = tomllib.loads(pyproject.read_text(encoding="utf-8"))["project"][
+            "optional-dependencies"
+        ]
+
+        assert "tdigest" in extras, (
+            "the ImportError in _resolve_list_backend_class tells the user to "
+            "install aiperf[tdigest]; that extra no longer exists"
+        )
+
+    def test_a_different_missing_module_keeps_its_own_error(
+        self, block_import, tdigest_backend
+    ) -> None:
+        """An installed-but-broken crick must not be reported as a missing one."""
+        block_import("crick", raises_name="some_transitive_dep")
+
+        with pytest.raises(ModuleNotFoundError) as excinfo:
+            _resolve_list_backend_class()
+
+        assert excinfo.value.name == "some_transitive_dep"
+        assert "aiperf[tdigest]" not in str(excinfo.value)
+
+    def test_the_default_backend_never_reaches_crick(self, block_import) -> None:
+        block_import("crick")
+
+        assert _resolve_list_backend_class() is RaggedSeries
