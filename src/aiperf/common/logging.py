@@ -54,6 +54,14 @@ def _create_basic_handler(level: str | int) -> logging.StreamHandler:
     Uses sys.stdout to match CustomRichHandler's Console() which also defaults to stdout.
     """
     handler = logging.StreamHandler(sys.stdout)
+    if hasattr(handler.stream, "reconfigure"):
+        # A non-UTF-8 console code page (e.g. Windows cp1252) raises
+        # UnicodeEncodeError on emit() for any message containing a character
+        # outside that page, which logging swallows into a "Logging error"
+        # banner in place of the actual line. FileHandler already sidesteps
+        # this via encoding="utf-8"; sys.stdout's encoding isn't ours to pick,
+        # so escape what the code page can't represent instead of losing it.
+        handler.stream.reconfigure(errors="backslashreplace")
     handler.setLevel(level)
     handler.setFormatter(
         logging.Formatter(_BASIC_LOG_FORMAT, datefmt=_BASIC_DATE_FORMAT)
