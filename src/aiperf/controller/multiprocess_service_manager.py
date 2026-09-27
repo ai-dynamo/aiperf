@@ -131,6 +131,9 @@ class MultiProcessServiceManager(BaseServiceManager):
     async def shutdown_all_services(self) -> list[BaseException | None]:
         """Stop all required services as multiprocessing processes."""
         self.debug("Stopping all service processes")
+        # The controller stops services before exporting results, so they stay
+        # silent for the rest of the run; the watchdog must not reap them.
+        self._shutdown_complete = True
 
         # Wait for all to finish in parallel
         return await asyncio.gather(
