@@ -16,6 +16,8 @@ timeout only buries the workers' own error under "No workers registered with
 the credit router".
 """
 
+from collections import Counter
+from multiprocessing import Process
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -23,6 +25,7 @@ import pytest
 from aiperf.common.enums import LifecycleState, ServiceRegistrationStatus, SystemState
 from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.models import ErrorDetails, ServiceRunInfo
+from aiperf.controller.multiprocess_service_manager import MultiProcessServiceManager
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import ServiceType
 
@@ -198,3 +201,35 @@ async def test_a_second_report_from_a_failed_worker_does_not_replace_the_cause(
         "No AWS credentials found"
         in system_controller._exit_errors[0].error_details.message
     )
+
+
+@pytest.mark.asyncio
+async def test_a_worker_reaped_before_its_error_arrives_is_still_tolerated(
+    system_controller: SystemController,
+    benchmark_run,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The registration-wait reaper and the SERVICE_ERROR race. With the real
+    manager, reaping first used to erase the worker's identity, so its error
+    took the generic path and cancelled the run although another worker was
+    healthy."""
+    monkeypatch.setattr(
+        "aiperf.controller.multiprocess_service_manager.Process",
+        MagicMock(side_effect=lambda **_: MagicMock(spec=Process)),
+    )
+    manager = MultiProcessServiceManager(required_services={}, run=benchmark_run)
+    await manager.run_service(ServiceType.WORKER, num_replicas=2)
+    dead, alive = manager.multi_process_info
+    dead.process.is_alive.return_value = False
+    alive.process.is_alive.return_value = True
+    manager._reap_dead_processes_during_registration(Counter({ServiceType.WORKER: 2}))
+
+    system_controller.service_manager = manager
+    system_controller._system_state = SystemState.PROFILING
+    system_controller._cancel_profiling = AsyncMock()
+    system_controller._check_and_trigger_shutdown = AsyncMock()
+
+    await _report(system_controller, dead.service_id)
+
+    system_controller._cancel_profiling.assert_not_awaited()
+    assert system_controller._exit_errors == []

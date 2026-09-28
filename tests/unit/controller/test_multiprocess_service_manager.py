@@ -3,6 +3,7 @@
 
 import asyncio
 import os
+from collections import Counter
 from multiprocessing import Process
 from unittest.mock import MagicMock
 
@@ -507,6 +508,66 @@ class TestLosingEveryWorkerBeforeRegistrationIsFatal:
         )
 
 
+async def _spawn_workers(manager, monkeypatch, count: int) -> list[MultiProcessRunInfo]:
+    """Spawn workers through the real ``run_service``, with processes stubbed."""
+    monkeypatch.setattr(
+        "aiperf.controller.multiprocess_service_manager.Process",
+        MagicMock(side_effect=lambda **_: MagicMock(spec=Process)),
+    )
+    await manager.run_service(ServiceType.WORKER, num_replicas=count)
+    return list(manager.multi_process_info)
+
+
+class TestSpawnedWorkerIdentitySurvivesReaping:
+    """The registration-wait reaper drops a dead worker from
+    ``multi_process_info``, but its SERVICE_ERROR can arrive after that. The
+    controller asks ``spawned_worker_ids()`` whether the sender is one of its
+    unregistered workers; if reaping erased that, the error took the generic
+    path, where an unknown sender counts as required, and one flaky worker
+    cancelled a run whose other workers were healthy."""
+
+    @pytest.fixture
+    def service_manager(self, benchmark_run) -> MultiProcessServiceManager:
+        return MultiProcessServiceManager(required_services={}, run=benchmark_run)
+
+    @pytest.mark.asyncio
+    async def test_a_reaped_worker_is_still_a_spawned_worker(
+        self, service_manager: MultiProcessServiceManager, monkeypatch
+    ) -> None:
+        dead, alive = await _spawn_workers(service_manager, monkeypatch, 2)
+        dead.process.is_alive.return_value = False
+        alive.process.is_alive.return_value = True
+
+        service_manager._reap_dead_processes_during_registration(
+            Counter({ServiceType.WORKER: 2})
+        )
+
+        assert dead not in service_manager.multi_process_info
+        assert service_manager.spawned_worker_ids() == {
+            dead.service_id,
+            alive.service_id,
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_reaped_worker_reports_as_dead_not_unknown(
+        self, service_manager: MultiProcessServiceManager, monkeypatch
+    ) -> None:
+        """``None`` means "not spawned here". The controller counts a spawned
+        worker as viable unless it is known dead, so a reaped one answering
+        ``None`` would hold the run open for a worker that no longer exists."""
+        dead, alive = await _spawn_workers(service_manager, monkeypatch, 2)
+        dead.process.is_alive.return_value = False
+        alive.process.is_alive.return_value = True
+
+        service_manager._reap_dead_processes_during_registration(
+            Counter({ServiceType.WORKER: 2})
+        )
+
+        assert service_manager.get_service_liveness(dead.service_id) is False
+        assert service_manager.get_service_liveness(alive.service_id) is True
+        assert service_manager.get_service_liveness("worker_never_spawned") is None
+
+
 class TestWaitForProcess:
     """Test _wait_for_process force-kill after bus shutdown grace.
 
@@ -596,6 +657,7 @@ class TestGetServiceLiveness:
     def manager(self) -> MultiProcessServiceManager:
         mgr = MultiProcessServiceManager.__new__(MultiProcessServiceManager)
         mgr.multi_process_info = []
+        mgr._spawned_worker_ids = set()
         return mgr
 
     def _add(self, manager, service_id: str, alive: bool | None) -> None:

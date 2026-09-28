@@ -73,6 +73,9 @@ class MultiProcessServiceManager(BaseServiceManager):
         # the registration wait. Workers failing on configuration usually die
         # together, but not necessarily within one 0.5s tick.
         self._workers_lost_before_registering: list[int | None] = []
+        # Kept past reaping: a worker's SERVICE_ERROR can arrive after the
+        # registration-wait reaper has dropped it from multi_process_info.
+        self._spawned_worker_ids: set[str] = set()
 
     async def run_service(
         self, service_type: ServiceTypeT, num_replicas: int = 1
@@ -116,6 +119,8 @@ class MultiProcessServiceManager(BaseServiceManager):
                     service_id=service_id,
                 )
             )
+            if service_type == ServiceType.WORKER:
+                self._spawned_worker_ids.add(service_id)
 
     async def stop_service(
         self, service_type: ServiceTypeT, service_id: str | None = None
@@ -237,17 +242,15 @@ class MultiProcessServiceManager(BaseServiceManager):
             raise AIPerfError("Some services failed to register within timeout") from e
 
     def spawned_worker_ids(self) -> frozenset[str]:
-        """Workers spawned here and not yet reaped.
+        """Every worker spawned here, including those already reaped.
 
-        Answers the question the SystemController needs when a worker reports a
-        start-up failure before registering: is there any other worker that
-        could still start?
+        The SystemController uses this to recognize a start-up failure from one
+        of its own unregistered workers. The reaper may drop a dead worker
+        before its SERVICE_ERROR arrives, so identity cannot come from
+        ``multi_process_info``; whether a worker can still start is
+        ``get_service_liveness``'s question.
         """
-        return frozenset(
-            info.service_id
-            for info in self.multi_process_info
-            if info.service_type == ServiceType.WORKER
-        )
+        return frozenset(self._spawned_worker_ids)
 
     def get_service_liveness(self, service_id: str) -> bool | None:
         """Answer liveness from the real ``multiprocessing.Process`` handle.
@@ -261,7 +264,8 @@ class MultiProcessServiceManager(BaseServiceManager):
         for info in self.multi_process_info:
             if info.service_id == service_id:
                 return info.process is not None and info.process.is_alive()
-        return None
+        # Spawned here but since reaped: known dead, not unknown.
+        return False if service_id in self._spawned_worker_ids else None
 
     def _reap_dead_processes_during_registration(
         self, required_counts: "Counter[ServiceTypeT]"
