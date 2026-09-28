@@ -629,6 +629,40 @@ class TestRealtimeTelemetryDashboard:
             mock_all_nodes.remove_class.assert_called_once_with("hidden")
             mock_all_nodes.update.assert_called_once_with(metrics)
 
+    def test_a_status_message_after_data_gives_way_to_the_next_batch(
+        self, dashboard: RealtimeTelemetryDashboard
+    ) -> None:
+        """Under --ui dashboard, data is already flowing when the pane is toggled,
+        and the toggle's status message hides the view. The next batch must bring
+        it back rather than render into a hidden widget."""
+
+        def widget() -> Mock:
+            mock = Mock()
+            mock.classes = set()
+            mock.add_class.side_effect = mock.classes.add
+            mock.remove_class.side_effect = mock.classes.discard
+            return mock
+
+        status, view = widget(), widget()
+        dashboard.all_nodes_view = view
+        metrics = [
+            MetricResult(
+                tag="gpu_util_dcgm_http___localhost_9400_metrics_gpu0_GPU-12345678",
+                header="GPU Utilization | localhost:9400 | GPU 0 | NVIDIA RTX 4090",
+                unit="%",
+                avg=75.0,
+            )
+        ]
+
+        with patch.object(dashboard, "query_one", return_value=status):
+            dashboard.on_realtime_telemetry_metrics(metrics)
+            dashboard.set_status_message("Enabling live GPU telemetry...")
+            assert "hidden" in view.classes
+            dashboard.on_realtime_telemetry_metrics(metrics)
+
+        assert "hidden" not in view.classes
+        assert "hidden" in status.classes
+
     def test_on_realtime_telemetry_metrics_subsequent_update(self, dashboard):
         """Test on_realtime_telemetry_metrics on subsequent updates."""
         mock_all_nodes = Mock()
