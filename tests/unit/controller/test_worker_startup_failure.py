@@ -212,10 +212,6 @@ async def test_a_worker_reaped_before_its_error_arrives_is_still_tolerated(
     benchmark_run,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The registration-wait reaper and the SERVICE_ERROR race. With the real
-    manager, reaping first used to erase the worker's identity, so its error
-    took the generic path and cancelled the run although another worker was
-    healthy."""
     monkeypatch.setattr(
         "aiperf.controller.multiprocess_service_manager.Process",
         MagicMock(side_effect=lambda **_: MagicMock(spec=Process)),
@@ -239,7 +235,6 @@ async def test_a_worker_reaped_before_its_error_arrives_is_still_tolerated(
 
 
 def _on_each_tick(monkeypatch: pytest.MonkeyPatch, callback) -> None:
-    """Run ``callback(tick)`` at every watch poll, then yield as sleep would."""
     real_sleep = asyncio.sleep
     ticks = 0
 

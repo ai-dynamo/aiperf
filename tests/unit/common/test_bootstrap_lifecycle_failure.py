@@ -13,11 +13,6 @@ The worker then exits cleanly without reporting a service error and the
 controller times out waiting for a registration that never comes: 35s and a
 misleading "No workers registered with the credit router" instead of 1s and the
 real cause.
-
-This is the same root cause fixed for ``endpoint_signer`` in ``b7e1a8af5``, but
-on the *default* path -- ``BaseTransport.__init__`` attaches the request signer
-as a child lifecycle, so it runs on every benchmark, while ``endpoint_signer``
-only runs with ``--reset-kv-cache`` or a readiness timeout.
 """
 
 import asyncio
