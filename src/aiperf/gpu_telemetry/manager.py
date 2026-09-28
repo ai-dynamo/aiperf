@@ -24,6 +24,7 @@ from aiperf.common.messages import (
 from aiperf.common.mixins import BaselineCollectorMixin
 from aiperf.common.models import ErrorDetails, TelemetryRecord
 from aiperf.common.protocols import PushClientProtocol
+from aiperf.common.redact import redact_url
 from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import GPUTelemetryCollectorType, PluginType
@@ -223,7 +224,7 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
         return [
             _CollectorCandidate(
                 collector_type=self._collector_type,
-                collector_id=f"collector_{dcgm_url.replace(':', '_').replace('/', '_')}",
+                collector_id=f"collector_{redact_url(dcgm_url).replace(':', '_').replace('/', '_')}",
                 kwargs={"dcgm_url": dcgm_url},
             )
             for dcgm_url in self._dcgm_endpoints
@@ -249,7 +250,9 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
                     error_callback=self._on_telemetry_error,
                     collector_id=candidate.collector_id,
                 )
-                source_identifier = collector.endpoint_url
+                # The source identifier keys records, logs and status messages,
+                # so it must not carry the endpoint's credentials.
+                source_identifier = redact_url(collector.endpoint_url)
                 configured_sources.append(source_identifier)
                 is_reachable = await collector.is_url_reachable()
                 if not is_reachable:
@@ -316,11 +319,14 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
         is_local = plugins.get_gpu_telemetry_collector_metadata(
             self._collector_type
         ).is_local
-        endpoints_for_display = (
-            configured_sources
-            if is_local
-            else self._compute_endpoints_for_display(reachable_defaults)
-        )
+        endpoints_for_display = [
+            redact_url(url)
+            for url in (
+                configured_sources
+                if is_local
+                else self._compute_endpoints_for_display(reachable_defaults)
+            )
+        ]
 
         if not self._collectors:
             reason = failure_reason or (
