@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import codecs
 import logging
 import multiprocessing
 import queue
@@ -48,6 +49,50 @@ _BASIC_LOG_FORMAT = (
 _BASIC_DATE_FORMAT = "%H:%M:%S"
 
 
+class _EncodableFormatter(logging.Formatter):
+    """Formatter that degrades characters the stream cannot encode.
+
+    A single-byte console encoding, and cp1252 is the Windows default, cannot
+    represent the box-drawing characters Rich puts in a rendered table. Writing
+    one raises inside ``StreamHandler.emit``, and logging's own handler then
+    discards the whole record: the operator loses the line entirely rather than
+    the character. Substituting keeps the line.
+    """
+
+    def __init__(self, *args, encoding: str, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._encoding = encoding
+
+    def format(self, record: logging.LogRecord) -> str:
+        formatted = super().format(record)
+        return formatted.encode(self._encoding, errors="replace").decode(self._encoding)
+
+
+def _stream_encoding(stream: object) -> str:
+    """The stream's text encoding, defaulting to utf-8 when it does not say."""
+    return getattr(stream, "encoding", None) or "utf-8"
+
+
+def _basic_formatter(encoding: str) -> logging.Formatter:
+    """A plain formatter on a UTF-8 sink, a substituting one on anything else.
+
+    An encoding Python does not know is treated as the most conservative case
+    rather than trusted, since substituting through it would raise LookupError
+    inside ``format`` and lose the record we are trying to save.
+    """
+    try:
+        codec = codecs.lookup(encoding)
+    except LookupError:
+        return _EncodableFormatter(
+            _BASIC_LOG_FORMAT, datefmt=_BASIC_DATE_FORMAT, encoding="ascii"
+        )
+    if codec.name == "utf-8":
+        return logging.Formatter(_BASIC_LOG_FORMAT, datefmt=_BASIC_DATE_FORMAT)
+    return _EncodableFormatter(
+        _BASIC_LOG_FORMAT, datefmt=_BASIC_DATE_FORMAT, encoding=encoding
+    )
+
+
 def _create_basic_handler(level: str | int) -> logging.StreamHandler:
     """Create a basic non-rich StreamHandler for non-TTY environments.
 
@@ -55,9 +100,7 @@ def _create_basic_handler(level: str | int) -> logging.StreamHandler:
     """
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(level)
-    handler.setFormatter(
-        logging.Formatter(_BASIC_LOG_FORMAT, datefmt=_BASIC_DATE_FORMAT)
-    )
+    handler.setFormatter(_basic_formatter(_stream_encoding(sys.stdout)))
     return handler
 
 
