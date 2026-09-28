@@ -107,6 +107,9 @@ class MarkdownParser:
                             )
                             if weight_str is not None:
                                 command_kwargs["weight"] = int(weight_str)
+                            timeout_str = attrs.get("timeout")
+                            if timeout_str is not None:
+                                command_kwargs["timeout"] = int(timeout_str)
                             command = Command(**command_kwargs)
 
                             self._categorize_command(command)
