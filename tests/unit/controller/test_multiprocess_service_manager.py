@@ -469,9 +469,6 @@ class TestLosingEveryWorkerBeforeRegistrationIsFatal:
     async def test_a_worker_dying_while_another_lives_is_still_tolerated(
         self, service_manager: MultiProcessServiceManager
     ):
-        """The fix is scoped to losing the *last* worker. One flaky worker
-        while another is healthy keeps the existing drop-and-continue
-        behavior."""
         dataset, timing = self._core(service_manager)
         dead_worker = self._info(
             ServiceType.WORKER, "worker_dead", self._process(alive=False, exitcode=1)
