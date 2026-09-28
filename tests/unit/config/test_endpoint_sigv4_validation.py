@@ -380,8 +380,8 @@ _SIGV4 = {"auth_type": "sigv4", "aws_region": "us-east-1", "aws_service": "execu
 class TestApiKeyIgnoredUnderSigningWarns:
     """A signer replaces Bearer (and Anthropic ``x-api-key``) auth, so the key
     is dropped from every request. Rejecting the combination would stop users
-    who keep a key in a shared config from enabling signing (raised on #771),
-    so this warns instead of failing."""
+    who keep a key in a shared config from enabling signing, so this warns
+    instead of failing."""
 
     def test_api_key_with_auth_type_warns_naming_both_flags(
         self, caplog: pytest.LogCaptureFixture

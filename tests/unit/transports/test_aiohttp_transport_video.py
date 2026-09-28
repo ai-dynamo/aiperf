@@ -1162,9 +1162,9 @@ class TestForeignDownloadDropsInheritedCredentials:
     async def test_an_unsigned_same_origin_download_never_follows_redirects(
         self, transport
     ):
-        """Documented in the video tutorial: a server whose /content 302s to a
-        CDN now fails the download even with no signer, because following it
-        would re-deliver the user's -H headers to the redirect target."""
+        """A server whose /content 302s to a CDN fails the download even with
+        no signer, because following it would re-deliver the user's -H headers
+        to the redirect target."""
         transport.aiohttp_client.get_request.return_value = create_request_record(
             status=200, body=b"video-bytes"
         )
