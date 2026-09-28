@@ -421,7 +421,7 @@ The nvidia-ml-py library (pynvml) collects the following metrics directly from t
 | Metric | Description | Unit |
 |--------|-------------|------|
 | `nvidia_power_usage` | Current power draw | W |
-| `nvidia_energy_consumption` | Total energy since boot | MJ |
+| `nvidia_energy_consumption` | Total energy since boot (see note below) | MJ |
 | `nvidia_gpu_utilization` | GPU compute utilization | % |
 | `nvidia_memory_utilization` | Memory controller utilization | % |
 | `nvidia_memory_used` | Framebuffer memory in use | GB |
@@ -434,6 +434,15 @@ The nvidia-ml-py library (pynvml) collects the following metrics directly from t
 
 <Note>
 Not all metrics are available on all GPU models. AIPerf gracefully handles missing metrics and reports only what the hardware supports.
+</Note>
+
+<Note>
+`nvidia_energy_consumption` needs the NVML total-energy counter, which requires Volta or
+newer and a driver that exports `nvmlDeviceGetTotalEnergyConsumption`. AIPerf probes it
+once at startup; where it is absent the field is omitted for that GPU and a warning names
+the requirement, rather than the run finishing silently without energy. Power efficiency
+metrics are still produced, derived from the power gauge instead. See
+[Energy source](../metrics-reference.md#gpu-power-efficiency-metrics).
 </Note>
 
 ## Comparing DCGM vs pynvml
