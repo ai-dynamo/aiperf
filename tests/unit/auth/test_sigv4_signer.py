@@ -655,9 +655,7 @@ def _refreshable_credentials():
 
 class TestStaticCredentialsSkipTheThreadHop:
     """Static credentials have nothing to refresh, so the thread hop that
-    protects the event loop from a blocking STS/SSO refresh buys nothing.
-    Measured on #771's review: the hop costs ~56 us per request, about twice
-    the ~29 us of inline signing at typical chat payload sizes."""
+    protects the event loop from a blocking STS/SSO refresh buys nothing."""
 
     @pytest.mark.asyncio
     async def test_static_credentials_are_read_inline(self) -> None:
