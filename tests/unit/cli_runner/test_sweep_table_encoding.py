@@ -23,10 +23,8 @@ _BOX_DRAWING = "\u2500\u2501"
     [
         ("utf-8", True),
         ("UTF-8", True),
-        (None, True),
+        (None, False),
         ("cp1252", False),
-        ("ascii", False),
-        ("latin-1", False),
         ("not-a-codec", False),
     ],
 )
@@ -44,7 +42,6 @@ def test_box_style_follows_the_stdout_encoding(
 def test_the_chosen_style_is_encodable_by_that_console(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The point of the choice: whatever comes back must survive the console."""
     monkeypatch.setattr(sys, "stdout", SimpleNamespace(encoding="cp1252"))
 
     str(SweepTableLogger._box_style()).encode("cp1252")

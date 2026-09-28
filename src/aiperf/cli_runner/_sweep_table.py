@@ -232,7 +232,11 @@ class SweepTableLogger:
         never runs. A cp1252 console, the Windows default, has no box-drawing
         characters, so ask the stream the handler writes to.
         """
-        encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+        encoding = getattr(sys.stdout, "encoding", None)
+        if encoding is None:
+            # A stream that will not say what it accepts is not worth betting a
+            # whole log record on.
+            return ASCII2
         try:
             "─━".encode(encoding)
         except (UnicodeEncodeError, LookupError):

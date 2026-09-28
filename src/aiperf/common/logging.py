@@ -68,28 +68,31 @@ class _EncodableFormatter(logging.Formatter):
         return formatted.encode(self._encoding, errors="replace").decode(self._encoding)
 
 
-def _stream_encoding(stream: object) -> str:
-    """The stream's text encoding, defaulting to utf-8 when it does not say."""
-    return getattr(stream, "encoding", None) or "utf-8"
+def _stream_encoding(stream: object) -> str | None:
+    """The stream's text encoding, or None when it does not report one."""
+    return getattr(stream, "encoding", None) or None
 
 
-def _basic_formatter(encoding: str) -> logging.Formatter:
+def _basic_formatter(encoding: str | None) -> logging.Formatter:
     """A plain formatter on a UTF-8 sink, a substituting one on anything else.
 
-    An encoding Python does not know is treated as the most conservative case
-    rather than trusted, since substituting through it would raise LookupError
-    inside ``format`` and lose the record we are trying to save.
+    Anything not known to be UTF-8 is treated as possibly narrower than the
+    message, including a stream that reports no encoding and a codec name
+    Python does not recognise. Guessing UTF-8 there costs the whole record when
+    the guess is wrong, while substituting costs one character when it was
+    right, so the unknown cases fall back to ASCII.
     """
-    try:
-        codec = codecs.lookup(encoding)
-    except LookupError:
-        return _EncodableFormatter(
-            _BASIC_LOG_FORMAT, datefmt=_BASIC_DATE_FORMAT, encoding="ascii"
-        )
-    if codec.name == "utf-8":
-        return logging.Formatter(_BASIC_LOG_FORMAT, datefmt=_BASIC_DATE_FORMAT)
+    if encoding is not None:
+        try:
+            if codecs.lookup(encoding).name == "utf-8":
+                return logging.Formatter(_BASIC_LOG_FORMAT, datefmt=_BASIC_DATE_FORMAT)
+            return _EncodableFormatter(
+                _BASIC_LOG_FORMAT, datefmt=_BASIC_DATE_FORMAT, encoding=encoding
+            )
+        except LookupError:
+            pass
     return _EncodableFormatter(
-        _BASIC_LOG_FORMAT, datefmt=_BASIC_DATE_FORMAT, encoding=encoding
+        _BASIC_LOG_FORMAT, datefmt=_BASIC_DATE_FORMAT, encoding="ascii"
     )
 
 

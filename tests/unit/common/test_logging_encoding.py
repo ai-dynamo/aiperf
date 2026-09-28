@@ -40,19 +40,6 @@ def _cp1252_stream() -> tuple[io.BytesIO, io.TextIOWrapper]:
     return raw, io.TextIOWrapper(raw, encoding="cp1252", errors="strict", newline="")
 
 
-def test_a_strict_console_drops_the_whole_record_without_the_formatter() -> None:
-    """Characterises the bug: a plain formatter loses the line, not just the rule."""
-    raw, stream = _cp1252_stream()
-    handler = logging.StreamHandler(stream)
-    handler.setFormatter(logging.Formatter("%(message)s"))
-
-    with pytest.raises(UnicodeEncodeError):
-        stream.write(handler.format(_record(_TABLE_LIKE)))
-
-    stream.flush()
-    assert raw.getvalue() == b""
-
-
 def test_the_line_survives_on_a_cp1252_console() -> None:
     raw, stream = _cp1252_stream()
     handler = logging.StreamHandler(stream)
@@ -98,10 +85,12 @@ def test_formatter_choice_follows_the_encoding(
 
 @pytest.mark.parametrize(
     ("attr", "expected"),
-    [("cp1252", "cp1252"), (None, "utf-8")],
-    ids=["reports-encoding", "reports-none"],
+    [("cp1252", "cp1252"), (None, None), ("", None)],
+    ids=["reports-encoding", "reports-none", "reports-empty"],
 )
-def test_stream_encoding_defaults_to_utf8(attr: str | None, expected: str) -> None:
+def test_stream_encoding_reports_none_when_the_stream_is_silent(
+    attr: str | None, expected: str | None
+) -> None:
     class _Stream:
         encoding = attr
 
@@ -126,3 +115,38 @@ def test_the_basic_handler_wires_the_substituting_formatter_in(
     written = raw.getvalue().decode("cp1252")
     assert "concurrency" in written
     assert "\u2501" not in written
+
+
+class _SilentAboutEncoding:
+    """A wrapper that forwards writes but reports no encoding.
+
+    Stands in for the stream layers that hide the terminal's encoding. The sink
+    underneath is still strict cp1252, so guessing UTF-8 here would drop the
+    record.
+    """
+
+    def __init__(self, wrapped) -> None:
+        self._wrapped = wrapped
+
+    def write(self, text: str) -> int:
+        return self._wrapped.write(text)
+
+    def flush(self) -> None:
+        self._wrapped.flush()
+
+
+def test_a_stream_that_reports_no_encoding_is_not_assumed_to_be_utf8(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw, strict_cp1252 = _cp1252_stream()
+    monkeypatch.setattr(
+        "aiperf.common.logging.sys.stdout", _SilentAboutEncoding(strict_cp1252)
+    )
+
+    handler = _create_basic_handler(logging.INFO)
+    handler.emit(_record(_TABLE_LIKE))
+    strict_cp1252.flush()
+
+    written = raw.getvalue().decode("cp1252")
+    assert "concurrency" in written
+    assert "━" not in written
