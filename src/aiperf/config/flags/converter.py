@@ -172,10 +172,11 @@ def _apply_recipe_scenarios(
 
     Mirrors ``_apply_recipe_sweep_parameters`` for the ScenarioSweep shape.
     Each scenario is a ``{"name": ..., "benchmark": {...}}`` dict; the result
-    is a ``{"type": "scenarios", "runs": [...]}`` sweep block. Mutually
-    exclusive with a YAML-declared sweep block AND with the grid-recipe path
-    (``_recipe_output_to_dict`` populates exactly one of ``sweep_parameters``
-    or ``scenarios``).
+    is a ``{"type": "scenarios", "runs": [...]}`` sweep block, carrying the
+    recipe's ``sla_filters`` and ``post_process`` the way ``build_sweep`` does
+    for grid recipes. Mutually exclusive with a YAML-declared sweep block AND
+    with the grid-recipe path (``_recipe_output_to_dict`` populates exactly one
+    of ``sweep_parameters`` or ``scenarios``).
     """
     if recipe_output is None:
         return
@@ -187,9 +188,14 @@ def _apply_recipe_scenarios(
             "--search-recipe (scenarios path) is mutually exclusive with a "
             "YAML-declared sweep block. Drop one."
         )
-    nested["sweep"] = {"type": "scenarios", "runs": list(scenarios)}
+    sweep: dict[str, Any] = {"type": "scenarios", "runs": list(scenarios)}
+    if recipe_output.get("sla_filters"):
+        sweep["sla_filters"] = list(recipe_output["sla_filters"])
+    if recipe_output.get("post_process") is not None:
+        sweep["post_process"] = recipe_output["post_process"]
     if recipe_output.get("recipe_name"):
-        nested["sweep"]["recipe_name"] = recipe_output["recipe_name"]
+        sweep["recipe_name"] = recipe_output["recipe_name"]
+    nested["sweep"] = sweep
 
 
 def _reject_recipe_plus_magic_lists(
