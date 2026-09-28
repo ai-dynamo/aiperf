@@ -259,6 +259,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 expected_duration_sec=(
                     profiling.expected_duration_sec if profiling is not None else None
                 ),
+                finite_replay=(
+                    profiling.finite_replay if profiling is not None else False
+                ),
             )
         else:
             self._conversation_source = ConversationSource(
@@ -294,6 +297,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._credit_router.set_return_callback(self._callback_handler.on_credit_return)
         self._credit_router.set_first_token_callback(
             self._callback_handler.on_first_token
+        )
+        self._credit_router.set_transport_dispatched_callback(
+            self._callback_handler.on_transport_dispatched
         )
         self._credit_router.set_fatal_error_callback(self._record_control_fatal_error)
 
