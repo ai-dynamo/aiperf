@@ -80,6 +80,14 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
         """
         return None
 
+    def get_service_exit_code(self, service_id: str) -> int | None:
+        """Exit code of a service process this manager spawned, if it has exited.
+
+        ``None`` when unknown: still running, not spawned here, or (as under
+        Kubernetes) no process handle to read.
+        """
+        return None
+
     def record_reaped_service(
         self, service_id: str, reason: str, first_seen_ns: int | None
     ) -> None:

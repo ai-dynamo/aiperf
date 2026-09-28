@@ -267,6 +267,12 @@ class MultiProcessServiceManager(BaseServiceManager):
         # Spawned here but since reaped: known dead, not unknown.
         return False if service_id in self._spawned_worker_ids else None
 
+    def get_service_exit_code(self, service_id: str) -> int | None:
+        for info in self.multi_process_info:
+            if info.service_id == service_id and info.process is not None:
+                return info.process.exitcode
+        return None
+
     def _reap_dead_processes_during_registration(
         self, required_counts: "Counter[ServiceTypeT]"
     ) -> None:

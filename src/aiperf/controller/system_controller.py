@@ -102,6 +102,16 @@ _PRE_BENCHMARK_STATES = frozenset(
 )
 """States in which no benchmark result can legitimately have been produced yet."""
 
+_WORKER_START_WATCH_INTERVAL = 0.5
+_WORKER_SILENT_DEATH_TICKS = 4
+"""Polls a worker must be seen dead before it counts as a silent death.
+
+A failing worker publishes SERVICE_ERROR and then exits, so the watch can see it
+dead before that report lands; acting on the first sighting would replace the
+real cause with "exited before registering". Counted in polls rather than wall
+time, like the heartbeat watchdog's confirmation ticks.
+"""
+
 
 class SystemController(
     PodStateTrackerMixin,
@@ -226,6 +236,7 @@ class SystemController(
         # a later one (``_kill``'s "entered FAILED state") is a consequence.
         self._worker_startup_failures: dict[str, ErrorDetails] = {}
         self._all_workers_failed_to_start = False
+        self._worker_start_watch_task: asyncio.Task | None = None
         self._export_failed = False
         self._failed_exporters: list[str] = []
         self._raw_artifacts_finalized = False
@@ -858,7 +869,7 @@ class SystemController(
         A sender we cannot identify is treated as required.
         """
         if self._is_unregistered_local_worker(message.service_id):
-            await self._on_worker_startup_failure(message)
+            await self._on_worker_startup_failure(message.service_id, message.error)
             return
 
         self.error(
@@ -895,7 +906,7 @@ class SystemController(
         )
 
     async def _on_worker_startup_failure(
-        self, message: BaseServiceErrorMessage
+        self, service_id: str, error: ErrorDetails
     ) -> None:
         """Cancel once no spawned worker can still start; tolerate a partial loss.
 
@@ -907,8 +918,8 @@ class SystemController(
         router". Liveness is ground truth here, so a worker that died without
         reporting does not hold the run open either.
         """
-        self._worker_startup_failures.setdefault(message.service_id, message.error)
-        self._result_join_coordinator.unregister_service(message.service_id)
+        self._worker_startup_failures.setdefault(service_id, error)
+        self._result_join_coordinator.unregister_service(service_id)
         if self._all_workers_failed_to_start:
             return
 
@@ -920,8 +931,8 @@ class SystemController(
         ]
         if viable:
             self.warning(
-                f"Worker '{message.service_id}' failed to start: "
-                f"{message.error.message} Continuing with {len(viable)} other "
+                f"Worker '{service_id}' failed to start: "
+                f"{error.message} Continuing with {len(viable)} other "
                 f"worker(s)."
             )
             await self._check_and_trigger_shutdown()
@@ -930,8 +941,8 @@ class SystemController(
         self._all_workers_failed_to_start = True
         self.error(
             f"Every worker failed to start ({len(self._worker_startup_failures)}), "
-            f"so no worker is left to send requests. '{message.service_id}': "
-            f"{message.error.message}"
+            f"so no worker is left to send requests. '{service_id}': "
+            f"{error.message}"
         )
         # One entry per worker; the exit-errors panel groups identical errors
         # across services, so N workers failing the same way render once.
@@ -945,6 +956,48 @@ class SystemController(
         )
         if self._system_state not in {SystemState.STOPPING, SystemState.SHUTDOWN}:
             await self._cancel_profiling()
+
+    async def _watch_workers_until_registered(self) -> None:
+        """Catch workers that die before registering without reporting why.
+
+        A worker killed by a signal, or crashing before its comms are up, sends
+        no SERVICE_ERROR, and it starts after the registration-wait reaper has
+        finished, so nothing else sees it before PhaseOrchestrator's
+        credit-router timeout. Such a death feeds the same decision as a
+        reported one, with the exit code as its only evidence.
+        """
+        dead_ticks: dict[str, int] = {}
+        while not self._all_workers_failed_to_start and self._system_state not in {
+            SystemState.STOPPING,
+            SystemState.SHUTDOWN,
+        }:
+            pending = (
+                self.service_manager.spawned_worker_ids()
+                - self.service_manager.service_id_map.keys()
+                - self._worker_startup_failures.keys()
+            )
+            if not pending:
+                return
+            for service_id in sorted(pending):
+                if self.service_manager.get_service_liveness(service_id) is not False:
+                    continue
+                dead_ticks[service_id] = dead_ticks.get(service_id, 0) + 1
+                if dead_ticks[service_id] < _WORKER_SILENT_DEATH_TICKS:
+                    continue
+                exit_code = self.service_manager.get_service_exit_code(service_id)
+                await self._on_worker_startup_failure(
+                    service_id,
+                    ErrorDetails(
+                        type="WorkerExitedBeforeRegistering",
+                        message=(
+                            "Worker exited before registering without reporting "
+                            f"an error (exit code {exit_code})."
+                        ),
+                    ),
+                )
+                if self._all_workers_failed_to_start:
+                    return
+            await asyncio.sleep(_WORKER_START_WATCH_INTERVAL)
 
     def _is_required_service(self, service_id: str) -> bool:
         """Whether losing this service invalidates the run.
@@ -1139,6 +1192,13 @@ class SystemController(
         num_workers = int(orjson.loads(message.payload)["num_workers"])
         # Spawn the workers
         await self.service_manager.run_service(ServiceType.WORKER, num_workers)
+        if self.service_manager.spawned_worker_ids() and (
+            self._worker_start_watch_task is None
+            or self._worker_start_watch_task.done()
+        ):
+            self._worker_start_watch_task = self.execute_async(
+                self._watch_workers_until_registered()
+            )
         # If we are scaling the record processor service count with the number of workers, spawn the record processors
         if self.scale_record_processors_with_workers:
             await self.service_manager.run_service(

@@ -16,13 +16,21 @@ timeout only buries the workers' own error under "No workers registered with
 the credit router".
 """
 
+import asyncio
 from collections import Counter
 from multiprocessing import Process
 from unittest.mock import AsyncMock, MagicMock
 
+import orjson
 import pytest
 
-from aiperf.common.enums import LifecycleState, ServiceRegistrationStatus, SystemState
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import (
+    CommandType,
+    LifecycleState,
+    ServiceRegistrationStatus,
+    SystemState,
+)
 from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.common.models import ErrorDetails, ServiceRunInfo
 from aiperf.controller.multiprocess_service_manager import MultiProcessServiceManager
@@ -40,12 +48,16 @@ def _local_workers(
     *,
     spawned: set[str],
     dead: frozenset[str] = frozenset(),
+    exit_codes: dict[str, int] | None = None,
     state: SystemState = SystemState.PROFILING,
 ) -> None:
     manager = system_controller.service_manager
     manager.service_id_map = {}
     manager.spawned_worker_ids = MagicMock(return_value=frozenset(spawned))
     manager.get_service_liveness = MagicMock(side_effect=lambda sid: sid not in dead)
+    manager.get_service_exit_code = MagicMock(
+        side_effect=lambda sid: (exit_codes or {}).get(sid)
+    )
     system_controller._system_state = state
     system_controller._cancel_profiling = AsyncMock()
     system_controller._check_and_trigger_shutdown = AsyncMock()
@@ -224,3 +236,155 @@ async def test_a_worker_reaped_before_its_error_arrives_is_still_tolerated(
 
     system_controller._cancel_profiling.assert_not_awaited()
     assert system_controller._exit_errors == []
+
+
+def _on_each_tick(monkeypatch: pytest.MonkeyPatch, callback) -> None:
+    """Run ``callback(tick)`` at every watch poll, then yield as sleep would."""
+    real_sleep = asyncio.sleep
+    ticks = 0
+
+    async def tick(_delay: float) -> None:
+        nonlocal ticks
+        ticks += 1
+        await callback(ticks)
+        await real_sleep(0)
+
+    monkeypatch.setattr("aiperf.controller.system_controller.asyncio.sleep", tick)
+
+
+class TestWorkersThatDieWithoutReporting:
+    """Workers start after the registration-wait reaper has finished, so one
+    that dies without publishing SERVICE_ERROR -- killed, or crashed before its
+    comms were up -- is seen by nothing until PhaseOrchestrator's 30s
+    credit-router timeout. The watch polls process liveness until every
+    spawned worker has registered or failed."""
+
+    @pytest.mark.asyncio
+    async def test_the_only_worker_dying_silently_cancels_with_its_exit_code(
+        self, system_controller: SystemController
+    ) -> None:
+        _local_workers(
+            system_controller,
+            spawned={"worker_a"},
+            dead=frozenset({"worker_a"}),
+            exit_codes={"worker_a": -9},
+        )
+
+        await system_controller._watch_workers_until_registered()
+
+        system_controller._cancel_profiling.assert_awaited_once()
+        [error] = system_controller._exit_errors
+        assert error.service_id == "worker_a"
+        assert "exited before registering" in error.error_details.message
+        assert "exit code -9" in error.error_details.message
+
+    @pytest.mark.asyncio
+    async def test_a_report_arriving_within_the_grace_keeps_the_real_cause(
+        self, system_controller: SystemController, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A failing worker publishes and then exits, so the watch can see it
+        dead before its report lands. Acting on the first sighting would bury
+        the real cause under "exited before registering"."""
+        _local_workers(
+            system_controller,
+            spawned={"worker_a"},
+            dead=frozenset({"worker_a"}),
+            exit_codes={"worker_a": 1},
+        )
+
+        async def report_on_first_tick(tick: int) -> None:
+            if tick == 1:
+                await _report(system_controller, "worker_a")
+
+        _on_each_tick(monkeypatch, report_on_first_tick)
+
+        await system_controller._watch_workers_until_registered()
+
+        [error] = system_controller._exit_errors
+        assert error.error_details.message == _CAUSE
+
+    @pytest.mark.asyncio
+    async def test_a_silent_death_while_another_worker_starts_is_tolerated(
+        self, system_controller: SystemController, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _local_workers(
+            system_controller,
+            spawned={"worker_a", "worker_b"},
+            dead=frozenset({"worker_a"}),
+            exit_codes={"worker_a": -11},
+        )
+        manager = system_controller.service_manager
+
+        async def worker_b_registers_late(tick: int) -> None:
+            if tick == 10:
+                manager.service_id_map["worker_b"] = MagicMock()
+
+        _on_each_tick(monkeypatch, worker_b_registers_late)
+
+        await system_controller._watch_workers_until_registered()
+
+        system_controller._cancel_profiling.assert_not_awaited()
+        assert "worker_a" in system_controller._worker_startup_failures
+        assert system_controller._exit_errors == []
+
+    @pytest.mark.asyncio
+    async def test_the_watch_ends_once_every_worker_has_registered(
+        self, system_controller: SystemController
+    ) -> None:
+        _local_workers(system_controller, spawned={"worker_a"})
+        system_controller.service_manager.service_id_map["worker_a"] = MagicMock()
+
+        await system_controller._watch_workers_until_registered()
+
+        system_controller._cancel_profiling.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_the_watch_ends_when_the_system_stops(
+        self, system_controller: SystemController
+    ) -> None:
+        _local_workers(
+            system_controller,
+            spawned={"worker_a"},
+            dead=frozenset({"worker_a"}),
+            state=SystemState.STOPPING,
+        )
+
+        await system_controller._watch_workers_until_registered()
+
+        system_controller._cancel_profiling.assert_not_awaited()
+        assert system_controller._exit_errors == []
+
+
+class TestSpawningStartsTheWatch:
+    @staticmethod
+    async def _spawn(system_controller: SystemController, spawned: set[str]) -> None:
+        manager = system_controller.service_manager
+        manager.spawned_worker_ids = MagicMock(return_value=frozenset(spawned))
+        system_controller._watch_workers_until_registered = AsyncMock()
+        system_controller.scale_record_processors_with_workers = False
+        await system_controller._handle_spawn_workers_command(
+            Command(
+                cid="c-1",
+                cmd=CommandType.SPAWN_WORKERS,
+                payload=orjson.dumps({"num_workers": len(spawned) or 1}),
+            )
+        )
+        await asyncio.sleep(0)
+
+    @pytest.mark.asyncio
+    async def test_spawning_local_workers_starts_the_watch(
+        self, system_controller: SystemController
+    ) -> None:
+        await self._spawn(system_controller, {"worker_a"})
+
+        system_controller._watch_workers_until_registered.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_no_watch_without_local_workers(
+        self, system_controller: SystemController
+    ) -> None:
+        """Under Kubernetes the manager spawns no local processes and has no
+        liveness to poll; pod failures have their own watcher."""
+        await self._spawn(system_controller, set())
+
+        system_controller._watch_workers_until_registered.assert_not_awaited()

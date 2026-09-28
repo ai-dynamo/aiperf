@@ -70,6 +70,10 @@ class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
         """Authoritative liveness for a service, or None when unknown."""
         ...
 
+    def get_service_exit_code(self, service_id: str) -> int | None:
+        """Exit code of a spawned service process, or None when unknown."""
+        ...
+
     def spawned_worker_ids(self) -> frozenset[str]:
         """IDs of workers this manager spawned as local processes.
 

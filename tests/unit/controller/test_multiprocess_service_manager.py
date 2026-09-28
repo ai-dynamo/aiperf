@@ -682,6 +682,12 @@ class TestGetServiceLiveness:
         self._add(manager, "worker_1", alive=None)
         assert manager.get_service_liveness("worker_1") is False
 
+    def test_get_service_exit_code_reports_the_process_exit_code(self, manager) -> None:
+        self._add(manager, "worker_1", alive=False)
+        manager.multi_process_info[0].process.exitcode = -9
+        assert manager.get_service_exit_code("worker_1") == -9
+        assert manager.get_service_exit_code("worker_2") is None
+
     def test_get_service_liveness_unknown_service_returns_none(self, manager) -> None:
         """Services this manager never spawned have no ground truth to offer."""
         self._add(manager, "worker_1", alive=True)
