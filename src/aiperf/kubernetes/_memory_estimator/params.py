@@ -269,10 +269,11 @@ def _derive_server_metrics(config: BenchmarkConfig) -> int:
     """Count the normalized endpoint union used by the metrics manager."""
     if not config.server_metrics.enabled:
         return 0
-    endpoints = {
-        normalize_metrics_endpoint_url(url)
-        for url in [*config.endpoint.urls, *(config.server_metrics.urls or [])]
-    }
+    endpoints = {normalize_metrics_endpoint_url(url) for url in config.endpoint.urls}
+    endpoints.update(
+        normalize_metrics_endpoint_url(url, preserve_explicit_path=True)
+        for url in config.server_metrics.urls or []
+    )
     return len(endpoints)
 
 

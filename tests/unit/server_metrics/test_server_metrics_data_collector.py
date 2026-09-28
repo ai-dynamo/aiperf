@@ -974,6 +974,120 @@ class TestServerMetricsDataCollectorCredentialRedaction:
 
     CREDENTIALED_URL = "http://alice:s3cret@127.0.0.1:34883/metrics"
 
+    @pytest.mark.asyncio
+    async def test_fetch_sends_configured_headers(self) -> None:
+        headers = {"Authorization": "Bearer metrics-secret", "X-Tenant": "tenant-a"}
+        collector = ServerMetricsDataCollector(
+            endpoint_url="http://localhost:8081/metrics", headers=headers
+        )
+
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.headers = {"content-type": "text/plain"}
+        mock_response.text = AsyncMock(
+            return_value="# TYPE requests_total counter\nrequests_total 1\n"
+        )
+        response_cm = MagicMock()
+        response_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        response_cm.__aexit__ = AsyncMock(return_value=None)
+
+        mock_session = MagicMock()
+        mock_session.closed = False
+        mock_session.get = MagicMock(return_value=response_cm)
+        collector._session = mock_session
+
+        await collector._fetch_metrics_text()
+
+        request_kwargs = mock_session.get.call_args.kwargs
+        assert request_kwargs["headers"] == headers
+        assert request_kwargs["allow_redirects"] is False
+        assert request_kwargs["trace_request_ctx"] is not None
+
+    @pytest.mark.asyncio
+    async def test_fetch_allows_redirects_without_configured_headers(self) -> None:
+        collector = ServerMetricsDataCollector(
+            endpoint_url="http://localhost:8081/metrics"
+        )
+
+        mock_response = MagicMock()
+        mock_response.status = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.headers = {"content-type": "text/plain"}
+        mock_response.text = AsyncMock(return_value="requests_total 1\n")
+        response_cm = MagicMock()
+        response_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        response_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_session = MagicMock()
+        mock_session.closed = False
+        mock_session.get = MagicMock(return_value=response_cm)
+        collector._session = mock_session
+
+        await collector._fetch_metrics_text()
+
+        assert mock_session.get.call_args.kwargs["allow_redirects"] is True
+
+    @pytest.mark.asyncio
+    async def test_reachability_allows_redirects_without_configured_headers(
+        self,
+    ) -> None:
+        collector = ServerMetricsDataCollector(
+            endpoint_url="http://localhost:8081/metrics"
+        )
+
+        response = MagicMock(status=200)
+        response_cm = MagicMock()
+        response_cm.__aenter__ = AsyncMock(return_value=response)
+        response_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_session = MagicMock()
+        mock_session.head = MagicMock(return_value=response_cm)
+
+        assert await collector._check_reachability_with_session(mock_session)
+        mock_session.head.assert_called_once_with(
+            collector._endpoint_url, headers={}, allow_redirects=True
+        )
+
+    @pytest.mark.asyncio
+    async def test_reachability_sends_configured_headers(self) -> None:
+        headers = {"Authorization": "Bearer metrics-secret"}
+        collector = ServerMetricsDataCollector(
+            endpoint_url="http://localhost:8081/metrics", headers=headers
+        )
+
+        response = MagicMock(status=200)
+        response_cm = MagicMock()
+        response_cm.__aenter__ = AsyncMock(return_value=response)
+        response_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_session = MagicMock()
+        mock_session.head = MagicMock(return_value=response_cm)
+
+        assert await collector._check_reachability_with_session(mock_session)
+        mock_session.head.assert_called_once_with(
+            collector._endpoint_url, headers=headers, allow_redirects=False
+        )
+
+    @pytest.mark.asyncio
+    async def test_reachability_fallback_get_does_not_forward_redirects(self) -> None:
+        headers = {"X-Acme-Token": "metrics-secret"}
+        collector = ServerMetricsDataCollector(
+            endpoint_url="http://localhost:8081/metrics", headers=headers
+        )
+
+        head_cm = MagicMock()
+        head_cm.__aenter__ = AsyncMock(return_value=MagicMock(status=405))
+        head_cm.__aexit__ = AsyncMock(return_value=None)
+        get_cm = MagicMock()
+        get_cm.__aenter__ = AsyncMock(return_value=MagicMock(status=200))
+        get_cm.__aexit__ = AsyncMock(return_value=None)
+        mock_session = MagicMock()
+        mock_session.head = MagicMock(return_value=head_cm)
+        mock_session.get = MagicMock(return_value=get_cm)
+
+        assert await collector._check_reachability_with_session(mock_session)
+        mock_session.get.assert_called_once_with(
+            collector._endpoint_url, headers=headers, allow_redirects=False
+        )
+
     def test_display_url_is_redacted_but_fetch_url_is_raw(self):
         """The raw URL (with userinfo) is retained for fetching; the display
         URL used for logs/records has the credentials stripped."""

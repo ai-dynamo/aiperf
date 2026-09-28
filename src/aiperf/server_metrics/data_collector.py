@@ -98,6 +98,7 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
 
     Args:
         endpoint_url: URL of the Prometheus metrics endpoint (e.g., "http://localhost:8081/metrics")
+        headers: Optional HTTP headers sent with reachability and scrape requests.
         collection_interval: Interval in seconds between metric collections (default from environment)
         reachability_timeout: Timeout in seconds for endpoint reachability checks (default from environment)
         record_callback: Optional async callback to receive collected records.
@@ -111,6 +112,7 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
         self,
         endpoint_url: str,
         *,
+        headers: dict[str, str] | None = None,
         collection_interval: float | None = None,
         reachability_timeout: float | None = None,
         record_callback: Callable[[list[ServerMetricsRecord], str], Awaitable[None]] | None = None,
@@ -119,6 +121,7 @@ class ServerMetricsDataCollector(BaseMetricsCollectorMixin[ServerMetricsRecord])
     ) -> None:  # fmt: skip
         super().__init__(
             endpoint_url=endpoint_url,
+            headers=headers,
             collection_interval=collection_interval or Environment.SERVER_METRICS.COLLECTION_INTERVAL,
             reachability_timeout=reachability_timeout or Environment.SERVER_METRICS.REACHABILITY_TIMEOUT,
             record_callback=record_callback,

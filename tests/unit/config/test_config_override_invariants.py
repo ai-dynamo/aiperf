@@ -95,6 +95,10 @@ FIELD_PROBE_VALUES: dict[str, list[Any]] = {
     "request_rate": [2.0, 3.0],
     "benchmark_duration": [2.0, 3.0],
     "headers": [["x-probe-a:1"], ["x-probe-b:2"]],
+    "server_metrics_headers": [
+        ["x-metrics-probe-a:1"],
+        ["x-metrics-probe-b:2"],
+    ],
     "extra_inputs": [["probe_a:1"], ["probe_b:2"]],
     "mlflow_tags": [["probe_a:1"], ["probe_b:2"]],
     "server_metrics": [

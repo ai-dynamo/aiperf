@@ -239,6 +239,64 @@ def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] 
     raise ValueError(f"User Config: {input} - must be a valid string, list, or dict")
 
 
+def parse_http_headers(input: Any | None) -> list[tuple[str, str]] | None:
+    """Parse repeatable HTTP header values without coercing their contents.
+
+    Unlike the general key/value parser, a header value is always text and may
+    legally contain commas. Each plain string therefore represents exactly one
+    ``name:value`` pair; users can repeat the CLI option for additional headers
+    or provide a JSON object.
+    """
+    if input is None:
+        return None
+    if isinstance(input, dict):
+        return [_validate_http_header_pair(key, value) for key, value in input.items()]
+    if isinstance(input, (list, tuple, set)):
+        return _parse_http_header_sequence(input)
+    if isinstance(input, str):
+        return _parse_http_header_string(input)
+    raise ValueError(
+        f"HTTP headers: {input} - must be a string, sequence, or JSON object"
+    )
+
+
+def _parse_http_header_sequence(input: Any) -> list[tuple[str, str]]:
+    output: list[tuple[str, str]] = []
+    for item in input:
+        if isinstance(item, (list, tuple)) and len(item) == 2:
+            output.append(_validate_http_header_pair(item[0], item[1]))
+            continue
+        parsed = parse_http_headers(item)
+        if parsed is not None:
+            output.extend(parsed)
+    return output
+
+
+def _parse_http_header_string(input: str) -> list[tuple[str, str]]:
+    if input.lstrip().startswith("{"):
+        try:
+            # Header values may contain credentials. Avoid the shared JSON
+            # helper here because it logs the raw value on decode failures.
+            parsed = orjson.loads(input)
+        except orjson.JSONDecodeError as e:
+            raise ValueError("HTTP headers must be a valid JSON object") from e
+        if not isinstance(parsed, dict):
+            raise ValueError("HTTP headers must be a JSON object")
+        return [_validate_http_header_pair(key, value) for key, value in parsed.items()]
+    name, separator, value = input.partition(":")
+    if not separator:
+        raise ValueError("HTTP header must use 'name:value' format")
+    return [_validate_http_header_pair(name.strip(), value.strip())]
+
+
+def _validate_http_header_pair(name: Any, value: Any) -> tuple[str, str]:
+    if not isinstance(name, str) or not name:
+        raise ValueError("HTTP header names must be non-empty strings")
+    if not isinstance(value, str):
+        raise ValueError(f"HTTP header {name!r} value must be a string")
+    return name, value
+
+
 def print_str_or_list(input: Any) -> str:
     """Convert a list, Enum, or scalar to a display string.
 

@@ -97,18 +97,20 @@ class LocalSubprocessExecutor(RunExecutor):
     ) -> subprocess.CompletedProcess[str]:
         """Run the benchmark subprocess runner and return its completed-process.
 
-        Three credential-bearing fields are forwarded out-of-band via env
+        Four credential-bearing fields are forwarded out-of-band via env
         vars rather than written into ``run_config.json`` (which redacts
-        them via the EndpointConfig field_serializers anyway):
+        them via the config model field serializers anyway):
 
         * ``AIPERF_INJECTED_API_KEY`` — ``endpoint.api_key``
         * ``AIPERF_INJECTED_HEADERS`` — sensitive entries of ``endpoint.headers``
           (Authorization, X-API-Key, …)
+        * ``AIPERF_INJECTED_SERVER_METRICS_HEADERS`` — sensitive entries of
+          ``server_metrics.headers``
         * ``AIPERF_INJECTED_ENDPOINT_URLS`` — full ``endpoint.urls`` list,
           forwarded only when at least one URL carries userinfo
           (``user:pass@host``) that ``redact_url`` would strip
 
-        ``subprocess_runner.main`` consumes and unsets all three variables
+        ``subprocess_runner.main`` consumes and unsets all four variables
         before invoking the benchmark, so neither the subprocess's own
         children nor any logging path sees them.
 
@@ -128,6 +130,7 @@ class LocalSubprocessExecutor(RunExecutor):
         # so an unset field on this run does not inherit a prior value.
         env.pop("AIPERF_INJECTED_API_KEY", None)
         env.pop("AIPERF_INJECTED_HEADERS", None)
+        env.pop("AIPERF_INJECTED_SERVER_METRICS_HEADERS", None)
         env.pop("AIPERF_INJECTED_ENDPOINT_URLS", None)
         api_key = run.cfg.endpoint.api_key
         if api_key is not None:
@@ -135,6 +138,13 @@ class LocalSubprocessExecutor(RunExecutor):
         sensitive_headers = extract_sensitive_headers(run.cfg.endpoint.headers)
         if sensitive_headers:
             env["AIPERF_INJECTED_HEADERS"] = orjson.dumps(sensitive_headers).decode()
+        sensitive_server_metrics_headers = extract_sensitive_headers(
+            run.cfg.server_metrics.headers
+        )
+        if sensitive_server_metrics_headers:
+            env["AIPERF_INJECTED_SERVER_METRICS_HEADERS"] = orjson.dumps(
+                sensitive_server_metrics_headers
+            ).decode()
         urls = list(run.cfg.endpoint.urls)
         if any(redact_url(url) != url for url in urls):
             env["AIPERF_INJECTED_ENDPOINT_URLS"] = orjson.dumps(urls).decode()
