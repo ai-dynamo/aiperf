@@ -20,8 +20,6 @@ PYNVML_SOURCE_IDENTIFIER = "pynvml://localhost"
 # Source identifier for amdsmi collector (used in TelemetryRecord.telemetry_source_url field)
 AMDSMI_SOURCE_IDENTIFIER = "amdsmi://localhost"
 
-# Source identifier for AMD DME collector is the actual HTTP URL (like DCGM)
-
 NVIDIA_GPU_TELEMETRY_PLATFORM = "nvidia"
 AMD_GPU_TELEMETRY_PLATFORM = "amd"
 UNKNOWN_GPU_TELEMETRY_PLATFORM = "unknown"

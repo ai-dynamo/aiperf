@@ -15,7 +15,12 @@ weren't ported into ``build_gpu_telemetry``:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import socket
+import threading
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
@@ -33,16 +38,15 @@ from aiperf.config.flags.cli_config import CLIConfig
 def _no_network_probe(monkeypatch: pytest.MonkeyPatch):
     """Keep the AMD exporter probe off the network for every test in this module.
 
-    ``build_gpu_telemetry`` probes each bare URL with a synchronous
-    ``httpx.get``. Left alone, a test passing a bare URL makes a genuine
-    outbound request; it currently returns fast only because the hostnames do
-    not resolve, and would block for the full timeout behind a resolving
-    wildcard DNS or a proxy. Defaulting to "not an AMD exporter" keeps the
-    suite hermetic. Tests that need detection to fire override this.
+    ``build_gpu_telemetry`` probes every bare URL over HTTP. Left alone, a test
+    passing a bare URL makes a genuine outbound request that returns fast only
+    because the hostname does not resolve, and would wait out the timeout
+    behind a resolving wildcard DNS or a proxy. Tests that exercise the real
+    probe point it at a loopback server instead.
     """
     monkeypatch.setattr(
         "aiperf.config.flags._converter_telemetry._detect_amd_exporter",
-        lambda url: False,
+        lambda urls: False,
     )
 
 
@@ -170,7 +174,7 @@ class TestAmdAutoDetectRespectsAnExplicitPrefix:
     def _always_detects_amd(self, monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(
             "aiperf.config.flags._converter_telemetry._detect_amd_exporter",
-            lambda url: True,
+            lambda urls: True,
         )
 
     def test_explicit_dcgm_prefix_is_not_overridden(self):
@@ -215,35 +219,107 @@ class TestAmdAutoDetectRespectsAnExplicitPrefix:
         cli = _make_cli(gpu_telemetry=["dcgm:node:9400/metrics"])
         assert build_gpu_telemetry(cli)["collector"] == "dcgm"
 
-
-class TestAmdProbeFailureIsNotSilent:
-    """A probe that cannot reach the endpoint must say so.
-
-    The probe swallows every exception and returns False, which leaves the URL
-    on the DCGM default. An AMD exporter collected as DCGM produces a run with
-    no GPU metrics, so the downgrade needs to be visible in the log rather than
-    inferred from an empty table afterwards.
-    """
-
-    def test_probe_failure_warns_and_names_the_explicit_form(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    @pytest.mark.parametrize(
+        "items",
+        [
+            ["dcgm:http://a:9400/metrics", "http://b:5000/metrics"],
+            ["http://b:5000/metrics", "dcgm:http://a:9400/metrics"],
+            ["dcgm:http://a:9400/metrics", "b:5000/metrics"],
+        ],
+        ids=["prefix-first", "bare-first", "scheme-less-sibling"],
+    )
+    def test_a_bare_sibling_url_does_not_overrule_an_explicit_prefix(
+        self, items: list[str]
     ):
-        import httpx
+        """One collector serves every endpoint, so probing a bare sibling URL
+        would re-decide the collector for the endpoint the user named."""
+        cli = _make_cli(gpu_telemetry=items)
+        assert build_gpu_telemetry(cli)["collector"] == "dcgm"
 
-        def _unreachable(*args, **kwargs):
-            raise httpx.ConnectError("connection refused")
 
-        monkeypatch.setattr(
-            "aiperf.config.flags._converter_telemetry._detect_amd_exporter",
-            _real_detect,
-        )
-        monkeypatch.setattr(httpx, "get", _unreachable)
+_DME_PAGE = b"""# TYPE gpu_package_power gauge
+gpu_package_power{gpu_id="0"} 212
+gpu_gfx_activity{gpu_id="0"} 97
+"""
+_DCGM_PAGE = b"""# TYPE DCGM_FI_DEV_POWER_USAGE gauge
+DCGM_FI_DEV_POWER_USAGE{gpu="0"} 212
+"""
+
+
+class _ExporterHandler(BaseHTTPRequestHandler):
+    pages = {"/amd": _DME_PAGE, "/dcgm": _DCGM_PAGE}
+
+    def do_GET(self):
+        body = self.pages.get(self.path)
+        self.send_response(200 if body is not None else 404)
+        self.end_headers()
+        self.wfile.write(body or b"")
+
+    def log_message(self, *args):
+        pass
+
+
+@pytest.fixture
+def exporter() -> Iterator[str]:
+    """Base URL of a loopback server serving an AMD and a DCGM metrics page."""
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _ExporterHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+    server.server_close()
+
+
+@pytest.fixture
+def closed_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+@pytest.fixture
+def real_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "aiperf.config.flags._converter_telemetry._detect_amd_exporter",
+        _real_detect,
+    )
+
+
+@pytest.mark.usefixtures("real_probe")
+class TestAmdProbe:
+    def test_an_amd_exporter_is_detected(self, exporter: str):
+        cli = _make_cli(gpu_telemetry=[f"{exporter}/amd"])
+        assert build_gpu_telemetry(cli)["collector"] == "amd_dme"
+
+    def test_a_dcgm_exporter_stays_on_dcgm(self, exporter: str):
+        cli = _make_cli(gpu_telemetry=[f"{exporter}/dcgm"])
+        assert build_gpu_telemetry(cli)["collector"] == "dcgm"
+
+    def test_any_amd_endpoint_among_several_is_enough(self, exporter: str):
+        cli = _make_cli(gpu_telemetry=[f"{exporter}/missing", f"{exporter}/amd"])
+        assert build_gpu_telemetry(cli)["collector"] == "amd_dme"
+
+    async def test_the_probe_runs_inside_an_event_loop(self, exporter: str):
+        """`aiperf kube profile` converts the CLI from inside its own loop."""
+        asyncio.get_running_loop()
+        cli = _make_cli(gpu_telemetry=[f"{exporter}/amd"])
+        assert build_gpu_telemetry(cli)["collector"] == "amd_dme"
+
+    def test_an_unreachable_endpoint_warns_without_leaking_credentials(
+        self, closed_port: int, caplog: pytest.LogCaptureFixture
+    ):
+        """A failed probe leaves the endpoint on DCGM, which collects nothing from
+        an AMD exporter, so the downgrade has to be visible in the log."""
         caplog.set_level(
             logging.WARNING, logger="aiperf.config.flags._converter_telemetry"
         )
+        url = f"http://ops:s3cr3t@127.0.0.1:{closed_port}/metrics"
 
-        cli = _make_cli(gpu_telemetry=["http://node:5000/metrics"])
+        cli = _make_cli(gpu_telemetry=[url])
         assert build_gpu_telemetry(cli)["collector"] == "dcgm"
 
         assert "could not probe" in caplog.text.lower()
-        assert "amd_dme:http://node:5000/metrics" in caplog.text
+        assert (
+            f"amd_dme:http://<redacted>@127.0.0.1:{closed_port}/metrics" in caplog.text
+        )
+        assert "s3cr3t" not in caplog.text
