@@ -11,8 +11,13 @@ VPC/PrivateLink and custom-domain deployments use.
 
 from __future__ import annotations
 
+import re
+
 _CHINA_SUFFIX = "amazonaws.com.cn"
 _COMMERCIAL_SUFFIX = "amazonaws.com"
+# Explicit ranges rather than re.IGNORECASE: under IGNORECASE, [a-z] also
+# matches non-ASCII letters that case-fold into it, such as the Kelvin sign.
+_REGION_ID = re.compile(r"[A-Za-z]+(-[A-Za-z]+)+-[0-9]+")
 
 
 def dns_suffix(region: str) -> str:
@@ -33,3 +38,20 @@ def dns_suffix(region: str) -> str:
         The DNS suffix, e.g. ``amazonaws.com`` or ``amazonaws.com.cn``.
     """
     return _CHINA_SUFFIX if region.lower().startswith("cn-") else _COMMERCIAL_SUFFIX
+
+
+def is_region_id(region: str) -> bool:
+    """Whether ``region`` has the shape of an AWS region id, e.g. ``us-west-2``.
+
+    Checked before a region is spliced into a hostname: it lands between two DNS
+    labels, so a ``.``, ``/``, ``#``, ``@`` or ``:`` could move a SigV4-signed
+    request to a host outside AWS. Only the shape is checked, not membership in a
+    list, for the same reason ``dns_suffix`` does not raise on unknown regions.
+
+    Args:
+        region: Candidate region id. Case-insensitive.
+
+    Returns:
+        True if ``region`` is letters-and-hyphens ending in ``-<number>``.
+    """
+    return _REGION_ID.fullmatch(region) is not None

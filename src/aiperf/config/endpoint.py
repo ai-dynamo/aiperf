@@ -169,8 +169,15 @@ def _apply_sagemaker_before_validation(data: dict) -> None:
             "runtime hostname and the SigV4 credential scope, and there is "
             "no safe default to guess."
         )
-    from aiperf.transports.aws.regions import dns_suffix
+    from aiperf.transports.aws.regions import dns_suffix, is_region_id
 
+    if not isinstance(region, str) or not is_region_id(region):
+        raise ValueError(
+            f"--aws-region {region!r} is not an AWS region id such as us-west-2. "
+            f"It becomes part of the derived SageMaker hostname, so anything else "
+            f"could send signed requests to a host outside AWS. To use a custom "
+            f"host, pass it with --url."
+        )
     data["urls"] = [f"https://runtime.sagemaker.{region}.{dns_suffix(region)}"]
 
 

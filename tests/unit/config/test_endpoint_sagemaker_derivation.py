@@ -15,6 +15,7 @@ are also what lands in exported config artifacts.
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.config.endpoint import EndpointConfig
 from aiperf.plugin.enums import RequestSignerType, TransportType
@@ -94,6 +95,37 @@ class TestBaseUrlDerivation:
             urls=["https://vpce-123.sagemaker.us-west-2.vpce.amazonaws.com"]
         )
         assert cfg.urls == ["https://vpce-123.sagemaker.us-west-2.vpce.amazonaws.com"]
+
+    @pytest.mark.parametrize(
+        "region",
+        [
+            param("evil.com/x", id="path"),
+            param("evil.com#", id="fragment"),
+            param("us-west-2.evil.com", id="extra-labels"),
+        ],
+    )  # fmt: skip
+    def test_a_region_that_would_change_the_host_is_rejected(self, region: str) -> None:
+        """``evil.com/x`` derived ``https://runtime.sagemaker.evil.com/x.amazonaws.com``:
+        a SigV4-signed request, session token included, sent to a non-AWS host."""
+        with pytest.raises(ValidationError, match="--aws-region"):
+            _endpoint(aws_region=region)
+
+    def test_a_camel_case_region_is_checked_too(self) -> None:
+        with pytest.raises(ValidationError, match="--aws-region"):
+            EndpointConfig.model_validate(
+                {
+                    "type": "chat",
+                    "sagemaker": {"endpointName": "my-ep"},
+                    "awsRegion": "evil.com/x",
+                }
+            )
+
+    def test_the_region_is_not_checked_when_it_builds_no_host(self) -> None:
+        """With an explicit ``--url`` the region is only the SigV4 credential
+        scope, where #771's generic signing path accepts non-AWS scopes such
+        as Cloudflare R2's ``auto``."""
+        cfg = _endpoint(aws_region="auto", urls=["https://example.com"])
+        assert cfg.aws_region == "auto"
 
 
 class TestSageMakerFieldsAreOptional:
