@@ -94,6 +94,7 @@ import logging
 import math
 import time
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -116,6 +117,11 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+
+def _is_finite_replay(credit: Any) -> bool:
+    """Treat only an explicit True as finite replay."""
+    return getattr(credit, "finite_replay", False) is True
 
 
 def _as_timestamp_ms(value) -> float | None:
@@ -291,7 +297,7 @@ class BranchOrchestrator:
         # children are not dispatched a second time when the parent's
         # turn 0 credit returns.
         self._pre_dispatched_branches: set[tuple[str, str]] = set()
-        self._overlap_dispatched_branches: set[tuple[str, str]] = set()
+        self._overlap_dispatched_branches: set[tuple[str, str, str]] = set()
         self._fail_fast = Environment.DAG.FAIL_FAST
         self._cleaning_up: bool = False
         # Set by cleanup() so an in-flight think-time sleep returns early instead
@@ -433,6 +439,8 @@ class BranchOrchestrator:
 
     async def on_credit_issued(self, credit) -> None:
         """Start branches that overlapped their spawning request in the capture."""
+        if _is_finite_replay(credit):
+            return
         if self._cleaning_up or credit.agent_depth > 0:
             return
         if credit.phase == CreditPhase.WARMUP and not self._accelerated_warmup_started:
@@ -447,6 +455,7 @@ class BranchOrchestrator:
         parent_api_ms = _as_timestamp_ms(turn_meta.api_time_ms)
         if parent_start_ms is None or parent_api_ms is None or parent_api_ms <= 0:
             return
+
         parent_end_ms = parent_start_ms + parent_api_ms
         branches_by_id = {branch.branch_id: branch for branch in parent_meta.branches}
         # Overlap-at-issue is SPAWN-only: FORK children sticky-clone the parent
@@ -470,8 +479,66 @@ class BranchOrchestrator:
                 dispatch_origin_ms=parent_start_ms,
             )
             self._overlap_dispatched_branches.update(
-                (parent_corr, branch_id) for branch_id in overlapping
+                (credit.effective_root_correlation_id, parent_corr, branch_id)
+                for branch_id in overlapping
             )
+
+    async def on_transport_dispatched(self, credit) -> None:
+        if self._cleaning_up or not _is_finite_replay(credit):
+            return
+        overlapping = self._overlapping_spawn_branch_ids(credit)
+        if not overlapping:
+            return
+        parent_meta = self._cs.get_metadata(credit.conversation_id)
+        parent_start_ms = _as_timestamp_ms(
+            parent_meta.turns[credit.turn_index].timestamp_ms
+        )
+        assert parent_start_ms is not None
+        parent_corr = credit.x_correlation_id
+        async with self._parent_locks[parent_corr]:
+            overlapping = [
+                branch_id
+                for branch_id in overlapping
+                if (
+                    credit.effective_root_correlation_id,
+                    parent_corr,
+                    branch_id,
+                )
+                not in self._overlap_dispatched_branches
+            ]
+            if not overlapping:
+                return
+            await self._spawn_children_and_register_gates(
+                credit,
+                overlapping,
+                dispatch_origin_ms=parent_start_ms,
+            )
+            self._overlap_dispatched_branches.update(
+                (credit.effective_root_correlation_id, parent_corr, branch_id)
+                for branch_id in overlapping
+            )
+
+    def _overlapping_spawn_branch_ids(self, credit) -> list[str]:
+        parent_meta = self._cs.get_metadata(credit.conversation_id)
+        if getattr(
+            parent_meta, "replay_scope_id", None
+        ) is None or credit.turn_index >= len(parent_meta.turns):
+            return []
+        turn_meta = parent_meta.turns[credit.turn_index]
+        parent_start_ms = _as_timestamp_ms(turn_meta.timestamp_ms)
+        parent_api_ms = _as_timestamp_ms(turn_meta.api_time_ms)
+        if parent_start_ms is None or parent_api_ms is None or parent_api_ms <= 0:
+            return []
+        parent_end_ms = parent_start_ms + parent_api_ms
+        branches_by_id = {branch.branch_id: branch for branch in parent_meta.branches}
+        return [
+            branch_id
+            for branch_id in turn_meta.branch_ids
+            if (branch := branches_by_id.get(branch_id)) is not None
+            and branch.mode == ConversationBranchMode.SPAWN
+            and (branch_start := self._branch_start_timestamp_ms(branch)) is not None
+            and branch_start < parent_end_ms
+        ]
 
     def _marker_for_root(self, root_correlation_id: str | None) -> str | None:
         """Resolve the tree-root cache-bust marker for a spawned descendant.
@@ -851,6 +918,11 @@ class BranchOrchestrator:
             branch_ids = self.get_branch_ids(credit)
             if branch_ids:
                 await self._spawn_children_and_register_gates(credit, branch_ids)
+                if _is_finite_replay(credit):
+                    self._overlap_dispatched_branches.update(
+                        (credit.effective_root_correlation_id, parent_corr, branch_id)
+                        for branch_id in self._overlapping_spawn_branch_ids(credit)
+                    )
             elif getattr(credit, "no_request", False):
                 # Terminal request-free gate (no branches to spawn): all rounds
                 # drained, so this graph instance reached END. All think-times
@@ -921,7 +993,12 @@ class BranchOrchestrator:
             # (dispatch_origin_ms is None) must not dispatch it a second time.
             if (
                 dispatch_origin_ms is None
-                and (parent_corr, b_id) in self._overlap_dispatched_branches
+                and (
+                    credit.effective_root_correlation_id,
+                    parent_corr,
+                    b_id,
+                )
+                in self._overlap_dispatched_branches
             ):
                 continue
             branch_gates = gate_for_branch.get(branch.branch_id, [])
@@ -1047,6 +1124,15 @@ class BranchOrchestrator:
             # registered so the gate considers this prereq satisfied (0
             # expected, 0 completed, registered=True -> is_done).
             state.registered = True
+
+        if _is_finite_replay(credit):
+            for child in all_children:
+                self._start_finite_first_turn(child, parent_corr)
+            if not all_children:
+                await self._finalize_failed_dispatches(
+                    parent_corr, next_turn_index=credit.turn_index + 1
+                )
+            return
 
         # Dispatch children. A SPAWN child whose recorded first request
         # starts after the branch spawn dispatches via a delayed background
@@ -1306,6 +1392,30 @@ class BranchOrchestrator:
         self._delayed_dispatch_tasks.add(task)
         task.add_done_callback(self._delayed_dispatch_tasks.discard)
         self.stats.children_delayed += 1
+
+    def _start_finite_first_turn(self, child, parent_corr: str) -> None:
+        task = asyncio.create_task(self._dispatch_finite_first_turn(child, parent_corr))
+        self._delayed_dispatch_tasks.add(task)
+        task.add_done_callback(self._delayed_dispatch_tasks.discard)
+
+    async def _dispatch_finite_first_turn(self, child, parent_corr: str) -> None:
+        try:
+
+            async def issue() -> bool:
+                async with self._parent_locks[parent_corr]:
+                    return await self._dispatch_first_turn(child, on_refused=rollback)
+
+            async def rollback() -> None:
+                async with self._parent_locks[parent_corr]:
+                    self._rollback_failed_first_turn(child, False, parent_corr)
+                    await self._finalize_failed_dispatches(parent_corr)
+
+            await issue()
+        except Exception as exc:
+            self._issuer.replay_gate.fail_finite(exc)
+            async with self._parent_locks[parent_corr]:
+                self._rollback_failed_first_turn(child, exc, parent_corr)
+                await self._finalize_failed_dispatches(parent_corr)
 
     async def _sleep_offset_ms(self, offset_ms: float) -> None:
         """Sleep out a dispatch offset. Separate method so tests can gate it."""
@@ -1634,14 +1744,25 @@ class BranchOrchestrator:
         else:
             self.stats.joins_suppressed += 1
 
-    async def _dispatch_first_turn(self, child_sampled_session) -> bool:
+    async def _dispatch_first_turn(
+        self,
+        child_sampled_session,
+        *,
+        on_refused: Callable[[], Awaitable[None]] | None = None,
+    ) -> bool:
         """Dispatch a child's turn-0 via the credit issuer.
 
         Returns True on successful dispatch, False when the issuer declined
         because a stop condition fired. Callers use this to roll back
         orchestrator bookkeeping when dispatch doesn't actually land a credit.
         """
-        result = await self._issuer.dispatch_first_turn(child_sampled_session)
+        if on_refused is None:
+            result = await self._issuer.dispatch_first_turn(child_sampled_session)
+        else:
+            result = await self._issuer.dispatch_first_turn(
+                child_sampled_session,
+                on_refused=on_refused,
+            )
         return bool(result)
 
     async def on_child_leaf_reached(self, child_x_correlation_id: str) -> None:

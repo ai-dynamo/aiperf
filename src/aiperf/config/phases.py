@@ -19,6 +19,7 @@ from pydantic import (
     model_validator,
 )
 
+from aiperf.common.enums import AgenticReplayLifecycle
 from aiperf.common.phase import infer_legacy_phase_kind
 from aiperf.common.types import PhaseKind
 from aiperf.config.adaptive_scale_phase import AdaptiveScalePhaseMixin
@@ -391,6 +392,11 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     # get autodefaults applied in the CLI->YAML converter (see
     # ``aiperf.config.flags._converter_profiling``); YAML users must be
     # explicit.
+    agentic_replay_lifecycle: AgenticReplayLifecycle = Field(
+        default=AgenticReplayLifecycle.STEADY_STATE,
+        description="Agentic replay admission policy for the profiling phase.",
+    )
+
     _stop_condition_required: ClassVar[bool] = True
     _windows_reserved_phase_names: ClassVar[frozenset[str]] = frozenset(
         {"CON", "PRN", "AUX", "NUL"}
@@ -438,6 +444,7 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
             self.exclude_from_results = required
         if (
             self._stop_condition_required
+            and self.agentic_replay_lifecycle != AgenticReplayLifecycle.FINITE
             and self.requests is None
             and self.duration is None
             and self.sessions is None
@@ -458,6 +465,41 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
             raise ValueError(
                 f"Phase '{self.name}': grace_period requires duration to be set"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_finite_replay(self) -> Self:
+        """Reject controls that truncate or rewrite a finite trace."""
+        if self.agentic_replay_lifecycle != AgenticReplayLifecycle.FINITE:
+            return self
+        if self.kind != "profiling" or self.type != PhaseType.CONCURRENCY:
+            raise ValueError(
+                "--agentic-replay-lifecycle finite requires a profiling concurrency phase"
+            )
+        if self.timing_mode not in (None, TimingMode.AGENTIC_REPLAY):
+            raise ValueError(
+                "--agentic-replay-lifecycle finite conflicts with timing_mode"
+            )
+        conflicts = {
+            "requests": self.requests,
+            "duration": self.duration,
+            "sessions": self.sessions,
+            "agentic_cache_warmup_duration": self.agentic_cache_warmup_duration,
+            "agentic_warmup_grace_period": self.agentic_warmup_grace_period,
+            "system_idle_gap_cap_seconds": self.system_idle_gap_cap_seconds,
+            "concurrency_ramp": self.concurrency_ramp,
+            "prefill_ramp": self.prefill_ramp,
+        }
+        for name, value in conflicts.items():
+            if value is not None:
+                raise ValueError(
+                    f"--agentic-replay-lifecycle finite conflicts with {name}"
+                )
+        if self.burst_phase_starts or self.seamless:
+            raise ValueError(
+                "Finite replay does not support burst_phase_starts or seamless phases"
+            )
+        self.timing_mode = TimingMode.AGENTIC_REPLAY
         return self
 
     @model_validator(mode="after")

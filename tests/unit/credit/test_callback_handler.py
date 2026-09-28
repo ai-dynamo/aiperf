@@ -136,6 +136,39 @@ def make_credit_return(
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled,error", [(False, "HTTP failed"), (True, None)])
+async def test_finite_terminal_failure_marks_phase_fatal(
+    registered_handler,
+    mock_progress,
+    mock_strategy,
+    cancelled: bool,
+    error: str | None,
+) -> None:
+    mock_progress.all_credits_sent_event = asyncio.Event()
+    mock_strategy.observe_credit_return.side_effect = RuntimeError(
+        "Finite replay terminal request failed"
+    )
+    credit = Credit(
+        id=1,
+        phase=CreditPhase.PROFILING,
+        conversation_id="root",
+        x_correlation_id="root-correlation",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=1,
+        finite_replay=True,
+    )
+
+    await registered_handler.on_credit_return(
+        "worker-1", CreditReturn(credit=credit, cancelled=cancelled, error=error)
+    )
+
+    mock_progress.record_fatal_error.assert_called_once()
+    assert mock_progress.all_credits_sent_event.is_set()
+    mock_strategy.handle_credit_return.assert_not_awaited()
+
+
 # =============================================================================
 # Test: Phase Registration
 # =============================================================================

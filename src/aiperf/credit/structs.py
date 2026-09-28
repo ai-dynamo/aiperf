@@ -54,6 +54,7 @@ class Credit(
     turn_index: int
     num_turns: int
     issued_at_ns: int
+    finite_replay: bool = False
     cancel_after_ns: int | None = None
     url_index: int | None = None
     agent_depth: int = 0
@@ -143,6 +144,10 @@ class CreditContext(
     first_token_sent: bool = False
     error: str | ErrorDetails | None = None
     record_emitted: bool = False
+    transport_eof_wall_ns: int | None = None
+    transport_eof_correction_ns: int | None = None
+    transport_eof_clock_offset_spread_ns: int | None = None
+    transport_start_sent: bool = False
     request_latency_ns: int | None = None
     inter_token_latency_ns: float | None = None
     output_sequence_length: int | None = None

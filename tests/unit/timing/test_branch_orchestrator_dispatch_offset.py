@@ -60,6 +60,7 @@ def _mk_harness(
     """(orchestrator, conversation_source, issuer) with real metadata models."""
     by_id = {c.conversation_id: c for c in conversations}
     cs = MagicMock()
+    cs.finite_replay = False
     cs.dataset_metadata = DatasetMetadata(
         conversations=conversations,
         sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
@@ -74,7 +75,7 @@ def _mk_harness(
 
     cs.start_branch_child = MagicMock(side_effect=_fake_child)
 
-    issuer = MagicMock()
+    issuer = MagicMock(finite_replay=False)
     issuer.dispatch_first_turn = AsyncMock(return_value=dispatch_result)
     issuer.dispatch_join_turn = AsyncMock(return_value=True)
 
@@ -90,6 +91,7 @@ def _mk_credit(conv_id: str, corr_id: str, turn_index: int):
         agent_depth=0,
         parent_correlation_id=None,
         phase=None,
+        finite_replay=False,
     )
 
 

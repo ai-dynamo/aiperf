@@ -877,3 +877,17 @@ class RandomCorpusStyle(CaseInsensitiveStrEnum):
 
     The default ``--dataset-name random`` is a different algorithm upstream
     (repeat/truncate ShareGPT token ids) and is not what this style mirrors."""
+
+
+class AgenticReplayLifecycle(CaseInsensitiveStrEnum):
+    """Admission policy for agentic trace replay."""
+
+    STEADY_STATE = "steady-state"
+    FINITE = "finite"
+
+
+class ReplayDependencyEvent(CaseInsensitiveStrEnum):
+    """Transport boundary required by a recorded dependency."""
+
+    DISPATCH = "dispatch"
+    COMPLETION = "completion"

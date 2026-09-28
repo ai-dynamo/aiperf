@@ -35,6 +35,7 @@ def _make_strategy(
     scheduler = MagicMock()
 
     strategy.conversation_source = conversation_source
+    strategy.config = MagicMock(finite_replay=False)
     strategy.credit_issuer = credit_issuer
     strategy.scheduler = scheduler
     strategy.branch_orchestrator = branch_orchestrator
