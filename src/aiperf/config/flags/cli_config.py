@@ -423,9 +423,10 @@ class CLIConfig(BaseConfig):
     sagemaker_target_model: Annotated[
         str | None,
         Field(
-            description="SageMaker `TargetModel` value, for multi-model endpoints. Defaults to "
-            "the request's model name. Not sent on streaming requests -- the streaming operation "
-            "does not accept it.",
+            description="SageMaker `TargetModel` value, for multi-model endpoints only: SageMaker "
+            "rejects requests that carry it on a single-model endpoint. Sent only when set, never "
+            "derived from `-m`, since it is a relative model-artifact path. Not sent on streaming "
+            "requests -- the streaming operation does not accept it.",
         ),
         CLIParameter(
             name=("--sagemaker-target-model",),

@@ -183,8 +183,8 @@ class EndpointInfo(AIPerfBaseModel):
     )
     sagemaker_target_model: str | None = Field(
         default=None,
-        description="SageMaker TargetModel for multi-model endpoints. Not sent on "
-        "streaming requests; defaults to the request's model name.",
+        description="SageMaker TargetModel for multi-model endpoints only. Sent only "
+        "when set, and never on streaming requests.",
     )
     sagemaker_inference_component_name: str | None = Field(
         default=None,

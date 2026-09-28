@@ -41,9 +41,11 @@ class SageMakerConfig(BaseConfig):
         str | None,
         Field(
             default=None,
-            description="SageMaker TargetModel value, for multi-model endpoints. Not "
-            "sent on streaming requests, which the API does not accept it on. Defaults "
-            "to the request's model name when not set explicitly.",
+            description="SageMaker TargetModel value, for multi-model endpoints only: "
+            "SageMaker rejects requests that carry it on a single-model endpoint. Sent "
+            "only when set -- it is a relative model-artifact path, so the request's "
+            "model name is never used in its place. Not sent on streaming requests, "
+            "which the API does not accept it on.",
         ),
     ]
 

@@ -141,9 +141,15 @@ class TestHeaders:
         assert headers["Accept"] == "application/json"
         assert HEADER_ACCEPT_STREAMING not in headers
 
-    def test_target_model_defaults_to_the_request_model(self) -> None:
-        """On multi-model endpoints TargetModel *is* the model to invoke."""
-        assert _headers(model_name="llama-3")[HEADER_TARGET_MODEL] == "llama-3"
+    def test_target_model_is_not_sent_unless_the_user_sets_it(self) -> None:
+        """SageMaker accepts TargetModel only on multi-model endpoints. Sent to a
+        single-model endpoint -- the common case -- it fails every request:
+        "Endpoint ... is not a multi-model endpoint and does not support target
+        model header". It is also a relative artifact path, not an OpenAI model
+        name, so aiperf's model name is never a valid fallback. The mock server
+        ignores the header, so only this test can catch a fallback coming back.
+        """
+        assert HEADER_TARGET_MODEL not in _headers(model_name="llama-3")
 
     def test_explicit_target_model_wins(self) -> None:
         assert _headers(target_model="pinned.tar.gz")[HEADER_TARGET_MODEL] == (

@@ -177,18 +177,13 @@ class SageMakerTransport(AioHttpTransport):
         if endpoint.sagemaker_target_variant:
             headers[HEADER_TARGET_VARIANT] = endpoint.sagemaker_target_variant
 
-        # TargetModel is absent from the streaming operation's input shape
-        # entirely, so sending it there is not merely redundant -- it is not
-        # part of that API. On multi-model endpoints TargetModel *is* the model
-        # identifier to invoke, which is the same concept as aiperf's own
-        # per-request model name, hence the fallback.
-        if not streaming:
-            target_model = endpoint.sagemaker_target_model or (
-                (request_info.turns[-1].model if request_info.turns else None)
-                or self.model_endpoint.primary_model_name
-            )
-            if target_model:
-                headers[HEADER_TARGET_MODEL] = target_model
+        # Only when the user asked for it. SageMaker accepts TargetModel solely on
+        # multi-model endpoints and rejects every request to a single-model one
+        # that carries it; the value is a relative artifact path, so aiperf's
+        # model name is never a valid stand-in. It is also absent from the
+        # streaming operation's input shape entirely.
+        if not streaming and endpoint.sagemaker_target_model:
+            headers[HEADER_TARGET_MODEL] = endpoint.sagemaker_target_model
 
         # Always the request id, never user-overridable: it is what correlates
         # an aiperf record with SageMaker's own captured inference data.

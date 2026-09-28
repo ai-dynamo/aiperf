@@ -134,10 +134,13 @@ aiperf profile -m my-model --sagemaker-endpoint-name my-ep \
     --aws-region us-west-2 --sagemaker-target-variant variant-b
 ```
 
-`--sagemaker-target-model` defaults to the `-m` model name, since on a
-Multi-Model Endpoint `TargetModel` *is* the model identifier. Note that AWS does
-not accept `TargetModel` on the streaming operation at all, so AIPerf omits it
-when `--streaming` is set.
+Set `--sagemaker-target-model` only for a Multi-Model Endpoint, and give it the
+model artifact's path relative to the endpoint's model location (for example
+`model-a.tar.gz`), not the `-m` name. AIPerf never fills it in for you: SageMaker
+rejects every request that carries `TargetModel` against a single-model endpoint
+with "Endpoint ... is not a multi-model endpoint and does not support target model
+header". AWS also does not accept `TargetModel` on the streaming operation, so
+AIPerf omits it when `--streaming` is set.
 
 `--sagemaker-target-variant` is useful for A/B deployments: it makes every
 request land on one variant, so you are benchmarking that variant rather than
