@@ -58,8 +58,13 @@ class TestNormalizeMetricsEndpointUrl:
         "input_url,expected",
         [
             ("https://secure:9400/prometheus", "https://secure:9400/prometheus"),
-            ("https://secure:9400/prometheus/", "https://secure:9400/prometheus"),
+            ("https://secure:9400/prometheus/", "https://secure:9400/prometheus/"),
+            (
+                "https://secure:9400/metrics/?instance=one#fragment",
+                "https://secure:9400/metrics/?instance=one#fragment",
+            ),
             ("https://secure:9400", "https://secure:9400/metrics"),
+            ("https://secure:9400/", "https://secure:9400/metrics"),
         ],
     )
     def test_normalize_can_preserve_explicit_paths(

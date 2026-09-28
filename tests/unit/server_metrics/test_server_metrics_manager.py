@@ -6,9 +6,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import orjson
 import pytest
+from aiohttp import web
 
+from aiperf.cli import app as cli_app
 from aiperf.common.control_structs import Command
-from aiperf.common.enums import BaselineKind, CommandType, CreditPhase
+from aiperf.common.enums import (
+    BaselineKind,
+    CommandType,
+    CreditPhase,
+    ServerMetricsDiscoveryMode,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.messages import (
     PhaseBaselineRequestMessage,
@@ -140,6 +147,66 @@ class TestServerMetricsManagerInitialization:
 
 class TestProfileConfigure:
     """Test profile configuration and endpoint reachability checking."""
+
+    @pytest.mark.asyncio
+    async def test_explicit_trailing_slash_url_scrapes_with_credentials(self) -> None:
+        requests: list[str] = []
+        metrics_text = "# TYPE requests_total counter\nrequests_total 1\n"
+
+        async def metrics(request: web.Request) -> web.Response:
+            requests.append(request.path)
+            if request.path == "/prometheus":
+                raise web.HTTPMovedPermanently(location="/prometheus/")
+            if request.path != "/prometheus/":
+                raise web.HTTPNotFound()
+            if request.headers.get("Authorization") != "Bearer metrics-secret":
+                raise web.HTTPUnauthorized()
+            return web.Response(text=metrics_text, content_type="text/plain")
+
+        app = web.Application()
+        app.router.add_route("*", "/{path:.*}", metrics)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        manager = None
+        try:
+            site = web.TCPSite(runner, "127.0.0.1", 0)
+            await site.start()
+            assert site._server is not None
+            port = site._server.sockets[0].getsockname()[1]
+            base_url = f"http://127.0.0.1:{port}"
+            metrics_url = f"{base_url}/prometheus/"
+            _, bound, _ = cli_app.parse_args(
+                [
+                    "profile",
+                    "--model",
+                    "test-model",
+                    "--url",
+                    f"{base_url}/inference",
+                    "--server-metrics",
+                    metrics_url,
+                    "--server-metrics-header",
+                    "Authorization:Bearer metrics-secret",
+                ],
+                exit_on_error=False,
+                print_error=False,
+            )
+            run = make_run_from_cli(bound.arguments["cli_config"])
+            run.cfg.server_metrics.discovery.mode = ServerMetricsDiscoveryMode.DISABLED
+            manager = ServerMetricsManager(run=run)
+            with patch.object(manager, "publish", new_callable=AsyncMock):
+                await manager._profile_configure_command(
+                    Command(cid="c-trailing-slash", cmd=CommandType.PROFILE_CONFIGURE)
+                )
+
+            assert metrics_url in manager._collectors
+            result = await manager._collectors[metrics_url]._fetch_metrics_text()
+            assert result.text == metrics_text
+            assert "/prometheus" not in requests
+        finally:
+            if manager is not None:
+                for collector in manager._collectors.values():
+                    await collector._cleanup_http_client()
+            await runner.cleanup()
 
     @pytest.mark.asyncio
     async def test_configure_with_reachable_endpoints(

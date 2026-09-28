@@ -188,8 +188,8 @@ aiperf profile --model MODEL ... --server-metrics-formats json csv parquet jsonl
 
 ### Adding Custom Endpoints
 
-Custom URLs are complete endpoint URLs: an explicit path is preserved, while a
-pathless host defaults to `/metrics`.
+Custom URLs are complete endpoint URLs: an explicit path, including its trailing
+slash, is preserved. A pathless host or root path defaults to `/metrics`.
 
 ```bash
 # Single endpoint
