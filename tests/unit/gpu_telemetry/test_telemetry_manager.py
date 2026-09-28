@@ -973,7 +973,6 @@ class TestSmartDefaultVisibility:
         status = manager.publish.call_args[0][0]
         assert "s3cr3t" not in status.model_dump_json()
         assert "http://<redacted>@node-a:9401/metrics" in status.endpoints_reachable
-        assert not any("s3cr3t" in key for key in manager._collectors)
         assert not any("s3cr3t" in url for url in manager._collector_id_to_url.values())
         assert not any("s3cr3t" in cid for cid in manager._collector_id_to_url)
         logged = [
@@ -985,6 +984,58 @@ class TestSmartDefaultVisibility:
         assert any(
             c.endpoint_url == secret_url for c in manager._collectors.values()
         ), "the collector itself must still scrape with the credentials"
+
+    @pytest.mark.asyncio
+    async def test_endpoints_differing_only_in_credentials_both_collect(self):
+        """Redaction must not merge two collectors whose URLs differ only in
+        their credentials."""
+        urls = [
+            "http://ops:one@node-a:9401/metrics",
+            "http://ops:two@node-a:9401/metrics",
+        ]
+        manager = self._create_test_manager(user_requested=True, user_endpoints=urls)
+        manager.publish = AsyncMock()
+
+        with (
+            patch.object(
+                DCGMTelemetryCollector,
+                "is_url_reachable",
+                new=AsyncMock(side_effect=lambda: True),
+            ),
+            patch.object(DCGMTelemetryCollector, "initialize", new=AsyncMock()),
+            patch.object(
+                DCGMTelemetryCollector, "collect_and_process_metrics", new=AsyncMock()
+            ),
+        ):
+            configure_msg = Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
+            await manager._profile_configure_command(configure_msg)
+
+        assert {c.endpoint_url for c in manager._collectors.values()} >= set(urls)
+        assert len(manager._collector_id_to_url) == len(manager._collectors)
+
+    @pytest.mark.asyncio
+    async def test_start_failure_status_carries_no_credentials(self):
+        """The all-collectors-failed status is sent from a different path than
+        the configure status and must be redacted too."""
+        secret_url = "http://ops:s3cr3t@node-a:9401/metrics"
+        manager = self._create_test_manager(
+            user_requested=True, user_endpoints=[secret_url]
+        )
+        manager.publish = AsyncMock()
+        manager.execute_async = MagicMock()
+        failing = MagicMock()
+        failing.start = AsyncMock(side_effect=RuntimeError("boom"))
+        manager._collectors = {secret_url: failing}
+
+        await manager._on_start_profiling(
+            Command(cid="c-2", cmd=CommandType.PROFILE_START)
+        )
+
+        status = manager.publish.call_args[0][0]
+        assert status.enabled is False
+        assert "s3cr3t" not in status.model_dump_json()
+        assert "http://<redacted>@node-a:9401/metrics" in status.endpoints_configured
+        assert not any("s3cr3t" in str(c) for c in manager.error.call_args_list)
 
     @pytest.mark.asyncio
     async def test_show_custom_and_reachable_defaults(self):
