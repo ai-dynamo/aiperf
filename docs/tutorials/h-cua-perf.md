@@ -69,7 +69,7 @@ The screenshot window and the session selection are `--dataset-filter` options:
 
 | Filter | Effect |
 | --- | --- |
-| `n_screenshots` | Sliding window of the N latest screenshots per request; the published records carry one. |
+| `n_screenshots` | Sliding window of the N latest screenshots per request; the published records carry one. Wider windows both increase the input length and lower the KV-Cache hit rate. See the [dataset card](https://huggingface.co/datasets/Hcompany/h_cua_perf) for why. |
 | `min_trace_length` | Drop shorter sessions; truncations never go below it (default 1). |
 | `max_trace_length` | Keep each session's first N turns. |
 | `avg_trace_length` | Scale every session's length by the same factor until the mean reaches the target. |
