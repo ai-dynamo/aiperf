@@ -69,7 +69,6 @@ class _EncodableFormatter(logging.Formatter):
 
 
 def _stream_encoding(stream: object) -> str | None:
-    """The stream's text encoding, or None when it does not report one."""
     return getattr(stream, "encoding", None) or None
 
 
