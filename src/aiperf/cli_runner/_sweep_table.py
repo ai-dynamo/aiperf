@@ -14,9 +14,11 @@ import sys
 from io import StringIO
 from typing import TYPE_CHECKING, Any
 
-from rich.box import ASCII2, SIMPLE_HEAVY
+from rich.box import ASCII2, SIMPLE_HEAVY, Box
 from rich.console import Console
 from rich.table import Table
+
+from aiperf.common.logging import is_utf8_encoding
 
 if TYPE_CHECKING:
     from aiperf.common.aiperf_logger import AIPerfLogger
@@ -224,7 +226,7 @@ class SweepTableLogger:
         self._logger.info(f"\n{rendered}\n")
 
     @staticmethod
-    def _box_style():
+    def _box_style() -> Box:
         """SIMPLE_HEAVY where the log sink can carry it, ASCII where it cannot.
 
         This table is rendered to a string and handed to the logger, so Rich
@@ -232,16 +234,9 @@ class SweepTableLogger:
         never runs. A cp1252 console, the Windows default, has no box-drawing
         characters, so ask the stream the handler writes to.
         """
-        encoding = getattr(sys.stdout, "encoding", None)
-        if encoding is None:
-            # A stream that will not say what it accepts is not worth betting a
-            # whole log record on.
-            return ASCII2
-        try:
-            "─━".encode(encoding)
-        except (UnicodeEncodeError, LookupError):
-            return ASCII2
-        return SIMPLE_HEAVY
+        if is_utf8_encoding(getattr(sys.stdout, "encoding", None)):
+            return SIMPLE_HEAVY
+        return ASCII2
 
     def _render(self) -> str:
         """Render the current accumulated table to a string."""

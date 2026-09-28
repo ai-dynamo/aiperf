@@ -72,7 +72,23 @@ def _stream_encoding(stream: object) -> str | None:
     return getattr(stream, "encoding", None) or None
 
 
-def _basic_formatter(encoding: str | None) -> logging.Formatter:
+def is_utf8_encoding(encoding: str | None) -> bool:
+    """Whether a stream reporting ``encoding`` can take any message as is.
+
+    The one rule for "is this sink narrower than the message", shared by the
+    basic formatter and the sweep table's box style so the two cannot drift.
+    """
+    if encoding is None:
+        return False
+    try:
+        return codecs.lookup(encoding).name == "utf-8"
+    except LookupError:
+        return False
+
+
+def _encodable_formatter(
+    fmt: str, datefmt: str | None, encoding: str | None
+) -> logging.Formatter:
     """A plain formatter on a UTF-8 sink, a substituting one on anything else.
 
     Anything not known to be UTF-8 is treated as possibly narrower than the
@@ -81,18 +97,50 @@ def _basic_formatter(encoding: str | None) -> logging.Formatter:
     the guess is wrong, while substituting costs one character when it was
     right, so the unknown cases fall back to ASCII.
     """
+    if is_utf8_encoding(encoding):
+        return logging.Formatter(fmt, datefmt=datefmt)
     if encoding is not None:
         try:
-            if codecs.lookup(encoding).name == "utf-8":
-                return logging.Formatter(_BASIC_LOG_FORMAT, datefmt=_BASIC_DATE_FORMAT)
-            return _EncodableFormatter(
-                _BASIC_LOG_FORMAT, datefmt=_BASIC_DATE_FORMAT, encoding=encoding
-            )
+            codecs.lookup(encoding)
+            return _EncodableFormatter(fmt, datefmt=datefmt, encoding=encoding)
         except LookupError:
             pass
-    return _EncodableFormatter(
-        _BASIC_LOG_FORMAT, datefmt=_BASIC_DATE_FORMAT, encoding="ascii"
+    return _EncodableFormatter(fmt, datefmt=datefmt, encoding="ascii")
+
+
+def _basic_formatter(encoding: str | None) -> logging.Formatter:
+    return _encodable_formatter(_BASIC_LOG_FORMAT, _BASIC_DATE_FORMAT, encoding)
+
+
+_PREFLIGHT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+
+def install_preflight_handler() -> bool:
+    """Install a temporary stderr handler for output before rich logging starts.
+
+    Returns False and does nothing when root already has a handler, so a
+    caller's own logging config wins. ``setup_rich_logging`` removes the
+    handler this installs; left in place it printed every later line a second
+    time, through a stream nobody had checked could encode it.
+    """
+    root = logging.getLogger()
+    if root.handlers:
+        return False
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(
+        _encodable_formatter(_PREFLIGHT_LOG_FORMAT, None, _stream_encoding(sys.stderr))
     )
+    handler._aiperf_preflight = True  # type: ignore[attr-defined]
+    root.addHandler(handler)
+    root.setLevel(logging.INFO)
+    return True
+
+
+def _remove_preflight_handlers() -> None:
+    root = logging.getLogger()
+    for handler in root.handlers[:]:
+        if getattr(handler, "_aiperf_preflight", False):
+            root.removeHandler(handler)
 
 
 def _create_basic_handler(level: str | int) -> logging.StreamHandler:
@@ -241,6 +289,7 @@ def setup_rich_logging(run: "BenchmarkRun") -> None:
     # Set logging level for the root logger (affects all loggers)
     level = run.cfg.logging.level.upper()
     logging.root.setLevel(level)
+    _remove_preflight_handlers()
 
     if is_tty():
         console_handler = CustomRichHandler(
@@ -255,16 +304,11 @@ def setup_rich_logging(run: "BenchmarkRun") -> None:
         console_handler = _create_basic_handler(level)
     logging.root.addHandler(console_handler)
 
-    # Enable file logging for services
+    # Enable file logging for services. UTF-8 explicitly: without an encoding
+    # the file opens in the locale's code page, cp1252 on a default Windows
+    # box, and on a TTY this file is the one sink narrower than the messages.
     log_folder = run.cfg.artifacts.dir / OutputDefaults.LOG_FOLDER
-    log_folder.mkdir(parents=True, exist_ok=True)
-    file_handler = logging.FileHandler(log_folder / OutputDefaults.LOG_FILE)
-    file_handler.setLevel(level)
-    file_handler.formatter = logging.Formatter(
-        "%(asctime)s.%(msecs)03d - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    logging.root.addHandler(file_handler)
+    logging.root.addHandler(create_file_handler(log_folder, level))
 
     _logger.debug(lambda: f"Logging initialized with level: {level}")
 
