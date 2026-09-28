@@ -28,13 +28,17 @@ from aiperf.common.messages import (
     HeartbeatMessage,
 )
 from aiperf.common.models import DatasetMetadata
+from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.credit.sticky_router import StickyCreditRouter
-from aiperf.plugin.enums import ServiceRunType, ServiceType
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType
 from aiperf.timing.config import TimingConfig
 from aiperf.timing.phase.publisher import PhasePublisher
 from aiperf.timing.phase_orchestrator import PhaseOrchestrator
 
 if TYPE_CHECKING:
+    from aiperf.auth.base_signer import RequestSignerProtocol
+    from aiperf.common.control_hooks import PreparedEndpointControlHooks
     from aiperf.config.resolution.plan import BenchmarkRun
 
 
@@ -162,6 +166,7 @@ class TimingManager(BaseComponentService):
         endpoint = self.run.cfg.endpoint
         control_hooks = prepare_endpoint_control_hooks(endpoint)
         control_headers = auth_headers_for_endpoint(endpoint)
+        control_signer = self._create_control_signer(control_hooks)
 
         # Create orchestrator that executes phases
         self._phase_orchestrator = PhaseOrchestrator(
@@ -171,9 +176,42 @@ class TimingManager(BaseComponentService):
             dataset_metadata=self._dataset_metadata,
             control_hooks=control_hooks,
             control_headers=control_headers,
+            control_signer=control_signer,
             run=self.run,
         )
+        if control_signer is not None:
+            # Attached before initialize() so the signer resolves credentials
+            # and runs its periodic re-resolution task under the
+            # orchestrator's lifecycle, exactly as the transport signer runs
+            # under the worker's.
+            self._phase_orchestrator.attach_child_lifecycle(control_signer)
         await self._phase_orchestrator.initialize()
+
+    def _create_control_signer(
+        self, control_hooks: PreparedEndpointControlHooks
+    ) -> RequestSignerProtocol | None:
+        """Build the control-plane request signer, or None when unneeded.
+
+        Constructed rather than context-managed because control hooks fire
+        across the whole run (profiler start at phase begin, stop at phase
+        end); the orchestrator owns its lifecycle instead.
+
+        The orchestrator only ever signs profiler start/stop POSTs, so a run
+        without profiler hooks skips the signer entirely: resolving botocore's
+        credential chain is blocking startup I/O (SSO, ``credential_process``)
+        that can fail, and failing a run over a request it will never send is
+        strictly worse than not building the signer.
+        """
+        auth_type = self.run.cfg.endpoint.auth_type
+        if not auth_type:
+            return None
+        if (
+            not control_hooks.profiler_start_urls
+            and not control_hooks.profiler_stop_urls
+        ):
+            return None
+        signer_class = plugins.get_class(PluginType.REQUEST_SIGNER, auth_type)
+        return signer_class(model_endpoint=ModelEndpointInfo.from_run(self.run))
 
     async def _wait_for_dataset_or_failure(self) -> None:
         """Wait for either the dataset-configured or dataset-failed event.

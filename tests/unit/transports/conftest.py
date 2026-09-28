@@ -42,6 +42,10 @@ def create_model_endpoint_info(
     api_key: str | None = None,
     headers: list[tuple[str, str]] | None = None,
     connection_reuse_strategy: ConnectionReuseStrategy = ConnectionReuseStrategy.POOLED,
+    auth_type: str | None = None,
+    aws_region: str | None = None,
+    aws_service: str | None = None,
+    aws_profile: str | None = None,
 ) -> ModelEndpointInfo:
     """Factory function to create ModelEndpointInfo instances."""
     return ModelEndpointInfo(
@@ -57,6 +61,10 @@ def create_model_endpoint_info(
             api_key=api_key,
             headers=headers or [],
             connection_reuse_strategy=connection_reuse_strategy,
+            auth_type=auth_type,
+            aws_region=aws_region,
+            aws_service=aws_service,
+            aws_profile=aws_profile,
         ),
     )
 
