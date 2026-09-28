@@ -116,7 +116,9 @@ class ImageGenerator(BaseGenerator):
 
         image = self._create_source_image(width, height)
         self.debug(
-            lambda: f"Generated image from {self.config.source} with width={width}, height={height}"
+            lambda: (
+                f"Generated image from {self.config.source} with width={width}, height={height}"
+            )
         )
         base64_image = utils.encode_image(image, image_format)
         return f"data:image/{image_format.name.lower()};base64,{base64_image}"

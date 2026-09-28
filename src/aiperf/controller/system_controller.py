@@ -1197,8 +1197,10 @@ class SystemController(
         )
         if is_optional and error.code in PEER_GONE_ERRNOS:
             self.debug(
-                lambda: f"{cmd} relay to '{service_id}': optional peer already "
-                f"gone (errno={error.code})"
+                lambda: (
+                    f"{cmd} relay to '{service_id}': optional peer already "
+                    f"gone (errno={error.code})"
+                )
             )
             return
         self.warning(f"{cmd} relay to '{service_id}': {error}")
@@ -1824,7 +1826,9 @@ class SystemController(
                 )
                 continue
             self.debug(
-                lambda r=result: f"Received ProcessRecordsResult from cancel command: {r}"
+                lambda r=result: (
+                    f"Received ProcessRecordsResult from cancel command: {r}"
+                )
             )
             self._profile_results = result
             return

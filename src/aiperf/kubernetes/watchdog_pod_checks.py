@@ -63,10 +63,12 @@ def track_phase_transition(
     short = pod.name.split("-")[-1] if "-" in pod.name else pod.name
 
     wd._log.info(
-        lambda: f"[WATCHDOG] {tl.role}({short}): "
-        f"{old_phase} -> {pod.phase}  "
-        f"(in {old_phase} for {_fmt_duration(time_in_old)}, "
-        f"total +{_fmt_duration(elapsed)})"
+        lambda: (
+            f"[WATCHDOG] {tl.role}({short}): "
+            f"{old_phase} -> {pod.phase}  "
+            f"(in {old_phase} for {_fmt_duration(time_in_old)}, "
+            f"total +{_fmt_duration(elapsed)})"
+        )
     )
 
     tl.last_phase = pod.phase
@@ -129,9 +131,11 @@ def check_crash_loop(
     tl.last_restart_count = pod.restarts
     tl.restart_count = pod.restarts
     wd._log.info(
-        lambda: f"[WATCHDOG] Restart detected: "
-        f"{tl.role}({pod.name.split('-')[-1]}) "
-        f"restarts {old_count} -> {pod.restarts}"
+        lambda: (
+            f"[WATCHDOG] Restart detected: "
+            f"{tl.role}({pod.name.split('-')[-1]}) "
+            f"restarts {old_count} -> {pod.restarts}"
+        )
     )
 
     if pod.restarts >= wd.crashloop_threshold and not tl.crashloop_warned:

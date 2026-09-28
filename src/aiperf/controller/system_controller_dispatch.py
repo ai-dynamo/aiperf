@@ -72,8 +72,10 @@ class SystemControllerDispatchMixin:
                 # in the ROUTER receive loop before the handler is reached. If we
                 # get here, nothing was waiting for this response.
                 self.debug(
-                    lambda: f"Unexpected command response from {identity}: "
-                    f"{type(message).__name__}"
+                    lambda: (
+                        f"Unexpected command response from {identity}: "
+                        f"{type(message).__name__}"
+                    )
                 )
                 return None
         return None
@@ -85,7 +87,9 @@ class SystemControllerDispatchMixin:
         only the transport changed.
         """
         self.debug(
-            lambda: f"Processing registration from {message.stype} with ID: {message.sid}"
+            lambda: (
+                f"Processing registration from {message.stype} with ID: {message.sid}"
+            )
         )
         service_type = ServiceType(message.stype)
         state = LifecycleState(message.state)
@@ -209,7 +213,9 @@ class SystemControllerDispatchMixin:
         """
         if message.sid not in self.service_manager.service_id_map:
             self.debug(
-                lambda: f"Received status update from un-registered service: {message.sid} ({message.stype})"
+                lambda: (
+                    f"Received status update from un-registered service: {message.sid} ({message.stype})"
+                )
             )
             self.execute_async(self._request_reregistration(message.sid))
             return

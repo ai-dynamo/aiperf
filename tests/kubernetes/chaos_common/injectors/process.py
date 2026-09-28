@@ -108,7 +108,7 @@ class _AppliedProcessFault(AppliedFault):
             return
         self.metadata["restored"] = True
 
-        restore_signal = _RESTORE_SIGNAL_MAP.get(self._signal_name, None)
+        restore_signal = _RESTORE_SIGNAL_MAP.get(self._signal_name)
         if restore_signal is None:
             logger.debug(
                 lambda sig=self._signal_name, pid=self._pid: (
