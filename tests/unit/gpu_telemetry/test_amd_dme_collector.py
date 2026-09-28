@@ -137,3 +137,100 @@ gpu_memory_temperature{{{LABELS_0}}} -1
     record = _by_index(collector._parse_metrics_to_records(payload))[0]
 
     assert record.telemetry_data.amd_memory_temperature == -1.0
+
+
+def _one_gpu(*sample_lines: str) -> str:
+    """An exposition for GPU 0 built from bare sample lines, all declared gauges."""
+    names = {line.split("{", 1)[0] for line in sample_lines}
+    header = "".join(f"# TYPE {name} gauge\n" for name in sorted(names))
+    return header + "\n".join(sample_lines) + "\n"
+
+
+def test_current_dme_clock_labels_are_read(collector) -> None:
+    """Current DME lower-cases clock_type and drops the GPU_CLOCK_TYPE_ prefix.
+
+    ROCm/device-metrics-exporter normalises it with
+    NormalizeStringWithoutPrefix(clock.Type, "GPU_CLOCK_TYPE_"), which also
+    lower-cases. Matching only the prefixed spelling read no clocks at all.
+    """
+    payload = _one_gpu(
+        f'gpu_clock{{{LABELS_0},clock_type="system",clock_index="0"}} 1533',
+        f'gpu_clock{{{LABELS_0},clock_type="memory",clock_index="8"}} 1292',
+    )
+    telemetry = collector._parse_metrics_to_records(payload)[0].telemetry_data
+
+    assert telemetry.amd_sm_clock == 1533.0
+    assert telemetry.amd_mem_clock == 1292.0
+
+
+@pytest.mark.parametrize("lowest_index_first", [True, False])
+def test_the_first_clock_of_each_type_wins(collector, lowest_index_first: bool) -> None:
+    """clock_index is a list position, not a domain: MI300X lists one system
+    clock per XCD before its memory clock, so the lowest index of each type is
+    taken rather than a hard-coded position, whichever order samples arrive in."""
+    lowest = [
+        f'gpu_clock{{{LABELS_0},clock_type="system",clock_index="0"}} 1533',
+        f'gpu_clock{{{LABELS_0},clock_type="memory",clock_index="8"}} 1292',
+    ]
+    later = [
+        f'gpu_clock{{{LABELS_0},clock_type="system",clock_index="3"}} 1400',
+        f'gpu_clock{{{LABELS_0},clock_type="memory",clock_index="9"}} 900',
+    ]
+    lines = lowest + later if lowest_index_first else later + lowest
+    telemetry = collector._parse_metrics_to_records(_one_gpu(*lines))[0].telemetry_data
+
+    assert telemetry.amd_sm_clock == 1533.0
+    assert telemetry.amd_mem_clock == 1292.0
+
+
+def test_power_falls_back_to_gpu_power_usage(collector) -> None:
+    """DME exports gpu_package_power only when the device reports it."""
+    payload = _one_gpu(f"gpu_power_usage{{{LABELS_0}}} 430")
+
+    assert (
+        collector._parse_metrics_to_records(payload)[0].telemetry_data.amd_power
+        == 430.0
+    )
+
+
+@pytest.mark.parametrize("package_power_first", [True, False])
+def test_package_power_wins_whichever_family_arrives_first(
+    collector, package_power_first: bool
+) -> None:
+    lines = [
+        f"gpu_package_power{{{LABELS_0}}} 748",
+        f"gpu_power_usage{{{LABELS_0}}} 430",
+    ]
+    if not package_power_first:
+        lines.reverse()
+    payload = "".join(
+        f"# TYPE {line.split('{', 1)[0]} gauge\n{line}\n" for line in lines
+    )
+
+    assert (
+        collector._parse_metrics_to_records(payload)[0].telemetry_data.amd_power
+        == 748.0
+    )
+
+
+def test_a_gpu_with_only_unused_samples_produces_no_record(collector) -> None:
+    payload = _one_gpu(
+        f'gpu_clock{{{LABELS_0},clock_type="video",clock_index="2"}} 900',
+        f"gpu_edge_temperature{{{LABELS_0}}} 40",
+    )
+
+    assert collector._parse_metrics_to_records(payload) == []
+
+
+def test_endpoint_credentials_stay_out_of_the_record() -> None:
+    """telemetry_source_url becomes a hierarchy key, a metric tag and an export
+    field, so any userinfo in the exporter URL must be redacted there."""
+    collector = AMDDMETelemetryCollector(
+        dcgm_url="http://metrics:s3cr3t@node-a:5000/metrics"
+    )
+    record = collector._parse_metrics_to_records(
+        _one_gpu(f"gpu_package_power{{{LABELS_0}}} 748")
+    )[0]
+
+    assert "s3cr3t" not in record.telemetry_source_url
+    assert "node-a:5000" in record.telemetry_source_url
