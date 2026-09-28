@@ -70,8 +70,6 @@ async def test_the_only_worker_failing_to_start_cancels_with_its_real_error(
 
     system_controller._cancel_profiling.assert_awaited_once()
     assert [e.service_id for e in system_controller._exit_errors] == ["worker_a"]
-    # The worker's own message is what reaches the exit-errors panel, rather
-    # than the credit-router timeout it used to be buried under.
     assert (
         "No AWS credentials found"
         in system_controller._exit_errors[0].error_details.message
