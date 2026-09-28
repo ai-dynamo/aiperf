@@ -15,9 +15,10 @@ benchmark requests and does **not** appear in metrics or profile exports.
 
 ## Quick start
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
-  --model your-model \
+  --model Qwen/Qwen3-0.6B \
   --url http://localhost:8000 \
   --endpoint-type chat \
   --streaming \
@@ -26,6 +27,7 @@ aiperf profile \
   --reset-kv-cache \
   --server-profiler
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 With defaults this issues:
 
