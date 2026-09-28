@@ -676,6 +676,18 @@ class EndpointConfig(BaseConfig):
         if self.path is None and not self.sagemaker.endpoint_name:
             raise _missing_endpoint_name_error()
 
+        # The readiness probe only knows OpenAI routes (/v1/models, the endpoint
+        # type's path), so here it would sign and send a request to a route the
+        # endpoint does not serve: a 401/403 aborts pre-flight, any other 4xx is
+        # read as "ready".
+        if self.wait_for_model_timeout > 0:
+            raise ValueError(
+                "--wait-for-model-timeout is not supported with the SageMaker "
+                "transport: the readiness probe targets OpenAI routes such as "
+                "/v1/models, but a SageMaker endpoint serves only "
+                "/endpoints/{name}/invocations. Drop --wait-for-model-timeout."
+            )
+
         if self.auth_type is None:
             self.auth_type = RequestSignerType.SIGV4
 

@@ -198,3 +198,22 @@ class TestEndpointNameIsRequired:
             EndpointConfig.model_validate(
                 {"type": "chat", "transport": "sagemaker", "aws_region": "us-west-2"}
             )
+
+
+class TestReadinessProbeIsRejected:
+    """The readiness probe builds `/v1/models` or the endpoint type's OpenAI
+    path, never `/endpoints/{name}/invocations`, so against SageMaker it signs
+    and sends a request to a route the endpoint does not serve. A signed 401/403
+    there aborts pre-flight; any other 4xx is taken as "ready".
+
+    The tutorial already documented `--wait-for-model-timeout` as refused for
+    SageMaker; nothing refused it."""
+
+    def test_wait_for_model_timeout_is_rejected_with_the_flag_named(self) -> None:
+        with pytest.raises(ValidationError, match="--wait-for-model-timeout"):
+            _endpoint(wait_for_model_timeout=30)
+
+    def test_the_default_disabled_probe_is_still_accepted(self) -> None:
+        """The probe is off by default, so the one-flag quick start must not trip
+        this."""
+        assert _endpoint().wait_for_model_timeout == 0

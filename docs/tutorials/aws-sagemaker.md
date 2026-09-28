@@ -163,16 +163,14 @@ not just a hostname component.
 
 ## What Is Not Supported
 
-Some AIPerf features reach the server over code paths that request signing does
-not cover, so their requests would be sent unsigned and rejected. AIPerf refuses
+Some AIPerf features cannot work against a SageMaker endpoint. AIPerf refuses
 these at startup rather than failing partway into a run:
 
 | Flag | Why |
 |---|---|
-| `--wait-for-model-timeout` | The readiness probe is an unsigned out-of-band request. |
-| `--reset-kv-cache`, server profiler hooks | Control-plane hooks call the server unsigned. |
-| Multipart endpoints (`image_edit`, `audio_transcription`) | Streamed multipart bodies never materialize as the bytes SigV4 must hash. |
-| Polling endpoints (`video_generation`) | Job submit/poll bypasses signing. |
+| `--wait-for-model-timeout` | The readiness probe targets OpenAI routes such as `/v1/models`; a SageMaker endpoint serves only `/endpoints/{name}/invocations`. |
+| `--reset-kv-cache`, server profiler hooks | Control-plane hooks require the plain `http` transport. |
+| Multipart endpoints (`image_edit`, `audio_transcription`, `video_generation`) | SigV4 must hash the request body, and a streamed multipart body never materializes as bytes to hash. |
 
 Also out of scope: **SageMaker Asynchronous Inference** and **Serverless
 Inference** endpoints, which exchange payloads through S3 rather than in the HTTP
