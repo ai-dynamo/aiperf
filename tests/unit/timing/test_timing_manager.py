@@ -451,4 +451,3 @@ class TestTimingManagerServerMetricsStatus:
         )
         assert mgr.phase_publisher.server_metrics_runtime_active is False
         assert mgr.phase_publisher.server_metrics_collector_count == 0
-

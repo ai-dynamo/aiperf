@@ -1309,9 +1309,7 @@ class PhaseRunner(TaskManagerMixin):
         override = Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT
         if override is not None and override > 0:
             return float(override)
-        collector_count = int(
-            self._phase_publisher.server_metrics_collector_count or 0
-        )
+        collector_count = int(self._phase_publisher.server_metrics_collector_count or 0)
         # Active collection implies at least one collector; floor at 1 so a
         # missing count cannot collapse the budget to zero.
         collector_budget = max(collector_count, 1)
