@@ -515,19 +515,23 @@ For **remote AMD GPU monitoring** across multiple nodes or when AIPerf runs on a
 
 ### Setup AMD DME Exporter
 
-The AMD GPU Operator includes a Prometheus metrics exporter that exposes GPU telemetry over HTTP. Here's how to set it up:
+The AMD GPU Operator includes a Prometheus metrics exporter that exposes GPU telemetry over HTTP. The operator installs with Helm and needs cert-manager in the cluster; see the [AMD GPU Operator README](https://github.com/ROCm/gpu-operator#readme) for prerequisites.
 
 ```bash
-# Deploy AMD GPU Operator with metrics exporter
-# The exporter runs as a DaemonSet and exposes metrics on port 5000
-kubectl apply -f https://raw.githubusercontent.com/ROCm/gpu-operator/main/deploy/gpu-operator.yaml
+# Install the AMD GPU Operator. Its default DeviceConfig enables the
+# metrics exporter as a DaemonSet serving metrics on port 5000.
+helm repo add rocm https://rocm.github.io/gpu-operator
+helm repo update
+helm install amd-gpu-operator rocm/gpu-operator-charts \
+  --namespace kube-amd-gpu \
+  --create-namespace
 
 # Verify the exporter is running
-kubectl get pods -n gpu-operator-resources | grep metrics-exporter
+kubectl get pods -n kube-amd-gpu -l app.kubernetes.io/name=metrics-exporter
 
 # Port-forward to access metrics (if needed)
-kubectl port-forward -n gpu-operator-resources \
-  $(kubectl get pods -n gpu-operator-resources -l app=gpu-operator-metrics-exporter -o name | head -1) \
+kubectl port-forward -n kube-amd-gpu \
+  $(kubectl get pods -n kube-amd-gpu -l app.kubernetes.io/name=metrics-exporter -o name | head -1) \
   5000:5000
 ```
 
@@ -564,7 +568,7 @@ AMD DME collects metrics from the Prometheus exporter and emits them under vendo
 
 | Metric | Source | Notes |
 |---|---|---|
-| `amd_power` (W) | `gpu_package_power` | Current GPU package power draw. |
+| `amd_power` (W) | `gpu_package_power`, else `gpu_power_usage` | Current GPU power draw. DME exports each only when non-zero, so the collector falls back to `gpu_power_usage` on GPUs that report no package power. |
 | `amd_energy_consumption` (MJ) | `gpu_energy_consumed` | Cumulative energy consumption (µJ → MJ). Accumulator computes delta against pre-profile baseline. |
 | `amd_gfx_activity` (%) | `gpu_gfx_activity` | Graphics engine activity percentage. |
 | `amd_umc_activity` (%) | `gpu_umc_activity` | Memory controller activity percentage. |
@@ -574,8 +578,8 @@ AMD DME collects metrics from the Prometheus exporter and emits them under vendo
 | `amd_temperature` (°C) | `gpu_junction_temperature` | GPU junction/hotspot temperature. |
 | `amd_memory_temperature` (°C) | `gpu_memory_temperature` | Memory temperature. |
 | `amd_ecc_uncorrectable` (count) | `gpu_ecc_uncorrect_total` | Total uncorrectable ECC error count. |
-| `amd_sm_clock` (MHz) | `gpu_clock{clock_type="GPU_CLOCK_TYPE_SYSTEM",clock_index="0"}` | System clock frequency. |
-| `amd_mem_clock` (MHz) | `gpu_clock{clock_type="GPU_CLOCK_TYPE_MEMORY",clock_index="8"}` | Memory clock frequency. |
+| `amd_sm_clock` (MHz) | `gpu_clock{clock_type="system"}` | System clock frequency, from the lowest `clock_index` of that type. Older DME releases label the type `GPU_CLOCK_TYPE_SYSTEM`; both are read. |
+| `amd_mem_clock` (MHz) | `gpu_clock{clock_type="memory"}` | Memory clock frequency, read the same way. |
 
 **Example Console Output:**
 
@@ -636,7 +640,7 @@ aiperf profile \
 | Hardware | NVIDIA | NVIDIA | AMD ROCm | AMD ROCm |
 | Setup | Container/service | `pip install nvidia-ml-py` | Ships with ROCm | GPU Operator exporter |
 | Multi-node | Yes (HTTP) | No (local) | No (local) | Yes (HTTP) |
-| Field naming | `gpu_*` | `gpu_*` | `amd_*` | `amd_*` |
+| Field naming | `nvidia_*` | `nvidia_*` | `amd_*` | `amd_*` |
 | Temperature | Yes (GPU + memory) | Yes (GPU) | Yes (GPU) | Yes (GPU + memory) |
 | Memory free/total | Yes | Yes | Yes | Yes |
 | ECC errors | Yes (XID) | No | Yes (per-block + total) | Yes (total uncorrectable) |
