@@ -50,10 +50,7 @@ def _resolve_list_backend_class() -> type[ListMetricBackendT]:
     from aiperf.common.environment import Environment
 
     if Environment.METRICS.LIST_BACKEND == "tdigest":
-        # ``crick`` is an optional dependency: it ships sdist-only on Linux
-        # aarch64, so a hard import would force a C toolchain on every arm64
-        # install just to reach the non-default backend. Import it here, where
-        # the user has actually asked for tdigest.
+        # crick is optional, so import it only when this backend is selected.
         try:
             from aiperf.metrics.list_metric_aggregation import (
                 TDigestListMetricAggregator,
