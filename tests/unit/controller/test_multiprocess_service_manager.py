@@ -509,7 +509,6 @@ class TestLosingEveryWorkerBeforeRegistrationIsFatal:
 
 
 async def _spawn_workers(manager, monkeypatch, count: int) -> list[MultiProcessRunInfo]:
-    """Spawn workers through the real ``run_service``, with processes stubbed."""
     monkeypatch.setattr(
         "aiperf.controller.multiprocess_service_manager.Process",
         MagicMock(side_effect=lambda **_: MagicMock(spec=Process)),

@@ -42,7 +42,6 @@ def _local_workers(
     dead: frozenset[str] = frozenset(),
     state: SystemState = SystemState.PROFILING,
 ) -> None:
-    """Workers spawned as local processes, none of them registered yet."""
     manager = system_controller.service_manager
     manager.service_id_map = {}
     manager.spawned_worker_ids = MagicMock(return_value=frozenset(spawned))
@@ -80,9 +79,6 @@ async def test_the_only_worker_failing_to_start_cancels_with_its_real_error(
 async def test_a_worker_failing_while_another_can_still_start_is_tolerated(
     system_controller: SystemController,
 ) -> None:
-    """Unknown senders are treated as required by the generic handler, which
-    would cancel here over one flaky worker. A partial loss keeps today's
-    behavior: continue, and do not turn the run into a failure."""
     _local_workers(system_controller, spawned={"worker_a", "worker_b"})
 
     await _report(system_controller, "worker_a")
@@ -148,9 +144,6 @@ async def test_no_cancel_once_the_system_is_already_stopping(
 async def test_a_registered_worker_keeps_the_existing_optional_path(
     system_controller: SystemController,
 ) -> None:
-    """The new path is only for workers that failed before registering. A
-    registered worker's error still goes through the generic handler, where in
-    multi-process mode a worker is optional and does not cancel the run."""
     assert ServiceType.WORKER not in system_controller.required_services
     manager = system_controller.service_manager
     manager.service_id_map = {

@@ -314,9 +314,6 @@ class TestStartupFailureIsReportedToTheController:
         cli_config: CLIConfig,
         mock_log_queue,
     ) -> None:
-        """The default must not change: an optional collector failing at
-        start-up would otherwise land in the controller's exit errors and turn
-        a degraded run into a failed one."""
         from aiperf.common.messages import BaseServiceErrorMessage
 
         published = self._run_and_capture(
