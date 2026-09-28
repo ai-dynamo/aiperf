@@ -35,6 +35,11 @@ if TYPE_CHECKING:
 __all__ = ["GPUTelemetryManager"]
 
 
+def _redacted(value: object) -> str:
+    """Text with endpoint credentials removed; aiohttp errors embed the URL."""
+    return redact_url(str(value))
+
+
 @dataclass(slots=True)
 class _CollectorCandidate:
     collector_type: GPUTelemetryCollectorType
@@ -281,12 +286,15 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
                 if baseline_failure_reason is not None:
                     failure_reason = baseline_failure_reason
             except RuntimeError as e:
-                failure_reason = str(e)
-                self.error(f"GPU Telemetry: {e}")
+                failure_reason = _redacted(e)
+                self.error(f"GPU Telemetry: {failure_reason}")
             except Exception as e:  # fault-tolerant telemetry
-                failure_reason = f"{collector_name} configuration failed: {e}"
+                failure_reason = (
+                    f"{collector_name} configuration failed: {_redacted(e)}"
+                )
                 self.error(
-                    f"GPU Telemetry: Failed to configure {collector_name} collector: {e}"
+                    f"GPU Telemetry: Failed to configure {collector_name} collector: "
+                    f"{_redacted(e)}"
                 )
         return configured_sources, failure_reason
 
@@ -303,11 +311,11 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
         except (Exception, asyncio.CancelledError) as e:
             self.warning(
                 f"GPU Telemetry: Failed to initialize {shown} during "
-                f"baseline capture, disabling collector: {e!r}"
+                f"baseline capture, disabling collector: {redact_url(repr(e))}"
             )
             self._collectors.pop(source_identifier, None)
             self._collector_id_to_url.pop(collector_id, None)
-            return f"{shown} initialization failed: {e}"
+            return f"{shown} initialization failed: {_redacted(e)}"
 
         try:
             await collector.collect_and_process_metrics()
@@ -315,7 +323,7 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
         except Exception as e:  # baseline scrape best-effort
             self.warning(
                 f"GPU Telemetry: Failed to capture baseline from {shown} "
-                f"(collector remains enabled): {e}"
+                f"(collector remains enabled): {_redacted(e)}"
             )
         return None
 
@@ -368,7 +376,7 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
                 await collector.collect_and_process_metrics()
             except Exception as exc:  # one failed endpoint should not skip others
                 errors.append(
-                    f"{redact_url(telemetry_source_url)}: {type(exc).__name__}: {exc}"
+                    f"{redact_url(telemetry_source_url)}: {type(exc).__name__}: {_redacted(exc)}"
                 )
         if errors:
             raise RuntimeError("; ".join(errors))
@@ -398,7 +406,8 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
                 started_count += 1
             except Exception as e:  # fault-tolerant telemetry
                 self.error(
-                    f"Failed to start collector for {redact_url(telemetry_source_url)}: {e}"
+                    f"Failed to start collector for {redact_url(telemetry_source_url)}: "
+                    f"{_redacted(e)}"
                 )
 
         if started_count == 0:
@@ -454,7 +463,7 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
             except Exception as e:
                 self.warning(
                     f"GPU Telemetry: Failed to capture final state from "
-                    f"{redact_url(telemetry_source_url)}: {e}"
+                    f"{redact_url(telemetry_source_url)}: {_redacted(e)}"
                 )
 
         await self._stop_all_collectors()
@@ -499,7 +508,8 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
                 await collector.stop()
             except Exception as e:  # fault-tolerant telemetry
                 self.error(
-                    f"Failed to stop collector for {redact_url(telemetry_source_url)}: {e}"
+                    f"Failed to stop collector for {redact_url(telemetry_source_url)}: "
+                    f"{_redacted(e)}"
                 )
 
     async def _on_telemetry_records(
@@ -607,7 +617,13 @@ class GPUTelemetryManager(BaselineCollectorMixin, BaseComponentService):
                     collector_id=collector_id,
                     telemetry_source_url=telemetry_source_url,
                     records=[],
-                    error=error,
+                    # aiohttp errors embed the request URL, credentials included.
+                    error=error.model_copy(
+                        update={
+                            "message": _redacted(error.message),
+                            "cause": _redacted(error.cause) if error.cause else None,
+                        }
+                    ),
                     sequence=sequence,
                 )
 

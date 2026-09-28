@@ -1038,6 +1038,48 @@ class TestSmartDefaultVisibility:
         assert not any("s3cr3t" in str(c) for c in manager.error.call_args_list)
 
     @pytest.mark.asyncio
+    async def test_exception_text_naming_the_url_is_redacted(self):
+        """aiohttp errors embed the request URL, so a failing scrape must not
+        carry the credentials into the log or the forwarded error."""
+        secret_url = "http://ops:s3cr3t@node-a:9401/metrics"
+        manager = self._create_test_manager(
+            user_requested=True, user_endpoints=[secret_url]
+        )
+        manager.publish = AsyncMock()
+
+        with (
+            patch.object(
+                DCGMTelemetryCollector,
+                "is_url_reachable",
+                new=AsyncMock(side_effect=lambda: True),
+            ),
+            patch.object(DCGMTelemetryCollector, "initialize", new=AsyncMock()),
+            patch.object(
+                DCGMTelemetryCollector,
+                "collect_and_process_metrics",
+                new=AsyncMock(side_effect=RuntimeError(f"503, url={secret_url}")),
+            ),
+        ):
+            configure_msg = Command(cid="c-1", cmd=CommandType.PROFILE_CONFIGURE)
+            await manager._profile_configure_command(configure_msg)
+
+        warnings = [str(c) for c in manager.warning.call_args_list]
+        assert any("503" in w for w in warnings)
+        assert not any("s3cr3t" in w for w in warnings)
+
+        manager.records_push_client = AsyncMock()
+        manager._records_push_lock = asyncio.Lock()
+        manager._telemetry_records_closed = False
+        manager._telemetry_sequence = 0
+        await manager._on_telemetry_error(
+            ErrorDetails(message=f"503, url={secret_url}", cause=secret_url),
+            "collector_x",
+        )
+        pushed = manager.records_push_client.push.call_args[0][0]
+        assert "s3cr3t" not in pushed.model_dump_json()
+        assert "503" in pushed.error.message
+
+    @pytest.mark.asyncio
     async def test_show_custom_and_reachable_defaults(self):
         """Test that both custom URLs and reachable defaults are shown (Scenario 3)."""
         manager = self._create_test_manager(
