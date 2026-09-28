@@ -542,3 +542,21 @@ class TestSageMakerEndpointRequiresUrlsOrEndpointName:
             assert any(
                 "endpointName" in rule and "awsRegion" in rule for rule in rules
             ), f"no endpointName-requires-awsRegion rule among: {rules}"
+
+    def test_an_empty_endpoint_name_counts_as_unset(self) -> None:
+        """CEL ``has()`` is true for ``endpointName: ""``, but EndpointConfig
+        treats an empty name as unset. Without a size check the apiserver admits
+        a resource with neither ``urls`` nor a usable name, and the job fails
+        later with "urls: Field required"."""
+        for node in (
+            _endpoint_node(_job_spec_node()),
+            _endpoint_node(_sweep_spec_node()),
+        ):
+            rules = [
+                cast(dict, r)["rule"]
+                for r in cast(list, node.get("x-kubernetes-validations", []))
+                if "endpointName" in cast(dict, r)["rule"]
+            ]
+            assert rules
+            for rule in rules:
+                assert "size(self.sagemaker.endpointName)" in rule, rule

@@ -610,9 +610,12 @@ def _decorate_endpoint_node(node: dict[str, Any]) -> None:
         node,
         (
             {
+                # size() as well as has(): EndpointConfig treats an empty
+                # name as unset, but has() is true for `endpointName: ""`.
                 "rule": (
                     "has(self.urls) || "
-                    "(has(self.sagemaker) && has(self.sagemaker.endpointName))"
+                    "(has(self.sagemaker) && has(self.sagemaker.endpointName) "
+                    "&& size(self.sagemaker.endpointName) > 0)"
                 ),
                 "message": (
                     "endpoint.urls is required unless "
@@ -628,6 +631,7 @@ def _decorate_endpoint_node(node: dict[str, Any]) -> None:
                 "rule": (
                     "!has(self.sagemaker) || "
                     "!has(self.sagemaker.endpointName) || "
+                    "size(self.sagemaker.endpointName) == 0 || "
                     "has(self.awsRegion)"
                 ),
                 "message": (
