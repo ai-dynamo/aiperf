@@ -108,6 +108,8 @@ navigation:
             path: ../pages-dev/tutorials/weka-trace.md
           - page: Replay TraceLab Agentic Coding Traces
             path: ../pages-dev/tutorials/tracelab-trace.md
+          - page: Replay H CUA Perf Computer-Use Agent Traces
+            path: ../pages-dev/tutorials/h-cua-perf.md
           - page: InferenceX AgentX MVP Benchmark
             path: ../pages-dev/tutorials/agentx-mvp.md
       - section: Load Patterns & Scheduling
