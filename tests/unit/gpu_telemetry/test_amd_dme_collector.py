@@ -104,25 +104,51 @@ def test_empty_payload_returns_no_records(collector) -> None:
     assert collector._parse_metrics_to_records("   \n") == []
 
 
-def test_one_bad_gpu_does_not_discard_the_rest_of_the_tick(collector, caplog) -> None:
-    """Record construction is per-GPU, so a single out-of-range sample costs
+def test_one_bad_gpu_does_not_discard_the_rest_of_the_tick(
+    collector, monkeypatch, caplog
+) -> None:
+    """Record construction is per-GPU, so a record that fails validation costs
     that GPU only. Building every record inside one try block would let one bad
     GPU blank the whole node for that scrape."""
     import logging
 
     caplog.set_level(logging.WARNING)
+    scale = collector._apply_scaling_factors
+
+    def fail_gpu_1(metrics: dict) -> dict:
+        scaled = scale(metrics)
+        if scaled.get("amd_power") == 751.0:
+            scaled["amd_power"] = "not a number"
+        return scaled
+
+    monkeypatch.setattr(collector, "_apply_scaling_factors", fail_gpu_1)
     payload = f"""
 # TYPE gpu_package_power gauge
 gpu_package_power{{{LABELS_0}}} 748
+gpu_package_power{{{LABELS_1}}} 751
+"""
+
+    records = _by_index(collector._parse_metrics_to_records(payload))
+
+    assert set(records) == {0}, "GPU 0's valid record must survive GPU 1's"
+    assert records[0].telemetry_data.amd_power == 748.0
+    assert "Dropping GPU 1" in caplog.text
+
+
+def test_an_out_of_range_reading_does_not_cost_the_record(collector) -> None:
+    """None of the AMD fields carry a range bound, so an odd reading is passed
+    through rather than taking the GPU's power and activity down with it."""
+    payload = f"""
+# TYPE gpu_package_power gauge
 gpu_package_power{{{LABELS_1}}} 751
 # TYPE gpu_free_vram gauge
 gpu_free_vram{{{LABELS_1}}} -1
 """
 
-    records = _by_index(collector._parse_metrics_to_records(payload))
+    record = _by_index(collector._parse_metrics_to_records(payload))[1]
 
-    assert set(records) == {0}, "GPU 0's valid record must survive GPU 1's bad sample"
-    assert records[0].telemetry_data.amd_power == 748.0
+    assert record.telemetry_data.amd_power == 751.0
+    assert record.telemetry_data.amd_memory_free < 0
 
 
 def test_memory_temperature_is_unbounded_like_its_sibling(collector) -> None:

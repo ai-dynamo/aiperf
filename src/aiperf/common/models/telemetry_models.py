@@ -124,11 +124,11 @@ class TelemetryMetrics(AIPerfBaseModel):
     amd_memory_used: float | None = Field(
         default=None, description="AMD GPU VRAM used in GB"
     )
-    amd_memory_free: float | None = Field(
-        default=None, ge=0, description="AMD GPU VRAM free in GB"
+    amd_memory_free: FiniteFloat | None = Field(
+        default=None, description="AMD GPU VRAM free in GB"
     )
-    amd_memory_total: float | None = Field(
-        default=None, ge=0, description="AMD GPU total VRAM in GB"
+    amd_memory_total: FiniteFloat | None = Field(
+        default=None, description="AMD GPU total VRAM in GB"
     )
     amd_temperature: float | None = Field(
         default=None,
@@ -148,11 +148,11 @@ class TelemetryMetrics(AIPerfBaseModel):
         description="AMD GPU throttle status snapshot (1.0 if any throttle "
         "indicator is active, 0.0 otherwise)",
     )
-    amd_sm_clock: float | None = Field(
-        default=None, ge=0, description="AMD GPU system clock frequency in MHz"
+    amd_sm_clock: FiniteFloat | None = Field(
+        default=None, description="AMD GPU system clock frequency in MHz"
     )
-    amd_mem_clock: float | None = Field(
-        default=None, ge=0, description="AMD GPU memory clock frequency in MHz"
+    amd_mem_clock: FiniteFloat | None = Field(
+        default=None, description="AMD GPU memory clock frequency in MHz"
     )
 
 
