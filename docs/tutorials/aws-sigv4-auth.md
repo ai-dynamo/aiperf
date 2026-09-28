@@ -323,7 +323,14 @@ aws sts get-caller-identity
 
 If that also fails, you need to set up credentials -- see [Setting Up Credentials](#setting-up-credentials).
 
-### "SigV4 auth requires botocore"
+### "the optional botocore dependency is not installed"
+
+The full message starts with what needed botocore, for example:
+
+```text
+SigV4 request signing is enabled but the optional botocore dependency is not
+installed.
+```
 
 Install the AWS extra:
 
