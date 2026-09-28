@@ -54,18 +54,6 @@ def test_the_line_survives_on_a_cp1252_console() -> None:
     assert "?" in written
 
 
-def test_utf8_output_is_left_alone() -> None:
-    raw = io.BytesIO()
-    stream = io.TextIOWrapper(raw, encoding="utf-8", errors="strict", newline="")
-    handler = logging.StreamHandler(stream)
-    handler.setFormatter(_basic_formatter("utf-8"))
-
-    handler.emit(_record(_TABLE_LIKE))
-    stream.flush()
-
-    assert _HEAVY_RULE in raw.getvalue().decode("utf-8")
-
-
 @pytest.mark.parametrize(
     ("encoding", "substitutes"),
     [

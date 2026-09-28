@@ -265,4 +265,14 @@ class SweepTableLogger:
 
         buf = StringIO()
         Console(file=buf, force_terminal=False, width=200).print(table)
-        return buf.getvalue().rstrip("\n")
+        return self._encodable(buf.getvalue().rstrip("\n"))
+
+    @staticmethod
+    def _encodable(text: str) -> str:
+        """Substitute what the log sink cannot encode, such as a non-ASCII
+        sweep parameter name, rather than lose the whole table record."""
+        encoding = getattr(sys.stdout, "encoding", None) or "ascii"
+        try:
+            return text.encode(encoding, errors="replace").decode(encoding)
+        except LookupError:
+            return text.encode("ascii", errors="replace").decode("ascii")
