@@ -141,6 +141,7 @@ Triton serves Prometheus metrics at `http://localhost:8002/metrics` by default, 
 
 Server metrics are **collected by default** - just run AIPerf normally:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -150,6 +151,7 @@ aiperf profile \
     --concurrency 4 \
     --request-count 100
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 AIPerf automatically:
 1. Discovers the `/metrics` endpoint on your inference server (base URL + `/metrics`)
