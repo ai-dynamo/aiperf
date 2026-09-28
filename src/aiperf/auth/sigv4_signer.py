@@ -43,7 +43,8 @@ class SigV4RequestSigner(AIPerfLifecycleMixin):
        ``asyncio.to_thread`` because that refresh is a synchronous STS/SSO/
        subprocess call guarded by a lock, and doing it inline would stall
        the worker's event loop - and every concurrent in-flight request -
-       for the duration of the refresh.
+       for the duration of the refresh. Static credentials (plain
+       ``Credentials``) have no refresh, so they skip the thread hop.
     2. Periodic full re-resolution (``AIPERF_AWS_CREDENTIAL_RERESOLVE_INTERVAL``,
        default 15 minutes, 0 disables it): a background task re-runs
        botocore's entire credential provider chain from scratch, independent
@@ -181,8 +182,16 @@ class SigV4RequestSigner(AIPerfLifecycleMixin):
         # get_frozen_credentials() re-resolves (and refreshes if expired)
         # on every call - see the class docstring for the two-layer
         # refresh/re-resolve strategy. Offloaded to a thread because the
-        # refresh path performs blocking network/subprocess I/O.
-        frozen = await asyncio.to_thread(self._credentials.get_frozen_credentials)
+        # refresh path performs blocking network/subprocess I/O. Static
+        # credentials have no refresh path, and the hop (~56 us) costs about
+        # twice the signing it protects at typical payload sizes, so they are
+        # read inline. Exact type only: a subclass may override the read with
+        # I/O. Checked per call, since re-resolution can swap the type.
+        credential_source = self._credentials
+        if type(credential_source) is self._Credentials:
+            frozen = credential_source.get_frozen_credentials()
+        else:
+            frozen = await asyncio.to_thread(credential_source.get_frozen_credentials)
         credentials = self._Credentials(
             frozen.access_key, frozen.secret_key, frozen.token
         )
