@@ -13,6 +13,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
+from pathlib import PurePosixPath
 from types import SimpleNamespace
 from typing import Any
 
@@ -387,6 +388,9 @@ class EndToEndTestRunner:
         logger.info("=" * 60)
         logger.info(f"Server {server.name} health check passed - ready for testing")
 
+        if not self._materialize_files(server):
+            return False
+
         # Run all aiperf commands for this server
         all_aiperf_passed = True
         for i, aiperf_cmd in enumerate(server.aiperf_commands):
@@ -475,6 +479,48 @@ class EndToEndTestRunner:
         )
 
         return all_aiperf_passed
+
+    def _materialize_files(self, server) -> bool:
+        """Write a server's declared file fixtures into the AIPerf container.
+
+        Content is piped in over stdin rather than interpolated into the shell
+        command: YAML and JSON routinely contain quotes, ``$`` and newlines,
+        which would otherwise be re-interpreted by the shell wrapping the
+        docker exec.
+        """
+        for fixture in server.files:
+            target = PurePosixPath(fixture.path)
+            if target.is_absolute() or ".." in target.parts:
+                logger.error(
+                    f"Refusing to write fixture outside the working directory: "
+                    f"{fixture.path} ({fixture.file_path}:{fixture.start_line})"
+                )
+                return False
+
+            logger.info(f"Writing fixture {fixture.path} for {server.name}")
+            parent = target.parent
+            mkdir = f"mkdir -p {parent} && " if str(parent) != "." else ""
+            result = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    "-i",
+                    self.aiperf_container_id,
+                    "bash",
+                    "-c",
+                    f"{mkdir}cat > {target}",
+                ],
+                input=fixture.content,
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                logger.error(
+                    f"Failed to write fixture {fixture.path}: {result.stderr.strip()}"
+                )
+                return False
+        return True
 
     def _cleanup(self):
         """Cleanup all containers (nuclear approach)"""

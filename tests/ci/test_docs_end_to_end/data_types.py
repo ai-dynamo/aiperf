@@ -4,7 +4,7 @@
 Data models for the end-to-end testing framework.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -27,6 +27,23 @@ class Command:
 
 
 @dataclass
+class FileFixture:
+    """A file a guide needs on disk before its commands can run.
+
+    Guides that drive AIPerf through ``--config foo.yaml`` (or a ``.jsonl``
+    trace) already print the file contents in the page. Materializing that
+    block is what makes such a guide testable at all; without it the command
+    can only be tagged by rewriting the doc to point at a path the reader does
+    not have.
+    """
+
+    path: str
+    content: str
+    file_path: str
+    start_line: int
+
+
+@dataclass
 class Server:
     """Represents a server with its setup, health check, and aiperf commands"""
 
@@ -34,3 +51,6 @@ class Server:
     setup_command: Command | None
     health_check_command: Command | None
     aiperf_commands: list[Command]
+    # Files written into the AIPerf container's working directory before any
+    # of this server's commands run, in document order.
+    files: list[FileFixture] = field(default_factory=list)
