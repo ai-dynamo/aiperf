@@ -14,6 +14,8 @@ from unittest.mock import patch
 
 import pytest
 
+from aiperf.common.models import ErrorDetails
+from aiperf.common.models.host_telemetry_models import HostTelemetryRecord
 from aiperf.host_telemetry.rapl_collector import (
     RAPLDomain,
     RAPLTelemetryCollector,
@@ -28,8 +30,12 @@ MAX_RANGE = 262143328850
 
 
 def make_domain(
-    parent: Path, name: str, label: str, energy: int | None, max_range=MAX_RANGE
-):
+    parent: Path,
+    name: str,
+    label: str,
+    energy: int | None,
+    max_range: int | None = MAX_RANGE,
+) -> Path:
     """Create one fake powercap domain directory."""
     d = parent / name
     d.mkdir(parents=True, exist_ok=True)
@@ -42,7 +48,7 @@ def make_domain(
 
 
 @pytest.fixture
-def powercap(tmp_path):
+def powercap(tmp_path: Path) -> Path:
     """A two-package tree with core and dram subdomains, all readable."""
     root = tmp_path / "powercap"
     root.mkdir()
@@ -55,7 +61,7 @@ def powercap(tmp_path):
 
 
 class TestDiscovery:
-    def test_finds_packages_and_subdomains(self, powercap):
+    def test_finds_packages_and_subdomains(self, powercap: Path) -> None:
         domains = discover_domains(powercap)
         assert [d.domain_id for d in domains] == [
             "intel-rapl:0",
@@ -65,33 +71,33 @@ class TestDiscovery:
             "intel-rapl:1:0",
         ]
 
-    def test_parents_come_before_their_children(self, powercap):
+    def test_parents_come_before_their_children(self, powercap: Path) -> None:
         domains = discover_domains(powercap)
         ids = [d.domain_id for d in domains]
         for d in domains:
             if d.parent_id is not None:
                 assert ids.index(d.parent_id) < ids.index(d.domain_id)
 
-    def test_subdomains_record_their_parent(self, powercap):
+    def test_subdomains_record_their_parent(self, powercap: Path) -> None:
         by_id = {d.domain_id: d for d in discover_domains(powercap)}
         assert by_id["intel-rapl:0:0"].parent_id == "intel-rapl:0"
         assert by_id["intel-rapl:0:1"].parent_id == "intel-rapl:0"
         assert by_id["intel-rapl:1:0"].parent_id == "intel-rapl:1"
         assert by_id["intel-rapl:0"].parent_id is None
 
-    def test_indices_are_unique_and_dense(self, powercap):
+    def test_indices_are_unique_and_dense(self, powercap: Path) -> None:
         domains = discover_domains(powercap)
         assert [d.index for d in domains] == list(range(len(domains)))
 
-    def test_reads_the_platform_label(self, powercap):
+    def test_reads_the_platform_label(self, powercap: Path) -> None:
         by_id = {d.domain_id: d for d in discover_domains(powercap)}
         assert by_id["intel-rapl:0"].name == "package-0"
         assert by_id["intel-rapl:0:1"].name == "dram"
 
-    def test_missing_root_yields_nothing(self, tmp_path):
+    def test_missing_root_yields_nothing(self, tmp_path: Path) -> None:
         assert discover_domains(tmp_path / "absent") == []
 
-    def test_ignores_unrelated_directories(self, tmp_path):
+    def test_ignores_unrelated_directories(self, tmp_path: Path) -> None:
         root = tmp_path / "powercap"
         root.mkdir()
         make_domain(root, "intel-rapl:0", "package-0", 1)
@@ -101,24 +107,23 @@ class TestDiscovery:
 
 
 class TestWraparound:
-    def test_normal_increase_passes_through(self, powercap):
+    def test_normal_increase_passes_through(self, powercap: Path) -> None:
         d = RAPLDomain(powercap / "intel-rapl:0", 0)
         assert d.read_energy_uj() == pytest.approx(1_000_000)
         (d.path / "energy_uj").write_text("1500000\n")
         assert d.read_energy_uj() == pytest.approx(1_500_000)
 
-    def test_wrap_is_corrected_using_the_declared_range(self, powercap):
+    def test_wrap_is_corrected_using_the_declared_range(self, powercap: Path) -> None:
         d = RAPLDomain(powercap / "intel-rapl:0", 0)
         (d.path / "energy_uj").write_text(f"{MAX_RANGE - 1000}\n")
         first = d.read_energy_uj()
-        # Counter wraps to a small value.
         (d.path / "energy_uj").write_text("2000\n")
         second = d.read_energy_uj()
 
         assert second > first, "a wrap must not make the running total go backwards"
         assert second - first == pytest.approx(3000)
 
-    def test_repeated_wraps_accumulate(self, powercap):
+    def test_repeated_wraps_accumulate(self, powercap: Path) -> None:
         d = RAPLDomain(powercap / "intel-rapl:0", 0)
         (d.path / "energy_uj").write_text("10\n")
         d.read_energy_uj()
@@ -131,10 +136,11 @@ class TestWraparound:
             if total_before is not None:
                 assert total > total_before
             total_before = total
-        # Three wraps, so the offset is three full ranges.
         assert d.read_energy_uj() == pytest.approx(10 + 3 * MAX_RANGE)
 
-    def test_wrap_without_a_declared_range_still_never_goes_backwards(self, tmp_path):
+    def test_wrap_without_a_declared_range_still_never_goes_backwards(
+        self, tmp_path: Path
+    ) -> None:
         root = tmp_path / "powercap"
         root.mkdir()
         make_domain(root, "intel-rapl:0", "package-0", 900, max_range=None)
@@ -144,13 +150,11 @@ class TestWraparound:
         second = d.read_energy_uj()
         assert second >= first
 
-    def test_more_than_one_wrap_between_reads_is_not_recoverable(self, tmp_path):
-        # Found by feeding the reader real measured energy from a Raspberry Pi 5
-        # PMIC against a deliberately small range. A backwards step is the only
-        # evidence of a wrap, so two wraps between reads look exactly like one
-        # and the total is short by a range. This pins the bound rather than
-        # claiming it does not exist; recovering it needs a timestamped counter,
-        # which powercap does not give.
+    def test_more_than_one_wrap_between_reads_is_not_recoverable(
+        self, tmp_path: Path
+    ) -> None:
+        # powercap has no timestamp, so two wraps between reads look like one and
+        # the total undercounts by a range; this pins the documented bound.
         root = tmp_path / "powercap"
         root.mkdir()
         make_domain(root, "intel-rapl:0", "package-0", 800, max_range=1000)
@@ -163,7 +167,7 @@ class TestWraparound:
         (d.path / "energy_uj").write_text("200\n")
         assert d.read_energy_uj() == 1200  # true cumulative energy is 3200
 
-    def test_unreadable_counter_returns_none(self, tmp_path):
+    def test_unreadable_counter_returns_none(self, tmp_path: Path) -> None:
         root = tmp_path / "powercap"
         root.mkdir()
         make_domain(root, "intel-rapl:0", "package-0", None)
@@ -171,7 +175,7 @@ class TestWraparound:
         assert d.read_energy_uj() is None
         assert d.is_readable() is False
 
-    def test_garbage_counter_returns_none(self, tmp_path):
+    def test_garbage_counter_returns_none(self, tmp_path: Path) -> None:
         root = tmp_path / "powercap"
         root.mkdir()
         p = make_domain(root, "intel-rapl:0", "package-0", 1)
@@ -180,21 +184,21 @@ class TestWraparound:
 
 
 class TestValidateEnvironment:
-    def test_rejects_non_linux(self, powercap):
+    def test_rejects_non_linux(self, powercap: Path) -> None:
         with (
             patch("aiperf.host_telemetry.rapl_collector.IS_LINUX", False),
             pytest.raises(RAPLUnavailableError, match="Linux"),
         ):
             RAPLTelemetryCollector.validate_environment(powercap)
 
-    def test_rejects_missing_powercap(self, tmp_path):
+    def test_rejects_missing_powercap(self, tmp_path: Path) -> None:
         with (
             patch("aiperf.host_telemetry.rapl_collector.IS_LINUX", True),
             pytest.raises(RAPLUnavailableError, match="does not exist"),
         ):
             RAPLTelemetryCollector.validate_environment(tmp_path / "absent")
 
-    def test_rejects_empty_powercap(self, tmp_path):
+    def test_rejects_empty_powercap(self, tmp_path: Path) -> None:
         root = tmp_path / "powercap"
         root.mkdir()
         with (
@@ -203,7 +207,9 @@ class TestValidateEnvironment:
         ):
             RAPLTelemetryCollector.validate_environment(root)
 
-    def test_unreadable_counters_name_the_permission_cause(self, tmp_path):
+    def test_unreadable_counters_name_the_permission_cause(
+        self, tmp_path: Path
+    ) -> None:
         """The common real-world failure: domains exist, energy_uj is root-only."""
         root = tmp_path / "powercap"
         root.mkdir()
@@ -214,24 +220,24 @@ class TestValidateEnvironment:
         ):
             RAPLTelemetryCollector.validate_environment(root)
 
-    def test_accepts_a_good_tree(self, powercap):
+    def test_accepts_a_good_tree(self, powercap: Path) -> None:
         with patch("aiperf.host_telemetry.rapl_collector.IS_LINUX", True):
             RAPLTelemetryCollector.validate_environment(powercap)
 
-    def test_availability_helper_matches(self, powercap, tmp_path):
+    def test_availability_helper_matches(self, powercap: Path, tmp_path: Path) -> None:
         with patch("aiperf.host_telemetry.rapl_collector.IS_LINUX", True):
             assert rapl_is_available(powercap) is True
             assert rapl_is_available(tmp_path / "absent") is False
 
 
 class TestCollector:
-    def test_identity(self, powercap):
+    def test_identity(self, powercap: Path) -> None:
         c = RAPLTelemetryCollector(powercap)
         assert c.id == "rapl"
         assert c.endpoint_url == "rapl://localhost"
 
     @pytest.mark.asyncio
-    async def test_initialize_keeps_only_readable_domains(self, tmp_path):
+    async def test_initialize_keeps_only_readable_domains(self, tmp_path: Path) -> None:
         root = tmp_path / "powercap"
         root.mkdir()
         make_domain(root, "intel-rapl:0", "package-0", 500)
@@ -242,7 +248,7 @@ class TestCollector:
         assert [d.domain_id for d in c.domains] == ["intel-rapl:0"]
 
     @pytest.mark.asyncio
-    async def test_collect_emits_one_record_per_domain(self, powercap):
+    async def test_collect_emits_one_record_per_domain(self, powercap: Path) -> None:
         c = RAPLTelemetryCollector(powercap)
         with patch("aiperf.host_telemetry.rapl_collector.IS_LINUX", True):
             await c.initialize()
@@ -260,7 +266,7 @@ class TestCollector:
         assert all(r.timestamp_ns > 0 for r in records)
 
     @pytest.mark.asyncio
-    async def test_collect_shares_one_timestamp(self, powercap):
+    async def test_collect_shares_one_timestamp(self, powercap: Path) -> None:
         """All domains in a sample must carry the same instant, or deltas skew."""
         c = RAPLTelemetryCollector(powercap)
         with patch("aiperf.host_telemetry.rapl_collector.IS_LINUX", True):
@@ -269,7 +275,7 @@ class TestCollector:
         assert len({r.timestamp_ns for r in records}) == 1
 
     @pytest.mark.asyncio
-    async def test_reports_energy_not_derived_power(self, powercap):
+    async def test_reports_energy_not_derived_power(self, powercap: Path) -> None:
         c = RAPLTelemetryCollector(powercap)
         with patch("aiperf.host_telemetry.rapl_collector.IS_LINUX", True):
             await c.initialize()
@@ -279,7 +285,9 @@ class TestCollector:
         assert record.telemetry_data.power_usage_w is None
 
     @pytest.mark.asyncio
-    async def test_domain_going_unreadable_is_skipped_not_zeroed(self, powercap):
+    async def test_domain_going_unreadable_is_skipped_not_zeroed(
+        self, powercap: Path
+    ) -> None:
         c = RAPLTelemetryCollector(powercap)
         with patch("aiperf.host_telemetry.rapl_collector.IS_LINUX", True):
             await c.initialize()
@@ -294,7 +302,7 @@ class TestCollector:
         assert all(r.telemetry_data.energy_consumption_uj > 0 for r in records)
 
     @pytest.mark.asyncio
-    async def test_is_url_reachable(self, powercap, tmp_path):
+    async def test_is_url_reachable(self, powercap: Path, tmp_path: Path) -> None:
         with patch("aiperf.host_telemetry.rapl_collector.IS_LINUX", True):
             assert await RAPLTelemetryCollector(powercap).is_url_reachable() is True
             assert (
@@ -304,7 +312,9 @@ class TestCollector:
 
 
 class TestProtocolConformance:
-    def test_collector_satisfies_the_host_protocol_surface(self, powercap):
+    def test_collector_satisfies_the_host_protocol_surface(
+        self, powercap: Path
+    ) -> None:
         """The full protocol surface, not a subset.
 
         The earlier version of this test listed five names and missed exactly
@@ -330,12 +340,16 @@ class TestProtocolConformance:
             assert hasattr(collector, name), name
 
     @pytest.mark.asyncio
-    async def test_collect_and_process_dispatches_via_callback(self, powercap):
+    async def test_collect_and_process_dispatches_via_callback(
+        self, powercap: Path
+    ) -> None:
         """Records reach the callback with the collector id, errors do not raise."""
 
         received = []
 
-        async def record_callback(records, collector_id):
+        async def record_callback(
+            records: list[HostTelemetryRecord], collector_id: str
+        ) -> None:
             received.append((records, collector_id))
 
         with patch("aiperf.host_telemetry.rapl_collector.IS_LINUX", True):
@@ -353,7 +367,9 @@ class TestProtocolConformance:
 
 class TestLifecycle:
     @pytest.mark.asyncio
-    async def test_start_runs_the_background_loop_and_stop_halts_it(self, powercap):
+    async def test_start_runs_the_background_loop_and_stop_halts_it(
+        self, powercap: Path
+    ) -> None:
         """initialize -> start -> a record arrives via the loop -> stop.
 
         The conformance isinstance check only proves the lifecycle methods
@@ -363,7 +379,9 @@ class TestLifecycle:
         received = asyncio.Event()
         deliveries = []
 
-        async def record_callback(records, collector_id):
+        async def record_callback(
+            records: list[HostTelemetryRecord], collector_id: str
+        ) -> None:
             deliveries.append((records, collector_id))
             received.set()
 
@@ -386,7 +404,9 @@ class TestLifecycle:
 
 
 class TestResetVersusWrap:
-    def test_reset_far_from_range_is_absorbed_not_credited_as_wrap(self, powercap):
+    def test_reset_far_from_range_is_absorbed_not_credited_as_wrap(
+        self, powercap: Path
+    ) -> None:
         """A counter reset at 10% of range must not inject a full range."""
         d = discover_domains(powercap)[0]
         assert d.max_energy_uj == 262143328850.0
@@ -398,7 +418,9 @@ class TestResetVersusWrap:
         (d.path / "energy_uj").write_text("2000")
         assert d.read_energy_uj() == first + 1000  # counting resumes
 
-    def test_backwards_step_near_range_ceiling_is_still_a_wrap(self, powercap):
+    def test_backwards_step_near_range_ceiling_is_still_a_wrap(
+        self, powercap: Path
+    ) -> None:
         d = discover_domains(powercap)[0]
         near_top = int(d.max_energy_uj * 0.9)
         (d.path / "energy_uj").write_text(str(near_top))
@@ -409,11 +431,13 @@ class TestResetVersusWrap:
 
 class TestFailureVisibility:
     @pytest.mark.asyncio
-    async def test_all_domains_unreadable_dispatches_an_error(self, powercap):
+    async def test_all_domains_unreadable_dispatches_an_error(
+        self, powercap: Path
+    ) -> None:
         """Total telemetry loss must not look like a healthy idle run."""
         errors = []
 
-        async def error_callback(details, collector_id):
+        async def error_callback(details: ErrorDetails, collector_id: str) -> None:
             errors.append((details, collector_id))
 
         with patch("aiperf.host_telemetry.rapl_collector.IS_LINUX", True):
@@ -427,11 +451,15 @@ class TestFailureVisibility:
         assert "no sample" in str(errors[0][0])
 
     @pytest.mark.asyncio
-    async def test_one_invalid_domain_does_not_poison_the_others(self, powercap):
+    async def test_one_invalid_domain_does_not_poison_the_others(
+        self, powercap: Path
+    ) -> None:
         """A negative reading fails model validation; the rest still deliver."""
         received = []
 
-        async def record_callback(records, collector_id):
+        async def record_callback(
+            records: list[HostTelemetryRecord], collector_id: str
+        ) -> None:
             received.append(records)
 
         with patch("aiperf.host_telemetry.rapl_collector.IS_LINUX", True):
@@ -448,7 +476,7 @@ class TestFailureVisibility:
 
 
 class TestDomainOrdering:
-    def test_double_digit_domains_sort_numerically(self, tmp_path):
+    def test_double_digit_domains_sort_numerically(self, tmp_path: Path) -> None:
         for i in (0, 1, 2, 10, 11):
             d = tmp_path / f"intel-rapl:{i}"
             d.mkdir()
