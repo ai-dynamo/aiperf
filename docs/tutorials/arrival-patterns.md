@@ -153,10 +153,11 @@ This allows direct comparison between AIPerf and vLLM benchmark results when usi
 
 Compare how your server handles ideal vs realistic traffic:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=90 -->
 ```bash
 # Run 1: Constant (baseline)
 aiperf profile \
-    --model your-model \
+    --model Qwen/Qwen3-0.6B \
     --url localhost:8000 \
     --endpoint-type chat \
     --streaming \
@@ -164,9 +165,11 @@ aiperf profile \
     --arrival-pattern constant \
     --benchmark-duration 60 \
     --output-artifact-dir results/constant
+```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Expected Output (Run 1):**
-```
+```text
 INFO     Starting AIPerf System
 INFO     Using Request_Rate strategy with constant arrival pattern
 INFO     AIPerf System is PROFILING
@@ -187,7 +190,9 @@ INFO     Results saved to: results/constant/
 └────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
 
 JSON Export: results/constant/profile_export_aiperf.json
-```text
+```
+
+```bash
 # Run 2: Poisson (realistic)
 aiperf profile \
     --model your-model \
