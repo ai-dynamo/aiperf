@@ -1157,3 +1157,25 @@ class TestForeignDownloadDropsInheritedCredentials:
         _, headers = transport.aiohttp_client.get_request.call_args.args
         assert headers["Authorization"] == "Bearer user-api-key"
         assert headers["X-Acme-Token"] == "custom-secret"
+
+    @pytest.mark.asyncio
+    async def test_an_unsigned_same_origin_download_never_follows_redirects(
+        self, transport
+    ):
+        """Documented in the video tutorial: a server whose /content 302s to a
+        CDN now fails the download even with no signer, because following it
+        would re-deliver the user's -H headers to the redirect target."""
+        transport.aiohttp_client.get_request.return_value = create_request_record(
+            status=200, body=b"video-bytes"
+        )
+        assert transport.request_signer is None
+
+        await transport._download_video_content(
+            "video-123",
+            "http://localhost/v1/videos/video-123/content",
+            {"X-Acme-Token": "custom-secret"},
+            signing_origin_url="http://localhost/v1/videos/video-123",
+        )
+
+        kwargs = transport.aiohttp_client.get_request.call_args.kwargs
+        assert kwargs.get("allow_redirects") is False
