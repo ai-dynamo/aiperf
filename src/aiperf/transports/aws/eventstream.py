@@ -100,12 +100,19 @@ def _stream_message_for_line(line: bytes, perf_ns: int) -> AwsEventStreamMessage
     return AwsEventStreamMessage(perf_ns=perf_ns, line=text, raw_line=bytes(line))
 
 
-def _error_from_frame(message_type: str, message: Any) -> AwsEventStreamError:
+def _error_from_frame(
+    message_type: str, message: Any, partial_line: bytes = b""
+) -> AwsEventStreamError:
     """Build a typed error from an ``error``/``exception`` frame.
 
     AWS labels the failure in ``:exception-type`` (exception frames) or
     ``:error-code`` (error frames), with prose in ``:error-message``. Both are
     read so the label survives into ``ErrorDetails.type``.
+
+    ``partial_line`` is whatever had been buffered but not yet newline-terminated
+    when the failure arrived. The clean-EOF path flushes such a fragment as a
+    message; raising would otherwise discard it, and a half-written token is
+    often the most diagnostic thing about a mid-stream server failure.
     """
     headers = message.headers
     exception_type = headers.get(":exception-type") or headers.get(":error-code")
@@ -113,9 +120,24 @@ def _error_from_frame(message_type: str, message: Any) -> AwsEventStreamError:
         "utf-8", errors="replace"
     )
     label = exception_type or message_type
+    text = f"AWS eventstream {message_type} ({label}): {detail}"
+    if partial_line.strip():
+        decoded = partial_line.decode("utf-8", errors="replace")
+        text = f"{text} [partial line buffered at failure: {decoded!r}]"
+    return AwsEventStreamError(text, exception_type=exception_type)
+
+
+def _decode_error(exc: Exception) -> AwsEventStreamError:
+    """Wrap a botocore framing/CRC failure as an eventstream error.
+
+    botocore owns frame and checksum validation and raises its own types
+    (``ChecksumMismatch``, ``ParserError``, ...). Letting those escape means the
+    error table groups a corrupt stream under a botocore class name rather than
+    alongside every other eventstream failure.
+    """
     return AwsEventStreamError(
-        f"AWS eventstream {message_type} ({label}): {detail}",
-        exception_type=exception_type,
+        f"Malformed AWS eventstream frame: {type(exc).__name__}: {exc}",
+        exception_type=type(exc).__name__,
     )
 
 
@@ -148,15 +170,20 @@ class AwsEventStreamReader:
             # the frames genuinely arrived together -- and would make
             # eventstream ITL non-comparable to SSE ITL from the same server.
             chunk_perf_ns = time.perf_counter_ns()
-            decoder.add_data(chunk)
+            try:
+                decoder.add_data(chunk)
+            except Exception as e:
+                raise _decode_error(e) from e
             while True:
                 try:
                     message = decoder.next()
                 except StopIteration:
                     break
+                except Exception as e:
+                    raise _decode_error(e) from e
                 message_type = message.headers.get(":message-type")
                 if message_type in ("error", "exception"):
-                    raise _error_from_frame(message_type, message)
+                    raise _error_from_frame(message_type, message, bytes(line_buffer))
                 if message.headers.get(":event-type") != "PayloadPart":
                     continue
                 # Accumulate across PayloadPart messages and only split on a

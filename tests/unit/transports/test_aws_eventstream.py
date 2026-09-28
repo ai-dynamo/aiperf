@@ -328,3 +328,96 @@ class TestRawLineFidelity:
         assert len(messages) == 1
         assert messages[0].line == '{"b": 2}'
         assert messages[0].raw_line == b'  {"b": 2}  '
+
+
+class TestChunkTimestampSharing:
+    """One timestamp per network read, shared by every message decoded from it.
+
+    Deliberate, and matched to what ``sse_utils.py`` does for SSE -- stamping at
+    decode time would fold decode latency into ITL and make the two framings
+    non-comparable. Pinned here because the existing decode tests happen to put
+    each frame in its own chunk, so a refactor to per-frame stamping would not
+    have failed anything.
+    """
+
+    @pytest.mark.asyncio
+    async def test_frames_arriving_in_one_read_share_a_timestamp(self) -> None:
+        one_read = encode_frame(b'data: {"i": 1}\n') + encode_frame(b'data: {"i": 2}\n')
+
+        messages = [m async for m in AwsEventStreamReader(_chunks(one_read))]
+
+        assert len(messages) == 2
+        assert messages[0].perf_ns == messages[1].perf_ns
+
+    @pytest.mark.asyncio
+    async def test_frames_arriving_in_separate_reads_do_not(self) -> None:
+        """Guards the test above: equal timestamps must mean 'same read', not
+        'the clock is stubbed'."""
+        messages = [
+            m
+            async for m in AwsEventStreamReader(
+                _chunks(
+                    encode_frame(b'data: {"i": 1}\n'), encode_frame(b'data: {"i": 2}\n')
+                )
+            )
+        ]
+
+        assert len(messages) == 2
+        assert messages[0].perf_ns != messages[1].perf_ns
+
+
+class TestPartialLineOnErrorPath:
+    """A line still buffered when an error frame arrives is often the most
+    diagnostic thing about a server-side failure, and the clean-EOF path would
+    have surfaced it. Raising must not silently discard it."""
+
+    @pytest.mark.asyncio
+    async def test_buffered_partial_line_is_reported_with_the_error(self) -> None:
+        # Truncated mid-token on purpose. The fragment is deliberately not a
+        # near-dictionary word, so spell-checkers do not flag the fixture.
+        partial = encode_frame(b'data: {"choices":[{"delta":{"content":"abcd')
+        failure = encode_frame(
+            b"", message_type="error", extra_headers={":error-code": "ModelStreamError"}
+        )
+
+        with pytest.raises(AwsEventStreamError) as excinfo:
+            async for _ in AwsEventStreamReader(_chunks(partial, failure)):
+                pass
+
+        assert "abcd" in str(excinfo.value)
+
+    @pytest.mark.asyncio
+    async def test_no_partial_line_leaves_the_message_unchanged(self) -> None:
+        """Nothing buffered means nothing appended -- no empty parenthetical."""
+        failure = encode_frame(b"boom", message_type="error")
+
+        with pytest.raises(AwsEventStreamError) as excinfo:
+            async for _ in AwsEventStreamReader(_chunks(failure)):
+                pass
+
+        assert "partial" not in str(excinfo.value).lower()
+
+
+class TestCorruptFrameHandling:
+    """botocore validates framing and CRCs, so a corrupt frame raises one of its
+    exceptions. Those should surface as AwsEventStreamError like every other
+    stream failure, rather than as a botocore type the error table cannot group.
+    """
+
+    @pytest.mark.asyncio
+    async def test_a_corrupt_crc_surfaces_as_an_eventstream_error(self) -> None:
+        frame = bytearray(encode_frame(b'data: {"a": 1}\n'))
+        frame[-1] ^= 0xFF  # break the trailing message CRC
+
+        with pytest.raises(AwsEventStreamError):
+            async for _ in AwsEventStreamReader(_chunks(bytes(frame))):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_a_corrupt_prelude_surfaces_as_an_eventstream_error(self) -> None:
+        frame = bytearray(encode_frame(b'data: {"a": 1}\n'))
+        frame[0] ^= 0xFF  # break the declared total length
+
+        with pytest.raises(AwsEventStreamError):
+            async for _ in AwsEventStreamReader(_chunks(bytes(frame))):
+                pass
