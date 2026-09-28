@@ -69,13 +69,14 @@ def _make_process_group_timeout_killer(
     test_num: int,
     server_name: str,
     guard: _ProcessGroupKillGuard,
+    timeout: int = AIPERF_COMMAND_TIMEOUT,
 ) -> Callable[[], None]:
     def _kill_on_timeout() -> None:
         if not guard.mark_killing_if_running(proc):
             return
         logger.error(
             f"AIPerf test {test_num} exceeded "
-            f"{AIPERF_COMMAND_TIMEOUT}s timeout for {server_name}; "
+            f"{timeout}s timeout for {server_name}; "
             f"sending SIGKILL to process group"
         )
         with suppress(ProcessLookupError):
@@ -422,13 +423,15 @@ class EndToEndTestRunner:
             )
 
             kill_guard = _ProcessGroupKillGuard()
+            command_timeout = aiperf_cmd.timeout or AIPERF_COMMAND_TIMEOUT
             watchdog = threading.Timer(
-                AIPERF_COMMAND_TIMEOUT,
+                command_timeout,
                 _make_process_group_timeout_killer(
                     proc=aiperf_process,
                     test_num=i + 1,
                     server_name=server.name,
                     guard=kill_guard,
+                    timeout=command_timeout,
                 ),
             )
             watchdog.daemon = True

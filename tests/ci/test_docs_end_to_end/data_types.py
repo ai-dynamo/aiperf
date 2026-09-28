@@ -24,6 +24,12 @@ class Command:
     # so 80 is a conservative under-estimate that prefers to leave shard
     # headroom rather than over-allocate.
     weight: int = 80
+    # Hard kill deadline in seconds. Defaults to AIPERF_COMMAND_TIMEOUT when
+    # unset. Tag-level annotation: ``<!-- aiperf-run-<server>-endpoint-server
+    # timeout=3600 -->``. Sweeps and multi-phase workflows legitimately run
+    # far longer than a single-point benchmark, and capping them at the shared
+    # default is what keeps those guides untestable.
+    timeout: int | None = None
 
 
 @dataclass
