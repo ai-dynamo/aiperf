@@ -84,7 +84,7 @@ invocation path, the signing name and the streaming operation, and supports
 `--streaming`. See [AWS SageMaker](aws-sagemaker.md).
 
 The plain HTTP transport can also reach a SageMaker endpoint through an explicit
-`--endpoint` path, non-streaming only:
+`--endpoint` path:
 
 ```bash
 aiperf profile \
@@ -98,8 +98,11 @@ aiperf profile \
     --request-count 100
 ```
 
-This route cannot stream: SageMaker frames streaming responses as AWS eventstream
-rather than SSE, which only the SageMaker transport decodes.
+This `/invocations` route is non-streaming. To stream, add `--streaming` and
+change `--endpoint` to `/endpoints/my-endpoint/invocations-response-stream`;
+AIPerf decodes the AWS eventstream response on either transport. Keep the two
+in step by hand: `--streaming` against `/invocations` gets one buffered
+response, so TTFT equals total latency.
 
 ## Figuring Out Your Region and Service Name
 
