@@ -6,6 +6,7 @@ Test runner for executing server setup, health checks, and AIPerf tests.
 
 import logging
 import os
+import re
 import signal
 import subprocess
 import threading
@@ -24,6 +25,24 @@ from data_types import Server
 from utils import get_repo_root
 
 logger = logging.getLogger(__name__)
+
+
+# Matches an explicit --ui / --ui-type the doc already chose. The lookbehind
+# keeps it from firing inside a longer token (``--no-ui-type-x``), and the
+# trailing ``=|\s`` keeps ``--ui-types`` from counting as ``--ui-type``.
+_UI_FLAG_RE = re.compile(r"(?<!\S)--ui(-type)?(=|\s)")
+
+
+def inject_ui_type(command: str, ui_type: str = AIPERF_UI_TYPE) -> str:
+    """Force the non-interactive UI unless the doc already selected one.
+
+    cyclopts rejects a repeated parameter with "Parameter --ui-type specified
+    multiple times" and exits 1, so injecting unconditionally would make every
+    guide that teaches ``--ui-type``/``--ui`` impossible to tag for docs-e2e.
+    """
+    if _UI_FLAG_RE.search(command):
+        return command
+    return command.replace("aiperf profile", f"aiperf profile --ui-type {ui_type}")
 
 
 class _ProcessGroupKillGuard:
@@ -376,10 +395,7 @@ class EndToEndTestRunner:
             )
 
             # Execute aiperf command in the container with verbose output
-            # Add --ui-type simple to all aiperf commands
-            aiperf_command_with_ui = aiperf_cmd.command.replace(
-                "aiperf profile", f"aiperf profile --ui-type {AIPERF_UI_TYPE}"
-            )
+            aiperf_command_with_ui = inject_ui_type(aiperf_cmd.command)
             exec_command = f"docker exec {self.aiperf_container_id} bash -c '{aiperf_command_with_ui}'"
 
             logger.info(
