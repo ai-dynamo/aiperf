@@ -26,6 +26,7 @@ from aiperf.common.messages import (
     DatasetConfigurationFailedNotification,
     DatasetConfiguredNotification,
     HeartbeatMessage,
+    ServerMetricsStatusMessage,
     ServerMetricsWarmupBoundaryReadyMessage,
 )
 from aiperf.common.models import DatasetMetadata
@@ -115,6 +116,22 @@ class TimingManager(BaseComponentService):
         """
         if message.service_type == ServiceType.WORKER:
             self.sticky_router.note_worker_heartbeat(message.service_id)
+
+    @on_message(MessageType.SERVER_METRICS_STATUS)
+    async def _on_server_metrics_status(
+        self, message: ServerMetricsStatusMessage
+    ) -> None:
+        """Track whether collection is actually running for the warmup barrier.
+
+        Configure publishes this before phases start. When no Prometheus
+        endpoints are reachable the manager shuts down at PROFILE_START and
+        never publishes SERVER_METRICS_WARMUP_BOUNDARY_READY, so PhaseRunner
+        must skip the flush/ack wait unless status reports active collectors.
+        """
+        self.phase_publisher.update_server_metrics_runtime_status(
+            enabled=message.enabled,
+            endpoints_reachable=message.endpoints_reachable,
+        )
 
     @on_message(MessageType.SERVER_METRICS_WARMUP_BOUNDARY_READY)
     async def _on_server_metrics_warmup_boundary_ready(

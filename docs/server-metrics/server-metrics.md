@@ -308,12 +308,27 @@ WARNING  Disabling server metrics collection for http://127.0.0.1:60000/metrics:
 
 **To suppress the warning entirely**, pass `--no-server-metrics` — collection is skipped, no probe is attempted, no warning is logged.
 
+## Warmup / profiling phase boundary
+
+When server metrics collection is **runtime-active** (configure found at least one reachable Prometheus endpoint), AIPerf coordinates the warmup-to-profiling transition so late histogram observations cannot leak into profiling deltas:
+
+1. Both `ServerMetricsManager` and `PhaseRunner` wait for `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` against the same absolute deadline.
+2. The manager suspends periodic scrapes, drains in-flight warmup-tagged scrapes, takes a final warmup scrape, then publishes `SERVER_METRICS_WARMUP_BOUNDARY_READY`.
+3. The runner does not return from warmup (so profiling credits cannot start) until that acknowledgement arrives.
+
+If the acknowledgement is missing while collection is active, the runner aborts with a `TimeoutError` before profiling credits start. That fail-closed contract protects attribution when collectors are live but slow.
+
+When collection is **runtime-inactive** (no reachable `/metrics`, or `--no-server-metrics`), the flush and ack waits are skipped entirely. The benchmark proceeds without server-metrics exports, matching the behaviour when server metrics were never enabled.
+
+The ack wait budget defaults to `COLLECTION_FLUSH_PERIOD + SCRAPE_TIMEOUT * (2 * N) + 5`, where `N` is the reachable collector count from `ServerMetricsStatusMessage`. Set `AIPERF_SERVER_METRICS_WARMUP_BOUNDARY_TIMEOUT` to override that derived budget.
+
 ## Configuration
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `AIPERF_SERVER_METRICS_COLLECTION_INTERVAL` | 0.333s | Collection frequency (333ms, ~3Hz) |
-| `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` | 2.0s | Wait time for metrics to settle at warmup/profiling boundaries; warmup also drains in-flight scrapes and requires a boundary acknowledgement before profiling starts (missing ack aborts the run) |
+| `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` | 2.0s | Wait time for metrics to settle at warmup/profiling boundaries when collection is active |
+| `AIPERF_SERVER_METRICS_WARMUP_BOUNDARY_TIMEOUT` | derived | Optional override for the warmup boundary ack wait; unset/0 uses flush + scrape budget from runtime collector count |
 | `AIPERF_SERVER_METRICS_PROFILE_COMPLETE_RELAY_TIMEOUT` | 60s | Maximum wait for the manager-owned final scrape and artifact flush command |
 | `AIPERF_SERVER_METRICS_REACHABILITY_TIMEOUT` | 10s | Timeout for endpoint reachability tests |
 | `AIPERF_SERVER_METRICS_EXPORT_BATCH_SIZE` | 100 | Batch size for JSONL writer |

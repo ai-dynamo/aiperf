@@ -699,14 +699,9 @@ class PhaseRunner(TaskManagerMixin):
 
         # Seamless mode: phase flows into next without waiting for returns.
         # Progress task continues in background until phase complete.
-        # Warmup never detaches: the server-metrics flush/drain barrier must
-        # finish before profiling credits start, even when the next phase is
-        # marked seamless.
-        is_warmup = (
-            self._config.phase == CreditPhase.WARMUP
-            or self._config.phase_kind == "warmup"
-        )
-        if seamless_to_next and not is_final_phase and not is_warmup:
+        # Warmup never detaches: the server-metrics barrier must finish before
+        # profiling credits start, even when the next phase is marked seamless.
+        if seamless_to_next and not is_final_phase and not self._is_warmup:
             self._return_wait_task = self.execute_async(
                 self._wait_for_returning_complete(strategy, phase_id=phase_id)
             )
@@ -1256,6 +1251,25 @@ class PhaseRunner(TaskManagerMixin):
             return
         await self._wait_for_server_metrics_warmup_boundary_ready()
 
+    @property
+    def _is_warmup(self) -> bool:
+        """True when this runner owns a warmup phase."""
+        return (
+            self._config.phase == CreditPhase.WARMUP
+            or self._config.phase_kind == "warmup"
+        )
+
+    def _server_metrics_collection_active(self) -> bool:
+        """True when ServerMetricsManager reported reachable collectors.
+
+        Gates the warmup flush/ack barrier on the runtime
+        ``ServerMetricsStatusMessage`` rather than static
+        ``cfg.server_metrics.enabled``. When collection is inactive (no
+        reachable /metrics, or ``--no-server-metrics``), skip the barrier so
+        the run matches main's exit-0 behaviour.
+        """
+        return bool(self._phase_publisher.server_metrics_runtime_active)
+
     async def _wait_for_server_metrics_warmup_flush(self) -> None:
         """Hold warmup completion until server metrics can settle.
 
@@ -1264,14 +1278,10 @@ class PhaseRunner(TaskManagerMixin):
         ``CREDIT_PHASE_COMPLETE``) keeps the next phase from issuing profiling
         credits during that window. The runner then waits for the manager's
         drain acknowledgment before ``run()`` returns.
+
+        Skipped when server metrics collection is runtime-inactive.
         """
-        is_warmup = (
-            self._config.phase == CreditPhase.WARMUP
-            or self._config.phase_kind == "warmup"
-        )
-        if not is_warmup:
-            return
-        if self._run is None or not self._run.cfg.server_metrics.enabled:
+        if not self._is_warmup or not self._server_metrics_collection_active():
             return
         flush_period = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
         if flush_period <= 0:
@@ -1291,23 +1301,20 @@ class PhaseRunner(TaskManagerMixin):
         """Bound the runner wait for the manager's warmup boundary work.
 
         After ``CREDIT_PHASE_COMPLETE``, ``ServerMetricsManager`` drains
-        in-flight scrapes (concurrent, one scrape-timeout bound) then takes a
-        serial final scrape per collector. The previous
-        ``flush + SCRAPE_TIMEOUT + 5`` budget covered only one scrape and let
-        multi-collector boundaries expire while still tagged warmup, so
-        profiling credits started and observations were misattributed.
+        in-flight scrapes then takes a serial final scrape per collector.
+        Prefer ``AIPERF_SERVER_METRICS_WARMUP_BOUNDARY_TIMEOUT`` when set;
+        otherwise derive from the runtime reachable collector count
+        (``flush + SCRAPE_TIMEOUT * (2 * N) + 5``).
         """
-        urls: list[str] = []
-        if self._run is not None:
-            urls = list(self._run.cfg.server_metrics.urls or [])
-        # Discovery can add endpoints beyond configured urls; floor at 2 so a
-        # dual-collector local setup (Jan's ack-timeout repro) is covered when
-        # only one URL is configured explicitly.
-        #
-        # Budget is 2 * N scrape-timeouts: one in-flight periodic task may scrape
-        # every collector serially during drain, then the boundary takes another
-        # serial final scrape per collector.
-        collector_budget = max(len(urls), 2)
+        override = Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT
+        if override is not None and override > 0:
+            return float(override)
+        collector_count = int(
+            self._phase_publisher.server_metrics_collector_count or 0
+        )
+        # Active collection implies at least one collector; floor at 1 so a
+        # missing count cannot collapse the budget to zero.
+        collector_budget = max(collector_count, 1)
         return (
             Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
             + Environment.SERVER_METRICS.SCRAPE_TIMEOUT * (2 * collector_budget)
@@ -1322,18 +1329,12 @@ class PhaseRunner(TaskManagerMixin):
         orchestrator would otherwise start profiling. Waiting for
         ``SERVER_METRICS_WARMUP_BOUNDARY_READY`` closes that gap.
 
-        A missing acknowledgement is a failed boundary: raise so ``run()``
-        aborts via the phase-failure lifecycle and profiling credits are never
-        released. Soft-continuing after timeout reintroduces warmup/profiling
-        misattribution.
+        Applies only when collection is runtime-active. A missing
+        acknowledgement in that case is a failed boundary: raise so ``run()``
+        aborts and profiling credits are never released. Soft-continuing after
+        timeout reintroduces warmup/profiling misattribution.
         """
-        is_warmup = (
-            self._config.phase == CreditPhase.WARMUP
-            or self._config.phase_kind == "warmup"
-        )
-        if not is_warmup:
-            return
-        if self._run is None or not self._run.cfg.server_metrics.enabled:
+        if not self._is_warmup or not self._server_metrics_collection_active():
             return
         timeout = self._server_metrics_warmup_boundary_ready_timeout()
         ready = await self._phase_publisher.wait_for_warmup_boundary_ready(timeout)

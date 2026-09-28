@@ -54,11 +54,18 @@ class PhasePublisher:
 
         ``warmup_boundary_ready`` is set by TimingManager when
         ServerMetricsManager publishes the warmup boundary acknowledgment.
+
+        Runtime server-metrics status (``server_metrics_runtime_active`` /
+        ``server_metrics_collector_count``) is updated from
+        ``ServerMetricsStatusMessage`` so PhaseRunner can skip the warmup
+        flush/ack barrier when collection is inactive.
         """
         self._pub_client = pub_client
         self._service_id = service_id
         self._profile_cancel_sender = profile_cancel_sender
         self._warmup_boundary_ready = warmup_boundary_ready
+        self._server_metrics_runtime_active = False
+        self._server_metrics_collector_count = 0
 
     async def publish_phases_configured(self, configs: list[CreditPhaseConfig]) -> None:
         """Publish phases configured event."""
@@ -150,6 +157,34 @@ class PhasePublisher:
         cancel its own orchestrator locally.
         """
         await self._profile_cancel_sender()
+
+    @property
+    def server_metrics_runtime_active(self) -> bool:
+        """True when ServerMetricsManager reported reachable collectors."""
+        return self._server_metrics_runtime_active
+
+    @property
+    def server_metrics_collector_count(self) -> int:
+        """Reachable collector count from the latest status message."""
+        return self._server_metrics_collector_count
+
+    def update_server_metrics_runtime_status(
+        self,
+        *,
+        enabled: bool,
+        endpoints_reachable: list[str] | None = None,
+    ) -> None:
+        """Record runtime collection status from ServerMetricsStatusMessage.
+
+        The warmup flush/ack barrier is active only when ``enabled`` is True and
+        at least one Prometheus endpoint is reachable. Missing or disabled
+        status defaults to inactive so PhaseRunner does not wait for an ack
+        that no living manager will publish.
+        """
+        reachable = list(endpoints_reachable or [])
+        active = bool(enabled and reachable)
+        self._server_metrics_runtime_active = active
+        self._server_metrics_collector_count = len(reachable) if active else 0
 
     def clear_warmup_boundary_ready(self) -> None:
         """Reset before publishing CREDIT_PHASE_COMPLETE for a warmup phase."""

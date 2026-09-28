@@ -14,6 +14,7 @@ from aiperf.common.exceptions import InvalidStateError
 from aiperf.common.messages import (
     BaseServiceErrorMessage,
     DatasetConfiguredNotification,
+    ServerMetricsStatusMessage,
 )
 from aiperf.common.models import DatasetMetadata, MemoryMapClientMetadata
 from aiperf.config.flags.cli_config import CLIConfig
@@ -418,3 +419,36 @@ class TestTimingManagerWorkerFloor:
         manager._phase_orchestrator.cancel.assert_not_awaited()
         manager._publish_phase_failure_and_wait.assert_not_awaited()
         manager._kill.assert_not_awaited()
+
+
+class TestTimingManagerServerMetricsStatus:
+    async def test_status_message_updates_phase_publisher_runtime_flags(
+        self, create_manager, cli_config
+    ) -> None:
+        mgr = create_manager(cli_config)
+        assert mgr.phase_publisher.server_metrics_runtime_active is False
+        assert mgr.phase_publisher.server_metrics_collector_count == 0
+
+        await mgr._on_server_metrics_status(
+            ServerMetricsStatusMessage(
+                service_id="server-metrics",
+                enabled=True,
+                endpoints_configured=["http://localhost:8000/metrics"],
+                endpoints_reachable=["http://localhost:8000/metrics"],
+            )
+        )
+        assert mgr.phase_publisher.server_metrics_runtime_active is True
+        assert mgr.phase_publisher.server_metrics_collector_count == 1
+
+        await mgr._on_server_metrics_status(
+            ServerMetricsStatusMessage(
+                service_id="server-metrics",
+                enabled=False,
+                reason="no Prometheus endpoints reachable",
+                endpoints_configured=["http://localhost:8000/metrics"],
+                endpoints_reachable=[],
+            )
+        )
+        assert mgr.phase_publisher.server_metrics_runtime_active is False
+        assert mgr.phase_publisher.server_metrics_collector_count == 0
+

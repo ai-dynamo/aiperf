@@ -175,6 +175,9 @@ def pub() -> MagicMock:
     m.publish_credits_complete = AsyncMock()
     m.clear_warmup_boundary_ready = MagicMock()
     m.wait_for_warmup_boundary_ready = AsyncMock(return_value=True)
+    # Default inactive: barrier requires a positive runtime-active signal.
+    m.server_metrics_runtime_active = False
+    m.server_metrics_collector_count = 0
     return m
 
 
@@ -1472,6 +1475,8 @@ class TestWarmupServerMetricsFlushBarrier:
             )
         )
         run.cfg.server_metrics.enabled = True
+        pub.server_metrics_runtime_active = True
+        pub.server_metrics_collector_count = 1
 
         runner = make_runner(
             cfg(phase=CreditPhase.WARMUP),
@@ -1580,6 +1585,8 @@ class TestWarmupServerMetricsFlushBarrier:
             )
         )
         run.cfg.server_metrics.enabled = True
+        pub.server_metrics_runtime_active = True
+        pub.server_metrics_collector_count = 1
         runner = make_runner(
             cfg(phase=CreditPhase.WARMUP),
             conv_src,
@@ -1624,10 +1631,8 @@ class TestWarmupServerMetricsFlushBarrier:
             )
         )
         run.cfg.server_metrics.enabled = True
-        run.cfg.server_metrics.urls = [
-            "http://localhost:8000/metrics",
-            "http://localhost:8000/second/metrics",
-        ]
+        pub.server_metrics_runtime_active = True
+        pub.server_metrics_collector_count = 2
         runner = make_runner(
             cfg(phase=CreditPhase.WARMUP),
             conv_src,
@@ -1646,18 +1651,21 @@ class TestWarmupServerMetricsFlushBarrier:
 
         original_flush = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
         original_scrape = Environment.SERVER_METRICS.SCRAPE_TIMEOUT
+        original_override = Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT
         Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = 0.2
         Environment.SERVER_METRICS.SCRAPE_TIMEOUT = 8.0
+        Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT = None
         try:
             with pytest.raises(TimeoutError, match="warmup boundary ready"):
                 await runner._wait_for_returning_complete(phase_id="phase-warmup")
-            # flush(0.2) + scrape(8) * (2 * max(2 urls, 2)) + 5 = 37.2
+            # flush(0.2) + scrape(8) * (2 * runtime_count 2) + 5 = 37.2
             pub.wait_for_warmup_boundary_ready.assert_awaited_once_with(37.2)
         finally:
             Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush
             Environment.SERVER_METRICS.SCRAPE_TIMEOUT = original_scrape
+            Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT = original_override
 
-    async def test_warmup_boundary_ready_timeout_floors_collector_budget(
+    async def test_warmup_skips_boundary_wait_when_runtime_inactive(
         self,
         conv_src: MagicMock,
         pub: MagicMock,
@@ -1666,7 +1674,64 @@ class TestWarmupServerMetricsFlushBarrier:
         cancel: MagicMock,
         cb: MagicMock,
     ) -> None:
-        """Configured URL count floors at 2 for dual-collector local setups."""
+        """No reachable collectors: skip flush/ack (restore main exit-0 path)."""
+        events: list[object] = []
+
+        async def record_sleep(delay: float) -> None:
+            events.append(("flush", delay))
+
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                endpoint_type=EndpointType.CHAT,
+                urls=["http://localhost:8000/v1/chat"],
+            )
+        )
+        # Static config still enabled (Frank's repro), but runtime inactive.
+        run.cfg.server_metrics.enabled = True
+        pub.server_metrics_runtime_active = False
+        pub.server_metrics_collector_count = 0
+        runner = make_runner(
+            cfg(phase=CreditPhase.WARMUP),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
+            run=run,
+        )
+        pub.publish_phase_complete = AsyncMock()
+        pub.wait_for_warmup_boundary_ready = AsyncMock(return_value=False)
+        runner._lifecycle.start()
+        runner._lifecycle.mark_sending_complete(timeout_triggered=False)
+        runner._progress.all_credits_returned_event.set()
+
+        original_flush = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
+        Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = 1.25
+        try:
+            with patch(
+                "aiperf.timing.phase.runner.asyncio.sleep",
+                side_effect=record_sleep,
+            ):
+                await runner._wait_for_returning_complete(phase_id="phase-warmup")
+        finally:
+            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush
+
+        assert events == []
+        pub.wait_for_warmup_boundary_ready.assert_not_awaited()
+        pub.publish_phase_complete.assert_awaited_once()
+
+    async def test_warmup_boundary_timeout_uses_runtime_collector_count(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """Budget uses reachable collector count, not cfg.server_metrics.urls."""
         run = make_run_from_cli(
             CLIConfig(
                 model_names=["test-model"],
@@ -1675,7 +1740,9 @@ class TestWarmupServerMetricsFlushBarrier:
             )
         )
         run.cfg.server_metrics.enabled = True
-        run.cfg.server_metrics.urls = ["http://localhost:8000/second/metrics"]
+        run.cfg.server_metrics.urls = []  # common path: endpoints from endpoint.urls
+        pub.server_metrics_runtime_active = True
+        pub.server_metrics_collector_count = 3
         runner = make_runner(
             cfg(phase=CreditPhase.WARMUP),
             conv_src,
@@ -1688,13 +1755,54 @@ class TestWarmupServerMetricsFlushBarrier:
         )
         original_flush = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
         original_scrape = Environment.SERVER_METRICS.SCRAPE_TIMEOUT
+        original_override = Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT
         Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = 0.2
         Environment.SERVER_METRICS.SCRAPE_TIMEOUT = 8.0
+        Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT = None
         try:
-            assert runner._server_metrics_warmup_boundary_ready_timeout() == 37.2
+            # flush(0.2) + scrape(8) * (2 * 3) + 5 = 53.2
+            assert runner._server_metrics_warmup_boundary_ready_timeout() == 53.2
         finally:
             Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush
             Environment.SERVER_METRICS.SCRAPE_TIMEOUT = original_scrape
+            Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT = original_override
+
+    async def test_warmup_boundary_timeout_env_override(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """AIPERF_SERVER_METRICS_WARMUP_BOUNDARY_TIMEOUT replaces the derived budget."""
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                endpoint_type=EndpointType.CHAT,
+                urls=["http://localhost:8000/v1/chat"],
+            )
+        )
+        run.cfg.server_metrics.enabled = True
+        pub.server_metrics_runtime_active = True
+        pub.server_metrics_collector_count = 10
+        runner = make_runner(
+            cfg(phase=CreditPhase.WARMUP),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
+            run=run,
+        )
+        original_override = Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT
+        Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT = 12.5
+        try:
+            assert runner._server_metrics_warmup_boundary_ready_timeout() == 12.5
+        finally:
+            Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT = original_override
 
     async def test_warmup_to_seamless_profiling_awaits_return_and_flush(
         self,
