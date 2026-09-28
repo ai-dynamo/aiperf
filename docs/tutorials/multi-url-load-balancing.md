@@ -24,6 +24,47 @@ aiperf profile --model llama \
     --request-count 100
 ```
 
+## Try it locally
+
+Two vLLM replicas of the same small model, on adjacent ports. Each is capped at
+45% of the device so both fit alongside each other -- vLLM otherwise reserves
+90% of GPU memory for the first replica and the second fails to start.
+
+<!-- setup-vllm-dual-openai-endpoint-server -->
+```bash
+docker pull vllm/vllm-openai:latest
+docker run -d --gpus all -p 8000:8000 -e HF_TOKEN vllm/vllm-openai:latest \
+  --model Qwen/Qwen3-0.6B \
+  --enforce-eager \
+  --gpu-memory-utilization 0.45 \
+  --host 0.0.0.0 --port 8000
+docker run -d --gpus all -p 8001:8001 -e HF_TOKEN vllm/vllm-openai:latest \
+  --model Qwen/Qwen3-0.6B \
+  --enforce-eager \
+  --gpu-memory-utilization 0.45 \
+  --host 0.0.0.0 --port 8001
+```
+<!-- /setup-vllm-dual-openai-endpoint-server -->
+
+<!-- health-check-vllm-dual-openai-endpoint-server -->
+```bash
+for port in 8000 8001; do
+  timeout 900 bash -c "while [ \"\$(curl -s -o /dev/null -w '%{http_code}' localhost:$port/v1/chat/completions -H 'Content-Type: application/json' -d '{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}')\" != \"200\" ]; do sleep 2; done" \
+    || { echo "vLLM on port $port not ready after 15min"; exit 1; }
+done
+```
+<!-- /health-check-vllm-dual-openai-endpoint-server -->
+
+<!-- aiperf-run-vllm-dual-openai-endpoint-server weight=120 -->
+```bash
+aiperf profile --model Qwen/Qwen3-0.6B \
+    --url http://localhost:8000 \
+    --url http://localhost:8001 \
+    --request-rate 20 \
+    --request-count 100
+```
+<!-- /aiperf-run-vllm-dual-openai-endpoint-server -->
+
 **Sample Output (Successful Run):**
 ```text
 INFO     Starting AIPerf System
