@@ -10,6 +10,8 @@ silently ignored flags) instead of failing fast at startup.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from pytest import param
 
@@ -364,3 +366,52 @@ def test_validator_derives_the_scope_through_the_signer_s_own_lookup(
 
     # Derived, never echoed back as something the user typed.
     assert config.aws_service is None
+
+
+def _endpoint(**overrides) -> EndpointConfig:
+    data: dict = {"type": EndpointType.CHAT, "urls": ["https://x.example.com"]}
+    data.update(overrides)
+    return EndpointConfig.model_validate(data)
+
+
+_SIGV4 = {"auth_type": "sigv4", "aws_region": "us-east-1", "aws_service": "execute-api"}
+
+
+class TestApiKeyIgnoredUnderSigningWarns:
+    """A signer replaces Bearer (and Anthropic ``x-api-key``) auth, so the key
+    is dropped from every request. Rejecting the combination would stop users
+    who keep a key in a shared config from enabling signing (raised on #771),
+    so this warns instead of failing."""
+
+    def test_api_key_with_auth_type_warns_naming_both_flags(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="aiperf.config.endpoint"):
+            cfg = _endpoint(api_key="sk-test", **_SIGV4)
+
+        assert "--api-key is ignored when --auth-type sigv4 is set" in caplog.text
+        assert cfg.api_key == "sk-test"
+
+    def test_the_warning_never_prints_the_key(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="aiperf.config.endpoint"):
+            _endpoint(api_key="sk-do-not-print", **_SIGV4)
+
+        assert "--api-key is ignored" in caplog.text
+        assert "sk-do-not-print" not in caplog.text
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            param({"api_key": "sk-test"}, id="api-key-alone"),
+            param(_SIGV4, id="auth-type-alone"),
+        ],
+    )  # fmt: skip
+    def test_either_setting_alone_does_not_warn(
+        self, overrides: dict, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING, logger="aiperf.config.endpoint"):
+            _endpoint(**overrides)
+
+        assert "--api-key is ignored" not in caplog.text
