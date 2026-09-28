@@ -249,3 +249,56 @@ class TestReadinessProbeIsRejected:
         """The probe is off by default, so the one-flag quick start must not trip
         this."""
         assert _endpoint().wait_for_model_timeout == 0
+
+
+_INVOCATION_URL = (
+    "https://runtime.sagemaker.us-west-2.amazonaws.com/endpoints/e/invocations"
+)
+
+
+class TestRoutingOptionsRequireTheSageMakerTransport:
+    """Only the SageMaker transport reads these, so under any other transport a
+    benchmark would run against the endpoint's default model, component or
+    traffic split while its config claims otherwise."""
+
+    @pytest.mark.parametrize(
+        "field,flag",
+        [
+            param("target_model", "--sagemaker-target-model", id="target-model"),
+            param("inference_component_name", "--sagemaker-inference-component-name", id="component"),
+            param("target_variant", "--sagemaker-target-variant", id="variant"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.parametrize("transport", [None, "http"])
+    def test_a_routing_option_without_the_sagemaker_transport_names_the_flag(
+        self, field: str, flag: str, transport: str | None
+    ) -> None:
+        with pytest.raises(ValidationError, match=flag):
+            EndpointConfig.model_validate(
+                {
+                    "type": "chat",
+                    "urls": [_INVOCATION_URL],
+                    "transport": transport,
+                    "sagemaker": {field: "blue"},
+                }
+            )
+
+    def test_routing_options_are_accepted_with_an_explicit_sagemaker_transport(
+        self,
+    ) -> None:
+        """``--transport sagemaker`` with an explicit ``--endpoint`` path needs no
+        endpoint name, and still sends the routing headers."""
+        cfg = EndpointConfig.model_validate(
+            {
+                "type": "chat",
+                "transport": "sagemaker",
+                "aws_region": "us-west-2",
+                "urls": ["https://runtime.sagemaker.us-west-2.amazonaws.com"],
+                "path": "/endpoints/e/invocations",
+                "sagemaker": {"target_variant": "blue"},
+            }
+        )
+        assert cfg.sagemaker.target_variant == "blue"
+
+    def test_routing_options_are_accepted_with_an_endpoint_name(self) -> None:
+        assert _endpoint(sagemaker={"endpoint_name": "my-ep", "target_variant": "blue"})

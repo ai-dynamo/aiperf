@@ -119,6 +119,37 @@ def _missing_endpoint_name_error() -> ValueError:
     )
 
 
+_SAGEMAKER_ROUTING_FLAGS = {
+    "target_model": "--sagemaker-target-model",
+    "inference_component_name": "--sagemaker-inference-component-name",
+    "target_variant": "--sagemaker-target-variant",
+}
+
+
+def _reject_orphaned_sagemaker_routing(
+    sagemaker: SageMakerConfig, transport: TransportType | None
+) -> None:
+    """Refuse SageMaker routing options that no transport will send.
+
+    Only the SageMaker transport reads them, so under any other transport the
+    benchmark would hit the endpoint's default model, component or traffic
+    split while the exported config says otherwise.
+    """
+    flags = [
+        flag
+        for field, flag in _SAGEMAKER_ROUTING_FLAGS.items()
+        if getattr(sagemaker, field)
+    ]
+    if flags:
+        selected = f"--transport {transport}" if transport else "the http transport"
+        raise ValueError(
+            f"SageMaker routing options require the SageMaker transport, but "
+            f"{selected} is selected and would silently ignore "
+            f"{', '.join(flags)}. Set --sagemaker-endpoint-name (or --transport "
+            f"sagemaker), or drop those flags."
+        )
+
+
 def _apply_sagemaker_before_validation(data: dict) -> None:
     """Resolve what ``--sagemaker-endpoint-name`` implies about transport and URL.
 
@@ -676,6 +707,7 @@ class EndpointConfig(BaseConfig):
             self.transport = TransportType.SAGEMAKER
 
         if self.transport != TransportType.SAGEMAKER:
+            _reject_orphaned_sagemaker_routing(self.sagemaker, self.transport)
             return self
 
         # An explicit --endpoint path is the exception: get_url() uses it verbatim

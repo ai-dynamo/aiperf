@@ -146,6 +146,11 @@ AIPerf omits it when `--streaming` is set.
 request land on one variant, so you are benchmarking that variant rather than
 the blend.
 
+All three options need the SageMaker transport, which
+`--sagemaker-endpoint-name` or `--transport sagemaker` selects. AIPerf rejects
+them under any other transport, which would otherwise ignore them without a
+word and benchmark the endpoint's default routing.
+
 ## VPC / PrivateLink and Custom Domains
 
 An explicit `--url` always wins over the derived hostname, and
