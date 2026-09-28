@@ -24,6 +24,11 @@ from aiperf_mock_server.eventstream import (
     encode_payload_part,
 )
 
+# botocore ships only in the optional aiperf[aws] extra, and CI installs
+# "--extra test --no-dev" on Windows-on-ARM. Skip the module rather than
+# failing collection there; these tests decode real eventstream frames.
+pytest.importorskip("botocore")
+
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import AwsEventStreamMessage, TextResponse
 from aiperf.common.models.record_models import RequestInfo

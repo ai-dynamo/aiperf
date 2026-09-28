@@ -593,9 +593,33 @@ def _decorate_endpoint_node(node: dict[str, Any]) -> None:
     # that and then trip the type-vs-template rule attached just below.
     if isinstance(props.get("type"), dict):
         props["type"].pop("default", None)
+
+    # A SageMaker endpoint legitimately omits `urls`: the runtime host is derived
+    # from `awsRegion` by the before-validator in config/endpoint.py. Keeping
+    # `urls` structurally required would have the apiserver reject that resource
+    # before any Python validator ran, making the derivation unreachable from
+    # Kubernetes. Relaxed here and re-imposed as the CEL OR-rule below, the same
+    # shape used for the models/datasets/phases shorthands.
+    endpoint_required = node.get("required")
+    if isinstance(endpoint_required, list) and "urls" in endpoint_required:
+        node["required"] = [r for r in endpoint_required if r != "urls"]
+        if not node["required"]:
+            del node["required"]
+
     _add_validation_rules(
         node,
         (
+            {
+                "rule": (
+                    "has(self.urls) || "
+                    "(has(self.sagemaker) && has(self.sagemaker.endpointName))"
+                ),
+                "message": (
+                    "endpoint.urls is required unless "
+                    "endpoint.sagemaker.endpointName is set (the SageMaker "
+                    "runtime URL is derived from endpoint.awsRegion)"
+                ),
+            },
             # Tier 1B — type=template requires template.
             {
                 "rule": (

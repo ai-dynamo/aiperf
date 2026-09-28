@@ -13,6 +13,12 @@ a structurally-similar look-alike.
 from collections.abc import AsyncIterator
 
 import pytest
+
+# botocore ships only in the optional aiperf[aws] extra, and CI installs
+# "--extra test --no-dev" on Windows-on-ARM. Skip the module rather than
+# failing collection there; these tests decode real eventstream frames.
+pytest.importorskip("botocore")
+
 from aiperf.transports.aws.eventstream import AwsEventStreamReader
 from aiperf_mock_server.app import asgi_app
 from aiperf_mock_server.eventstream import EVENTSTREAM_CONTENT_TYPE

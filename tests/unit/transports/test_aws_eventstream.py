@@ -18,6 +18,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+# botocore ships only in the optional aiperf[aws] extra, and CI installs
+# "--extra test --no-dev" on Windows-on-ARM. Skip the module rather than
+# failing collection there; these tests decode real eventstream frames.
+pytest.importorskip("botocore")
+
 from aiperf.transports.aws.eventstream import (
     AwsEventStreamError,
     AwsEventStreamReader,
@@ -293,3 +298,33 @@ class TestAwsEventStreamMessageProtocolConformance:
         assert message.get_json() == {"a": 1}
         assert message.get_text() == '{"a": 1}'
         assert message.get_raw() == b'data: {"a": 1}'
+
+
+class TestRawLineFidelity:
+    """``raw_line`` is documented as the undecoded bytes exactly as received, and
+    ``get_raw()`` feeds raw-record exports. Normalizing it would mean an export
+    could not reproduce what the server actually sent."""
+
+    @pytest.mark.asyncio
+    async def test_surrounding_whitespace_is_preserved_in_raw_line(self) -> None:
+        frame = encode_frame(b'  data: {"a": 1}  \n')
+
+        messages = [m async for m in AwsEventStreamReader(_chunks(frame))]
+
+        assert len(messages) == 1
+        # The decoded view is normalized...
+        assert messages[0].line == '{"a": 1}'
+        # ...while the raw view keeps what arrived.
+        assert messages[0].raw_line == b'  data: {"a": 1}  '
+
+    @pytest.mark.asyncio
+    async def test_trailing_line_without_newline_keeps_its_bytes(self) -> None:
+        """The final flush path builds a message too, and must not normalize
+        differently from the main loop."""
+        frame = encode_frame(b'  {"b": 2}  ')
+
+        messages = [m async for m in AwsEventStreamReader(_chunks(frame))]
+
+        assert len(messages) == 1
+        assert messages[0].line == '{"b": 2}'
+        assert messages[0].raw_line == b'  {"b": 2}  '
