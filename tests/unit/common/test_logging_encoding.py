@@ -1,12 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""The basic log handler must survive a console that cannot encode the message.
-
-Rich renders tables with box-drawing characters. On a cp1252 console, the
-Windows default, writing one raises inside ``StreamHandler.emit`` and logging
-discards the entire record, so the operator loses the line rather than the
-character.
-"""
 
 import io
 import logging
