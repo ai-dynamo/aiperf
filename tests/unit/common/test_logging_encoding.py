@@ -72,12 +72,12 @@ def test_utf8_output_is_left_alone() -> None:
         ("utf-8", False),
         ("UTF8", False),
         ("cp1252", True),
-        ("ascii", True),
         ("not-a-codec", True),
+        (None, True),
     ],
 )
 def test_formatter_choice_follows_the_encoding(
-    encoding: str, substitutes: bool
+    encoding: str | None, substitutes: bool
 ) -> None:
     formatted = _basic_formatter(encoding).format(_record(_TABLE_LIKE))
     assert ("\u2501" in formatted) is not substitutes
