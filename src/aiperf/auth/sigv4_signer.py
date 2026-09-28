@@ -183,10 +183,10 @@ class SigV4RequestSigner(AIPerfLifecycleMixin):
         # on every call - see the class docstring for the two-layer
         # refresh/re-resolve strategy. Offloaded to a thread because the
         # refresh path performs blocking network/subprocess I/O. Static
-        # credentials have no refresh path, and the hop (~56 us) costs about
-        # twice the signing it protects at typical payload sizes, so they are
-        # read inline. Exact type only: a subclass may override the read with
-        # I/O. Checked per call, since re-resolution can swap the type.
+        # credentials have no refresh path, and at typical payload sizes the
+        # hop costs more than the signing it protects, so they are read
+        # inline. Exact type only: a subclass may override the read with I/O.
+        # Checked per call, since re-resolution can swap the type.
         credential_source = self._credentials
         if type(credential_source) is self._Credentials:
             frozen = credential_source.get_frozen_credentials()
