@@ -47,19 +47,30 @@ BO runs in-process via `aiperf profile --search-*`. The orchestrator owns the pl
 
 ## Quick start
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=420 timeout=1800 -->
 ```bash
 aiperf profile \
-    --model my-model \
-    --url http://infer.example.com \
-    --search-space "concurrency:1,1000:int" \
+    --model Qwen/Qwen3-0.6B \
+    --url http://localhost:8000 \
+    --search-space "concurrency:1,16:int" \
     --search-metric output_token_throughput \
     --search-direction maximize \
-    --search-max-iterations 30 \
+    --search-max-iterations 6 \
+    --search-initial-points 3 \
     --search-random-seed 42 \
-    --num-profile-runs 3
+    --request-count 20
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
-This runs 30 search iterations × 3 trials each = 90 benchmarks. `--search-planner=bayesian` is the implicit default. Output:
+This runs 6 search iterations of 20 requests each, which finishes in minutes.
+A production search widens the space and repeats each point for confidence --
+`--search-space "concurrency:1,1000:int" --search-max-iterations 30
+--num-profile-runs 3` is 30 iterations × 3 trials = 90 benchmarks.
+
+Note that `--search-initial-points` must be smaller than
+`--search-max-iterations`, or the Gaussian process never fits and the run is
+rejected at config validation. The default is 5, so short searches have to
+lower it. `--search-planner=bayesian` is the implicit default. Output:
 - `<artifact_dir>/search_iter_NNNN/profile_runs/run_NNNN/` — per-trial artifacts.
 - `<artifact_dir>/search_history.json` — BO trajectory, written incrementally.
 - `<artifact_dir>/aggregate/sweep_aggregate/profile_export_aiperf_sweep.{json,csv}` — same per-combination aggregate the grid path produces. (For sweep-only runs without `--num-profile-runs`, this lands at `<artifact_dir>/sweep_aggregate/` instead; multi-run wrapping nests it under `aggregate/`.)
