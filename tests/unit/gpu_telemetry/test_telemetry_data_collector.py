@@ -158,15 +158,15 @@ class TestHttpCommunication:
         """Test DCGM endpoint reachability check with successful HTTP response."""
         collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
-        with patch("aiohttp.ClientSession.head") as mock_head:
-            # Mock successful HEAD response with Prometheus content-type
+        with patch("aiohttp.ClientSession.get") as mock_get:
+            # Mock successful GET response with Prometheus content-type
             mock_response = AsyncMock()
             mock_response.status = 200
             mock_response.headers = {
                 "Content-Type": "text/plain; version=0.0.4; charset=utf-8"
             }
             mock_response.raise_for_status = AsyncMock()
-            mock_head.return_value.__aenter__.return_value = mock_response
+            mock_get.return_value.__aenter__.return_value = mock_response
 
             # Initialize the collector to set up the session
             await collector.initialize()
@@ -203,20 +203,20 @@ class TestHttpCommunication:
             await collector.stop()
 
     @pytest.mark.asyncio
-    async def test_endpoint_reachability_head_fallback(self):
-        """Test that HEAD request falls back to GET when HEAD returns non-200."""
+    async def test_endpoint_reachability_never_probes_with_head(self):
+        """Reachability must rely on GET alone, never on a HEAD pre-flight.
+
+        Servers are free to reject HEAD, and some answer it with a body that
+        breaks the client parse, so a HEAD probe could report a healthy
+        endpoint as unreachable. See TestReachabilityHeadFallback in
+        tests/unit/common/mixins/test_base_metrics_collector_mixin.py.
+        """
         collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         with (
             patch("aiohttp.ClientSession.head") as mock_head,
             patch("aiohttp.ClientSession.get") as mock_get,
         ):
-            # Mock HEAD returning 405 (Method Not Allowed)
-            mock_head_response = AsyncMock()
-            mock_head_response.status = 405
-            mock_head.return_value.__aenter__.return_value = mock_head_response
-
-            # Mock GET returning 200
             mock_get_response = AsyncMock()
             mock_get_response.status = 200
             mock_get.return_value.__aenter__.return_value = mock_get_response
@@ -225,9 +225,8 @@ class TestHttpCommunication:
             result = await collector.is_url_reachable()
 
             assert result is True
-            # Both HEAD and GET should have been called
-            mock_head.assert_called_once()
             mock_get.assert_called_once()
+            mock_head.assert_not_called()
 
             await collector.stop()
 
@@ -249,7 +248,7 @@ class TestHttpCommunication:
 
             # Create mock session
             mock_session = MagicMock()
-            mock_session.head = MagicMock(return_value=mock_response_cm)
+            mock_session.get = MagicMock(return_value=mock_response_cm)
 
             # Make ClientSession() return an async context manager that yields the mock_session
             mock_context_manager = MagicMock()

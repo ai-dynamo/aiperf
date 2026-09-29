@@ -438,9 +438,11 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
     async def is_url_reachable(self) -> bool:
         """Check if metrics endpoint is accessible before starting collection.
 
-        Tests endpoint reachability using a two-phase approach:
-        1. HEAD request (lightweight, doesn't fetch content)
-        2. GET request fallback if HEAD not supported (some servers disable HEAD)
+        Probes with GET, the same method collection itself uses, so a healthy
+        endpoint can never be judged unreachable by a method it does not have
+        to support. A HEAD pre-flight was tried here previously; it produced
+        false negatives against servers that answer HEAD with a body (see
+        _check_reachability_with_session).
 
         Uses existing session if available (during lifecycle), otherwise creates
         a temporary session for pre-initialization testing. This allows reachability
@@ -475,6 +477,15 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
     ) -> bool:
         """Check reachability using a specific session.
 
+        Uses GET rather than a cheaper HEAD pre-flight. Servers are free to
+        reject HEAD, and some answer it with a body, which RFC 9110 forbids --
+        Triton's /metrics frontend routes every non-GET method through an error
+        path that writes `{"error":"Method Not Allowed"}` to the response
+        buffer. aiohttp >= 3.14 reports those stray bytes as a bad status line,
+        either on the HEAD itself or on whatever request next reuses the
+        keep-alive connection, so a HEAD pre-flight could report a perfectly
+        healthy endpoint as unreachable.
+
         Args:
             session: aiohttp session to use for the check
 
@@ -482,16 +493,10 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             True if endpoint is reachable with HTTP 200
         """
         try:
-            # Try HEAD first for efficiency
-            async with session.head(
-                self._endpoint_url, allow_redirects=False
-            ) as response:
-                if response.status == 200:
-                    return True
-            # Fall back to GET if HEAD is not supported
             async with session.get(self._endpoint_url) as response:
                 return response.status == 200
-        except (TimeoutError, aiohttp.ClientError):
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            self.debug(f"Reachability probe failed for {self._endpoint_url}: {exc!r}")
             return False
 
     @background_task(immediate=True, interval=lambda self: self.collection_interval)
