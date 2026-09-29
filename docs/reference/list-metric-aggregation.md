@@ -17,9 +17,9 @@ To bound memory, AIPerf aggregates list-valued record metrics with a **t-digest 
 | Stat | Source | Accuracy |
 |---|---|---|
 | `count` | running `int` | bit-exact |
-| `sum` | running `float64` | bit-exact (within float round-off across summation orders) |
+| `sum` | running `float64` | agrees with a direct numpy sum to floating-point round-off; the summation order follows the ingest batches |
 | `min`, `max` | running scalars | bit-exact |
-| `avg` | `sum / count` | bit-exact |
+| `avg` | `sum / count` | as `sum` |
 | `std` | Welford's online algorithm (`sqrt(max(0, m2/count))`) | population std; batch `extend` is bit-exact against `np.std`, per-sample `append` agrees to ~1e-14 relative |
 | `p1` … `p99` | t-digest sketch | approximate — see empirical band below |
 
