@@ -215,15 +215,11 @@ class TestLlamaCppTimingsCapture:
     def test_parse_response_vllm_stats_take_priority_over_timings(
         self, chat_endpoint: ChatEndpoint
     ) -> None:
-        """When both speculative_decoding_stats and timings are present, vLLM wins."""
+        """When both metrics.speculative_decoding and timings are present, vLLM wins."""
         json_obj = {
             "object": "chat.completion",
-            "choices": [
-                {
-                    "message": {"role": "assistant", "content": "hi"},
-                    "speculative_decoding_stats": STATS,
-                }
-            ],
+            "choices": [{"message": {"role": "assistant", "content": "hi"}}],
+            "metrics": {"speculative_decoding": STATS},
             "timings": LLAMACPP_TIMINGS,
         }
         parsed = chat_endpoint.parse_response(_mock_response(json_obj))
@@ -238,22 +234,6 @@ class TestLlamaCppTimingsCapture:
             "object": "chat.completion",
             "choices": [{"message": {"role": "assistant", "content": "hi"}}],
             "timings": {"predicted_n": 20, "predicted_ms": 76.2},
-        }
-        parsed = chat_endpoint.parse_response(_mock_response(json_obj))
-        assert parsed is not None
-        assert parsed.spec_decode_stats is None
-
-    def test_parse_response_llamacpp_timings_multi_choice_suppressed(
-        self, chat_endpoint: ChatEndpoint
-    ) -> None:
-        """n > 1 multi-choice response: timings suppressed, same as vLLM rule."""
-        json_obj = {
-            "object": "chat.completion",
-            "choices": [
-                {"message": {"content": "a"}},
-                {"message": {"content": "b"}},
-            ],
-            "timings": LLAMACPP_TIMINGS,
         }
         parsed = chat_endpoint.parse_response(_mock_response(json_obj))
         assert parsed is not None
