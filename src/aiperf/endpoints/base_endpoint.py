@@ -117,21 +117,38 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     def extract_spec_decode_stats(json_obj: dict[str, Any]) -> dict[str, Any] | None:
         """Capture the raw speculative-decoding payload from the response root.
 
-        vLLM nests it at ``metrics.speculative_decoding`` -- on the response body
-        non-streaming, or on the trailing usage chunk (empty ``choices``)
-        streaming -- when the server runs with ``--per-request-spec-decode-metrics``.
+        Checks two locations, engine-specific and mutually exclusive:
+
+        1. ``metrics.speculative_decoding`` -- vLLM's format, on the response
+           body non-streaming, or on the trailing usage chunk (empty
+           ``choices``) streaming -- when the server runs with
+           ``--per-request-spec-decode-metrics``.
+        2. Top-level ``timings`` -- llama.cpp's format, present when the
+           server runs with speculative decoding and ``timings`` contains
+           ``draft_n`` and ``draft_n_accepted``.
+
         Captured verbatim and uninterpreted so a ``SpecDecodeAdapterProtocol``
         owns the engine-specific interpretation downstream; None when absent.
 
-        vLLM populates it only for single-sequence requests (``n == 1``), leaving
-        it ``null`` otherwise, so no client-side ``n > 1`` suppression is needed:
-        a mixed per-request record can never arise here.
+        vLLM populates its field only for single-sequence requests (``n == 1``),
+        leaving it ``null`` otherwise, so no client-side ``n > 1`` suppression is
+        needed: a mixed per-request record can never arise here.
         """
         metrics = json_obj.get("metrics")
-        if not isinstance(metrics, dict):
-            return None
-        stats = metrics.get("speculative_decoding")
-        return stats if isinstance(stats, dict) else None
+        if isinstance(metrics, dict):
+            vllm_stats = metrics.get("speculative_decoding")
+            if isinstance(vllm_stats, dict):
+                return vllm_stats
+
+        timings = json_obj.get("timings")
+        if (
+            isinstance(timings, dict)
+            and "draft_n" in timings
+            and "draft_n_accepted" in timings
+        ):
+            return timings
+
+        return None
 
     def build_assistant_turn(self, record: RequestRecord) -> Turn | None:
         """Build a Turn representing the assistant response for context replay.

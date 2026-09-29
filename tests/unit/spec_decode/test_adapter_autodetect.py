@@ -13,6 +13,7 @@ from aiperf.common.models import ParsedResponse, SpecDecodeAcceptanceRecord
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.records.inference_result_parser import InferenceResultParser
+from tests.unit.spec_decode.test_llamacpp_adapter import TIMINGS_PAYLOAD
 from tests.unit.spec_decode.test_vllm_adapter import SUMMARY_PAYLOAD
 
 
@@ -20,6 +21,25 @@ def test_vllm_adapter_is_registered() -> None:
     """The vllm adapter resolves through the spec_decode_adapter category."""
     adapter = plugins.get_class(PluginType.SPEC_DECODE_ADAPTER, "vllm")
     assert adapter.__name__ == "VLLMSpecDecodeAdapter"
+
+
+def test_llamacpp_adapter_is_registered() -> None:
+    """The llamacpp adapter resolves through the spec_decode_adapter category."""
+    adapter = plugins.get_class(PluginType.SPEC_DECODE_ADAPTER, "llamacpp")
+    assert adapter.__name__ == "LlamaCppSpecDecodeAdapter"
+
+
+def test_extract_returns_llamacpp_record_for_timings_payload() -> None:
+    """Auto-detection resolves the llama.cpp adapter end-to-end via the registry."""
+    responses = [
+        ParsedResponse(perf_ns=1, spec_decode_stats=TIMINGS_PAYLOAD),
+        ParsedResponse(perf_ns=2, usage={"completion_tokens": 20}),
+    ]
+    record = InferenceResultParser._extract_spec_decode_acceptance(responses)
+
+    assert isinstance(record, SpecDecodeAcceptanceRecord)
+    assert record.engine == "llamacpp"
+    assert record.completion_tokens == 20
 
 
 def test_extract_returns_record_when_stats_present() -> None:
