@@ -43,6 +43,7 @@ def test_extract_returns_llamacpp_record_for_timings_payload() -> None:
 
 
 def test_extract_returns_record_when_stats_present() -> None:
+    """Auto-detection resolves the vLLM adapter end-to-end via the registry."""
     responses = [
         ParsedResponse(perf_ns=1, spec_decode_stats=SUMMARY_PAYLOAD),
         ParsedResponse(perf_ns=2, usage={"completion_tokens": 7}),

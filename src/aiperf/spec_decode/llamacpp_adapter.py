@@ -23,6 +23,7 @@ _LLAMACPP_SIGNATURE_KEYS = ("draft_n", "draft_n_accepted")
 
 
 def _is_llamacpp_payload(payload: Any) -> bool:
+    """Return True if ``payload`` carries llama.cpp's ``timings`` signature keys."""
     return isinstance(payload, dict) and all(
         key in payload for key in _LLAMACPP_SIGNATURE_KEYS
     )
@@ -62,12 +63,18 @@ class LlamaCppSpecDecodeAdapter:
 
     @classmethod
     def can_adapt(cls, responses: list[ParsedResponse]) -> bool:
+        """Return True if any response carries a llama.cpp-shaped spec-decode payload."""
         return _is_llamacpp_payload(_find_spec_decode_payload(responses))
 
     @classmethod
     def adapt(
         cls, responses: list[ParsedResponse]
     ) -> SpecDecodeAcceptanceRecord | None:
+        """Build a ``SpecDecodeAcceptanceRecord`` from llama.cpp ``timings`` counters.
+
+        Returns None when no response carries a llama.cpp-shaped payload, or
+        when the payload's counters are malformed (logged as a warning).
+        """
         payload = _find_spec_decode_payload(responses)
         if payload is None:
             return None

@@ -74,10 +74,12 @@ def _response(
     spec_decode_stats: dict[str, Any] | None = None,
     usage: dict[str, Any] | None = None,
 ) -> ParsedResponse:
+    """Build a minimal ``ParsedResponse`` for adapter tests."""
     return ParsedResponse(perf_ns=123, usage=usage, spec_decode_stats=spec_decode_stats)
 
 
 def _non_streaming(payload: dict[str, Any]) -> list[ParsedResponse]:
+    """Single-response layout: the payload and usage land on the same response."""
     return [_response(spec_decode_stats=payload, usage={"completion_tokens": 20})]
 
 
@@ -101,6 +103,7 @@ class TestLlamaCppSpecDecodeAdapter:
     def test_adapt_typical_payload_fills_record(
         self, make_responses: Callable[[dict[str, Any]], list[ParsedResponse]]
     ) -> None:
+        """A well-formed timings payload fills all record fields, streaming or not."""
         responses = make_responses(TIMINGS_PAYLOAD)
 
         assert LlamaCppSpecDecodeAdapter.can_adapt(responses) is True
@@ -160,6 +163,7 @@ class TestLlamaCppSpecDecodeAdapter:
         assert record.acceptance_histogram == {10: 2}
 
     def test_adapt_no_usage_leaves_completion_tokens_none(self) -> None:
+        """No response carrying a usage block leaves completion_tokens unset."""
         responses = [_response(spec_decode_stats=TIMINGS_PAYLOAD)]
         record = LlamaCppSpecDecodeAdapter.adapt(responses)
 
@@ -202,6 +206,7 @@ class TestLlamaCppSpecDecodeAdapter:
     def test_can_adapt_rejects_non_llamacpp_shapes(
         self, responses: list[ParsedResponse]
     ) -> None:
+        """Payloads missing draft_n/draft_n_accepted are not claimed or adapted."""
         assert LlamaCppSpecDecodeAdapter.can_adapt(responses) is False
         assert LlamaCppSpecDecodeAdapter.adapt(responses) is None
 
