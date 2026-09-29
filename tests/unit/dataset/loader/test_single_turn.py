@@ -99,7 +99,6 @@ class TestSingleTurn:
             SingleTurn(text="Hello", output_length=-1)
 
     def test_create_with_audio_duration_seconds(self):
-        """Test creating SingleTurn with audio_duration_seconds."""
         data = SingleTurn(
             audio="https://example.com/audio.wav", audio_duration_seconds=30.0
         )
@@ -107,18 +106,15 @@ class TestSingleTurn:
         assert data.audio_duration_seconds == 30.0
 
     def test_create_with_audio_duration_seconds_default_is_none(self):
-        """Test that audio_duration_seconds defaults to None."""
         data = SingleTurn(text="Hello")
 
         assert data.audio_duration_seconds is None
 
     def test_create_with_audio_duration_seconds_negative_raises(self):
-        """Test that negative audio_duration_seconds raises validation error."""
         with pytest.raises(ValueError):
             SingleTurn(text="Hello", audio_duration_seconds=-1.0)
 
     def test_create_with_audio_duration_seconds_zero_allowed(self):
-        """Test that audio_duration_seconds=0 is allowed (ge=0, unlike output_length's gt=0)."""
         data = SingleTurn(text="Hello", audio_duration_seconds=0.0)
 
         assert data.audio_duration_seconds == 0.0
@@ -529,7 +525,6 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
         assert conversations[0].turns[0].max_tokens is None
 
     def test_convert_with_audio_duration_seconds(self, default_cfg):
-        """Test converting data with audio_duration_seconds sets Turn.audio_duration_seconds."""
         loader = SingleTurnDatasetLoader(
             filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
         )
@@ -548,7 +543,6 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
         assert conversations[0].turns[0].audio_duration_seconds == 30.0
 
     def test_convert_without_audio_duration_seconds_is_none(self, default_cfg):
-        """Test converting data without audio_duration_seconds leaves Turn.audio_duration_seconds as None."""
         loader = SingleTurnDatasetLoader(
             filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
         )

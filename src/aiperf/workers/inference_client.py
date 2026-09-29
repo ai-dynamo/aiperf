@@ -252,13 +252,14 @@ class InferenceClient(AIPerfLifecycleMixin):
         by the downcast in ``_enrich_request_record``. Populate them explicitly
         so the record processor (``osl_mismatch`` / ``audio_duration`` /
         ``replay_send_schedule_offset`` metrics) reads them directly off the
-        slim record without the full ``turns`` list on the wire:
-        ``max_tokens`` and ``scheduled_send_ms`` from the dispatch (last) turn,
-        ``audio_duration_seconds`` from the first turn (ASR requests are
-        single-turn; mirrors the pre-hoist ``turns[0]`` read).
+        slim record without the full ``turns`` list on the wire. All three are
+        read from the dispatch (last) turn — the turn whose payload was
+        actually sent to the server (see ``turns[-1]`` in
+        ``_send_request_to_transport``) — so a causal multi-turn session with
+        a distinct ``audio_duration_seconds`` per turn reports the correct
+        duration (and therefore RTFx) for every turn, not just the first.
         """
         last_turn = request_info.turns[-1] if request_info.turns else None
-        first_turn = request_info.turns[0] if request_info.turns else None
         turn_model = last_turn.model if last_turn else None
         record.model_name = turn_model or self.model_endpoint.primary_model_name
         self._enrich_request_record(record, request_info)
@@ -266,7 +267,7 @@ class InferenceClient(AIPerfLifecycleMixin):
         if record.request_info is not None:
             record.request_info.max_tokens = last_turn.max_tokens if last_turn else None
             record.request_info.audio_duration_seconds = (
-                first_turn.audio_duration_seconds if first_turn else None
+                last_turn.audio_duration_seconds if last_turn else None
             )
             record.request_info.scheduled_send_ms = (
                 float(last_turn.timestamp)
