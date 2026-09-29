@@ -468,8 +468,21 @@ Synthesis parameters can be configured via CLI or programmatically.
 
 **Via CLI Options (with `aiperf profile`):**
 
+The input is a mooncake JSONL trace, one request per line, where `hash_ids`
+name the KV blocks each request touches:
+
+<!-- setup-file-vllm-default-openai-endpoint-server path=traces/production.jsonl -->
+```jsonl
+{"timestamp": 0, "input_length": 1200, "output_length": 52, "hash_ids": [0, 1, 2]}
+{"timestamp": 105, "input_length": 1800, "output_length": 26, "hash_ids": [0, 3, 4, 5]}
+{"timestamp": 274, "input_length": 1300, "output_length": 52, "hash_ids": [1, 4, 6]}
+{"timestamp": 388, "input_length": 1100, "output_length": 40, "hash_ids": [0, 1, 7]}
+```
+<!-- /setup-file-vllm-default-openai-endpoint-server -->
+
 Synthesis is applied automatically when running `aiperf profile` with mooncake traces and synthesis parameters:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=60 -->
 ```bash
 aiperf profile \
     --input-file traces/production.jsonl \
@@ -481,6 +494,7 @@ aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Via SynthesisConfig:**
 ```python
