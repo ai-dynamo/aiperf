@@ -19,7 +19,6 @@ Single-run: the callback only fires on exit 0. Multi-run / sweep: the callback f
 
 ## Quick start
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -28,7 +27,6 @@ aiperf profile \
     --request-count 200 \
     --auto-plot
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 After the run, the artifact tree looks like:
 
