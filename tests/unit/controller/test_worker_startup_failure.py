@@ -103,9 +103,6 @@ async def test_a_worker_failing_while_another_can_still_start_is_tolerated(
 async def test_the_last_of_several_workers_failing_cancels_and_reports_all(
     system_controller: SystemController,
 ) -> None:
-    """Workers failing on configuration usually fail together, but their
-    reports arrive one at a time. Only the last one decides, and the earlier
-    ones are not lost -- the panel groups identical errors across services."""
     _local_workers(system_controller, spawned={"worker_a", "worker_b"})
 
     await _report(system_controller, "worker_a")
