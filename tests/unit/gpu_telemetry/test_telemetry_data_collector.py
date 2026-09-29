@@ -204,13 +204,7 @@ class TestHttpCommunication:
 
     @pytest.mark.asyncio
     async def test_endpoint_reachability_never_probes_with_head(self):
-        """Reachability must rely on GET alone, never on a HEAD pre-flight.
-
-        Servers are free to reject HEAD, and some answer it with a body that
-        breaks the client parse, so a HEAD probe could report a healthy
-        endpoint as unreachable. See TestReachabilityHeadFallback in
-        tests/unit/common/mixins/test_base_metrics_collector_mixin.py.
-        """
+        """Reachability must rely on GET alone, never on a HEAD pre-flight."""
         collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         with (

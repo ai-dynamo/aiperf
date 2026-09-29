@@ -264,44 +264,28 @@ class TestFetchRejectsJsonContentType:
         mock_response.text.assert_not_awaited()
 
 
-class MalformedHeadServer:
+class BodyOnHeadServer:
     """A real HTTP server whose HEAD reply illegally carries a body.
 
     RFC 9110 forbids content on a HEAD response. Triton's `/metrics` frontend
-    violates this: every non-GET method hits `RETURN_AND_RESPOND_WITH_ERR`,
-    which writes `{"error":"Method Not Allowed"}` into the output buffer and
-    sends it. Those stray bytes break the client's parse -- aiohttp >= 3.14
-    reports them as a bad status line. Because the connection is keep-alive the
-    damage is timing-dependent: the HEAD itself fails when the body shares the
-    headers' TCP segment, otherwise the next request to reuse the connection
-    fails instead. Both must leave a GET-serving endpoint reachable.
+    violates this: `HTTPMetricsServer::Handle` routes every non-GET method
+    through `RETURN_AND_RESPOND_WITH_ERR`, which writes
+    `{"error":"Method Not Allowed"}` into the response buffer and sends it.
+    aiohttp >= 3.14 reports those stray bytes as a bad status line, which is
+    why probing this endpoint with HEAD wrongly reported it unreachable.
 
     Served over a raw socket because no compliant HTTP framework will emit a
     body on a HEAD reply, which is precisely the behavior under test.
-
-    Args:
-        split_write: send the stray body in a separate write from the headers,
-            making the poison surface on the reused connection rather than on
-            the HEAD itself.
-        ignore_connection_close: keep the connection alive even when the client
-            asked to close it, modelling a maximally uncooperative server.
     """
 
     GET_BODY = b"# HELP up Server is up\n# TYPE up gauge\nup 1\n"
     HEAD_ERROR_BODY = b'{"error":"Method Not Allowed"}'
 
-    def __init__(
-        self,
-        *,
-        split_write: bool = False,
-        ignore_connection_close: bool = False,
-    ) -> None:
-        self.split_write = split_write
-        self.ignore_connection_close = ignore_connection_close
+    def __init__(self) -> None:
         self.methods_seen: list[str] = []
         self._server: asyncio.AbstractServer | None = None
 
-    async def __aenter__(self) -> "MalformedHeadServer":
+    async def __aenter__(self) -> "BodyOnHeadServer":
         self._server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
         return self
 
@@ -323,102 +307,66 @@ class MalformedHeadServer:
                 request_line = await reader.readline()
                 if not request_line:
                     return
-
-                wants_close = False
                 while True:
                     header = await reader.readline()
                     if header in (b"\r\n", b"\n", b""):
                         break
-                    if header.lower().startswith(b"connection:"):
-                        wants_close = b"close" in header.lower()
 
                 method = request_line.split(b" ")[0].decode()
                 self.methods_seen.append(method)
 
                 if method == "HEAD":
-                    await self._reply_to_head(writer)
+                    body = self.HEAD_ERROR_BODY
+                    writer.write(
+                        b"HTTP/1.1 405 Method Not Allowed\r\n"
+                        b"Content-Type: application/json\r\n"
+                        b"Content-Length: "
+                        + str(len(body)).encode()
+                        + b"\r\n\r\n"
+                        + body
+                    )
                 else:
-                    await self._reply_to_get(writer)
-
-                if wants_close and not self.ignore_connection_close:
-                    return
+                    writer.write(
+                        b"HTTP/1.1 200 OK\r\n"
+                        b"Content-Type: text/plain\r\n"
+                        b"Content-Length: "
+                        + str(len(self.GET_BODY)).encode()
+                        + b"\r\n\r\n"
+                        + self.GET_BODY
+                    )
+                await writer.drain()
         except (ConnectionResetError, BrokenPipeError):
             pass
         finally:
             writer.close()
 
-    async def _reply_to_head(self, writer: asyncio.StreamWriter) -> None:
-        """Reply 405 and -- illegally -- include the error body."""
-        body = self.HEAD_ERROR_BODY
-        headers = (
-            b"HTTP/1.1 405 Method Not Allowed\r\n"
-            b"Content-Type: application/json\r\n"
-            b"Content-Length: " + str(len(body)).encode() + b"\r\n\r\n"
-        )
-        if self.split_write:
-            writer.write(headers)
-            await writer.drain()
-            writer.write(body)
-        else:
-            writer.write(headers + body)
-        await writer.drain()
 
-    async def _reply_to_get(self, writer: asyncio.StreamWriter) -> None:
-        writer.write(
-            b"HTTP/1.1 200 OK\r\n"
-            b"Content-Type: text/plain\r\n"
-            b"Content-Length: "
-            + str(len(self.GET_BODY)).encode()
-            + b"\r\n\r\n"
-            + self.GET_BODY
-        )
-        await writer.drain()
+class TestReachabilityAgainstMalformedHeadReplies:
+    """Reachability must hold for a server that mishandles HEAD.
 
-
-class TestReachabilityHeadFallback:
-    """Reachability must fall back to GET whenever the HEAD probe is unusable.
-
-    These drive the real aiohttp client against a real socket server. The
+    Drives the real aiohttp client against a real socket server. The
     pre-existing reachability tests mock `_check_reachability_with_session`
-    outright, so they cannot catch a regression in the fallback itself.
+    outright, so they cannot catch a regression in the probe itself.
     """
 
-    def _collector(self, url: str) -> ConcreteCollector:
-        return ConcreteCollector(
-            endpoint_url=url,
-            collection_interval=1.0,
-            reachability_timeout=5.0,
-        )
-
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "split_write",
-        [
-            param(False, id="poison_surfaces_on_head"),
-            param(True, id="poison_surfaces_on_reused_connection"),
-        ],
-    )  # fmt: skip
-    async def test_body_on_head_reply_still_falls_back_to_get(
-        self, split_write: bool
-    ) -> None:
-        """A body on a HEAD reply must not mark a GET-serving endpoint unreachable."""
-        async with MalformedHeadServer(split_write=split_write) as server:
-            assert await self._collector(server.url).is_url_reachable() is True
-            assert server.methods_seen.count("GET") == 1, (
-                "GET fallback must reach the server after an unusable HEAD probe"
+    async def test_body_on_head_reply_does_not_block_reachability(self) -> None:
+        """Triton's RFC-violating HEAD reply must not hide a GET-serving endpoint."""
+        async with BodyOnHeadServer() as server:
+            collector = ConcreteCollector(
+                endpoint_url=server.url,
+                collection_interval=1.0,
+                reachability_timeout=5.0,
+            )
+
+            assert await collector.is_url_reachable() is True
+            assert server.methods_seen == ["GET"], (
+                "the probe must reach the server with GET and never send HEAD"
             )
 
     @pytest.mark.asyncio
-    async def test_falls_back_when_server_ignores_connection_close(self) -> None:
-        """The GET must not inherit poisoned bytes even if the server keeps the socket open."""
-        async with MalformedHeadServer(
-            split_write=True, ignore_connection_close=True
-        ) as server:
-            assert await self._collector(server.url).is_url_reachable() is True
-
-    @pytest.mark.asyncio
     async def test_unreachable_endpoint_reports_false(self) -> None:
-        """Nothing listening means neither probe succeeds."""
+        """Nothing listening means the probe fails."""
         collector = ConcreteCollector(
             endpoint_url="http://127.0.0.1:1/metrics",
             collection_interval=1.0,

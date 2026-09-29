@@ -438,11 +438,8 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
     async def is_url_reachable(self) -> bool:
         """Check if metrics endpoint is accessible before starting collection.
 
-        Probes with GET, the same method collection itself uses, so a healthy
-        endpoint can never be judged unreachable by a method it does not have
-        to support. A HEAD pre-flight was tried here previously; it produced
-        false negatives against servers that answer HEAD with a body (see
-        _check_reachability_with_session).
+        Probes with GET; see `_check_reachability_with_session` for why a HEAD
+        pre-flight is unsafe here.
 
         Uses existing session if available (during lifecycle), otherwise creates
         a temporary session for pre-initialization testing. This allows reachability
