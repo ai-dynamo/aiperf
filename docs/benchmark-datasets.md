@@ -88,9 +88,10 @@ Provide a finite materialization bound through `--num-conversations`, `--num-dat
 
 Select a source harness and source model independently from the target model served by the endpoint:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=120 -->
 ```bash
 aiperf profile \
-  --model TARGET_MODEL \
+  --model Qwen/Qwen3-0.6B \
   --url http://localhost:8000/v1/chat/completions \
   --endpoint-type chat \
   --public-dataset exgentic_v2 \
@@ -100,6 +101,7 @@ aiperf profile \
   --num-conversations 1 \
   --fixed-schedule
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 `source_model` selects the model that produced the trace; `--model` selects the target model receiving the replay. `benchmark` selects an Exgentic v2 workload. Invalid filters report the available harness/model combinations. The v1 dataset contains 22 combinations across five harnesses and six canonical source models.
 
