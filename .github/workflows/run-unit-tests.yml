@@ -72,7 +72,7 @@ jobs:
         PYTHONIOENCODING: utf-8
       run: |
         uv venv .venv --python ${{ matrix.python-version }}
-        uv pip install -e ".[dev]"
+        uv sync --locked --extra dev --no-dev
         uv pip install -e "tests/aiperf_mock_server[dev]"
         uv run python -c "import aiperf_mock_server"
         uv run python tools/generate_plugin_artifacts.py --enums
