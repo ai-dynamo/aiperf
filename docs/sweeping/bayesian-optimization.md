@@ -45,32 +45,46 @@ Use a grid sweep when:
 
 BO runs in-process via `aiperf profile --search-*`. The orchestrator owns the planner state and drives one benchmark per iteration.
 
+## Running these examples
+
+A search drives many back-to-back benchmarks, so point it at a server you are
+happy to keep busy for a while. Any OpenAI-compatible endpoint works; a small
+local model is enough to exercise the search machinery:
+
+<!-- setup-vllm-longrun-openai-endpoint-server -->
+```bash
+docker pull vllm/vllm-openai:latest
+docker run --gpus all -p 8000:8000 -e HF_TOKEN vllm/vllm-openai:latest \
+  --model Qwen/Qwen3-0.6B \
+  --enforce-eager \
+  --reasoning-parser qwen3 \
+  --host 0.0.0.0 --port 8000
+```
+<!-- /setup-vllm-longrun-openai-endpoint-server -->
+
+<!-- health-check-vllm-longrun-openai-endpoint-server -->
+```bash
+timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
+```
+<!-- /health-check-vllm-longrun-openai-endpoint-server -->
+
 ## Quick start
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server weight=420 timeout=1800 -->
+<!-- aiperf-run-vllm-longrun-openai-endpoint-server weight=6000 timeout=9000 -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --url http://localhost:8000 \
-    --search-space "concurrency:1,16:int" \
+    --search-space "concurrency:1,1000:int" \
     --search-metric output_token_throughput \
     --search-direction maximize \
-    --search-max-iterations 6 \
-    --search-initial-points 3 \
+    --search-max-iterations 30 \
     --search-random-seed 42 \
-    --request-count 20
+    --num-profile-runs 3
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- /aiperf-run-vllm-longrun-openai-endpoint-server -->
 
-This runs 6 search iterations of 20 requests each, which finishes in minutes.
-A production search widens the space and repeats each point for confidence --
-`--search-space "concurrency:1,1000:int" --search-max-iterations 30
---num-profile-runs 3` is 30 iterations × 3 trials = 90 benchmarks.
-
-Note that `--search-initial-points` must be smaller than
-`--search-max-iterations`, or the Gaussian process never fits and the run is
-rejected at config validation. The default is 5, so short searches have to
-lower it. `--search-planner=bayesian` is the implicit default. Output:
+This runs 30 search iterations × 3 trials each = 90 benchmarks. `--search-planner=bayesian` is the implicit default. Output:
 - `<artifact_dir>/search_iter_NNNN/profile_runs/run_NNNN/` — per-trial artifacts.
 - `<artifact_dir>/search_history.json` — BO trajectory, written incrementally.
 - `<artifact_dir>/aggregate/sweep_aggregate/profile_export_aiperf_sweep.{json,csv}` — same per-combination aggregate the grid path produces. (For sweep-only runs without `--num-profile-runs`, this lands at `<artifact_dir>/sweep_aggregate/` instead; multi-run wrapping nests it under `aggregate/`.)

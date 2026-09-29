@@ -21,7 +21,13 @@ sys.path.insert(0, str(HARNESS))
 
 from parser import MarkdownParser  # noqa: E402
 
-WORKFLOW = REPO / ".github/workflows/test-docs-end-to-end.yml"
+# Long-running guides live in their own weekly workflow so they cannot be
+# pulled in by nightly's workflow_call; both files must be scanned or their
+# server reads as unsharded.
+WORKFLOWS = (
+    REPO / ".github/workflows/test-docs-end-to-end.yml",
+    REPO / ".github/workflows/test-docs-long-guides.yml",
+)
 
 
 def _documented_servers() -> set[str]:
@@ -37,9 +43,17 @@ def _documented_servers() -> set[str]:
 
 
 def _matrix_servers() -> set[str]:
-    spec = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
-    jobs = spec["jobs"]["test-docs-end-to-end"]
-    return {shard["server"] for shard in jobs["strategy"]["matrix"]["shard"]}
+    """Every server named by a matrix shard in any docs-e2e workflow."""
+    servers: set[str] = set()
+    for path in WORKFLOWS:
+        spec = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for name, job in spec["jobs"].items():
+            if not name.startswith("test-docs-end-to-end"):
+                continue
+            shards = job.get("strategy", {}).get("matrix", {}).get("shard")
+            if shards:
+                servers.update(shard["server"] for shard in shards)
+    return servers
 
 
 def test_every_documented_server_has_a_shard() -> None:
