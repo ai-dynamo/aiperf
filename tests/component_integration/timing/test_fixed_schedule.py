@@ -772,11 +772,7 @@ class TestFixedScheduleOffsetFiltering:
         assert get_request_count(result) == 1
 
     def test_offset_filtering_empty_result(self, cli: AIPerfCLI, tmp_path: Path):
-        """An offset window that selects no entries fails fast, naming the window.
-
-        This used to "complete with 0 requests" only because configuration
-        failed and the failure was masked as exit 0.
-        """
+        """An offset window that selects no entries fails fast, naming the window."""
         trace_file = tmp_path / "trace.jsonl"
 
         with open(trace_file, "w") as f:

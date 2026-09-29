@@ -894,9 +894,6 @@ class TestMooncakeTraceDatasetLoader:
     def test_load_dataset_offset_window_excluding_everything_is_an_error(
         self, create_jsonl_file, mock_prompt_generator
     ):
-        """An empty dataset used to fail later with an unrelated error ("cannot
-        mmap an empty file", then "conversation_ids cannot be empty"), which a
-        masked exit code turned into a silent 0-request run."""
         filename = create_jsonl_file(
             [
                 f'{{"input_length": 100, "output_length": 50, "timestamp": {t}}}'
