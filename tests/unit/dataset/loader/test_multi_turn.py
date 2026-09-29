@@ -584,6 +584,35 @@ class TestMultiTurnDatasetLoaderConvertToConversations:
         assert conversations[0].turns[0].max_tokens == 50
         assert conversations[0].turns[1].max_tokens == 500
 
+    def test_convert_with_audio_duration_seconds(self, default_cfg):
+        """Test converting multi-turn data with audio_duration_seconds sets Turn.audio_duration_seconds."""
+        data = {
+            "session_1": [
+                MultiTurn(
+                    session_id="session_1",
+                    turns=[
+                        SingleTurn(
+                            audio="https://example.com/first.wav",
+                            audio_duration_seconds=10.0,
+                        ),
+                        SingleTurn(
+                            audio="https://example.com/second.wav",
+                            audio_duration_seconds=25.0,
+                        ),
+                    ],
+                )
+            ]
+        }
+
+        loader = MultiTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].audio_duration_seconds == 10.0
+        assert conversations[0].turns[1].audio_duration_seconds == 25.0
+
     def test_convert_mixed_output_length(self, default_cfg):
         """Test converting data where some turns have output_length and others do not."""
         data = {

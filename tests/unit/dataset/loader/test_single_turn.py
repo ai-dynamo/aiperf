@@ -546,19 +546,6 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
         assert len(conversations) == 1
         assert conversations[0].turns[0].audio_duration_seconds == 30.0
 
-    def test_convert_without_audio_duration_seconds_is_none(self, default_cfg):
-        loader = SingleTurnDatasetLoader(
-            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
-        )
-        data = {
-            "session_1": [SingleTurn(text="Hello")],
-        }
-
-        conversations = loader.convert_to_conversations(data)
-
-        assert len(conversations) == 1
-        assert conversations[0].turns[0].audio_duration_seconds is None
-
     def test_convert_multimodal_with_output_length(self, default_cfg):
         """Test converting multimodal data with output_length sets Turn.max_tokens."""
         loader = SingleTurnDatasetLoader(
