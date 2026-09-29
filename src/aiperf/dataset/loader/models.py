@@ -114,6 +114,13 @@ class SingleTurn(AIPerfBaseModel):
         gt=0,
         description="Maximum number of output tokens to generate for this request. Overrides the global --osl setting when specified.",
     )
+    audio_duration_seconds: float | None = Field(
+        default=None,
+        ge=0,
+        description="Duration of the audio content in seconds, self-reported by the caller. "
+        "Used to compute RTFx (Inverse Real-Time Factor) for ASR benchmarks when audio "
+        "duration cannot be derived automatically (e.g. custom/concatenated audio files).",
+    )
     extra: dict[str, Any] | None = Field(
         default=None,
         description="Per-turn extra fields shallow-merged into the request body at dispatch time. Keys override formatter defaults on collision.",
