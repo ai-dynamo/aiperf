@@ -554,10 +554,6 @@ spec:
                         description: When enabled, start/stop the server profiler around each profiling phase. Accepts false
                           | true | {timeout_seconds?, start_path?, stop_path?}.
                     x-kubernetes-validations:
-                    - rule: has(self.urls) || (has(self.sagemaker) && has(self.sagemaker.endpointName) && size(self.sagemaker.endpointName)
-                        > 0)
-                      message: endpoint.urls is required unless endpoint.sagemaker.endpointName is set (the SageMaker runtime
-                        URL is derived from endpoint.awsRegion)
                     - rule: '!has(self.sagemaker) || !has(self.sagemaker.endpointName) || size(self.sagemaker.endpointName)
                         == 0 || has(self.awsRegion)'
                       message: endpoint.awsRegion is required when endpoint.sagemaker.endpointName is set

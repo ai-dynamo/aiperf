@@ -598,8 +598,12 @@ def _decorate_endpoint_node(node: dict[str, Any]) -> None:
     # from `awsRegion` by the before-validator in config/endpoint.py. Keeping
     # `urls` structurally required would have the apiserver reject that resource
     # before any Python validator ran, making the derivation unreachable from
-    # Kubernetes. Relaxed here and re-imposed as the CEL OR-rule below, the same
-    # shape used for the models/datasets/phases shorthands.
+    # Kubernetes. The "urls or an endpoint name" requirement cannot move into CEL:
+    # `urls` is a typeless preserve-unknown field (it also accepts a single
+    # string), CEL cannot see it, and a rule selecting it makes the apiserver
+    # reject the whole CRD. Like the model/dataset shorthand requirement in
+    # _decorate_aiperf_config_node, EndpointConfig enforces it and the operator
+    # reports it as status.phase=Failed.
     endpoint_required = node.get("required")
     if isinstance(endpoint_required, list) and "urls" in endpoint_required:
         node["required"] = [r for r in endpoint_required if r != "urls"]
@@ -610,24 +614,12 @@ def _decorate_endpoint_node(node: dict[str, Any]) -> None:
         node,
         (
             {
-                # size() as well as has(): EndpointConfig treats an empty
-                # name as unset, but has() is true for `endpointName: ""`.
-                "rule": (
-                    "has(self.urls) || "
-                    "(has(self.sagemaker) && has(self.sagemaker.endpointName) "
-                    "&& size(self.sagemaker.endpointName) > 0)"
-                ),
-                "message": (
-                    "endpoint.urls is required unless "
-                    "endpoint.sagemaker.endpointName is set (the SageMaker "
-                    "runtime URL is derived from endpoint.awsRegion)"
-                ),
-            },
-            {
                 # The derived URL and the SigV4 credential scope both come from
                 # the region, so an endpoint name without one is rejected by
                 # EndpointConfig. Mirrored here so `kubectl apply` reports it
                 # instead of the resource being admitted and the job failing.
+                # size() as well as has(): EndpointConfig treats an empty name
+                # as unset, but has() is true for `endpointName: ""`.
                 "rule": (
                     "!has(self.sagemaker) || "
                     "!has(self.sagemaker.endpointName) || "

@@ -32,8 +32,10 @@ values, so native schema typing is part of the lifecycle safety boundary.
 
 ## Shorthand acceptance
 
-The whole structural `required` chain is `spec: [benchmark]`,
-`spec.benchmark: [endpoint]`, `endpoint: [urls]`, and `spec.benchmark` carries
+The whole structural `required` chain is `spec: [benchmark]` and
+`spec.benchmark: [endpoint]`; `endpoint.urls` is not required, because a SageMaker
+endpoint derives its URL from `endpoint.sagemaker.endpointName` and
+`endpoint.awsRegion`. `spec.benchmark` carries
 an **empty** `x-kubernetes-validations: []` block. `models` and every
 shorthand sibling (`model`, `dataset`, `warmup`, `profiling`) are typeless
 `x-kubernetes-preserve-unknown-fields` properties; `datasets` and `phases` are
@@ -111,6 +113,7 @@ are enforced by Pydantic on the operator side instead — see
 | `!has(self.template) \|\| !has(self.type) \|\| self.type == 'template'` | `endpoint.template is only used when endpoint.type='template' (omit type to have it inferred)` |
 | `!has(self.requestContentType) \|\| self.requestContentType != 'multipart/form-data' \|\| !has(self.type) \|\| self.type in ['audio_transcription', 'image_edit', 'video_generation']` | `requestContentType='multipart/form-data' is only supported on endpoint types that accept form data: audio_transcription, image_edit, video_generation` |
 | `!has(self.path) \|\| self.path.startsWith('/')` | `endpoint.path must start with '/' (e.g. '/v1/chat/completions', not 'v1/chat/completions')` |
+| `!has(self.sagemaker) \|\| !has(self.sagemaker.endpointName) \|\| size(self.sagemaker.endpointName) == 0 \|\| has(self.awsRegion)` | `endpoint.awsRegion is required when endpoint.sagemaker.endpointName is set` |
 
 The form-data endpoint list in the third rule is derived at generation time
 from the `requires_form_data` plugin metadata in
@@ -207,6 +210,7 @@ reconcile (they are also run client-side by `aiperf kube validate`):
 | `_require_sweep_on_aiperfsweep` (`kubernetes/crd_models.py`) | AIPerfSweep requires a `sweep` block (mirrors the `has(self.sweep)` CEL rule) |
 | `_reject_non_finite_sweep_knobs` (`kubernetes/crd_models.py`) | rejects NaN/inf on `sweep.cooldownSeconds`, `sweep.plateauThreshold`, `sweep.slaWarmupSeconds` |
 | `_reject_repeated_iteration_with_convergence` (`kubernetes/crd_models.py`) | AIPerfSweep rejects `sweep.iterationOrder='repeated'` together with `multiRun.convergence` |
+| `_apply_sagemaker_before_validation` (`config/endpoint.py`) | `endpoint.urls` or a non-empty `endpoint.sagemaker.endpointName` — `urls` is typeless in the CRD (it also accepts a single string), so CEL cannot test for it |
 | `_resolve_format` / `_validate_path` (`config/user_files.py`) | `artifacts.userFiles[]` format↔content pairing (`text` needs a string, `json`/`yaml` need structured content) and path safety (relative, no `..`, no control chars) — `content` is typeless in the CRD so CEL cannot type-check it |
 
 > There is no `validate_datasets_unique_names` or `validate_dataset_references`
