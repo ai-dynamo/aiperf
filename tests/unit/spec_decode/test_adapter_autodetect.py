@@ -97,6 +97,38 @@ def test_extract_suppresses_multi_sequence_stats() -> None:
     assert InferenceResultParser._extract_spec_decode_acceptance(responses) is None
 
 
+def test_extract_coalesces_cumulative_llamacpp_timings_across_chunks() -> None:
+    """llama.cpp's ``timings`` payload rides every chunk when the request sets
+    ``timings_per_token``, growing cumulatively toward the final chunk's totals.
+
+    Those duplicates describe one request, not distinct sequences, so they must
+    not trip the n > 1 guard: only the last (most complete) chunk should count,
+    and its values -- not an earlier partial chunk's -- must be adapted.
+    """
+    partial_payload = {
+        **TIMINGS_PAYLOAD,
+        "predicted_n": 5,
+        "draft_n": 3,
+        "draft_n_accepted": 3,
+    }
+    responses = [
+        ParsedResponse(perf_ns=1, spec_decode_stats=partial_payload),
+        ParsedResponse(perf_ns=2, spec_decode_stats=partial_payload),
+        ParsedResponse(
+            perf_ns=3,
+            spec_decode_stats=TIMINGS_PAYLOAD,
+            usage={"completion_tokens": 20},
+        ),
+    ]
+    record = InferenceResultParser._extract_spec_decode_acceptance(responses)
+
+    assert isinstance(record, SpecDecodeAcceptanceRecord)
+    assert record.engine == "llamacpp"
+    assert record.num_draft_tokens == TIMINGS_PAYLOAD["draft_n"]
+    assert record.num_accepted_draft_tokens == TIMINGS_PAYLOAD["draft_n_accepted"]
+    assert record.completion_tokens == 20
+
+
 def test_extract_treats_empty_dict_payload_as_absent() -> None:
     """An empty ``{}`` payload is counted by truthiness (like the adapter), so a
     real payload beside it still yields a record instead of tripping the n > 1

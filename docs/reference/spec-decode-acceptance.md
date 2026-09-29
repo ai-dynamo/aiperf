@@ -12,8 +12,8 @@ AIPerf captures this as an **engine-neutral per-request record** so the metrics
 layer can reason about acceptance without knowing which engine produced it.
 
 This page documents the record, the adapter interface that fills it, and the
-vLLM adapter (the first supported engine). SGLang and TensorRT-LLM adapters are
-future work and reuse the same record.
+vLLM and llama.cpp adapters. SGLang and TensorRT-LLM adapters are future work
+and reuse the same record.
 
 ## The engine-neutral record
 
@@ -29,7 +29,7 @@ drafting such as DSpark-style adaptive verification.
 | `engine` | Serving engine that produced the stats (e.g. `vllm`). |
 | `mean_acceptance_length` | Mean tokens per verify step including the bonus token: `1 + num_accepted_draft_tokens / num_spec_steps`. Ranges `1.0` … `num_spec_tokens + 1`. |
 | `draft_acceptance_rate` | `num_accepted_draft_tokens / num_draft_tokens`. Draft-only. |
-| `acceptance_histogram` | Sparse `{accepted_draft_count: num_steps}` map with **integer** keys. Zero-count buckets omitted. Excludes the bonus token. |
+| `acceptance_histogram` | Sparse `{accepted_draft_count: num_steps}` map with **integer** keys. Zero-count buckets omitted. Excludes the bonus token. `None` when the engine reports only request-level aggregates and no genuine per-step breakdown -- adapters must not fabricate one from the aggregates (see the llama.cpp adapter below). |
 | `num_accepted_draft_tokens` | Total accepted draft tokens (excludes bonus). |
 | `num_draft_tokens` | Total proposed draft tokens counted toward acceptance (the denominator of `draft_acceptance_rate`). Engines that discard some proposals before counting report the post-adjustment total; see the engine section. |
 | `num_spec_steps` | Number of verify steps. Equals the sum of the histogram counts. |
@@ -132,3 +132,29 @@ The wire object maps to the record one-to-one, except:
   only `n > 1` triggers this.
 - **Behind Dynamo** the custom field is currently stripped, so this path is
   direct-to-vLLM only.
+
+## The llama.cpp adapter
+
+`LlamaCppSpecDecodeAdapter` reads llama.cpp's response-root `timings` object,
+present on every response when `llama-server` runs with a draft model. It maps
+to the record with one deliberate omission:
+
+- **`acceptance_histogram` is always `None`.** `timings` carries only
+  request-level aggregates (`draft_n`, `draft_n_accepted`, `predicted_n`) --
+  llama.cpp does not report a per-step breakdown. The same aggregate totals are
+  consistent with many different per-step distributions (e.g. all rejections
+  followed by one fully-accepted step looks identical in aggregate to evenly
+  split acceptance across every step), so the adapter does not synthesize a
+  histogram to fill the field: a fabricated distribution would be
+  indistinguishable from genuine per-step data once exported, and would corrupt
+  any pooled histogram it was merged into. `per_step_accepted` /
+  `per_step_drafted` stay `None` for the same reason.
+- **`num_spec_steps`** is derived as `predicted_n - draft_n_accepted`: each
+  verify step emits the accepted drafts plus one guaranteed bonus token, so
+  `predicted_n == num_accepted_draft_tokens + num_spec_steps`.
+- **`num_spec_tokens`** is always `None` -- llama.cpp's draft length is not
+  surfaced in `timings`.
+- In streaming, `timings` is cumulative and rides only the trailing chunk by
+  default; if the request sets `timings_per_token: true` it rides every chunk
+  with growing totals, and AIPerf coalesces those duplicates to the last
+  (most complete) chunk before building the record.

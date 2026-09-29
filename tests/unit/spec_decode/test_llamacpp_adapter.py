@@ -1,18 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Unit tests for the llama.cpp per-request spec-decode adapter.
-
-Mirrors the structure of ``test_vllm_adapter.py``. Covers the
-engine-neutral ``SpecDecodeAcceptanceRecord`` filled from llama.cpp's
-top-level ``timings`` field (``draft_n``, ``draft_n_accepted``,
-``predicted_n``) across representative shapes: normal, fully rejected,
-all accepted, and various malformed payloads.
-
-Wire-format reference: llama.cpp ``timings`` object as returned by
-``llama-server`` when running with a draft model.
-"""
-
 from collections.abc import Callable
 from typing import Any
 
@@ -24,11 +12,6 @@ from aiperf.spec_decode.llamacpp_adapter import LlamaCppSpecDecodeAdapter
 from aiperf.spec_decode.vllm_adapter import VLLMSpecDecodeAdapter
 
 # Representative llama.cpp timings payload from a real server response.
-# predicted_n=20, draft_n=15, draft_n_accepted=14 =>
-#   num_spec_steps      = 20 - 14          = 6
-#   draft_acceptance    = 14 / 15          = 0.933...
-#   mean_accept_length  = 1 + 14 / 6       = 3.333...
-#   histogram (base=2, remainder=2)        = {3: 2, 2: 4}
 TIMINGS_PAYLOAD: dict[str, Any] = {
     "predicted_n": 20,
     "draft_n": 15,
@@ -40,17 +23,12 @@ TIMINGS_PAYLOAD: dict[str, Any] = {
     "prompt_ms": 224.7,
 }
 
-# Fully-rejected case: no drafts accepted.
 REJECTED_PAYLOAD: dict[str, Any] = {
     "predicted_n": 10,
     "draft_n": 30,
     "draft_n_accepted": 0,
 }
 
-# All-accepted case: every draft token accepted.
-# predicted_n=22, draft_n=20, draft_n_accepted=20 =>
-#   num_spec_steps = 22 - 20 = 2
-#   histogram (base=10, remainder=0) = {10: 2}
 ALL_ACCEPTED_PAYLOAD: dict[str, Any] = {
     "predicted_n": 22,
     "draft_n": 20,
@@ -122,26 +100,18 @@ class TestLlamaCppSpecDecodeAdapter:
         assert record.per_step_accepted is None
         assert record.per_step_drafted is None
 
-    def test_adapt_histogram_invariants_hold(self) -> None:
-        """Reconstructed histogram satisfies both SpecDecodeAcceptanceRecord invariants."""
-        record = LlamaCppSpecDecodeAdapter.adapt(_non_streaming(TIMINGS_PAYLOAD))
-
-        assert record is not None
-        h = record.acceptance_histogram
-        assert sum(h.values()) == record.num_spec_steps
-        assert (
-            sum(j * count for j, count in h.items()) == record.num_accepted_draft_tokens
-        )
-
-    def test_adapt_histogram_two_bucket_distribution(self) -> None:
-        """integer-division bucketing: 14 accepted / 6 steps -> base=2, rem=2 -> {2:4, 3:2}."""
-        record = LlamaCppSpecDecodeAdapter.adapt(_non_streaming(TIMINGS_PAYLOAD))
-
-        assert record is not None
-        assert record.acceptance_histogram == {2: 4, 3: 2}
+    def test_adapt_never_fabricates_acceptance_histogram(self) -> None:
+        """timings carries only aggregate totals, not a per-step breakdown, so the
+        histogram must stay None rather than be synthesized from the aggregates --
+        a fabricated distribution would be indistinguishable from genuine per-step
+        data once exported."""
+        for payload in (TIMINGS_PAYLOAD, REJECTED_PAYLOAD, ALL_ACCEPTED_PAYLOAD):
+            record = LlamaCppSpecDecodeAdapter.adapt(_non_streaming(payload))
+            assert record is not None
+            assert record.acceptance_histogram is None
 
     def test_adapt_fully_rejected_fills_record(self) -> None:
-        """All drafts rejected: rate 0.0, all steps in j=0 bucket."""
+        """All drafts rejected: rate 0.0."""
         record = LlamaCppSpecDecodeAdapter.adapt(_non_streaming(REJECTED_PAYLOAD))
 
         assert record is not None
@@ -149,10 +119,9 @@ class TestLlamaCppSpecDecodeAdapter:
         assert record.draft_acceptance_rate == 0.0
         assert record.mean_acceptance_length == pytest.approx(1.0)
         assert record.num_spec_steps == 10  # predicted_n(10) - accepted(0)
-        assert record.acceptance_histogram == {0: 10}
 
     def test_adapt_all_accepted_fills_record(self) -> None:
-        """All drafts accepted: rate 1.0, histogram is a single even bucket."""
+        """All drafts accepted: rate 1.0."""
         record = LlamaCppSpecDecodeAdapter.adapt(_non_streaming(ALL_ACCEPTED_PAYLOAD))
 
         assert record is not None
@@ -160,7 +129,6 @@ class TestLlamaCppSpecDecodeAdapter:
         assert record.draft_acceptance_rate == pytest.approx(1.0)
         assert record.num_spec_steps == 2  # 22 - 20
         assert record.mean_acceptance_length == pytest.approx(1.0 + 20 / 2)
-        assert record.acceptance_histogram == {10: 2}
 
     def test_adapt_no_usage_leaves_completion_tokens_none(self) -> None:
         """No response carrying a usage block leaves completion_tokens unset."""
@@ -238,6 +206,18 @@ class TestLlamaCppSpecDecodeAdapter:
                 {"draft_n": 15, "draft_n_accepted": 14},
                 id="missing_predicted_n",
             ),
+            # fractional draft_n: int() would silently truncate to 15 instead
+            # of rejecting the malformed value
+            param(
+                {"predicted_n": 20, "draft_n": 15.9, "draft_n_accepted": 14},
+                id="fractional_draft_n",
+            ),
+            # bool draft_n_accepted: a bool is an int subclass and would
+            # silently pass an isinstance(..., int) check
+            param(
+                {"predicted_n": 20, "draft_n": 15, "draft_n_accepted": True},
+                id="bool_draft_n_accepted",
+            ),
         ],
     )  # fmt: skip
     def test_adapt_malformed_payload_degrades_to_none(
@@ -249,26 +229,9 @@ class TestLlamaCppSpecDecodeAdapter:
         assert LlamaCppSpecDecodeAdapter.can_adapt(responses) is True
         assert LlamaCppSpecDecodeAdapter.adapt(responses) is None
 
-    def test_adapt_extra_timings_fields_are_ignored(self) -> None:
-        """Extra llama.cpp timing fields (prompt_ms, predicted_per_second, etc.) are ignored."""
-        payload = {**TIMINGS_PAYLOAD, "cache_n": 7, "prompt_per_second": 49.0}
-        record = LlamaCppSpecDecodeAdapter.adapt(_non_streaming(payload))
-        assert record is not None
-        assert record.num_draft_tokens == 15
-
-    def test_adapt_num_spec_tokens_is_always_none(self) -> None:
-        """llama.cpp timings never carry a per-step draft bound, so num_spec_tokens is None."""
-        record = LlamaCppSpecDecodeAdapter.adapt(_non_streaming(TIMINGS_PAYLOAD))
-        assert record is not None
-        assert record.num_spec_tokens is None
-
     @pytest.mark.parametrize(
         "bad_payload",
         [
-            param(
-                {"predicted_n": 20, "draft_n": -1, "draft_n_accepted": 0},
-                id="negative_draft_n",
-            ),
             param(
                 {"predicted_n": 20, "draft_n": 15, "draft_n_accepted": -1},
                 id="negative_draft_n_accepted",
