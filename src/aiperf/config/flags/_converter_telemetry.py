@@ -55,13 +55,13 @@ def _local_collector_keywords() -> dict[str, Any]:
     }
 
 
-_DETECT_TIMEOUT_SEC = 1.0
+_DETECT_TIMEOUT_SEC = 5.0
 """Budget for the AMD exporter probe.
 
-The probe runs before the benchmark starts, and every bare URL is probed
-concurrently, so this is the most the check can add to startup. An exporter
-that cannot answer a metrics scrape within a second is not one the run can use
-anyway.
+Every bare URL is probed concurrently, so this is the most the check adds to
+startup however many endpoints there are. A Device Metrics Exporter answering
+its first scrape after sitting idle has taken over a second on an MI300X node,
+and a probe that gives up then leaves an AMD endpoint on the DCGM collector.
 """
 
 _AMD_EXPORTER_MARKERS = ("gpu_package_power", "gpu_gfx_activity")
@@ -121,11 +121,15 @@ async def _serves_amd_metrics(session: Any, url: str) -> bool:
         # Not silent: a probe that fails leaves the endpoint on the DCGM
         # default, and an AMD exporter treated as DCGM collects nothing.
         shown = redact_url(url)
+        reason = (
+            f"no response within {_DETECT_TIMEOUT_SEC:g} s"
+            if isinstance(e, TimeoutError)
+            else f"{type(e).__name__}: {redact_url(str(e))}"
+        )
         AIPerfLogger(__name__).warning(
-            f"Could not probe {shown} for AMD GPU telemetry metrics "
-            f"({type(e).__name__}: {redact_url(str(e))}). Treating it as a DCGM "
-            f"endpoint. Pass "
-            f"'amd_dme:{shown}' to select the AMD collector explicitly."
+            f"Could not probe {shown} for AMD GPU telemetry metrics ({reason}). "
+            f"Treating it as a DCGM endpoint. Pass 'amd_dme:{shown}' to select "
+            f"the AMD collector explicitly."
         )
         return False
     return any(marker in content for marker in _AMD_EXPORTER_MARKERS)
@@ -136,14 +140,25 @@ def _split_collector_prefix(item: str) -> tuple[Any, str]:
 
     Returns ``(collector_type, url)`` if the part before the first colon is a
     known collector, otherwise ``(None, item)`` so the caller treats the whole
-    string as a URL.
+    string as a URL. A prefix followed by a scheme can only have been meant as
+    a collector, so an unknown one there is a typo and is rejected rather than
+    folded into a URL that cannot resolve.
     """
+    from aiperf.common.redact import redact_url
     from aiperf.plugin.enums import GPUTelemetryCollectorType
 
     prefix, _, remainder = item.partition(":")
     try:
         return GPUTelemetryCollectorType(prefix.upper()), remainder
     except (ValueError, KeyError):
+        if remainder.startswith(("http://", "https://")):
+            valid = ", ".join(
+                sorted(f"'{c.lower()}'" for c in GPUTelemetryCollectorType)
+            )
+            raise ValueError(
+                f"Unknown GPU telemetry collector '{prefix}' in "
+                f"'{redact_url(item)}'. Valid collectors: {valid}."
+            ) from None
         return None, item
 
 

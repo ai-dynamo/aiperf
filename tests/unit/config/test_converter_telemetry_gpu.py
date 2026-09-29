@@ -19,6 +19,7 @@ import asyncio
 import logging
 import socket
 import threading
+import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -247,9 +248,11 @@ DCGM_FI_DEV_POWER_USAGE{gpu="0"} 212
 
 
 class _ExporterHandler(BaseHTTPRequestHandler):
-    pages = {"/amd": _DME_PAGE, "/dcgm": _DCGM_PAGE}
+    pages = {"/amd": _DME_PAGE, "/dcgm": _DCGM_PAGE, "/amd-cold": _DME_PAGE}
 
     def do_GET(self):
+        if self.path == "/amd-cold":
+            time.sleep(1.5)  # a cold exporter answering its first scrape
         body = self.pages.get(self.path)
         self.send_response(200 if body is not None else 404)
         self.end_headers()
@@ -323,3 +326,45 @@ class TestAmdProbe:
             f"amd_dme:http://<redacted>@127.0.0.1:{closed_port}/metrics" in caplog.text
         )
         assert "s3cr3t" not in caplog.text
+
+    def test_an_exporter_slow_on_its_first_scrape_is_still_detected(
+        self, exporter: str
+    ):
+        """Seen on an MI300X node: the first scrape after the exporter sat idle
+        took over a second, and a one-second probe left it on DCGM."""
+        cli = _make_cli(gpu_telemetry=[f"{exporter}/amd-cold"])
+        assert build_gpu_telemetry(cli)["collector"] == "amd_dme"
+
+    def test_a_timeout_says_so_rather_than_an_empty_error(
+        self,
+        exporter: str,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        monkeypatch.setattr(
+            "aiperf.config.flags._converter_telemetry._DETECT_TIMEOUT_SEC", 0.2
+        )
+        caplog.set_level(
+            logging.WARNING, logger="aiperf.config.flags._converter_telemetry"
+        )
+
+        cli = _make_cli(gpu_telemetry=[f"{exporter}/amd-cold"])
+        assert build_gpu_telemetry(cli)["collector"] == "dcgm"
+
+        assert "no response within 0.2 s" in caplog.text
+
+
+class TestMistypedCollectorPrefix:
+    def test_an_unknown_prefix_before_a_scheme_is_rejected(self):
+        """`adm_dme:http://...` can only be a typo for a collector; folded into a
+        URL it fails the probe with a suggestion that repeats the typo."""
+        cli = _make_cli(gpu_telemetry=["adm_dme:http://node:5000/metrics"])
+        with pytest.raises(
+            ValueError, match="Unknown GPU telemetry collector 'adm_dme'"
+        ) as err:
+            build_gpu_telemetry(cli)
+        assert "'amd_dme'" in str(err.value) and "'dcgm'" in str(err.value)
+
+    def test_a_scheme_less_host_port_is_still_a_url(self):
+        cli = _make_cli(gpu_telemetry=["node:5000/metrics"])
+        assert build_gpu_telemetry(cli)["urls"] == ["http://node:5000/metrics"]
