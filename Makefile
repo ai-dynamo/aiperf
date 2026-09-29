@@ -16,7 +16,7 @@
 
 
 .PHONY: ruff lint ruff-fix lint-fix format fmt check-format check-fmt \
-		test coverage clean install install-app precompile docker docker-run first-time-setup \
+		test coverage clean install install-app install-app-locked precompile docker docker-run first-time-setup \
 		ci-install check-mock-server-install \
 		test-verbose setup-venv install-mock-server install-mock-amdsmi test-ci test-all \
 		integration-tests integration-tests-ci integration-tests-verbose integration-tests-ci-macos \
