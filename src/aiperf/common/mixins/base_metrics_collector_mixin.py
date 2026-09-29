@@ -496,7 +496,13 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             async with session.get(self._endpoint_url) as response:
                 return response.status == 200
         except (TimeoutError, aiohttp.ClientError) as exc:
-            self.debug(f"Reachability probe failed for {self._endpoint_url}: {exc!r}")
+            # Both halves are redacted: the endpoint may embed userinfo, and
+            # some aiohttp errors (InvalidUrlClientError) render the requested
+            # URL verbatim in their repr, credentials included.
+            self.debug(
+                f"Reachability probe failed for {self._display_url}: "
+                f"{redact_url(repr(exc))}"
+            )
             return False
 
     @background_task(immediate=True, interval=lambda self: self.collection_interval)

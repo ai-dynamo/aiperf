@@ -426,3 +426,39 @@ class TestReachabilityHeadFallback:
         )
 
         assert await collector.is_url_reachable() is False
+
+
+class TestReachabilityProbeRedactsCredentials:
+    """The reachability probe must never log endpoint credentials.
+
+    Two separate leak paths: the endpoint URL itself may embed userinfo, and
+    some aiohttp errors render the requested URL verbatim in their repr --
+    InvalidUrlClientError is an aiohttp.ClientError subclass, so it reaches the
+    probe's except clause with credentials attached.
+    """
+
+    SECRET = "sup3rs3cret"  # noqa: S105 - test fixture, not a real credential
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "endpoint_url",
+        [
+            param(f"http://admin:{SECRET}@127.0.0.1:1/metrics", id="unreachable_host"),
+            param(f"http://admin:{SECRET}@/metrics", id="invalid_url_error"),
+        ],
+    )  # fmt: skip
+    async def test_probe_failure_never_logs_credentials(
+        self, endpoint_url: str, caplog
+    ) -> None:
+        collector = ConcreteCollector(
+            endpoint_url=endpoint_url,
+            collection_interval=1.0,
+            reachability_timeout=2.0,
+        )
+
+        with caplog.at_level("DEBUG"):
+            assert await collector.is_url_reachable() is False
+
+        assert self.SECRET not in caplog.text, (
+            "endpoint credentials leaked into the reachability probe log"
+        )
