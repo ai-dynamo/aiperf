@@ -125,6 +125,20 @@ class TestLoader:
         assert (second.max_tokens, second.timestamp, second.delay) == (11, None, 2000)
         assert image_slots(second.raw_messages) == [0, 1]
 
+    async def test_path_filter_reads_a_local_build_instead_of_the_hub(
+        self, hub: MagicMock, tmp_path: Path
+    ) -> None:
+        base = tmp_path / "local"
+        (tmp_path / "h_cua.jsonl.zst").rename(base.with_name("local.jsonl.zst"))
+        meta = orjson.loads((tmp_path / "h_cua.meta.json").read_bytes())
+        meta["sha256"] = {"local.jsonl.zst": meta["sha256"]["h_cua.jsonl.zst"]}
+        base.with_name("local.meta.json").write_bytes(orjson.dumps(meta))
+
+        data = await _loader({"path": str(base)}).load_dataset()
+
+        assert hub.call_count == 0
+        assert {sid: len(t) for sid, t in data.items()} == SESSION_TURNS
+
     async def test_request_count_fallback_does_not_cap_trajectories(
         self, hub: MagicMock
     ) -> None:
