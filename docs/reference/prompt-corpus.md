@@ -231,12 +231,17 @@ datasets:
       random_corpus_style: vllm
 ```
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=40 -->
 ```bash
 aiperf profile \
+  --model Qwen/Qwen3-0.6B \
+  --url localhost:8000 \
   --prompt-corpus random \
   --random-range-ratio 0.3 \
   --random-corpus-style vllm \
   --prompt-input-tokens-mean 128 \
   --prompt-output-tokens-mean 128 \
-  --random-seed 0
+  --random-seed 0 \
+  --request-count 20
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->

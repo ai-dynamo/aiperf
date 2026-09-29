@@ -122,20 +122,32 @@ def main():
         # immune to docs reordering (unlike contiguous-chunk slicing).
         shard_bins: list[list] = [[] for _ in range(args.shard_total)]
         shard_load: list[int] = [0] * args.shard_total
-        # Tuple key: heaviest first, then (file_path, start_line) for a
-        # stable, OS-independent secondary sort. ``Path.rglob`` returns
-        # files in filesystem-dependent order (macOS vs Linux differ), so
-        # without the tuple tie-break the same code would assign tests to
-        # different shards locally vs in CI — a real bug we hit on the
-        # 2026-05-19 rebalance pass.
-        sorted_cmds = sorted(
-            server.aiperf_commands,
-            key=lambda c: (-c.weight, c.file_path, c.start_line),
+        # Bin-pack whole documents, never individual commands. Guides commonly
+        # split setup and use across two tagged blocks -- trace-replay.md
+        # writes custom_trace.jsonl in one block and consumes it in the next --
+        # so a per-command packing can place the consumer in a shard that never
+        # ran the producer, and the guide fails with a missing file on a
+        # combination of commands that depends on how many exist in total.
+        # A document is the natural dependency unit; pack at that granularity.
+        docs: dict[str, list] = {}
+        for cmd in server.aiperf_commands:
+            docs.setdefault(cmd.file_path, []).append(cmd)
+        for cmds in docs.values():
+            cmds.sort(key=lambda c: c.start_line)
+
+        # Tuple key: heaviest document first, then file_path for a stable,
+        # OS-independent secondary sort. ``Path.rglob`` returns files in
+        # filesystem-dependent order (macOS vs Linux differ), so without the
+        # tie-break the same code would assign tests to different shards
+        # locally vs in CI — a real bug we hit on the 2026-05-19 rebalance.
+        sorted_docs = sorted(
+            docs.items(),
+            key=lambda kv: (-sum(c.weight for c in kv[1]), kv[0]),
         )
-        for cmd in sorted_cmds:
+        for _file_path, cmds in sorted_docs:
             target = min(range(args.shard_total), key=lambda i: shard_load[i])
-            shard_bins[target].append(cmd)
-            shard_load[target] += cmd.weight
+            shard_bins[target].extend(cmds)
+            shard_load[target] += sum(c.weight for c in cmds)
         my_bin = shard_bins[args.shard_index]
         my_bin.sort(key=lambda c: (c.file_path, c.start_line))
         server.aiperf_commands = my_bin
