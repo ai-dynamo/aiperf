@@ -195,14 +195,16 @@ class TestScreenshotWindow:
 
 
 class TestRequestShaping:
-    def test_uuid_cache_sends_each_screenshot_in_full_once(self) -> None:
+    def test_uuid_cache_sends_each_screenshot_in_full_once_per_trajectory(self) -> None:
         filters = HCuaPerfFilters(n_screenshots=2, uuid_cache=True)
-        out = list(iter_selected_records(iter(RECORDS), {"traj-a": 3}, filters))
+        plan = {"traj-a": 3, "traj-b": 1}
+        out = list(iter_selected_records(iter(RECORDS), plan, filters))
 
         assert [_references(r) for r in out] == [
             [(0, True)],
             [(0, False), (1, True)],
             [(1, False), (2, True)],
+            [(0, True)],
         ]
         parts, idx = screenshot_slots(out[1]["messages"])[0]
         assert parts[idx] == {
