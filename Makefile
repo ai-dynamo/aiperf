@@ -164,6 +164,9 @@ install: install-app install-mock-server install-mock-amdsmi precompile #? insta
 install-app: #? install the project in editable mode.
 	$(activate_venv) && uv pip install -e ".[dev]"
 
+install-app-locked: #? install the project and its dev extra at the exact versions in uv.lock (CI).
+	$(activate_venv) && uv sync --locked --active --extra dev --no-dev
+
 precompile: #? precompile source bytecode so parallel test subprocesses never race to write __pycache__ on first import.
 	$(activate_venv) && python -m compileall -q -x '/(\.venv|\.ruff_cache|.*\.egg-info)/' src/aiperf tests/aiperf_mock_server tests/aiperf_mock_amdsmi
 
@@ -248,8 +251,10 @@ first-time-setup: #? convenience command to setup the environment for the first 
 ci-install: #? CI-only environment setup: venv + project + plugin artifacts. No pre-commit hooks, no redundant mock-server install.
 	$(MAKE) setup-venv --no-print-directory
 
-	@printf "$(bold)$(green)Installing project (+ mock server)...$(reset)\n"
-	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory install
+	@# From uv.lock, not a fresh resolve: an unpinned install takes whatever was
+	@# released minutes ago, so an upstream release could fail every PR at once.
+	@printf "$(bold)$(green)Installing project from uv.lock (+ mock server)...$(reset)\n"
+	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory install-app-locked install-mock-server install-mock-amdsmi precompile
 
 	@printf "$(bold)$(green)Verifying mock server install...$(reset)\n"
 	@PATH="$(UV_PATH):$(PATH)" $(MAKE) --no-print-directory check-mock-server-install
