@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.auth.base_signer import SignedRequest
 from aiperf.common import readiness_probe
@@ -286,17 +287,17 @@ def test_wait_for_endpoint_receives_normalized_urls_from_endpoint_config(
 @pytest.mark.parametrize(
     "mode, base_path, custom_endpoint, expected_paths",
     [
-        pytest.param(
+        param(
             "both", "", None, ["/v1/models", "/v1/chat/completions"], id="default"
         ),
-        pytest.param(
+        param(
             "inference",
             "/v1/chat/completions/",
             None,
             ["/v1/chat/completions"],
             id="existing-path",
         ),
-        pytest.param(
+        param(
             "both",
             "/proxy/",
             "/generate",
@@ -304,7 +305,7 @@ def test_wait_for_endpoint_receives_normalized_urls_from_endpoint_config(
             id="custom-path",
         ),
     ],
-)
+)  # fmt: skip
 def test_readiness_preserves_query_while_appending_endpoint(
     mode: str, base_path: str, custom_endpoint: str | None, expected_paths: list[str]
 ) -> None:

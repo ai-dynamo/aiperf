@@ -5,6 +5,7 @@
 from urllib.parse import urlparse
 
 import pytest
+from pytest import param
 
 from aiperf import __version__ as aiperf_version
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
@@ -418,19 +419,20 @@ class TestBaseTransport:
     @pytest.mark.parametrize(
         "endpoint_params, expected",
         [
-            pytest.param({}, "tag=first&mode=strict&tag=&tag=last", id="retain-order"),
-            pytest.param(
+            param({}, "tag=first&mode=strict&tag=&tag=last", id="retain-order"),
+            param(
                 {"tag": "replacement"}, "mode=strict&tag=replacement", id="override"
             ),
-            pytest.param(
+            param(
                 {"other": "value"},
                 "tag=first&mode=strict&tag=&tag=last&other=value",
                 id="merge",
             ),
-            pytest.param({"tag": ["a", "b"]}, "mode=strict&tag=a&tag=b", id="list"),
-            pytest.param({"tag": ("a", "b")}, "mode=strict&tag=a&tag=b", id="tuple"),
+            param({"tag": ["a", "b"]}, "mode=strict&tag=a&tag=b", id="list"),
+            param({"tag": ("a", "b")}, "mode=strict&tag=a&tag=b", id="tuple"),
+            param({"tag": []}, "mode=strict", id="remove"),
         ],
-    )
+    )  # fmt: skip
     def test_build_url_preserves_repeated_query_values(
         self, request_info: RequestInfo, endpoint_params: dict, expected: str
     ) -> None:
