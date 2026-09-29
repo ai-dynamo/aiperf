@@ -905,8 +905,25 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
     dataset_filters = getattr(dataset, "filters", None)
     if dataset_filters:
         payload["dataset_filters"] = dict(dataset_filters)
+        payload["dataset_filters_manifest_sha256"] = _local_build_manifest_sha256(
+            dataset_filters.get("path")
+        )
 
     return payload
+
+
+def _local_build_manifest_sha256(path: str | None) -> str | None:
+    """Digest of a local build's ``<path>.meta.json``, which names its trace's sha256.
+
+    Replacing the build in place then changes the cache key instead of serving
+    the previous build's records.
+    """
+    if not path:
+        return None
+    manifest = Path(path).with_name(f"{Path(path).name}.meta.json")
+    if not manifest.is_file():
+        return None
+    return hashlib.sha256(manifest.read_bytes()).hexdigest()
 
 
 def compute_cache_key_from_run(run: BenchmarkRun) -> str | None:
