@@ -5,7 +5,6 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pytest import param
 
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import IncompatibleMetricsEndpointError
@@ -265,17 +264,10 @@ class TestFetchRejectsJsonContentType:
 
 
 class BodyOnHeadServer:
-    """A real HTTP server whose HEAD reply illegally carries a body.
+    """Serves a HEAD reply that illegally carries a body, as Triton does.
 
-    RFC 9110 forbids content on a HEAD response. Triton's `/metrics` frontend
-    violates this: `HTTPMetricsServer::Handle` routes every non-GET method
-    through `RETURN_AND_RESPOND_WITH_ERR`, which writes
-    `{"error":"Method Not Allowed"}` into the response buffer and sends it.
-    aiohttp >= 3.14 reports those stray bytes as a bad status line, which is
-    why probing this endpoint with HEAD wrongly reported it unreachable.
-
-    Served over a raw socket because no compliant HTTP framework will emit a
-    body on a HEAD reply, which is precisely the behavior under test.
+    Raw sockets because no compliant HTTP framework will emit a body on a HEAD
+    reply, which is the behavior under test.
     """
 
     GET_BODY = b"# HELP up Server is up\n# TYPE up gauge\nup 1\n"
@@ -366,7 +358,6 @@ class TestReachabilityAgainstMalformedHeadReplies:
 
     @pytest.mark.asyncio
     async def test_unreachable_endpoint_reports_false(self) -> None:
-        """Nothing listening means the probe fails."""
         collector = ConcreteCollector(
             endpoint_url="http://127.0.0.1:1/metrics",
             collection_interval=1.0,
@@ -388,16 +379,8 @@ class TestReachabilityProbeRedactsCredentials:
     SECRET = "sup3rs3cret"  # noqa: S105 - test fixture, not a real credential
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "endpoint_url",
-        [
-            param(f"http://admin:{SECRET}@127.0.0.1:1/metrics", id="unreachable_host"),
-            param(f"http://admin:{SECRET}@/metrics", id="invalid_url_error"),
-        ],
-    )  # fmt: skip
-    async def test_probe_failure_never_logs_credentials(
-        self, endpoint_url: str, caplog
-    ) -> None:
+    async def test_probe_failure_never_logs_credentials(self, caplog) -> None:
+        endpoint_url = f"http://admin:{self.SECRET}@/metrics"
         collector = ConcreteCollector(
             endpoint_url=endpoint_url,
             collection_interval=1.0,

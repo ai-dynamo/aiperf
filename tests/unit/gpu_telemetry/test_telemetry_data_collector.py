@@ -159,7 +159,6 @@ class TestHttpCommunication:
         collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
 
         with patch("aiohttp.ClientSession.get") as mock_get:
-            # Mock successful GET response with Prometheus content-type
             mock_response = AsyncMock()
             mock_response.status = 200
             mock_response.headers = {
