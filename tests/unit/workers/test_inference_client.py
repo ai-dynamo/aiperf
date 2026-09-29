@@ -429,12 +429,7 @@ class TestInferenceClient:
     def test_finalize_request_record_uses_last_turn_audio_duration_seconds(
         self, inference_client
     ):
-        """audio_duration_seconds must be hoisted from the dispatched (last)
-        turn, not the first turn, so a causal multi-turn session with a
-        distinct duration per turn reports the correct RTFx for every turn
-        -- not just the first (see turns[-1] used to build the dispatched
-        payload in _send_request_to_transport).
-        """
+        """audio_duration_seconds must be hoisted from the dispatched (last) turn."""
         first_turn = Turn(
             texts=[Text(contents=["first turn"])],
             role="user",

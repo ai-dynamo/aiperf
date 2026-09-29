@@ -244,17 +244,9 @@ class InferenceClient(AIPerfLifecycleMixin):
         record: RequestRecord,
         request_info: RequestInfo,
     ) -> RequestRecord:
-        """Enrich a RequestRecord with the original request info.
-
-        The hoisted metric inputs ``max_tokens``, ``audio_duration_seconds``,
-        and ``scheduled_send_ms`` live only on the originating turn — they are
-        NOT ``RecordContext`` fields on ``request_info`` and so are not copied
-        by the downcast in ``_enrich_request_record``. Populate them explicitly
-        so the record processor (``osl_mismatch`` / ``audio_duration`` /
-        ``replay_send_schedule_offset`` metrics) reads them directly off the
-        slim record without the full ``turns`` list on the wire. All three
-        must be read from the dispatched (last) turn, since that is the turn
-        whose payload was actually sent to the server.
+        """Enrich a RequestRecord with the original request info, hoisting
+        per-turn values (``max_tokens``, ``audio_duration_seconds``,
+        ``scheduled_send_ms``) from the dispatched (last) turn.
         """
         last_turn = request_info.turns[-1] if request_info.turns else None
         turn_model = last_turn.model if last_turn else None
