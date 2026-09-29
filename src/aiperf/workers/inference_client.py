@@ -252,12 +252,9 @@ class InferenceClient(AIPerfLifecycleMixin):
         by the downcast in ``_enrich_request_record``. Populate them explicitly
         so the record processor (``osl_mismatch`` / ``audio_duration`` /
         ``replay_send_schedule_offset`` metrics) reads them directly off the
-        slim record without the full ``turns`` list on the wire. All three are
-        read from the dispatch (last) turn — the turn whose payload was
-        actually sent to the server (see ``turns[-1]`` in
-        ``_send_request_to_transport``) — so a causal multi-turn session with
-        a distinct ``audio_duration_seconds`` per turn reports the correct
-        duration (and therefore RTFx) for every turn, not just the first.
+        slim record without the full ``turns`` list on the wire. All three
+        must be read from the dispatched (last) turn, since that is the turn
+        whose payload was actually sent to the server.
         """
         last_turn = request_info.turns[-1] if request_info.turns else None
         turn_model = last_turn.model if last_turn else None

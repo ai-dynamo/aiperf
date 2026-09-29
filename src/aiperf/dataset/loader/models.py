@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.enums import AssistantResponseMode
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
 from aiperf.plugin.enums import CustomDatasetType
 
@@ -114,7 +115,7 @@ class SingleTurn(AIPerfBaseModel):
         gt=0,
         description="Maximum number of output tokens to generate for this request. Overrides the global --osl setting when specified.",
     )
-    audio_duration_seconds: float | None = Field(
+    audio_duration_seconds: FiniteFloat | None = Field(
         default=None,
         ge=0,
         description="Duration of the audio content in seconds, self-reported by the caller. "
