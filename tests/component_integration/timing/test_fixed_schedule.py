@@ -772,7 +772,11 @@ class TestFixedScheduleOffsetFiltering:
         assert get_request_count(result) == 1
 
     def test_offset_filtering_empty_result(self, cli: AIPerfCLI, tmp_path: Path):
-        """Test offset filtering that results in no entries."""
+        """An offset window that selects no entries fails fast, naming the window.
+
+        This used to "complete with 0 requests" only because configuration
+        failed and the failure was masked as exit 0.
+        """
         trace_file = tmp_path / "trace.jsonl"
 
         with open(trace_file, "w") as f:
@@ -795,7 +799,9 @@ class TestFixedScheduleOffsetFiltering:
                 --extra-inputs ignore_eos:true \
                 --ui {defaults.ui}
         """
-        result = cli.run_sync(cmd, timeout=30.0)
+        result = cli.run_sync(cmd, timeout=30.0, assert_success=False)
 
-        # Should complete with 0 requests (not hang)
-        assert get_request_count(result) == 0
+        assert result.exit_code != 0
+        output = (result.stderr or "") + (result.log or "")
+        assert "No trace entries remain" in output
+        assert "offset window" in output

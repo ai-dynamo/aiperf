@@ -891,6 +891,39 @@ class TestMooncakeTraceDatasetLoader:
         assert traces[0][0].input_length == 100
         assert traces[0][0].timestamp == 1500
 
+    def test_load_dataset_offset_window_excluding_everything_is_an_error(
+        self, create_jsonl_file, mock_prompt_generator
+    ):
+        """An empty dataset used to fail later with an unrelated error ("cannot
+        mmap an empty file", then "conversation_ids cannot be empty"), which a
+        masked exit code turned into a silent 0-request run."""
+        filename = create_jsonl_file(
+            [
+                f'{{"input_length": 100, "output_length": 50, "timestamp": {t}}}'
+                for t in (1000, 2000, 3000)
+            ]
+        )
+        cli_config = CLIConfig(
+            model_names=["test-model"],
+            input_file=filename,
+            custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            fixed_schedule=True,
+            fixed_schedule_start_offset=10000,
+            fixed_schedule_end_offset=20000,
+        )
+        loader = MooncakeTraceDatasetLoader(
+            filename=filename,
+            run=make_run_from_cli(cli_config),
+            prompt_generator=mock_prompt_generator,
+        )
+
+        with pytest.raises(ValueError, match="No trace entries remain") as exc_info:
+            loader.load_dataset()
+
+        message = str(exc_info.value)
+        assert "3 outside the fixed-schedule offset window" in message
+        assert "10000" in message and "20000" in message
+
     @pytest.mark.parametrize(
         "max_osl,expected_output_lengths,description",
         [
