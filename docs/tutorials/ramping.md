@@ -54,14 +54,14 @@ Each ramps from a low starting value up to your target over the specified durati
 
 Gradually increase from 1 concurrent request to 100 over 30 seconds:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server weight=150 -->
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=300 -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --url localhost:8000 \
     --concurrency 100 \
     --concurrency-ramp-duration 30 \
-    --request-count 1000
+    --request-count 200
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
