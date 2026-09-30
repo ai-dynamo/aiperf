@@ -14,5 +14,7 @@ keywords:
   - inference
   - nvidia
 home: https://github.com/nvidia/aiperf
+sources:
+  - https://github.com/ai-dynamo/aiperf
 maintainers:
   - name: NVIDIA

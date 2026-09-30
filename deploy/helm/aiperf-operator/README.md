@@ -8,7 +8,13 @@ Deploys the AIPerf Kubernetes operator, its two CRDs (`aiperfjobs.aiperf.nvidia.
 
 Both CRD templates are generated from the `AIPerfJobSpec` / `AIPerfSweepSpec` Pydantic models by `tools/generate_crd.py`. Do not hand-edit `templates/crd-aiperfjob.yaml` or `templates/crd-aiperfsweep.yaml`.
 
+Each AIPerf release publishes this chart to `oci://ghcr.io/ai-dynamo/charts/aiperf-operator` and attaches the packaged chart and standalone CRDs to the [GitHub Release](https://github.com/ai-dynamo/aiperf/releases). The chart version and `appVersion` match the release tag.
+
 ```bash
+helm install aiperf-operator oci://ghcr.io/ai-dynamo/charts/aiperf-operator \
+  --version X.Y.Z --namespace aiperf-system --create-namespace
+
+# or, from a source checkout
 helm install aiperf-operator deploy/helm/aiperf-operator \
   --namespace aiperf-system --create-namespace
 ```
