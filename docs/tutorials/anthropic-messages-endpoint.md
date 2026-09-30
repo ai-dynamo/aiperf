@@ -370,7 +370,7 @@ Notes:
 - Latest-non-`None` turn wins — a FORK-mode DAG child that does not redeclare `raw_system` still inherits the parent's value.
 - The field is Anthropic-specific. Other endpoints (`chat`, `responses`, ...) ignore it.
 - Block contents flow into ISL accounting via the endpoint's system-prompt walk; see [Input token accounting (ISL)](#input-token-accounting-isl) below.
-- `raw_system` is currently populated by trace-replay loaders that ingest Anthropic-shaped traces; programmatic callers building `Turn` objects directly can set it as well.
+- Built-in dataset loaders do not currently populate `raw_system`; programmatic callers building `Turn` objects directly can set it.
 - A conversation-level `system_message` (from `--system-prompt`/`--system-prompt-file` or `--shared-system-prompt-length`) is **prepended as block 0**, ahead of the authored blocks, which are passed through untouched along with their `cache_control`. The two coexist rather than one winning.
 - `--cache-bust system-prefix` marks `system_message` when both are present, because that is block 0 — marking `raw_system` would leave a constant leading block the server could still prefix-hit on. `--cache-bust system-suffix` does the opposite: the tail of the system section is the last `raw_system` block, so the marker goes there and `system_message` is left unchanged; `system_message` receives the suffix marker only when no `raw_system` follows it. On the `raw_system` path the marker is appended or prepended as its own `{"type": "text", ...}` block rather than being spliced into an existing block's text, so a neighbouring `cache_control` breakpoint stays attached to the bytes it was authored against.
 
