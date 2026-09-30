@@ -131,6 +131,10 @@ jobs:
           # comparable to the modality servers.
           - id: tgi-generate
             server: tgi-generate
+          # TEI in re-ranker mode; bge-reranker-base is small enough that the
+          # boot cost is dominated by the image pull.
+          - id: tei-rankings
+            server: tei-rankings
     steps:
       - name: Checkout
         uses: actions/checkout@v6
