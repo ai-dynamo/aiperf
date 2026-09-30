@@ -65,6 +65,7 @@ class HCuaPerfFileLoader(MooncakeTraceDatasetLoader):
             raise DatasetLoaderError(
                 f"{self.tag}: {self.manifest} not found beside {self.filename.name}"
             )
+        self._plan: dict[str, int] = {}
 
     @classmethod
     def can_load(
@@ -78,18 +79,29 @@ class HCuaPerfFileLoader(MooncakeTraceDatasetLoader):
         """
         return False
 
+    def _init_trace_scope(self) -> None:
+        """One read of the trace serves both the manifest check and the hash_ids scope.
+
+        The base class would hash the file again for ``trace_id``; on a 2.5 GB
+        build that is a second full pass before the decompressing read.
+        """
+        try:
+            meta = orjson.loads(self.manifest.read_bytes())
+            self._plan = meta["session_turns"]
+            if shortfall := memory_shortfall(meta, self._plan):
+                self.warning(f"{self.tag}: {shortfall}; derive a smaller build")
+            self._trace_id = verify_trace(meta, self.filename)[:16]
+        except (KeyError, ValueError) as e:
+            raise DatasetLoaderError(f"{self.tag}: {e}") from e
+        self.prompt_generator._hash_id_corpus_rng.set_trace_id(self._trace_id)
+        self.prompt_generator._cache.clear()
+
     def _iter_record_dicts(
         self, source: str | Path | None = None
     ) -> Iterator[dict[str, Any]]:
-        """Every trajectory of the build, in file order, once the trace matches its manifest."""
         try:
-            meta = orjson.loads(self.manifest.read_bytes())
-            plan: dict[str, int] = meta["session_turns"]
-            if shortfall := memory_shortfall(meta, plan):
-                self.warning(f"{self.tag}: {shortfall}; derive a smaller build")
-            verify_trace(meta, self.filename)
             with open_dataset(self.filename) as lines:
                 records = (orjson.loads(line) for line in lines if line.strip())
-                yield from iter_selected_records(records, plan, None)
-        except (KeyError, ValueError, zstandard.ZstdError) as e:
+                yield from iter_selected_records(records, self._plan, None)
+        except (ValueError, zstandard.ZstdError) as e:
             raise DatasetLoaderError(f"{self.tag}: {e}") from e

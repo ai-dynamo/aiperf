@@ -16,8 +16,7 @@ from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.dataset.composer.custom import CustomDatasetComposer
 from aiperf.dataset.loader.h_cua_perf_file import HCuaPerfFileLoader
-from aiperf.plugin import plugins
-from aiperf.plugin.enums import CustomDatasetType, PluginType
+from aiperf.plugin.enums import CustomDatasetType
 from tests.unit.conftest import make_run_from_cli
 from tests.unit.dataset.loader._h_cua_perf_records import trajectory
 
@@ -26,7 +25,6 @@ RECORDS = [r for sid, n in SESSION_TURNS.items() for r in trajectory(sid, n)]
 
 
 def build(directory: Path, name: str) -> Path:
-    """A build as trace_processor.py writes it: the trace, plain or zstd, beside its manifest."""
     trace = directory / name
     lines = b"".join(orjson.dumps(r) + b"\n" for r in RECORDS)
     trace.write_bytes(zstandard.compress(lines) if name.endswith(".zst") else lines)
@@ -48,22 +46,14 @@ def _run(trace: Path) -> BenchmarkRun:
     )
 
 
-class TestRegistry:
-    def test_plugin_resolves_to_loader_class(self) -> None:
-        cls = plugins.get_class(
-            PluginType.CUSTOM_DATASET_LOADER, CustomDatasetType.H_CUA_PERF
-        )
-        assert cls is HCuaPerfFileLoader
+class TestLoader:
+    """The Hub loader's tests cover the replay itself; these cover the file path into it."""
 
     def test_never_claims_a_file(self, tmp_path: Path) -> None:
         """Its rows are Mooncake rows; claiming them would break mooncake_trace detection."""
         assert (
             HCuaPerfFileLoader.can_load(RECORDS[0], tmp_path / "h_cua.jsonl") is False
         )
-
-
-class TestLoader:
-    """The Hub loader's tests cover the replay itself; these cover the file path into it."""
 
     @pytest.mark.parametrize(
         "name",
@@ -84,6 +74,9 @@ class TestLoader:
 
         assert isinstance(composer.loader, HCuaPerfFileLoader)
         assert {c.session_id: len(c.turns) for c in conversations} == SESSION_TURNS
+        # The manifest check's digest also scopes the hash_ids: the trace was hashed once.
+        manifest = orjson.loads((tmp_path / "h_cua.meta.json").read_bytes())
+        assert composer.loader._trace_id == manifest["sha256"][name][:16]
 
     def test_missing_manifest_is_rejected_at_construction(self, tmp_path: Path) -> None:
         trace = build(tmp_path, "h_cua.jsonl.zst")

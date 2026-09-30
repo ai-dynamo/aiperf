@@ -147,6 +147,7 @@ class HCuaPerfDatasetLoader(BaseHFDatasetLoader):
         return data
 
     def _verify_trace(self, meta: dict[str, Any], trace: Path) -> None:
+        """The Hub cache persists across runs, so a mismatch is fixed by downloading again."""
         verify_trace(
             meta,
             trace,

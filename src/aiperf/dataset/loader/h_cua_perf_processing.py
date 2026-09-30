@@ -152,13 +152,13 @@ def open_dataset(path: Path) -> TextIO:
 
 
 def manifest_path(trace: Path) -> Path:
-    """``<name>.meta.json`` beside ``<name>.jsonl`` or ``<name>.jsonl.zst``."""
+    """Where trace_processor.py writes the manifest: beside its output, named without the compression suffix."""
     name = trace.name.removesuffix(".zst").removesuffix(".jsonl")
     return trace.with_name(f"{name}.meta.json")
 
 
-def verify_trace(meta: dict[str, Any], trace: Path, *, mismatch_hint: str = "") -> None:
-    """The manifest names the sha256 of the trace it describes; any other file is refused."""
+def verify_trace(meta: dict[str, Any], trace: Path, *, mismatch_hint: str = "") -> str:
+    """Refuse any trace but the one the manifest names; return its sha256 so it is hashed once."""
     digests = meta.get("sha256")
     expected = digests.get(trace.name) if isinstance(digests, dict) else None
     if not expected:
@@ -170,6 +170,7 @@ def verify_trace(meta: dict[str, Any], trace: Path, *, mismatch_hint: str = "") 
             f"{trace.name} does not match the manifest "
             f"(sha256 {actual[:12]}, manifest says {expected[:12]}){mismatch_hint}"
         )
+    return actual
 
 
 def memory_shortfall(meta: dict[str, Any], plan: dict[str, int]) -> str | None:
