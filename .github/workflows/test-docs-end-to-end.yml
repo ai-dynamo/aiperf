@@ -127,6 +127,10 @@ jobs:
             server: vllm-video-openai
           - id: vllm-embeddings-openai
             server: vllm-embeddings-openai
+          # First non-vLLM backend. TinyLlama-1.1B on TGI, so the boot cost is
+          # comparable to the modality servers.
+          - id: tgi-generate
+            server: tgi-generate
     steps:
       - name: Checkout
         uses: actions/checkout@v6
