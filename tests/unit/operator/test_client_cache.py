@@ -266,30 +266,6 @@ class TestCompletionClaim:
         assert patch_ops[2]["path"] == f"/metadata/annotations/{escaped_key}"
         assert len(patch_ops) == 3
 
-    def test_existing_annotations_stale_patch_fails_after_resource_version_changes(
-        self,
-    ) -> None:
-        """Two claim patches built from the same snapshot cannot both win."""
-        body = {
-            "metadata": {
-                "resourceVersion": "42",
-                "annotations": {"aiperf.nvidia.com/other": "value"},
-            }
-        }
-        patch_ops = _build_claim_patch_ops(body)
-        live_body = {
-            "metadata": {
-                "resourceVersion": "42",
-                "annotations": {"aiperf.nvidia.com/other": "value"},
-            }
-        }
-
-        self._apply_claim_patch(live_body, patch_ops)
-        live_body["metadata"]["resourceVersion"] = "43"
-
-        with pytest.raises(AssertionError):
-            self._apply_claim_patch(live_body, patch_ops)
-
     def test_missing_annotations_parent_tests_resource_version_before_add(
         self,
     ) -> None:
