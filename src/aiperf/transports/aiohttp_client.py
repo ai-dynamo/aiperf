@@ -272,7 +272,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                                         :_NON_SSE_ERROR_PREVIEW_BYTES
                                     ].decode("utf-8", errors="replace")
                                 if len(preview_bytes) > _NON_SSE_ERROR_PREVIEW_BYTES:
-                                    preview += "…"
+                                    preview += "..."
                                 context += f"; body prefix: {preview}"
                             raise SSEResponseError(
                                 "Chat stream completion could not be verified: "
