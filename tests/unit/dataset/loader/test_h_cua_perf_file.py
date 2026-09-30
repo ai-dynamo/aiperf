@@ -3,7 +3,7 @@
 
 import hashlib
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import orjson
 import pytest
@@ -70,13 +70,15 @@ class TestLoader:
             run=_run(trace), tokenizer=mock_tokenizer_cls.from_pretrained("test-model")
         )
 
-        conversations = composer.create_dataset()
+        # The manifest check's digest scopes the hash_ids; the base class must not hash again.
+        with patch(
+            "aiperf.dataset.loader.base_trace_loader._compute_file_hash"
+        ) as second_hash:
+            conversations = composer.create_dataset()
 
         assert isinstance(composer.loader, HCuaPerfFileLoader)
         assert {c.session_id: len(c.turns) for c in conversations} == SESSION_TURNS
-        # The manifest check's digest also scopes the hash_ids: the trace was hashed once.
-        manifest = orjson.loads((tmp_path / "h_cua.meta.json").read_bytes())
-        assert composer.loader._trace_id == manifest["sha256"][name][:16]
+        second_hash.assert_not_called()
 
     def test_missing_manifest_is_rejected_at_construction(self, tmp_path: Path) -> None:
         trace = build(tmp_path, "h_cua.jsonl.zst")
