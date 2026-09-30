@@ -1557,10 +1557,10 @@ async def test_startup_deadline_revalidates_before_delete_and_status_commit(
 
 
 def test_startup_failure_claim_ops_never_test_user_derived_documents() -> None:
-    """The stable-blocker claim must not test the spec or annotation map.
+    """The stable-blocker claim must not test the spec, annotations or startupIssue.
 
-    Both carry user-supplied strings (the spec, and kopf's serialized copy of
-    it). The apiserver compares scalar ``test`` values by raw JSON bytes and
+    All carry free-form strings (the spec, kopf's serialized copy of it, and
+    the kubelet message). The apiserver compares scalar ``test`` values by raw JSON bytes and
     Go escapes ``>`` as ``\\u003e`` while Python does not, so such tests were
     rejected with 422 on every attempt. resourceVersion already pins both.
     """
@@ -1575,7 +1575,13 @@ def test_startup_failure_claim_ops_never_test_user_derived_documents() -> None:
             },
         },
         "spec": {"podTemplate": {"command": ["sh", "-c", "echo hi > /tmp/x"]}},
-        "status": {"phase": str(Phase.PENDING)},
+        "status": {
+            "phase": str(Phase.PENDING),
+            "startupIssue": {
+                "reason": "ErrImagePull",
+                "message": "rpc error: code = Unknown desc = <nil> & more",
+            },
+        },
     }
 
     operations = monitor._startup_failure_claim_ops(body, "fingerprint")
@@ -1584,6 +1590,7 @@ def test_startup_failure_claim_ops_never_test_user_derived_documents() -> None:
     assert tested_paths[:2] == ["/metadata/uid", "/metadata/resourceVersion"]
     assert "/spec" not in tested_paths
     assert "/metadata/annotations" not in tested_paths
+    assert "/status/startupIssue" not in tested_paths
     assert operations[-1]["op"] == "add"
     assert operations[-1]["value"] == "fingerprint"
 
