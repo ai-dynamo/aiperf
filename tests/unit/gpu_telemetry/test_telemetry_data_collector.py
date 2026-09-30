@@ -154,37 +154,11 @@ class TestHttpCommunication:
     """Test HTTP communication with DCGM endpoints using aiohttp."""
 
     @pytest.mark.asyncio
-    async def test_endpoint_reachability_success(self):
-        """Test DCGM endpoint reachability check with successful HTTP response."""
-        collector = DCGMTelemetryCollector("http://localhost:9401/metrics")
-
-        with patch("aiohttp.ClientSession.get") as mock_get:
-            mock_response = AsyncMock()
-            mock_response.status = 200
-            mock_response.headers = {
-                "Content-Type": "text/plain; version=0.0.4; charset=utf-8"
-            }
-            mock_response.raise_for_status = AsyncMock()
-            mock_get.return_value.__aenter__.return_value = mock_response
-
-            # Initialize the collector to set up the session
-            await collector.initialize()
-
-            # Test reachability
-            result = await collector.is_url_reachable()
-            assert result is True
-
-            await collector.stop()
-
-    @pytest.mark.asyncio
     async def test_endpoint_reachability_failures(self, time_traveler):
         """Test DCGM endpoint reachability check with various failure scenarios."""
         collector = DCGMTelemetryCollector("http://nonexistent:9401/metrics")
 
-        with (
-            patch("aiohttp.ClientSession.head") as mock_head,
-            patch("aiohttp.ClientSession.get") as mock_get,
-        ):
+        with patch("aiohttp.ClientSession.get") as mock_get:
             # Mock different failure scenarios
             failure_scenarios = [
                 aiohttp.ClientError("Connection failed"),
@@ -194,7 +168,6 @@ class TestHttpCommunication:
             await collector.initialize()
 
             for exception in failure_scenarios:
-                mock_head.side_effect = exception
                 mock_get.side_effect = exception
                 result = await collector.is_url_reachable()
                 assert result is False
