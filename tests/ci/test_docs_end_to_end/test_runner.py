@@ -401,7 +401,20 @@ class EndToEndTestRunner:
 
             # Execute aiperf command in the container with verbose output
             aiperf_command_with_ui = inject_ui_type(aiperf_cmd.command)
-            exec_command = f"docker exec {self.aiperf_container_id} bash -c '{aiperf_command_with_ui}'"
+            # The command goes in over stdin, not interpolated into a
+            # single-quoted `bash -c '...'`. Guides routinely pass JSON in
+            # single quotes (--extra-inputs '{"temperature": 0}'), and wrapping
+            # that in single quotes strips them: the payload arrives as
+            # {temperature: 0} and fails JSON validation. Any guide using a
+            # single quote is otherwise impossible to tag.
+            exec_argv = [
+                "docker",
+                "exec",
+                "-i",
+                self.aiperf_container_id,
+                "bash",
+                "-s",
+            ]
 
             logger.info(
                 f"Executing AIPerf command {i + 1}/{len(server.aiperf_commands)} against {server.name}:"
@@ -412,8 +425,8 @@ class EndToEndTestRunner:
             logger.info("=" * 60)
 
             aiperf_process = subprocess.Popen(
-                exec_command,
-                shell=True,
+                exec_argv,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -421,6 +434,9 @@ class EndToEndTestRunner:
                 universal_newlines=True,
                 start_new_session=True,
             )
+            assert aiperf_process.stdin is not None
+            aiperf_process.stdin.write(aiperf_command_with_ui + "\n")
+            aiperf_process.stdin.close()
 
             kill_guard = _ProcessGroupKillGuard()
             command_timeout = aiperf_cmd.timeout or AIPERF_COMMAND_TIMEOUT
