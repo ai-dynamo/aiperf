@@ -1974,14 +1974,6 @@ def _startup_failure_claim_ops(
     fingerprint: str,
 ) -> list[dict[str, Any]]:
     """Build the atomic parent preconditions for stable-blocker cleanup.
-
-    ``resourceVersion`` already pins the spec, annotations and status. None of
-    them is tested as a whole: they carry free-form strings (the spec itself,
-    kopf's serialized copy of it in ``last-handled-configuration``, and the
-    kubelet message in ``startupIssue``), and the apiserver compares scalar
-    ``test`` values by raw JSON bytes, so any ``<``, ``>`` or ``&`` (escaped
-    by Go, not by Python) fails the claim.
-    See ``client_cache._build_claim_patch_ops``.
     """
     metadata = body.get("metadata") or {}
     status = body.get("status") or {}

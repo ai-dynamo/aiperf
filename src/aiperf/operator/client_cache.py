@@ -474,13 +474,7 @@ def _build_claim_patch_ops(
 
     The precondition is ``/metadata/resourceVersion`` whenever the snapshot
     carries one (every apiserver-sourced body does). It must NOT be the whole
-    annotations map: that map holds kopf's ``last-handled-configuration``, a
-    serialized copy of the user's spec, and the apiserver compares scalar
-    ``test`` values by their raw JSON bytes. Go escapes ``<``, ``>`` and ``&``
-    as ``\\u003c``/``\\u003e``/``\\u0026`` while Python's ``json.dumps`` does
-    not, so a spec containing any of them made the claim fail with 422 on
-    every tick and the job never left Running. The map/metadata tests remain
-    only as a fallback for resourceVersion-less bodies.
+    annotations map
 
     ``timestamp`` lets the caller reuse the exact value it later latches into
     the local body snapshot, so the same-tick transient-fetch retry gate sees
