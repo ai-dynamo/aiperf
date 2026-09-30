@@ -122,11 +122,8 @@ class HCuaPerfDatasetLoader(BaseHFDatasetLoader):
             return list(iter_selected_records(records, plan, self.filters))
 
     async def load_dataset(self) -> dict[str, list[MooncakeTrace]]:
-        """Download or locate, plan the trajectory selection, read that far, delegate the rest."""
-        if self.filters.path is None:
-            manifest, trace = (await super().load_dataset())["dataset"]
-        else:
-            manifest, trace = self._local_files(self.filters.path)
+        """Download, plan the trajectory selection, read that far, delegate the rest."""
+        manifest, trace = (await super().load_dataset())["dataset"]
         loop = asyncio.get_running_loop()
         try:
             meta = orjson.loads(manifest.read_bytes())
@@ -146,40 +143,25 @@ class HCuaPerfDatasetLoader(BaseHFDatasetLoader):
         data = await loop.run_in_executor(None, self._mooncake.load_dataset)
         self.info(
             f"Selected {len(data)}/{len(session_turns)} trajectories "
-            f"({len(records):,} requests) from {self.filters.path or self.hf_dataset_name}"
+            f"({len(records):,} requests) from {self.hf_dataset_name}"
         )
         return data
-
-    def _local_files(self, base: Path) -> tuple[Path, Path]:
-        """``<base>.meta.json`` and ``<base>.jsonl.zst`` on disk, in place of the Hub download."""
-        manifest, trace = (
-            base.with_name(f"{base.name}{suffix}")
-            for suffix in (".meta.json", ".jsonl.zst")
-        )
-        for file in (manifest, trace):
-            if not file.exists():
-                raise DatasetLoaderError(f"{self.tag}: {file} not found")
-        return manifest, trace
 
     def _verify_trace(self, meta: dict[str, Any], trace: Path) -> None:
         """The manifest names the sha256 of the trace it describes; any other file is refused."""
         digests = meta.get("sha256")
-        expected = digests.get(trace.name) if isinstance(digests, dict) else None
+        expected = digests.get(self.hf_filename) if isinstance(digests, dict) else None
         if not expected:
             raise DatasetLoaderError(
-                f"{self.tag}: the manifest carries no sha256 for {trace.name}"
+                f"{self.tag}: the manifest carries no sha256 for {self.hf_filename}"
             )
         with open(trace, "rb") as f:
             actual = hashlib.file_digest(f, "sha256").hexdigest()
         if actual != expected:
-            hint = (
-                ""
-                if self.filters.path
-                else "; delete it from the Hub cache and download again"
-            )
             raise DatasetLoaderError(
-                f"{self.tag}: {trace.name} does not match the manifest "
-                f"(sha256 {actual[:12]}, manifest says {expected[:12]}){hint}"
+                f"{self.tag}: {self.hf_filename} does not match the manifest "
+                f"(sha256 {actual[:12]}, manifest says {expected[:12]}); "
+                "delete it from the Hub cache and download again"
             )
 
     def _warn_if_selection_exceeds_memory(

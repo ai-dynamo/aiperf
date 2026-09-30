@@ -78,11 +78,6 @@ class HCuaPerfFilters(AIPerfBaseModel):
         description="Drop the recorded response format from the extra body; "
         "tool_choice is kept.",
     )
-    path: Path | None = Field(
-        default=None,
-        description="Read ``<path>.jsonl.zst`` and ``<path>.meta.json`` from disk "
-        "instead of the Hub, e.g. a build derived with the dataset's trace_processor.py.",
-    )
 
     @model_validator(mode="after")
     def _max_not_below_min(self) -> HCuaPerfFilters:
