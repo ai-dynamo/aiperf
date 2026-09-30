@@ -1554,3 +1554,48 @@ async def test_startup_deadline_revalidates_before_delete_and_status_commit(
     delete_jobset.assert_not_awaited()
     status_patch.assert_not_awaited()
     assert kopf_patch.status == {}
+
+
+def test_startup_failure_claim_ops_never_test_user_derived_documents() -> None:
+    """The stable-blocker claim must not test the spec or annotation map.
+
+    Both carry user-supplied strings (the spec, and kopf's serialized copy of
+    it). The apiserver compares scalar ``test`` values by raw JSON bytes and
+    Go escapes ``>`` as ``\\u003e`` while Python does not, so such tests were
+    rejected with 422 on every attempt. resourceVersion already pins both.
+    """
+    body = {
+        "metadata": {
+            "uid": "job-uid",
+            "resourceVersion": "42",
+            "annotations": {
+                "kopf.zalando.org/last-handled-configuration": (
+                    '{"spec":{"command":"echo hi > /tmp/x"}}'
+                ),
+            },
+        },
+        "spec": {"podTemplate": {"command": ["sh", "-c", "echo hi > /tmp/x"]}},
+        "status": {"phase": str(Phase.PENDING)},
+    }
+
+    operations = monitor._startup_failure_claim_ops(body, "fingerprint")
+
+    tested_paths = [op["path"] for op in operations if op["op"] == "test"]
+    assert tested_paths[:2] == ["/metadata/uid", "/metadata/resourceVersion"]
+    assert "/spec" not in tested_paths
+    assert "/metadata/annotations" not in tested_paths
+    assert operations[-1]["op"] == "add"
+    assert operations[-1]["value"] == "fingerprint"
+
+
+def test_startup_failure_claim_ops_create_missing_annotations_parent() -> None:
+    """An annotation-less parent still gets its annotations object created."""
+    body = {
+        "metadata": {"uid": "job-uid", "resourceVersion": "42"},
+        "status": {"phase": str(Phase.PENDING)},
+    }
+
+    operations = monitor._startup_failure_claim_ops(body, "fingerprint")
+
+    assert {"op": "add", "path": "/metadata/annotations", "value": {}} in operations
+    assert operations[-1]["path"].startswith("/metadata/annotations/")

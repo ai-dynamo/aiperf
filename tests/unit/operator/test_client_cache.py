@@ -233,6 +233,63 @@ class TestCompletionClaim:
         assert patch_ops[1]["op"] == "add"
         assert patch_ops[1]["path"] == f"/metadata/annotations/{escaped_key}"
 
+    def test_existing_annotations_with_resource_version_never_tests_annotation_map(
+        self,
+    ) -> None:
+        """User-derived annotation strings must not be part of the precondition.
+
+        kopf's last-handled-configuration annotation is a serialized copy of
+        the spec. The apiserver compares scalar ``test`` values by raw JSON
+        bytes and Go escapes ``>`` as ``\\u003e`` while Python does not, so a
+        whole-map ``test`` over it was rejected with 422 on every tick.
+        """
+        body = {
+            "metadata": {
+                "uid": "job-uid",
+                "resourceVersion": "42",
+                "annotations": {
+                    "kopf.zalando.org/last-handled-configuration": (
+                        '{"spec":{"command":"echo hi > /tmp/x && cat < /tmp/x"}}'
+                    ),
+                },
+            }
+        }
+
+        patch_ops = _build_claim_patch_ops(body)
+
+        escaped_key = Annotations.COMPLETION_CLAIMED.replace("/", "~1")
+        assert patch_ops[:2] == [
+            {"op": "test", "path": "/metadata/uid", "value": "job-uid"},
+            {"op": "test", "path": "/metadata/resourceVersion", "value": "42"},
+        ]
+        assert patch_ops[2]["op"] == "add"
+        assert patch_ops[2]["path"] == f"/metadata/annotations/{escaped_key}"
+        assert len(patch_ops) == 3
+
+    def test_existing_annotations_stale_patch_fails_after_resource_version_changes(
+        self,
+    ) -> None:
+        """Two claim patches built from the same snapshot cannot both win."""
+        body = {
+            "metadata": {
+                "resourceVersion": "42",
+                "annotations": {"aiperf.nvidia.com/other": "value"},
+            }
+        }
+        patch_ops = _build_claim_patch_ops(body)
+        live_body = {
+            "metadata": {
+                "resourceVersion": "42",
+                "annotations": {"aiperf.nvidia.com/other": "value"},
+            }
+        }
+
+        self._apply_claim_patch(live_body, patch_ops)
+        live_body["metadata"]["resourceVersion"] = "43"
+
+        with pytest.raises(AssertionError):
+            self._apply_claim_patch(live_body, patch_ops)
+
     def test_missing_annotations_parent_tests_resource_version_before_add(
         self,
     ) -> None:

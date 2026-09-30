@@ -1973,10 +1973,17 @@ def _startup_failure_claim_ops(
     body: dict[str, Any],
     fingerprint: str,
 ) -> list[dict[str, Any]]:
-    """Build the atomic parent preconditions for stable-blocker cleanup."""
+    """Build the atomic parent preconditions for stable-blocker cleanup.
+
+    ``resourceVersion`` already pins the spec and annotations. Neither is tested
+    as a whole: both carry user-supplied strings (the spec itself, and kopf's
+    serialized copy of it in ``last-handled-configuration``), and the
+    apiserver compares scalar ``test`` values by raw JSON bytes, so any
+    ``<``, ``>`` or ``&`` (escaped by Go, not by Python) fails the claim.
+    See ``client_cache._build_claim_patch_ops``.
+    """
     metadata = body.get("metadata") or {}
     status = body.get("status") or {}
-    annotations = metadata.get("annotations")
     operations: list[dict[str, Any]] = [
         {"op": "test", "path": "/metadata/uid", "value": metadata.get("uid")},
         {
@@ -1984,7 +1991,6 @@ def _startup_failure_claim_ops(
             "path": "/metadata/resourceVersion",
             "value": metadata.get("resourceVersion"),
         },
-        {"op": "test", "path": "/spec", "value": deepcopy(body.get("spec") or {})},
         {"op": "test", "path": "/status/phase", "value": status.get("phase")},
         {
             "op": "test",
@@ -1992,16 +1998,8 @@ def _startup_failure_claim_ops(
             "value": deepcopy(status.get(STARTUP_ISSUE_STATUS_KEY)),
         },
     ]
-    if annotations is None:
+    if metadata.get("annotations") is None:
         operations.append({"op": "add", "path": "/metadata/annotations", "value": {}})
-    else:
-        operations.append(
-            {
-                "op": "test",
-                "path": "/metadata/annotations",
-                "value": deepcopy(annotations),
-            }
-        )
     operations.append(
         {
             "op": "add",

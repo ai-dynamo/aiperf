@@ -472,6 +472,16 @@ def _build_claim_patch_ops(
     lost race, so a later tick can retry; only a 409 whose live re-read
     confirms the annotation counts as a decisive lost race.
 
+    The precondition is ``/metadata/resourceVersion`` whenever the snapshot
+    carries one (every apiserver-sourced body does). It must NOT be the whole
+    annotations map: that map holds kopf's ``last-handled-configuration``, a
+    serialized copy of the user's spec, and the apiserver compares scalar
+    ``test`` values by their raw JSON bytes. Go escapes ``<``, ``>`` and ``&``
+    as ``\\u003c``/``\\u003e``/``\\u0026`` while Python's ``json.dumps`` does
+    not, so a spec containing any of them made the claim fail with 422 on
+    every tick and the job never left Running. The map/metadata tests remain
+    only as a fallback for resourceVersion-less bodies.
+
     ``timestamp`` lets the caller reuse the exact value it later latches into
     the local body snapshot, so the same-tick transient-fetch retry gate sees
     the claim age. When ``None`` (the default) the value is generated here.
@@ -495,42 +505,33 @@ def _build_claim_patch_ops(
         )
     current_annotations = metadata.get("annotations")
 
-    if current_annotations is None:
+    if metadata.get("resourceVersion") is not None:
+        precondition_path = "/metadata/resourceVersion"
+        precondition_value: Any = metadata["resourceVersion"]
+    elif current_annotations is None:
         precondition_path = "/metadata"
         # Snapshot the metadata dict so a later mutation of body["metadata"]
         # (e.g. the caller latching the claim annotation after a successful
         # patch) cannot retroactively alter this test-op precondition.
-        precondition_value: Any = dict(metadata)
-        if metadata.get("resourceVersion") is not None:
-            precondition_path = "/metadata/resourceVersion"
-            precondition_value = metadata["resourceVersion"]
-        return patch_ops + [
-            {
-                "op": "test",
-                "path": precondition_path,
-                "value": precondition_value,
-            },
-            {"op": "add", "path": "/metadata/annotations", "value": {}},
-            {
-                "op": "add",
-                "path": f"/metadata/annotations/{escaped_key}",
-                "value": timestamp,
-            },
-        ]
-    return patch_ops + [
-        {
-            "op": "test",
-            "path": "/metadata/annotations",
-            # Snapshot so a later body["metadata"]["annotations"] mutation
-            # (claim-latch by the caller) cannot alter this precondition.
-            "value": dict(current_annotations),
-        },
+        precondition_value = dict(metadata)
+    else:
+        precondition_path = "/metadata/annotations"
+        # Snapshot so a later body["metadata"]["annotations"] mutation
+        # (claim-latch by the caller) cannot alter this precondition.
+        precondition_value = dict(current_annotations)
+    patch_ops.append(
+        {"op": "test", "path": precondition_path, "value": precondition_value}
+    )
+    if current_annotations is None:
+        patch_ops.append({"op": "add", "path": "/metadata/annotations", "value": {}})
+    patch_ops.append(
         {
             "op": "add",
             "path": f"/metadata/annotations/{escaped_key}",
             "value": timestamp,
-        },
-    ]
+        }
+    )
+    return patch_ops
 
 
 async def _post_dashboard_refresh() -> None:
