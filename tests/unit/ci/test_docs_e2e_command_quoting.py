@@ -16,6 +16,15 @@ import subprocess
 import pytest
 from pytest import param
 
+from aiperf.common.constants import IS_WINDOWS
+
+# The docs-e2e runner only ever executes inside a Linux container, and these
+# tests assert on real shell behaviour, so there is nothing to verify on a
+# platform without bash.
+pytestmark = pytest.mark.skipif(
+    IS_WINDOWS, reason="docs-e2e commands run in a Linux container; needs bash"
+)
+
 QUOTED = """aiperf profile --model m --extra-inputs '{"temperature": 0}'"""
 
 
