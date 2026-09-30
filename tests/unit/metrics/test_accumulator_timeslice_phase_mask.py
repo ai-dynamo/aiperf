@@ -1,13 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Regression: a phase's timeslice grid must end where that phase's records end.
-
-The grid starts at the earliest masked record but used to end at the latest
-record of any phase, so a later phase in the same run (e.g. a settle warmup
-after a profiling phase, as in the multi-phase workflow docs) stretched the
-last slice of the exported phase and diluted its throughput.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -55,8 +47,6 @@ async def _run_last_slice_ends_with_the_exported_phase() -> None:
     acc = MetricsAccumulator(
         make_benchmark_run(extra={"artifacts": {"slice_duration": 10}})
     )
-    # Profiling: one 1 s request per second over [0 s, 15 s), then a warmup
-    # phase over [15 s, 40 s) in the same run.
     for second in range(15):
         await acc.process_record(_record(second, second, CreditPhase.PROFILING))
     for second in range(15, 40):
