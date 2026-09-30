@@ -145,6 +145,8 @@ A custom dataset whose turns go through the Responses formatter (for example `mu
 
 `instructions` is only dropped in that collision case. With no authored system item, the prompt goes to `instructions` as described above.
 
+With stateful chaining (`--extra-inputs store:true`), the server replays the merged item from stored history on every later request in the chain. Top-level `instructions` is not carried across `previous_response_id`, so AIPerf also omits `instructions` from those chained requests to avoid sending the system prompt twice. A `reset_context` turn starts a new chain, and the rule is re-evaluated from there.
+
 ---
 
 ## Vision (Image Inputs)

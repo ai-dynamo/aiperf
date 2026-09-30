@@ -208,6 +208,17 @@ class ResponsesEndpoint(BaseEndpoint):
                 else []
             )
         instructions = request_info.system_message or None
+        if (
+            instructions
+            and request_info.previous_response_id
+            and self._chain_history_embeds_system_prompt(turns)
+        ):
+            # An earlier request in this chain merged the system prompt into an
+            # authored input item, which the server now replays from stored
+            # history. Top-level ``instructions`` is not carried across
+            # ``previous_response_id``, so re-sending it -- or merging it into
+            # this turn's own system item -- would double the prompt.
+            instructions = None
 
         # A dataset that authored its own leading ``role: system`` input item
         # collides with ``instructions``: both ship, and the server sees two
@@ -279,6 +290,31 @@ class ResponsesEndpoint(BaseEndpoint):
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
+
+    def _chain_history_embeds_system_prompt(self, turns: list[Turn]) -> bool:
+        """Whether a prior request in this chain merged the system prompt.
+
+        ``format_payload`` merges into the leading input item of every request
+        that has one with ``role: system``. The chain's first request was sent
+        statelessly from the last ``reset_context`` turn (the session clears
+        ``previous_response_id`` there), and each chained request sent a single
+        turn, so a prior turn whose first emitted item is a system item marks
+        a merge already sitting in server-side history.
+        """
+        start = 0
+        for i in range(len(turns) - 2, -1, -1):
+            if turns[i].reset_context and turns[i].raw_messages is not None:
+                start = i
+                break
+        for turn in turns[start:-1]:
+            rendered = self.build_messages([turn])
+            if (
+                rendered
+                and isinstance(rendered[0], dict)
+                and rendered[0].get("role") == "system"
+            ):
+                return True
+        return False
 
     _warned_chaining_isl: bool = False
 

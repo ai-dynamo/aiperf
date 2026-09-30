@@ -1314,3 +1314,102 @@ class TestResponsesStatefulChaining:
         assert payload["previous_response_id"] == "resp_b6c65395f4fb8c7d"
         assert len(payload["input"]) == 1
         assert payload["input"][0]["content"] == "Second message"
+
+    @staticmethod
+    def _system_user_turn(system: str, user: str) -> Turn:
+        return Turn(
+            raw_messages=[
+                {"role": "system", "content": system, "type": "message"},
+                {"role": "user", "content": user, "type": "message"},
+            ],
+        )
+
+    @staticmethod
+    def _user_turn(user: str) -> Turn:
+        return Turn(raw_messages=[{"role": "user", "content": user, "type": "message"}])
+
+    def test_format_payload_chain_after_merged_system_item_omits_instructions(
+        self, store_endpoint: ResponsesEndpoint
+    ) -> None:
+        """Request 1 stores the merged prompt server-side; request 2 must not resend it."""
+        turn0 = self._system_user_turn("DATASET POLICY", "FIRST")
+        turn1 = self._user_turn("SECOND")
+
+        first = store_endpoint.format_payload(
+            create_request_info(
+                model_endpoint=store_endpoint.model_endpoint,
+                turns=[turn0],
+                system_message="CLI POLICY",
+            )
+        )
+        second = store_endpoint.format_payload(
+            create_request_info(
+                model_endpoint=store_endpoint.model_endpoint,
+                turns=[turn0, turn1],
+                system_message="CLI POLICY",
+                previous_response_id="resp_first",
+            )
+        )
+
+        assert "instructions" not in first
+        assert first["input"][0]["content"] == "CLI POLICY\n\nDATASET POLICY"
+        assert "instructions" not in second
+        assert [i["content"] for i in second["input"]] == ["SECOND"]
+
+    def test_format_payload_chain_without_authored_system_item_keeps_instructions(
+        self, store_endpoint: ResponsesEndpoint
+    ) -> None:
+        """``instructions`` does not carry across the chain, so it is resent."""
+        turns = [self._user_turn("FIRST"), self._user_turn("SECOND")]
+        payload = store_endpoint.format_payload(
+            create_request_info(
+                model_endpoint=store_endpoint.model_endpoint,
+                turns=turns,
+                system_message="CLI POLICY",
+                previous_response_id="resp_first",
+            )
+        )
+        assert payload["instructions"] == "CLI POLICY"
+
+    def test_format_payload_chain_merged_system_item_before_reset_is_ignored(
+        self, store_endpoint: ResponsesEndpoint
+    ) -> None:
+        """A reset restarts the chain, so a merge before it is not in history."""
+        turns = [
+            self._system_user_turn("DATASET POLICY", "FIRST"),
+            Turn(
+                raw_messages=[
+                    {"role": "user", "content": "RESTART", "type": "message"}
+                ],
+                reset_context=True,
+            ),
+            self._user_turn("THIRD"),
+        ]
+        payload = store_endpoint.format_payload(
+            create_request_info(
+                model_endpoint=store_endpoint.model_endpoint,
+                turns=turns,
+                system_message="CLI POLICY",
+                previous_response_id="resp_after_reset",
+            )
+        )
+        assert payload["instructions"] == "CLI POLICY"
+
+    def test_format_payload_chained_turn_with_own_system_item_does_not_remerge(
+        self, store_endpoint: ResponsesEndpoint
+    ) -> None:
+        """A later authored system item ships as authored once history has the prompt."""
+        turns = [
+            self._system_user_turn("DATASET POLICY", "FIRST"),
+            self._system_user_turn("TURN POLICY", "SECOND"),
+        ]
+        payload = store_endpoint.format_payload(
+            create_request_info(
+                model_endpoint=store_endpoint.model_endpoint,
+                turns=turns,
+                system_message="CLI POLICY",
+                previous_response_id="resp_first",
+            )
+        )
+        assert "instructions" not in payload
+        assert payload["input"][0]["content"] == "TURN POLICY"
