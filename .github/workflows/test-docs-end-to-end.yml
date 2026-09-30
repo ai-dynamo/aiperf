@@ -135,6 +135,11 @@ jobs:
           # boot cost is dominated by the image pull.
           - id: tei-rankings
             server: tei-rankings
+          # vLLM plus an OTel collector and an MLflow server, so the
+          # --otel-url / --mlflow-tracking-uri export paths are exercised
+          # rather than only parsed.
+          - id: otel-mlflow-openai
+            server: otel-mlflow-openai
     steps:
       - name: Checkout
         uses: actions/checkout@v6
