@@ -29,6 +29,8 @@ from aiperf.transports.sse_utils import (
 if TYPE_CHECKING:
     from aiperf.transports.base_transports import FirstTokenCallback
 
+_NON_SSE_ERROR_PREVIEW_BYTES = 512
+
 
 def _expected_request_body_size(data: Any) -> int | None:
     """Return the byte length of an HTTP request body, or None if unknown.
@@ -242,13 +244,39 @@ class AioHttpClient(AIPerfLoggerMixin):
                             ):
                                 AsyncSSEStreamReader.inspect_message_for_error(message)
                                 record.responses.append(message)
+                        record.end_perf_ns = time.perf_counter_ns()
                         if check_completion:
                             _validate_chat_stream_completion(record.responses)
-                        record.end_perf_ns = time.perf_counter_ns()
                     else:
                         if check_completion:
+                            content_type = response.content_type or "unknown"
+                            context = f"content type: {content_type}"
+                            if (
+                                content_type.startswith("text/")
+                                or content_type == "application/json"
+                                or content_type.endswith("+json")
+                            ):
+                                preview_bytes = await response.content.read(
+                                    _NON_SSE_ERROR_PREVIEW_BYTES + 1
+                                )
+                                charset = response.charset
+                                encoding = (
+                                    charset if isinstance(charset, str) else "utf-8"
+                                )
+                                try:
+                                    preview = preview_bytes[
+                                        :_NON_SSE_ERROR_PREVIEW_BYTES
+                                    ].decode(encoding, errors="replace")
+                                except LookupError:
+                                    preview = preview_bytes[
+                                        :_NON_SSE_ERROR_PREVIEW_BYTES
+                                    ].decode("utf-8", errors="replace")
+                                if len(preview_bytes) > _NON_SSE_ERROR_PREVIEW_BYTES:
+                                    preview += "…"
+                                context += f"; body prefix: {preview}"
                             raise SSEResponseError(
-                                "Chat stream completion could not be verified: response is not SSE",
+                                "Chat stream completion could not be verified: "
+                                f"response is not SSE ({context})",
                                 error_code=502,
                             )
                         # Non-SSE response (e.g., JSON or binary)

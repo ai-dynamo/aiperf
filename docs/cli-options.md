@@ -491,7 +491,7 @@ Enable streaming responses. When enabled, the server streams tokens incrementall
 
 #### `--require-stream-completion`
 
-Fail incomplete OpenAI-compatible chat streams. Requires --streaming and --endpoint-type chat; accepts [DONE] or a nonempty finish_reason as the completion signal. Malformed chunks fail the request.
+Fail streamed chat responses without [DONE] or a nonempty finish_reason for every observed choice. Malformed chunks also fail; requires streaming chat.
 <br/>_Flag (no value required)_
 
 #### `-u`, `--url` `<list>`
@@ -2110,7 +2110,7 @@ Enable streaming responses. When enabled, the server streams tokens incrementall
 
 #### `--require-stream-completion`
 
-Fail incomplete OpenAI-compatible chat streams. Requires --streaming and --endpoint-type chat; accepts [DONE] or a nonempty finish_reason as the completion signal. Malformed chunks fail the request.
+Fail streamed chat responses without [DONE] or a nonempty finish_reason for every observed choice. Malformed chunks also fail; requires streaming chat.
 <br/>_Flag (no value required)_
 
 #### `-u`, `--url` `<list>`
@@ -3724,7 +3724,7 @@ Enable streaming responses. When enabled, the server streams tokens incrementall
 
 #### `--require-stream-completion`
 
-Fail incomplete OpenAI-compatible chat streams. Requires --streaming and --endpoint-type chat; accepts [DONE] or a nonempty finish_reason as the completion signal. Malformed chunks fail the request.
+Fail streamed chat responses without [DONE] or a nonempty finish_reason for every observed choice. Malformed chunks also fail; requires streaming chat.
 <br/>_Flag (no value required)_
 
 #### `-u`, `--url` `<list>`
@@ -5845,7 +5845,7 @@ Enable streaming responses. When enabled, the server streams tokens incrementall
 
 #### `--require-stream-completion`
 
-Fail incomplete OpenAI-compatible chat streams. Requires --streaming and --endpoint-type chat; accepts [DONE] or a nonempty finish_reason as the completion signal. Malformed chunks fail the request.
+Fail streamed chat responses without [DONE] or a nonempty finish_reason for every observed choice. Malformed chunks also fail; requires streaming chat.
 <br/>_Flag (no value required)_
 
 #### `-u`, `--url` `<list>`

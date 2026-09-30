@@ -45,21 +45,6 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
-For OpenAI-compatible **streaming chat** runs, add
-`--require-stream-completion` to count an abruptly ended stream as a failed
-request. With this opt-in check, AIPerf accepts a `[DONE]` event or a chat chunk
-with a nonempty `finish_reason` as completion. Empty data events, malformed JSON
-chunks, and unsupported chunk shapes fail the request even if a completion marker
-follows.
-When the server streams multiple choices, every observed choice must finish
-unless the stream sends `[DONE]`.
-After `[DONE]`, any further SSE data event fails the request; comments and
-metadata may still follow.
-The check requires `--streaming --endpoint-type chat`; default runs retain their
-existing stream handling.
-If an individual request overrides `stream` to `false`, the check is skipped for
-that request's non-streaming response.
-
 **Sample Output (Successful Run):**
 ```
 INFO     Starting AIPerf System
@@ -82,6 +67,21 @@ INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency1/
 
 JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency1/profile_export_aiperf.json
 ```
+
+#### Strict stream completion checks
+
+For OpenAI-compatible streaming chat runs, add `--require-stream-completion`
+to count abruptly ended streams as failed requests. The check requires
+`--streaming --endpoint-type chat`.
+
+- A `[DONE]` event completes the stream. Without it, every observed choice must
+  have a nonempty `finish_reason`.
+- Empty data events, malformed JSON chunks, unsupported chunk shapes, and SSE
+  data after `[DONE]` fail the request. Comments and metadata may follow `[DONE]`.
+- A non-SSE response fails with its content type and a bounded text or JSON
+  body prefix to help diagnose server errors.
+- If an individual request overrides `stream` to `false`, this check is skipped
+  for that request's non-streaming response.
 
 ### Profile with custom input file
 

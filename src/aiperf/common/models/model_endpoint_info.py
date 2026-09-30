@@ -80,7 +80,9 @@ class EndpointInfo(AIPerfBaseModel):
     )
     require_stream_completion: bool = Field(
         default=EndpointDefaults.REQUIRE_STREAM_COMPLETION,
-        description="Require an explicit completion signal in streamed chat responses.",
+        description="Fail streamed chat responses without [DONE] or a nonempty "
+        "finish_reason for every observed choice. Malformed chunks also fail; "
+        "requires streaming chat.",
     )
     headers: list[tuple[str, str]] = Field(
         default=[],

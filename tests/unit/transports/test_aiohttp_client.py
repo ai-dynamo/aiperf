@@ -5,12 +5,15 @@
 import asyncio
 import json
 from contextlib import contextmanager
+from itertools import count
 from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
 import pytest
 from aiohttp import web
+from pytest import param
 
+from aiperf.common.exceptions import SSEResponseError
 from aiperf.common.models import ParsedResponseRecord, SSEField, SSEMessage
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.transports.aiohttp_client import AioHttpClient
@@ -22,6 +25,7 @@ from tests.unit.transports.conftest import (
     create_aiohttp_exception,
     create_mock_error_response,
     create_mock_response,
+    create_model_endpoint_info,
     setup_mock_session,
 )
 
@@ -124,38 +128,42 @@ class TestAioHttpClient:
     @pytest.mark.parametrize(
         "tail,should_fail",
         [
-            (b"", True),
-            (b"data: [DONE]\n\n", False),
-            (
+            param(b"", True, id="unfinished"),
+            param(b"data: [DONE]\n\n", False, id="done"),
+            param(
                 b'data: [DONE]\n\ndata: {"choices":[{"finish_reason":null}]}\n\n',
                 True,
+                id="data-after-done",
             ),
-            (b"data: [DONE]\n\ndata: [DONE]\n\n", True),
-            (b"data: [DONE]\n\ndata:\n\n", True),
-            (b"data: [DONE]\n\n: keepalive\n\nid: 7\n\n", False),
-            (b"data:\n\ndata: [DONE]\n\n", True),
-            (b'data: {"choices":[]}\n\ndata: [DONE]\n\n', False),
-            (b'data: {"choices":[]}\n\n', True),
-            (b'data: {"choices":{}}\n\ndata: [DONE]\n\n', True),
-            (b'data: {"choices":[{"finish_reason":5}]}\n\ndata: [DONE]\n\n', True),
-            (
+            param(b"data: [DONE]\n\ndata: [DONE]\n\n", True, id="duplicate-done"),
+            param(b"data: [DONE]\n\ndata:\n\n", True, id="empty-after-done"),
+            param(b"data: [DONE]\n\n: keepalive\n\nid: 7\n\n", False, id="metadata-after-done"),
+            param(b"data:\n\ndata: [DONE]\n\n", True, id="empty-before-done"),
+            param(b'data: {"choices":[]}\n\ndata: [DONE]\n\n', False, id="empty-choices-with-done"),
+            param(b'data: {"choices":[]}\n\n', True, id="empty-choices-without-done"),
+            param(b'data: {"choices":{}}\n\ndata: [DONE]\n\n', True, id="non-list-choices"),
+            param(b'data: {"choices":[{"finish_reason":5}]}\n\ndata: [DONE]\n\n', True, id="non-string-finish"),
+            param(
                 b'data: {"choices":[{"index":0,"finish_reason":"stop"},'
                 b'{"index":1,"finish_reason":null}]}\n\n',
                 True,
+                id="one-unfinished-choice",
             ),
-            (
+            param(
                 b'data: {"choices":[{"index":0,"finish_reason":"stop"},'
                 b'{"index":1,"finish_reason":"stop"}]}\n\n',
                 False,
+                id="all-choices-finished",
             ),
-            (b"data: {broken}\n\ndata: [DONE]\n\n", True),
-            (
+            param(b"data: {broken}\n\ndata: [DONE]\n\n", True, id="malformed-json"),
+            param(
                 b'data: {"object":"chat.completion.chunk","choices":'
                 b'[{"delta":{},"finish_reason":"stop"}]}\n\n',
                 False,
+                id="finish-reason-without-done",
             ),
         ],
-    )
+    )  # fmt: skip
     async def test_optional_chat_stream_completion(
         self,
         aiohttp_client: AioHttpClient,
@@ -215,6 +223,84 @@ class TestAioHttpClient:
             )
         assert record.error is None
 
+    @pytest.mark.parametrize(
+        "validation_fails",
+        [
+            param(False, id="complete"),
+            param(True, id="invalid"),
+        ],
+    )  # fmt: skip
+    async def test_stream_end_timestamp_excludes_completion_validation(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_sse_response: Mock,
+        validation_fails: bool,
+    ) -> None:
+        aiohttp_client.require_stream_completion = True
+        mock_sse_response.content = MockStreamReader([b"data: [DONE]\n\n"])
+        clock = count(start=1_000_000, step=100)
+        validation_clock_ns = None
+
+        def validate(_messages: list[SSEMessage]) -> None:
+            nonlocal validation_clock_ns
+            validation_clock_ns = next(clock)
+            if validation_fails:
+                raise SSEResponseError("invalid stream", error_code=502)
+
+        with (
+            patch("aiohttp.ClientSession") as mock_session_class,
+            patch(
+                "aiperf.transports.aiohttp_client.time.perf_counter_ns",
+                side_effect=clock,
+            ),
+            patch(
+                "aiperf.transports.aiohttp_client._validate_chat_stream_completion",
+                side_effect=validate,
+            ),
+        ):
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream", b"{}", {"Accept": "text/event-stream"}
+            )
+
+        assert validation_clock_ns is not None
+        assert record.end_perf_ns is not None
+        assert (record.error is not None) is validation_fails
+        if validation_fails:
+            assert record.end_perf_ns > validation_clock_ns
+        else:
+            assert record.end_perf_ns < validation_clock_ns
+
+    @pytest.mark.parametrize(
+        "error_chunk,expected_detail",
+        [
+            param(b'{"error":{"message":"overloaded","code":503}}', "503", id="error-object"),
+            param(b'{"error":"overloaded"}', "overloaded", id="error-string"),
+        ],
+    )  # fmt: skip
+    async def test_chat_stream_surfaces_json_error(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_sse_response: Mock,
+        error_chunk: bytes,
+        expected_detail: str,
+    ) -> None:
+        aiohttp_client.require_stream_completion = True
+        mock_sse_response.content = MockStreamReader(
+            [b"data: " + error_chunk + b"\n\n"]
+        )
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream", b"{}", {"Accept": "text/event-stream"}
+            )
+
+        assert record.error is not None
+        assert record.error.type == "SSEResponseError"
+        assert "overloaded" in record.error.message
+        assert expected_detail in record.error.message
+        assert "unsupported chunk shape" not in record.error.message
+
     async def test_required_chat_stream_rejects_non_sse_response(
         self, aiohttp_client: AioHttpClient, mock_aiohttp_response: Mock
     ) -> None:
@@ -226,6 +312,55 @@ class TestAioHttpClient:
             )
         assert record.error is not None
         assert record.error.type == "SSEResponseError"
+
+    @pytest.mark.parametrize(
+        "content_type",
+        [
+            param("application/json", id="json"),
+            param("application/problem+json", id="problem-json"),
+            param("text/plain", id="text"),
+        ],
+    )  # fmt: skip
+    async def test_required_chat_stream_non_sse_context_is_bounded(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_aiohttp_response: Mock,
+        content_type: str,
+    ) -> None:
+        aiohttp_client.require_stream_completion = True
+        mock_aiohttp_response.content_type = content_type
+        body = b'{"error":"overloaded"}' + b"x" * 10000 + b"secret-tail"
+        mock_aiohttp_response.content.read = AsyncMock(side_effect=lambda n: body[:n])
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            setup_mock_session(mock_session_class, mock_aiohttp_response, ["request"])
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream", b"{}", {"Accept": "text/event-stream"}
+            )
+
+        assert record.error is not None
+        assert record.error.type == "SSEResponseError"
+        assert content_type in record.error.message
+        assert "overloaded" in record.error.message
+        assert "secret-tail" not in record.error.message
+        assert len(record.error.message) < 750
+        mock_aiohttp_response.content.read.assert_awaited_once_with(513)
+        mock_aiohttp_response.text.assert_not_awaited()
+
+    async def test_required_chat_stream_binary_non_sse_does_not_read_body(
+        self, aiohttp_client: AioHttpClient, mock_aiohttp_response: Mock
+    ) -> None:
+        aiohttp_client.require_stream_completion = True
+        mock_aiohttp_response.content_type = "application/octet-stream"
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            setup_mock_session(mock_session_class, mock_aiohttp_response, ["request"])
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream", b"{}", {"Accept": "text/event-stream"}
+            )
+
+        assert record.error is not None
+        assert "application/octet-stream" in record.error.message
+        mock_aiohttp_response.content.read.assert_not_awaited()
+        mock_aiohttp_response.text.assert_not_awaited()
 
     async def test_incomplete_stream_does_not_poison_next_request(self) -> None:
         async def handler(request: web.Request) -> web.StreamResponse:
@@ -260,7 +395,9 @@ class TestAioHttpClient:
             )
             assert failed.error is not None
             assert failed.error.type == "SSEResponseError"
-            endpoint = ChatEndpoint(model_endpoint=None)
+            endpoint = ChatEndpoint(
+                model_endpoint=create_model_endpoint_info(streaming=True)
+            )
             parsed, _ = endpoint.process_responses(failed, capture_assistant_turn=False)
             assert ParsedResponseRecord(request=failed, responses=parsed).has_error
             succeeded = await asyncio.wait_for(

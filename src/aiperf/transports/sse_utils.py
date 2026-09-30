@@ -26,6 +26,11 @@ def _parse_chat_chunk_choices(data: str) -> list[dict[str, object]]:
             "Chat stream completion could not be verified: malformed SSE data",
             error_code=502,
         ) from e
+    if isinstance(chunk, dict) and "error" in chunk:
+        detail = orjson.dumps(chunk["error"]).decode("utf-8")[:512]
+        raise SSEResponseError(
+            f"Chat stream returned server error: {detail}", error_code=502
+        )
     if (
         not isinstance(chunk, dict)
         or not isinstance(choices := chunk.get("choices"), list)

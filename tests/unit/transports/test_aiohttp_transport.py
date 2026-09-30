@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import ConnectionReuseStrategy, CreditPhase
 from aiperf.common.models.record_models import RequestInfo, RequestRecord
@@ -238,12 +239,12 @@ class TestAioHttpTransport:
     @pytest.mark.parametrize(
         "payload,expected",
         [
-            ({"stream": True}, True),
-            ({"stream": False}, False),
-            (b'{"stream":true}', True),
-            (b'{"stream":false}', False),
+            param({"stream": True}, True, id="dict-streaming"),
+            param({"stream": False}, False, id="dict-non-streaming"),
+            param(b'{"stream":true}', True, id="bytes-streaming"),
+            param(b'{"stream":false}', False, id="bytes-non-streaming"),
         ],
-    )
+    )  # fmt: skip
     async def test_stream_completion_uses_effective_payload(
         self, payload: dict | bytes, expected: bool
     ) -> None:

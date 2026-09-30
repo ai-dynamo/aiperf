@@ -393,6 +393,7 @@ class AioHttpTransport(BaseTransport):
             require_stream_completion = False
             if request_info.model_endpoint.endpoint.require_stream_completion:
                 if isinstance(payload, bytes):
+                    # Decoding is O(payload bytes) before AioHttpClient starts request timing.
                     try:
                         effective_payload = orjson.loads(payload)
                     except orjson.JSONDecodeError:

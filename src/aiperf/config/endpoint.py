@@ -262,8 +262,9 @@ class EndpointConfig(BaseConfig):
         bool,
         Field(
             default=EndpointDefaults.REQUIRE_STREAM_COMPLETION,
-            description="Treat a streaming chat response as failed unless it ends with "
-            "[DONE] or a chunk with finish_reason. Malformed chunks also fail the request.",
+            description="Fail streamed chat responses without [DONE] or a nonempty "
+            "finish_reason for every observed choice. Malformed chunks also fail; "
+            "requires streaming chat.",
         ),
     ]
 

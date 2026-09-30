@@ -184,9 +184,9 @@ class CLIConfig(BaseConfig):
     require_stream_completion: Annotated[
         bool,
         Field(
-            description="Fail incomplete OpenAI-compatible chat streams. Requires "
-            "--streaming and --endpoint-type chat; accepts [DONE] or a nonempty "
-            "finish_reason as the completion signal. Malformed chunks fail the request."
+            description="Fail streamed chat responses without [DONE] or a nonempty "
+            "finish_reason for every observed choice. Malformed chunks also fail; "
+            "requires streaming chat."
         ),
         CLIParameter(
             name=("--require-stream-completion",),
