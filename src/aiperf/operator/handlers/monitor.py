@@ -1973,8 +1973,7 @@ def _startup_failure_claim_ops(
     body: dict[str, Any],
     fingerprint: str,
 ) -> list[dict[str, Any]]:
-    """Build the atomic parent preconditions for stable-blocker cleanup.
-    """
+    """Build the atomic parent preconditions for stable-blocker cleanup."""
     metadata = body.get("metadata") or {}
     status = body.get("status") or {}
     operations: list[dict[str, Any]] = [
