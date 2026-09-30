@@ -468,13 +468,16 @@ The lookup tries `<filename>.zst` first, then `<filename>` as-is. `namespace` an
 
 | Client `Accept-Encoding` | Response `Content-Encoding` | Server action |
 |--------------------------|-----------------------------|---------------|
-| `zstd` (substring match) | `zstd` | Stream raw bytes unmodified |
-| `gzip` (no zstd)         | `gzip` | Decompress zstd, recompress as gzip on the fly |
-| anything else / absent   | absent | Decompress zstd to identity |
+| `zstd` or a wildcard that allows it | `zstd` | Stream raw bytes unmodified |
+| `gzip` or a wildcard that allows it, when zstd is not accepted | `gzip` | Decompress zstd, recompress as gzip on the fly |
+| identity allowed, or header absent | absent | Decompress zstd to identity |
+| all available encodings refused | n/a | Return `406 Not Acceptable` |
 
 **Content negotiation for stored raw files**
 
-The `common.compression.select_encoding` helper picks the best encoding the client accepts (default `IDENTITY`). `Content-Encoding` is set only if the server is recompressing; otherwise it's omitted.
+The `common.compression.select_encoding` helper picks the best encoding the client accepts (default `IDENTITY`). An `Accept-Encoding: *` wildcard accepts both zstd and gzip, with explicit encoding values taking precedence (for example, `*;q=1, zstd;q=0` selects gzip). `Content-Encoding` is set only if the server is recompressing; otherwise it's omitted.
+
+If every available encoding is rejected, the server returns `406 Not Acceptable`. This includes `*;q=0`, which also rejects identity unless explicitly allowed (for example, `*;q=0, identity;q=1`). An absent header keeps the default identity response. These rules also apply to the sanitized `job_spec.json` response.
 
 **Response headers (both paths)**
 

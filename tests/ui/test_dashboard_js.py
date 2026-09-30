@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient
 from pytest import param
 
 from aiperf.api.routers.static import static_router
+from aiperf.common.constants import IS_WINDOWS
 
 # -----------------------------------------------------------------------------
 # Paths
@@ -35,6 +36,11 @@ from aiperf.api.routers.static import static_router
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _DASHBOARD_HTML = _REPO_ROOT / "src" / "aiperf" / "api" / "static" / "dashboard.html"
+
+# Windows CI runners pay a one-time AV/Defender scan on freshly-written temp
+# files before `node.EXE` can even start; under xdist contention that alone
+# can exceed a 15s budget. Give Windows more headroom than Linux/macOS.
+_NODE_TIMEOUT_SECONDS = 45 if IS_WINDOWS else 15
 
 
 # -----------------------------------------------------------------------------
@@ -83,7 +89,7 @@ class TestDashboardInlineJS:
         proc = subprocess.run(
             [_node_binary(), "--check", str(js_path)],
             capture_output=True,
-            timeout=15,
+            timeout=_NODE_TIMEOUT_SECONDS,
         )
         assert proc.returncode == 0, (
             f"inline JS failed `node --check`:\n{proc.stderr.decode(errors='replace')}"
@@ -141,7 +147,7 @@ def _run_v2_node_script(tmp_path: Path, script: str) -> dict[str, Any]:
     proc = subprocess.run(
         [node, str(script_path)],
         capture_output=True,
-        timeout=15,
+        timeout=_NODE_TIMEOUT_SECONDS,
         text=True,
         cwd=sandbox,
     )
@@ -245,7 +251,7 @@ class TestDashboardV2InlineJS:
             proc = subprocess.run(
                 [_node_binary(), "--check", str(path)],
                 capture_output=True,
-                timeout=15,
+                timeout=_NODE_TIMEOUT_SECONDS,
             )
             if proc.returncode != 0:
                 failures.append(
