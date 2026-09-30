@@ -611,6 +611,19 @@ custom_dataset_loader:
       is_trace: true
       default_block_size: 512
 
+  h_cua_perf:
+    class: aiperf.dataset.loader.h_cua_perf_file:HCuaPerfFileLoader
+    description: |
+      H CUA Perf computer-use agent traces read from a local build: <name>.jsonl.zst
+      beside its <name>.meta.json manifest, e.g. a variant derived from
+      Hcompany/h_cua_perf with the dataset's trace_processor.py. Same records
+      and replay as the h_cua_perf public dataset, minus its --dataset-filter
+      knobs: a derived build already carries its shape. Never auto-detected;
+      select it by name.
+      Usage: --input-file ./build/h_cua.jsonl.zst --custom-dataset-type h_cua_perf
+    metadata:
+      is_trace: true
+
   raw_payload:
     class: aiperf.dataset.loader.raw_payload:RawPayloadDatasetLoader
     description: |

@@ -694,7 +694,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `h_cua_perf`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
 
 #### `--ignore-trace-delays`
 
@@ -2308,7 +2308,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `h_cua_perf`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
 
 #### `--ignore-trace-delays`
 
@@ -3917,7 +3917,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `h_cua_perf`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
 
 #### `--ignore-trace-delays`
 
@@ -6033,7 +6033,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `h_cua_perf`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
 
 #### `--ignore-trace-delays`
 
