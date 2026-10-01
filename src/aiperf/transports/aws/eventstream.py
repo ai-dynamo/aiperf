@@ -144,9 +144,10 @@ def _decode_error(exc: Exception) -> AwsEventStreamError:
     """Wrap a botocore framing/CRC failure as an eventstream error.
 
     botocore owns frame and checksum validation and raises its own types
-    (``ChecksumMismatch``, ``ParserError``, ...). Letting those escape means the
-    error table groups a corrupt stream under a botocore class name rather than
-    alongside every other eventstream failure.
+    (``ChecksumMismatch``, ``ParserError``, ...). Wrapping gives the HTTP client
+    one type to catch for every eventstream failure, with a common message
+    prefix, while ``exception_type`` keeps botocore's class name as the error
+    table's label.
     """
     return AwsEventStreamError(
         f"Malformed AWS eventstream frame: {type(exc).__name__}: {exc}",
