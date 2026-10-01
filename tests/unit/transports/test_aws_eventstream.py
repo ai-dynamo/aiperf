@@ -510,3 +510,22 @@ class TestNonUtf8PayloadIsAnError:
         InferenceResultsMessage.model_construct(
             service_id="worker", record=record
         ).to_json_bytes()
+
+
+class TestManyLinesInOnePayloadPart:
+    """Containers can batch several lines into one PayloadPart. Every complete
+    line is yielded in order, blank lines are dropped, and a trailing fragment
+    waits for the next frame."""
+
+    @pytest.mark.asyncio
+    async def test_batched_lines_are_split_in_order_and_the_fragment_carries(
+        self,
+    ) -> None:
+        batched = b"".join(f'data: {{"i": {i}}}\n'.encode() for i in range(128))
+        frames = encode_frame(batched + b"\n" + b'data: {"i": "tail') + encode_frame(
+            b'"}\n'
+        )
+
+        lines = [m.line async for m in AwsEventStreamReader(_chunks(frames))]
+
+        assert lines == [f'{{"i": {i}}}' for i in range(128)] + ['{"i": "tail"}']

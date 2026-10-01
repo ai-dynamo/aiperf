@@ -65,17 +65,16 @@ def _event_stream_buffer_cls() -> type[EventStreamBuffer]:
 
 
 def _split_complete_lines(buffer: bytearray) -> tuple[list[bytes], bytearray]:
-    """Split ``buffer`` on ``\\n``, returning complete non-empty lines and the remainder."""
-    lines: list[bytes] = []
-    while b"\n" in buffer:
-        line, _, rest = buffer.partition(b"\n")
-        buffer = bytearray(rest)
-        # Emptiness is judged on the stripped form, but the line keeps its
-        # bytes: ``AwsEventStreamMessage.raw_line`` is the undecoded wire
-        # content, and raw-record exports must reproduce what was sent.
-        if line.strip():
-            lines.append(bytes(line))
-    return lines, buffer
+    """Split ``buffer`` on ``\\n``, returning complete non-empty lines and the remainder.
+
+    Split once, keeping only the trailing fragment: a PayloadPart can batch many
+    lines, and peeling them off one at a time re-copied the remainder per line.
+    """
+    *complete, fragment = bytes(buffer).split(b"\n")
+    # Emptiness is judged on the stripped form, but the line keeps its bytes:
+    # ``AwsEventStreamMessage.raw_line`` is the undecoded wire content, and
+    # raw-record exports must reproduce what was sent.
+    return [line for line in complete if line.strip()], bytearray(fragment)
 
 
 def _strip_data_prefix(text: str) -> str:
