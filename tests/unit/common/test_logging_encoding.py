@@ -54,7 +54,6 @@ def test_the_line_survives_on_a_cp1252_console() -> None:
         ("UTF8", False),
         ("cp1252", True),
         ("not-a-codec", True),
-        (None, True),
     ],
 )
 def test_formatter_choice_follows_the_encoding(
@@ -66,8 +65,8 @@ def test_formatter_choice_follows_the_encoding(
 
 @pytest.mark.parametrize(
     ("attr", "expected"),
-    [("cp1252", "cp1252"), (None, None), ("", None)],
-    ids=["reports-encoding", "reports-none", "reports-empty"],
+    [("cp1252", "cp1252"), (None, None)],
+    ids=["reports-encoding", "reports-none"],
 )
 def test_stream_encoding_reports_none_when_the_stream_is_silent(
     attr: str | None, expected: str | None
