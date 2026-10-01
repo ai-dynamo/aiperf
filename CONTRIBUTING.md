@@ -39,6 +39,7 @@ pre-commit install    # Install pre-commit hooks
 | `make first-time-setup` | Full environment setup (venv + install + hooks) |
 | `make install` | Install project, mock server, and fake amdsmi bindings in editable mode |
 | `make install-app` | Install project only |
+| `make install-app-locked` | Install project only, at the exact versions in `uv.lock` (what CI's `make ci-install` uses) |
 | `make install-mock-server` | Install mock server only |
 | `make install-mock-amdsmi` | Install fake `amdsmi` bindings to exercise the AMD telemetry path on non-AMD hardware (see [Mocking a ROCm Environment](docs/reference/mock-amdsmi.md)) |
 | `make test` | Unit tests (parallel, excludes integration) |
@@ -233,6 +234,12 @@ act -j run-integration-tests
 ```
 
 You can also use the Visual Studio Code extension [GitHub Local Actions](https://marketplace.visualstudio.com/items?itemName=SanjulaGanepola.github-local-actions).
+
+## Nightly Slack Alerts
+
+The nightly workflow ends with a `notify-slack` job that calls the reusable `.github/workflows/notify-slack.yml`. It lists the run's jobs through the Actions API and, when any job failed, timed out, or was cancelled, posts one Slack alert per configured webhook. Advisory jobs listed in the caller's `ignored_jobs` input (currently Suggest Shard Weights) are not reported, and nothing is posted for a green run or when the run itself was cancelled.
+
+Configuration lives in repository settings. `SLACK_NOTIFY_NIGHTLY_WEBHOOK_URL` (secret) is the incoming webhook for the release automation channel and falls back to the legacy `NIGHTLY_SLACK_WEBHOOK` secret. `SLACK_NOTIFY_AIPERF_DEV_WEBHOOK_URL` (secret) is the webhook for the AIPerf dev channel. `NIGHTLY_SLACK_MENTION` (variable) holds optional Slack IDs to mention, `S...` for a team or `U...` for a user, comma separated. Every webhook is optional; with none configured the job logs a warning and stays green.
 
 ## Signing Off Your Work
 
