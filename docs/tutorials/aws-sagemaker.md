@@ -211,9 +211,15 @@ uv pip install 'aiperf[aws]'
 
 ### Streaming "works" but TTFT equals total latency
 
-You are hitting the non-streaming path, so the whole response arrives at once.
-If you passed an explicit `--url` containing `/invocations`, AIPerf uses it
-verbatim; drop the path from `--url` and let `--streaming` select the operation.
+You are hitting the non-streaming operation, so the whole response arrives at
+once. Check that `--streaming` is set: with the SageMaker transport it picks the
+operation, even when `--url` already ends in `/endpoints/<name>/invocations` or
+`/invocations-response-stream` for the same endpoint.
+
+A path is used exactly as written only when you set it with `--endpoint`, or
+when you use the plain HTTP transport (see the
+[SigV4 tutorial](aws-sigv4-auth.md)). There, a streaming run must point at
+`/endpoints/<name>/invocations-response-stream`.
 
 ### `404` from the endpoint
 
