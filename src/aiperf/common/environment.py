@@ -40,6 +40,9 @@ Examples:
     print(f"Workers: {Environment.WORKER.CPU_UTILIZATION_FACTOR}")
 """
 
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, Self
 
@@ -2611,6 +2614,41 @@ class _Environment(BaseSettings):
         default_factory=_ZMQSettings,
         description="ZMQ communication settings",
     )
+
+    @contextmanager
+    def defaults(
+        self, values: dict[str, dict[str, str | int | float | bool]]
+    ) -> Iterator[None]:
+        """Scope missing settings to this process and children spawned within the context."""
+        previous: dict[str, BaseSettings] = {}
+        inserted: list[str] = []
+        try:
+            for group, fields in values.items():
+                settings = getattr(self, group)
+                updates = {}
+                for key, value in fields.items():
+                    env_key = f"{settings.model_config['env_prefix']}{key}"
+                    if (
+                        env_key not in os.environ
+                        and key not in settings.model_fields_set
+                    ):
+                        os.environ[env_key] = str(value)
+                        inserted.append(env_key)
+                        updates[key] = value
+                previous[group] = settings
+                updated = type(settings)(**{**settings.model_dump(), **updates})
+                updated.__pydantic_fields_set__ = (
+                    settings.model_fields_set | updates.keys()
+                )
+                setattr(self, group, updated)
+            if values:
+                type(self).model_validate(self.model_dump())
+            yield
+        finally:
+            for group, settings in previous.items():
+                setattr(self, group, settings)
+            for key in inserted:
+                os.environ.pop(key, None)
 
     @model_validator(mode="after")
     def validate_dev_mode(self) -> Self:
