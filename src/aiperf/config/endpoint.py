@@ -389,9 +389,11 @@ class EndpointConfig(BaseConfig):
         TransportType | None,
         Field(
             default=None,
-            description="Transport plugin name. Currently only 'http' (aiohttp-based "
-            "HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit "
-            "setting overrides auto-detection.",
+            description="Transport plugin name. 'http' (aiohttp-based HTTP/1.1) and "
+            "'sagemaker' (AWS SageMaker Runtime, normally derived from "
+            "sagemaker.endpoint_name) are shipped. Auto-detected from the URL when "
+            "unset, which always selects 'http'; explicit setting overrides "
+            "auto-detection.",
         ),
     ]
 
