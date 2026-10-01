@@ -11,6 +11,7 @@ CreditCallbackHandler.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -88,23 +89,26 @@ def _make_finite_dataset() -> DatasetMetadata:
     )
 
 
-@pytest.mark.asyncio
-async def test_finite_replay_e2e_lifecycle_execution_to_completion() -> None:
-    """A multi-root, multi-subagent finite dataset executes faithfully to completion."""
-    dataset = _make_finite_dataset()
-    sampler = SequentialSampler(
-        [c.conversation_id for c in dataset.conversations if c.is_root]
-    )
-    concurrency = 1  # forces serial admission to test queue progression
+def _build_finite_test_rig(
+    dataset: DatasetMetadata,
+    *,
+    concurrency: int = 1,
+    sampler: SequentialSampler | None = None,
+    random_seed: int = 42,
+) -> SimpleNamespace:
+    """Build and wire a fresh finite replay execution pipeline."""
+    if sampler is None:
+        sampler = SequentialSampler(
+            [c.conversation_id for c in dataset.conversations if c.is_root]
+        )
 
     source = TrajectorySource(
         dataset_metadata=dataset,
         dataset_sampler=sampler,
         concurrency=concurrency,
-        random_seed=42,
+        random_seed=random_seed,
         finite_replay=True,
     )
-
     phase_cfg = CreditPhaseConfig(
         phase=CreditPhase.PROFILING,
         timing_mode=TimingMode.AGENTIC_REPLAY,
@@ -188,15 +192,40 @@ async def test_finite_replay_e2e_lifecycle_execution_to_completion() -> None:
     issuer.replay_gate.set_child_refused(branch_orchestrator.on_child_stopped)
     issuer.replay_gate.set_credit_issued(branch_orchestrator.on_credit_issued)
 
+    return SimpleNamespace(
+        dataset=dataset,
+        source=source,
+        phase_cfg=phase_cfg,
+        scheduler=scheduler,
+        lifecycle=lifecycle,
+        progress=progress,
+        stop_checker=stop_checker,
+        concurrency_manager=concurrency_manager,
+        tree_registry=tree_registry,
+        router=router,
+        barrier=barrier,
+        issuer=issuer,
+        branch_orchestrator=branch_orchestrator,
+        strategy=strategy,
+        callback_handler=callback_handler,
+    )
+
+
+@pytest.mark.asyncio
+async def test_finite_replay_e2e_lifecycle_execution_to_completion() -> None:
+    """A multi-root, multi-subagent finite dataset executes faithfully to completion."""
+    dataset = _make_finite_dataset()
+    rig = _build_finite_test_rig(dataset, concurrency=1)
+
     # Simulated worker that answers credits automatically
     dispatched_credits: list[Credit] = []
 
     async def fake_send_credit(credit: Credit) -> None:
         dispatched_credits.append(credit)
-        now_wall = lifecycle.now_ns()
+        now_wall = rig.lifecycle.now_ns()
 
         # Worker sends TransportDispatched
-        await callback_handler.on_transport_dispatched(
+        await rig.callback_handler.on_transport_dispatched(
             TransportDispatched(
                 credit_id=credit.id,
                 phase=credit.phase,
@@ -217,26 +246,26 @@ async def test_finite_replay_e2e_lifecycle_execution_to_completion() -> None:
             cancelled=False,
             error=None,
         )
-        await callback_handler.on_credit_return("worker-0", ret)
+        await rig.callback_handler.on_credit_return("worker-0", ret)
 
-    router.send_credit.side_effect = fake_send_credit
+    rig.router.send_credit.side_effect = fake_send_credit
 
     # Run the strategy setup and execution
-    lifecycle.start()
+    rig.lifecycle.start()
 
-    await strategy.setup_phase()
-    await strategy.execute_phase()
+    await rig.strategy.setup_phase()
+    await rig.strategy.execute_phase()
 
-    await asyncio.wait_for(progress.all_credits_sent_event.wait(), timeout=2)
+    await asyncio.wait_for(rig.progress.all_credits_sent_event.wait(), timeout=2)
 
-    assert progress.all_credits_sent_event.is_set()
+    assert rig.progress.all_credits_sent_event.is_set()
     assert {c.conversation_id for c in dispatched_credits} == {
         "root-0",
         "child-0",
         "root-1",
     }
-    assert concurrency_manager.get_session_stats(0).release_count == 2
-    assert progress.fatal_error is None
+    assert rig.concurrency_manager.get_session_stats(0).release_count == 2
+    assert rig.progress.fatal_error is None
     assert sorted(
         (c.conversation_id, c.turn_index) for c in dispatched_credits
     ) == sorted(
@@ -244,7 +273,7 @@ async def test_finite_replay_e2e_lifecycle_execution_to_completion() -> None:
         for conversation in dataset.conversations
         for index in range(len(conversation.turns))
     )
-    assert not barrier.has_pending_finite_work()
+    assert not rig.barrier.has_pending_finite_work()
 
 
 @pytest.mark.asyncio
@@ -266,108 +295,15 @@ async def test_finite_replay_e2e_invalid_return_aborts_before_next_turn(
 ) -> None:
     """An invalid non-final return must not advance its root or admit later roots."""
     dataset = _make_finite_dataset()
-    sampler = SequentialSampler(
-        [c.conversation_id for c in dataset.conversations if c.is_root]
-    )
-    concurrency = 1
-
-    source = TrajectorySource(
-        dataset_metadata=dataset,
-        dataset_sampler=sampler,
-        concurrency=concurrency,
-        random_seed=42,
-        finite_replay=True,
-    )
-    phase_cfg = CreditPhaseConfig(
-        phase=CreditPhase.PROFILING,
-        timing_mode=TimingMode.AGENTIC_REPLAY,
-        concurrency=concurrency,
-        finite_replay=True,
-    )
-
-    scheduler = LoopScheduler()
-    lifecycle = PhaseLifecycle(phase_cfg)
-    progress = PhaseProgressTracker(phase_cfg)
-    stop_checker = StopConditionChecker(
-        config=phase_cfg,
-        lifecycle=lifecycle,
-        counter=progress.counter,
-    )
-
-    concurrency_manager = ConcurrencyManager()
-    concurrency_manager.configure_for_phase(0, concurrency, prefill_concurrency=1)
-
-    tree_registry = SessionTreeRegistry(concurrency_manager)
-    router = MagicMock()
-
-    barrier = ReplayBarrierCoordinator(
-        dataset,
-        strict_finite=True,
-        scheduler=scheduler,
-    )
-
-    issuer = CreditIssuer(
-        phase=CreditPhase.PROFILING,
-        phase_index=0,
-        profiling_index=0,
-        phase_name="profiling",
-        phase_kind="profiling",
-        stop_checker=stop_checker,
-        progress=progress,
-        concurrency_manager=concurrency_manager,
-        credit_router=router,
-        cancellation_policy=MagicMock(
-            next_cancellation_delay_ns=MagicMock(return_value=None)
-        ),
-        lifecycle=lifecycle,
-        session_tree_registry=tree_registry,
-        session_tree_registry_enabled=True,
-        replay_barrier=barrier,
-        finite_replay=True,
-    )
-
-    branch_orchestrator = BranchOrchestrator(
-        conversation_source=source,
-        credit_issuer=issuer,
-        session_tree_registry=tree_registry,
-    )
-
-    strategy = AgenticReplayStrategy(
-        config=phase_cfg,
-        conversation_source=source,
-        scheduler=scheduler,
-        stop_checker=stop_checker,
-        credit_issuer=issuer,
-        lifecycle=lifecycle,
-        branch_orchestrator=branch_orchestrator,
-        session_tree_registry=tree_registry,
-        progress=progress,
-    )
-
-    callback_handler = CreditCallbackHandler(
-        concurrency_manager=concurrency_manager, session_tree_registry=tree_registry
-    )
-    callback_handler.register_phase(
-        phase=CreditPhase.PROFILING,
-        phase_index=0,
-        progress=progress,
-        lifecycle=lifecycle,
-        stop_checker=stop_checker,
-        strategy=strategy,
-    )
-    callback_handler.set_branch_orchestrator(
-        branch_orchestrator, phase=CreditPhase.PROFILING, phase_index=0
-    )
-    issuer.replay_gate.set_child_refused(branch_orchestrator.on_child_stopped)
-    issuer.replay_gate.set_credit_issued(branch_orchestrator.on_credit_issued)
+    rig = _build_finite_test_rig(dataset, concurrency=1)
 
     dispatched_credits: list[Credit] = []
 
     async def fake_failing_credit(credit: Credit) -> None:
         dispatched_credits.append(credit)
-        now_wall = lifecycle.now_ns()
+        now_wall = rig.lifecycle.now_ns()
 
-        await callback_handler.on_transport_dispatched(
+        await rig.callback_handler.on_transport_dispatched(
             TransportDispatched(
                 credit_id=credit.id,
                 phase=credit.phase,
@@ -389,26 +325,26 @@ async def test_finite_replay_e2e_invalid_return_aborts_before_next_turn(
         )
         if missing_field is not None:
             ret = replace(ret, **{missing_field: None})
-        await callback_handler.on_credit_return("worker-0", ret)
+        await rig.callback_handler.on_credit_return("worker-0", ret)
 
-    router.send_credit.side_effect = fake_failing_credit
+    rig.router.send_credit.side_effect = fake_failing_credit
 
-    lifecycle.start()
+    rig.lifecycle.start()
 
-    await strategy.setup_phase()
-    await strategy.execute_phase()
+    await rig.strategy.setup_phase()
+    await rig.strategy.execute_phase()
 
-    await asyncio.wait_for(progress.all_credits_sent_event.wait(), timeout=2)
+    await asyncio.wait_for(rig.progress.all_credits_sent_event.wait(), timeout=2)
 
-    assert progress.fatal_error is not None
-    assert expected_error in str(progress.fatal_error)
-    assert progress.all_credits_sent_event.is_set()
+    assert rig.progress.fatal_error is not None
+    assert expected_error in str(rig.progress.fatal_error)
+    assert rig.progress.all_credits_sent_event.is_set()
     assert [(c.conversation_id, c.turn_index) for c in dispatched_credits] == [
         ("root-0", 0)
     ]
-    branch_orchestrator.cleanup()
-    await issuer.replay_gate.cancel(notify_refused=False)
-    await asyncio.gather(*scheduler.cancel_all(), return_exceptions=True)
+    rig.branch_orchestrator.cleanup()
+    await rig.issuer.replay_gate.cancel(notify_refused=False)
+    await asyncio.gather(*rig.scheduler.cancel_all(), return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -458,105 +394,15 @@ async def test_finite_replay_e2e_multi_subagent_concurrent_branches_drain() -> N
             ),
         ],
     )
-    sampler = SequentialSampler(["root-0"])
-    concurrency = 1
-
-    source = TrajectorySource(
-        dataset_metadata=dataset,
-        dataset_sampler=sampler,
-        concurrency=concurrency,
-        random_seed=42,
-        finite_replay=True,
-    )
-    phase_cfg = CreditPhaseConfig(
-        phase=CreditPhase.PROFILING,
-        timing_mode=TimingMode.AGENTIC_REPLAY,
-        concurrency=concurrency,
-        finite_replay=True,
-    )
-
-    scheduler = LoopScheduler()
-    lifecycle = PhaseLifecycle(phase_cfg)
-    progress = PhaseProgressTracker(phase_cfg)
-    stop_checker = StopConditionChecker(
-        config=phase_cfg,
-        lifecycle=lifecycle,
-        counter=progress.counter,
-    )
-
-    concurrency_manager = ConcurrencyManager()
-    concurrency_manager.configure_for_phase(0, concurrency, prefill_concurrency=1)
-
-    tree_registry = SessionTreeRegistry(concurrency_manager)
-    router = MagicMock()
-    barrier = ReplayBarrierCoordinator(
-        dataset,
-        strict_finite=True,
-        scheduler=scheduler,
-    )
-
-    issuer = CreditIssuer(
-        phase=CreditPhase.PROFILING,
-        phase_index=0,
-        profiling_index=0,
-        phase_name="profiling",
-        phase_kind="profiling",
-        stop_checker=stop_checker,
-        progress=progress,
-        concurrency_manager=concurrency_manager,
-        credit_router=router,
-        cancellation_policy=MagicMock(
-            next_cancellation_delay_ns=MagicMock(return_value=None)
-        ),
-        lifecycle=lifecycle,
-        session_tree_registry=tree_registry,
-        session_tree_registry_enabled=True,
-        replay_barrier=barrier,
-        finite_replay=True,
-    )
-
-    branch_orchestrator = BranchOrchestrator(
-        conversation_source=source,
-        credit_issuer=issuer,
-        session_tree_registry=tree_registry,
-    )
-
-    strategy = AgenticReplayStrategy(
-        config=phase_cfg,
-        conversation_source=source,
-        scheduler=scheduler,
-        stop_checker=stop_checker,
-        credit_issuer=issuer,
-        lifecycle=lifecycle,
-        branch_orchestrator=branch_orchestrator,
-        session_tree_registry=tree_registry,
-        progress=progress,
-    )
-
-    callback_handler = CreditCallbackHandler(
-        concurrency_manager=concurrency_manager, session_tree_registry=tree_registry
-    )
-    callback_handler.register_phase(
-        phase=CreditPhase.PROFILING,
-        phase_index=0,
-        progress=progress,
-        lifecycle=lifecycle,
-        stop_checker=stop_checker,
-        strategy=strategy,
-    )
-    callback_handler.set_branch_orchestrator(
-        branch_orchestrator, phase=CreditPhase.PROFILING, phase_index=0
-    )
-    issuer.replay_gate.set_child_refused(branch_orchestrator.on_child_stopped)
-    issuer.replay_gate.set_credit_issued(branch_orchestrator.on_credit_issued)
+    rig = _build_finite_test_rig(dataset, concurrency=1)
 
     dispatched_credits: list[Credit] = []
 
     async def fake_send_credit(credit: Credit) -> None:
         dispatched_credits.append(credit)
-        now_wall = lifecycle.now_ns()
+        now_wall = rig.lifecycle.now_ns()
 
-        await callback_handler.on_transport_dispatched(
+        await rig.callback_handler.on_transport_dispatched(
             TransportDispatched(
                 credit_id=credit.id,
                 phase=credit.phase,
@@ -576,25 +422,25 @@ async def test_finite_replay_e2e_multi_subagent_concurrent_branches_drain() -> N
             cancelled=False,
             error=None,
         )
-        await callback_handler.on_credit_return("worker-0", ret)
+        await rig.callback_handler.on_credit_return("worker-0", ret)
 
-    router.send_credit.side_effect = fake_send_credit
+    rig.router.send_credit.side_effect = fake_send_credit
 
-    lifecycle.start()
+    rig.lifecycle.start()
 
-    await strategy.setup_phase()
-    await strategy.execute_phase()
+    await rig.strategy.setup_phase()
+    await rig.strategy.execute_phase()
 
-    await asyncio.wait_for(progress.all_credits_sent_event.wait(), timeout=2)
+    await asyncio.wait_for(rig.progress.all_credits_sent_event.wait(), timeout=2)
 
-    assert progress.all_credits_sent_event.is_set()
+    assert rig.progress.all_credits_sent_event.is_set()
     assert {c.conversation_id for c in dispatched_credits} == {
         "root-0",
         "child-spawn",
         "child-fork",
     }
-    assert concurrency_manager.get_session_stats(0).release_count == 1
-    assert progress.fatal_error is None
+    assert rig.concurrency_manager.get_session_stats(0).release_count == 1
+    assert rig.progress.fatal_error is None
     assert sorted(
         (c.conversation_id, c.turn_index) for c in dispatched_credits
     ) == sorted(
@@ -602,4 +448,4 @@ async def test_finite_replay_e2e_multi_subagent_concurrent_branches_drain() -> N
         for conversation in dataset.conversations
         for index in range(len(conversation.turns))
     )
-    assert not barrier.has_pending_finite_work()
+    assert not rig.barrier.has_pending_finite_work()
