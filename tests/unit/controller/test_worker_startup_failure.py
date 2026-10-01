@@ -54,7 +54,7 @@ def _local_workers(
     manager = system_controller.service_manager
     manager.service_id_map = {}
     manager.spawned_worker_ids = MagicMock(return_value=frozenset(spawned))
-    manager.get_service_liveness = MagicMock(side_effect=lambda sid: sid not in dead)
+    manager.live_worker_ids = MagicMock(return_value=frozenset(spawned) - dead)
     manager.get_service_exit_code = MagicMock(
         side_effect=lambda sid: (exit_codes or {}).get(sid)
     )
@@ -164,7 +164,7 @@ async def test_a_registered_worker_keeps_the_existing_optional_path(
         )
     }
     manager.spawned_worker_ids = MagicMock(return_value=frozenset({"worker_a"}))
-    manager.get_service_liveness = MagicMock(return_value=True)
+    manager.live_worker_ids = MagicMock(return_value=frozenset({"worker_a"}))
     system_controller._system_state = SystemState.PROFILING
     system_controller._cancel_profiling = AsyncMock()
     system_controller._check_and_trigger_shutdown = AsyncMock()
@@ -380,3 +380,21 @@ class TestSpawningStartsTheWatch:
         await self._spawn(system_controller, set())
 
         system_controller._watch_workers_until_registered.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_the_viability_check_reads_liveness_once_per_report(
+    system_controller: SystemController,
+) -> None:
+    """A per-worker liveness lookup inside the scan made staggered failures
+    cubic in the worker count (about 1 s of bookkeeping at 512 workers). One
+    report now reads the live set once."""
+    workers = {f"worker_{i}" for i in range(64)}
+    _local_workers(system_controller, spawned=workers)
+    manager = system_controller.service_manager
+    manager.get_service_liveness = MagicMock(return_value=True)
+
+    await _report(system_controller, "worker_0")
+
+    manager.get_service_liveness.assert_not_called()
+    manager.live_worker_ids.assert_called_once()

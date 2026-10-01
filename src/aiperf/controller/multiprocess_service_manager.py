@@ -252,6 +252,21 @@ class MultiProcessServiceManager(BaseServiceManager):
         """
         return frozenset(self._spawned_worker_ids)
 
+    def live_worker_ids(self) -> frozenset[str]:
+        """Workers whose process is alive, in one pass over the process list.
+
+        The controller asks this once per worker start-up report rather than
+        calling ``get_service_liveness`` for every worker, which is a linear
+        scan each, made staggered failures cubic in the worker count.
+        """
+        return frozenset(
+            info.service_id
+            for info in self.multi_process_info
+            if info.service_type == ServiceType.WORKER
+            and info.process is not None
+            and info.process.is_alive()
+        )
+
     def get_service_liveness(self, service_id: str) -> bool | None:
         """Answer liveness from the real ``multiprocessing.Process`` handle.
 

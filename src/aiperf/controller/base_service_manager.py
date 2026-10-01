@@ -65,6 +65,10 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
         """
         return frozenset()
 
+    def live_worker_ids(self) -> frozenset[str]:
+        """IDs of locally spawned workers whose process is alive; empty here."""
+        return frozenset()
+
     def get_service_liveness(self, service_id: str) -> bool | None:
         """Report authoritative liveness for a service, when the manager knows it.
 

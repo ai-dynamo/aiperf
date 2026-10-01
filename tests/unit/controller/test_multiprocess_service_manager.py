@@ -682,6 +682,14 @@ class TestGetServiceLiveness:
         self._add(manager, "worker_1", alive=None)
         assert manager.get_service_liveness("worker_1") is False
 
+    def test_live_worker_ids_lists_only_workers_whose_process_is_alive(
+        self, manager
+    ) -> None:
+        self._add(manager, "worker_alive", alive=True)
+        self._add(manager, "worker_dead", alive=False)
+        self._add(manager, "worker_no_handle", alive=None)
+        assert manager.live_worker_ids() == {"worker_alive"}
+
     def test_get_service_exit_code_reports_the_process_exit_code(self, manager) -> None:
         self._add(manager, "worker_1", alive=False)
         manager.multi_process_info[0].process.exitcode = -9

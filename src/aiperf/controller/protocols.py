@@ -81,6 +81,13 @@ class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
         """
         ...
 
+    def live_worker_ids(self) -> frozenset[str]:
+        """IDs of locally spawned workers whose process is alive.
+
+        Empty for managers that do not spawn workers themselves.
+        """
+        ...
+
 
 @runtime_checkable
 class LocalProcessServiceManagerProtocol(ServiceManagerProtocol, Protocol):

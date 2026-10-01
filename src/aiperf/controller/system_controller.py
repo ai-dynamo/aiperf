@@ -934,12 +934,10 @@ class SystemController(
         if self._all_workers_failed_to_start:
             return
 
-        viable = [
-            service_id
-            for service_id in self.service_manager.spawned_worker_ids()
-            if service_id not in self._worker_startup_failures
-            and self.service_manager.get_service_liveness(service_id) is not False
-        ]
+        viable = (
+            self.service_manager.spawned_worker_ids()
+            & self.service_manager.live_worker_ids()
+        ) - self._worker_startup_failures.keys()
         if viable:
             self.warning(
                 f"Worker '{service_id}' failed to start: "
@@ -1009,9 +1007,8 @@ class SystemController(
             )
             if not pending:
                 return
-            for service_id in sorted(pending):
-                if self.service_manager.get_service_liveness(service_id) is not False:
-                    continue
+            live = self.service_manager.live_worker_ids()
+            for service_id in sorted(pending - live):
                 dead_ticks[service_id] = dead_ticks.get(service_id, 0) + 1
                 if dead_ticks[service_id] < _WORKER_SILENT_DEATH_TICKS:
                     continue
