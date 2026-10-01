@@ -169,8 +169,8 @@ def _apply_sagemaker_before_validation(data: dict) -> None:
     ``urls`` is a required field: an after-validator never runs, so the user
     would get "urls: Field required" instead of anything about SageMaker.
 
-    Extracted from ``normalize_before_validation`` to keep that method under the
-    repo's complexity guardrail, and because everything here is one concern.
+    Separate from ``normalize_before_validation``, which calls it, to keep that
+    method under the repo's complexity guardrail; everything here is one concern.
     """
     sagemaker = data.get("sagemaker") or {}
     if isinstance(sagemaker, dict):

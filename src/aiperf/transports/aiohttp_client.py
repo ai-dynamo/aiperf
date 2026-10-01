@@ -299,7 +299,6 @@ class AioHttpClient(AIPerfLoggerMixin):
                     )
         except (SSEResponseError, AwsEventStreamError) as e:
             record.end_perf_ns = time.perf_counter_ns()
-            # Covers two framings now, so the message no longer says "SSE".
             self.error(f"Error in streaming response: {e!r}")
             record.error = ErrorDetails.from_exception(e)
             if isinstance(e, AwsEventStreamError) and e.exception_type:

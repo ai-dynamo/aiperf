@@ -51,9 +51,9 @@ class AwsEventStreamError(RuntimeError):
 def _event_stream_buffer_cls() -> type[EventStreamBuffer]:
     """Import botocore's frame decoder once, not once per stream.
 
-    Cached at module scope because the original import sat inside ``__aiter__``,
-    which re-runs it for every streamed response in a hot async generator, and
-    surfaced a bare ``ModuleNotFoundError`` instead of naming the missing extra.
+    ``__aiter__`` runs for every streamed response, so the import is cached here
+    rather than repeated in that hot path. A missing botocore raises an error
+    naming the ``aiperf[aws]`` extra rather than a bare ``ModuleNotFoundError``.
     """
     try:
         from botocore.eventstream import EventStreamBuffer
