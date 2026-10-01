@@ -150,6 +150,20 @@ def _reject_orphaned_sagemaker_routing(
         )
 
 
+def _missing_region_error() -> ValueError:
+    """A SageMaker endpoint with no region to derive its host and scope from.
+
+    Raised by the before-validator when it would derive the URL and by the
+    after-validator when an explicit ``--url`` skipped that, so the CLI and YAML
+    paths report the same message.
+    """
+    return ValueError(
+        "SageMaker endpoints require --aws-region: it selects both the "
+        "runtime hostname and the SigV4 credential scope, and there is "
+        "no safe default to guess."
+    )
+
+
 def _canonical_transport(value: Any) -> Any:
     """``value`` as a TransportType when it names one, in any casing.
 
@@ -213,11 +227,7 @@ def _apply_sagemaker_before_validation(data: dict) -> None:
 
     region = data.get("aws_region") or data.get("awsRegion")
     if not region:
-        raise ValueError(
-            "SageMaker endpoints require --aws-region: it selects both the "
-            "runtime hostname and the SigV4 credential scope, and there is "
-            "no safe default to guess."
-        )
+        raise _missing_region_error()
     from aiperf.transports.aws.regions import dns_suffix, is_region_id
 
     if not isinstance(region, str) or not is_region_id(region):
@@ -751,11 +761,7 @@ class EndpointConfig(BaseConfig):
             self.auth_type = RequestSignerType.SIGV4
 
         if not self.aws_region:
-            raise ValueError(
-                "SageMaker endpoints require --aws-region: it selects both the "
-                "runtime hostname and the SigV4 credential scope, and there is no "
-                "safe default to guess."
-            )
+            raise _missing_region_error()
 
         return self
 

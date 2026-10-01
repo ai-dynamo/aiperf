@@ -324,3 +324,28 @@ class TestTransportIsComparedCaseInsensitively:
     def test_another_transport_in_any_casing_is_still_a_conflict(self) -> None:
         with pytest.raises(ValidationError, match="--transport"):
             _endpoint(transport="HTTP")
+
+
+class TestMissingRegionMessageIsShared:
+    """Two validators reject a SageMaker endpoint without a region: the
+    before-validator when it would derive the URL, and the after-validator when
+    an explicit --url skips that. They share one message so the CLI and YAML
+    paths cannot drift apart."""
+
+    def test_both_paths_give_the_same_message(self) -> None:
+        def message(data: dict) -> str:
+            with pytest.raises(ValidationError) as exc_info:
+                EndpointConfig.model_validate(data)
+            return str(exc_info.value).split("Value error, ")[-1].split(" [type=")[0]
+
+        derived = message({"type": "chat", "sagemaker": {"endpoint_name": "my-ep"}})
+        explicit_url = message(
+            {
+                "type": "chat",
+                "sagemaker": {"endpoint_name": "my-ep"},
+                "urls": ["https://runtime.sagemaker.us-west-2.amazonaws.com"],
+            }
+        )
+
+        assert derived == explicit_url
+        assert "--aws-region" in derived
