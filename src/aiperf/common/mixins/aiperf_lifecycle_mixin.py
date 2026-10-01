@@ -162,8 +162,8 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
             # failed start from a clean stop: bootstrap's
             # _exit_if_service_failed sees a healthy service and the process
             # exits 0, so a worker whose request signer could not resolve
-            # credentials surfaces 30s later as "No workers registered with the
-            # credit router" instead of the real cause.
+            # credentials surfaces as "No workers registered with the credit
+            # router" instead of the real cause.
             #
             # Genuine cancellation must still propagate untouched, or a
             # cooperative shutdown turns into a spurious failure.

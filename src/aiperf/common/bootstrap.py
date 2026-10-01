@@ -194,9 +194,9 @@ def bootstrap_and_run_service(
             # never sees it, the contextlib.suppress() around the event loop
             # swallows it, and _exit_if_service_failed further down never runs.
             # The service then exits cleanly without reporting anything and the
-            # controller times out waiting for a registration that never comes:
-            # 35s and "No workers registered with the credit router" instead of
-            # 1s and the real cause.
+            # controller times out waiting for a registration that never comes,
+            # reporting "No workers registered with the credit router" instead
+            # of the real cause.
             #
             # Converted only for a service that actually failed. A genuine
             # cancellation -- Ctrl-C, cooperative shutdown -- must keep

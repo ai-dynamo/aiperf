@@ -344,8 +344,8 @@ class MultiProcessServiceManager(BaseServiceManager):
         losing the last one drives its expected count to 0, the registration
         wait then sees every count satisfied (``0 >= 0``) and reports success,
         and start-up carries on into ``PhaseOrchestrator``'s wait for a worker
-        that will never register: 30s, then "No workers registered with the
-        credit router" in place of the workers' own error.
+        that will never register, which ends in "No workers registered with
+        the credit router" in place of the workers' own error.
 
         Start-up failures from configuration -- missing credentials, a bad
         request signer -- are deterministic, so every worker fails the same way

@@ -922,8 +922,8 @@ class SystemController(
         """Cancel once no spawned worker can still start; tolerate a partial loss.
 
         In multi-process mode workers are not required services, so one failing
-        while another can still start is a degraded run, and keeps today's
-        behavior. But with none left nothing will ever send a request, and
+        while another can still start is a degraded run that continues. But
+        with none left nothing will ever send a request, and
         waiting out PhaseOrchestrator's credit-router timeout would only bury
         the workers' own error under "No workers registered with the credit
         router". Liveness is ground truth here, so a worker that died without
