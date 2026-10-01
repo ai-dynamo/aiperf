@@ -743,8 +743,9 @@ def _apply_sagemaker_override(
 ) -> None:
     """Route the flat ``--sagemaker-*`` flags onto the nested endpoint block.
 
-    Unlike the control hooks there is no bare boolean flag to interpret, so a
-    partial override merges field-by-field with whatever the YAML supplied.
+    Unlike the control hooks there is no bare boolean flag to interpret. A
+    partial override merges field-by-field with whatever the YAML supplied, in
+    ``deep_merge`` later.
     """
     from aiperf.config.flags._converter_endpoint import (
         _SAGEMAKER_FIELD_MAP,
@@ -754,10 +755,7 @@ def _apply_sagemaker_override(
     if not fields_set & set(_SAGEMAKER_FIELD_MAP):
         return
     if sub_fields := _maybe_build_sagemaker(cli):
-        existing = endpoint.get("sagemaker")
-        endpoint["sagemaker"] = (
-            {**existing, **sub_fields} if isinstance(existing, dict) else sub_fields
-        )
+        endpoint["sagemaker"] = sub_fields
 
 
 def _apply_reset_kv_cache_override(

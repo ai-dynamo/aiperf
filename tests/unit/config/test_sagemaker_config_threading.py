@@ -13,10 +13,15 @@ These tests therefore assert on declared fields and on ``from_run`` output,
 never on hand-built objects.
 """
 
+import textwrap
+from pathlib import Path
+
 import pytest
 from pytest import param
 
 from aiperf.common.models.model_endpoint_info import EndpointInfo
+from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.flags.resolver import resolve_config
 
 _SAGEMAKER_FIELDS = (
     "sagemaker_endpoint_name",
@@ -104,3 +109,42 @@ def test_an_explicit_url_still_wins_on_the_cli_path() -> None:
     assert run.cfg.endpoint.urls == [
         "https://vpce-123.execute-api.us-west-2.vpce.amazonaws.com"
     ]
+
+
+_YAML_SAGEMAKER = textwrap.dedent("""\
+benchmark:
+  models:
+    - test-model
+  endpoint:
+    aws_region: us-west-2
+    sagemaker:
+      endpoint_name: my-ep
+  datasets:
+    - name: default
+      type: synthetic
+      entries: 10
+      prompts:
+        isl: 16
+        osl: 8
+  phases:
+    - name: profiling
+      type: concurrency
+      requests: 4
+      concurrency: 1
+""")
+
+
+def test_a_cli_sagemaker_flag_merges_with_the_yaml_sagemaker_block(
+    tmp_path: Path,
+) -> None:
+    """The CLI override carries only the --sagemaker-* flags that were set; the
+    field-by-field merge with the YAML block happens in deep_merge, so the
+    endpoint name from YAML survives a CLI-only target variant."""
+    cfg_file = tmp_path / "sagemaker.yaml"
+    cfg_file.write_text(_YAML_SAGEMAKER)
+
+    config = resolve_config(CLIConfig(sagemaker_target_variant="blue"), cfg_file)
+
+    sagemaker = config.benchmark.endpoint.sagemaker
+    assert sagemaker.endpoint_name == "my-ep"
+    assert sagemaker.target_variant == "blue"
