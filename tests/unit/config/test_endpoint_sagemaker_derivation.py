@@ -302,3 +302,25 @@ class TestRoutingOptionsRequireTheSageMakerTransport:
 
     def test_routing_options_are_accepted_with_an_endpoint_name(self) -> None:
         assert _endpoint(sagemaker={"endpoint_name": "my-ep", "target_variant": "blue"})
+
+
+class TestTransportIsComparedCaseInsensitively:
+    """TransportType accepts any casing, so YAML `transport: SageMaker` is a valid
+    value. The before-validator compared the raw string, so it rejected that as a
+    conflict with SageMaker itself and skipped the missing-name guard."""
+
+    @pytest.mark.parametrize("transport", ["SageMaker", "SAGEMAKER"])
+    def test_any_casing_of_sagemaker_with_an_endpoint_name_is_accepted(
+        self, transport: str
+    ) -> None:
+        assert _endpoint(transport=transport).transport == TransportType.SAGEMAKER
+
+    def test_any_casing_without_an_endpoint_name_names_the_flag(self) -> None:
+        with pytest.raises(ValidationError, match="--sagemaker-endpoint-name"):
+            EndpointConfig.model_validate(
+                {"type": "chat", "transport": "SageMaker", "aws_region": "us-west-2"}
+            )
+
+    def test_another_transport_in_any_casing_is_still_a_conflict(self) -> None:
+        with pytest.raises(ValidationError, match="--transport"):
+            _endpoint(transport="HTTP")

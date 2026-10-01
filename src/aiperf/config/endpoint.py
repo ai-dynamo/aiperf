@@ -150,6 +150,18 @@ def _reject_orphaned_sagemaker_routing(
         )
 
 
+def _canonical_transport(value: Any) -> Any:
+    """``value`` as a TransportType when it names one, in any casing.
+
+    The raw mapping is compared here, before field validation, and the field
+    itself accepts any casing (YAML `transport: SageMaker`).
+    """
+    try:
+        return TransportType(value)
+    except (ValueError, TypeError):
+        return value
+
+
 def _apply_sagemaker_before_validation(data: dict) -> None:
     """Resolve what ``--sagemaker-endpoint-name`` implies about transport and URL.
 
@@ -172,7 +184,10 @@ def _apply_sagemaker_before_validation(data: dict) -> None:
     else:
         endpoint_name = getattr(sagemaker, "endpoint_name", None)
     if not endpoint_name:
-        if str(data.get("transport")) == "sagemaker" and data.get("path") is None:
+        if (
+            _canonical_transport(data.get("transport")) == TransportType.SAGEMAKER
+            and data.get("path") is None
+        ):
             raise _missing_endpoint_name_error()
         return
 
@@ -182,7 +197,10 @@ def _apply_sagemaker_before_validation(data: dict) -> None:
     # "--aws-region has no effect unless --auth-type is set to 'sigv4'";
     # without one, "SageMaker endpoints require --aws-region".
     transport = data.get("transport")
-    if transport is not None and str(transport) != "sagemaker":
+    if (
+        transport is not None
+        and _canonical_transport(transport) != TransportType.SAGEMAKER
+    ):
         raise ValueError(
             f"--sagemaker-endpoint-name selects the SageMaker transport, but "
             f"--transport {transport} was set explicitly. Drop --transport to "
