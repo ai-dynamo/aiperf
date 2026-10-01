@@ -188,12 +188,10 @@ def _apply_sagemaker_before_validation(data: dict) -> None:
     """
     sagemaker = data.get("sagemaker") or {}
     if isinstance(sagemaker, dict):
-        # Both spellings: BaseConfig sets alias_generator=to_camel with
-        # populate_by_name, so field validation accepts either -- but this runs
-        # before that, on the raw mapping. Both generated CRDs and the published
-        # JSON schema declare camelCase only, so reading snake_case alone meant
-        # Kubernetes input never derived anything and failed with
-        # "urls: Field required" or a spurious missing-region error.
+        # Both spellings: this runs on the raw mapping, before alias
+        # resolution, and the input may use either. BaseConfig accepts both
+        # (alias_generator=to_camel, populate_by_name), and the generated CRDs
+        # and JSON schema use camelCase.
         endpoint_name = sagemaker.get("endpoint_name") or sagemaker.get("endpointName")
     else:
         endpoint_name = getattr(sagemaker, "endpoint_name", None)
