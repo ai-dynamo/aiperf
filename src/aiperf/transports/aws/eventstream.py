@@ -19,7 +19,7 @@ stitching, multi-field parsing) that does not apply here.
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from functools import cache
 from typing import TYPE_CHECKING, Any
 
@@ -141,6 +141,17 @@ def _decode_error(exc: Exception) -> AwsEventStreamError:
     )
 
 
+def _complete_frames(decoder: EventStreamBuffer) -> Iterator[Any]:
+    """Yield every complete frame ``decoder`` holds, wrapping botocore failures."""
+    while True:
+        try:
+            yield decoder.next()
+        except StopIteration:
+            return
+        except Exception as e:
+            raise _decode_error(e) from e
+
+
 class AwsEventStreamReader:
     """Parse an AWS ``application/vnd.amazon.eventstream`` binary byte stream
     directly into :class:`AwsEventStreamMessage` objects, one per
@@ -162,6 +173,11 @@ class AwsEventStreamReader:
     async def __aiter__(self) -> AsyncIterator[AwsEventStreamMessage]:
         decoder = _event_stream_buffer_cls()()
         line_buffer = bytearray()
+        # botocore reports an incomplete frame only as "need more data", so a
+        # body that ends mid-frame is detected here by counting, rather than by
+        # reading the decoder's private buffer.
+        bytes_received = 0
+        bytes_decoded = 0
         async for chunk in self._async_iter:
             # One timestamp per network read, shared by every message decoded
             # from it. This matches what sse_utils.py already does for SSE
@@ -170,17 +186,13 @@ class AwsEventStreamReader:
             # the frames genuinely arrived together -- and would make
             # eventstream ITL non-comparable to SSE ITL from the same server.
             chunk_perf_ns = time.perf_counter_ns()
+            bytes_received += len(chunk)
             try:
                 decoder.add_data(chunk)
             except Exception as e:
                 raise _decode_error(e) from e
-            while True:
-                try:
-                    message = decoder.next()
-                except StopIteration:
-                    break
-                except Exception as e:
-                    raise _decode_error(e) from e
+            for message in _complete_frames(decoder):
+                bytes_decoded += message.prelude.total_length
                 message_type = message.headers.get(":message-type")
                 if message_type in ("error", "exception"):
                     raise _error_from_frame(message_type, message, bytes(line_buffer))
@@ -199,6 +211,12 @@ class AwsEventStreamReader:
         # as received on the message.
         if line_buffer.strip():
             yield _stream_message_for_line(bytes(line_buffer), time.perf_counter_ns())
+        if bytes_received > bytes_decoded:
+            raise AwsEventStreamError(
+                f"AWS eventstream ended inside an incomplete frame: "
+                f"{bytes_received - bytes_decoded} trailing byte(s) after the last "
+                f"complete frame"
+            )
 
     @staticmethod
     def inspect_message_for_error(message: AwsEventStreamMessage) -> None:

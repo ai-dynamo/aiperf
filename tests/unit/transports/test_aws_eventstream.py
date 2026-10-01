@@ -421,3 +421,41 @@ class TestCorruptFrameHandling:
         with pytest.raises(AwsEventStreamError):
             async for _ in AwsEventStreamReader(_chunks(bytes(frame))):
                 pass
+
+
+class TestTruncatedFrameAtEndOfStream:
+    """A clean HTTP EOF can still end inside an eventstream frame: the body was
+    delivered in full, but its framing was malformed. botocore only reports
+    "need more data" for an incomplete frame, so without a check at EOF the
+    request reads as a success with the frame's tokens silently missing."""
+
+    @pytest.mark.asyncio
+    async def test_a_final_frame_missing_its_last_byte_raises(self) -> None:
+        good = encode_frame(b'data: {"tok": "a"}\n')
+        truncated = encode_frame(b'data: {"tok": "b"}\n')[:-1]
+
+        with pytest.raises(AwsEventStreamError, match="incomplete"):
+            async for _ in AwsEventStreamReader(_chunks(good + truncated)):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_lines_decoded_before_the_truncation_are_still_delivered(
+        self,
+    ) -> None:
+        good = encode_frame(b'data: {"tok": "a"}\n')
+        truncated = encode_frame(b'data: {"tok": "b"}\n')[:10]
+        received: list[str] = []
+
+        with pytest.raises(AwsEventStreamError):
+            async for message in AwsEventStreamReader(_chunks(good + truncated)):
+                received.append(message.line)
+
+        assert received == ['{"tok": "a"}']
+
+    @pytest.mark.asyncio
+    async def test_a_stream_of_complete_frames_ends_cleanly(self) -> None:
+        frames = encode_frame(b'data: {"tok": "a"}\n') + encode_frame(
+            b'data: {"tok": "b"}\n'
+        )
+        lines = [m.line async for m in AwsEventStreamReader(_chunks(frames))]
+        assert lines == ['{"tok": "a"}', '{"tok": "b"}']
