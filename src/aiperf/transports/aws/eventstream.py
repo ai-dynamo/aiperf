@@ -95,8 +95,22 @@ def _strip_data_prefix(text: str) -> str:
 
 
 def _stream_message_for_line(line: bytes, perf_ns: int) -> AwsEventStreamMessage:
-    """Turn one PayloadPart line into an AwsEventStreamMessage."""
-    text = _strip_data_prefix(line.decode("utf-8", errors="replace").strip())
+    """Turn one PayloadPart line into an AwsEventStreamMessage.
+
+    Decoded strictly: ``raw_line`` keeps the bytes as received, and bytes that
+    are not UTF-8 cannot be JSON-serialized with the record, which would drop
+    the request from every metric. A non-UTF-8 line is a malformed stream, so it
+    fails the request instead. Lines are complete here, so a multi-byte
+    character split across PayloadParts has already been reassembled.
+    """
+    try:
+        decoded = line.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise AwsEventStreamError(
+            f"AWS eventstream PayloadPart line is not valid UTF-8 "
+            f"(byte {e.start}): {line[:64]!r}"
+        ) from e
+    text = _strip_data_prefix(decoded.strip())
     return AwsEventStreamMessage(perf_ns=perf_ns, line=text, raw_line=bytes(line))
 
 

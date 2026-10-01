@@ -23,6 +23,8 @@ import pytest
 # failing collection there; these tests decode real eventstream frames.
 pytest.importorskip("botocore")
 
+from aiperf.common.messages.inference_messages import InferenceResultsMessage
+from aiperf.common.models import ErrorDetails, RequestRecord
 from aiperf.transports.aws.eventstream import (
     AwsEventStreamError,
     AwsEventStreamReader,
@@ -459,3 +461,52 @@ class TestTruncatedFrameAtEndOfStream:
         )
         lines = [m.line async for m in AwsEventStreamReader(_chunks(frames))]
         assert lines == ['{"tok": "a"}', '{"tok": "b"}']
+
+
+class TestNonUtf8PayloadIsAnError:
+    """A CRC-valid PayloadPart whose bytes are not UTF-8 used to become a
+    message whose raw_line could not be JSON-serialized, so the worker's push
+    of the whole record failed and the request vanished from both success and
+    error metrics. It is a malformed stream, so it now fails the request with
+    an error that serializes."""
+
+    @pytest.mark.asyncio
+    async def test_a_non_utf8_line_raises(self) -> None:
+        frame = encode_frame(b"data: \xff\xfe not utf-8\n")
+
+        with pytest.raises(AwsEventStreamError, match="not valid UTF-8"):
+            async for _ in AwsEventStreamReader(_chunks(frame)):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_a_non_utf8_trailing_fragment_raises_at_eof(self) -> None:
+        frame = encode_frame(b"data: \xff")
+
+        with pytest.raises(AwsEventStreamError, match="not valid UTF-8"):
+            async for _ in AwsEventStreamReader(_chunks(frame)):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_a_character_split_across_frames_still_decodes(self) -> None:
+        encoded = 'data: {"tok": "é"}\n'.encode()
+        split = encoded.index("é".encode()) + 1  # inside the two-byte é
+        frames = encode_frame(encoded[:split]) + encode_frame(encoded[split:])
+
+        lines = [m.line async for m in AwsEventStreamReader(_chunks(frames))]
+
+        assert lines == ['{"tok": "é"}']
+
+    @pytest.mark.asyncio
+    async def test_the_resulting_error_record_serializes(self) -> None:
+        with pytest.raises(AwsEventStreamError) as exc_info:
+            async for _ in AwsEventStreamReader(
+                _chunks(encode_frame(b"data: \xff\xfe\n"))
+            ):
+                pass
+        record = RequestRecord.model_construct(
+            responses=[], error=ErrorDetails.from_exception(exc_info.value)
+        )
+
+        InferenceResultsMessage.model_construct(
+            service_id="worker", record=record
+        ).to_json_bytes()
