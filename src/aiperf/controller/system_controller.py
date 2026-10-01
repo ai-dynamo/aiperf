@@ -38,7 +38,7 @@ from aiperf.common.enums import (
     SystemState,
 )
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import LifecycleOperationError
+from aiperf.common.exceptions import AIPerfError, LifecycleOperationError
 from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_stop
 from aiperf.common.logging import cleanup_global_log_queue, get_global_log_queue
 from aiperf.common.messages import (
@@ -236,6 +236,9 @@ class SystemController(
         # a later one (``_kill``'s "entered FAILED state") is a consequence.
         self._worker_startup_failures: dict[str, ErrorDetails] = {}
         self._all_workers_failed_to_start = False
+        # Set when every worker failed while _start_services was still running;
+        # that task aborts at its next checkpoint (see _on_worker_startup_failure).
+        self._startup_abort_reason: str | None = None
         self._worker_start_watch_task: asyncio.Task | None = None
         self._export_failed = False
         self._failed_exporters: list[str] = []
@@ -548,9 +551,11 @@ class SystemController(
         # meaningful once every one of them has registered.
         self.service_manager.activate_heartbeat_monitoring()
 
+        self._raise_if_startup_aborted()
         await self._set_system_state(SystemState.CONFIGURING)
         self.info("AIPerf System is CONFIGURING")
         await self._profile_configure_all_services()
+        self._raise_if_startup_aborted()
         await self._set_system_state(SystemState.READY)
         self.info("AIPerf System is CONFIGURED")
         await self._verify_pods_healthy()
@@ -559,9 +564,15 @@ class SystemController(
             self._pod_failure_watcher_task = self.execute_async(
                 self._watch_pod_failure_abort()
             )
+        self._raise_if_startup_aborted()
         await self._start_profiling_all_services()
         await self._set_system_state(SystemState.PROFILING)
         self.info("AIPerf System is PROFILING")
+        # Every worker failed while PROFILE_START was in flight: no checkpoint
+        # remains, and the handler deferred to this task, so cancel from here.
+        if self._startup_abort_reason is not None:
+            await self._cancel_profiling()
+            return
         # A very short run can publish its terminal result while PROFILE_START
         # acknowledgements are still being collected. Re-check after leaving
         # the startup states so an earlier, deliberately ignored readiness
@@ -954,8 +965,28 @@ class SystemController(
             )
             for service_id, error in self._worker_startup_failures.items()
         )
+        if self._system_state in _PRE_BENCHMARK_STATES:
+            # _start_services is still running on its own task. Tearing down
+            # from here would race it: start-up carries on after the teardown
+            # begins, then fails, and that failure can reach runner shutdown
+            # before the in-flight stop reaches os._exit, hanging the process.
+            # Start-up aborts at its next checkpoint instead.
+            self._startup_abort_reason = (
+                f"Every worker failed to start "
+                f"({len(self._worker_startup_failures)}); see the worker errors."
+            )
+            return
         if self._system_state not in {SystemState.STOPPING, SystemState.SHUTDOWN}:
             await self._cancel_profiling()
+
+    def _raise_if_startup_aborted(self) -> None:
+        """Abort ``_start_services`` at a checkpoint once every worker has failed.
+
+        Raised on the start-up task itself, so the run ends through the ordinary
+        start-up failure path rather than a second, concurrent teardown.
+        """
+        if self._startup_abort_reason is not None:
+            raise AIPerfError(self._startup_abort_reason)
 
     async def _watch_workers_until_registered(self) -> None:
         """Catch workers that die before registering without reporting why.
