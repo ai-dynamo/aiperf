@@ -618,13 +618,14 @@ def _decorate_endpoint_node(node: dict[str, Any]) -> None:
                 # the region, so an endpoint name without one is rejected by
                 # EndpointConfig. Mirrored here so `kubectl apply` reports it
                 # instead of the resource being admitted and the job failing.
-                # size() as well as has(): EndpointConfig treats an empty name
-                # as unset, but has() is true for `endpointName: ""`.
+                # size() as well as has() on both fields: EndpointConfig treats
+                # an empty name as unset and rejects an empty region, but has()
+                # is true for `""`.
                 "rule": (
                     "!has(self.sagemaker) || "
                     "!has(self.sagemaker.endpointName) || "
                     "size(self.sagemaker.endpointName) == 0 || "
-                    "has(self.awsRegion)"
+                    "(has(self.awsRegion) && size(self.awsRegion) > 0)"
                 ),
                 "message": (
                     "endpoint.awsRegion is required when "

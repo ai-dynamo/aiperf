@@ -555,7 +555,7 @@ spec:
                           | true | {timeout_seconds?, start_path?, stop_path?}.
                     x-kubernetes-validations:
                     - rule: '!has(self.sagemaker) || !has(self.sagemaker.endpointName) || size(self.sagemaker.endpointName)
-                        == 0 || has(self.awsRegion)'
+                        == 0 || (has(self.awsRegion) && size(self.awsRegion) > 0)'
                       message: endpoint.awsRegion is required when endpoint.sagemaker.endpointName is set
                     - rule: '!has(self.type) || self.type != ''template'' || has(self.template)'
                       message: endpoint.template is required when endpoint.type='template'

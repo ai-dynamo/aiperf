@@ -113,7 +113,7 @@ are enforced by Pydantic on the operator side instead — see
 | `!has(self.template) \|\| !has(self.type) \|\| self.type == 'template'` | `endpoint.template is only used when endpoint.type='template' (omit type to have it inferred)` |
 | `!has(self.requestContentType) \|\| self.requestContentType != 'multipart/form-data' \|\| !has(self.type) \|\| self.type in ['audio_transcription', 'image_edit', 'video_generation']` | `requestContentType='multipart/form-data' is only supported on endpoint types that accept form data: audio_transcription, image_edit, video_generation` |
 | `!has(self.path) \|\| self.path.startsWith('/')` | `endpoint.path must start with '/' (e.g. '/v1/chat/completions', not 'v1/chat/completions')` |
-| `!has(self.sagemaker) \|\| !has(self.sagemaker.endpointName) \|\| size(self.sagemaker.endpointName) == 0 \|\| has(self.awsRegion)` | `endpoint.awsRegion is required when endpoint.sagemaker.endpointName is set` |
+| `!has(self.sagemaker) \|\| !has(self.sagemaker.endpointName) \|\| size(self.sagemaker.endpointName) == 0 \|\| (has(self.awsRegion) && size(self.awsRegion) > 0)` | `endpoint.awsRegion is required when endpoint.sagemaker.endpointName is set` |
 
 The form-data endpoint list in the third rule is derived at generation time
 from the `requires_form_data` plugin metadata in

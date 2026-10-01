@@ -514,6 +514,22 @@ class TestSageMakerEndpointRequiresUrlsOrEndpointName:
         endpoint = _endpoint_node(_job_spec_node())
         assert "urls" not in cast(list, endpoint.get("required", []))
 
+    def test_an_empty_region_does_not_satisfy_the_region_rule(self) -> None:
+        """``has()`` is true for ``awsRegion: ""``, which EndpointConfig rejects,
+        so admission let through a resource the operator then failed."""
+        for node in (
+            _endpoint_node(_job_spec_node()),
+            _endpoint_node(_sweep_spec_node()),
+        ):
+            rules = [
+                cast(dict, r)["rule"]
+                for r in cast(list, node.get("x-kubernetes-validations", []))
+                if "awsRegion" in cast(dict, r)["rule"]
+            ]
+            assert rules
+            for rule in rules:
+                assert "size(self.awsRegion) > 0" in rule, rule
+
     def test_urls_or_an_endpoint_name_is_left_to_the_operator(self) -> None:
         """``urls`` is a typeless preserve-unknown field (it also accepts a
         single string), so CEL cannot see it: a rule selecting it fails to
