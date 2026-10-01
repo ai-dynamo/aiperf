@@ -163,9 +163,6 @@ class _RootBarrierState:
     """Dispatches keyed by request, waiting on their predecessors to complete."""
     dispatch_events: dict[ReplayTurnKey, int] = field(default_factory=dict)
     completion_events: dict[ReplayTurnKey, int] = field(default_factory=dict)
-    dispatch_clock_spread_ns: dict[ReplayTurnKey, int] = field(default_factory=dict)
-    completion_clock_spread_ns: dict[ReplayTurnKey, int] = field(default_factory=dict)
-    dispatch_lateness_ns: dict[ReplayTurnKey, int] = field(default_factory=dict)
     root_start_perf_ns: int | None = None
 
 
@@ -183,11 +180,6 @@ class ReplayBarrierCoordinator:
         self._predecessors: dict[ReplayTurnKey, tuple[ReplayTurnKey, ...]] = {}
         self._dependencies: dict[ReplayTurnKey, tuple[ReplayTurnReference, ...]] = {}
         self._floor_ns: dict[ReplayTurnKey, int] = {}
-        self._conversation_roots: dict[str, str] = {}
-        self._required_completion_dependents: dict[
-            ReplayTurnKey, set[ReplayTurnKey]
-        ] = {}
-        self._required_dispatch_dependents: dict[ReplayTurnKey, set[ReplayTurnKey]] = {}
         self._strict_finite = strict_finite
         self._scheduler = scheduler
         if strict_finite and scheduler is None:
@@ -227,7 +219,6 @@ class ReplayBarrierCoordinator:
         if len(conversations) != len(dataset_metadata.conversations):
             raise RuntimeError("Finite replay conversation IDs must be unique")
         roots = self._resolve_conversation_roots(conversations)
-        self._conversation_roots = roots
         root_timestamps = self._validate_root_timestamps(conversations, roots)
         self._add_spawn_dependencies(dataset_metadata, conversations, roots)
         self._predecessors = {
@@ -525,12 +516,6 @@ class ReplayBarrierCoordinator:
             if predecessor == key:
                 raise RuntimeError(f"Finite replay turn {key!r} depends on itself")
             predecessors.add(predecessor)
-            dependents = (
-                self._required_dispatch_dependents
-                if reference.event == ReplayDependencyEvent.DISPATCH
-                else self._required_completion_dependents
-            )
-            dependents.setdefault(predecessor, set()).add(key)
         return predecessors
 
     @staticmethod
@@ -670,7 +655,6 @@ class ReplayBarrierCoordinator:
         state = self._roots.setdefault(root_id, _RootBarrierState(set(), {}))
         key = ReplayTurnKey(credit.conversation_id, credit.turn_index)
         if self._remember_first(state.dispatch_events, key, perf_ns):
-            state.dispatch_clock_spread_ns[key] = clock_spread_ns
             self._finite_clock_spread_max_ns = max(
                 self._finite_clock_spread_max_ns, clock_spread_ns
             )
@@ -712,7 +696,6 @@ class ReplayBarrierCoordinator:
             )
         state.completed.add(key)
         if self._remember_first(state.completion_events, key, eof_perf_ns):
-            state.completion_clock_spread_ns[key] = clock_spread_ns
             self._finite_clock_spread_max_ns = max(
                 self._finite_clock_spread_max_ns, clock_spread_ns
             )
@@ -842,7 +825,6 @@ class ReplayBarrierCoordinator:
             return
         state.pending.pop(key)
         lateness_ns = now_ns - deadline_ns
-        state.dispatch_lateness_ns[key] = lateness_ns
         self._finite_dispatch_lateness_count += 1
         self._finite_dispatch_lateness_total_ns += lateness_ns
         self._finite_dispatch_lateness_max_ns = max(

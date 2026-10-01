@@ -37,6 +37,7 @@ from aiperf.common.hooks import (
     on_stop,
 )
 from aiperf.common.messages import (
+    BaseServiceErrorMessage,
     DatasetConfiguredNotification,
     DatasetDownloadedNotification,
     ErrorMessage,
@@ -1166,6 +1167,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     @background_task(
         immediate=False,
         interval=Environment.WORKER.CLOCK_REMEASURE_INTERVAL,
+        stop_on_error=True,
     )
     async def _clock_remeasure_task(self) -> None:
         """Re-probe credit-channel RTT so the transit estimate does not go stale.
@@ -1180,6 +1182,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         Skipped outside Kubernetes, where both clocks are the same clock and no
         correction is meaningful. Failures are inert: the previous baseline
         stays in place.
+
+        In finite replay mode, a failed re-measurement is terminal: the worker
+        invalidates its calibration, publishes a service error, and transitions
+        to FAILED so the run aborts rather than emitting TransportDispatched
+        with stale timestamps.
         """
         if not self._tracks_clock_offset:
             return
@@ -1198,7 +1205,31 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             or self.clock_offset_tracker.baseline_measurement_count
             == previous_measurement_count
         ):
-            raise RuntimeError("Finite replay clock calibration was lost")
+            await self._handle_finite_clock_calibration_failure()
+
+    async def _handle_finite_clock_calibration_failure(self) -> None:
+        """Terminate the worker after unrecoverable finite replay clock calibration loss"""
+        self.clock_offset_tracker.baseline_rtt_ns = None
+        self.clock_offset_tracker.estimated_one_way_ns = None
+
+        error = RuntimeError("Finite replay clock calibration was lost")
+        self.error(str(error))
+
+        try:
+            await self.publish(
+                BaseServiceErrorMessage(
+                    service_id=self.service_id,
+                    error=ErrorDetails.from_exception(error),
+                )
+            )
+        except Exception as publish_error:
+            self.debug(
+                lambda e=publish_error: (
+                    f"Failed to publish calibration-loss error: {e!r}"
+                )
+            )
+
+        await self._fail(error)
 
     async def _publish_startup_state(self, state: WorkerStartupState) -> None:
         """Publish a worker startup-state transition, skipping repeats."""

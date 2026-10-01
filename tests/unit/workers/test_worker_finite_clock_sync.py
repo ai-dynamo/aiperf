@@ -3,12 +3,13 @@
 """Tests for distributed Kubernetes worker clock synchronization in finite replay."""
 
 import asyncio
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.messages import BaseServiceErrorMessage
 from aiperf.credit.messages import TimePong, WorkerDispatchable
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.workers.clock_offset_tracker import ClockOffsetTracker
@@ -78,23 +79,44 @@ async def test_worker_ready_requires_finite_clock_calibration_convergence() -> N
 
 
 @pytest.mark.asyncio
-async def test_clock_remeasure_task_raises_when_calibration_lost_in_finite_replay() -> (
+async def test_clock_remeasure_task_fails_worker_when_calibration_lost_in_finite_replay() -> (
     None
 ):
-    """Periodic remeasurement task fails fast if calibration is lost in finite replay."""
+    """Periodic remeasurement task transitions worker to FAILED when calibration is lost."""
+
+    async def mock_fail(error: Exception) -> None:
+        raise asyncio.CancelledError(str(error))
+
+    tracker = MagicMock(
+        baseline_measurement_count=1,
+        is_currently_calibrated=False,
+        baseline_rtt_ns=500_000,
+        estimated_one_way_ns=250_000,
+    )
     worker = SimpleNamespace(
+        service_id="worker-1",
         _tracks_clock_offset=True,
         _finite_replay_enabled=True,
-        clock_offset_tracker=MagicMock(
-            baseline_measurement_count=1,
-            is_currently_calibrated=False,
-            baseline_rtt_ns=None,
-        ),
+        clock_offset_tracker=tracker,
         _measure_baseline_rtt=AsyncMock(),
+        publish=AsyncMock(),
+        error=MagicMock(),
+        debug=MagicMock(),
+        _fail=mock_fail,
+    )
+    worker._handle_finite_clock_calibration_failure = MethodType(
+        Worker._handle_finite_clock_calibration_failure, worker
     )
 
-    with pytest.raises(RuntimeError, match="Finite replay clock calibration was lost"):
+    with pytest.raises(asyncio.CancelledError):
         await Worker._clock_remeasure_task(worker)
+
+    assert tracker.baseline_rtt_ns is None
+    assert tracker.estimated_one_way_ns is None
+    worker.publish.assert_awaited_once()
+    published = worker.publish.await_args.args[0]
+    assert isinstance(published, BaseServiceErrorMessage)
+    assert published.service_id == "worker-1"
 
 
 def test_uncalibrated_worker_rejects_finite_start_and_eof_callbacks() -> None:
