@@ -2,16 +2,20 @@
 # SPDX-License-Identifier: Apache-2.0
 """Region to DNS-suffix mapping for deriving AWS service hostnames.
 
-Pure string handling with no botocore import on purpose: this runs during
-``EndpointConfig`` validation, which has to work whether or not the optional
-``aiperf[aws]`` extra is installed. Getting the suffix wrong only affects the
-*derived* base URL -- an explicit ``--url`` always wins, which is what
-VPC/PrivateLink and custom-domain deployments use.
+The suffix comes from botocore's partition table when botocore is installed,
+which it is wherever a SageMaker run can actually sign requests. This runs
+during ``EndpointConfig`` validation, which also has to work without the
+optional ``aiperf[aws]`` extra, so the import is optional and a commercial/China
+fallback remains. Getting the suffix wrong only affects the *derived* base URL
+-- an explicit ``--url`` always wins, which is what VPC/PrivateLink and
+custom-domain deployments use.
 """
 
 from __future__ import annotations
 
 import re
+from functools import cache
+from typing import Any
 
 _CHINA_SUFFIX = "amazonaws.com.cn"
 _COMMERCIAL_SUFFIX = "amazonaws.com"
@@ -20,16 +24,29 @@ _COMMERCIAL_SUFFIX = "amazonaws.com"
 _REGION_ID = re.compile(r"[A-Za-z]+(-[A-Za-z]+)+-[0-9]+")
 
 
+@cache
+def _partitions() -> tuple[dict[str, Any], ...]:
+    """botocore's partition table, or empty when botocore is not installed."""
+    try:
+        from botocore.loaders import create_loader
+
+        return tuple(create_loader().load_data("endpoints")["partitions"])
+    except Exception:  # noqa: BLE001 - missing extra or unreadable data: use the fallback
+        return ()
+
+
 def dns_suffix(region: str) -> str:
     """Return the DNS suffix for ``region``'s AWS partition.
 
-    Only the China partition uses a different suffix. GovCloud regions
-    (``us-gov-*``) read like a separate partition but resolve under the
-    commercial suffix, so they are deliberately not special-cased.
+    Matched the way botocore resolves endpoints: a partition's listed regions
+    first, then its region pattern, so a region AWS adds to a known partition
+    resolves before botocore lists it. The EU sovereign cloud (``eusc-*``,
+    ``amazonaws.eu``) and the ISO partitions do not use ``amazonaws.com``.
 
-    Unknown or future regions fall back to the commercial suffix rather than
-    raising: AWS adds regions regularly, and a wrong guess here is both
-    recoverable (pass ``--url``) and immediately visible as a DNS failure.
+    Without botocore, or for a region no partition claims, only China gets a
+    different suffix; everything else falls back to the commercial one rather
+    than raising, since a wrong guess is recoverable (pass ``--url``) and shows
+    up immediately as a DNS failure.
 
     Args:
         region: AWS region id, e.g. ``us-west-2``. Case-insensitive.
@@ -37,7 +54,13 @@ def dns_suffix(region: str) -> str:
     Returns:
         The DNS suffix, e.g. ``amazonaws.com`` or ``amazonaws.com.cn``.
     """
-    return _CHINA_SUFFIX if region.lower().startswith("cn-") else _COMMERCIAL_SUFFIX
+    normalized = region.lower()
+    for partition in _partitions():
+        if normalized in partition.get("regions", {}) or re.match(
+            partition["regionRegex"], normalized
+        ):
+            return partition["dnsSuffix"]
+    return _CHINA_SUFFIX if normalized.startswith("cn-") else _COMMERCIAL_SUFFIX
 
 
 def is_region_id(region: str) -> bool:

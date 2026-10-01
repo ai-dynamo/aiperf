@@ -11,6 +11,7 @@ is installed.
 import pytest
 from pytest import param
 
+from aiperf.transports.aws import regions
 from aiperf.transports.aws.regions import dns_suffix, is_region_id
 
 
@@ -83,3 +84,40 @@ def test_anything_that_could_leave_the_hostname_label_is_rejected(
     so a ``.``, ``/``, ``#``, ``@`` or ``:`` would move that request -- body and
     session token included -- to a host outside AWS."""
     assert not is_region_id(region)
+
+
+@pytest.mark.parametrize(
+    "region",
+    [
+        param("us-west-2", id="aws"),
+        param("cn-northwest-1", id="aws-cn"),
+        param("us-gov-west-1", id="aws-us-gov"),
+        param("us-iso-east-1", id="aws-iso"),
+        param("us-isob-east-1", id="aws-iso-b"),
+        param("eu-isoe-west-1", id="aws-iso-e"),
+        param("us-isof-south-1", id="aws-iso-f"),
+        param("eusc-de-east-1", id="aws-eusc"),
+        param("eusc-de-west-9", id="aws-eusc-unlisted-region"),
+    ],
+)  # fmt: skip
+def test_the_derived_host_matches_botocore_in_every_partition(region: str) -> None:
+    """The EU sovereign cloud and the four ISO partitions do not use
+    amazonaws.com, so a suffix guessed from the region prefix sent requests to
+    the wrong host. botocore's own resolver is the oracle."""
+    botocore_loaders = pytest.importorskip("botocore.loaders")
+    from botocore.regions import EndpointResolver
+
+    resolver = EndpointResolver(botocore_loaders.create_loader().load_data("endpoints"))
+    expected = resolver.construct_endpoint("runtime.sagemaker", region)["hostname"]
+
+    assert f"runtime.sagemaker.{region}.{dns_suffix(region)}" == expected
+
+
+def test_without_botocore_the_commercial_and_china_fallback_remains(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Config validation must work without the aiperf[aws] extra."""
+    monkeypatch.setattr(regions, "_partitions", lambda: ())
+
+    assert dns_suffix("us-west-2") == "amazonaws.com"
+    assert dns_suffix("cn-north-1") == "amazonaws.com.cn"
