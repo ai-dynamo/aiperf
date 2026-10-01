@@ -15,6 +15,7 @@ import logging
 import pytest
 from pytest import param
 
+from aiperf.common.redact import REDACTED_VALUE
 from aiperf.config.endpoint import EndpointConfig
 from aiperf.plugin.enums import EndpointType
 
@@ -400,6 +401,17 @@ class TestApiKeyIgnoredUnderSigningWarns:
 
         assert "--api-key is ignored" in caplog.text
         assert "sk-do-not-print" not in caplog.text
+
+    def test_the_redacted_placeholder_does_not_warn(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Kubernetes service containers validate the serialized config before
+        the real key is injected, and sweep subprocesses revalidate each
+        variation, so the placeholder would repeat the warning in every log."""
+        with caplog.at_level(logging.WARNING, logger="aiperf.config.endpoint"):
+            _endpoint(api_key=REDACTED_VALUE, **_SIGV4)
+
+        assert "--api-key is ignored" not in caplog.text
 
     @pytest.mark.parametrize(
         "overrides",
