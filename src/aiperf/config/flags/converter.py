@@ -544,6 +544,8 @@ def _apply_scenario_defaults(cli: CLIConfig) -> CLIConfig:
             defaults.pop(disabled, None)
         if disabled in cli.model_fields_set:
             defaults.pop(enabled, None)
+    if cli.agentic_cache_warmup_duration is not None:
+        defaults.pop("warmup_requests_per_lane", None)
     unknown = sorted(defaults.keys() - type(cli).model_fields.keys())
     if unknown:
         raise TypeError(
