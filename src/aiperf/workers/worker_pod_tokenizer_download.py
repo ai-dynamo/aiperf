@@ -206,7 +206,23 @@ def _safe_extractall(tf: tarfile.TarFile, dest: Path) -> None:
     (``tarfile.data_filter`` absent). Rather than fall back to an unfiltered
     ``extractall`` there, validate each member's resolved path stays under
     ``dest`` first, so no supported interpreter ever runs an unguarded extract.
+
+    Hard links are rejected outright, on every interpreter, before any filter
+    runs (CVE-2026-82049): the ``data`` filter's own hard-link handling has a
+    hard-link-to-symlink bypass on all Python versions below 3.14, letting a
+    crafted member tamper with or disclose the contents of a file outside
+    ``dest``. Tokenizer bundles have no legitimate use for hard links, so
+    there is no compatibility cost to blocking them unconditionally instead
+    of waiting on the 3.14 fix.
     """
+    for member in tf.getmembers():
+        if member.islnk():
+            raise tarfile.TarError(
+                f"tar member '{member.name}' is a hard link (-> "
+                f"'{member.linkname}'); hard links are rejected outright, "
+                "see CVE-2026-82049"
+            )
+
     if hasattr(tarfile, "data_filter"):
         tf.extractall(path=dest, filter="data")
         return
