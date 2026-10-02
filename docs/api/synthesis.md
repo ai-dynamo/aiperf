@@ -484,7 +484,8 @@ aiperf profile \
 
 **Via SynthesisConfig:**
 ```python
-from aiperf.config.flags._input import SynthesisConfig
+from aiperf.config.dataset.trace import SynthesisConfig
+from aiperf.dataset.synthesis.models import SynthesisParams
 
 config = SynthesisConfig(
     speedup_ratio=2.0,
@@ -493,9 +494,7 @@ config = SynthesisConfig(
     max_isl=4096,
 )
 
-# Check if synthesis would be triggered
-if config.should_synthesize():
-    print("Synthesis will be applied")
+params = SynthesisParams.from_synthesis_config(config)
 ```
 
 **Direct Instantiation:**
