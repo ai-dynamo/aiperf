@@ -387,8 +387,7 @@ async def test_the_viability_check_reads_liveness_once_per_report(
     system_controller: SystemController,
 ) -> None:
     """A per-worker liveness lookup inside the scan made staggered failures
-    cubic in the worker count (about 1 s of bookkeeping at 512 workers). One
-    report now reads the live set once."""
+    cubic in the worker count. One report now reads the live set once."""
     workers = {f"worker_{i}" for i in range(64)}
     _local_workers(system_controller, spawned=workers)
     manager = system_controller.service_manager
