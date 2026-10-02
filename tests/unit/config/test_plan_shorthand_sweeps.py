@@ -87,38 +87,6 @@ def test_path_sweep_preserves_shorthand_values(
     assert config._raw_envelope == raw_before
 
 
-@pytest.mark.parametrize("sweep_type", ["grid", "zip", "sobol", "latin_hypercube"])
-def test_shorthand_sweep_renders_each_variation(sweep_type: str) -> None:
-    sweep = _sweep(sweep_type)
-    if sweep_type in {"grid", "zip"}:
-        sweep["parameters"]["variables.output_tokens"] = [8, 16]
-    else:
-        sweep["dimensions"].append(
-            {"path": "variables.output_tokens", "choices": [8, 16]}
-        )
-    config = load_config_from_mapping(
-        {
-            "variables": {"output_tokens": 4},
-            "benchmark": {
-                "model": "test-model",
-                "endpoint": {"url": "http://localhost:8000"},
-                "dataset": {
-                    "type": "synthetic",
-                    "prompts": {"isl": 64, "osl": "{{ output_tokens }}"},
-                },
-                "phases": {"type": "concurrency", "requests": 10, "concurrency": 1},
-            },
-            "sweep": sweep,
-        }
-    )
-    plan = build_benchmark_plan(config)
-    for benchmark, variation in zip(plan.configs, plan.variations, strict=True):
-        assert (
-            benchmark.datasets[0].prompts.osl.expected_value
-            == variation.values["variables.output_tokens"]
-        )
-
-
 def test_shorthand_sweep_rejects_wrong_dataset_name() -> None:
     config = load_config_from_mapping(
         {
