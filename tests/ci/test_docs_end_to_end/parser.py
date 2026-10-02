@@ -14,12 +14,14 @@ from constants import (
     AIPERF_RUN_TAG_PREFIX_LEN,
     HEALTH_CHECK_TAG_PREFIX,
     HEALTH_CHECK_TAG_PREFIX_LEN,
+    SETUP_FILE_TAG_PREFIX,
+    SETUP_FILE_TAG_PREFIX_LEN,
     SETUP_TAG_PREFIX,
     SETUP_TAG_PREFIX_LEN,
     TAG_SUFFIX,
     TAG_SUFFIX_LEN,
 )
-from data_types import Command, Server
+from data_types import Command, FileFixture, Server
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +62,33 @@ class MarkdownParser:
             # it's silently ignored on closing tags (which the categorizer
             # filters out anyway).
             if line.startswith("<!--") and line.endswith("-->"):
-                tag_match = re.match(r"<!--\s*(\S+)(?:\s+weight=(\d+))?\s*-->", line)
+                tag_match = re.match(r"<!--\s*(\S+)((?:\s+\w+=\S+)*)\s*-->", line)
                 if tag_match:
                     tag_name = tag_match.group(1).strip()
-                    weight_str = tag_match.group(2)
+                    attrs = dict(re.findall(r"(\w+)=(\S+)", tag_match.group(2) or ""))
+                    weight_str = attrs.get("weight")
+
+                    # setup-file- must be checked before setup-: it is a
+                    # longer prefix of the same namespace, and the block it
+                    # introduces is yaml/json/jsonl rather than bash.
+                    if self._is_file_tag(tag_name):
+                        path_attr = attrs.get("path")
+                        if not path_attr:
+                            logger.error(
+                                f"{tag_name} at {file_path}:{i + 1} has no path= attribute; skipping"
+                            )
+                        else:
+                            content = self._extract_fenced_block(lines, i + 1)
+                            if content is None:
+                                logger.warning(
+                                    f"No fenced block found after tag {tag_name}"
+                                )
+                            else:
+                                self._add_file_fixture(
+                                    tag_name, path_attr, content, file_path, i + 1
+                                )
+                        i += 1
+                        continue
 
                     # Check for setup or aiperf-run tags ending with endpoint-server
                     if self._is_target_tag(tag_name):
@@ -82,12 +107,69 @@ class MarkdownParser:
                             )
                             if weight_str is not None:
                                 command_kwargs["weight"] = int(weight_str)
+                            timeout_str = attrs.get("timeout")
+                            if timeout_str is not None:
+                                command_kwargs["timeout"] = int(timeout_str)
                             command = Command(**command_kwargs)
 
                             self._categorize_command(command)
                         else:
                             logger.warning(f"No bash block found after tag {tag_name}")
             i += 1
+
+    def _is_file_tag(self, tag_name: str) -> bool:
+        """Whether this tag declares a file to materialize before the run."""
+        return (
+            tag_name.startswith(SETUP_FILE_TAG_PREFIX)
+            and tag_name.endswith(TAG_SUFFIX)
+            and not tag_name.startswith("/")
+        )
+
+    def _extract_fenced_block(self, lines: list[str], start_idx: int) -> str | None:
+        """Extract the next fenced block regardless of its language.
+
+        ``_extract_bash_block`` deliberately only accepts ```bash; a config
+        fixture is yaml/json/jsonl, so it needs its own reader.
+        """
+        i = start_idx
+        while i < len(lines):
+            line = lines[i].strip()
+            if line.startswith("```"):
+                break
+            if line and not line.startswith("#"):
+                return None
+            i += 1
+        else:
+            return None
+
+        body: list[str] = []
+        i += 1
+        while i < len(lines):
+            if lines[i].strip() == "```":
+                return "".join(body)
+            body.append(lines[i])
+            i += 1
+        return None
+
+    def _add_file_fixture(
+        self, tag_name: str, path: str, content: str, file_path: str, line_no: int
+    ) -> None:
+        server_name = tag_name[SETUP_FILE_TAG_PREFIX_LEN:-TAG_SUFFIX_LEN].rstrip("-")
+        server = self.servers.get(server_name)
+        if server is None:
+            server = Server(
+                name=server_name,
+                setup_command=None,
+                health_check_command=None,
+                aiperf_commands=[],
+            )
+            self.servers[server_name] = server
+        server.files.append(
+            FileFixture(
+                path=path, content=content, file_path=file_path, start_line=line_no
+            )
+        )
+        logger.info(f"Registered file fixture {path} for server {server_name}")
 
     def _is_target_tag(self, tag_name: str) -> bool:
         """Check if tag is a setup, health-check, or aiperf-run command for endpoint servers"""
