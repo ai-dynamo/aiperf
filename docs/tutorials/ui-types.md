@@ -47,6 +47,7 @@ The full-featured TUI provides:
 - Worker status monitoring
 - Interactive display with multiple tabs
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
@@ -56,6 +57,7 @@ aiperf profile \
   --request-count 100 \
   --streaming
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **When to use:**
 - Monitoring benchmarks interactively
@@ -69,6 +71,7 @@ aiperf profile \
 
 Lightweight progress bars using TQDM:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
@@ -79,6 +82,7 @@ aiperf profile \
   --streaming \
   --ui-type simple
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```
@@ -102,6 +106,7 @@ INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
 
 Shows application logs only, no progress UI. This is the automatic default when output is piped or redirected:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
@@ -112,6 +117,7 @@ aiperf profile \
   --streaming \
   --ui-type none
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```

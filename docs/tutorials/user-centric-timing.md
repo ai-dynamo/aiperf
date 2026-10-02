@@ -37,9 +37,10 @@ User-centric timing recreates this pattern with **controlled, consistent timing*
 
 ## Quick Start
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=150 -->
 ```bash
 aiperf profile \
-    --model your-model \
+    --model Qwen/Qwen3-0.6B \
     --url localhost:8000 \
     --endpoint-type chat \
     --streaming \
@@ -53,6 +54,7 @@ aiperf profile \
     --num-dataset-entries 1000 \
     --benchmark-duration 100
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 This configures 15 simulated users with sessions averaging 20 turns:
 

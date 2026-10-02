@@ -24,31 +24,33 @@ Your goal is operational: find the single concurrency value that maximizes `outp
 
 ## The first run
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=420 timeout=1800 -->
 ```bash
 aiperf profile \
-    --model meta-llama/Llama-3.1-8B-Instruct \
-    --url http://vllm.internal:8000 \
-    --search-space "concurrency:1,1000:int" \
+    --model Qwen/Qwen3-0.6B \
+    --url http://localhost:8000 \
+    --search-space "concurrency:1,64:int" \
     --search-metric output_token_throughput \
     --search-direction maximize \
-    --search-max-iterations 25 \
-    --search-initial-points 5 \
+    --search-max-iterations 6 \
+    --search-initial-points 3 \
     --search-random-seed 42 \
-    --num-profile-runs 3 \
-    --request-count 1000 \
-    --warmup-request-count 50
+    --num-profile-runs 1 \
+    --request-count 20 \
+    --warmup-request-count 5
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 Flag-by-flag for this scenario (general semantics live in the [BO reference](../sweeping/bayesian-optimization.md#flag-reference)):
 
-- `--search-space "concurrency:1,1000:int"` — `concurrency` is bare-name sugar for `phases.profiling.concurrency` (the same dotted path a YAML grid sweep would use; see [Bare-Name Aliases](sweeps.md#bare-name-aliases-for-common-phase-fields)); `:int` makes the planner round to integers so we never propose `concurrency=472.6`.
-- `--search-max-iterations 25` — upper bound on outer iterations. Convergence may stop earlier (improvement-patience or plateau-CV; see [Convergence detection](../sweeping/bayesian-optimization.md#convergence-detection)).
-- `--search-initial-points 5` — the first 5 iterations are random Sobol draws (no GP yet); iterations 6–25 are GP-driven. With a one-dimensional search 5 is plenty; raise it for higher-dimensional spaces.
+- `--search-space "concurrency:1,64:int"` — `concurrency` is bare-name sugar for `phases.profiling.concurrency` (the same dotted path a YAML grid sweep would use; see [Bare-Name Aliases](sweeps.md#bare-name-aliases-for-common-phase-fields)); `:int` makes the planner round to integers so we never propose `concurrency=472.6`.
+- `--search-max-iterations 6` — upper bound on outer iterations. Production searches run far more; this is sized to finish quickly. Convergence may stop earlier (improvement-patience or plateau-CV; see [Convergence detection](../sweeping/bayesian-optimization.md#convergence-detection)).
+- `--search-initial-points 3` — the first 3 iterations are random Sobol draws (no GP yet); the rest are GP-driven. It must stay below `--search-max-iterations`, or the GP never fits and the run is rejected at config validation. With a one-dimensional search a handful is plenty; raise it for higher-dimensional spaces.
 - `--search-random-seed 42` — same seed, same trajectory. Drop it for production search; keep it while you are tuning the *recipe* itself.
-- `--num-profile-runs 3` — three benchmarks per proposed point. The planner records one aggregate vector per point: by default each objective is the mean of finite trial values, or the pooled percentile when percentile pooling is configured. The GP/Optuna planner sees one observation per point, not three separate per-trial observations. See [Objective semantics](../sweeping/bayesian-optimization.md#objective-semantics).
-- `--warmup-request-count 50` — 50 warmup requests before each timed run, so cold-cache effects don't poison early observations the GP is fitting on.
+- `--num-profile-runs 1` — one benchmark per proposed point; raise it to average out noise. The planner records one aggregate vector per point: by default each objective is the mean of finite trial values, or the pooled percentile when percentile pooling is configured. The GP/Optuna planner sees one observation per point, not three separate per-trial observations. See [Objective semantics](../sweeping/bayesian-optimization.md#objective-semantics).
+- `--warmup-request-count 5` — warmup requests before each timed run, so cold-cache effects don't poison early observations the GP is fitting on.
 
-The total timed work here is `25 iterations × 3 trials = 75` benchmarks (capped — the loop may exit earlier on improvement-patience).
+The total timed work here is `6 iterations × 1 trial = 6` benchmarks (capped — the loop may exit earlier on improvement-patience). A production search widens the space and raises both numbers.
 
 You did not specify `--search-stat`, so the converter defaults it to `avg`. You did not specify a goodput SLO yet — see [Common follow-ups](#common-follow-ups) below for the percentile-objective variant.
 
