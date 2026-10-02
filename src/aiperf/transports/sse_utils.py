@@ -26,11 +26,8 @@ def _parse_chat_chunk_choices(data: str) -> list[dict[str, object]]:
             "Chat stream completion could not be verified: malformed SSE data",
             error_code=502,
         ) from e
-    if isinstance(chunk, dict) and "error" in chunk:
-        detail = orjson.dumps(chunk["error"]).decode("utf-8")[:512]
-        raise SSEResponseError(
-            f"Chat stream returned server error: {detail}", error_code=502
-        )
+    if isinstance(chunk, dict) and chunk.get("error"):
+        _raise_for_data_error(data)
     if (
         not isinstance(chunk, dict)
         or not isinstance(choices := chunk.get("choices"), list)
@@ -79,6 +76,56 @@ def _validate_chat_stream_completion(messages: list[SSEMessage]) -> None:
             "Chat stream ended without a completion signal ([DONE] or finish_reason)",
             error_code=502,
         )
+
+
+def _raise_for_data_error(data_content: str) -> None:
+    """Raise when a candidate SSE data payload contains a structured error."""
+    try:
+        payload = orjson.loads(data_content)
+    except orjson.JSONDecodeError:
+        return
+
+    if not isinstance(payload, dict):
+        return
+
+    error = payload.get("error")
+    if not error:
+        return
+
+    error_code = 502
+    if isinstance(error, dict):
+        error_message = error.get("message")
+        code = error.get("code")
+        if isinstance(code, int) and not isinstance(code, bool) and 400 <= code <= 599:
+            error_code = code
+        if not isinstance(error_message, str):
+            error_message = orjson.dumps(error).decode()
+    elif isinstance(error, str):
+        error_message = error
+    else:
+        error_message = orjson.dumps(error).decode()
+
+    raise SSEResponseError(
+        f"Error occurred in SSE response: {error_message}", error_code=error_code
+    )
+
+
+def _classify_message_fields(message: SSEMessage) -> tuple[bool, bool]:
+    """Return named-error and structured-data-candidate flags."""
+    has_error_event = False
+    has_data_error_candidate = False
+    for packet in message.packets:
+        if packet.name == _SSE_DATA_FIELD_NAME:
+            if packet.value is not None and '"error"' in packet.value:
+                has_data_error_candidate = True
+            continue
+        if (
+            packet.name.casefold() == _SSE_EVENT_FIELD_NAME
+            and packet.value is not None
+            and packet.value.casefold() == _SSE_ERROR_EVENT_VALUE
+        ):
+            has_error_event = True
+    return has_error_event, has_data_error_candidate
 
 
 class AsyncSSEStreamReader:
@@ -146,24 +193,24 @@ class AsyncSSEStreamReader:
         return messages
 
     @staticmethod
-    def inspect_message_for_error(message: SSEMessage):
-        """Check if the message contains an error event packet and raise an SSEResponseError if so.
+    def inspect_message_for_error(message: SSEMessage) -> None:
+        """Raise for named SSE errors or structured ``data`` error payloads.
 
-        If so, look for any comment field and raise an SSEResponseError
-        with that comment as the error message, otherwise use the full message.
+        A named error uses its first comment when present. Without a comment,
+        structured data supplies the message and code before the unknown-error
+        fallback. Data is checked for the exact marker before JSON decoding to
+        keep normal streaming messages on the fast path.
         """
         if (
             len(message.packets) == 1
             and message.packets[0].name == _SSE_DATA_FIELD_NAME
         ):
+            data_content = message.packets[0].value
+            if data_content is not None and '"error"' in data_content:
+                _raise_for_data_error(data_content)
             return
 
-        has_error_event = any(
-            packet.name.casefold() == _SSE_EVENT_FIELD_NAME
-            and packet.value is not None
-            and packet.value.casefold() == _SSE_ERROR_EVENT_VALUE
-            for packet in message.packets
-        )
+        has_error_event, has_data_error_candidate = _classify_message_fields(message)
 
         if has_error_event:
             error_message = None
@@ -172,11 +219,19 @@ class AsyncSSEStreamReader:
                     error_message = packet.value
                     break
 
-            if error_message is None:
-                error_message = f"Unknown error in SSE response: {message}"
+            if error_message is not None:
+                raise SSEResponseError(
+                    f"Error occurred in SSE response: {error_message}",
+                    error_code=502,
+                )
 
+        if has_data_error_candidate:
+            _raise_for_data_error(message.extract_data_content())
+
+        if has_error_event:
             raise SSEResponseError(
-                f"Error occurred in SSE response: {error_message}", error_code=502
+                f"Error occurred in SSE response: Unknown error in SSE response: {message}",
+                error_code=502,
             )
 
     async def __aiter__(self) -> AsyncIterator[SSEMessage]:

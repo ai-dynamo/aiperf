@@ -272,10 +272,11 @@ class TestAioHttpClient:
             assert record.end_perf_ns < validation_clock_ns
 
     @pytest.mark.parametrize(
-        "error_chunk,expected_detail",
+        "error_chunk,expected_code",
         [
-            param(b'{"error":{"message":"overloaded","code":503}}', "503", id="error-object"),
-            param(b'{"error":"overloaded"}', "overloaded", id="error-string"),
+            param(b'{"error":{"message":"overloaded","code":503}}', 503, id="error-object"),
+            param(b'{"error":"overloaded"}', 502, id="error-string"),
+            param(b'{"\\u0065rror":{"message":"overloaded","code":503}}', 503, id="escaped-error-key"),
         ],
     )  # fmt: skip
     async def test_chat_stream_surfaces_json_error(
@@ -283,7 +284,7 @@ class TestAioHttpClient:
         aiohttp_client: AioHttpClient,
         mock_sse_response: Mock,
         error_chunk: bytes,
-        expected_detail: str,
+        expected_code: int,
     ) -> None:
         aiohttp_client.require_stream_completion = True
         mock_sse_response.content = MockStreamReader(
@@ -297,9 +298,24 @@ class TestAioHttpClient:
 
         assert record.error is not None
         assert record.error.type == "SSEResponseError"
+        assert record.error.code == expected_code
         assert "overloaded" in record.error.message
-        assert expected_detail in record.error.message
         assert "unsupported chunk shape" not in record.error.message
+
+    async def test_required_chat_stream_rejects_aws_eventstream(
+        self, aiohttp_client: AioHttpClient, mock_aiohttp_response: Mock
+    ) -> None:
+        aiohttp_client.require_stream_completion = True
+        mock_aiohttp_response.content_type = "application/vnd.amazon.eventstream"
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            setup_mock_session(mock_session_class, mock_aiohttp_response, ["request"])
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream", b"{}", {}
+            )
+        assert record.error is not None
+        assert record.error.type == "SSEResponseError"
+        assert "response is not SSE" in record.error.message
+        assert "application/vnd.amazon.eventstream" in record.error.message
 
     async def test_required_chat_stream_rejects_non_sse_response(
         self, aiohttp_client: AioHttpClient, mock_aiohttp_response: Mock
@@ -485,6 +501,35 @@ class TestAioHttpClient:
             assert expected_error_text in record.error.message
             assert len(record.responses) == 1
             assert isinstance(record.responses[0], SSEMessage)
+
+    @pytest.mark.asyncio
+    async def test_sse_stream_data_error_handling(
+        self, aiohttp_client: AioHttpClient, mock_sse_response: Mock
+    ) -> None:
+        """Test that a structured data error in a 200 response fails the request."""
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_sse_response.content = MockStreamReader(
+                [
+                    b'data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n',
+                    b'data: {"error":{"message":"Internal server error","type":"internal_server_error","code":500}}\n\n',
+                    b"data: [DONE]\n\n",
+                ]
+            )
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream",
+                '{"stream": true}',
+                {"Accept": "text/event-stream"},
+            )
+
+        assert record.error is not None
+        assert record.status == 200
+        assert record.error.code == 500
+        assert record.error.type == "SSEResponseError"
+        assert "Internal server error" in record.error.message
+        assert len(record.responses) == 1
+        assert isinstance(record.responses[0], SSEMessage)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
