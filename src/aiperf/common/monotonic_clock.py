@@ -48,6 +48,10 @@ class MonotonicClock:
             time.time_ns(),
         )
 
+    def wall_time_for_perf_ns(self, perf_ns: int) -> int:
+        """Map a local performance timestamp into this clock's wall domain."""
+        return self.wall_anchor_ns + (perf_ns - self.perf_anchor_ns)
+
     def now_ns(self) -> int:
         """Current wall-clock time derived from perf_counter delta."""
         return self.wall_anchor_ns + (time.perf_counter_ns() - self.perf_anchor_ns)

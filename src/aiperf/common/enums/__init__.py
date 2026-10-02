@@ -19,6 +19,7 @@ from aiperf.common.enums.dataset_enums import (
     SweepType as SweepType,
 )
 from aiperf.common.enums.enums import (
+    AgenticReplayLifecycle,
     AIPerfLogLevel,
     AudioFormat,
     CacheBustTarget,
@@ -50,6 +51,7 @@ from aiperf.common.enums.enums import (
     PromptCorpus,
     PromptSource,
     RandomCorpusStyle,
+    ReplayDependencyEvent,
     RequestContentType,
     ServerMetricsDiscoveryMode,
     ServerMetricsFormat,
@@ -103,6 +105,7 @@ from aiperf.plugin.enums import DatasetFormat
 
 __all__ = [
     "AIPerfLogLevel",
+    "AgenticReplayLifecycle",
     "AssistantResponseMode",
     "AudioFormat",
     "BaseMetricUnit",
@@ -165,6 +168,7 @@ __all__ = [
     "PromptCorpus",
     "PromptSource",
     "RandomCorpusStyle",
+    "ReplayDependencyEvent",
     "RequestContentType",
     "SSEEventType",
     "SSEFieldType",

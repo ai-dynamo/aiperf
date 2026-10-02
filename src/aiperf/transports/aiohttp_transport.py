@@ -39,6 +39,7 @@ from aiperf.transports.aiohttp_client import AioHttpClient, create_tcp_connector
 from aiperf.transports.base_transports import (
     BaseTransport,
     FirstTokenCallback,
+    TransportBoundaryCallback,
     TransportMetadata,
 )
 
@@ -337,6 +338,8 @@ class AioHttpTransport(BaseTransport):
         payload: dict[str, Any] | bytes,
         *,
         first_token_callback: FirstTokenCallback | None = None,
+        transport_start_callback: TransportBoundaryCallback | None = None,
+        transport_eof_callback: TransportBoundaryCallback | None = None,
     ) -> RequestRecord:
         """Send HTTP POST request with JSON payload.
 
@@ -447,6 +450,8 @@ class AioHttpTransport(BaseTransport):
                 headers,
                 cancel_after_ns=request_info.cancel_after_ns,
                 first_token_callback=first_token_callback,
+                transport_start_callback=transport_start_callback,
+                transport_eof_callback=transport_eof_callback,
                 connector=connector,
                 connector_owner=connector_owner,
                 **redirect_kwargs,

@@ -112,6 +112,7 @@ _ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
         "wandb_run_name",
         "wandb_tags",
         # agentic phase fields, via _apply_agentic_replay_fields
+        "agentic_replay_lifecycle",
         "agentic_cache_warmup_duration",
         "agentic_warmup_grace_period",
         # publishing targets, via build_mlflow / build_otel /

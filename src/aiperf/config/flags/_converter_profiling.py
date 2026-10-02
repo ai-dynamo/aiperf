@@ -11,6 +11,7 @@ import zlib
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.enums import AgenticReplayLifecycle
 
 _logger = AIPerfLogger(__name__)
 
@@ -55,6 +56,7 @@ _RAMP_FIELDS: tuple[tuple[str, str], ...] = (
 # AGENTIC_REPLAY phase fields that pass through verbatim onto BasePhaseConfig.
 # (output_key == attr_name on CLIConfig.)
 _AGENTIC_REPLAY_ROUTES: tuple[str, ...] = (
+    "agentic_replay_lifecycle",
     "failed_request_threshold",
     "trajectory_start_min_ratio",
     "trajectory_start_max_ratio",
@@ -575,6 +577,8 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
     if (
         not any(k in prof for k in ("requests", "duration", "sessions"))
         and prof["type"] != PhaseType.FIXED_SCHEDULE
+        and prof.get("agentic_replay_lifecycle", cli.agentic_replay_lifecycle)
+        != AgenticReplayLifecycle.FINITE
     ):
         # Why: when no bound is given for an unbounded run, default to
         # 10 requests so the run terminates in a reasonable time.
@@ -661,6 +665,11 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
 
     from aiperf.config.phases import PhaseType
 
+    if (
+        prof.get("agentic_replay_lifecycle", cli.agentic_replay_lifecycle)
+        == AgenticReplayLifecycle.FINITE
+    ):
+        return
     file_path: Path | None = cli.input_file if cli.input_file is not None else None
 
     _maybe_auto_promote_trace(prof, cli, file_path)

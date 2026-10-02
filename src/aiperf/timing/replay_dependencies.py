@@ -6,18 +6,28 @@ from __future__ import annotations
 
 import asyncio
 import math
+import time
 from collections import Counter
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.enums import ConversationBranchMode, ReplayDependencyEvent
+from aiperf.common.models.dataset_models import ReplayTurnReference
 
 if TYPE_CHECKING:
-    from aiperf.common.models import DatasetMetadata
+    from aiperf.common.loop_scheduler import LoopScheduler
+    from aiperf.common.models import (
+        ConversationBranchInfo,
+        ConversationMetadata,
+        DatasetMetadata,
+        TurnMetadata,
+    )
     from aiperf.credit.structs import Credit, TurnToSend
 
 _logger = AIPerfLogger(__name__)
+_MAX_TIMESTAMP_NS = 2**63 - 1
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -151,24 +161,383 @@ class _RootBarrierState:
     """Keys of requests on this tree that have recorded completion."""
     pending: dict[ReplayTurnKey, _PendingDispatch]
     """Dispatches keyed by request, waiting on their predecessors to complete."""
+    dispatch_events: dict[ReplayTurnKey, int] = field(default_factory=dict)
+    completion_events: dict[ReplayTurnKey, int] = field(default_factory=dict)
+    root_start_perf_ns: int | None = None
 
 
 class ReplayBarrierCoordinator:
     """Release requests only after their recorded frontier has completed."""
 
-    def __init__(self, dataset_metadata: DatasetMetadata) -> None:
+    def __init__(
+        self,
+        dataset_metadata: DatasetMetadata,
+        *,
+        strict_finite: bool = False,
+        scheduler: LoopScheduler | None = None,
+        fail_finite: Callable[[BaseException], None] | None = None,
+    ) -> None:
         self._predecessors: dict[ReplayTurnKey, tuple[ReplayTurnKey, ...]] = {}
+        self._dependencies: dict[ReplayTurnKey, tuple[ReplayTurnReference, ...]] = {}
+        self._floor_ns: dict[ReplayTurnKey, int] = {}
+        self._strict_finite = strict_finite
+        self._scheduler = scheduler
+        if strict_finite and scheduler is None:
+            raise ValueError("Finite replay barrier requires an absolute scheduler")
+        self._fail_finite = fail_finite or self._raise_finite
+        self._closed_roots: set[str] = set()
+        self._credits_by_id: dict[int, Credit] = {}
+        self._scheduled_finite: set[tuple[str, ReplayTurnKey]] = set()
         for conversation in dataset_metadata.conversations:
             for turn_index, turn in enumerate(conversation.turns):
                 key = ReplayTurnKey(conversation.conversation_id, turn_index)
+                self._dependencies[key] = tuple(turn.replay_predecessors)
                 self._predecessors[key] = tuple(
                     ReplayTurnKey(ref.conversation_id, ref.turn_index)
                     for ref in turn.replay_predecessors
                 )
+        if strict_finite:
+            self._build_finite_graph(dataset_metadata)
         self._roots: dict[str, _RootBarrierState] = {}
         self._dispatch_tasks: set[asyncio.Task] = set()
+        self._finite_dispatch_lateness_count = 0
+        self._finite_dispatch_lateness_total_ns = 0
+        self._finite_dispatch_lateness_max_ns = 0
+        self._finite_clock_spread_max_ns = 0
         self._active = False
         self._releases_paused = False
+
+    @staticmethod
+    def _raise_finite(error: BaseException) -> None:
+        raise error
+
+    def _build_finite_graph(self, dataset_metadata: DatasetMetadata) -> None:
+        conversations = {
+            conversation.conversation_id: conversation
+            for conversation in dataset_metadata.conversations
+        }
+        if len(conversations) != len(dataset_metadata.conversations):
+            raise RuntimeError("Finite replay conversation IDs must be unique")
+        roots = self._resolve_conversation_roots(conversations)
+        root_timestamps = self._validate_root_timestamps(conversations, roots)
+        self._add_spawn_dependencies(dataset_metadata, conversations, roots)
+        self._predecessors = {
+            key: tuple(
+                ReplayTurnKey(reference.conversation_id, reference.turn_index)
+                for reference in references
+            )
+            for key, references in self._dependencies.items()
+        }
+        graph = self._build_turn_dependency_graph(conversations, roots, root_timestamps)
+        self._validate_dependency_graph(graph)
+
+    @staticmethod
+    def _resolve_conversation_roots(
+        conversations: dict[str, ConversationMetadata],
+    ) -> dict[str, str]:
+        def root_id(conversation_id: str) -> str:
+            seen: set[str] = set()
+            current = conversations[conversation_id]
+            while current.parent_conversation_id is not None:
+                if current.conversation_id in seen:
+                    raise RuntimeError("Finite replay conversation parent cycle")
+                seen.add(current.conversation_id)
+                parent = conversations.get(current.parent_conversation_id)
+                if parent is None:
+                    raise RuntimeError(
+                        f"Finite replay parent {current.parent_conversation_id!r} is missing"
+                    )
+                current = parent
+            return current.conversation_id
+
+        return {
+            conversation_id: root_id(conversation_id)
+            for conversation_id in conversations
+        }
+
+    @staticmethod
+    def _validate_root_timestamps(
+        conversations: dict[str, ConversationMetadata], roots: dict[str, str]
+    ) -> dict[str, float]:
+        root_timestamps: dict[str, float] = {}
+        for conversation_id, conversation in conversations.items():
+            if roots[conversation_id] != conversation_id:
+                continue
+            if not conversation.turns:
+                raise RuntimeError(
+                    f"Finite replay root {conversation_id!r} has no turns"
+                )
+            timestamp = conversation.turns[0].timestamp_ms
+            if not isinstance(timestamp, int | float) or isinstance(timestamp, bool):
+                raise RuntimeError(
+                    f"Finite replay root {conversation_id!r} turn 0 has no timestamp_ms"
+                )
+            if not math.isfinite(float(timestamp)):
+                raise RuntimeError(
+                    f"Finite replay root {conversation_id!r} turn 0 timestamp_ms is not finite"
+                )
+            root_timestamps[conversation_id] = float(timestamp)
+        return root_timestamps
+
+    def _add_spawn_dependencies(
+        self,
+        dataset_metadata: DatasetMetadata,
+        conversations: dict[str, ConversationMetadata],
+        roots: dict[str, str],
+    ) -> None:
+        for parent in dataset_metadata.conversations:
+            if any(
+                getattr(branch, "dispatch_timing", "post") == "pre"
+                for branch in parent.branches
+            ):
+                raise RuntimeError(
+                    f"Finite replay does not support pre-session branches in "
+                    f"conversation {parent.conversation_id!r}"
+                )
+            branches_by_id = {branch.branch_id: branch for branch in parent.branches}
+            self._add_parent_spawn_dependencies(
+                parent, branches_by_id, conversations, roots
+            )
+
+    def _add_parent_spawn_dependencies(
+        self,
+        parent: ConversationMetadata,
+        branches_by_id: dict[str, ConversationBranchInfo],
+        conversations: dict[str, ConversationMetadata],
+        roots: dict[str, str],
+    ) -> None:
+        for parent_turn_index, parent_turn in enumerate(parent.turns):
+            parent_start_value = parent_turn.timestamp_ms
+            if (
+                not isinstance(parent_start_value, int | float)
+                or isinstance(parent_start_value, bool)
+                or not math.isfinite(float(parent_start_value))
+            ):
+                raise RuntimeError(
+                    f"Finite replay turn {parent.conversation_id!r}/{parent_turn_index} "
+                    "has no finite timestamp_ms"
+                )
+            parent_start_ms = float(parent_start_value)
+            for branch_id in parent_turn.branch_ids:
+                branch = branches_by_id.get(branch_id)
+                if branch is None:
+                    raise RuntimeError(
+                        f"Finite replay turn {parent.conversation_id!r}/{parent_turn_index} "
+                        f"references missing branch {branch_id!r}"
+                    )
+                if branch.mode != ConversationBranchMode.SPAWN:
+                    continue
+                if parent_turn.no_request:
+                    raise RuntimeError(
+                        f"Finite replay SPAWN parent "
+                        f"{parent.conversation_id!r}/{parent_turn_index} "
+                        "does not issue an HTTP request"
+                    )
+                for child_id in branch.child_conversation_ids:
+                    self._add_spawn_child_dependency(
+                        parent=parent,
+                        parent_turn_index=parent_turn_index,
+                        parent_start_ms=parent_start_ms,
+                        branch_id=branch_id,
+                        child_id=child_id,
+                        conversations=conversations,
+                        roots=roots,
+                    )
+
+    def _add_spawn_child_dependency(
+        self,
+        *,
+        parent: ConversationMetadata,
+        parent_turn_index: int,
+        parent_start_ms: float,
+        branch_id: str,
+        child_id: str,
+        conversations: dict[str, ConversationMetadata],
+        roots: dict[str, str],
+    ) -> None:
+        child = conversations.get(child_id)
+        if child is None or not child.turns:
+            raise RuntimeError(
+                f"Finite replay SPAWN branch {branch_id!r} references "
+                f"missing child conversation {child_id!r}"
+            )
+        if roots[child_id] != roots[parent.conversation_id]:
+            raise RuntimeError(
+                f"Finite replay SPAWN branch {branch_id!r} crosses root traces"
+            )
+        child_start_value = child.turns[0].timestamp_ms
+        if (
+            not isinstance(child_start_value, int | float)
+            or isinstance(child_start_value, bool)
+            or not math.isfinite(float(child_start_value))
+        ):
+            raise RuntimeError(
+                f"Finite replay SPAWN child {child_id!r} turn 0 "
+                "has no finite timestamp_ms"
+            )
+        delay_ms = float(child_start_value) - parent_start_ms
+        delay_ns_value = delay_ms * 1_000_000
+        if (
+            not math.isfinite(delay_ms)
+            or not math.isfinite(delay_ns_value)
+            or delay_ms < 0
+            or delay_ns_value > _MAX_TIMESTAMP_NS
+        ):
+            raise RuntimeError(
+                f"Finite replay SPAWN child {child_id!r} starts before "
+                f"its declaring turn {parent.conversation_id!r}/{parent_turn_index}"
+            )
+        child_key = ReplayTurnKey(child_id, 0)
+        reference = ReplayTurnReference(
+            conversation_id=parent.conversation_id,
+            turn_index=parent_turn_index,
+            event=ReplayDependencyEvent.DISPATCH,
+            delay_ns=int(delay_ns_value),
+        )
+        dependencies = list(self._dependencies[child_key])
+        if reference not in dependencies:
+            dependencies.append(reference)
+            self._dependencies[child_key] = tuple(dependencies)
+
+    def _build_turn_dependency_graph(
+        self,
+        conversations: dict[str, ConversationMetadata],
+        roots: dict[str, str],
+        root_timestamps: dict[str, float],
+    ) -> dict[ReplayTurnKey, set[ReplayTurnKey]]:
+        graph: dict[ReplayTurnKey, set[ReplayTurnKey]] = {}
+        for conversation_id, conversation in conversations.items():
+            root_timestamp = root_timestamps[roots[conversation_id]]
+            for turn_index, turn in enumerate(conversation.turns):
+                key = ReplayTurnKey(conversation_id, turn_index)
+                timestamp = self._validate_turn_floor(
+                    key=key,
+                    turn=turn,
+                    turn_index=turn_index,
+                    conversation_id=conversation_id,
+                    roots=roots,
+                    root_timestamp=root_timestamp,
+                )
+                graph[key] = self._validate_turn_dependencies(
+                    key=key,
+                    conversation_id=conversation_id,
+                    timestamp=timestamp,
+                    conversations=conversations,
+                    roots=roots,
+                )
+        return graph
+
+    def _validate_turn_floor(
+        self,
+        *,
+        key: ReplayTurnKey,
+        turn: TurnMetadata,
+        turn_index: int,
+        conversation_id: str,
+        roots: dict[str, str],
+        root_timestamp: float,
+    ) -> float:
+        timestamp_value = turn.timestamp_ms
+        if not isinstance(timestamp_value, int | float) or isinstance(
+            timestamp_value, bool
+        ):
+            raise RuntimeError(f"Finite replay turn {key!r} has no timestamp_ms")
+        timestamp = float(timestamp_value)
+        if not math.isfinite(timestamp):
+            raise RuntimeError(f"Finite replay turn {key!r} timestamp is not finite")
+        floor_ms = timestamp - root_timestamp
+        floor_scaled = floor_ms * 1_000_000
+        if (
+            not math.isfinite(floor_ms)
+            or not math.isfinite(floor_scaled)
+            or floor_scaled > _MAX_TIMESTAMP_NS
+        ):
+            raise RuntimeError(f"Finite replay turn {key!r} has an invalid root floor")
+        floor_ns = int(floor_scaled)
+        if floor_ns < 0:
+            raise RuntimeError(f"Finite replay turn {key!r} has an invalid root floor")
+        if turn_index == 0 and turn.no_request:
+            raise RuntimeError(
+                f"Finite replay root {conversation_id!r} turn 0 must issue an HTTP request"
+            )
+        if (
+            conversation_id == roots[conversation_id]
+            and turn_index == 0
+            and self._dependencies[key]
+        ):
+            raise RuntimeError(
+                f"Finite replay root {conversation_id!r} turn 0 cannot have predecessors"
+            )
+        self._floor_ns[key] = floor_ns
+        return timestamp
+
+    def _validate_turn_dependencies(
+        self,
+        *,
+        key: ReplayTurnKey,
+        conversation_id: str,
+        timestamp: float,
+        conversations: dict[str, ConversationMetadata],
+        roots: dict[str, str],
+    ) -> set[ReplayTurnKey]:
+        predecessors: set[ReplayTurnKey] = set()
+        for reference in self._dependencies[key]:
+            predecessor = ReplayTurnKey(reference.conversation_id, reference.turn_index)
+            predecessor_conversation = conversations.get(reference.conversation_id)
+            if predecessor_conversation is None or predecessor.turn_index >= len(
+                predecessor_conversation.turns
+            ):
+                raise RuntimeError(
+                    f"Finite replay dependency {predecessor!r} for {key!r} is missing"
+                )
+            predecessor_turn = predecessor_conversation.turns[predecessor.turn_index]
+            predecessor_timestamp = predecessor_turn.timestamp_ms
+            if (
+                not isinstance(predecessor_timestamp, int | float)
+                or isinstance(predecessor_timestamp, bool)
+                or not math.isfinite(float(predecessor_timestamp))
+            ):
+                raise RuntimeError(
+                    f"Finite replay dependency {predecessor!r} has no finite timestamp_ms"
+                )
+            if float(predecessor_timestamp) > timestamp:
+                raise RuntimeError(
+                    f"Finite replay dependency {predecessor!r} starts after {key!r}"
+                )
+            if predecessor_turn.no_request:
+                raise RuntimeError(
+                    f"Finite replay dependency {predecessor!r} for {key!r} "
+                    "references a turn without a transport event"
+                )
+            if roots[reference.conversation_id] != roots[conversation_id]:
+                raise RuntimeError(
+                    f"Finite replay dependency {predecessor!r} crosses root traces"
+                )
+            if predecessor == key:
+                raise RuntimeError(f"Finite replay turn {key!r} depends on itself")
+            predecessors.add(predecessor)
+        return predecessors
+
+    @staticmethod
+    def _validate_dependency_graph(
+        graph: dict[ReplayTurnKey, set[ReplayTurnKey]],
+    ) -> None:
+        visiting: set[ReplayTurnKey] = set()
+        visited: set[ReplayTurnKey] = set()
+
+        def visit(key: ReplayTurnKey) -> None:
+            if key in visiting:
+                raise RuntimeError(f"Finite replay dependency cycle at {key!r}")
+            if key in visited:
+                return
+            visiting.add(key)
+            for predecessor in graph[key]:
+                visit(predecessor)
+            visiting.remove(key)
+            visited.add(key)
+
+        for key in graph:
+            visit(key)
 
     def activate(self) -> None:
         """Enable barriers after baseline cache priming completes."""
@@ -187,6 +556,9 @@ class ReplayBarrierCoordinator:
             sum(widths.values()),
             dict(sorted(widths.items())),
         )
+
+    def activate_finite(self) -> None:
+        self._active = True
 
     def pause_releases(self) -> None:
         """Retain newly ready dispatches for an explicit phase handoff."""
@@ -207,6 +579,16 @@ class ReplayBarrierCoordinator:
             root_id, _RootBarrierState(completed=set(), pending={})
         )
         key = ReplayTurnKey(turn.conversation_id, turn.turn_index)
+        if self._strict_finite:
+            if turn.agent_depth == 0 and turn.turn_index == 0:
+                return await issue()
+            if key in state.pending:
+                raise RuntimeError(
+                    f"Duplicate finite replay dispatch for root={root_id!r}, turn={key!r}"
+                )
+            state.pending[key] = _PendingDispatch(turn, issue, on_refused)
+            self._schedule_finite_if_ready(root_id, state, key)
+            return True
         if self._ready(state, key) and not self._releases_paused:
             return await issue()
         if key in state.pending:
@@ -239,6 +621,230 @@ class ReplayBarrierCoordinator:
     def close_root(self, root_id: str) -> None:
         """Discard completed runtime state when a recycled tree drains."""
         self._roots.pop(root_id, None)
+        if self._strict_finite:
+            self._closed_roots.add(root_id)
+            self._credits_by_id = {
+                credit_id: credit
+                for credit_id, credit in self._credits_by_id.items()
+                if credit.effective_root_correlation_id != root_id
+            }
+
+    def register_credit(self, credit: Credit) -> None:
+        if not self._strict_finite or not credit.finite_replay:
+            return
+        previous = self._credits_by_id.get(credit.id)
+        if previous is not None and previous != credit:
+            raise RuntimeError(f"Finite replay credit ID {credit.id} was reused")
+        self._credits_by_id[credit.id] = credit
+
+    def unregister_credit(self, credit: Credit) -> None:
+        if self._credits_by_id.get(credit.id) == credit:
+            self._credits_by_id.pop(credit.id, None)
+
+    def credit_for_id(self, credit_id: int) -> Credit | None:
+        return self._credits_by_id.get(credit_id)
+
+    def record_dispatch(
+        self, credit: Credit, perf_ns: int, clock_spread_ns: int
+    ) -> None:
+        self._validate_transport_event("transport start", perf_ns, clock_spread_ns)
+        root_id = credit.effective_root_correlation_id
+        if root_id in self._closed_roots:
+            _logger.warning("Dropping late finite dispatch for closed root %s", root_id)
+            return
+        state = self._roots.setdefault(root_id, _RootBarrierState(set(), {}))
+        key = ReplayTurnKey(credit.conversation_id, credit.turn_index)
+        if self._remember_first(state.dispatch_events, key, perf_ns):
+            self._finite_clock_spread_max_ns = max(
+                self._finite_clock_spread_max_ns, clock_spread_ns
+            )
+            if credit.agent_depth == 0 and credit.turn_index == 0:
+                state.root_start_perf_ns = perf_ns
+            self._release_finite_ready(root_id, state)
+
+    def record_completion(
+        self,
+        credit: Credit,
+        eof_perf_ns: int | None,
+        *,
+        clock_spread_ns: int | None,
+        failed: bool,
+    ) -> None:
+        root_id = credit.effective_root_correlation_id
+        if root_id in self._closed_roots:
+            _logger.warning(
+                "Dropping late finite completion for closed root %s", root_id
+            )
+            return
+        state = self._roots.setdefault(root_id, _RootBarrierState(set(), {}))
+        key = ReplayTurnKey(credit.conversation_id, credit.turn_index)
+        if not credit.no_request and key not in state.dispatch_events:
+            raise RuntimeError(f"Finite replay transport start missing for {key!r}")
+        if failed:
+            raise RuntimeError(f"Finite replay terminal request failed for {key!r}")
+        if eof_perf_ns is None:
+            if not credit.no_request:
+                raise RuntimeError(f"Finite replay response EOF missing for {key!r}")
+            state.completed.add(key)
+            return
+        self._validate_transport_event("response EOF", eof_perf_ns, clock_spread_ns)
+        assert clock_spread_ns is not None
+        dispatch_perf_ns = state.dispatch_events.get(key)
+        if dispatch_perf_ns is not None and eof_perf_ns < dispatch_perf_ns:
+            raise RuntimeError(
+                f"Finite replay response EOF precedes transport start for {key!r}"
+            )
+        state.completed.add(key)
+        if self._remember_first(state.completion_events, key, eof_perf_ns):
+            self._finite_clock_spread_max_ns = max(
+                self._finite_clock_spread_max_ns, clock_spread_ns
+            )
+            self._release_finite_ready(root_id, state)
+
+    def finite_diagnostics(self) -> tuple[int, int, int, int]:
+        """Return dispatch lateness count, total, max, and max clock spread."""
+        return (
+            self._finite_dispatch_lateness_count,
+            self._finite_dispatch_lateness_total_ns,
+            self._finite_dispatch_lateness_max_ns,
+            self._finite_clock_spread_max_ns,
+        )
+
+    def has_pending_finite_work(self) -> bool:
+        return bool(
+            any(state.pending for state in self._roots.values())
+            or self._scheduled_finite
+            or self._dispatch_tasks
+        )
+
+    def fail_finite(self, error: BaseException) -> None:
+        self._fail_finite(error)
+
+    @staticmethod
+    def _validate_transport_event(
+        label: str, perf_ns: int, clock_spread_ns: int | None
+    ) -> None:
+        if (
+            not isinstance(perf_ns, int)
+            or isinstance(perf_ns, bool)
+            or not 0 < perf_ns <= _MAX_TIMESTAMP_NS
+        ):
+            raise RuntimeError(f"Finite replay {label} has an invalid timestamp")
+        if (
+            not isinstance(clock_spread_ns, int)
+            or isinstance(clock_spread_ns, bool)
+            or not 0 <= clock_spread_ns <= _MAX_TIMESTAMP_NS
+        ):
+            raise RuntimeError(f"Finite replay {label} has an invalid clock spread")
+
+    @staticmethod
+    def _remember_first(
+        events: dict[ReplayTurnKey, int], key: ReplayTurnKey, perf_ns: int
+    ) -> bool:
+        previous = events.get(key)
+        if previous is None:
+            events[key] = perf_ns
+            return True
+        if previous != perf_ns:
+            _logger.warning(
+                "Conflicting finite replay event for %r; retaining first timestamp %d",
+                key,
+                previous,
+            )
+        return False
+
+    def _finite_deadline(
+        self, state: _RootBarrierState, key: ReplayTurnKey
+    ) -> int | None:
+        if state.root_start_perf_ns is None:
+            return None
+        root_deadline = state.root_start_perf_ns + self._floor_ns[key]
+        if root_deadline > _MAX_TIMESTAMP_NS:
+            raise RuntimeError(f"Finite replay deadline overflows for {key!r}")
+        deadlines = [root_deadline]
+        for reference in self._dependencies[key]:
+            predecessor = ReplayTurnKey(reference.conversation_id, reference.turn_index)
+            events = (
+                state.dispatch_events
+                if reference.event == ReplayDependencyEvent.DISPATCH
+                else state.completion_events
+            )
+            event_ns = events.get(predecessor)
+            if event_ns is None:
+                return None
+            dependency_deadline = event_ns + reference.delay_ns
+            if dependency_deadline > _MAX_TIMESTAMP_NS:
+                raise RuntimeError(
+                    f"Finite replay dependency deadline overflows for {key!r}"
+                )
+            deadlines.append(dependency_deadline)
+        return max(deadlines)
+
+    def _schedule_finite_if_ready(
+        self, root_id: str, state: _RootBarrierState, key: ReplayTurnKey
+    ) -> None:
+        if self._releases_paused:
+            return
+        pending = state.pending.get(key)
+        if pending is None:
+            return
+        due_ns = self._finite_deadline(state, key)
+        if due_ns is None:
+            return
+        scheduled_key = (root_id, key)
+        if scheduled_key in self._scheduled_finite:
+            return
+        self._scheduled_finite.add(scheduled_key)
+        task = self._scheduler.schedule_at_perf_ns(
+            due_ns, self._dispatch_finite_pending(root_id, key, pending)
+        )
+        if isinstance(task, asyncio.Task):
+            self._dispatch_tasks.add(task)
+            task.add_done_callback(self._dispatch_tasks.discard)
+
+    def _release_finite_ready(self, root_id: str, state: _RootBarrierState) -> None:
+        for key in tuple(state.pending):
+            self._schedule_finite_if_ready(root_id, state, key)
+
+    async def _dispatch_finite_pending(
+        self, root_id: str, key: ReplayTurnKey, pending: _PendingDispatch
+    ) -> None:
+        self._scheduled_finite.discard((root_id, key))
+        state = self._roots.get(root_id)
+        if state is None or state.pending.get(key) is not pending:
+            return
+        deadline_ns = self._finite_deadline(state, key)
+        if deadline_ns is None:
+            self._fail_finite(
+                RuntimeError(f"Finite replay dispatch deadline missing for {key!r}")
+            )
+            return
+        now_ns = time.perf_counter_ns()
+        if now_ns < deadline_ns:
+            self._schedule_finite_if_ready(root_id, state, key)
+            return
+        state.pending.pop(key)
+        lateness_ns = now_ns - deadline_ns
+        self._finite_dispatch_lateness_count += 1
+        self._finite_dispatch_lateness_total_ns += lateness_ns
+        self._finite_dispatch_lateness_max_ns = max(
+            self._finite_dispatch_lateness_max_ns, lateness_ns
+        )
+        try:
+            issued = await pending.issue()
+        except Exception as exc:
+            self._fail_finite(exc)
+            if pending.on_refused is not None:
+                try:
+                    await pending.on_refused()
+                except Exception as cleanup_error:
+                    self._fail_finite(cleanup_error)
+            return
+        if not issued and pending.on_refused is not None:
+            try:
+                await pending.on_refused()
+            except Exception as exc:
+                self._fail_finite(exc)
 
     def seed_completed_prefixes(
         self,
@@ -377,11 +983,15 @@ class ReplayIssueGate:
         issue: Callable[[], Awaitable[bool]],
         *,
         child_refusal_cleanup: bool = False,
+        on_refused: Callable[[], Awaitable[None]] | None = None,
     ) -> bool:
         if self._coordinator is None:
             return await issue()
-        on_refused = None
-        if child_refusal_cleanup and self._child_refused is not None:
+        if (
+            on_refused is None
+            and child_refusal_cleanup
+            and self._child_refused is not None
+        ):
 
             async def on_refused() -> None:
                 await self._child_refused(turn.x_correlation_id)
@@ -395,6 +1005,53 @@ class ReplayIssueGate:
     def complete(self, credit: Credit) -> None:
         if self._coordinator is not None:
             self._coordinator.complete(credit)
+
+    def register_credit(self, credit: Credit) -> None:
+        if self._coordinator is not None:
+            self._coordinator.register_credit(credit)
+
+    def unregister_credit(self, credit: Credit) -> None:
+        if self._coordinator is not None:
+            self._coordinator.unregister_credit(credit)
+
+    def credit_for_id(self, credit_id: int) -> Credit | None:
+        if self._coordinator is None:
+            return None
+        return self._coordinator.credit_for_id(credit_id)
+
+    def record_dispatch(
+        self, credit: Credit, perf_ns: int, clock_spread_ns: int
+    ) -> None:
+        if self._coordinator is not None:
+            self._coordinator.record_dispatch(credit, perf_ns, clock_spread_ns)
+
+    def record_completion(
+        self,
+        credit: Credit,
+        eof_perf_ns: int | None,
+        *,
+        clock_spread_ns: int | None,
+        failed: bool,
+    ) -> None:
+        if self._coordinator is not None:
+            self._coordinator.record_completion(
+                credit,
+                eof_perf_ns,
+                clock_spread_ns=clock_spread_ns,
+                failed=failed,
+            )
+
+    def has_pending_finite_work(self) -> bool:
+        return bool(self._coordinator and self._coordinator.has_pending_finite_work())
+
+    def finite_diagnostics(self) -> tuple[int, int, int, int]:
+        if self._coordinator is None:
+            return 0, 0, 0, 0
+        return self._coordinator.finite_diagnostics()
+
+    def fail_finite(self, error: BaseException) -> None:
+        if self._coordinator is not None:
+            self._coordinator.fail_finite(error)
 
     def close_root(self, root_correlation_id: str) -> None:
         if self._coordinator is not None:
@@ -430,5 +1087,5 @@ class ReplayIssueGate:
             await self._coordinator.cancel_pending(notify_refused=notify_refused)
 
     async def observe_issued(self, credit: Credit) -> None:
-        if self._credit_issued is not None:
+        if self._credit_issued is not None and not credit.finite_replay:
             await self._credit_issued(credit)

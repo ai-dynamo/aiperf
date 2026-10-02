@@ -63,6 +63,7 @@ def _make_strategy(
         timing_mode if timing_mode is not None else TimingMode.AGENTIC_REPLAY
     )
     cfg.concurrency = max(1, len(trajectories))
+    cfg.finite_replay = False
     issuer = issuer if issuer is not None else AsyncMock()
     scheduler = scheduler if scheduler is not None else MagicMock()
     strategy = AgenticReplayStrategy(
@@ -87,6 +88,7 @@ def test_warmup_phase_with_non_agentic_timing_mode_pins_current_behavior():
     cfg.phase = CreditPhase.WARMUP
     cfg.timing_mode = TimingMode.REQUEST_RATE  # mismatched on purpose
     cfg.concurrency = 1
+    cfg.finite_replay = False
     # PINNED: today, the constructor accepts this without error. If a future
     # commit tightens this guard to ``raise ValueError``, this assertion will
     # fail and the corresponding negative test (rejection) should be added.
@@ -291,6 +293,7 @@ def test_strategy_constructed_multiple_times_within_one_phase_is_independent():
         cfg.phase = CreditPhase.PROFILING
         cfg.timing_mode = TimingMode.AGENTIC_REPLAY
         cfg.concurrency = 2
+        cfg.finite_replay = False
         return AgenticReplayStrategy(
             config=cfg,
             conversation_source=src,

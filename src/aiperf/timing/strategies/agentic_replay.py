@@ -142,6 +142,14 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self.lifecycle = lifecycle
         self.branch_orchestrator = branch_orchestrator
         self._progress = progress
+        finite_root_ids = (
+            getattr(conversation_source, "finite_root_ids", ())
+            if config.finite_replay
+            else ()
+        )
+        self._finite_roots: deque[str] = deque(finite_root_ids)
+        self._finite_active_lanes: set[int] = set()
+        self._finite_completion_signalled = False
         # Per-tree session-slot ledger (agentic replay PROFILING only). When
         # present, a lane's session slot is held until its whole TREE drains
         # (root + every descendant), and recycle of the freed lane is driven by
@@ -381,6 +389,10 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 )
             )
             return
+        if self.config.finite_replay:
+            self._finite_active_lanes.discard(lane)
+            self.scheduler.execute_async(self._dispatch_finite_root_on_lane(lane))
+            return
         self.scheduler.schedule_later(0.0, self._dispatch_recycled_on_lane(lane))
 
     async def setup_phase(self) -> None:
@@ -399,28 +411,45 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         if self._has_tree_registry:
             self._session_tree_registry.set_drain_callback(self._on_tree_drained)
         if self.config.phase == CreditPhase.PROFILING:
-            for trajectory in self.conversation_source.trajectories:
-                self._seed_trajectory_replay_prefix(trajectory)
             self.credit_issuer.replay_gate.activate()
-            if not self.conversation_source.trajectories:
+            if not self.config.finite_replay:
+                for trajectory in self.conversation_source.trajectories:
+                    self._seed_trajectory_replay_prefix(trajectory)
+            if (
+                not self.conversation_source.trajectories
+                and not self.config.finite_replay
+            ):
                 raise RuntimeError(
                     "AgenticReplayStrategy PROFILING setup: trajectories empty. "
                     "WARMUP must complete with at least one trajectory before "
                     "PROFILING can start. Check loader output and warmup failures."
                 )
-            self.info(
-                f"PROFILING setup: {len(self.conversation_source.trajectories)} "
-                "trajectory lanes; recycle draws roots from the dataset sampler"
-            )
-            rootless, gated = self._lane_credit_lane_counts()
-            if rootless or gated:
+            if self.config.finite_replay:
+                self.scheduler.set_drain_observer(self._schedule_finite_finish_check)
+                if self.branch_orchestrator is not None:
+                    self.branch_orchestrator.set_drain_observer(
+                        self._schedule_finite_finish_check
+                    )
+            if self.config.finite_replay:
                 self.info(
-                    f"PROFILING: {rootless} rootless + {gated} gated-parent lanes "
-                    f"of {len(self.conversation_source.trajectories)} dispatch no "
-                    f"root credit at start and hold a lane credit instead (so they "
-                    f"still count toward concurrency); rootless lanes recycle into a "
-                    f"fresh root once their background subagents drain"
+                    f"PROFILING setup: finite replay will admit "
+                    f"{len(self._finite_roots)} root traces across "
+                    f"{min(self.config.concurrency or 0, len(self._finite_roots))} lanes"
                 )
+            else:
+                self.info(
+                    f"PROFILING setup: {len(self.conversation_source.trajectories)} "
+                    "trajectory lanes; recycle draws roots from the dataset sampler"
+                )
+                rootless, gated = self._lane_credit_lane_counts()
+                if rootless or gated:
+                    self.info(
+                        f"PROFILING: {rootless} rootless + {gated} gated-parent lanes "
+                        f"of {len(self.conversation_source.trajectories)} dispatch no "
+                        f"root credit at start and hold a lane credit instead (so they "
+                        f"still count toward concurrency); rootless lanes recycle into a "
+                        f"fresh root once their background subagents drain"
+                    )
 
     async def execute_phase(self) -> None:
         """Dispatch initial credits for the phase."""
@@ -754,9 +783,48 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
             await self.credit_issuer.issue_credit(turn)
 
-    def observe_credit_return(self, credit: Credit) -> None:
+    def observe_transport_dispatched(
+        self, credit_id: int, perf_ns: int, clock_spread_ns: int
+    ) -> None:
+        credit = self.credit_issuer.replay_gate.credit_for_id(credit_id)
+        if credit is None or not credit.finite_replay:
+            raise RuntimeError(f"Unknown finite replay credit ID {credit_id}")
+        if credit.effective_root_correlation_id not in self._correlation_to_lane:
+            raise RuntimeError(
+                f"Finite replay credit {credit_id} has no active root lane"
+            )
+        self.credit_issuer.replay_gate.record_dispatch(credit, perf_ns, clock_spread_ns)
+        if self.branch_orchestrator is not None:
+            self.scheduler.execute_async(self._dispatch_finite_branches(credit))
+
+    async def _dispatch_finite_branches(self, credit: Credit) -> None:
+        branch_orchestrator = self.branch_orchestrator
+        if branch_orchestrator is None:
+            return
+        try:
+            await branch_orchestrator.on_transport_dispatched(credit)
+        except Exception as exc:
+            self.credit_issuer.replay_gate.fail_finite(exc)
+
+    def observe_credit_return(
+        self,
+        credit: Credit,
+        *,
+        transport_eof_perf_ns: int | None = None,
+        transport_eof_clock_spread_ns: int | None = None,
+        error: str | None = None,
+        cancelled: bool = False,
+    ) -> None:
         """Track the next live turn for the warmup-to-profile handoff."""
-        self.credit_issuer.replay_gate.complete(credit)
+        if self.config.finite_replay:
+            self.credit_issuer.replay_gate.record_completion(
+                credit,
+                transport_eof_perf_ns,
+                clock_spread_ns=transport_eof_clock_spread_ns,
+                failed=error is not None or cancelled,
+            )
+        else:
+            self.credit_issuer.replay_gate.complete(credit)
         if not self._accelerated_warmup_started:
             return
         root_correlation_id = credit.effective_root_correlation_id
@@ -1168,6 +1236,18 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         serializing over N credit round-trips. Subsequent turns and
         recycle-pool sessions are dispatched from handle_credit_return.
         """
+        if self.config.finite_replay:
+            lane_count = min(self.config.concurrency or 0, len(self._finite_roots))
+            if lane_count == 0:
+                raise RuntimeError("Finite replay has no roots to admit")
+            await asyncio.gather(
+                *(
+                    self._dispatch_finite_root_on_lane(lane)
+                    for lane in range(lane_count)
+                )
+            )
+            return
+
         spread_s = self._profiling_spread_seconds()
         mode = "burst" if self._burst_phase_starts else "spread"
         self.info(
@@ -1198,6 +1278,47 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 first_error = result
         if first_error is not None:
             raise first_error
+
+    async def _dispatch_finite_root_on_lane(self, lane: int) -> None:
+        if not self._finite_roots:
+            self._finite_active_lanes.discard(lane)
+            self._schedule_finite_finish_check()
+            return
+        trace_id = self._finite_roots.popleft()
+        session = self._build_session_for_trace(trace_id)
+        if session is None or not session.metadata.turns:
+            raise RuntimeError(f"Finite replay root {trace_id!r} is not spawnable")
+        self._finite_active_lanes.add(lane)
+        self._correlation_to_lane[session.effective_root_correlation_id] = lane
+        self._root_to_lane[session.effective_root_correlation_id] = lane
+        self._mint_marker_for_session(
+            session.effective_root_correlation_id, trace_id, lane
+        )
+        turn = self._build_turn_for_session(session, 0)
+        if not await self.credit_issuer.issue_credit(turn):
+            raise RuntimeError(f"Finite replay root {trace_id!r} was refused")
+
+    def _schedule_finite_finish_check(self) -> None:
+        asyncio.get_running_loop().call_soon(self._maybe_finish_finite_graph)
+
+    def _maybe_finish_finite_graph(self) -> None:
+        if not self.config.finite_replay or self._finite_completion_signalled:
+            return
+        if self._finite_roots or self._finite_active_lanes:
+            return
+        if self._progress is None or self._progress.in_flight != 0:
+            return
+        if self.credit_issuer.replay_gate.has_pending_finite_work():
+            return
+        if (
+            self.branch_orchestrator is not None
+            and self.branch_orchestrator.has_pending_branch_work()
+        ):
+            return
+        if self.scheduler.pending_count or self.scheduler.running_count:
+            return
+        self._finite_completion_signalled = True
+        self._progress.all_credits_sent_event.set()
 
     def _profiling_spread_seconds(self) -> float:
         """Window over which each trajectory's FIRST request fires, in seconds.
@@ -1381,6 +1502,13 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         """
         next_meta = self.conversation_source.get_next_turn_metadata(credit)
         turn = TurnToSend.from_previous_credit(credit, next_meta)
+
+        if self.config.finite_replay:
+            if turn.agent_depth > 0:
+                await self.credit_issuer.dispatch_child_turn(turn)
+            else:
+                await self.credit_issuer.issue_credit(turn)
+            return
 
         coro = (
             self._issue_child_continuation_or_drain(turn)

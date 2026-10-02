@@ -238,6 +238,11 @@ class MetricRecordMetadata(AIPerfBaseModel):
         description="The wall clock timestamp of the request end time measured as time.time_ns(). If the request failed, "
         "this will be the time of the error.",
     )
+    response_body_eof_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Exact successful client HTTP response-body EOF in the controller's corrected wall-clock frame. Finite replay only; distinct from request_end_ns, which retains its existing last-response semantics.",
+    )
     worker_id: str = Field(
         ..., description="The ID of the AIPerf worker that processed the request."
     )
@@ -1099,6 +1104,11 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         description="The end time of the request in nanoseconds (perf_counter_ns).",
     )
+    response_body_eof_perf_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Exact successful HTTP response-body EOF in the worker's perf_counter_ns domain. Captured separately from the last response event in finite replay.",
+    )
     recv_start_perf_ns: int | None = Field(
         default=None,
         description="The start time of the streaming response in nanoseconds (perf_counter_ns).",
@@ -1757,6 +1767,11 @@ class RawRecordInfo(AIPerfBaseModel):
     start_perf_ns: int = Field(
         default_factory=time.perf_counter_ns,
         description="The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).",
+    )
+    response_body_eof_perf_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Exact successful HTTP response-body EOF in the same worker perf_counter_ns domain as start_perf_ns; distinct from the last raw SSE event.",
     )
     payload: dict[str, Any] | None = Field(
         default=None,

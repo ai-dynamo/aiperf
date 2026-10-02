@@ -14,6 +14,7 @@ Key responsibilities:
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -83,6 +84,7 @@ class CreditIssuer:
         session_tree_registry_enabled: bool | None = None,
         replay_barrier: ReplayBarrierCoordinator | None = None,
         cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
+        finite_replay: bool = False,
     ) -> None:
         """Initialize credit issuer.
 
@@ -128,6 +130,7 @@ class CreditIssuer:
             else None
         )
         self._cache_bust_target = cache_bust_target
+        self._finite_replay = finite_replay
         self._issuing_stopped = False
         self._max_tokens_override: int | None = None
         self.replay_gate = ReplayIssueGate(replay_barrier)
@@ -456,6 +459,7 @@ class CreditIssuer:
             turn_index=turn.turn_index,
             num_turns=turn.num_turns,
             issued_at_ns=issued_at_ns,
+            finite_replay=self._finite_replay,
             cancel_after_ns=cancel_after_ns,
             url_index=url_index,
             agent_depth=turn.agent_depth,
@@ -470,17 +474,29 @@ class CreditIssuer:
             max_tokens_override=turn.max_tokens_override,
         )
 
-        await self._credit_router.send_credit(credit=credit)
+        self.replay_gate.register_credit(credit)
+        try:
+            await self._credit_router.send_credit(credit=credit)
+        except BaseException:
+            self.replay_gate.unregister_credit(credit)
+            raise
         replay_gate = getattr(self, "replay_gate", None)
         if replay_gate is not None:
             await replay_gate.observe_issued(credit)
         if is_final_credit:
+            if self._finite_replay:
+                raise RuntimeError("Finite replay cannot issue a capped final credit")
             self._progress.freeze_sent_counts()
             self._progress.all_credits_sent_event.set()
 
         return not is_final_credit
 
-    async def dispatch_first_turn(self, sampled_session: SampledSession) -> bool:
+    async def dispatch_first_turn(
+        self,
+        sampled_session: SampledSession,
+        *,
+        on_refused: Callable[[], Awaitable[None]] | None = None,
+    ) -> bool:
         """Dispatch the first turn of a mid-run DAG child session.
 
         Thin wrapper around ``dispatch_child_turn`` that builds the
@@ -491,9 +507,16 @@ class CreditIssuer:
         roll back its tracking via ``BranchOrchestrator.on_child_stopped``
         / per-child rollback).
         """
-        return await self.dispatch_child_turn(sampled_session.build_first_turn())
+        return await self.dispatch_child_turn(
+            sampled_session.build_first_turn(), on_refused=on_refused
+        )
 
-    async def dispatch_child_turn(self, turn: TurnToSend) -> bool:
+    async def dispatch_child_turn(
+        self,
+        turn: TurnToSend,
+        *,
+        on_refused: Callable[[], Awaitable[None]] | None = None,
+    ) -> bool:
         """Dispatch a DAG child turn (first or continuation).
 
         Returns True if the credit was sent on the wire (caller should
@@ -517,6 +540,7 @@ class CreditIssuer:
             turn,
             lambda: self._dispatch_child_turn_ready(turn),
             child_refusal_cleanup=True,
+            on_refused=on_refused,
         )
 
     async def _dispatch_child_turn_ready(self, turn: TurnToSend) -> bool:

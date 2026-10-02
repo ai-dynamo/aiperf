@@ -37,6 +37,7 @@ from cyclopts import Parameter
 from pydantic import AfterValidator, BeforeValidator, Field
 
 from aiperf.common.enums import (
+    AgenticReplayLifecycle,
     AIPerfLogLevel,
     AudioFormat,
     CacheBustTarget,
@@ -2447,6 +2448,15 @@ class CLIConfig(BaseConfig):
             group=Groups.LOAD_GENERATOR,
         ),
     ] = None
+
+    agentic_replay_lifecycle: Annotated[
+        AgenticReplayLifecycle,
+        Field(
+            default=AgenticReplayLifecycle.STEADY_STATE,
+            description="Agentic replay admission: recycle traces or replay each root once.",
+        ),
+        CLIParameter(name=("--agentic-replay-lifecycle",), group=Groups.LOAD_GENERATOR),
+    ] = AgenticReplayLifecycle.STEADY_STATE
 
     system_idle_gap_cap_seconds: Annotated[
         float | None,
