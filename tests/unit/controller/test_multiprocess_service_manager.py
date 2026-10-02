@@ -362,21 +362,16 @@ class TestMultiProcessServiceManager:
         )
 
 
-class TestLosingEveryWorkerBeforeRegistrationIsFatal:
+class TestWorkersDyingBeforeRegistration:
     """Workers are not in ``required_services`` in multi-process mode -- they
-    are spawned later through ``SPAWN_WORKERS`` -- so a worker that dies before
-    registering is reaped as optional and dropped.
+    are spawned later through ``SPAWN_WORKERS`` -- so the registration wait
+    drops a dead one like an optional service and carries on.
 
-    That is right for a partial loss, but when the *last* worker goes, its
-    expected count reaches 0, the wait loop sees every count satisfied
-    (``0 >= 0``) and reports registration as a success. Start-up then carries
-    on into ``PhaseOrchestrator``'s 30s wait for a worker that will never
-    register, and the user sees "No workers registered with the credit router"
-    instead of the workers' own error.
-
-    Worker start-up failures that come from configuration -- missing AWS
-    credentials, a bad signer -- are deterministic: every worker fails the
-    same way, so continuing can never succeed.
+    Whether the run can continue is the SystemController's decision: its
+    start-up watcher sees a reaped worker as dead (spawned IDs and liveness
+    persist past reaping) and aborts start-up once none can start. The manager
+    making the same call separately, with its own timing and message, was
+    redundant.
     """
 
     @pytest.fixture
@@ -423,7 +418,7 @@ class TestLosingEveryWorkerBeforeRegistrationIsFatal:
         return dataset, timing
 
     @pytest.mark.asyncio
-    async def test_the_only_worker_dying_before_registering_is_fatal(
+    async def test_losing_every_worker_leaves_the_decision_to_the_controller(
         self, service_manager: MultiProcessServiceManager
     ):
         dataset, timing = self._core(service_manager)
@@ -431,39 +426,15 @@ class TestLosingEveryWorkerBeforeRegistrationIsFatal:
             ServiceType.WORKER, "worker_a", self._process(alive=False, exitcode=1)
         )
         service_manager.multi_process_info = [dataset, timing, dead_worker]
+        service_manager._spawned_worker_ids.add("worker_a")
 
-        with pytest.raises(AIPerfError) as exc_info:
-            await service_manager.wait_for_all_services_registration(
-                stop_event=asyncio.Event(), timeout_seconds=2.0
-            )
+        await service_manager.wait_for_all_services_registration(
+            stop_event=asyncio.Event(), timeout_seconds=2.0
+        )
 
-        message = str(exc_info.value)
-        assert "worker" in message.lower()
-        assert "exited before registering" in message
-        assert "exit code 1" in message
-
-    @pytest.mark.asyncio
-    async def test_every_worker_dying_reports_how_many_were_lost(
-        self, service_manager: MultiProcessServiceManager
-    ):
-        """All N failing the same way is the signal that the cause is
-        configuration rather than a flaky process, so the count is part of the
-        diagnosis, not decoration."""
-        dataset, timing = self._core(service_manager)
-        workers = [
-            self._info(
-                ServiceType.WORKER,
-                f"worker_{i}",
-                self._process(alive=False, exitcode=1),
-            )
-            for i in range(3)
-        ]
-        service_manager.multi_process_info = [dataset, timing, *workers]
-
-        with pytest.raises(AIPerfError, match="3 of 3"):
-            await service_manager.wait_for_all_services_registration(
-                stop_event=asyncio.Event(), timeout_seconds=2.0
-            )
+        assert dead_worker not in service_manager.multi_process_info
+        assert "worker_a" in service_manager.spawned_worker_ids()
+        assert service_manager.get_service_liveness("worker_a") is False
 
     @pytest.mark.asyncio
     async def test_a_worker_dying_while_another_lives_is_still_tolerated(

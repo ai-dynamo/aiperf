@@ -69,10 +69,6 @@ class MultiProcessServiceManager(BaseServiceManager):
         super().__init__(required_services, **kwargs)
         self.multi_process_info: list[MultiProcessRunInfo] = []
         self.log_queue = log_queue
-        # Exit codes of workers reaped before registering, across every poll of
-        # the registration wait. Workers failing on configuration usually die
-        # together, but not necessarily within one 0.5s tick.
-        self._workers_lost_before_registering: list[int | None] = []
         # Kept past reaping: a worker's SERVICE_ERROR can arrive after the
         # registration-wait reaper has dropped it from multi_process_info.
         self._spawned_worker_ids: set[str] = set()
@@ -319,9 +315,8 @@ class MultiProcessServiceManager(BaseServiceManager):
             required_counts[info.service_type] -= 1
             self.multi_process_info.remove(info)
             if info.service_type == ServiceType.WORKER:
-                # Not "continuing without it": whether that is true depends on
-                # whether any worker is left, which is decided below.
-                self._workers_lost_before_registering.append(exit_code)
+                # Not "continuing without it": whether the run can continue is
+                # the SystemController's start-up decision, not this wait's.
                 self.warning(
                     f"Worker {info.service_id!r} exited before registering "
                     f"(exit code {exit_code})."
@@ -332,38 +327,6 @@ class MultiProcessServiceManager(BaseServiceManager):
                     f"registering (exit code {exit_code}); continuing "
                     f"benchmark without it."
                 )
-
-        self._raise_if_no_worker_remains()
-
-    def _raise_if_no_worker_remains(self) -> None:
-        """Fail fast once the *last* worker has died before registering.
-
-        Workers are not in ``required_services`` in multi-process mode -- they
-        are spawned later through ``SPAWN_WORKERS`` -- so each dead one is
-        reaped like an optional service. That is right for a partial loss. But
-        losing the last one drives its expected count to 0, the registration
-        wait then sees every count satisfied (``0 >= 0``) and reports success,
-        and start-up carries on into ``PhaseOrchestrator``'s wait for a worker
-        that will never register, which ends in "No workers registered with
-        the credit router" in place of the workers' own error.
-
-        Start-up failures from configuration -- missing credentials, a bad
-        request signer -- are deterministic, so every worker fails the same way
-        and continuing can never succeed. How many were lost, and with which
-        exit codes, is what tells the user that.
-        """
-        lost = self._workers_lost_before_registering
-        if not lost or any(
-            info.service_type == ServiceType.WORKER for info in self.multi_process_info
-        ):
-            return
-        codes = sorted({str(code) for code in lost})
-        label = "exit code" if len(codes) == 1 else "exit codes"
-        raise AIPerfError(
-            f"Every worker exited before registering ({len(lost)} of {len(lost)}; "
-            f"{label} {', '.join(codes)}). No worker is left to send requests, so "
-            f"the benchmark cannot run. The workers' own errors are logged above."
-        )
 
     async def _wait_for_process(self, info: MultiProcessRunInfo) -> None:
         """Force-kill a service process that is still alive after bus shutdown.
