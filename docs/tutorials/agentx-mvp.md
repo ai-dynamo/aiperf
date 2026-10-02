@@ -5,10 +5,6 @@ SPDX-License-Identifier: Apache-2.0
 
 # InferenceX AgentX MVP Benchmark
 
-> **Status: Work-in-progress MVP.** This is the first AIPerf implementation of the
-> SemiAnalysis InferenceX AgentX-MVP benchmark. The scenario, the rules it locks,
-> and the output fields described here may change as the spec stabilizes.
-
 This page walks you through running the **AgentX MVP** benchmark in AIPerf. It's
 aimed at someone who hasn't worked with the scenario before — after a short
 orientation, you'll get a copy-pasteable command, then explanations of what it
@@ -26,7 +22,9 @@ Sessions come from the public **Weka agentic-coding trace corpus** captured by
 Callan Fox ([kv-cache-tester](https://github.com/callanjfox/kv-cache-tester)),
 which records real Claude Code sessions byte-for-byte. AgentX MVP runs against
 the current **with-subagents** corpus, where parent coding sessions can spawn
-helper conversations that rejoin the parent before it resumes; see
+helper conversations. Most rejoin the parent before it resumes; a subagent
+with no following parent turn runs in the background and the parent does not
+wait for it. See
 [the Weka tutorial](weka-trace.md) for the source format and the SPAWN/JOIN
 mapping.
 
@@ -112,10 +110,14 @@ what you must set, what you may tune, and what you shouldn't touch:
   request's `model` field. See
   [Per-Trace Model Rewriting](weka-trace.md#per-trace-model-rewriting) in the
   Weka tutorial for how multiple `--model` values map.
-- **`--max-context-length 128000`** drops traces whose peak **input + output**
-  — the prompt plus that turn's requested `max_tokens` — exceeds 128k tokens
-  before replay. Filtering happens before `--num-dataset-entries` is applied,
-  so the cap keeps the first N *eligible* traces.
+- **`--max-context-length 128000`** drops, before replay, any trace whose peak
+  *recorded* **input + output** exceeds 128k tokens. Input is the request's
+  recorded `input_length` and output is its requested `max_tokens`, with the
+  peak taken across parent and subagent requests. These are the trace's
+  recorded counts, not a re-tokenization of the rebuilt prompt with your
+  model's tokenizer, so leave some headroom. Filtering happens before
+  `--num-dataset-entries` is applied, so the cap keeps the first N *eligible*
+  traces.
   Set it to the maximum context your server accepts — i.e. the
   model's native maximum, since AgentX MVP expects the server to run at its
   default max length. Because it mirrors the server's real capacity, the run
@@ -158,7 +160,8 @@ explicit value is honored *silently*, with no error and no change to the
   900 seconds (15 minutes) is the enforced minimum, and AIPerf rejects
   anything shorter. Longer values are accepted without complaint.
 - **`--random-seed`**: omitted, AIPerf picks a fresh random seed and logs it;
-  passing your own (any integer) makes the run reproducible up front.
+  passing your own (any non-negative integer) makes the run reproducible up
+  front.
   Pinning a seed also keys the reconstructed-dataset disk cache: unseeded
   scenario runs draw a fresh seed each time and repay the full multi-minute
   corpus reconstruction on every run (see
@@ -170,7 +173,8 @@ explicit value is honored *silently*, with no error and no change to the
   aggregate file with confidence intervals across the runs. See
   [Reading the Result](#reading-the-result-submission_valid) below for where
   the `submission_valid` stamp lands.
-- The full corpus (393 traces) loads by default; `--num-dataset-entries N`
+- Every eligible trace loads by default: all 393 when `--max-context-length`
+  is unset, otherwise every trace that fits under it. `--num-dataset-entries N`
   keeps the first N *eligible* traces after `--max-context-length` filtering
   (filter-then-cap). Reducing the corpus changes the replayed workload and is
   *not* caught by the scenario locks — the run still stamps
@@ -186,12 +190,16 @@ conflict with the locked scheduling mode and the run will error.
 
 ### Tokenization options: `--apply-chat-template` and `--use-server-token-count`
 
-**Optional: `--apply-chat-template`.** With the flag off (the default),
-the reported ISL is the bare-text encode of the wire payload. With it on,
-the record processor re-tokenizes each request's wire payload through the
-tokenizer's own `apply_chat_template`, so the reported ISL counts the full
-wire-token total — chat-template wrapping plus the cache-bust marker — and
-is directly comparable to a server's `usage.prompt_tokens`. See
+**Optional: `--apply-chat-template` (only matters without
+`--use-server-token-count`).** When `--use-server-token-count` is set, as in
+the Quick Start, the reported ISL is the server's `usage.prompt_tokens` and
+this flag does not change it. Without server counts and with the flag off (the
+default), the reported ISL is the bare-text encode of the wire payload. With
+the flag on, the record processor re-tokenizes each request's wire payload
+through the tokenizer's own `apply_chat_template`, so the reported ISL also
+counts the chat-template wrapping (role headers and the generation prompt) on
+top of the wire text, which already includes the cache-bust marker either way,
+and is directly comparable to a server's `usage.prompt_tokens`. See
 [Input Sequence Length (ISL) Tokenization](../reference/isl-tokenization.md)
 for the full picture.
 
@@ -203,20 +211,25 @@ different BPE merges, a different chat template — the reported OSL drifts
 from the server's actual emitted token count, and the per-run console
 shows an "Output Sequence Length Mismatch Warning" panel even though
 `ignore_eos=true` is locked and the server really did emit `max_tokens`.
-With the flag, AIPerf trusts the server's `usage.completion_tokens` (and
-`usage.prompt_tokens`) and the mismatch goes away.
+With the flag, AIPerf takes token counts from the server's `usage` block: ISL
+from `usage.prompt_tokens`, and OSL from `usage.completion_tokens` minus any
+`usage.reasoning_tokens`, so the mismatch goes away. If the server reports no
+usage, the token-count metrics are left empty.
 
 ### Benchmarking through a router (multiple replicas)
 
 Make the routing conversation-aware, or cross-replica scatter will destroy
 the prefix-cache reuse this benchmark exists to measure. Server side: SGLang
 Model Gateway `--policy cache_aware` (or `--policy manual`) / Dynamo
-`--router-mode kv`. Client side, AIPerf keeps a stable per-conversation ID
-and exposes it as an additive session-affinity header via an environment
-variable: `AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID=1` (SGLang
-`manual`), `AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID=1` (Dynamo
-session affinity), or `AIPERF_HTTP_X_SESSION_ID_FROM_CORRELATION_ID=1` (any
-other router). For the server-side prefix-affinity setup, see
+`--router-mode kv` (add `--router-session-affinity-ttl-secs` on the frontend
+to honor the Dynamo session header below). Client side, AIPerf keeps a stable
+per-conversation ID and exposes it as an additive session-affinity header via
+an environment variable: `AIPERF_HTTP_X_SMG_ROUTING_KEY_FROM_CORRELATION_ID=1`
+(SGLang `manual`), `AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID=1`
+(Dynamo session affinity; sends `X-Dynamo-Session-ID`, plus
+`X-Dynamo-Parent-Session-ID` on subagent requests), or
+`AIPERF_HTTP_X_SESSION_ID_FROM_CORRELATION_ID=1` (any other router). For the
+server-side prefix-affinity setup, see
 [SGLang Model Gateway](https://docs.sglang.io/docs/advanced_features/sgl_model_gateway)
 and [Dynamo KV-aware routing](https://docs.nvidia.com/dynamo/dev/cli/kv-aware-routing/overview);
 the sticky-session headers above are AIPerf-side and are described in
@@ -257,22 +270,24 @@ sit on top of it.
 When you pass the scenario flag, AIPerf checks (and in some cases sets) the
 following settings before the run starts. If any of them conflict with what you
 asked for, the run errors immediately with a clear message naming the offending
-flag.
+flag, unless you pass [`--unsafe-override`](#--unsafe-override), which
+downgrades conflicts to warnings and stamps `submission_valid: false`. Omitting
+a Weka dataset entirely is an error even then.
 
 | Locked setting | What it means | Why it matters |
 |---|---|---|
-| `timing_mode` is `agentic_replay` | Use the multi-turn agentic-replay scheduler (locked in by the scenario; not a user-selectable flag) | This is the scheduling discipline AgentX MVP requires (warmup → steady-state — the [profiling phase](#profiling-phase-faithful-replay-recycle-global-idle-guard) — with sampler-driven trace recycle and per-session-tree concurrency). |
+| `timing_mode` is `agentic_replay` | Use the multi-turn agentic-replay scheduler (stamped onto the profiling phase by the scenario; not a user-selectable flag). Passing `--request-rate`, `--arrival-pattern`, `--user-centric-rate`, `--fixed-schedule`, or `--adaptive-scale` (or declaring a rate-shaped YAML phase) is a scenario violation | This is the scheduling discipline AgentX MVP requires (warmup → steady-state — the [profiling phase](#profiling-phase-faithful-replay-recycle-global-idle-guard) — with sampler-driven trace recycle and per-session-tree concurrency). |
 | `extra_inputs.ignore_eos = true` | Server is told to ignore its end-of-stream token and generate the full requested length | Without this, models stop early and you measure their decision to stop, not the server. |
 | `--streaming` is on | Responses stream token-by-token (auto-enabled when unset; explicitly setting streaming to false, e.g. `streaming: false` in YAML, errors) | The per-token latency metrics (TTFT, ITL) are core to this benchmark and need streaming responses. |
-| Replay delays are end-to-start (always on, no flag) | Each turn's replay delay is the recorded idle gap from the previous response's *end* to the next request's *start*, not the start-to-start delta. This is unconditional for weka trace replay — there is no toggle. | Replay dispatches each turn after the previous one completes, so start-to-start deltas would double-count the previous request's server time, making every session drift later turn by turn and overstating how many sessions overlap at once. |
+| Replay delays are end-to-start (default; not validated) | Each turn's replay delay is the recorded idle gap from the previous response's *end* to the next request's *start*, not the start-to-start delta. This is the Weka loader default. The scenario does not lock it: `--use-think-time-only` switches delays to the recorded per-request `think_time` and is accepted silently, so leave it unset for comparable runs. | Replay dispatches each turn after the previous one completes, so start-to-start deltas would double-count the previous request's server time, making every session drift later turn by turn and overstating how many sessions overlap at once. |
 | `--ignore-trace-delays` is off | Trace-derived delays are preserved | The replay retains the captured agent pacing and KV-cache reuse intervals. |
 | Per-trace idle-gap cap is optional | `--trace-idle-gap-cap-seconds` is unset by default and accepts an explicit CLI value | Setting it bounds observed runtime idle across the root and every descendant stream without rewriting dataset timestamps or bypassing spawn/join dependencies. |
 | Per-turn cap is forbidden | `--inter-turn-delay-cap-seconds` must remain unset | Independently clamping parent and subagent delays can distort their relative timing. |
 | `--system-idle-gap-cap-seconds = 10` | When no request is active or ready, all pending replay timers shift uniformly so the next request arrives within 10 seconds | The benchmark avoids measuring long periods with no server work while preserving request order and relative spacing across every pending trajectory. |
-| `--cache-bust first_turn_prefix` | A unique per-conversation marker is injected at the start of the first user turn for every play (each dispatch of a trace, initial or recycled) | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker gives every recycled play a fresh prompt prefix. |
+| `--cache-bust first_turn_prefix` | A unique per-trajectory-tree marker (shared by the root session and its subagents) is injected at the start of the first user turn of the request prefix for every play (each fresh dispatch of a trace, initial or recycled); a tree that continues from warmup into profiling keeps its marker | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker gives every recycled play a fresh prompt prefix. |
 | Loader is a pinned Weka with-subagents corpus | The dataset must be a with-subagents `--public-dataset` alias or `--hf-weka-dataset semianalysisai/cc-traces-weka-062126` (`weka_hf`). A local `weka_trace` directory is format-compatible but unpinned — the run refuses unless you pass `--unsafe-override` (which stamps `submission_valid: false`). The [Troubleshooting](#troubleshooting) entry for this lock lists the exact flag forms. | Submission validity requires a known public corpus identity; arbitrary local dirs are not hash-verifiable. |
 | `--benchmark-duration >= 900` (defaults to 1800 when unset) | The run lasts at least 15 minutes; if omitted, it runs for 30 minutes | Steady-state needs time to stabilize; short runs are noise. |
-| No client-side input truncation | `--synthesis-max-isl` — the file-based synthesis ISL filter — is rejected because it drops traces whose input length exceeds the cap (the `--public-dataset` corpus has no synthesis filter, so there the flag has no effect either way) | Truncating prompts on the client side would falsify the workload. |
+| No client-side input truncation | `--synthesis-max-isl` (the synthesis ISL filter) is rejected for both `--public-dataset` / `--hf-weka-dataset` and file-based Weka inputs, because it drops traces whose input length exceeds the cap | Truncating prompts on the client side would falsify the workload. |
 | `--random-seed` is set | If you didn't pass one, AIPerf picks a strong random one and logs it | Reproducibility — every replayed result can be regenerated. |
 
 If you forget to pass the `ignore_eos` extra-input, `--streaming`,
@@ -294,9 +309,13 @@ you intend to compare (see the flag groups in [Quick Start](#quick-start)).
 
 ## Reading the Result: `submission_valid`
 
-All output files land under the artifact directory — `./artifacts/` by
-default, relative to where you ran `aiperf`; override it with
-`--artifact-dir`. AIPerf prints the exact output locations at the end of the
+All output files land under the artifact directory. By default that is an
+auto-named subdirectory of `./artifacts/` (relative to where you ran
+`aiperf`), named from the model, endpoint, and load settings, for example
+`artifacts/<model>-openai-chat-concurrency10/`. Pass `--artifact-dir` to use
+an exact directory with no auto-named subdirectory. With multiple profile
+runs, each run's files go under `profile_runs/<run_label>/` inside that
+directory. AIPerf prints the exact output locations at the end of the
 run.
 
 When you use `--scenario`, AIPerf stamps a submission-validity flag onto the
@@ -332,14 +351,17 @@ Three possible states for `submission_valid`:
   - `"unsafe_override"` — you passed `--unsafe-override` along with one or
     more rule-breaking flags. See [`--unsafe-override`](#--unsafe-override) below.
   - `"context_overflow_rate_exceeded"` — more than 1% of the responses came
-    back with a context-overflow error from the server, which means the server
-    is rejecting prompts the benchmark requires it to handle. This usually
+    back with a context-overflow error from the server (the threshold is
+    `AIPERF_AGENTX_CONTEXT_OVERFLOW_RATE_LIMIT`, default `0.01`; exactly 1% is
+    accepted), which means the server is rejecting prompts the benchmark
+    requires it to handle. This usually
     means the server was started with a reduced max model length;
     AgentX MVP requires the model's default.
   - `"run_cancelled"` — the run was cancelled early (Ctrl+C). On a single
     Ctrl+C AIPerf cancels gracefully and still writes the export files with
     whatever partial metrics it collected (a second Ctrl+C force-quits
-    without writing); a cancelled run is always stamped invalid.
+    immediately, so the export files may be incomplete or missing); a
+    cancelled run is always stamped invalid.
   - `"scenario_reresolve_failed"` — multi-run aggregate export could not
     re-apply the scenario lock on the base config (import/env breakage).
     Fail-closed: the aggregate stamps `submission_valid: false` rather than
@@ -350,8 +372,13 @@ Three possible states for `submission_valid`:
   - `"profile_metric_coverage_validation_failed"` — AIPerf could not validate
     that coverage because required accumulator data or phase timestamps were
     unavailable.
-  - `"scenario_with_sweep"` — aggregate of a parameter sweep run under
-    `--scenario` with `--unsafe-override`.
+  - `"scenario_with_sweep"` — a parameter sweep was run under `--scenario`
+    with `--unsafe-override`. The tag appears in each variation's aggregate
+    file (`aggregate/<variation>/profile_export_aiperf_aggregate.json` or
+    `<variation>/aggregate/profile_export_aiperf_aggregate.json`, depending
+    on the sweep's iteration order), which is written whenever at least two
+    runs succeed, even with `--num-profile-runs 1`. Individual per-run files
+    do not carry this tag.
 - **Field absent** — you ran without `--scenario`. The submission-validity
   machinery is gated on the scenario flag.
 
@@ -387,8 +414,12 @@ the name reserved: phase names you declare must match
 Here's the picture. You set `--concurrency 100`. The scheduler builds 100
 active trajectory lanes, drawing traces from the dataset sampler. Filling more
 lanes than distinct loaded roots requires `--allow-dataset-wrap` or an active
-`--cache-bust` target (which the scenario locks on); without either, an
-undersized pool is capped with a warning rather than silently wrap-filled. When wrapping is enabled, the same
+`--cache-bust` target (which the scenario locks on); without either, a
+bounded run (by duration, request count, or a session budget larger than the
+corpus) fails
+at startup with `concurrency N exceeds the M distinct loaded traces while
+dataset wrapping is disabled`. Separately, if too few traces are long enough to
+split, the pool is capped with a warning. When wrapping is enabled, the same
 trace can back multiple lanes, each with a deterministic per-lane start
 position. For each lane, it samples a random starting instant `t*` somewhere
 between 0% and 100% of that trace's recorded duration (the
@@ -532,7 +563,8 @@ A few wrinkles worth knowing:
   warmup turn `k_i` and its first profiling turn `k_i+1` carry the *same*
   `[rid:…]` — that's how the KV-cache prefix work done during warmup
   transfers into measurement instead of being thrown away.
-- **Concurrency may exceed the number of usable traces only with wrap enabled.**
+- **Concurrency may exceed the number of distinct loaded traces only with
+  wrap or cache-bust enabled.**
   Traces too short to split into a warmup + profiling turn are skipped (the
   pool is capped with a warning when it cannot fill after skips). Filling
   more lanes than distinct loaded roots requires `--allow-dataset-wrap` or an
@@ -546,9 +578,10 @@ A few wrinkles worth knowing:
 ### Subagents
 
 The AgentX MVP corpus is the current **with-subagents** variant. Parent turns
-can spawn one or more helper conversations, and the parent's next anchored
-turn waits on the corresponding `SPAWN_JOIN` prerequisite before resuming. As
-covered in the
+can spawn one or more helper conversations, and the first later parent turn
+recorded at or after a helper's end waits on the corresponding `SPAWN_JOIN`
+prerequisite before resuming (a long helper may run through several parent
+turns before it gates one). As covered in the
 [Profiling Phase](#profiling-phase-faithful-replay-recycle-global-idle-guard)
 section, `--concurrency` counts live session **trees**, with each slot held
 until the whole tree drains. The new wrinkle here is the *request* count:
@@ -557,10 +590,12 @@ of in-flight requests can rise above `--concurrency` at a fan-out point — the
 cap is on concurrent trees, not on individual in-flight requests.
 
 AIPerf constructs this topology from `WekaSubagentEntry` blocks in the trace:
-subagents with preceding and following parent anchors become SPAWN/JOIN
-branches, background subagents with no following anchor do not block the
-parent, and adjacent subagents sharing the same anchors collapse into one
-multi-child branch.
+subagents spawn from the last parent turn before them and join the first later
+parent turn recorded at or after their end, becoming SPAWN/JOIN branches;
+subagents that no later parent turn reaches become background branches that do
+not block the parent; subagents sharing the same spawning and joining turns
+collapse into one multi-child branch; and subagents with no preceding parent
+turn are dropped.
 
 Within each subagent entry, AIPerf additionally detects nested context
 chains, so one recorded subagent may replay as several parallel child
@@ -597,10 +632,14 @@ What `--unsafe-override` does:
   `--input-file`, the CLI defaults to synthetic; AgentX still refuses to start
   (continuing would look like a corpus load while producing 1-turn sessions
   that empty the trajectory pool). Pass an allowed weka loader explicitly.
-- **Stamps `submission_valid: false`** in every JSON output (per-run and, when
-  `--num-profile-runs >= 2`, the aggregate file), with `"unsafe_override"` in
-  `submission_invalid_reasons` — but only when at least one rule was actually
-  broken. Passing the flag without breaking any rule is a no-op.
+- **Stamps `submission_valid: false`** under `metadata` in
+  `profile_export_aiperf.json` (and, when `--num-profile-runs >= 2`, in
+  `aggregate/profile_export_aiperf_aggregate.json`), with `"unsafe_override"`
+  in `submission_invalid_reasons`, but only when at least one per-run scenario
+  rule was actually broken. Passing the flag without breaking any rule is a
+  no-op. Exception: pairing `--scenario` with a parameter sweep is only
+  downgraded to a logged warning by `--unsafe-override` and does not by itself
+  stamp the outputs.
 
 Once the flag is on and a rule is broken, the stamp stays `false` in that
 run's outputs — there's no way to flip it after the fact, so the override is
@@ -663,7 +702,9 @@ serving), or the server's `max-model-len` set lower than the trace's
 requested context.
 
 **Run completes but `submission_valid: false` with `"context_overflow_rate_exceeded"`**
-Your server is rejecting prompts as too long for more than 1% of requests.
+Your server is rejecting prompts as too long for more than 1% of requests
+(the default of `AIPERF_AGENTX_CONTEXT_OVERFLOW_RATE_LIMIT=0.01`; a rate
+exactly at the limit is accepted).
 The most common cause is starting the server with a reduced `--max-model-len`
 (or equivalent flag) — AgentX MVP requires the model's default. Restart the
 server without overriding the max length and try again. If the model's
@@ -693,10 +734,14 @@ phases shorter than the scenario's minimum valid duration are excluded.
 
 **"scenario `'inferencex-agentx-mvp'` requires loader=any of …" / cannot verify corpus identity for a local weka_trace directory**
 The AgentX MVP scenario stamps `submission_valid: true` only for a pinned
-public SemiAnalysis Weka corpus (`semianalysisai/cc-traces-weka-062126`),
-replayed via with-subagents `--public-dataset` aliases (rolling or
-date-pinned; the legacy no-subagents aliases are rejected) or the generic
-HuggingFace Weka loader (`weka_hf`) constrained to that repo. Pass one of:
+public SemiAnalysis Weka corpus: one of the allow-listed with-subagents
+`--public-dataset` aliases (the rolling
+`semianalysis_cc_traces_weka_with_subagents` alias, currently
+`semianalysisai/cc-traces-weka-062126`; the date-pinned
+`_060226`/`_060526`/`_060826`/`_061326`/`_061526`/`_062126` aliases; or any of
+their `_256k` variants; the legacy no-subagents aliases are rejected), or the
+generic HuggingFace Weka loader (`weka_hf`), which is constrained to
+`semianalysisai/cc-traces-weka-062126`. Pass one of:
 
 - `--public-dataset semianalysis_cc_traces_weka_with_subagents` (zero-setup;
   rolling alias for the current corpus),
@@ -779,7 +824,9 @@ the percentiles more data to stabilize on.
   the time-weighted EFFECTIVE and ACTIVE console tables printed at the end of
   a run.
 - [Timing Modes Reference](../benchmark-modes/timing-modes-reference.md) —
-  where `agentic_replay` fits among the other AIPerf timing modes.
+  the other AIPerf timing modes (request-rate, concurrency, fixed-schedule);
+  it does not cover `agentic_replay`, which is described in this tutorial and
+  in [Weka Agentic Coding Traces](weka-trace.md).
 - [Warmup Phase tutorial](warmup.md) — the generic AIPerf warmup mechanism
   (the agentic-replay warmup is a specialization of this).
 - [Input Sequence Length (ISL) Tokenization](../reference/isl-tokenization.md) —
