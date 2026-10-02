@@ -249,8 +249,9 @@ from killing a healthy run (a Ctrl+C stamps it `run_cancelled` / invalid):
    pinned `--random-seed` restore it from the on-disk cache in seconds.
 2. **Warmup.** Each lane sends one primer request per live stream (the root
    plus any active subagents): that stream's final request before the lane's
-   starting instant `t*`, which primes the server's KV cache. Every warmup request, primers and optional cache-pressure
-   traffic alike, is limited to one output token. With deep histories in real
+   starting instant `t*`, which primes the server's KV cache. Every warmup
+   request, primers and optional cache-pressure traffic alike, is limited to
+   one output token. With deep histories in real
    coding traces this is a meaningful chunk of wall time on its own.
 3. **Profiling** for `--benchmark-duration` (1800 s by default) — with
    `--ui simple`, per-phase progress and request counts tick along as
