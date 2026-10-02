@@ -96,9 +96,7 @@ class SageMakerTransport(AioHttpTransport):
         The endpoint plugin's own ``endpoint_path`` (``/v1/chat/completions``
         and friends) is deliberately ignored: SageMaker routes on the request
         *body*, not the path, and every endpoint type is invoked through the
-        same ``/endpoints/{name}/invocations`` path. This is the single most
-        surprising thing about the integration for a first-time user, so it is
-        called out prominently in the tutorial as well.
+        same ``/endpoints/{name}/invocations`` path.
 
         Streaming picks the ``-response-stream`` variant, which is a distinct
         SageMaker operation rather than a content-negotiation flag -- getting it

@@ -516,12 +516,11 @@ transport:
   sagemaker:
     class: aiperf.transports.aws.sagemaker:SageMakerTransport
     description: |
-      AWS SageMaker Runtime InvokeEndpoint / InvokeEndpointWithResponseStream.
-      Subclasses the HTTP transport, overriding only the URL path and headers;
-      SigV4 signing and eventstream response decoding are inherited.
-      url_schemes is empty on purpose so URL-scheme auto-detection can never
-      select it over the built-in http transport - it is chosen explicitly via
-      --transport sagemaker, or derived from --sagemaker-endpoint-name.
+      Invokes an AWS SageMaker Runtime endpoint (InvokeEndpoint, or
+      InvokeEndpointWithResponseStream with --streaming), with SigV4-signed
+      requests and eventstream response decoding. Selected by
+      --sagemaker-endpoint-name, or explicitly with --transport sagemaker; it is
+      never auto-detected from the URL.
     metadata:
       transport_type: sagemaker
       url_schemes: []

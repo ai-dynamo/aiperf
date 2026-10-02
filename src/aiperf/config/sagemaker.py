@@ -20,9 +20,8 @@ class SageMakerConfig(BaseConfig):
     """SageMaker Runtime routing options.
 
     Grouped rather than flattened onto ``EndpointConfig`` because they only
-    apply to one transport, and because ``EndpointConfig`` is already at the
-    field count where the repo's ergonomics guardrail asks for sub-models.
-    Follows the same shape as ``reset_kv_cache`` / ``server_profiler``.
+    apply to one transport. Follows the same shape as ``reset_kv_cache`` /
+    ``server_profiler``.
     """
 
     model_config = ConfigDict(extra="forbid")
