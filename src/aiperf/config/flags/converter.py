@@ -522,6 +522,12 @@ def _apply_scenario_defaults(cli: CLIConfig) -> CLIConfig:
     }
     if "gpu_telemetry" in cli.model_fields_set:
         defaults.pop("no_gpu_telemetry", None)
+    unknown = sorted(defaults.keys() - type(cli).model_fields.keys())
+    if unknown:
+        raise TypeError(
+            f"Scenario {cli.scenario!r} cli_defaults has unknown CLI field(s): {unknown}"
+        )
+    defaults = type(cli).model_validate(defaults).model_dump(exclude_unset=True)
     return cli.model_copy(update=defaults)
 
 

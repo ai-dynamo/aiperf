@@ -5,6 +5,7 @@
 from pathlib import Path
 
 import pytest
+from pytest import param
 
 from aiperf.common.scenario import SCENARIOS, get_scenario
 from aiperf.config.flags.cli_config import CLIConfig
@@ -51,6 +52,32 @@ def test_scenario_duration_prevents_fallback_request_limit(preset: str) -> None:
     phase = config.benchmark.get_profiling_phases()[0]
     assert phase.duration == get_scenario(preset).default_benchmark_duration_seconds
     assert phase.requests is None
+
+
+def test_scenario_defaults_parse_model_names(preset: str) -> None:
+    SCENARIOS[preset] = SCENARIOS[preset].model_copy(
+        update={"cli_defaults": {"model_names": "foo"}}
+    )
+
+    config = resolve_config(CLIConfig(scenario=preset))
+
+    assert [model.name for model in config.benchmark.models.items] == ["foo"]
+
+
+@pytest.mark.parametrize(
+    ("defaults", "error", "match"),
+    [
+        param({"random_sead": 19}, TypeError, "random_sead", id="unknown-field"),
+        param({"random_seed": "invalid"}, ValueError, "random_seed", id="invalid-value"),
+    ],
+)  # fmt: skip
+def test_invalid_scenario_defaults_are_rejected(
+    preset: str, defaults: dict[str, object], error: type[Exception], match: str
+) -> None:
+    SCENARIOS[preset] = SCENARIOS[preset].model_copy(update={"cli_defaults": defaults})
+
+    with pytest.raises(error, match=match):
+        resolve_config(CLIConfig(scenario=preset, model_names=["test-model"]))
 
 
 def test_config_file_values_are_not_replaced_by_scenario_defaults(

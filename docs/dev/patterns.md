@@ -20,7 +20,8 @@ environment_defaults = {"HTTP": {"TCP_USER_TIMEOUT": 60000}}
 
 For flag-based `aiperf profile` commands, the converter fills omitted CLI fields
 before building the benchmark config. Explicit flags win, including `False` and
-zero. Presets also use the existing duration and trajectory default fields.
+zero. Preset keys must name declared CLI fields, and their values use normal CLI
+type parsing. Presets also use the existing duration and trajectory default fields.
 Explicit GPU telemetry suppresses a default that disables it. Scenario invariants
 still apply.
 The CLI preset does not supply benchmark values for `--config`; YAML continues
