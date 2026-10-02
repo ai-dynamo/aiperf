@@ -32,7 +32,7 @@ def user_config():
     """A real v2 BenchmarkRun (named ``user_config`` for minimal churn)."""
     from tests.unit.dataset.loader.conftest import make_weka_run
 
-    return make_weka_run(model_names=["test-model"])
+    return make_weka_run(model_names=["test-model"], weka_nested_timestamp_basis="auto")
 
 
 def _make_trace_dict(
@@ -48,6 +48,29 @@ def _make_trace_dict(
         "block_size": 64,
         "hash_id_scope": "local",
         "requests": requests,
+    }
+
+
+def _subagent(marker_t: float, inner_t: float) -> dict[str, Any]:
+    return {
+        "t": marker_t,
+        "type": "subagent",
+        "agent_id": "agent-1",
+        "subagent_type": "Explore",
+        "duration_ms": 100,
+        "total_tokens": 11,
+        "tool_use_count": 0,
+        "status": "completed",
+        "requests": [
+            {
+                "t": inner_t,
+                "type": "n",
+                "model": "m",
+                "in": 10,
+                "out": 1,
+            }
+        ],
+        "models": ["m"],
     }
 
 
@@ -191,6 +214,30 @@ class TestLoadDatasetRowValidation:
             pytest.raises(DatasetLoaderError, match="Duplicate trace id"),
         ):
             await loader.load_dataset()
+
+    async def test_timestamp_preflight_scans_rows_before_context_filter(self) -> None:
+        from tests.unit.dataset.loader.conftest import make_weka_run
+
+        run = make_weka_run(
+            model_names=["test-model"],
+            max_context_length=100,
+            weka_nested_timestamp_basis="auto",
+        )
+        loader = SemiAnalysisCCTracesWekaLoader(
+            run=run,
+            hf_dataset_name=_NO_SUBAGENTS_HF_DATASET_NAME,
+            prompt_generator=MagicMock(),
+        )
+        valid = _make_trace_dict("valid")
+        malformed_filtered_out = _make_trace_dict("malformed")
+        malformed_filtered_out["requests"][0]["in"] = 1_000
+        malformed_filtered_out["requests"].append(_subagent(10.0, float("nan")))
+
+        with pytest.raises(
+            DatasetLoaderError,
+            match=r"Trace 'malformed' in row 1.*must be finite",
+        ):
+            loader._validate_rows([valid, malformed_filtered_out])
 
 
 # Delegation to WekaTraceLoader

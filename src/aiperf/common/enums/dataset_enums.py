@@ -4,6 +4,16 @@
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum
 
 
+class AssistantResponseMode(CaseInsensitiveStrEnum):
+    """Source of assistant responses in Mooncake message conversations."""
+
+    RECORDED = "recorded"
+    """Replay each row's complete authored history."""
+
+    LIVE = "live"
+    """Accumulate message deltas and responses generated during the run."""
+
+
 class SweepType(CaseInsensitiveStrEnum):
     """Defines the sweep strategy for parameter exploration."""
 
