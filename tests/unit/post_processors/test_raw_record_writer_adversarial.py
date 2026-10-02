@@ -387,6 +387,32 @@ class TestBufferedWritePayloadBytesFastPath:
             or not processor.output_file.read_text().strip()
         )
 
+    @pytest.mark.asyncio
+    async def test_fast_path_drop_fails_explicit_artifact_finalization(
+        self,
+        run_raw,
+    ) -> None:
+        """A dropped RAW row must prevent the pod from acknowledging finalize."""
+        record = RawRecordInfo.model_construct(
+            metadata=create_metric_metadata(),
+            start_perf_ns=1_000_000_000,
+            payload=None,
+            payload_bytes=123,  # type: ignore[arg-type]
+            request_headers={},
+            response_headers=None,
+            status=200,
+            responses=[TextResponse(text="ok", perf_ns=2_000_000_000)],
+            error=None,
+        )
+
+        async with raw_record_processor("processor-finalize", run_raw) as processor:
+            await processor.buffered_write(record)
+
+            with pytest.raises(
+                RuntimeError, match="failed before artifact finalization"
+            ):
+                await processor.flush_buffer()
+
 
 class TestBuildExportRecord:
     """Pin ``_build_export_record`` behaviour for edge shapes."""

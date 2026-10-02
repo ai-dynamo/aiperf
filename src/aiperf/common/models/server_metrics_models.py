@@ -11,6 +11,7 @@ from aiperf.common.enums import CreditPhase, PrometheusMetricType
 from aiperf.common.finite import FiniteFloat
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.models.error_models import ErrorDetailsCount
+from aiperf.common.types import PhaseKind
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,6 +203,20 @@ class SlimRecord(AIPerfBaseModel):
         description="Benchmark phase active when this scrape was collected. "
         "None for setup/baseline scrapes outside a timing phase.",
     )
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index of the concrete phase."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index among profiling-kind phases; None for warmup.",
+    )
+    phase_name: str | None = Field(
+        default=None, description="User-facing name of the concrete phase."
+    )
+    phase_kind: PhaseKind | None = Field(
+        default=None, description="Semantic kind of the concrete phase."
+    )
 
 
 class ServerMetricsRecord(AIPerfBaseModel):
@@ -249,6 +264,28 @@ class ServerMetricsRecord(AIPerfBaseModel):
         description="Benchmark phase active when this scrape was collected. "
         "None for setup/baseline scrapes outside a timing phase.",
     )
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index of the concrete phase."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Index among profiling-kind phases; None for warmup.",
+    )
+    phase_name: str | None = Field(
+        default=None, description="User-facing name of the concrete phase."
+    )
+    phase_kind: PhaseKind | None = Field(
+        default=None, description="Semantic kind of the concrete phase."
+    )
+    phase_instance_id: int | None = Field(
+        default=None,
+        ge=0,
+        description="Monotonic per-run identifier of the phase *occurrence* this "
+        "scrape belongs to. Distinguishes two same-named instances of a phase "
+        "that carries no absolute phase_index (a synthesized warmup that runs "
+        "again after profiling). None for scrapes collected outside any phase.",
+    )
 
     def to_slim(self) -> SlimRecord:
         """Convert to slim record.
@@ -257,7 +294,8 @@ class ServerMetricsRecord(AIPerfBaseModel):
         so they will be include in the final export, but not in the JSONL records.
 
         Returns:
-            ServerMetricsSlimRecord with only timestamp and slim samples (flat structure)
+            SlimRecord carrying the same timing and phase identity with flat
+            per-family sample lists instead of full MetricFamily objects
         """
         slim_metrics = {
             name: family.samples
@@ -273,6 +311,10 @@ class ServerMetricsRecord(AIPerfBaseModel):
             request_sent_ns=self.request_sent_ns,
             first_byte_ns=self.first_byte_ns,
             benchmark_phase=self.benchmark_phase,
+            phase_index=self.phase_index,
+            profiling_index=self.profiling_index,
+            phase_name=self.phase_name,
+            phase_kind=self.phase_kind,
         )
 
 
@@ -745,6 +787,23 @@ class ServerMetricsResults(AIPerfBaseModel):
         description="Unique identifier for this benchmark run (UUID), shared across all export formats. "
         "None for legacy exports created before this field was added.",
     )
+    phase: CreditPhase | None = Field(
+        default=None, description="Semantic runtime phase for a phase-scoped result."
+    )
+    phase_index: int | None = Field(
+        default=None, ge=0, description="Absolute index for a phase-scoped result."
+    )
+    profiling_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Profiling-kind index for a phase-scoped result.",
+    )
+    phase_name: str | None = Field(
+        default=None, description="User-facing name for a phase-scoped result."
+    )
+    phase_kind: PhaseKind | None = Field(
+        default=None, description="Semantic kind for a phase-scoped result."
+    )
     endpoint_summaries: dict[str, ServerMetricsEndpointSummary] | None = Field(
         default=None,
         description="Pre-computed endpoint summaries ready for export (sent over ZMQ)",
@@ -790,6 +849,10 @@ class ServerMetricsResults(AIPerfBaseModel):
     aggregation_time_filter: TimeRangeFilter | None = Field(
         default=None,
         description="Time filter for aggregation, excluding warmup periods",
+    )
+    phase_results: list[Self] = Field(
+        default_factory=list,
+        description="Exact server-metric summaries for each concrete named phase.",
     )
 
 

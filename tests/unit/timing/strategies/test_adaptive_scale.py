@@ -1508,6 +1508,28 @@ async def test_pre_sustain_credit_results_do_not_poison_sustain_window(
     assert stats.samples == [10_000_000]
 
 
+def test_enter_sustain_reads_the_boundary_from_the_phase_clock_frame(
+    tmp_path,
+) -> None:
+    """CR-14: the sustain boundary must share the CreditIssuer's clock frame.
+
+    ``_is_pre_sustain_credit`` compares ``credit.issued_at_ns`` (stamped from
+    ``lifecycle.now_ns()``) against ``_sustain_started_at_ns`` directly, so a
+    raw ``time.time_ns()`` read here would misfile credits across the boundary
+    by whatever the wall clock slewed since the phase started.
+    """
+    strategy = _strategy(tmp_path)
+    strategy._last_good_concurrency = 4
+    strategy._lifecycle.now_ns = MagicMock(return_value=777_000_000_000)
+
+    strategy._enter_sustain(
+        None, MagicMock(samples=[], errors=0, throughput=0.0), "boundary"
+    )
+
+    strategy._lifecycle.now_ns.assert_called_once_with()
+    assert strategy._sustain_started_at_ns == 777_000_000_000
+
+
 def test_enter_sustain_requires_last_good_boundary(tmp_path) -> None:
     strategy = _strategy(tmp_path)
 

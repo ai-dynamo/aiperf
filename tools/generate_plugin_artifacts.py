@@ -511,6 +511,10 @@ def generate_enums_pyi() -> str | None:
             _generate_composite_enum_pyi(enum_name, config, yaml_plugins_for_composite)
         )
 
+    # Every category block ends with a blank separator; the last one would emit
+    # a trailing blank line that ruff-format strips right back out.
+    while lines and not lines[-1]:
+        lines.pop()
     return "\n".join(lines) + "\n"
 
 

@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from abc import ABC
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import zmq.asyncio
 
@@ -41,7 +41,8 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
 
         self.context = zmq.asyncio.Context.instance()
         self._clients_cache: dict[
-            tuple[CommClientType, CommAddressType, bool], CommunicationClientProtocol
+            tuple[CommClientType, CommAddressType, bool, Any],
+            CommunicationClientProtocol,
         ] = {}
 
         self._ensure_ipc_directory()
@@ -58,6 +59,31 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
             return self.config.get_address(address_type)
         return address_type
 
+    @staticmethod
+    def _freeze_cache_value(value: Any) -> Any:
+        """Convert kwargs into a deterministic, hashable cache key fragment."""
+        if isinstance(value, dict):
+            return tuple(
+                sorted(
+                    (
+                        BaseZMQCommunication._freeze_cache_value(k),
+                        BaseZMQCommunication._freeze_cache_value(v),
+                    )
+                    for k, v in value.items()
+                )
+            )
+        if isinstance(value, list | tuple):
+            return tuple(BaseZMQCommunication._freeze_cache_value(v) for v in value)
+        if isinstance(value, set | frozenset):
+            return tuple(
+                sorted(BaseZMQCommunication._freeze_cache_value(v) for v in value)
+            )
+        if isinstance(value, type):
+            return ("type", value.__module__, value.__qualname__)
+        if value is None or isinstance(value, str | int | float | bool | bytes):
+            return value
+        return ("repr", repr(value))
+
     def create_client(
         self,
         client_type: CommClientType,
@@ -67,6 +93,7 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
         *,
         max_pull_concurrency: int | None = None,
         additional_bind_address: str | None = None,
+        attach_lifecycle: bool = True,
         **kwargs,
     ) -> CommunicationClientProtocol:
         """Create a communication client for a given client type and address.
@@ -78,9 +105,33 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
             socket_ops: Additional socket options to set.
             max_pull_concurrency: The maximum number of concurrent pull requests to allow. (Only used for pull clients)
             additional_bind_address: Optional second address to bind to for dual-bind mode (e.g., IPC + TCP).
+            attach_lifecycle: Whether this communication layer should manage the client's lifecycle.
+                Pass False when the caller must own the client's start/stop ordering itself.
         """
-        if (client_type, address, bind) in self._clients_cache:
-            return self._clients_cache[(client_type, address, bind)]
+        cache_kwargs = {
+            **kwargs,
+            "socket_ops": socket_ops,
+            "max_pull_concurrency": max_pull_concurrency,
+            "additional_bind_address": additional_bind_address,
+        }
+        cache_key = (
+            client_type,
+            address,
+            bind,
+            self._freeze_cache_value(cache_kwargs),
+        )
+        if cache_key in self._clients_cache:
+            cached = self._clients_cache[cache_key]
+            # Two callers disagree about who owns this client's lifecycle, and only
+            # one can be right. Returning the already-attached client would silently
+            # drop the ordering guarantee attach_lifecycle=False exists to provide.
+            if not attach_lifecycle and cached in self._children:
+                raise InvalidStateError(
+                    f"Cannot create {client_type} client for {address!r} with "
+                    "attach_lifecycle=False: a cached client for this address is "
+                    "already lifecycle-managed by this communication layer."
+                )
+            return cached
 
         if self.state != LifecycleState.CREATED:
             # We require the clients to be created before the communication class is initialized.
@@ -100,8 +151,13 @@ class BaseZMQCommunication(BaseCommunication, AIPerfLoggerMixin, ABC, Singleton)
             **kwargs,
         )
 
-        self._clients_cache[(client_type, address, bind)] = client
-        self.attach_child_lifecycle(client)
+        self._clients_cache[cache_key] = client
+        # attach_lifecycle=False lets a caller own the client's lifecycle itself
+        # (the SystemController's control ROUTER must be started ahead of comms
+        # and must outlive comms.stop()). The client is still built through this
+        # factory so FakeCommunication can substitute a fake in tests.
+        if attach_lifecycle:
+            self.attach_child_lifecycle(client)
         return client
 
 

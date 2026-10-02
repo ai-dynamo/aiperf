@@ -367,6 +367,10 @@ SINGLE_VALUED_FIELDS: frozenset[str] = frozenset(
         # a field to the value it already has cannot change anything -- so no
         # observation here can distinguish routed from dropped.
         "wait_for_model_mode",
+        # False is the endpoint model default. A standalone explicit false
+        # therefore cannot produce an observable config diff, while true is
+        # covered by dedicated YAML-prerequisite routing tests.
+        "per_chunk_usage",
     }
 )
 

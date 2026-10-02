@@ -47,6 +47,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         *,
         max_pull_concurrency: int | None = None,
         additional_bind_address: str | None = None,
+        attach_lifecycle: bool = True,
         **kwargs: Any,
     ) -> CommunicationClientProtocol:
         """Create a communication client for a given client type and address.
@@ -58,6 +59,8 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
             socket_ops: Additional socket options to set.
             max_pull_concurrency: The maximum number of concurrent pull requests to allow. (Only used for pull clients)
             additional_bind_address: Optional second address to bind to for dual-bind mode (e.g., IPC + TCP).
+            attach_lifecycle: Whether this communication layer should manage the client's lifecycle.
+                Pass False when the caller must own the client's start/stop ordering itself.
             **kwargs: Additional keyword arguments passed to specific client types (e.g., identity for DEALER).
         """
 
@@ -131,19 +134,34 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
         address: CommAddressType,
         bind: bool = False,
         socket_ops: dict | None = None,
+        additional_bind_address: str | None = None,
     ) -> ReplyClientProtocol:
         return cast(
             ReplyClientProtocol,
-            self.create_client(CommClientType.REPLY, address, bind, socket_ops),
+            self.create_client(
+                CommClientType.REPLY,
+                address,
+                bind,
+                socket_ops,
+                additional_bind_address=additional_bind_address,
+            ),
         )
 
     def create_streaming_router_client(
         self,
         address: CommAddressType,
+        *,
         bind: bool = True,
         socket_ops: dict | None = None,
         additional_bind_address: str | None = None,
+        decode_type: Any = None,
+        attach_lifecycle: bool = True,
     ) -> StreamingRouterClientProtocol:
+        # Forwarded only when set: an out-of-tree COMMUNICATION_CLIENT plugin
+        # need not accept a decode_type parameter to be constructible.
+        extra: dict[str, Any] = (
+            {} if decode_type is None else {"decode_type": decode_type}
+        )
         return cast(
             StreamingRouterClientProtocol,
             self.create_client(
@@ -152,17 +170,24 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
                 bind,
                 socket_ops,
                 additional_bind_address=additional_bind_address,
+                attach_lifecycle=attach_lifecycle,
+                **extra,
             ),
         )
 
     def create_streaming_dealer_client(
         self,
         address: CommAddressType,
+        *,
         identity: str,
         bind: bool = False,
         socket_ops: dict | None = None,
+        decode_type: Any = None,
     ) -> StreamingDealerClientProtocol:
         # Identity must be passed through client_kwargs since it's specific to DEALER
+        extra: dict[str, Any] = (
+            {} if decode_type is None else {"decode_type": decode_type}
+        )
         return cast(
             StreamingDealerClientProtocol,
             self.create_client(
@@ -171,6 +196,7 @@ class BaseCommunication(AIPerfLifecycleMixin, ABC):
                 bind,
                 socket_ops,
                 identity=identity,
+                **extra,
             ),
         )
 

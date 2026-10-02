@@ -14,6 +14,7 @@ For technical architecture, see [`docs/architecture.md`](docs/architecture.md). 
 - **Python 3.11+**
 - **uv**: Package manager (installed automatically by `make first-time-setup`)
 - **pre-commit**: For automated code quality checks
+- **Kubernetes tests only**: Docker, Kind, kubectl, and Helm
 
 ### Initial Setup
 
@@ -38,6 +39,7 @@ pre-commit install    # Install pre-commit hooks
 | `make first-time-setup` | Full environment setup (venv + install + hooks) |
 | `make install` | Install project, mock server, and fake amdsmi bindings in editable mode |
 | `make install-app` | Install project only |
+| `make install-app-locked` | Install project only, at the exact versions in `uv.lock` (what CI's `make ci-install` uses) |
 | `make install-mock-server` | Install mock server only |
 | `make install-mock-amdsmi` | Install fake `amdsmi` bindings to exercise the AMD telemetry path on non-AMD hardware (see [Mocking a ROCm Environment](docs/reference/mock-amdsmi.md)) |
 | `make test` | Unit tests (parallel, excludes integration) |
@@ -46,6 +48,7 @@ pre-commit install    # Install pre-commit hooks
 | `make test-integration` | Integration tests with mock server |
 | `make test-integration-verbose` | Integration tests with real-time output |
 | `make test-component-integration` | Component integration tests |
+| `make test-kubernetes-ci` | Serial Kubernetes PR gate on a fresh isolated Kind cluster |
 | `make test-ci` | CI mode: unit + component integration with coverage |
 | `make test-imports` | Verify all modules can be imported |
 | `make test-stress` | Stress tests with mock server |
@@ -59,6 +62,12 @@ pre-commit install    # Install pre-commit hooks
 | `make generate-all-docs` | Regenerate CLI + env var documentation |
 | `make generate-cli-docs` | Regenerate CLI documentation |
 | `make generate-env-vars-docs` | Regenerate environment variable documentation |
+| `make generate-crd` | Regenerate the Helm AIPerfJob and AIPerfSweep CRD templates |
+| `make check-crd` | Verify the generated CRD templates match the Python models |
+| `make crd-release` | Render standalone CRD manifests into `dist/` (override with `HELM_DIST_DIR`) |
+| `make helm-lint` | Lint the bundled AIPerf operator Helm chart |
+| `make helm-template` | Render the bundled Helm chart without cluster access |
+| `make helm-package` | Package the bundled Helm chart into `dist/` (override with `HELM_DIST_DIR`) |
 | `make docker` | Build Docker image |
 | `make docker-run` | Run Docker container |
 | `make clean` | Clean caches and build artifacts |
@@ -70,7 +79,15 @@ Direct pytest commands:
 uv run pytest tests/unit/ -n auto                          # Unit tests (parallel)
 uv run pytest -m integration -n auto                       # Integration tests (multiprocess)
 uv run pytest -m component_integration -n auto             # Component integration tests
+make test-kubernetes-ci                                   # Kubernetes acceptance tests (serial Kind)
 ```
+
+The CI workflow builds the local runtime and mock-server images before invoking
+this target. The test run loads those images, creates a uniquely named Kind
+cluster with an isolated kubeconfig, and deletes that cluster afterward. It
+excludes the opt-in GPU, slow, audit, and chaos suites. Keep the gate serial
+(`-n 0`): its tests intentionally share one operator installation and exercise
+ordered cluster lifecycle behavior.
 
 ### Pre-Commit Hooks
 
@@ -106,16 +123,29 @@ The repository uses pre-commit hooks defined in `.pre-commit-config.yaml`:
 
 Run pre-commit after every code change, even before creating commits. Do not wait until commit time to discover problems.
 
-### Code Review Skills
+### Bundled Skills
 
-Bundled with the repository you'll find the `aiperf-code-review` skill. When starting Claude Code within the repository and running `/skills`, you should see the following:
+The repository ships agent skills under `.agents/skills/` (surfaced to Claude Code
+through the `.claude/skills` symlink). Running `/skills` inside the repository
+lists them:
 
 ```
   Project skills (.claude/skills)
-  aiperf-code-review · ~30 description tokens
+  aiperf-code-review              review a branch against origin/main
+  aiperf-llm-ergonomics-review    review CLI/API surfaces for LLM ergonomics
+  aiperf-kube-run                 run a benchmark on Kubernetes end to end
+  aiperf-kube-setup               prepare a cluster and install the operator
+  aiperf-kube-triage              diagnose a stuck or failed Kubernetes run
+  aiperf-kube-sweep               run parameter sweeps on Kubernetes
+  bump-version                    version bump helper
+  cherry-pick                     cherry-pick helper
+  docs-to-fern                    docs site conversion helper
+  linear-issue                    Linear issue helper
 ```
 
-When creating a PR, you can run this skill yourself within your branch (or inside of a worktree) once your pull request is created by prompting Claude similar to the example below:
+#### Code review
+
+When creating a PR, you can run the `aiperf-code-review` skill yourself within your branch (or inside of a worktree) once your pull request is created by prompting Claude similar to the example below:
 
 ```
 ❯ Can you run a code review with the aiperf-code-review skill?
@@ -127,6 +157,21 @@ When creating a PR, you can run this skill yourself within your branch (or insid
 You are encouraged to use this to self-review as a first pass review before a maintainer reviews your PR.
 
 Please note, the skill does run `aiperf` and utilizes a mock server. If you are working on a laptop or personal work station, be aware that this may slow down your computer during review.
+
+#### Kubernetes
+
+The `aiperf-kube-*` skills cover the Kubernetes path and are grounded in
+[`docs/kubernetes/`](docs/kubernetes/). Start with `aiperf-kube-run`, which links
+out to the other three. They quote CLI flags, container defaults, and Helm values
+as literals, so they can go stale when those change; the pack ships a verifier
+that checks every one of them against the live CLI and the working tree:
+
+```bash
+uv run python .agents/skills/aiperf-kube-run/verify_pack.py
+```
+
+Run it after changing an `aiperf kube` flag, a `AIPERF_K8S_*` default, or
+`deploy/helm/aiperf-operator/values.yaml`, and update the skill text when it fails.
 
 
 ### Package Management
@@ -167,22 +212,66 @@ act -j run-integration-tests
 
 You can also use the Visual Studio Code extension [GitHub Local Actions](https://marketplace.visualstudio.com/items?itemName=SanjulaGanepola.github-local-actions).
 
-## Developer Certificate of Origin
+## Nightly Slack Alerts
 
-AIPerf is open source under the Apache 2.0 license (see [the Apache site](https://www.apache.org/licenses/LICENSE-2.0) or [LICENSE](./LICENSE)).
+The nightly workflow ends with a `notify-slack` job that calls the reusable `.github/workflows/notify-slack.yml`. It lists the run's jobs through the Actions API and, when any job failed, timed out, or was cancelled, posts one Slack alert per configured webhook. Advisory jobs listed in the caller's `ignored_jobs` input (currently Suggest Shard Weights) are not reported, and nothing is posted for a green run or when the run itself was cancelled.
 
-We respect intellectual property rights and want to ensure all contributions are correctly attributed and licensed. A Developer Certificate of Origin (DCO) is a lightweight mechanism to do that.
+Configuration lives in repository settings. `SLACK_NOTIFY_NIGHTLY_WEBHOOK_URL` (secret) is the incoming webhook for the release automation channel and falls back to the legacy `NIGHTLY_SLACK_WEBHOOK` secret. `SLACK_NOTIFY_AIPERF_DEV_WEBHOOK_URL` (secret) is the webhook for the AIPerf dev channel. `NIGHTLY_SLACK_MENTION` (variable) holds optional Slack IDs to mention, `S...` for a team or `U...` for a user, comma separated. Every webhook is optional; with none configured the job logs a warning and stays green.
 
-The DCO is a declaration attached to every contribution. In the commit message, the developer adds a `Signed-off-by` statement and thereby agrees to the DCO, which you can find at [DeveloperCertificate.org](http://developercertificate.org/).
+## Signing Off Your Work
 
-We require that every contribution is signed with a DCO, verified by a required CI check. Please use your real name. We do not accept anonymous contributors or pseudonyms.
+We require that all contributors "sign-off" on their commits. This certifies that the contribution is your original work, or you have the right to submit it under the project's [Apache-2.0 license](LICENSE).
 
-Each commit must include:
+- Any contribution which contains commits that are not Signed-Off will not be accepted.
+- To sign off on a commit you simply use the `--signoff` (or `-s`) option when committing your changes:
 
-```text
-Signed-off-by: Jane Smith <jane.smith@email.com>
-```
+  ```bash
+  $ git commit -s -m "Add cool feature."
+  ```
 
-You can use `-s` or `--signoff` to add the `Signed-off-by` line automatically.
+  This will append the following to your commit message:
+
+  ```text
+  Signed-off-by: Your Name <your@email.com>
+  ```
+
+- Full text of the DCO (https://developercertificate.org/):
+
+  ```text
+  Developer Certificate of Origin
+  Version 1.1
+
+  Copyright (C) 2004, 2006 The Linux Foundation and its contributors.
+
+  Everyone is permitted to copy and distribute verbatim copies of this
+  license document, but changing it is not allowed.
+
+
+  Developer's Certificate of Origin 1.1
+
+  By making a contribution to this project, I certify that:
+
+  (a) The contribution was created in whole or in part by me and I
+      have the right to submit it under the open source license
+      indicated in the file; or
+
+  (b) The contribution is based upon previous work that, to the best
+      of my knowledge, is covered under an appropriate open source
+      license and I have the right under that license to submit that
+      work with modifications, whether created in whole or in part
+      by me, under the same open source license (unless I am
+      permitted to submit under a different license), as indicated
+      in the file; or
+
+  (c) The contribution was provided directly to me by some other
+      person who certified (a), (b) or (c) and I have not modified
+      it.
+
+  (d) I understand and agree that this project and the contribution
+      are public and that a record of the contribution (including all
+      personal information I submit with it, including my sign-off) is
+      maintained indefinitely and may be redistributed consistent with
+      this project or the open source license(s) involved.
+  ```
 
 If your pull request fails the DCO check, see the [DCO Troubleshooting Guide](DCO.md).

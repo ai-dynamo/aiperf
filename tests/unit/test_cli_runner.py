@@ -242,7 +242,10 @@ class TestRunMultiBenchmark:
     def successful_result(self, tmp_path: Path) -> RunResult:
         return RunResult(label="run_0001", success=True, artifacts_path=tmp_path)
 
-    @patch("aiperf.cli_runner._multi_run.aggregate_and_export", new_callable=AsyncMock)
+    @patch(
+        "aiperf.cli_runner._multi_run.aggregate_plan_results",
+        new_callable=AsyncMock,
+    )
     @patch("aiperf.cli_runner._multi_run._estimate_and_log_duration")
     @patch("aiperf.orchestrator.orchestrator.MultiRunOrchestrator")
     def test_multi_run_success_with_aggregation(

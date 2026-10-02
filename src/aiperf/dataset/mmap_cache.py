@@ -14,7 +14,7 @@ Cache key inputs:
     - input/prompt config dump that affects tokenization or layout, including
       num_conversations, num_dataset_entries, sampling_strategy, and the entire
       ``input.prompt`` config (excluding the cache_bust subtree -- see below)
-    - aiperf release-tag-or-rev when AIPERF_VERSION is set; absent otherwise
+    - canonical AIPerf build identity (commit SHA when available, else source tree)
 
 Cache-bust deliberately does NOT enter the key. The mmap holds template bytes
 that the worker re-randomizes per-request, so two runs with different
@@ -653,9 +653,29 @@ def populate(
         return None
 
 
-def _aiperf_version() -> str | None:
-    """Return AIPERF_VERSION env var if set, else None."""
-    return os.environ.get("AIPERF_VERSION") or None
+def _source_tree_identity(package_dir: Path) -> str | None:
+    """Hash Python sources so editable-install cache entries track code changes."""
+    try:
+        source_files = sorted(package_dir.rglob("*.py"))
+        digest = hashlib.sha256()
+        for source_file in source_files:
+            digest.update(str(source_file.relative_to(package_dir)).encode())
+            digest.update(source_file.read_bytes())
+    except OSError:
+        return None
+    return digest.hexdigest() if source_files else None
+
+
+def aiperf_cache_identity() -> str | None:
+    """Return the canonical build identity used for cache provenance."""
+    import aiperf
+
+    if aiperf.__commit_sha__ != "unknown":
+        return aiperf.__commit_sha__
+    source_identity = _source_tree_identity(Path(aiperf.__file__).parent)
+    return (
+        f"source:{source_identity}" if source_identity else aiperf.__version__ or None
+    )
 
 
 def _tokenizer_identity_from_run(run: BenchmarkRun) -> dict[str, object]:
@@ -929,5 +949,5 @@ def compute_cache_key_from_run(run: BenchmarkRun) -> str | None:
         custom_dataset_type=custom_dataset_type,
         tokenizer_identity=_tokenizer_identity_from_run(run),
         settings_payload=_settings_payload_from_run(run),
-        aiperf_version=_aiperf_version(),
+        aiperf_version=aiperf_cache_identity(),
     )

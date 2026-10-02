@@ -80,6 +80,16 @@ INTENTIONAL_PYDANTIC_FIELDS_EXEMPTIONS: dict[str, str] = {
         "flag as a top-level field by design (v1 flatten, Tasks 1-13). "
         "Splitting into sub-models would re-nest the v1 layer."
     ),
+    "src/aiperf/common/environment.py::_DatasetSettings": (
+        "Every field is a user-facing environment variable documented in "
+        "docs/environment-variables.md: the class sets "
+        "env_prefix='AIPERF_DATASET_', so field FOO *is* the public name "
+        "AIPERF_DATASET_FOO. Splitting into nested sub-models would re-prefix "
+        "each variable and break every call site that reads "
+        "Environment.DATASET.FOO. environment.py's convention is one "
+        "flat _XxxSettings class per env_prefix domain, aggregated on "
+        "_Environment -- the flat shape is the design, not pending debt."
+    ),
 }
 
 CHECKS = [
@@ -91,7 +101,6 @@ CHECKS = [
     "stdlib-json",
     "exception-message",
 ]
-
 
 # ---------------------------------------------------------------------------
 # Violation model + baseline
@@ -610,7 +619,9 @@ def _iter_py_files(paths: list[Path]) -> list[Path]:
             out.append(p)
         elif p.is_dir():
             out.extend(sorted(p.rglob("*.py")))
-    return [f for f in out if "__pycache__" not in f.parts]
+    # "vendor" holds verbatim third-party sources whose value is being byte
+    # identical to upstream, so AIPerf's ergonomics rules cannot apply to them.
+    return [f for f in out if "__pycache__" not in f.parts and "vendor" not in f.parts]
 
 
 def _run_per_file(

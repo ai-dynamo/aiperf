@@ -3,8 +3,16 @@
 
 """Variables block must persist on the resolved config so run-time renderers can use it."""
 
+from pathlib import Path
+
 from aiperf.config import AIPerfConfig
-from aiperf.config.loader import build_benchmark_plan, load_config_from_string
+from aiperf.config.flags import CLIConfig
+from aiperf.config.flags.resolver import resolve_config
+from aiperf.config.loader import (
+    build_benchmark_plan,
+    load_config_dict_with_raw_envelope,
+    load_config_from_string,
+)
 from aiperf.config.loader.jinja import expand_config_dict
 
 _BASE_YAML = """
@@ -44,6 +52,30 @@ _BASE_DICT: dict = {
         {"name": "profiling", "type": "concurrency", "requests": 10, "concurrency": 1}
     ],
 }
+
+
+_RESOLVER_SWEEP_YAML = """
+variables:
+  load: 100
+sweep:
+  type: grid
+  parameters:
+    variables.load: [10, 50, 100]
+benchmark:
+  models: [llama]
+  endpoint:
+    type: chat
+    urls: ["http://x:8000/v1/chat/completions"]
+  datasets:
+    - name: main
+      type: synthetic
+  phases:
+    - name: steady_state
+      kind: profiling
+      type: concurrency
+      requests: "{{ load * 5 }}"
+      concurrency: "{{ load }}"
+"""
 
 
 def test_variables_block_persists_on_resolved_config():
@@ -181,3 +213,35 @@ benchmark:
     assert all(c.phases[0].requests == 1000 for c in plan.configs)
     # The bare-path sweep on concurrency still wins over the YAML default.
     assert [c.phases[0].concurrency for c in plan.configs] == [1, 2]
+
+
+def test_load_config_dict_with_raw_envelope_returns_both_jinja_stages(
+    tmp_path: Path,
+) -> None:
+    config_file = tmp_path / "sweep.yaml"
+    config_file.write_text(_RESOLVER_SWEEP_YAML, encoding="utf-8")
+
+    rendered, raw_envelope = load_config_dict_with_raw_envelope(config_file)
+
+    assert rendered["benchmark"]["phases"][0]["concurrency"] == 100
+    assert raw_envelope["benchmark"]["phases"][0]["concurrency"] == "{{ load }}"
+
+
+def test_resolve_config_applies_cli_override_to_rendered_and_raw_envelopes(
+    tmp_path: Path,
+) -> None:
+    config_file = tmp_path / "sweep.yaml"
+    config_file.write_text(_RESOLVER_SWEEP_YAML, encoding="utf-8")
+
+    config = resolve_config(CLIConfig(request_count=7), config_file)
+
+    assert config._raw_envelope is not None
+    raw_phase = config._raw_envelope["benchmark"]["phases"][0]
+    assert raw_phase["name"] == "steady_state"
+    assert raw_phase["kind"] == "profiling"
+    assert raw_phase["requests"] == 7
+    assert raw_phase["concurrency"] == "{{ load }}"
+
+    plan = build_benchmark_plan(config)
+    assert [cfg.phases[0].concurrency for cfg in plan.configs] == [10, 50, 100]
+    assert [cfg.phases[0].requests for cfg in plan.configs] == [7, 7, 7]

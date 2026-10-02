@@ -93,6 +93,27 @@ class TestZMQTCPCommunication:
 
         assert client1 is not client2  # Different instances
 
+    def test_create_client_different_socket_ops_creates_new(self):
+        """Two callers on the same (type, address, bind) with different socket_ops
+        must not silently share a client - socket_ops affects HWM/LINGER/etc."""
+        comm = ZMQTCPCommunication()
+        address = "tcp://127.0.0.1:5555"
+
+        client_a = comm.create_client(
+            CommClientType.PUSH,
+            address,
+            bind=True,
+            socket_ops={"sndhwm": 100},
+        )
+        client_b = comm.create_client(
+            CommClientType.PUSH,
+            address,
+            bind=True,
+            socket_ops={"sndhwm": 500},
+        )
+
+        assert client_a is not client_b
+
     @pytest.mark.asyncio
     async def test_create_client_after_initialize_raises_error(self):
         """Test that creating client after initialize raises InvalidStateError."""

@@ -34,6 +34,17 @@ class ParsedTurn(AIPerfBaseModel):
     )
 
 
+def reconstruct_cumulative_context(turns: list[ParsedTurn]) -> list[int]:
+    """Reconstruct the cumulative input length observed for each turn."""
+    cumulative = 0
+    context_lengths: list[int] = []
+    for turn in turns:
+        cumulative += turn.input_length
+        context_lengths.append(cumulative)
+        cumulative += turn.output_length
+    return context_lengths
+
+
 def iter_jsonl_rows(path: Path) -> list[dict[str, Any]]:
     """Read non-empty JSONL rows as dictionaries."""
     rows: list[dict[str, Any]] = []
@@ -125,20 +136,18 @@ def load_simulation_sessions(jsonl_path: Path) -> list[dict[str, Any]]:
     grouped = group_sessions(load_jsonl(jsonl_path))
     result: list[dict[str, Any]] = []
     for session_id, turns in grouped.items():
-        cumulative = 0
         sim_turns: list[dict[str, Any]] = []
-        for turn in turns:
-            cumulative += turn.input_length
+        cumulative_context = reconstruct_cumulative_context(turns)
+        for turn, input_length in zip(turns, cumulative_context, strict=True):
             sim_turns.append(
                 {
                     "input_length": turn.input_length,
                     "output_length": turn.output_length,
                     "delay_ms": turn.delay_ms,
                     "hash_ids": turn.hash_ids,
-                    "cumulative_input_length": cumulative,
+                    "cumulative_input_length": input_length,
                 }
             )
-            cumulative += turn.output_length
 
         first = turns[0]
         result.append(

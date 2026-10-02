@@ -21,6 +21,7 @@ from aiperf.exporters.gpu_telemetry_console_exporter import (
     GPUTelemetryConsoleExporter,
 )
 from aiperf.plugin.enums import EndpointType
+from tests.harness import fixed_console
 from tests.unit.exporters.conftest import make_exporter_config
 
 
@@ -116,7 +117,7 @@ class TestGPUTelemetryConsoleExporter:
         )
 
         exporter = GPUTelemetryConsoleExporter(exporter_config)
-        console = Console(width=150)
+        console = fixed_console(150)
         await exporter.export(console)
 
         output = capsys.readouterr().out
@@ -140,7 +141,7 @@ class TestGPUTelemetryConsoleExporter:
         )
 
         exporter = GPUTelemetryConsoleExporter(exporter_config)
-        console = Console(width=150)
+        console = fixed_console(150)
         await exporter.export(console)
 
         output = capsys.readouterr().out
@@ -164,7 +165,7 @@ class TestGPUTelemetryConsoleExporter:
         )
 
         exporter = GPUTelemetryConsoleExporter(exporter_config)
-        console = Console(width=150)
+        console = fixed_console(150)
         await exporter.export(console)
 
         output = capsys.readouterr().out
@@ -185,7 +186,7 @@ class TestGPUTelemetryConsoleExporter:
         )
 
         exporter = GPUTelemetryConsoleExporter(exporter_config)
-        console = Console(width=150)
+        console = fixed_console(150)
         await exporter.export(console)
 
         output = capsys.readouterr().out
@@ -248,7 +249,7 @@ class TestGPUTelemetryConsoleExporter:
         )
 
         exporter = GPUTelemetryConsoleExporter(exporter_config)
-        console = Console(width=150)
+        console = fixed_console(150)
         await exporter.export(console)
 
         output = capsys.readouterr().out
@@ -286,7 +287,7 @@ class TestGPUTelemetryConsoleExporter:
         )
 
         exporter = GPUTelemetryConsoleExporter(exporter_config)
-        console = Console(width=150)
+        console = fixed_console(150)
         await exporter.export(console)
 
         output = capsys.readouterr().out
@@ -344,7 +345,7 @@ class TestGPUTelemetryConsoleExporter:
         )
 
         exporter = GPUTelemetryConsoleExporter(exporter_config)
-        console = Console(width=150)
+        console = fixed_console(150)
 
         # Should not raise exception despite missing metrics
         await exporter.export(console)
@@ -381,7 +382,7 @@ class TestGPUTelemetryConsoleExporter:
         )
 
         exporter = GPUTelemetryConsoleExporter(exporter_config)
-        console = Console(width=150)
+        console = fixed_console(150)
         await exporter.export(console)
 
         output = capsys.readouterr().out
@@ -505,7 +506,7 @@ class TestGPUTelemetryConsoleExporter:
         )
 
         exporter = GPUTelemetryConsoleExporter(exporter_config)
-        console = Console(width=150)
+        console = fixed_console(150)
         await exporter.export(console)
 
         output = capsys.readouterr().out

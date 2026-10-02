@@ -4,13 +4,13 @@
 """Tests for ConsoleGpuVendorDisclaimerExporter."""
 
 import pytest
-from rich.console import Console
 
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.console_gpu_vendor_disclaimer_exporter import (
     ConsoleGpuVendorDisclaimerExporter,
 )
 from aiperf.plugin.enums import EndpointType
+from tests.harness import fixed_console
 from tests.unit.exporters.conftest import make_exporter_config
 
 
@@ -30,7 +30,7 @@ class TestConsoleGpuVendorDisclaimerExporter:
                 cli_config=_cfg(), telemetry_results=sample_telemetry_results
             )
         )
-        await exporter.export(Console(width=120))
+        await exporter.export(fixed_console(120))
         output = capsys.readouterr().out
 
         assert "GPU Telemetry Platform" in output
@@ -42,5 +42,5 @@ class TestConsoleGpuVendorDisclaimerExporter:
         exporter = ConsoleGpuVendorDisclaimerExporter(
             make_exporter_config(cli_config=_cfg(), telemetry_results=None)
         )
-        await exporter.export(Console(width=120))
+        await exporter.export(fixed_console(120))
         assert capsys.readouterr().out.strip() == ""

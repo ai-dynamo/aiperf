@@ -99,12 +99,16 @@ Then:
 2. If the flag maps to an existing `AIPerfConfig` key, add an entry to that section's
    field map (e.g. `_ENDPOINT_FIELD_MAP` in `_converter_endpoint.py`).
    Otherwise, read it directly in the relevant `_converter_*.py` builder.
-3. Run `make generate-cli-docs` to regen `docs/cli-options.md`. Run
+3. Add the same explicit-field route to
+   `config.flags.resolver.build_cli_overrides` when the flag is valid with
+   `--config`. Test CLI-only and YAML-plus-CLI resolution against the same
+   affected `AIPerfConfig` subtree; unrelated YAML must remain intact.
+4. Run `make generate-cli-docs` to regen `docs/cli-options.md`. Run
    `make generate-env-vars-docs` if you also added a corresponding env var.
-4. Add a unit test under `tests/unit/config/` constructing
+5. Add a unit test under `tests/unit/config/` constructing
    `CLIConfig(my_new_flag=...)` and asserting the converter emits the
    right `AIPerfConfig` shape.
-5. The disjointedness invariant in
+6. The disjointedness invariant in
    `tests/unit/config/v1/test_section_fields.py` will catch any
    cross-section name collision automatically.
 
@@ -112,8 +116,26 @@ Then:
 - No validators on CLIConfig fields. `BeforeValidator(parse_str_or_list)` for
   CLI input coercion is fine; domain validation (range checks across fields,
   cross-field constraints) lives on `AIPerfConfig`, not CLIConfig.
-- The CLI-to-envelope converter is the only module outside `cli_commands/` that may
-  read `CLIConfig` attributes.
+- The CLI-to-envelope converter and config-file resolver are the only modules
+  outside `cli_commands/` that may read `CLIConfig` attributes.
+
+### Config-file override envelope invariant
+
+`resolve_config` keeps two Config-v2 dictionaries aligned when combining
+`--config` with explicit CLI flags:
+
+- The rendered dictionary is post-environment and post-Jinja; it feeds
+  `AIPerfConfig.model_validate`.
+- The raw envelope is post-environment but pre-Jinja; it is retained on
+  `AIPerfConfig._raw_envelope` so `build_benchmark_plan` can render each
+  `sweep.parameters` variation independently.
+
+Every config-file override transformation must run through
+`_merge_overrides_into_envelope`, which applies the same deep merge, dataset
+filtering, phase targeting, and magic-list promotion to both dictionaries. Do
+not mutate only the rendered dictionary: a CLI override of a templated field
+would appear correct on the base config and then be replaced by the old Jinja
+template during sweep expansion.
 
 ### Bool|object nested endpoint fields + flat CLI lowering
 
@@ -214,6 +236,86 @@ async def _handle(self, msg: MyMsg) -> None:
 
 Auto-subscription happens during `@on_init` phase.
 
+## Control Channel Command Pattern
+
+Commands do **not** ride the pub/sub event bus. They ride a dedicated
+DEALER/ROUTER control channel at `CommAddress.CONTROL`: every component service
+opens a DEALER (identity = its service ID), and `SystemController` binds the
+single ROUTER. The wire format is the `msgspec` tagged-union structs in
+`aiperf.common.control_structs`, not Pydantic `Message` subclasses. The same
+channel also carries registration (`Registration` / `RegistrationAck`),
+`Heartbeat`, and `StatusUpdate`.
+
+Every other message type still goes over the event bus with `publish()` /
+`@on_message`.
+
+### Request/response structs
+
+| Struct | Meaning |
+|---|---|
+| `Command{cid, cmd, payload}` | The request. `cid` correlates the response; `payload` is `orjson`-encoded bytes (`b""` when the command carries no data). |
+| `CommandAck{cid, cmd, sid}` | Handler ran and returned `None`. |
+| `CommandOk{cid, cmd, sid, payload}` | Handler returned a value, serialized into `payload`. |
+| `CommandErr{cid, cmd, sid, error, traceback}` | Handler raised. |
+| `CommandUnhandled{cid, cmd, sid}` | No `@on_command` hook matched. |
+
+`CommandUnhandled` is deliberately not an ack: "no handler" is a *failure* to
+callers that need the work done. `SystemController._finalize_artifact_response_error`
+treats it as one. Do not assume an unhandled command is harmless.
+
+### Adding a new command
+
+1. Add the value to `CommandType` in `common/enums/enums.py`.
+2. Add a handler on the receiving service. It takes a single `Command`:
+
+```python
+from aiperf.common.control_structs import Command
+from aiperf.common.hooks import on_command
+
+@on_command(CommandType.MY_COMMAND)
+async def _on_my_command(self, message: Command) -> None:
+    # Decode the payload only if the command carries data.
+    opts = orjson.loads(message.payload) if message.payload else {}
+    await self._do_the_thing(opts.get("mode"))
+```
+
+Returning `None` makes the dispatcher send `CommandAck`. Returning a value makes
+it send `CommandOk` with the value serialized into `payload` (`bytes` pass
+through, Pydantic models use `model_dump_json()`, everything else goes through
+`orjson.dumps`).
+
+Exactly **one** hook may claim a given `CommandType` per service — the dispatcher
+stops at the first match, because the response it sends back is that hook's
+result and a second hook would have no way to answer.
+
+### Sending a command
+
+From a service to the controller:
+
+```python
+response = await self.send_command_to_controller(
+    CommandType.MY_COMMAND, payload=orjson.dumps({"mode": "fast"})
+)
+```
+
+From the controller to services:
+
+| Method | Behavior |
+|---|---|
+| `_send_control_command(identity, cmd, ...)` | One service, awaits its response. |
+| `_send_control_command_to_all(cmd, service_ids, ...)` | Fan-out, returns responses in **input order** so callers can `zip(service_ids, responses, strict=True)`. Failures become `ErrorDetails` entries rather than raising. |
+| `_send_control_command_to_all_fail_fast(cmd, service_ids, ...)` | Completion-ordered fan-out that stops waiting on the first `CommandErr` or timeout. `CommandUnhandled` is **not** an abort condition here — the two callers fan `PROFILE_CONFIGURE` / `PROFILE_START` at every registered service and several legitimately implement neither. |
+| `_broadcast_control_command(cmd, service_ids, ...)` | Fire-and-forget; per-peer send errors are swallowed so one dead service cannot block the rest. |
+
+### Peer-to-peer commands must be relayed
+
+The ROUTER is the only path between two non-controller services — services have
+no socket to each other. A command aimed at a *peer* therefore needs a
+controller-side handler that re-fans it out. `PROFILE_COMPLETE` and
+`PROFILE_CANCEL` both work this way: the originating service sends to the
+controller, and the controller's handler broadcasts to the other services,
+excluding the originator.
+
 ## Plugin System Pattern
 
 YAML-based registry with lazy-loading:
@@ -306,6 +408,40 @@ self.debug(lambda: f"Processing {len(self._items())} items")
 # Cheap - direct string is fine
 self.info("Starting service")
 ```
+
+## Machine-Readable Kube CLI Output Pattern
+
+Any `aiperf kube` command with a JSON or YAML output mode writes the payload
+through `kube_console.emit_raw`, never `kube_console.console.print`. Rich
+hard-wraps lines wider than the resolved console width — 80 whenever stdout is
+not a tty — and the wrap lands inside the token, so a long image reference or
+endpoint URL turns a valid document into an unparseable one under redirection
+or in CI. `soft_wrap=True` also avoids the wrap, but it is per-call discipline
+that is easy to forget; `emit_raw` makes the correct path the only path.
+
+```python
+from aiperf.kubernetes import console as kube_console
+
+kube_console.emit_raw(orjson.dumps(payload, option=orjson.OPT_INDENT_2).decode())
+kube_console.emit_raw(yaml.safe_dump(doc, width=float("inf")), end="")  # already \n-terminated
+```
+
+Wrap the work that produces the payload in `machine_readable_stdout()` when it
+can log. The context manager retargets the `aiperf.kube` handlers to stderr for
+the duration instead of filtering by level, so a record emitted at *any* level
+— including one added by a later change — cannot prepend text to the document
+on stdout. Diagnostics stay visible, just on the other stream.
+
+```python
+with kube_console.machine_readable_stdout():
+    results = await checker.run_all_checks()
+kube_console.emit_raw(orjson.dumps(results.to_dict()).decode())
+```
+
+Human-facing log text (`aiperf kube logs`, controller log streaming) keeps
+going through `console.print`, but with `soft_wrap=True`: those lines may want
+styling later, and letting the terminal fold a long URL beats breaking it
+mid-token.
 
 ## NaN/Inf Discipline Pattern
 

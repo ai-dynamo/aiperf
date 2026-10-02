@@ -180,19 +180,45 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
             else self._default_realtime_interval()
         )
         while not self.stop_requested:
-            if (
-                self.run.cfg.ui_type != UIType.DASHBOARD
-                or self.run.cfg.gpu_telemetry_mode
-                != GPUTelemetryMode.REALTIME_DASHBOARD
-            ):
-                # Either non-dashboard UI or telemetry not yet in realtime mode -
-                # sleep until the dashboard sends START_REALTIME_TELEMETRY.
+            if not self._realtime_telemetry_publish_enabled():
+                # No live consumer yet - sleep until the dashboard sends
+                # START_REALTIME_TELEMETRY.
                 await self._realtime_enable_event.wait()
                 self._realtime_enable_event.clear()
                 continue
 
             await self._report_realtime_metrics()
             await asyncio.sleep(interval)
+
+    def _realtime_telemetry_publish_enabled(self) -> bool:
+        """True when a live consumer justifies periodic GPU telemetry publishing.
+
+        The textual ``--ui dashboard`` always publishes once the pane is
+        toggled on (``gpu_telemetry_mode`` flips to ``REALTIME_DASHBOARD`` via
+        ``start_realtime_telemetry``). A headless run (``--ui-type none``)
+        still needs the stream when something else is serving the *web*
+        dashboard over the same WebSocket: a local API server (``--api-port``)
+        or a Kubernetes-managed run — mirrors
+        ``RecordsManager._realtime_metrics_publish_enabled``. Neither of those
+        consumers can send ``START_REALTIME_TELEMETRY`` (that command only
+        exists for the textual UI's keybinding), so realtime mode is forced on
+        directly instead of waiting for it.
+        """
+        has_dashboard_consumer = (
+            self.run.cfg.ui_type == UIType.DASHBOARD
+            or self.run.cfg.runtime.api_port is not None
+            or str(self.run.cfg.runtime.service_run_type).lower() == "kubernetes"
+            or Environment.UI.REALTIME_METRICS_ENABLED
+        )
+        if (
+            has_dashboard_consumer
+            and self.run.cfg.gpu_telemetry_mode != GPUTelemetryMode.REALTIME_DASHBOARD
+        ):
+            self.run.cfg.gpu_telemetry_mode = GPUTelemetryMode.REALTIME_DASHBOARD
+        return (
+            has_dashboard_consumer
+            and self.run.cfg.gpu_telemetry_mode == GPUTelemetryMode.REALTIME_DASHBOARD
+        )
 
     def _default_realtime_interval(self) -> float:
         """Resolve the per-UI default cadence for interval-0 dashboard polling."""

@@ -6,7 +6,7 @@ BaselineKind tags whether a baseline reading is taken near phase start (START)
 or after credits have drained (END).
 
 ServiceCapability is a generic capability tag advertised by services in their
-RegisterServiceCommand.
+control-channel ``Registration``.
 """
 
 from aiperf.common.enums.base_enums import CaseInsensitiveStrEnum

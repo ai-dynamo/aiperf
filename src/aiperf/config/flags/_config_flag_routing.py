@@ -183,21 +183,10 @@ SWEEP_FIELDS_NOT_ROUTED: frozenset[str] = frozenset(
 )
 
 
-# Flags that only route when a companion flag is also present, verified by
-# resolving with and without the companion. Without it they resolve cleanly
-# and change nothing, so they must be rejected rather than quietly ignored.
-COMPANION_ROUTED: dict[str, frozenset[str]] = {
-    # _apply_endpoint_overrides writes `models.strategy` only inside the
-    # `model_names` branch.
-    "model_selection_strategy": frozenset({"model_names"}),
-    # _apply_phase_loadgen_overrides consults arrival_pattern only when
-    # rewriting a phase for --request-rate-series.
-    "arrival_pattern": frozenset({"request_rate_series"}),
-    # EndpointConfig._validate_per_chunk_usage requires server token counts,
-    # streaming, and a chat endpoint; on its own the flag can only be set to
-    # its default.
-    "per_chunk_usage": frozenset({"use_server_token_count", "streaming"}),
-}
+# Kept as the invariant suite's source of companion test inputs. The resolver
+# now evaluates the effective YAML+CLI configuration, so none of the routed
+# flags require a CLI-only companion before reaching that validation.
+COMPANION_ROUTED: dict[str, frozenset[str]] = {}
 
 
 # Flags that would replace the dataset the config file declared rather than
@@ -472,13 +461,6 @@ def reject_unrouted_cli_flags(cli: CLIConfig) -> None:
     # Keyed on every CLIConfig field rather than on the section frozensets:
     # those are opt-in, and a field nobody sectioned was invisible here.
     unrouted = cli.model_fields_set - ROUTED_UNDER_CONFIG - EXEMPT_FROM_CONFIG_ROUTING
-    # Companion-routed flags are inert on their own, so treat a missing
-    # companion the same as no routing at all.
-    unrouted |= {
-        field
-        for field, companions in COMPANION_ROUTED.items()
-        if field in cli.model_fields_set and not (companions & cli.model_fields_set)
-    }
     if not unrouted:
         return
 

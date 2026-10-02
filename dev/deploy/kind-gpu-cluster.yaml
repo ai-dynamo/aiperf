@@ -1,0 +1,10 @@
+# Kind cluster config with GPU passthrough via nvidia-container-runtime.
+# The /dev/null sentinel mount triggers device injection by the nvidia runtime.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.33.1
+    extraMounts:
+      - hostPath: /dev/null
+        containerPath: /var/run/nvidia-container-devices/all

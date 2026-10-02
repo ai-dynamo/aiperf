@@ -13,13 +13,13 @@ Cascading discriminators (different field at each level):
         discriminator_field = "message_type"
         message_type: str
 
-    class CommandMessage(Message):
-        discriminator_field = "command"  # NEW discriminator field
-        message_type: str = "command"
-        command: str
+    class RecordsMessage(Message):
+        discriminator_field = "record_type"  # NEW discriminator field
+        message_type: str = "records"
+        record_type: str
 
-    class SpawnWorkersCommand(CommandMessage):
-        command: str = "spawn_workers"
+    class InferenceRecordsMessage(RecordsMessage):
+        record_type: str = "inference"
 
 Hierarchical discriminators (same field, multiple levels):
     class Animal(AutoRoutedModel):
@@ -126,6 +126,6 @@ class AutoRoutedModel(BaseModel):
                 )
 
         # An unregistered discriminator falls back to the base class by design:
-        # the command hierarchy routes generic commands (no dedicated subclass) to
-        # the base CommandMessage/CommandSuccessResponse.
+        # a hierarchy may route generic values (no dedicated subclass) to its
+        # base model rather than failing.
         return cls.model_validate(data)

@@ -236,7 +236,13 @@ def build_network_latency(cli: CLIConfig) -> dict[str, Any]:
             )
         return {"enabled": False}
 
-    network_latency: dict[str, Any] = {"enabled": True}
+    # ``mean_ms: None`` is load-bearing, not a redundant default: automatic mode
+    # is encoded as the *absence* of a mean (``NetworkLatencyConfig.should_probe``),
+    # and in the YAML+CLI path this dict is deep-merged onto the config file. An
+    # omitted key would leave a YAML ``meanMs`` in place and silently disable the
+    # probing the flag asked for -- the exact combination the CLI rejects as
+    # mutually exclusive above.
+    network_latency: dict[str, Any] = {"enabled": True, "mean_ms": None}
     if interval_set and cli.network_latency_ping_interval is not None:
         network_latency["ping_interval"] = cli.network_latency_ping_interval
     return network_latency

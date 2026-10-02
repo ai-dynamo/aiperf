@@ -150,6 +150,15 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
             description="Port for control channel (ROUTER-DEALER)",
         ),
     ] = 5667
+    group_lifecycle_port: Annotated[
+        int,
+        Field(
+            default=5670,
+            ge=1,
+            le=65535,
+            description="Port for group-local lifecycle channel (WorkerGroupManager coordination)",
+        ),
+    ] = 5670
     dataset_manager_proxy_config: Annotated[  # type: ignore
         ZMQTCPProxyConfig,
         Field(
@@ -204,4 +213,4 @@ class ZMQTCPConfig(BaseZMQCommunicationConfig):
     @property
     def group_lifecycle_address(self) -> str:
         """Get the group-local lifecycle channel address."""
-        return f"tcp://{self.host}:{self.control_port + 1}"
+        return f"tcp://{self.host}:{self.group_lifecycle_port}"
