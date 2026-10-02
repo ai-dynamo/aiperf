@@ -17,6 +17,7 @@ from aiperf.common.models import (
 from aiperf.credit.dispatch import ChildDispatchResult
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import DatasetSamplingStrategy
+from aiperf.timing import replay_dependencies
 from aiperf.timing.replay_dependencies import (
     ReplayBarrierCoordinator,
     ReplayResumeBoundary,
@@ -340,6 +341,45 @@ async def test_retained_child_dispatch_reports_deferred_not_rejected() -> None:
 
     assert result is ChildDispatchResult.DEFERRED
     assert coordinator.pending_turns("root") == (_turn("d"),)
+
+
+@pytest.mark.asyncio
+async def test_release_time_deferral_is_expected_not_refused_or_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logger = MagicMock()
+    monkeypatch.setattr(replay_dependencies, "_logger", logger)
+    coordinator = ReplayBarrierCoordinator(_metadata())
+    coordinator.activate()
+    issue_calls: list[str] = []
+    refused: list[str] = []
+
+    async def issue() -> ChildDispatchResult:
+        issue_calls.append("d")
+        return ChildDispatchResult.DEFERRED
+
+    async def on_refused() -> None:
+        refused.append("d")
+
+    result = await coordinator.submit(
+        _turn("d"),
+        issue,
+        on_refused=on_refused,
+        retained_result=ChildDispatchResult.DEFERRED,
+    )
+    assert result is ChildDispatchResult.DEFERRED
+    assert issue_calls == []
+
+    for name in "abc":
+        coordinator.complete(_credit(name))
+    await asyncio.sleep(0)
+
+    assert issue_calls == ["d"]
+    assert refused == []
+    assert coordinator.pending_turns_by_root() == {}
+    logger.error.assert_not_called()
+    logger.exception.assert_not_called()
+    logger.debug.assert_called_once()
 
 
 @pytest.mark.asyncio
