@@ -502,6 +502,58 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         return self._records_tracker.check_and_set_all_records_received_for_phase(phase)
 
     @background_task(
+        interval=lambda self: Environment.RECORD.PROGRESS_STALL_CHECK_INTERVAL,
+        immediate=False,
+    )
+    async def _watch_for_progress_stall(self) -> None:
+        """Fail a run whose profiling phase stops producing records entirely.
+
+        Distinct from :meth:`_watch_for_record_stall`, which handles aggregation
+        falling behind *after* every credit has come back and finalizes with
+        partial results. Here no credit ever comes back: a request that is
+        dispatched and never completes leaves ``final_requests_completed`` unset,
+        so the completion barrier is not merely unmet but unevaluable, and
+        nothing downstream can ever re-trigger it. ``--request-timeout-seconds``
+        is not a backstop -- it defaults to six hours and never applies to a
+        request that was never dispatched at all.
+
+        Armed only between profiling start and profiling completion, so neither
+        a slow dataset build (no records yet, by design) nor a finished run (no
+        records ever again, by design) is mistaken for a stall.
+        """
+        timeout = Environment.RECORD.PROGRESS_STALL_TIMEOUT
+        if timeout <= 0:
+            raise asyncio.CancelledError("progress stall watchdog disabled")
+        if not self._profiling_started:
+            return
+        if CreditPhase.PROFILING in self._complete_credit_phases:
+            return
+
+        total = self._records_tracker.total_records_for_phase(CreditPhase.PROFILING)
+        now = time.monotonic()
+        if total != self._progress_stall_last_total:
+            self._progress_stall_last_total = total
+            self._progress_stall_since = now
+            return
+
+        stalled_for = now - self._progress_stall_since
+        if stalled_for < timeout:
+            self.warning(
+                f"No records received for {stalled_for:.0f}s; {total:,} so far. "
+                f"Failing at {timeout:.0f}s "
+                f"(AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to wait indefinitely)."
+            )
+            return
+
+        raise RuntimeError(
+            f"Benchmark stalled: no records received for {stalled_for:.0f}s with "
+            f"the profiling phase still in flight ({total:,} records received). A "
+            f"request was dispatched but never completed, or a credit was never "
+            f"returned, so the phase can never report complete. Set "
+            f"AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to disable this check."
+        )
+
+    @background_task(
         interval=lambda self: Environment.RECORD.CHECKPOINT_INTERVAL,
         immediate=False,
     )
@@ -667,6 +719,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._last_checkpoint_records = -1
         self._error_tracker = ErrorTracker()
 
+        # Stall detection: a phase completes only once the credit phase reports
+        # its final count, so a credit that is never returned leaves that
+        # condition unevaluable and the wait never ends.
+
         # DatasetConfiguredNotification (SUB) and metric records (PULL) arrive on
         # independent channels with no ordering guarantee. Gate record processing on
         # this event so results processors are configured (e.g. accuracy task names)
@@ -708,6 +764,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # last advanced. Only consulted once credits are complete.
         self._stall_last_total_records: int = -1
         self._stall_last_progress_ns: int = 0
+        self._profiling_started = False
+        self._progress_stall_last_total: int = -1
+        self._progress_stall_since: float = 0.0
         # Set to a human-readable reason when the run is finalized without every
         # expected record. Propagated onto ProfileResults.incomplete_reason.
         self._incomplete_reason: str | None = None
@@ -1403,6 +1462,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Handle a credit phase start message in order to track the total number of expected requests."""
         self._records_tracker.update_phase_info(phase_start_msg.stats)
         await self._dispatch_record(phase_start_msg.stats, warn_if_unrouted=False)
+        if phase_start_msg.config.phase == CreditPhase.PROFILING:
+            self._profiling_started = True
         self.info(f"Credit phase start: {phase_start_msg.config.phase}")
 
     @on_message(MessageType.CREDIT_PHASE_PROGRESS)
