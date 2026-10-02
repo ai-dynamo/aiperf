@@ -102,10 +102,12 @@ class ScenarioSpec(AIPerfBaseModel):
         default=None,
         ge=0,
         description=(
-            "Hard ceiling (seconds) for idle gaps within each root trace. For "
-            "Weka, parent + subagent request-start timestamps are compressed "
-            "per-trace before per-turn delays are derived. Takes precedence over "
-            "inter_turn_delay_cap_seconds and supersedes use_think_time_only."
+            "Hard ceiling (seconds) for observed runtime idle time within each "
+            "AgentX trajectory tree. The idle clock covers initial future work "
+            "and restarts when the final in-flight request across the root and "
+            "all descendant streams completes. Dataset timestamps are unchanged; "
+            "request order, spawn/join dependencies, and replay barriers remain "
+            "authoritative."
         ),
     )
     system_idle_gap_cap_seconds: float | None = Field(
@@ -136,6 +138,17 @@ class ScenarioSpec(AIPerfBaseModel):
             "When set, prompt.cache_bust.target must equal this value. "
             "Mismatch is rejected unless --unsafe-override is also set "
             "(which stamps submission_valid=false)."
+        ),
+    )
+    minimum_profile_metric_coverage_ratio: float | None = Field(
+        default=None,
+        gt=0.0,
+        le=1.0,
+        description=(
+            "Minimum fraction of each duration-based profiling phase that must "
+            "contain TTFT or inter-token-latency observations. A run that "
+            "falls below the threshold exits non-zero and is not a valid scenario "
+            "submission. None disables the post-run check."
         ),
     )
 

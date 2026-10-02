@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import orjson
@@ -24,6 +25,66 @@ def _write_profile_record(run_dir: Path, metric_value: float) -> None:
         "error": None,
     }
     (run_dir / "profile_export.jsonl").write_bytes(orjson.dumps(record) + b"\n")
+
+
+@pytest.mark.asyncio
+async def test_aggregate_export_propagates_runtime_invalid_reasons(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from aiperf.cli_runner import _aggregate
+
+    base_config = SimpleNamespace(scenario="inferencex-agentx-mvp")
+    plan = SimpleNamespace(
+        configs=[base_config],
+        confidence_level=0.95,
+        cooldown_seconds=0.0,
+        use_adaptive=False,
+        is_sweep=False,
+    )
+    clean_run = SimpleNamespace(
+        resolved=SimpleNamespace(
+            scenario_outcome=SimpleNamespace(
+                submission_valid=True,
+                submission_invalid_reasons=[],
+            )
+        )
+    )
+    monkeypatch.setattr(
+        "aiperf.dataset.provenance.public_dataset_provenance", lambda _c: None
+    )
+    monkeypatch.setattr("aiperf.cli_runner._make_benchmark_run", lambda _c: clean_run)
+    monkeypatch.setattr("aiperf.common.scenario.apply_scenario", lambda _r: None)
+
+    strategy = MagicMock()
+    strategy.get_aggregate_path.return_value = tmp_path / "aggregate"
+    reason = "profile_metric_coverage_validation_failed"
+    results = [
+        RunResult(
+            label="run_0001",
+            success=True,
+            runtime_submission_invalid_reasons=[reason],
+        ),
+        RunResult(
+            label="run_0002",
+            success=True,
+            runtime_submission_invalid_reasons=[reason],
+        ),
+    ]
+
+    await _aggregate.aggregate_and_export(
+        results,
+        plan,
+        strategy=strategy,
+        base_dir=tmp_path,
+        logger=MagicMock(),
+    )
+
+    aggregate_path = tmp_path / "aggregate" / "profile_export_aiperf_aggregate.json"
+    payload = json.loads(await asyncio.to_thread(aggregate_path.read_text))
+    metadata = payload["metadata"]
+    assert metadata["submission_valid"] is False
+    assert metadata["submission_invalid_reasons"] == [reason]
 
 
 @pytest.mark.asyncio

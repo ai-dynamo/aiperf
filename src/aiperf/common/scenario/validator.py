@@ -561,6 +561,13 @@ def _resolve_cache_bust_config(run: BenchmarkRun) -> Any | None:
     return getattr(dataset, "cache_bust", None)
 
 
+def _default_benchmark_grace_period() -> float:
+    """Return the CLI's ``--benchmark-grace-period`` default."""
+    from aiperf.config.flags.cli_config import CLIConfig
+
+    return float(CLIConfig.model_fields["benchmark_grace_period"].default)
+
+
 def _apply_duration(
     run: BenchmarkRun,
     spec: ScenarioSpec,
@@ -578,6 +585,11 @@ def _apply_duration(
         for phase in profiling_phases:
             if phase.duration is None:
                 phase.duration = float(spec.default_benchmark_duration_seconds)
+                # The CLI converter only applies the default grace period when
+                # --benchmark-duration is explicit; without this the auto-filled
+                # duration would cancel in-flight requests at the deadline.
+                if phase.grace_period is None:
+                    phase.grace_period = _default_benchmark_grace_period()
                 _logger.info(
                     "Scenario %r: auto-set --benchmark-duration=%s (was unset).",
                     spec.name,
