@@ -125,7 +125,11 @@ class HFASRDatasetLoader(BaseHFDatasetLoader):
                 continue
 
             duration = await asyncio.to_thread(self._duration_seconds, audio_value)
-            if duration is not None and duration > _MAX_DURATION_SECONDS:
+            if (
+                duration is None
+                and not audio_value.get("bytes")
+                and audio_value.get("path")
+            ) or (duration is not None and duration > _MAX_DURATION_SECONDS):
                 skipped += 1
                 continue
 

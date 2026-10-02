@@ -200,6 +200,55 @@ async def test_path_backed_hf_audio_is_loaded(
 
 
 @pytest.mark.asyncio
+async def test_corrupt_path_backed_audio_is_skipped_without_reading(
+    loader: HFASRDatasetLoader, tmp_path: Path
+) -> None:
+    corrupt_path = tmp_path / "corrupt.wav"
+    corrupt_path.write_bytes(b"\x00" * (9 * 1024 * 1024))
+    valid_path = tmp_path / "valid.wav"
+    valid_path.write_bytes(_make_audio_bytes(0.5))
+    dataset = Dataset.from_dict(
+        {"audio": [str(corrupt_path), str(valid_path)]}
+    ).cast_column("audio", HFAudio(decode=False))
+    assert dataset[0]["audio"]["bytes"] is None
+
+    with patch(
+        "aiperf.dataset.loader.hf_asr.aiofiles.open", wraps=aiofiles.open
+    ) as open_audio:
+        conversations = await loader.convert_to_conversations({"dataset": dataset})
+
+    assert [call.args[0] for call in open_audio.call_args_list] == [str(valid_path)]
+    assert len(conversations) == 1
+    turn = conversations[0].turns[0]
+    assert turn.audio_duration_seconds == pytest.approx(0.5)
+    encoded = turn.audios[0].contents[0].split(",", 1)[1]
+    samples, rate = sf.read(io.BytesIO(base64.b64decode(encoded)))
+    assert rate == 16000
+    assert len(samples) == 8000
+
+
+@pytest.mark.asyncio
+async def test_embedded_audio_bytes_are_decoded_when_duration_is_unknown(
+    loader: HFASRDatasetLoader,
+) -> None:
+    row = _make_audio_row(0.5)
+    with (
+        patch.object(loader, "_duration_seconds", return_value=None),
+        patch("aiperf.dataset.loader.hf_asr.aiofiles.open") as open_audio,
+    ):
+        conversations = await loader.convert_to_conversations({"dataset": [row]})
+
+    open_audio.assert_not_called()
+    assert len(conversations) == 1
+    turn = conversations[0].turns[0]
+    assert turn.audio_duration_seconds is None
+    encoded = turn.audios[0].contents[0].split(",", 1)[1]
+    samples, rate = sf.read(io.BytesIO(base64.b64decode(encoded)))
+    assert rate == 16000
+    assert len(samples) == 8000
+
+
+@pytest.mark.asyncio
 async def test_path_backed_long_and_missing_audio_are_skipped(
     loader: HFASRDatasetLoader, tmp_path: Path
 ) -> None:

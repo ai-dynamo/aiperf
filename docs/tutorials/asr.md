@@ -22,6 +22,8 @@ Five ASR datasets are built in:
 
 Audio rows can contain embedded audio bytes or a path to a local/cache file.
 Both forms are decoded to WAV for requests and checked against the duration limit.
+Path-backed files with unreadable duration metadata are skipped without loading
+their full contents.
 
 Clips longer than 30 seconds are automatically skipped to stay within typical ASR model context
 limits.
