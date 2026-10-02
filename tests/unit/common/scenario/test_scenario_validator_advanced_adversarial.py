@@ -196,3 +196,23 @@ def test_benchmark_duration_none_auto_fills_scenario_default() -> None:
     outcome = apply_scenario(run)
     assert outcome.violations == []
     assert run.cfg.get_profiling_phases()[0].duration == 1800.0
+
+
+def test_benchmark_duration_auto_fill_applies_default_grace_period() -> None:
+    """An auto-filled duration gets the CLI's default grace so in-flight requests drain."""
+    run = _build_run(streaming=True, extra={"ignore_eos": True})
+    phase = run.cfg.get_profiling_phases()[0]
+    phase.duration = None
+    phase.grace_period = None
+    apply_scenario(run)
+    assert phase.grace_period == 30.0
+
+
+def test_benchmark_duration_auto_fill_keeps_explicit_grace_period() -> None:
+    """An explicit grace period survives the duration auto-fill."""
+    run = _build_run(streaming=True, extra={"ignore_eos": True})
+    phase = run.cfg.get_profiling_phases()[0]
+    phase.duration = None
+    phase.grace_period = 120.0
+    apply_scenario(run)
+    assert phase.grace_period == 120.0
