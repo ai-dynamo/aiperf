@@ -43,13 +43,23 @@ class TaskManagerMixin(AIPerfLoggerMixin):
     ) -> None:
         """Cancel all tasks in the set and wait for up to timeout seconds for them to complete.
 
+        Excludes ``asyncio.current_task()`` even if it is itself tracked in
+        ``self.tasks``: a command handler dispatched via ``execute_async``
+        (e.g. the SHUTDOWN handler on a DEALER client's control channel) can
+        end up calling ``stop()`` on the very manager that is running it. If
+        that task cancelled itself here, the ``await`` that led to this call
+        would never resume, so the caller's own teardown (and anything
+        awaiting it, like ``stopped_event``) would hang forever instead of
+        completing.
+
         Args:
             timeout: The timeout to wait for the tasks to complete.
         """
         if not self.tasks:
             return
 
-        task_list = list(self.tasks)
+        current_task = asyncio.current_task()
+        task_list = [task for task in self.tasks if task is not current_task]
         for task in task_list:
             task.cancel()
 

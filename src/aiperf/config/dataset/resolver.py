@@ -359,6 +359,8 @@ class DatasetResolver:
         # Structural detection
         detected = None
         for entry, LoaderClass in plugins.iter_all(PluginType.CUSTOM_DATASET_LOADER):
+            if not plugins.is_autodetectable(entry):
+                continue
             if LoaderClass.can_load(data, file_path):
                 if detected is not None:
                     _logger.warning(

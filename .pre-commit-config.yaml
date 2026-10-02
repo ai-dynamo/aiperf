@@ -12,6 +12,9 @@ ci:
     - check-agent-files-sync
     - check-ergonomics
     - check-ruff-baselined
+    - generate-crd
+    - check-chart-consistency
+    - check-vendor-ui-deps
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0  # Use the latest stable version
@@ -28,21 +31,28 @@ repos:
         exclude: ^\.devcontainer/devcontainer\.json$
       - id: check-toml
       - id: check-yaml
+        args: ['--allow-multiple-documents']
+        exclude: ^deploy/helm/.*/templates/.*\.yaml$
       - id: check-shebang-scripts-are-executable
+      # The vendored SPEED-Bench resolver is byte-pinned to upstream by a
+      # sha256 CI gate. Any whitespace or newline rewrite breaks that pin.
       - id: end-of-file-fixer
         types_or: [cuda, proto, textproto, python]
+        exclude: ^src/aiperf/dataset/loader/vendor/
       - id: mixed-line-ending
+        exclude: ^src/aiperf/dataset/loader/vendor/
       - id: no-commit-to-branch
         args: [--branch, main]
       - id: requirements-txt-fixer
       - id: trailing-whitespace
+        exclude: ^src/aiperf/dataset/loader/vendor/
   - repo: https://github.com/codespell-project/codespell
     rev: v2.4.2
     hooks:
     - id: codespell
       additional_dependencies: [tomli]
       args: ["--toml", "pyproject.toml"]
-      exclude: (?x)^(.*stemmer.*|.*stop_words.*|^CHANGELOG.md$|.*shakespeare.txt|ATTRIBUTIONS-.*\.md)
+      exclude: (?x)^(.*stemmer.*|.*stop_words.*|^CHANGELOG.md$|.*shakespeare.txt|ATTRIBUTIONS-.*\.md|src/aiperf/dataset/loader/vendor/.*)
   - repo: local
     hooks:
       - id: add-license
@@ -50,6 +60,7 @@ repos:
         entry: make add-copyright
         language: python
         require_serial: true
+        exclude: ^src/aiperf/dataset/loader/vendor/
       - id: generate-cli-docs
         name: generate-cli-docs
         entry: make generate-cli-docs
@@ -61,7 +72,7 @@ repos:
         name: generate-env-vars-docs
         entry: make generate-env-vars-docs
         language: python
-        files: ^(src/aiperf/common/environment\.py|tools/generate_env_vars_docs\.py)$
+        files: ^(src/aiperf/(common|kubernetes|operator)/environment\.py|tools/generate_env_vars_docs\.py)$
         pass_filenames: false
         args: []
       - id: generate-plugin-artifacts
@@ -83,6 +94,33 @@ repos:
         entry: make generate-config-schema
         language: python
         files: (^src/aiperf/config/.*\.py$|^tools/generate_config_schema\.py$)
+        pass_filenames: false
+        args: []
+      - id: generate-crd
+        name: generate-crd
+        entry: make generate-crd
+        language: python
+        files: (^src/aiperf/config/.*\.py$|^src/aiperf/operator/models\.py$|^src/aiperf/kubernetes/enums\.py$|^tools/generate_crd\.py$|^pyproject\.toml$)
+        pass_filenames: false
+        args: []
+      - id: helm-lint
+        name: helm-lint
+        entry: bash -c 'command -v helm >/dev/null 2>&1 || { echo "helm not installed; skipping helm-lint (CI still enforces it)"; exit 0; }; exec helm lint deploy/helm/aiperf-operator'
+        language: system
+        files: ^deploy/helm/
+        pass_filenames: false
+      - id: check-chart-consistency
+        name: check-chart-consistency
+        entry: make check-chart-consistency
+        language: python
+        files: (^deploy/helm/aiperf-operator/values\.yaml$|^src/aiperf/operator/environment\.py$|^src/aiperf/kubernetes/(constants|results_operator)\.py$|^deploy/helm/aiperf-operator/README\.md$|^tools/check_chart_consistency\.py$)
+        pass_filenames: false
+        args: []
+      - id: check-vendor-ui-deps
+        name: check-vendor-ui-deps
+        entry: make check-vendor-ui-deps
+        language: python
+        files: (^src/aiperf/api/static(-v2)?/vendor/|^tools/vendor_ui_deps\.py$|^package\.json$)
         pass_filenames: false
         args: []
       - id: test-imports

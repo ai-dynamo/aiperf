@@ -57,10 +57,16 @@ def test_v1_output_plot_required_default_is_false() -> None:
     assert cfg.plot_required is False
 
 
-def test_v2_artifacts_auto_plot_default_is_false() -> None:
-    """v2 ``ArtifactsConfig.auto_plot`` is a plain bool defaulting to False."""
+def test_v2_artifacts_auto_plot_default_is_unset() -> None:
+    """v2 ``ArtifactsConfig.auto_plot`` is tri-state, defaulting to unset.
+
+    ``None`` (rather than False) is what lets a ``plot:`` section imply True
+    without ``model_fields_set``, which the Kubernetes apiserver defeats by
+    materializing CRD ``default:`` values on write. ``AIPerfConfig`` resolves
+    it, so anything through the loader carries a plain bool.
+    """
     cfg = ArtifactsConfig()
-    assert cfg.auto_plot is False
+    assert cfg.auto_plot is None
     assert cfg.plot_required is False
 
 

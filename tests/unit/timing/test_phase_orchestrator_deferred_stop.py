@@ -20,6 +20,7 @@ def _hooks() -> PreparedEndpointControlHooks:
         profiler_start_urls=["http://a:8000/start_profile"],
         profiler_stop_urls=["http://a:8000/stop_profile"],
         profiler_timeout_s=1.0,
+        reset_max_retry_seconds=1.0,
     )
 
 
@@ -36,7 +37,7 @@ async def test_drain_awaits_stop_task_spawned_by_phase_complete_callback(
     released = asyncio.Event()
     stop_completed = False
 
-    async def slow_stop(*_args: object) -> None:
+    async def slow_stop(*_args: object, **_kwargs: object) -> None:
         nonlocal stop_completed
         await released.wait()
         stop_completed = True

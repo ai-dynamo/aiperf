@@ -140,6 +140,15 @@ transport:
     Manages connection pooling, streaming, error handling, and TCP configuration.
     One-to-one mapping based on transport_type configuration.
 
+request_signer:
+  protocol: aiperf.auth.base_signer:RequestSignerProtocol
+  enum: RequestSignerType
+  description: |
+    Request signers add authentication signatures to outbound requests.
+    Called at the transport layer after headers, URL, and body are finalized.
+    Supports AWS SigV4 and extensible to other signing schemes.
+    One-to-one mapping based on auth_type configuration.
+
 # =============================================================================
 # Processing Categories
 # =============================================================================

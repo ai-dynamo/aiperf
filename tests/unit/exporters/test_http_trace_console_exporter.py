@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-from rich.console import Console
 
 from aiperf.common.exceptions import ConsoleExporterDisabled
 from aiperf.common.models import MetricResult, ProfileResults
@@ -28,6 +27,7 @@ from aiperf.metrics.types.http_trace_metrics import (
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.ttft_metric import TTFTMetric
 from aiperf.plugin.enums import EndpointType
+from tests.harness import fixed_console
 from tests.unit.exporters.conftest import (
     make_exporter_config as _make_v2_exporter_config,
 )
@@ -269,7 +269,7 @@ class TestHttpTraceConsoleExporter:
             show_trace_timing=True,
         )
         exporter = HttpTraceConsoleExporter(config)
-        await exporter.export(Console(width=120))
+        await exporter.export(fixed_console())
 
         output = capsys.readouterr().out
         assert "NVIDIA AIPerf | HTTP Trace Timing" in output
@@ -292,7 +292,7 @@ class TestHttpTraceConsoleExporter:
             show_trace_timing=True,
         )
         exporter = HttpTraceConsoleExporter(config)
-        await exporter.export(Console(width=120))
+        await exporter.export(fixed_console())
 
         output = capsys.readouterr().out
         # HTTP trace metrics should be present
@@ -313,7 +313,7 @@ class TestHttpTraceConsoleExporter:
             show_trace_timing=True,
         )
         exporter = HttpTraceConsoleExporter(config)
-        await exporter.export(Console(width=120))
+        await exporter.export(fixed_console())
 
         output = capsys.readouterr().out
         # Should not print anything when there are no records

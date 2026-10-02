@@ -211,8 +211,10 @@ class TurnMetadata(AIPerfBaseModel):
     source_kind: str | None = Field(
         default=None,
         description=(
-            "Loader-specific source classification for the reconstructed turn "
-            "(for example weka_main or weka_flat)."
+            "Loader-specific label for the turn's origin: Weka trace loaders "
+            "set the reconstruction kind (weka_main, weka_flat), the "
+            "SPEED-Bench loader sets the row's benchmark category (coding, "
+            "math, low_entropy)."
         ),
     )
     replay_predecessors: list["ReplayTurnReference"] = Field(
@@ -339,8 +341,10 @@ class Turn(AIPerfBaseModel):
     source_kind: str | None = Field(
         default=None,
         description=(
-            "Loader-specific source classification for the reconstructed turn "
-            "(for example weka_main or weka_flat)."
+            "Loader-specific label for the turn's origin: Weka trace loaders "
+            "set the reconstruction kind (weka_main, weka_flat), the "
+            "SPEED-Bench loader sets the row's benchmark category (coding, "
+            "math, low_entropy)."
         ),
     )
     replay_predecessors: list["ReplayTurnReference"] = Field(
@@ -605,6 +609,11 @@ class ConversationMetadata(AIPerfBaseModel):
             "one replay dependency graph. Independent scopes are never joined."
         ),
     )
+    context_mode: ConversationContextMode | None = Field(
+        default=None,
+        description="Optional per-conversation context-mode override. Falls back "
+        "to DatasetMetadata.default_context_mode when unset.",
+    )
     accuracy_ground_truth: str | None = Field(
         default=None,
         description="Ground-truth answer for this conversation (accuracy mode only). "
@@ -795,6 +804,7 @@ class Conversation(AIPerfBaseModel):
             subagent_type=self.subagent_type,
             parent_conversation_id=self.parent_conversation_id,
             replay_scope_id=self.replay_scope_id,
+            context_mode=self.context_mode,
             accuracy_ground_truth=self.accuracy_ground_truth,
             accuracy_task=self.accuracy_task,
         )

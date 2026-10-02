@@ -13,7 +13,7 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
-from aiperf.cli_runner._aggregate import aggregate_and_export
+from aiperf.cli_runner._aggregation_dispatch import aggregate_plan_results
 from aiperf.cli_runner._banner import _log_search_planner_active, log_multi_run_banner
 from aiperf.cli_runner._callbacks import (
     CompletedRun,
@@ -21,15 +21,11 @@ from aiperf.cli_runner._callbacks import (
     _invoke_callbacks,
 )
 from aiperf.cli_runner._strategy import (
-    _build_search_planner,
     build_strategy,
     validate_convergence_config,
 )
-from aiperf.cli_runner._sweep_aggregate import (
-    aggregate_per_variation_and_export,
-    aggregate_sweep_and_export,
-)
 from aiperf.orchestrator.models import _variation_key
+from aiperf.orchestrator.search_planner import build_search_planner
 from aiperf.plugin.enums import UIType
 
 if TYPE_CHECKING:
@@ -148,7 +144,7 @@ def _execute_multi_benchmark(
     )
     orchestrator = MultiRunOrchestrator(base_dir=base_dir, cell_callback=table_logger)
     executor = LocalSubprocessExecutor(base_dir=base_dir)
-    search_planner = _build_search_planner(plan)
+    search_planner = build_search_planner(plan)
     _log_search_planner_active(plan, search_planner, logger)
 
     try:
@@ -228,7 +224,8 @@ def _reject_in_process_sweep_under_operator(plan: BenchmarkPlan) -> None:
             f"In-process parameter sweep ({len(plan.configs)} variations across "
             f"{swept_params or '<unknown>'}) is not supported in operator-managed "
             f"runs (AIPERF_OPERATOR_MANAGED=1). Use the AIPerfSweep CRD "
-            f"(cluster-scope) for cross-job sweeps - see docs/kubernetes/sweeps.md "
+            f"(cluster-scope) for cross-job sweeps - see "
+            f"docs/tutorials/sweeps.md#running-sweeps-on-kubernetes "
             f"- or submit one AIPerfJob per variation. To run as a single point "
             f"benchmark, drop the comma in --concurrency / other magic-list flags."
         )
@@ -269,23 +266,15 @@ def _summarize_and_export(
 
     if len(successful_runs) >= 2:
         logger.info("Computing aggregate statistics...")
-        if plan.is_sweep:
-            # Per-variation confidence aggregates (one JSON+CSV per cell with
-            # >=2 successful runs) and the cross-variation sweep aggregate
-            # are independent; run concurrently.
-            async def _aggregate_sweep() -> None:
-                await _asyncio.gather(
-                    aggregate_per_variation_and_export(results, plan, base_dir, logger),
-                    aggregate_sweep_and_export(results, plan, base_dir, logger),
-                )
-
-            _asyncio.run(_aggregate_sweep())
-        else:
-            _asyncio.run(
-                aggregate_and_export(
-                    results, plan, strategy=strategy, base_dir=base_dir, logger=logger
-                )
+        _asyncio.run(
+            aggregate_plan_results(
+                results,
+                plan,
+                strategy=strategy,
+                base_dir=base_dir,
+                logger=logger,
             )
+        )
         return 0
     if len(successful_runs) == 1:
         if plan.is_sweep:

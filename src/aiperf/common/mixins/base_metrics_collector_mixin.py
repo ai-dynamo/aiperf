@@ -16,6 +16,7 @@ from typing import Generic, TypeVar
 
 import aiohttp
 
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import IncompatibleMetricsEndpointError
 from aiperf.common.hooks import background_task, on_init, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
@@ -27,6 +28,14 @@ from aiperf.transports.http_defaults import AioHttpDefaults
 # against the lowercased header value, which may carry `; version=...; charset=...`.
 JSON_CONTENT_TYPE_PREFIX = "application/json"
 OPENMETRICS_CONTENT_TYPE_PREFIX = "application/openmetrics-text"
+
+# A stalling endpoint (headers sent, then no chunk delivery) is bounded by
+# `sock_read` rather than the collection cadence, so scrapes can pile up
+# in-flight when the read timeout dwarfs the interval between them. This
+# multiplier only flags configurations far outside that relationship -
+# it stays above the built-in defaults' own ratio (~90x) so it doesn't
+# fire on an unmodified install.
+READ_TIMEOUT_TO_INTERVAL_WARN_RATIO = 100
 
 # `create_tcp_connector` is exposed as a module attribute via __getattr__ to
 # break a circular import at module-load time:
@@ -286,19 +295,50 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         """
         return self._collection_interval
 
+    def _warn_if_read_timeout_far_exceeds_collection_interval(self) -> None:
+        """Warn when the scrape read timeout dwarfs the collection cadence.
+
+        `sock_read` bounds each inter-chunk gap, not the total scrape, so a
+        stalling endpoint can only ever delay a given scrape by up to
+        ``METRICS_SCRAPE_READ_TIMEOUT``. When that timeout is far above the
+        interval at which new scrapes are issued, a single stall can leave
+        many scrapes in flight simultaneously. This is a sanity check, not a
+        hard failure - it never blocks initialization.
+        """
+        read_timeout = Environment.HTTP.METRICS_SCRAPE_READ_TIMEOUT
+        if (
+            read_timeout
+            > self._collection_interval * READ_TIMEOUT_TO_INTERVAL_WARN_RATIO
+        ):
+            self.warning(
+                lambda: (
+                    f"METRICS_SCRAPE_READ_TIMEOUT ({read_timeout}s) for {self._display_url} "
+                    f"is more than {READ_TIMEOUT_TO_INTERVAL_WARN_RATIO}x the collection "
+                    f"interval ({self._collection_interval}s). A stalling metrics endpoint "
+                    f"could leave many scrapes in flight at once. Consider lowering "
+                    f"AIPERF_HTTP_METRICS_SCRAPE_READ_TIMEOUT or raising the collection "
+                    f"interval."
+                )
+            )
+
     @on_init
     async def _initialize_http_client(self) -> None:
         """Initialize the aiohttp client session with trace config.
 
         Called automatically during initialization phase.
         Creates an aiohttp ClientSession with appropriate timeout settings.
-        Uses connect timeout only (no total timeout) to allow long-running scrapes.
+        No total timeout, so a large exposition payload is never truncated, but
+        `sock_read` bounds the gap between response chunks: a connect-only
+        timeout cannot detect a server that sends headers and then stalls, and
+        the completion path awaits scrapes inline.
         Configures TraceConfig to capture HTTP timing events for precise correlation.
         Uses create_tcp_connector to apply standard socket settings including IP version.
         """
+        self._warn_if_read_timeout_far_exceeds_collection_interval()
         timeout = aiohttp.ClientTimeout(
             total=None,  # No total timeout for ongoing scrapes
             connect=self._reachability_timeout,  # Fast connection timeout only
+            sock_read=Environment.HTTP.METRICS_SCRAPE_READ_TIMEOUT,
         )
         trace_config = self._create_trace_config()
         self._connector = _resolve_create_tcp_connector()()
@@ -398,9 +438,8 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
     async def is_url_reachable(self) -> bool:
         """Check if metrics endpoint is accessible before starting collection.
 
-        Tests endpoint reachability using a two-phase approach:
-        1. HEAD request (lightweight, doesn't fetch content)
-        2. GET request fallback if HEAD not supported (some servers disable HEAD)
+        Probes with GET; see `_check_reachability_with_session` for why a HEAD
+        pre-flight is unsafe here.
 
         Uses existing session if available (during lifecycle), otherwise creates
         a temporary session for pre-initialization testing. This allows reachability
@@ -435,6 +474,15 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
     ) -> bool:
         """Check reachability using a specific session.
 
+        Uses GET rather than a cheaper HEAD pre-flight. Servers are free to
+        reject HEAD, and some answer it with a body, which RFC 9110 forbids --
+        Triton's /metrics frontend routes every non-GET method through an error
+        path that writes `{"error":"Method Not Allowed"}` to the response
+        buffer. aiohttp >= 3.14 reports those stray bytes as a bad status line,
+        either on the HEAD itself or on whatever request next reuses the
+        keep-alive connection, so a HEAD pre-flight could report a perfectly
+        healthy endpoint as unreachable.
+
         Args:
             session: aiohttp session to use for the check
 
@@ -442,16 +490,16 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             True if endpoint is reachable with HTTP 200
         """
         try:
-            # Try HEAD first for efficiency
-            async with session.head(
-                self._endpoint_url, allow_redirects=False
-            ) as response:
-                if response.status == 200:
-                    return True
-            # Fall back to GET if HEAD is not supported
             async with session.get(self._endpoint_url) as response:
                 return response.status == 200
-        except (TimeoutError, aiohttp.ClientError):
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            # Both halves are redacted: the endpoint may embed userinfo, and
+            # some aiohttp errors (InvalidUrlClientError) render the requested
+            # URL verbatim in their repr, credentials included.
+            self.debug(
+                f"Reachability probe failed for {self._display_url}: "
+                f"{redact_url(repr(exc))}"
+            )
             return False
 
     @background_task(immediate=True, interval=lambda self: self.collection_interval)

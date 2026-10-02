@@ -6,6 +6,7 @@ from pathlib import Path
 
 import zmq.asyncio
 
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import InitializationError, NotInitializedError
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.loop_scheduler import LoopScheduler
@@ -88,8 +89,8 @@ class BaseZMQClient(AIPerfLifecycleMixin):
 
         This method will:
         - Create the zmq socket
+        - Set the socket options (before bind/connect, so connect-time options land)
         - Bind or connect the socket to the address
-        - Set the socket options
         - Run the AIPerfHook.ON_INIT hooks
         """
         try:
@@ -108,36 +109,24 @@ class BaseZMQClient(AIPerfLifecycleMixin):
                 )
                 del self.socket_ops[zmq.IDENTITY]
 
+            self._apply_socket_options()
+
             if self.bind:
                 self.socket.bind(self.address)
             else:
                 self.socket.connect(self.address)
 
-            # Set default timeouts
-            self.socket.setsockopt(zmq.RCVTIMEO, ZMQSocketDefaults.RCVTIMEO)
-            self.socket.setsockopt(zmq.SNDTIMEO, ZMQSocketDefaults.SNDTIMEO)
-
-            # Set high water mark
-            self.socket.setsockopt(zmq.SNDHWM, ZMQSocketDefaults.SNDHWM)
-            self.socket.setsockopt(zmq.RCVHWM, ZMQSocketDefaults.RCVHWM)
-
-            # Set performance-oriented socket options
-            self.socket.setsockopt(zmq.TCP_KEEPALIVE, ZMQSocketDefaults.TCP_KEEPALIVE)
-            self.socket.setsockopt(
-                zmq.TCP_KEEPALIVE_IDLE, ZMQSocketDefaults.TCP_KEEPALIVE_IDLE
-            )
-            self.socket.setsockopt(
-                zmq.TCP_KEEPALIVE_INTVL, ZMQSocketDefaults.TCP_KEEPALIVE_INTVL
-            )
-            self.socket.setsockopt(
-                zmq.TCP_KEEPALIVE_CNT, ZMQSocketDefaults.TCP_KEEPALIVE_CNT
-            )
+            # Unlike RECONNECT_IVL*/ROUTER_HANDOVER above, IMMEDIATE is deliberately set
+            # AFTER bind/connect, where libzmq's connect-time snapshot makes it a no-op
+            # -- matching its behavior on main. Setting it before connect() instead makes
+            # a send to a not-yet-(re)connected peer raise zmq.Again rather than queueing,
+            # which plain PUSH clients (e.g. RecordProcessor -> RecordsManager) retry only
+            # twice at 100ms apart: far short of the RECONNECT_IVL_MAX backoff above, so a
+            # peer restart can exhaust the retry budget and drop (or, worse, hang on) a
+            # record. Only the streaming credit-return PUSH/DEALER clients are built to
+            # rely on IMMEDIATE's zmq.Again signal; activate it there deliberately via
+            # socket_ops if that behavior is ever needed instead of enabling it globally.
             self.socket.setsockopt(zmq.IMMEDIATE, ZMQSocketDefaults.IMMEDIATE)
-            self.socket.setsockopt(zmq.LINGER, ZMQSocketDefaults.LINGER)
-
-            # Set additional socket options requested by the caller
-            for key, val in self.socket_ops.items():
-                self.socket.setsockopt(key, val)
 
             self.debug(
                 lambda: f"ZMQ {self.socket_type_name} socket {'BOUND' if self.bind else 'CONNECTED'} to {self.address} ({self.client_id})"
@@ -145,6 +134,59 @@ class BaseZMQClient(AIPerfLifecycleMixin):
 
         except Exception as e:
             raise InitializationError(f"Failed to initialize ZMQ socket: {e}") from e
+
+    def _apply_socket_options(self) -> None:
+        """Apply the connect-time-sensitive socket options, before bind/connect.
+
+        IMMEDIATE is intentionally not among them; see the setsockopt call after
+        bind/connect in :meth:`_initialize_socket` for why.
+        """
+        self.socket.setsockopt(zmq.RCVTIMEO, ZMQSocketDefaults.RCVTIMEO)
+        self.socket.setsockopt(zmq.SNDTIMEO, ZMQSocketDefaults.SNDTIMEO)
+
+        self.socket.setsockopt(zmq.SNDHWM, ZMQSocketDefaults.SNDHWM)
+        self.socket.setsockopt(zmq.RCVHWM, ZMQSocketDefaults.RCVHWM)
+
+        self.socket.setsockopt(zmq.TCP_KEEPALIVE, ZMQSocketDefaults.TCP_KEEPALIVE)
+        self.socket.setsockopt(
+            zmq.TCP_KEEPALIVE_IDLE, ZMQSocketDefaults.TCP_KEEPALIVE_IDLE
+        )
+        self.socket.setsockopt(
+            zmq.TCP_KEEPALIVE_INTVL, ZMQSocketDefaults.TCP_KEEPALIVE_INTVL
+        )
+        self.socket.setsockopt(
+            zmq.TCP_KEEPALIVE_CNT, ZMQSocketDefaults.TCP_KEEPALIVE_CNT
+        )
+        self.socket.setsockopt(zmq.LINGER, ZMQSocketDefaults.LINGER)
+
+        # When a DEALER reconnects with the same identity, replace the stale
+        # routing entry instead of rejecting the connection. Idle TCP
+        # connections dropped by container networking otherwise leave dead
+        # entries in the routing table: sends to a reconnected peer fail with
+        # "stream is closed", or credits keep routing into the dead entry and
+        # the phase stalls with no error at all.
+        if self.socket_type == zmq.ROUTER:
+            self.socket.setsockopt(zmq.ROUTER_HANDOVER, 1)
+
+        # Reconnect backoff on connecting sockets. libzmq 4.3.5 ships
+        # RECONNECT_IVL=100 and RECONNECT_IVL_MAX=0, where 0 means "no
+        # exponential backoff, retry every RECONNECT_IVL forever" -- not an
+        # unbounded wait. RECONNECT_IVL below therefore restates the default,
+        # and RECONNECT_IVL_MAX *enables* backoff libzmq otherwise does not
+        # perform, trading a slower rejoin for a restarted pod (up to 5 s
+        # instead of a flat 100 ms) against fewer connect attempts while a peer
+        # stays down. Both only reach the reconnect logic because this whole
+        # block runs before connect(): session_base_t copies the option set at
+        # connect time, so a later setsockopt never lands.
+        if not self.bind:
+            self.socket.setsockopt(zmq.RECONNECT_IVL, ZMQSocketDefaults.RECONNECT_IVL)
+            self.socket.setsockopt(
+                zmq.RECONNECT_IVL_MAX, ZMQSocketDefaults.RECONNECT_IVL_MAX
+            )
+
+        # Caller-requested options last so they can override the defaults.
+        for key, val in self.socket_ops.items():
+            self.socket.setsockopt(key, val)
 
     @on_init
     async def _bind_additional_address(self) -> None:
@@ -156,14 +198,30 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             )
 
     def _cleanup_ipc_file(self) -> None:
-        """Remove the IPC socket file if this client bound to one."""
-        if self.bind and self.address.startswith("ipc://"):
-            Path(self.address.removeprefix("ipc://")).unlink(missing_ok=True)
+        """Remove the IPC socket files this client bound to, including a dual-bind secondary."""
+        if not self.bind:
+            return
+        for addr in (self.address, self.additional_bind_address):
+            if addr and addr.startswith("ipc://"):
+                Path(addr.removeprefix("ipc://")).unlink(missing_ok=True)
 
     @on_stop
     async def _shutdown_socket(self) -> None:
         """Shutdown the socket."""
-        # TODO: Should we await the cancellation of the tasks?
+        if self.scheduler and not self.scheduler.is_idle():
+            drain_event = asyncio.Event()
+            self.scheduler.set_drain_observer(drain_event.set)
+            if not self.scheduler.is_idle():
+                try:
+                    await asyncio.wait_for(
+                        drain_event.wait(),
+                        timeout=Environment.ZMQ.PUSH_DRAIN_TIMEOUT,
+                    )
+                except TimeoutError:
+                    self.warning(
+                        f"Timed out draining {self.scheduler.running_count} in-flight ZMQ tasks on stop ({self.client_id})"
+                    )
+            self.scheduler.set_drain_observer(None)
         if self.scheduler:
             self.scheduler.cancel_all()
         try:

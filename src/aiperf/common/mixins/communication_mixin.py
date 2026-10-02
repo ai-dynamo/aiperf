@@ -21,6 +21,8 @@ class CommunicationMixin(AIPerfLifecycleMixin, ABC):
     def __init__(
         self,
         run: "BenchmarkRun",
+        *,
+        manage_comms_lifecycle: bool = True,
         **kwargs,
     ) -> None:
         super().__init__(run=run, **kwargs)
@@ -30,4 +32,5 @@ class CommunicationMixin(AIPerfLifecycleMixin, ABC):
             PluginType.COMMUNICATION, comm_config.comm_backend
         )
         self.comms: CommunicationProtocol = CommClass(config=comm_config)
-        self.attach_child_lifecycle(self.comms)
+        if manage_comms_lifecycle:
+            self.attach_child_lifecycle(self.comms)

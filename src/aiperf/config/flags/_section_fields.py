@@ -17,6 +17,10 @@ from __future__ import annotations
 ENDPOINT_FIELDS: frozenset[str] = frozenset(
     {
         "api_key",
+        "auth_type",
+        "aws_profile",
+        "aws_region",
+        "aws_service",
         "connection_reuse_strategy",
         "custom_endpoint",
         "download_video_content",
@@ -69,6 +73,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "public_dataset",
         "random_seed",
         "use_think_time_only",
+        "weka_nested_timestamp_basis",
         # ----- conversation modality -----
         "conversation_num",
         "conversation_num_dataset_entries",
@@ -90,6 +95,8 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "prompt_prefix_length",
         "prompt_prefix_shared_system_length",
         "prompt_prefix_user_context_length",
+        "prompt_random_corpus_style",
+        "prompt_random_range_ratio",
         "prompt_sequence_distribution",
         # ----- image modality -----
         "image_width_mean",

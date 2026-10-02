@@ -292,32 +292,38 @@ def parse_str_or_list_of_positive_values(input: Any) -> list[Any]:
     return output
 
 
-def parse_file(value: str | None) -> Path | None:
+def parse_file(value: str | Path | None) -> Path | None:
     """Parse an existing file/directory path from a CLI value.
 
     Args:
-        value: Path string from CLI/config input. ``None`` or an empty string
-            disables the path and returns ``None``.
+        value: Path string from CLI/config input, or a ``Path`` this
+            function already returned -- accepted as a pass-through so the
+            validator is idempotent when a caller round-trips an
+            already-parsed field value back through it (e.g. reconstructing
+            a model from another instance's field values). ``None`` or an
+            empty string disables the path and returns ``None``.
 
     Returns:
         A ``Path`` pointing to an existing file or directory, or ``None`` when no
         value was provided.
 
     Raises:
-        ValueError: If ``value`` is not a string, or if the path does not exist as
-            a file or directory.
+        ValueError: If ``value`` is not a string or Path, or if the path does not
+            exist as a file or directory.
     """
 
     if not value:
         return None
+    elif isinstance(value, Path):
+        path = value
     elif not isinstance(value, str):
         raise ValueError(f"Expected a string, but got {type(value).__name__}")
     else:
         path = Path(value)
-        if path.is_file() or path.is_dir():
-            return path
-        else:
-            raise ValueError(f"'{value}' is not a valid file or directory")
+    if path.is_file() or path.is_dir():
+        return path
+    else:
+        raise ValueError(f"'{value}' is not a valid file or directory")
 
 
 def validate_sequence_distribution(v: str | None) -> str | None:
@@ -455,3 +461,56 @@ def require_turn_mean_at_least_one(value: Any) -> Any:
                 "use --conversation-turn-mean 1 or omit it for single-turn conversations."
             )
     return value
+
+
+# SPEED-Bench category and entropy-tier selectors moved from
+# --custom-dataset-type to --public-dataset, where AIPerf resolves the dataset
+# itself instead of requiring a separately prepared file. The names were the
+# only documented way to run those subsets, so a bare enum error would strand
+# anyone with an existing script.
+_MOVED_TO_PUBLIC_DATASET = frozenset(
+    [
+        f"speed_bench_{c}"
+        for c in (
+            "coding",
+            "humanities",
+            "math",
+            "multilingual",
+            "qa",
+            "rag",
+            "reasoning",
+            "roleplay",
+            "stem",
+            "summarization",
+            "writing",
+        )
+    ]
+    + [
+        f"speed_bench_throughput_{isl}_{tier}"
+        for isl in ("1k", "2k", "8k", "16k", "32k")
+        for tier in ("low_entropy", "mixed", "high_entropy")
+    ]
+)
+
+
+def reject_moved_custom_dataset_type(input: Any) -> Any:
+    """Point relocated dataset-format values at their new flag.
+
+    Runs before enum coercion so the message names the replacement command
+    rather than listing every remaining valid value. Shared by the
+    ``--custom-dataset-type`` flag and the YAML ``format:`` key, which are two
+    spellings of the same choice and must migrate identically.
+
+    Raises:
+        ValueError: If the value moved to ``--public-dataset``.
+    """
+    if isinstance(input, str) and input in _MOVED_TO_PUBLIC_DATASET:
+        raise ValueError(
+            f"'{input}' is no longer a custom dataset format "
+            f"(--custom-dataset-type / YAML 'format:'). SPEED-Bench "
+            f"subsets are now selected with --public-dataset, and AIPerf "
+            f"resolves the dataset for you, so --input-file is not needed:\n"
+            f"    aiperf profile --public-dataset {input} ...\n"
+            f"See docs/tutorials/speed-bench.md."
+        )
+    return input

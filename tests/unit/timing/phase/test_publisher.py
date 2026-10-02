@@ -1,10 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.messages import ProfileCancelCommand
 from aiperf.common.models import CreditPhaseStats
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
@@ -25,7 +24,11 @@ class TestPhasePublisher:
         sample_phase_config: CreditPhaseConfig,
         sample_phase_stats: CreditPhaseStats,
     ) -> None:
-        pub = PhasePublisher(pub_client=mock_pub_client, service_id="tm-001")
+        pub = PhasePublisher(
+            pub_client=mock_pub_client,
+            service_id="tm-001",
+            profile_cancel_sender=AsyncMock(),
+        )
         await pub.publish_phase_start(sample_phase_config, sample_phase_stats)
         mock_pub_client.publish.assert_called_once()
         msg = mock_pub_client.publish.call_args[0][0]
@@ -37,7 +40,11 @@ class TestPhasePublisher:
     async def test_publish_sending_complete(
         self, mock_pub_client: MagicMock, sample_phase_stats: CreditPhaseStats
     ) -> None:
-        pub = PhasePublisher(pub_client=mock_pub_client, service_id="tm-001")
+        pub = PhasePublisher(
+            pub_client=mock_pub_client,
+            service_id="tm-001",
+            profile_cancel_sender=AsyncMock(),
+        )
         await pub.publish_phase_sending_complete(sample_phase_stats)
         mock_pub_client.publish.assert_called_once()
         msg = mock_pub_client.publish.call_args[0][0]
@@ -48,7 +55,11 @@ class TestPhasePublisher:
     async def test_publish_phase_complete(
         self, mock_pub_client: MagicMock, sample_phase_stats: CreditPhaseStats
     ) -> None:
-        pub = PhasePublisher(pub_client=mock_pub_client, service_id="tm-001")
+        pub = PhasePublisher(
+            pub_client=mock_pub_client,
+            service_id="tm-001",
+            profile_cancel_sender=AsyncMock(),
+        )
         await pub.publish_phase_complete(sample_phase_stats)
         mock_pub_client.publish.assert_called_once()
         msg = mock_pub_client.publish.call_args[0][0]
@@ -59,7 +70,11 @@ class TestPhasePublisher:
     async def test_publish_progress(
         self, mock_pub_client: MagicMock, sample_phase_stats: CreditPhaseStats
     ) -> None:
-        pub = PhasePublisher(pub_client=mock_pub_client, service_id="tm-001")
+        pub = PhasePublisher(
+            pub_client=mock_pub_client,
+            service_id="tm-001",
+            profile_cancel_sender=AsyncMock(),
+        )
         await pub.publish_progress(sample_phase_stats)
         mock_pub_client.publish.assert_called_once()
         msg = mock_pub_client.publish.call_args[0][0]
@@ -68,17 +83,31 @@ class TestPhasePublisher:
         assert msg.stats is sample_phase_stats
 
     async def test_publish_credits_complete(self, mock_pub_client: MagicMock) -> None:
-        pub = PhasePublisher(pub_client=mock_pub_client, service_id="tm-001")
+        pub = PhasePublisher(
+            pub_client=mock_pub_client,
+            service_id="tm-001",
+            profile_cancel_sender=AsyncMock(),
+        )
         await pub.publish_credits_complete()
         mock_pub_client.publish.assert_called_once()
         msg = mock_pub_client.publish.call_args[0][0]
         assert isinstance(msg, CreditsCompleteMessage)
         assert msg.service_id == "tm-001"
 
-    async def test_publish_profile_cancel(self, mock_pub_client: MagicMock) -> None:
-        pub = PhasePublisher(pub_client=mock_pub_client, service_id="tm-001")
-        await pub.publish_profile_cancel()
-        mock_pub_client.publish.assert_called_once()
-        msg = mock_pub_client.publish.call_args[0][0]
-        assert isinstance(msg, ProfileCancelCommand)
-        assert msg.service_id == "tm-001"
+    async def test_request_profile_cancel_uses_injected_sender(
+        self, mock_pub_client: MagicMock
+    ) -> None:
+        """PROFILE_CANCEL goes to the controller, never onto the pub bus.
+
+        The controller owns the peer fan-out; a publish here would reach nobody
+        now that no service subscribes to command messages.
+        """
+        sender = AsyncMock()
+        pub = PhasePublisher(
+            pub_client=mock_pub_client,
+            service_id="tm-001",
+            profile_cancel_sender=sender,
+        )
+        await pub.request_profile_cancel()
+        sender.assert_awaited_once()
+        mock_pub_client.publish.assert_not_called()

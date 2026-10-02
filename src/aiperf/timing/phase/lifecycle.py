@@ -75,6 +75,28 @@ class PhaseLifecycle:
             else None
         )
 
+    def now_ns(self) -> int:
+        """Current wall-clock-domain time in this phase's clock frame.
+
+        The single clock every controller-side wall-clock timestamp must be read
+        from. It anchors on the phase's start (``time.time_ns()``) and advances
+        by ``perf_counter_ns`` deltas, so it stays in the wall-clock domain for
+        cross-machine comparison while being immune to an NTP step mid-phase.
+
+        Credits carry ``issued_at_ns`` from this frame, so anything compared
+        against a credit timestamp -- sustain-window boundaries, phase-relative
+        cutoffs -- must read it here rather than calling ``time.time_ns()``
+        directly. A raw wall-clock read and this frame diverge by exactly the
+        slew accumulated since the phase started, which silently misclassifies
+        credits that straddle a boundary.
+
+        Falls back to a raw wall-clock read before the phase has started, when
+        there is no anchor to advance from.
+        """
+        if self.started_at_ns is None or self.started_at_perf_ns is None:
+            return time.time_ns()
+        return self.started_at_ns + (time.perf_counter_ns() - self.started_at_perf_ns)
+
     def start(self) -> None:
         """Transition to STARTED state.
 

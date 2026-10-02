@@ -62,7 +62,7 @@ class TestPerCreditIntegration:
 
         # Worker processes and returns
         router._track_credit_returned(
-            worker_id, credit.id, cancelled=False, error_reported=False
+            worker_id, credit, cancelled=False, error_reported=False
         )
         assert router._workers[worker_id].in_flight_credits == 0
         assert router._workers[worker_id].total_completed_credits == 1
@@ -111,7 +111,7 @@ class TestPerCreditIntegration:
 
             # Simulate worker processing (credit return)
             router._track_credit_returned(
-                worker_id, credit.id, cancelled=False, error_reported=False
+                worker_id, credit, cancelled=False, error_reported=False
             )
 
         # Assignment should be cleaned up after final turn
@@ -229,7 +229,7 @@ class TestPerCreditIntegration:
 
             # Simulate credit return
             router._track_credit_returned(
-                worker_id, credit.id, cancelled=False, error_reported=False
+                worker_id, credit, cancelled=False, error_reported=False
             )
 
         # Verify results
@@ -389,7 +389,7 @@ class TestPerCreditIntegration:
         await router.send_credit(credit1)
         worker1 = router._router_client.send_to.call_args[0][0]
         router._track_credit_returned(
-            worker1, credit1.id, cancelled=False, error_reported=False
+            worker1, credit1, cancelled=False, error_reported=False
         )
 
         # Worker fails and unregisters

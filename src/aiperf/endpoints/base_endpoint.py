@@ -44,7 +44,7 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         """Get endpoint headers (auth + user custom). Override to customize."""
         cfg = self.model_endpoint.endpoint
         headers = dict(cfg.headers) if cfg.headers else {}
-        if cfg.api_key:
+        if cfg.api_key and not cfg.auth_type:
             headers["Authorization"] = f"Bearer {cfg.api_key}"
         return headers
 
@@ -85,6 +85,14 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         ]
         record._parsed_responses_cache = parsed_responses
         return parsed_responses
+
+    def extract_response_id(self, record: RequestRecord) -> str | None:
+        """Extract server-generated response ID for stateful session chaining.
+
+        Default returns None (stateless). Subclasses implementing stateful protocols
+        (e.g. ResponsesEndpoint) override this.
+        """
+        return None
 
     def process_responses(
         self,

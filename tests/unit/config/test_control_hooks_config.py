@@ -5,7 +5,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
-from aiperf.config.control_hooks import ResetKvCacheConfig
+from aiperf.config.control_hooks import ResetKvCacheConfig, ServerProfilerConfig
 from aiperf.config.endpoint import EndpointConfig
 from aiperf.config.flags._converter_endpoint import build_endpoint
 from aiperf.config.flags.cli_config import CLIConfig
@@ -32,6 +32,45 @@ def test_reset_kv_cache_accepts_bool_or_object(raw, expect_none: bool) -> None:
         assert cfg.reset_kv_cache is None
     else:
         assert cfg.reset_kv_cache is not None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        param(float("inf"), id="inf"),
+        param(float("-inf"), id="neg-inf"),
+        param(float("nan"), id="nan"),
+    ],
+)  # fmt: skip
+def test_reset_kv_cache_timeout_seconds_rejects_non_finite(value: float) -> None:
+    with pytest.raises(ValidationError):
+        ResetKvCacheConfig(timeout_seconds=value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        param(float("inf"), id="inf"),
+        param(float("-inf"), id="neg-inf"),
+        param(float("nan"), id="nan"),
+    ],
+)  # fmt: skip
+def test_reset_kv_cache_max_retry_seconds_rejects_non_finite(value: float) -> None:
+    with pytest.raises(ValidationError):
+        ResetKvCacheConfig(max_retry_seconds=value)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        param(float("inf"), id="inf"),
+        param(float("-inf"), id="neg-inf"),
+        param(float("nan"), id="nan"),
+    ],
+)  # fmt: skip
+def test_server_profiler_timeout_seconds_rejects_non_finite(value: float) -> None:
+    with pytest.raises(ValidationError):
+        ServerProfilerConfig(timeout_seconds=value)
 
 
 def test_server_profiler_object_parses_overrides() -> None:

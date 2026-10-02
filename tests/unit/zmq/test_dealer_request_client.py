@@ -187,3 +187,61 @@ class TestZMQDealerRequestClientReceiverExceptions:
         ) as _client:
             await wait_for_background_task()
             # Should not crash - exception is logged and task continues
+
+
+class TestZMQDealerRequestClientSend:
+    """Test ZMQDealerRequestClient.send (one-way, no response awaited)."""
+
+    @pytest.mark.asyncio
+    async def test_send_transmits_without_registering_callback(
+        self, mock_zmq_socket, mock_zmq_context, sample_message
+    ):
+        """Test that send transmits the message and registers no callback."""
+        client = ZMQDealerRequestClient(address="tcp://127.0.0.1:5555", bind=False)
+        await client.initialize()
+
+        await client.send(sample_message)
+
+        mock_zmq_socket.send.assert_called_once()
+        sent_bytes = mock_zmq_socket.send.call_args[0][0]
+        assert sent_bytes == sample_message.to_json_bytes()
+        assert client.request_callbacks == {}
+
+    @pytest.mark.asyncio
+    async def test_send_generates_request_id_if_missing(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """Test that send generates a request_id when the message has none."""
+        client = ZMQDealerRequestClient(address="tcp://127.0.0.1:5555", bind=False)
+        await client.initialize()
+
+        message = Message(message_type=MessageType.HEARTBEAT)
+        assert message.request_id is None
+
+        await client.send(message)
+
+        assert message.request_id is not None
+
+    @pytest.mark.asyncio
+    async def test_send_raises_on_non_message_type(
+        self, mock_zmq_socket, mock_zmq_context
+    ):
+        """Test that send raises TypeError for non-Message objects."""
+        client = ZMQDealerRequestClient(address="tcp://127.0.0.1:5555", bind=False)
+        await client.initialize()
+
+        with pytest.raises(TypeError, match="must be an instance of Message"):
+            await client.send("not a message")
+
+    @pytest.mark.asyncio
+    async def test_send_raises_communication_error_on_send_failure(
+        self, dealer_test_helper
+    ):
+        """Test that send raises CommunicationError when the socket send fails."""
+        async with dealer_test_helper.create_client(
+            send_side_effect=Exception("Send failed")
+        ) as client:
+            message = Message(message_type=MessageType.HEARTBEAT, request_id="test-123")
+
+            with pytest.raises(CommunicationError, match="Exception sending message"):
+                await client.send(message)

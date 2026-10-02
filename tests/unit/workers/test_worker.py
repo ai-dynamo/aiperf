@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock
 import pytest
 from pytest import param
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import ConversationContextMode, CreditPhase
 from aiperf.common.models import (
     Conversation,
     ErrorDetails,
@@ -20,6 +20,7 @@ from aiperf.common.models import (
 from aiperf.config.phases import ConcurrencyPhase
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.dataset.memory_map_utils import PayloadTurnData
+from aiperf.workers.session_manager import UserSession
 from aiperf.workers.worker import (
     Worker,
     _is_terminal_context_overflow,
@@ -731,16 +732,49 @@ class TestReleaseAndEvictForTerminal:
     async def test_release_and_evict_for_terminal_evicts_session(
         self, mock_worker, sample_credit_context
     ):
-        """A terminal eviction removes the (non-fork) session from the session manager."""
+        """A terminal eviction removes the (non-fork) session from the session manager.
+
+        Routed through ``evict_if_unpinned`` rather than a hard ``evict`` so an
+        in-flight FORK pin is honored even when the session's
+        ``is_fork_parent`` stamp is False (a parent created from a conversation
+        whose ``branches`` were already stripped still gets pinned by arriving
+        children).
+        """
         credit = sample_credit_context.credit
         mock_worker.session_manager = MagicMock()
         mock_worker.session_manager.get.return_value = None
 
         mock_worker._release_and_evict_for_terminal(credit, credit.x_correlation_id)
 
-        mock_worker.session_manager.evict.assert_called_once_with(
+        mock_worker.session_manager.evict_if_unpinned.assert_called_once_with(
             credit.x_correlation_id
         )
+        mock_worker.session_manager.evict.assert_not_called()
+
+    async def test_terminal_eviction_honors_a_pin_on_an_unstamped_parent(
+        self, mock_worker, sample_credit_context
+    ):
+        """A pinned session survives its own terminal turn even without the stamp."""
+        from aiperf.common.models.dataset_models import Conversation, Turn
+        from aiperf.workers.session_manager import UserSession, UserSessionManager
+
+        credit = sample_credit_context.credit
+        corr = credit.x_correlation_id
+        manager = UserSessionManager(max_sessions=8)
+        manager.store(
+            corr,
+            UserSession(
+                x_correlation_id=corr,
+                num_turns=1,
+                conversation=Conversation(session_id=corr, turns=[Turn()]),
+            ),
+        )
+        manager.pin_for_fork_child(corr)
+        mock_worker.session_manager = manager
+
+        mock_worker._release_and_evict_for_terminal(credit, corr)
+
+        assert manager.get(corr) is not None
 
 
 _OVERFLOW_BODY = "This model's maximum context length is 8192 tokens"
@@ -931,7 +965,7 @@ class TestPayloadBytesFastPath:
     async def test_fast_path_turn_carries_max_tokens_and_timestamp(
         self, mock_worker, sample_credit_context
     ):
-        """PAYLOAD_BYTES fast path must hoist turn scalars (max_tokens, timestamp) for metric enrichment, else OSL-mismatch and schedule-lag metrics go silent."""
+        """PAYLOAD_BYTES fast path must hoist turn scalars (max_tokens, timestamp, source_kind) for metric enrichment, else OSL-mismatch and schedule-lag metrics go silent and every record is attributed to the run-level label."""
         mock_worker._is_payload_bytes = True
         mock_worker._dataset_client = AsyncMock()
         payload = b'{"messages":[{"role":"user","content":"hi"}],"max_tokens":64}'
@@ -939,6 +973,7 @@ class TestPayloadBytesFastPath:
             payload_bytes=payload,
             max_tokens=64,
             timestamp=1234.5,
+            source_kind="coding",
         )
 
         success_record = RequestRecord(
@@ -961,17 +996,20 @@ class TestPayloadBytesFastPath:
         assert len(sent_request_info.turns) == 1
         assert sent_request_info.turns[0].max_tokens == 64
         assert sent_request_info.turns[0].timestamp == 1234.5
+        assert sent_request_info.turns[0].source_kind == "coding"
+        assert sent_request_info.source_kind == "coding"
 
     async def test_retrieve_conversation_for_session_restores_scalars(
         self, mock_worker, sample_credit_context
     ):
-        """Session-path reconstruction must restore max_tokens and timestamp."""
+        """Session-path reconstruction must restore max_tokens, timestamp, and source_kind."""
         mock_worker._is_payload_bytes = True
         mock_worker._dataset_client = AsyncMock()
         mock_worker._dataset_client.get_payload_turn.return_value = PayloadTurnData(
             payload_bytes=b'{"max_completion_tokens":32,"messages":[]}',
             max_tokens=32,
             timestamp=99,
+            source_kind="math",
         )
         mock_worker.session_manager = MagicMock()
         mock_worker.session_manager.default_context_mode = None
@@ -983,10 +1021,75 @@ class TestPayloadBytesFastPath:
         assert len(conversation.turns) == 1
         assert conversation.turns[0].max_tokens == 32
         assert conversation.turns[0].timestamp == 99
+        assert conversation.turns[0].source_kind == "math"
         assert conversation.turns[0].raw_payload == {
             "max_completion_tokens": 32,
             "messages": [],
         }
+
+
+@pytest.mark.asyncio
+class TestFinalizeSessionResponseChaining:
+    """`_finalize_session_response` must chain only onto successful responses."""
+
+    def _chaining_session(self) -> UserSession:
+        conv = Conversation(
+            conversation_id="test-conv-chain",
+            turns=[Turn(raw_messages=[{"role": "user", "content": "Q1"}])],
+        )
+        return UserSession(
+            x_correlation_id="test-corr",
+            num_turns=1,
+            conversation=conv,
+            context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+        )
+
+    async def test_finalize_session_response_error_keeps_last_good_id(
+        self,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A failed turn may emit a partial ``response.created`` id; chaining onto
+        it would corrupt server context, so the last good id must be preserved."""
+        monkeypatch.setattr(
+            mock_worker, "_process_responses_for_record", Mock(return_value=([], None))
+        )
+        monkeypatch.setattr(mock_worker, "_populate_response_metrics", Mock())
+        extract = Mock(return_value="resp_partial")
+        monkeypatch.setattr(
+            mock_worker.inference_client.endpoint, "extract_response_id", extract
+        )
+        session = self._chaining_session()
+        session.store_response_id("resp_prev_good")
+        record = RequestRecord(error=ErrorDetails(message="boom", type="TestError"))
+
+        mock_worker._finalize_session_response(session, sample_credit_context, record)
+
+        assert session.previous_response_id == "resp_prev_good"
+        extract.assert_not_called()
+
+    async def test_finalize_session_response_success_stores_new_id(
+        self,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            mock_worker, "_process_responses_for_record", Mock(return_value=([], None))
+        )
+        monkeypatch.setattr(mock_worker, "_populate_response_metrics", Mock())
+        monkeypatch.setattr(
+            mock_worker.inference_client.endpoint,
+            "extract_response_id",
+            Mock(return_value="resp_new"),
+        )
+        session = self._chaining_session()
+        record = RequestRecord(timestamp_ns=1, start_perf_ns=1, end_perf_ns=2)
+
+        mock_worker._finalize_session_response(session, sample_credit_context, record)
+
+        assert session.previous_response_id == "resp_new"
 
 
 @pytest.mark.asyncio

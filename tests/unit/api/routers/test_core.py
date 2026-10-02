@@ -4,13 +4,17 @@
 """Tests for the core API router (config, run, healthz, readyz)."""
 
 import sys
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from pytest import param
 from starlette.testclient import TestClient
 
 from aiperf.api.api_service import FastAPIService
+from aiperf.api.routers import core as core_router_mod
 from aiperf.common.enums import LifecycleState
+from aiperf.common.environment import Environment
 from aiperf.config.flags.cli_config import CLIConfig
 from tests.unit.conftest import make_run_from_cli
 
@@ -24,7 +28,7 @@ class TestConfigEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert "endpoint" in data
-        assert "artifacts" in data
+        assert "models" in data
 
     def test_config_does_not_expose_run_identity(
         self, api_test_client: TestClient
@@ -46,7 +50,7 @@ class TestRunEndpoint:
         response = api_test_client.get("/api/run")
         assert response.status_code == 200
         data = response.json()
-        assert data["benchmark_id"] == "test-bench"
+        assert data["benchmark_id"] == "api-test"
         assert isinstance(data["cli_command"], str)
         assert data["cli_command"].startswith("aiperf")
 
@@ -66,7 +70,7 @@ class TestRunEndpoint:
         self,
         monkeypatch: pytest.MonkeyPatch,
         mock_zmq,
-        api_cfg: CLIConfig,
+        cli_config: CLIConfig,
     ) -> None:
         """End-to-end: ``--api-key <secret>`` in sys.argv must not leak through
         ``/api/run.cli_command``. Mirrors the QA ``test_api_key_redaction``
@@ -79,7 +83,7 @@ class TestRunEndpoint:
             "argv",
             ["aiperf", "profile", "--model", "test-model", "--api-key", secret],
         )
-        run = make_run_from_cli(api_cfg)
+        run = make_run_from_cli(cli_config)
         run.benchmark_id = "test-bench"
         run.cfg.runtime.api_host = "127.0.0.1"
         run.cfg.runtime.api_port = 9999
@@ -126,6 +130,51 @@ class TestRunEndpoint:
         response = api_test_client.get("/api/run")
         assert response.status_code == 503
         assert response.json() == {"detail": "No active benchmark run."}
+
+
+class TestShutdownEndpoint:
+    """Test deferred API shutdown behavior."""
+
+    @pytest.mark.asyncio
+    async def test_uses_configured_response_delay(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        svc = MagicMock()
+        svc.app.state.results = None
+        svc.stop = AsyncMock()
+        monkeypatch.setattr(
+            Environment.API_SERVER, "SHUTDOWN_RESPONSE_DELAY_SECONDS", 1.25
+        )
+
+        with patch.object(
+            core_router_mod.asyncio, "sleep", new_callable=AsyncMock
+        ) as mock_sleep:
+            response = await core_router_mod.shutdown(svc)
+            tasks = list(core_router_mod._SHUTDOWN_TASKS)
+            await core_router_mod.asyncio.gather(*tasks)
+
+        assert response == {"status": "shutting_down"}
+        mock_sleep.assert_awaited_once_with(1.25)
+        svc.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_shutdown_benchmark_running_raises_409(self) -> None:
+        """The endpoint must refuse to shut down while a benchmark is still
+        in progress, so the controller pod never disappears out from under
+        an active run."""
+        svc = MagicMock()
+        svc.app.state.results._benchmark_complete = False
+        svc.stop = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await core_router_mod.shutdown(svc)
+
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.detail == (
+            "Benchmark is still running. Cannot shut down API service."
+        )
+        assert not core_router_mod._SHUTDOWN_TASKS
+        svc.stop.assert_not_awaited()
 
 
 class TestHealthzEndpoint:

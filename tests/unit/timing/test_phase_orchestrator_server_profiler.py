@@ -196,6 +196,7 @@ async def test_profiler_stop_network_error_warns_and_does_not_raise() -> None:
         profiler_start_urls=["http://127.0.0.1:1/start_profile"],
         profiler_stop_urls=["http://127.0.0.1:1/stop_profile"],
         profiler_timeout_s=0.5,
+        reset_max_retry_seconds=1.0,
     )
     await run_phase_with_server_profiler(
         phase=CreditPhase.PROFILING,
@@ -266,6 +267,7 @@ async def test_stop_server_profiler_skips_without_owners_and_stops_once() -> Non
     orchestrator._server_profiler_owners = set()
     orchestrator._control_hooks = MagicMock(profiler_stop_urls=["http://h/stop"])
     orchestrator._control_headers = {}
+    orchestrator._control_signer = None
     orchestrator.warning = MagicMock()
 
     with patch(
@@ -276,7 +278,7 @@ async def test_stop_server_profiler_skips_without_owners_and_stops_once() -> Non
         await orchestrator._stop_server_profiler_warn_only()
         await orchestrator._stop_server_profiler_warn_only()
 
-    stop.assert_awaited_once_with(orchestrator._control_hooks, {})
+    stop.assert_awaited_once_with(orchestrator._control_hooks, {}, signer=None)
 
 
 @pytest.mark.asyncio
@@ -285,6 +287,7 @@ async def test_profiler_owners_stop_only_after_last_runner_drains() -> None:
     first_runner = MagicMock()
     second_runner = MagicMock()
     hooks = MagicMock()
+    orchestrator._control_signer = None
     orchestrator._server_profiler_owners = {first_runner, second_runner}
 
     stop = AsyncMock()
@@ -293,7 +296,7 @@ async def test_profiler_owners_stop_only_after_last_runner_drains() -> None:
         stop.assert_not_awaited()
         await orchestrator._stop_server_profiler_for_runner(second_runner, hooks, {})
 
-    stop.assert_awaited_once_with(hooks, {})
+    stop.assert_awaited_once_with(hooks, {}, signer=None)
 
 
 @pytest.mark.asyncio
@@ -302,6 +305,7 @@ async def test_profiler_start_and_stop_are_serialized_by_runner_ownership() -> N
     first_runner = MagicMock()
     second_runner = MagicMock()
     hooks = MagicMock()
+    orchestrator._control_signer = None
     orchestrator._server_profiler_owners = set()
 
     start = AsyncMock()
@@ -315,8 +319,8 @@ async def test_profiler_start_and_stop_are_serialized_by_runner_ownership() -> N
         await orchestrator._stop_server_profiler_for_runner(first_runner, hooks, {})
         await orchestrator._stop_server_profiler_for_runner(second_runner, hooks, {})
 
-    start.assert_awaited_once_with(hooks, {})
-    stop.assert_awaited_once_with(hooks, {})
+    start.assert_awaited_once_with(hooks, {}, signer=None)
+    stop.assert_awaited_once_with(hooks, {}, signer=None)
 
 
 @pytest.mark.asyncio
@@ -347,6 +351,7 @@ async def test_shutdown_stops_outstanding_profiler_owners() -> None:
     orchestrator._server_profiler_owners = {MagicMock()}
     orchestrator._control_hooks = MagicMock(profiler_stop_urls=["http://h/stop"])
     orchestrator._control_headers = {}
+    orchestrator._control_signer = None
     orchestrator.warning = MagicMock()
 
     with patch(
@@ -354,4 +359,4 @@ async def test_shutdown_stops_outstanding_profiler_owners() -> None:
     ) as stop:
         await orchestrator._stop_orchestrator()
 
-    stop.assert_awaited_once_with(orchestrator._control_hooks, {})
+    stop.assert_awaited_once_with(orchestrator._control_hooks, {}, signer=None)

@@ -141,8 +141,15 @@ class TestPrintTemplateTable:
 
     @pytest.fixture(autouse=True)
     def _widen_console(self, monkeypatch) -> None:
-        """Prevent Rich from truncating verbose column headers at 80 cols."""
+        """Prevent Rich from truncating verbose column headers at 80 cols.
+
+        `print_template_table` builds its own `Console`, so the size has to come
+        from the environment. `TERM` is part of that: Rich returns a hard-coded
+        80x25 for a dumb terminal before it ever reads `COLUMNS`.
+        """
+        monkeypatch.setenv("TERM", "xterm")
         monkeypatch.setenv("COLUMNS", "200")
+        monkeypatch.setenv("LINES", "50")
 
     def test_verbose_adds_tags_and_difficulty_columns(self, capsys) -> None:
         from aiperf.config.templates import list_templates

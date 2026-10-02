@@ -25,6 +25,7 @@ from typing import ClassVar
 
 import pytest
 
+from aiperf.config.config import BenchmarkConfig
 from aiperf.config.flags._converter_profiling import build_profiling
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.plugin.enums import ArrivalPattern, PhaseType
@@ -691,3 +692,659 @@ class TestRateSeries:
 
         with pytest.raises(ValueError, match="user-centric-rate"):
             build_profiling(user)
+
+
+# ---------------------------------------------------------------------------
+# BUG 5 (NVBugs 6656707) — --search-space keywords must auto-infer phase shape
+# ---------------------------------------------------------------------------
+
+
+class TestSearchSpacePhaseShapeInference:
+    def test_bare_rate_keyword_infers_poisson_phase(self) -> None:
+        """--search-space 'rate:...' with no --request-rate must not crash;
+        it should auto-switch to a rate-controlled (poisson default) phase,
+        seeding 'rate' from the search-space dimension's own lower bound."""
+        loadgen = CLIConfig(
+            search_space=["rate:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 1.0
+
+    def test_dotted_rate_path_infers_poisson_phase(self) -> None:
+        """Full dotted path form ('phases.profiling.rate') resolves the same
+        as the bare alias."""
+        loadgen = CLIConfig(
+            search_space=["phases.profiling.rate:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 1.0
+
+    def test_rate_search_space_respects_explicit_arrival_pattern(self) -> None:
+        """--arrival-pattern gamma + --search-space 'rate:...' should still
+        pick GAMMA, not the POISSON default."""
+        loadgen = CLIConfig(
+            search_space=["rate:1,100:real"],
+            arrival_pattern=ArrivalPattern.GAMMA,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.GAMMA
+        assert prof["rate"] == 1.0
+
+    def test_rate_ramp_keyword_with_request_rate_stays_poisson(self) -> None:
+        """--request-rate supplies the base rate; 'rate_ramp' alone in
+        search-space just needs a companion rate source, per the bug
+        report's documented workaround."""
+        loadgen = CLIConfig(
+            search_space=["rate_ramp:1,60:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 10.0
+
+    def test_rate_ramp_keyword_alone_raises_clear_error(self) -> None:
+        """'rate_ramp' layers a ramp on top of a base rate -- it cannot
+        supply that base rate itself. Without --request-rate or a 'rate'
+        search-space dimension, this must fail with a clear error, not a
+        raw Pydantic 'rate-controlled phases require rate or rate_series'."""
+        loadgen = CLIConfig(
+            search_space=["rate_ramp:1,60:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="base rate"):
+            build_profiling(user)
+
+    def test_rate_series_keyword_alone_raises_clear_error(self) -> None:
+        """'rate_series' is a piecewise-linear schedule, not a scalar the
+        planner can sample between two bounds -- it must never be treated
+        as a searchable numeric dimension, regardless of companion flags."""
+        loadgen = CLIConfig(
+            search_space=["rate_series:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="not a valid adaptive-search"):
+            build_profiling(user)
+
+    def test_rate_series_keyword_with_request_rate_still_raises(self) -> None:
+        """A --request-rate companion doesn't change anything -- 'rate_series'
+        itself still can't be a scalar search dimension (it was previously
+        treated as equivalent to 'rate', which silently masked the fact
+        that a sampled float would later crash writing into a
+        RateSeriesConfig-typed field)."""
+        loadgen = CLIConfig(
+            search_space=["rate_series:1,100:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="not a valid adaptive-search"):
+            build_profiling(user)
+
+    def test_rate_series_keyword_with_request_rate_series_still_raises(
+        self, tmp_path: Path
+    ) -> None:
+        """Even the documented --request-rate-series companion doesn't make
+        the schedule itself searchable as a number -- this combo was
+        already reachable before this PR (via the pre-existing
+        request_rate_series-sets-a-rate-controlled-type logic) and already
+        crashed once a sampled float reached the planner; now it's rejected
+        immediately and clearly instead."""
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":1},{"time_s":60,"qps":7}]}',
+            encoding="utf-8",
+        )
+        loadgen = CLIConfig(
+            search_space=["rate_series:1,100:real"],
+            request_rate_series=json_path,
+            arrival_pattern=ArrivalPattern.CONSTANT,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="not a valid adaptive-search"):
+            build_profiling(user)
+
+    def test_rate_keyword_with_request_rate_series_raises_mutual_exclusion_error(
+        self, tmp_path: Path
+    ) -> None:
+        """Searching 'rate' (a valid scalar dimension on its own) while
+        --request-rate-series already supplies a fixed schedule passes
+        config conversion cleanly if left unchecked -- prof["rate_series"]
+        is already set, so the seed step's has_base_rate short-circuit
+        skips seeding prof["rate"] without complaint. But the planner
+        still samples 'rate' every trial and injects it into a phase dict
+        that already has rate_series, violating RatePhaseConfig's mutual
+        exclusion at the first trial instead of failing clearly here."""
+        json_path = tmp_path / "rate.json"
+        json_path.write_text(
+            '{"points":[{"time_s":0,"qps":1},{"time_s":60,"qps":7}]}',
+            encoding="utf-8",
+        )
+        loadgen = CLIConfig(
+            search_space=["rate:1,100:real"],
+            request_rate_series=json_path,
+            arrival_pattern=ArrivalPattern.CONSTANT,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            build_profiling(user)
+
+    def test_smoothness_keyword_with_request_rate_infers_gamma_phase(self) -> None:
+        """--search-space 'smoothness:...' auto-switches to gamma, but still
+        needs a base rate from somewhere -- --request-rate supplies it."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.GAMMA
+        assert prof["rate"] == 10.0
+
+    def test_smoothness_keyword_alone_raises_clear_error(self) -> None:
+        """'smoothness' alone (no --request-rate, no 'rate' in search-space)
+        auto-switches the *type* to gamma but has no base rate to seed --
+        must fail with a clear error, not a raw Pydantic crash."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="base rate"):
+            build_profiling(user)
+
+    def test_users_keyword_infers_user_centric_phase(self) -> None:
+        """--user-centric-rate supplies the shared base rate; 'users' in
+        search-space self-seeds the user count from its own lower bound."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+        assert prof["users"] == 1
+        assert prof["rate"] == 10.0
+
+    def test_users_keyword_alone_raises_clear_error(self) -> None:
+        """'users' alone (no --user-centric-rate, no 'rate' in search-space)
+        auto-switches the *type* to user-centric and self-seeds 'users', but
+        has no base rate to seed -- must fail with a clear error."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int"],
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="base rate"):
+            build_profiling(user)
+
+    def test_users_and_rate_together_infers_user_centric_with_both_seeded(
+        self,
+    ) -> None:
+        """'users' and 'rate' are compatible, not a conflict: UserCentricPhase
+        subclasses RatePhaseConfig, so it legitimately has both fields.
+        Searching them together fully self-seeds a user-centric shape with
+        no companion flags needed at all."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int", "rate:1,100:real"],
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+        assert prof["users"] == 1
+        assert prof["rate"] == 1.0
+
+    def test_users_and_smoothness_together_raises_clear_conflict_error(self) -> None:
+        """This IS a genuine, unresolvable conflict: no phase type has both
+        a 'users' field (UserCentricPhase-only) and a 'smoothness' field
+        (GammaPhase-only)."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int", "smoothness:0.5,2.0:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="only have one shape"):
+            build_profiling(user)
+
+    def test_explicit_user_centric_rate_and_smoothness_raises_clear_conflict_error(
+        self,
+    ) -> None:
+        """The same conflict as 'users'+'smoothness', but triggered via an
+        explicit --user-centric-rate instead of a 'users' search-space
+        dimension -- either way the phase resolves to USER_CENTRIC, which
+        still has no 'smoothness' field. Previously only the 'users'-in-
+        search-space trigger was checked, so this combo built a
+        USER_CENTRIC phase that would only fail later, at the planner."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="only have one shape"):
+            build_profiling(user)
+
+    def test_rate_nan_lower_bound_raises_clear_error(self) -> None:
+        """A NaN lower bound bypasses 'rate_lo <= 0' (NaN comparisons are
+        always False), so it must be explicitly rejected with
+        math.isfinite() rather than silently seeding prof["rate"] = nan."""
+        loadgen = CLIConfig(
+            search_space=["rate:nan,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be > 0"):
+            build_profiling(user)
+
+    def test_users_nan_lower_bound_raises_clear_error(self) -> None:
+        loadgen = CLIConfig(
+            search_space=["users:nan,50:int"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be >= 1"):
+            build_profiling(user)
+
+    def test_smoothness_negative_lower_bound_raises_clear_error(self) -> None:
+        """'smoothness' isn't seeded into prof at config-build time (it's
+        optional, only ever written by the planner once trials start), so
+        it needs its own bound check independent of the seeding logic --
+        GammaPhase.smoothness has the same gt=0 constraint 'rate' has."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:-5,-1:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be > 0"):
+            build_profiling(user)
+
+    def test_rate_ramp_negative_lower_bound_raises_clear_error(self) -> None:
+        """Same as smoothness: 'rate_ramp' isn't seeded at config-build
+        time either, but RampConfig.duration has gt=0.0."""
+        loadgen = CLIConfig(
+            search_space=["rate_ramp:-50,-10:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be > 0"):
+            build_profiling(user)
+
+    def test_smoothness_with_explicit_non_gamma_arrival_pattern_raises_clear_error(
+        self,
+    ) -> None:
+        """'smoothness' only auto-promotes the phase to GAMMA when
+        --arrival-pattern is unset; an explicit non-gamma pattern wins
+        instead, leaving 'smoothness' with nowhere to land (only GammaPhase
+        has that field). Must fail clearly at config time, not at trial 0
+        with a raw Pydantic extra_forbidden."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            request_rate=10.0,
+            arrival_pattern=ArrivalPattern.POISSON,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="only supported with --arrival-pattern"):
+            build_profiling(user)
+
+    def test_smoothness_with_explicit_constant_arrival_pattern_raises_clear_error(
+        self,
+    ) -> None:
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            request_rate=10.0,
+            arrival_pattern=ArrivalPattern.CONSTANT,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="only supported with --arrival-pattern"):
+            build_profiling(user)
+
+    def test_search_space_path_with_leading_whitespace_ignored_for_shape_inference(
+        self,
+    ) -> None:
+        """The real parser (parse_search_space) doesn't strip whitespace --
+        ' rate' and 'rate' are different paths to it, and ' rate' is
+        accepted as a literal (broken) path rather than resolved as the
+        'rate' alias. This helper must match that exactly: stripping the
+        path here would silently reshape the benchmark for a dimension the
+        real parser treats as something else entirely."""
+        loadgen = CLIConfig(
+            search_space=[" rate:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.CONCURRENCY
+        assert "rate" not in prof
+
+    def test_search_space_kind_with_leading_whitespace_ignored_for_shape_inference(
+        self,
+    ) -> None:
+        """'rate:1,100: int' (space before kind) is REJECTED by the real
+        parser (kind must be exactly 'int' or 'real'). This helper must
+        not silently normalize ' int' to 'int' and proceed as if the
+        dimension were well-formed -- skip it and let the real parser
+        report the actual grammar error."""
+        loadgen = CLIConfig(
+            search_space=["rate:1,100: int"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.CONCURRENCY
+        assert "rate" not in prof
+
+    def test_trace_auto_promote_conflict_message_mentions_search_space(
+        self, tmp_path: Path
+    ) -> None:
+        """When 'rate' was seeded from --search-space (not an explicit
+        --request-rate flag), the trace auto-promote conflict error must
+        not tell the user to "drop the conflicting flags" -- there is no
+        flag to drop, only a --search-space dimension."""
+        trace_path = tmp_path / "trace.jsonl"
+        trace_path.write_text(
+            '{"timestamp": 0, "input_length": 100, "output_length": 50}\n'
+            '{"timestamp": 100, "input_length": 120, "output_length": 60}\n',
+            encoding="utf-8",
+        )
+        # Built directly (not via _make_user's two-CLIConfig merge) since
+        # input_file's validator only accepts a literal str, and
+        # _make_user's model_dump()/reconstruct round-trip turns it back
+        # into a Path first.
+        user = CLIConfig(
+            url="http://localhost:8000/test",
+            model_names=["test-model"],
+            search_space=["rate:1,100:real"],
+            input_file=str(trace_path),
+            custom_dataset_type="mooncake_trace",
+            request_count=10,
+        )
+        with pytest.raises(ValueError, match="--search-space dimensions"):
+            build_profiling(user)
+
+    def test_explicit_request_rate_still_wins_without_search_space(self) -> None:
+        """Regression guard: explicit --request-rate path (no search-space)
+        is unaffected by the new inference logic."""
+        loadgen = CLIConfig(request_rate=50.0, request_count=10)
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 50.0
+
+    def test_concurrency_search_space_keyword_unaffected(self) -> None:
+        """'concurrency' is already valid on every phase type incl. the
+        default -- must keep resolving to PhaseType.CONCURRENCY."""
+        loadgen = CLIConfig(
+            search_space=["concurrency:1,1000:int"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.CONCURRENCY
+
+    def test_smoothness_search_space_with_gamma_and_explicit_smoothness_flag(
+        self,
+    ) -> None:
+        """--search-space 'smoothness:...' combined with an explicit
+        --arrival-smoothness flag under gamma still succeeds normally (the
+        two features are independent; this just proves no interaction bug)."""
+        loadgen = CLIConfig(
+            search_space=["smoothness:0.5,2.0:real"],
+            arrival_pattern=ArrivalPattern.GAMMA,
+            arrival_smoothness=1.0,
+            request_rate=50.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.GAMMA
+        assert prof["smoothness"] == 1.0
+
+    def test_bare_rate_keyword_produces_a_fully_valid_benchmark_config(self) -> None:
+        """End-to-end proof, not just build_profiling()'s dict: the seeded
+        phase actually passes full BenchmarkConfig/Pydantic validation."""
+        loadgen = CLIConfig(
+            search_space=["rate:1,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        cfg = BenchmarkConfig.model_validate(
+            {
+                "models": ["m"],
+                "endpoint": {"urls": ["http://x"], "type": "chat"},
+                "datasets": [{"name": "profiling", "type": "synthetic"}],
+                "phases": [{"name": "profiling", **prof}],
+            }
+        )
+        assert cfg.phases[0].type == PhaseType.POISSON
+
+    def test_users_and_rate_together_produces_a_fully_valid_benchmark_config(
+        self,
+    ) -> None:
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int", "rate:1,100:real"],
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        cfg = BenchmarkConfig.model_validate(
+            {
+                "models": ["m"],
+                "endpoint": {"urls": ["http://x"], "type": "chat"},
+                "datasets": [{"name": "profiling", "type": "synthetic"}],
+                "phases": [{"name": "profiling", **prof}],
+            }
+        )
+        assert cfg.phases[0].type == PhaseType.USER_CENTRIC
+
+    def test_rate_lower_bound_zero_raises_clear_error(self) -> None:
+        """A zero/negative --search-space 'rate' lower bound must not
+        silently seed an invalid value and crash with a raw Pydantic
+        'greater than' error -- it should fail clearly at seed time."""
+        loadgen = CLIConfig(
+            search_space=["rate:0,100:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be > 0"):
+            build_profiling(user)
+
+    def test_users_lower_bound_zero_raises_clear_error(self) -> None:
+        loadgen = CLIConfig(
+            search_space=["users:0,50:int"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be >= 1"):
+            build_profiling(user)
+
+    def test_users_real_kind_raises_clear_error(self) -> None:
+        """'users:1.5,50:real' must not silently truncate 1.5 -> 1 (a value
+        below the user's own declared lower bound) as the seed -- the number
+        of simulated users can only ever be a whole number, so a ':real'
+        kind for 'users' must fail clearly instead."""
+        loadgen = CLIConfig(
+            search_space=["users:1.5,50:real"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="':int' kind"):
+            build_profiling(user)
+
+    def test_users_default_kind_is_real_and_still_raises(self) -> None:
+        """Omitting ':kind' defaults to 'real' (matching
+        SearchSpaceDimension's own default) -- 'users' without an explicit
+        ':int' suffix must also raise, not silently pass."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="':int' kind"):
+            build_profiling(user)
+
+    def test_users_real_kind_with_explicit_num_users_still_raises(self) -> None:
+        """An explicit --num-users must not bypass ':int'-kind validation
+        for a 'users' search-space dimension. Before this was fixed, an
+        already-set prof["users"] (from --num-users) short-circuited the
+        seed function entirely, letting 'users:1.5,50:real' silently reach
+        the search planner as a real-valued dimension for a field that
+        requires an integer."""
+        loadgen = CLIConfig(
+            search_space=["users:1.5,50:real"],
+            user_centric_rate=10.0,
+            num_users=5,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="':int' kind"):
+            build_profiling(user)
+
+    def test_users_lower_bound_zero_with_explicit_num_users_still_raises(
+        self,
+    ) -> None:
+        """Same bypass check for the bound validation: an explicit
+        --num-users must not let an out-of-bounds 'users' search-space
+        lower bound go unvalidated."""
+        loadgen = CLIConfig(
+            search_space=["users:0,50:int"],
+            user_centric_rate=10.0,
+            num_users=5,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be >= 1"):
+            build_profiling(user)
+
+    def test_users_explicit_num_users_wins_over_search_space_lower_bound(
+        self,
+    ) -> None:
+        """When --num-users is explicit AND 'users' is validly searched
+        (:int kind, valid bound), the explicit --num-users value is kept
+        rather than overwritten by the search-space lower bound -- the
+        search-space dimension is still validated, just not used as the
+        seed when an explicit value already exists."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int"],
+            user_centric_rate=10.0,
+            num_users=5,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+        assert prof["users"] == 5
+
+    def test_rate_negative_bound_with_explicit_request_rate_still_raises(
+        self,
+    ) -> None:
+        """An explicit --request-rate must not bypass bound validation for a
+        'rate' search-space dimension -- mirrors the analogous --num-users
+        fix. Before this was fixed, `--request-rate 10 --search-space
+        "rate:-5,100"` skipped the rate_lo <= 0 check entirely (since
+        prof["rate"] was already set from --request-rate), letting a
+        negative rate reach the planner and crash mid-search once sampled,
+        instead of failing clearly at config-build time."""
+        loadgen = CLIConfig(
+            search_space=["rate:-5,100:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="must be > 0"):
+            build_profiling(user)
+
+    def test_rate_explicit_request_rate_wins_over_search_space_lower_bound(
+        self,
+    ) -> None:
+        """When --request-rate is explicit AND 'rate' is validly searched
+        (positive bound), the explicit --request-rate value is kept rather
+        than overwritten by the search-space lower bound -- the dimension
+        is still validated, just not used as the seed when an explicit
+        value already exists."""
+        loadgen = CLIConfig(
+            search_space=["rate:1,100:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 10.0
+
+    def test_search_space_extra_kind_segment_is_skipped_not_misreported(
+        self,
+    ) -> None:
+        """'users:1,50:int:log' has an extra ':'-separated segment (a
+        malformed grammar the real parser will reject with its own error).
+        This lightweight helper must skip it rather than misparse
+        'int:log' as the kind and report the wrong complaint (e.g. telling
+        a user who wrote ':int' that they wrote ':real')."""
+        loadgen = CLIConfig(
+            search_space=["users:1,50:int:log"],
+            user_centric_rate=10.0,
+            conversation_turn_mean=4,
+        )
+        user = _make_user(loadgen=loadgen)
+        # The malformed dimension is invisible to shape inference (skipped),
+        # so with no other search-space field this falls through to
+        # whatever --user-centric-rate alone would produce: USER_CENTRIC
+        # type, but no 'users' seed and no ':int'-kind complaint about a
+        # dimension this helper never parsed.
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.USER_CENTRIC
+
+    def test_warmup_path_search_space_dimension_ignored_for_shape_inference(
+        self,
+    ) -> None:
+        """A dotted path targeting a non-profiling phase (e.g. warmup) must
+        not be mistaken for a profiling-phase field by its trailing segment
+        alone -- it should be ignored by shape inference entirely."""
+        loadgen = CLIConfig(
+            search_space=["phases.warmup.rate:1,10:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.CONCURRENCY
+        assert "rate" not in prof
+
+    def test_nested_cancellation_rate_path_ignored_for_shape_inference(self) -> None:
+        """'phases.profiling.cancellation.rate' is the request-cancellation
+        rate (an unrelated CancellationConfig sub-field), not the phase's
+        own 'rate'. Matching by trailing path segment alone previously
+        misclassified this as a phase-shape-selecting 'rate' dimension,
+        wrongly switching the phase to POISSON and seeding prof["rate"]
+        from the cancellation-rate range."""
+        loadgen = CLIConfig(
+            search_space=["phases.profiling.cancellation.rate:1,50:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.CONCURRENCY
+        assert "rate" not in prof

@@ -34,6 +34,23 @@ class TelemetryRecordsMessage(BaseServiceMessage):
     error: ErrorDetails | None = Field(
         default=None, description="The error details if telemetry collection failed."
     )
+    sequence: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Producer-local delivery sequence. Positive values let the records "
+            "manager prove that every message preceding the completion marker "
+            "finished processing despite concurrent PULL dispatch."
+        ),
+    )
+    collection_complete: bool = Field(
+        default=False,
+        description=(
+            "Whether this is the producer's terminal in-band marker. The GPU "
+            "telemetry manager sends it after closing record admission so the "
+            "records manager can prove all earlier PUSH messages were processed."
+        ),
+    )
 
     @property
     def valid(self) -> bool:

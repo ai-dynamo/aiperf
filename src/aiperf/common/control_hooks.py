@@ -6,18 +6,29 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit, urlunsplit
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.control_plane_http import ControlPlaneHttpError, control_plane_post
 from aiperf.common.redact import redact_url
 from aiperf.config.control_hooks import (
+    DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS,
+    DEFAULT_RESET_KV_CACHE_MAX_RETRY_SECONDS,
     DEFAULT_RESET_KV_CACHE_PATH,
+    DEFAULT_RETRY_BACKOFF_CAP_SECONDS,
+    DEFAULT_RETRY_BACKOFF_MULTIPLIER,
+    DEFAULT_RETRY_BACKOFF_SECONDS,
     DEFAULT_SERVER_PROFILER_START_PATH,
     DEFAULT_SERVER_PROFILER_STOP_PATH,
+    RESET_KV_CACHE_RETRYABLE_STATUS_CODES,
 )
 from aiperf.config.endpoint import EndpointConfig
+
+if TYPE_CHECKING:
+    from aiperf.auth.base_signer import RequestSignerProtocol
 
 _logger = AIPerfLogger(__name__)
 
@@ -47,6 +58,8 @@ class PreparedEndpointControlHooks:
     """Absolute profiler-stop URLs (empty when disabled)."""
     profiler_timeout_s: float
     """Timeout seconds for profiler start/stop POSTs."""
+    reset_max_retry_seconds: float
+    """Total time budget for retrying a retryable reset_kv_cache POST failure."""
 
 
 def unique_endpoint_origins(urls: list[str]) -> list[str]:
@@ -85,12 +98,18 @@ def prepare_endpoint_control_hooks(
     reset_timeout = (
         endpoint.reset_kv_cache.timeout_seconds
         if endpoint.reset_kv_cache and endpoint.reset_kv_cache.timeout_seconds
-        else endpoint.timeout
+        else DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS
     )
     profiler_timeout = (
         endpoint.server_profiler.timeout_seconds
         if endpoint.server_profiler and endpoint.server_profiler.timeout_seconds
-        else endpoint.timeout
+        else DEFAULT_CONTROL_HOOK_TIMEOUT_SECONDS
+    )
+    reset_max_retry_seconds = (
+        endpoint.reset_kv_cache.max_retry_seconds
+        if endpoint.reset_kv_cache
+        and endpoint.reset_kv_cache.max_retry_seconds is not None
+        else DEFAULT_RESET_KV_CACHE_MAX_RETRY_SECONDS
     )
     return PreparedEndpointControlHooks(
         timeout_s=float(reset_timeout),
@@ -110,28 +129,82 @@ def prepare_endpoint_control_hooks(
             else []
         ),
         profiler_timeout_s=float(profiler_timeout),
+        reset_max_retry_seconds=float(reset_max_retry_seconds),
     )
+
+
+async def _post_with_retry(
+    *,
+    url: str,
+    headers: dict[str, str],
+    timeout_s: float,
+    max_retry_seconds: float,
+    signer: RequestSignerProtocol | None,
+) -> None:
+    """POST with bounded exponential-backoff retry on retryable failures only.
+
+    A retryable failure - a transport-level error (timeout, connection
+    error) or a response with a status in
+    ``RESET_KV_CACHE_RETRYABLE_STATUS_CODES`` (e.g. 503) - may resolve if
+    the server is transiently busy with unrelated control-plane work. Any
+    other non-2xx response is a real rejection and is never retried.
+    """
+    deadline = time.monotonic() + max_retry_seconds
+    backoff = DEFAULT_RETRY_BACKOFF_SECONDS
+    while True:
+        try:
+            await control_plane_post(
+                url=url, headers=headers, timeout_s=timeout_s, signer=signer
+            )
+            return
+        except ControlPlaneHttpError as error:
+            is_retryable = (
+                error.retryable
+                or error.status_code in RESET_KV_CACHE_RETRYABLE_STATUS_CODES
+            )
+            if not is_retryable or time.monotonic() + backoff >= deadline:
+                raise
+            await asyncio.sleep(backoff)
+            backoff = min(
+                backoff * DEFAULT_RETRY_BACKOFF_MULTIPLIER,
+                DEFAULT_RETRY_BACKOFF_CAP_SECONDS,
+            )
 
 
 async def run_reset_kv_cache(
     hooks: PreparedEndpointControlHooks,
     headers: dict[str, str],
+    signer: RequestSignerProtocol | None = None,
 ) -> None:
-    """POST reset_kv_cache to every prepared reset URL (fatal on first failure)."""
+    """POST reset_kv_cache to every prepared reset URL (fatal on first failure).
+
+    Retryable failures (timeout, connection error) are retried with backoff
+    up to ``hooks.reset_max_retry_seconds``; a non-2xx response fails fast.
+    """
     for url in hooks.reset_urls:
-        await control_plane_post(url=url, headers=headers, timeout_s=hooks.timeout_s)
+        await _post_with_retry(
+            url=url,
+            headers=headers,
+            timeout_s=hooks.timeout_s,
+            max_retry_seconds=hooks.reset_max_retry_seconds,
+            signer=signer,
+        )
 
 
 async def start_server_profiler(
     hooks: PreparedEndpointControlHooks,
     headers: dict[str, str],
+    signer: RequestSignerProtocol | None = None,
 ) -> None:
     """POST profiler start to every origin; reverse-stop on partial failure."""
     started: list[str] = []
     try:
         for url in hooks.profiler_start_urls:
             await control_plane_post(
-                url=url, headers=headers, timeout_s=hooks.profiler_timeout_s
+                url=url,
+                headers=headers,
+                timeout_s=hooks.profiler_timeout_s,
+                signer=signer,
             )
             started.append(url)
     except BaseException:
@@ -145,6 +218,7 @@ async def start_server_profiler(
                     url=stop_url,
                     headers=headers,
                     timeout_s=hooks.profiler_timeout_s,
+                    signer=signer,
                 )
             except Exception as cleanup_exc:
                 msg = (
@@ -164,6 +238,7 @@ async def start_server_profiler(
 async def stop_server_profiler(
     hooks: PreparedEndpointControlHooks,
     headers: dict[str, str],
+    signer: RequestSignerProtocol | None = None,
 ) -> None:
     """Best-effort stop on every origin; raise one aggregated error if any fail.
 
@@ -176,7 +251,10 @@ async def stop_server_profiler(
     for url in hooks.profiler_stop_urls:
         try:
             await control_plane_post(
-                url=url, headers=headers, timeout_s=hooks.profiler_timeout_s
+                url=url,
+                headers=headers,
+                timeout_s=hooks.profiler_timeout_s,
+                signer=signer,
             )
         except ControlPlaneHttpError as error:
             failures.append(str(error))

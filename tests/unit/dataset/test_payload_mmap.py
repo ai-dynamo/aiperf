@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+
 import orjson
 import pytest
 
@@ -90,6 +93,57 @@ async def test_conversation_format_returns_none_for_payload_bytes(
     conversation = client.get_conversation("conv-1")
     assert conversation.session_id == "conv-1"
 
+    client.close()
+    await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_conversation_reads_do_not_share_mmap_cursor(
+    tmp_path, monkeypatch
+):
+    """Executor reads use independent slices instead of the mmap file position."""
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+    store = MemoryMapDatasetBackingStore(benchmark_id="test_concurrent_reads")
+    await store.initialize()
+    await store.add_conversation(
+        "conv-1", Conversation(session_id="conv-1", turns=[Turn(role="user")])
+    )
+    await store.add_conversation(
+        "conv-2", Conversation(session_id="conv-2", turns=[Turn(role="user")])
+    )
+    await store.finalize()
+    metadata = store.get_client_metadata()
+    client = MemoryMapDatasetClient(
+        metadata.data_file_path,
+        metadata.index_file_path,
+    )
+
+    original_mmap = client.data_mmap
+    raw_data = bytes(original_mmap[:])
+    read_barrier = Barrier(2)
+
+    class ConcurrentSliceProbe:
+        def __getitem__(self, key: slice) -> bytes:
+            read_barrier.wait(timeout=5)
+            return raw_data[key]
+
+        def seek(self, offset: int) -> None:
+            raise AssertionError(f"shared mmap cursor seek attempted: {offset}")
+
+        def read(self, size: int) -> bytes:
+            raise AssertionError(f"shared mmap cursor read attempted: {size}")
+
+    client.data_mmap = ConcurrentSliceProbe()
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(client.get_conversation, ("conv-1", "conv-2")))
+    finally:
+        client.data_mmap = original_mmap
+
+    assert [conversation.session_id for conversation in results] == [
+        "conv-1",
+        "conv-2",
+    ]
     client.close()
     await store.stop()
 
@@ -276,11 +330,14 @@ async def test_adopt_existing_files_compress_only_missing_zst_raises(
 
 @pytest.mark.asyncio
 async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
-    """PAYLOAD_BYTES index must round-trip max_tokens and timestamp.
+    """PAYLOAD_BYTES index must round-trip max_tokens, timestamp, and source_kind.
 
     Turn scalars live outside the wire body for some loaders (e.g. mooncake
-    ``output_length`` / ``timestamp``). Persisting them on PayloadOffset keeps
-    OSL-mismatch and schedule-lag metrics alive on the verbatim path.
+    ``output_length`` / ``timestamp``, SPEED-Bench and Weka ``source_kind``).
+    Persisting them on PayloadOffset keeps OSL-mismatch and schedule-lag metrics
+    alive on the verbatim path, and keeps each record attributable to the
+    dataset row it came from -- without it a per-category split collapses to a
+    single run-level label.
     """
     from aiperf.dataset.memory_map_utils import (
         PayloadOffset,
@@ -305,6 +362,7 @@ async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
                 raw_payload=payload,
                 max_tokens=128,
                 timestamp=42.5,
+                source_kind="coding",
             )
         ],
     )
@@ -321,17 +379,20 @@ async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
     assert entry is not None
     assert entry.max_tokens == 128
     assert entry.timestamp == 42.5
+    assert entry.source_kind == "coding"
     assert orjson.loads(entry.payload_bytes) == payload
 
     turn = turn_from_payload_turn(entry)
     assert turn.max_tokens == 128
     assert turn.timestamp == 42.5
+    assert turn.source_kind == "coding"
     assert turn.raw_payload == payload
 
     # Wire-JSON fallback recovers max_tokens when index scalars are absent
     # (legacy PayloadOffset with only offset/size).
     legacy = PayloadOffset(offset=0, size=0)
     assert legacy.max_tokens is None
+    assert legacy.source_kind is None
     assert (
         max_tokens_from_wire_payload({"max_completion_tokens": 16, "messages": []})
         == 16

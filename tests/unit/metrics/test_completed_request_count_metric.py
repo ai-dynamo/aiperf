@@ -35,15 +35,36 @@ class TestCompletedRequestCountMetric:
         value = CompletedRequestCountMetric().derive_value(results)
         assert value == 50
 
-    def test_completed_count_missing_request_count_raises(self):
-        """RequestCountMetric is required — derive raises when absent."""
+    def test_completed_count_derives_from_error_only_run(self):
+        """All-error runs have no RequestCountMetric to contribute."""
         results = MetricResultsDict()
         results[ErrorRequestCountMetric.tag] = 5
-        with pytest.raises(NoMetricValue):
-            CompletedRequestCountMetric().derive_value(results)
+        assert CompletedRequestCountMetric().derive_value(results) == 5
 
-    def test_completed_count_required_metrics_declared(self):
-        """Required-metric declaration drives MetricRegistry dependency order."""
-        assert CompletedRequestCountMetric.required_metrics == frozenset(
+    def test_completed_count_missing_both_counts_raises(self):
+        with pytest.raises(NoMetricValue):
+            CompletedRequestCountMetric().derive_value(MetricResultsDict())
+
+    def test_completed_count_dependencies_declared(self):
+        """Either counter can be absent but both retain dependency ordering."""
+        assert CompletedRequestCountMetric.required_metrics is None
+        assert CompletedRequestCountMetric.optional_metrics == frozenset(
             {RequestCountMetric.tag, ErrorRequestCountMetric.tag}
+        )
+
+    def test_completed_count_derives_on_a_zero_error_run(self):
+        """The whole point: no error tag present, metric still exports."""
+        results = MetricResultsDict()
+        results[RequestCountMetric.tag] = 7
+        assert CompletedRequestCountMetric().derive_value(results) == 7
+
+    def test_dependency_order_still_places_error_count_first(self):
+        """optional_metrics must order exactly like required_metrics."""
+        from aiperf.metrics.metric_registry import MetricRegistry
+
+        order = MetricRegistry.create_dependency_order_for(
+            [CompletedRequestCountMetric.tag]
+        )
+        assert order.index(ErrorRequestCountMetric.tag) < order.index(
+            CompletedRequestCountMetric.tag
         )

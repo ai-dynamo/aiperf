@@ -11,13 +11,16 @@ from pathlib import Path
 import pytest
 from pytest import param
 
+from aiperf.config.dataset import FileDataset, PublicDataset
 from aiperf.config.flags._converter_dataset import build_dataset
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.converter import convert_cli_to_aiperf
 from aiperf.config.flags.resolver import (
-    _apply_dataset_synthesis_overrides,
+    _apply_dataset_overrides,
     resolve_config,
 )
+from aiperf.config.loader.errors import ConfigurationError
+from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.plugin.enums import CustomDatasetType, PublicDatasetType
 
 _WEKA_HF = PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS
@@ -31,11 +34,12 @@ def trace_jsonl(tmp_path: Path) -> Path:
 
 
 def _file_cli(trace_jsonl: Path, **extra: object) -> CLIConfig:
+    dataset_type = extra.pop("custom_dataset_type", CustomDatasetType.MOONCAKE_TRACE)
     return CLIConfig(
         model_names=["test-model"],
         endpoint_type="chat",
         input_file=str(trace_jsonl),
-        custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+        custom_dataset_type=dataset_type,
         **extra,
     )
 
@@ -47,6 +51,90 @@ def _public_cli(**extra: object) -> CLIConfig:
         public_dataset=_WEKA_HF,
         **extra,
     )
+
+
+class TestWekaTimestampConfigRoundTrip:
+    @pytest.mark.parametrize("format", ["single_turn", "multi_turn", "mooncake_trace"])
+    def test_non_weka_file_round_trip(self, trace_jsonl: Path, format: str) -> None:
+        dataset = FileDataset(
+            type="file", name="default", path=trace_jsonl, format=format
+        )
+        dumped = dataset.model_dump(mode="json", exclude_none=True)
+        assert "weka_nested_timestamp_basis" not in dumped
+        assert FileDataset.model_validate(dumped).weka_nested_timestamp_basis is None
+        assert (
+            FileDataset.model_validate(dataset.model_dump()).weka_nested_timestamp_basis
+            is None
+        )
+
+    @pytest.mark.parametrize("source", ["file", "public"])
+    def test_non_weka_benchmark_run_round_trip(
+        self, trace_jsonl: Path, source: str, tmp_path: Path
+    ) -> None:
+        cli = (
+            _file_cli(trace_jsonl, custom_dataset_type=CustomDatasetType.MULTI_TURN)
+            if source == "file"
+            else CLIConfig(
+                model_names=["test-model"], public_dataset=PublicDatasetType.SHAREGPT
+            )
+        )
+        run = BenchmarkRun(
+            benchmark_id="weka-config-roundtrip",
+            cfg=convert_cli_to_aiperf(cli).benchmark,
+            artifact_dir=tmp_path,
+        )
+        restored = BenchmarkRun.model_validate(
+            run.model_dump(mode="json", exclude_none=True)
+        )
+        assert restored.cfg.datasets[0].weka_nested_timestamp_basis is None
+
+    @pytest.mark.parametrize("basis", ["auto", "absolute", "relative"])
+    @pytest.mark.parametrize("source", ["file", "public"])
+    def test_weka_basis_survives_round_trip(
+        self, trace_jsonl: Path, basis: str, source: str
+    ) -> None:
+        dataset = (
+            FileDataset(
+                type="file",
+                name="default",
+                path=trace_jsonl,
+                format="weka_trace",
+                weka_nested_timestamp_basis=basis,
+            )
+            if source == "file"
+            else PublicDataset(
+                type="public",
+                name="default",
+                dataset=_WEKA_HF,
+                weka_nested_timestamp_basis=basis,
+            )
+        )
+        restored = type(dataset).model_validate(
+            dataset.model_dump(mode="json", exclude_none=True)
+        )
+        assert restored.weka_nested_timestamp_basis == basis
+
+    @pytest.mark.parametrize("basis", ["auto", "absolute", "relative"])
+    @pytest.mark.parametrize("source", ["file", "public"])
+    def test_explicit_weka_basis_rejected_for_known_non_weka(
+        self, trace_jsonl: Path, basis: str, source: str
+    ) -> None:
+        with pytest.raises(ValueError, match="weka-nested-timestamp-basis"):
+            if source == "file":
+                FileDataset(
+                    type="file",
+                    name="default",
+                    path=trace_jsonl,
+                    format="multi_turn",
+                    weka_nested_timestamp_basis=basis,
+                )
+            else:
+                PublicDataset(
+                    type="public",
+                    name="default",
+                    dataset=PublicDatasetType.SHAREGPT,
+                    weka_nested_timestamp_basis=basis,
+                )
 
 
 class TestPromptCorpusRouting:
@@ -166,6 +254,29 @@ class TestTraceDelayFlagRouting:
         "cli_factory_id",
         [param("file", id="file"), param("public", id="public_weka_hf")],
     )
+    def test_weka_nested_timestamp_basis_routes(
+        self, trace_jsonl: Path, cli_factory_id: str
+    ) -> None:
+        def _cli() -> CLIConfig:
+            return (
+                _file_cli(
+                    trace_jsonl,
+                    custom_dataset_type=CustomDatasetType.WEKA_TRACE,
+                    weka_nested_timestamp_basis="relative",
+                )
+                if cli_factory_id == "file"
+                else _public_cli(weka_nested_timestamp_basis="relative")
+            )
+
+        out = build_dataset(_cli())
+        assert out["weka_nested_timestamp_basis"] == "relative"
+        ds = convert_cli_to_aiperf(_cli()).benchmark.datasets[0]
+        assert ds.weka_nested_timestamp_basis == "relative"
+
+    @pytest.mark.parametrize(
+        "cli_factory_id",
+        [param("file", id="file"), param("public", id="public_weka_hf")],
+    )
     def test_trace_idle_gap_cap_routes(
         self, trace_jsonl: Path, cli_factory_id: str
     ) -> None:
@@ -253,9 +364,9 @@ benchmark:
         merged = {"benchmark": {"datasets": datasets}}
 
         with pytest.raises(
-            ValueError, match="synthesis flags require a file or public dataset"
+            ConfigurationError, match="require a dataset in the config file"
         ):
-            _apply_dataset_synthesis_overrides(merged, CLIConfig(synthesis_max_osl=512))
+            _apply_dataset_overrides(merged, CLIConfig(synthesis_max_osl=512))
 
     def test_multiple_yaml_datasets_warns_and_updates_only_first(
         self, caplog: pytest.LogCaptureFixture
@@ -268,24 +379,25 @@ benchmark:
         merged = {"benchmark": {"datasets": [first, second]}}
 
         with caplog.at_level("WARNING", logger="aiperf.config.flags.resolver"):
-            _apply_dataset_synthesis_overrides(
-                merged, CLIConfig(synthesis_max_osl=12000)
-            )
+            _apply_dataset_overrides(merged, CLIConfig(synthesis_max_osl=12000))
 
         assert "apply only to the first dataset" in caplog.text
-        assert first["synthesis"] == {"speedupRatio": 2.0, "maxOsl": 12000}
+        assert first["synthesis"] == {"speedupRatio": 2.0, "max_osl": 12000}
         assert second["synthesis"] == {"maxOsl": 8000}
 
-    def test_non_trace_yaml_dataset_warns_and_is_unchanged(
-        self, caplog: pytest.LogCaptureFixture
-    ) -> None:
+    def test_non_trace_yaml_dataset_is_rejected(self) -> None:
+        """Synthesis has no meaning on a synthetic dataset, so say so.
+
+        This previously warned and dropped the flag; a warning on stderr is
+        not enough when the result is a benchmark that ignored what the user
+        asked for.
+        """
         dataset = {"type": "synthetic"}
         merged = {"benchmark": {"datasets": [dataset]}}
 
-        with caplog.at_level("WARNING", logger="aiperf.config.flags.resolver"):
-            _apply_dataset_synthesis_overrides(merged, CLIConfig(synthesis_max_osl=512))
+        with pytest.raises(ConfigurationError, match="have no effect"):
+            _apply_dataset_overrides(merged, CLIConfig(synthesis_max_osl=512))
 
-        assert "require a file or public dataset" in caplog.text
         assert dataset == {"type": "synthetic"}
 
     @pytest.mark.parametrize(
@@ -311,7 +423,7 @@ benchmark:
         }
 
         with pytest.raises(ValueError, match=match) as exc_info:
-            _apply_dataset_synthesis_overrides(merged, CLIConfig(**cli_kwargs))
+            _apply_dataset_overrides(merged, CLIConfig(**cli_kwargs))
 
         assert "YAML format: baseten_trace" in str(exc_info.value)
         assert "--custom-dataset-type" not in str(exc_info.value)
@@ -320,11 +432,9 @@ benchmark:
         dataset = {"type": "file", "format": "baseten_trace"}
         merged = {"benchmark": {"datasets": [dataset]}}
 
-        _apply_dataset_synthesis_overrides(
-            merged, CLIConfig(synthesis_output_len_multiplier=2.0)
-        )
+        _apply_dataset_overrides(merged, CLIConfig(synthesis_output_len_multiplier=2.0))
 
-        assert dataset["synthesis"] == {"outputLenMultiplier": 2.0}
+        assert dataset["synthesis"] == {"output_len_multiplier": 2.0}
 
 
 class TestOslFallbackRouting:

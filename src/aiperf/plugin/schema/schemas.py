@@ -492,6 +492,15 @@ class PublicDatasetLoaderMetadata(BaseModel):
         default=False,
         description="Whether the loader emits timestamps suitable for fixed-schedule replay.",
     )
+    category: str | None = Field(
+        default=None,
+        description=(
+            "Filter dataset rows to a specific category value. Used by loaders "
+            "that expose per-category subsets as separate selectable datasets "
+            "(e.g. SPEED-Bench). Mirrors the field of the same name on "
+            "CustomDatasetLoaderMetadata."
+        ),
+    )
     prompt_template: str | None = Field(
         default=None,
         description="Python str.format() template for constructing the prompt from multiple columns (e.g. '{code}\\n\\n{change_request}'). When set, overrides prompt_column. All referenced column names must exist in the dataset.",

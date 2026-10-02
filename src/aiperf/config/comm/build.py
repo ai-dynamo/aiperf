@@ -23,6 +23,7 @@ from aiperf.config.comm.inputs import (
 )
 from aiperf.config.comm.ipc import ZMQIPCConfig
 from aiperf.config.comm.tcp import ZMQTCPConfig, ZMQTCPProxyConfig
+from aiperf.kubernetes.environment import K8sEnvironment
 
 if TYPE_CHECKING:
     from aiperf.config.comm.base import BaseZMQCommunicationConfig
@@ -34,6 +35,7 @@ def _build_tcp(comm: TcpCommunicationConfig) -> ZMQTCPConfig:
         host=comm.host,
         records_push_pull_port=comm.records_port,
         credit_router_port=comm.credit_router_port,
+        credit_return_push_pull_port=comm.credit_return_push_pull_port,
         control_port=comm.control_port,
         event_bus_proxy_config=ZMQTCPProxyConfig(
             frontend_port=comm.event_bus_proxy.frontend_port,
@@ -53,9 +55,7 @@ def _build_tcp(comm: TcpCommunicationConfig) -> ZMQTCPConfig:
 def _build_dual(comm: DualBindCommunicationConfig) -> ZMQDualBindConfig:
     controller_host = comm.controller_host
     if controller_host is None:
-        import os
-
-        controller_host = os.environ.get("AIPERF_K8S_ZMQ_CONTROLLER_HOST")
+        controller_host = K8sEnvironment.ZMQ.CONTROLLER_HOST
 
     return ZMQDualBindConfig(
         ipc_path=Path(comm.ipc_path),
@@ -63,6 +63,7 @@ def _build_dual(comm: DualBindCommunicationConfig) -> ZMQDualBindConfig:
         controller_host=controller_host,
         records_push_pull_tcp_port=comm.records_port,
         credit_router_tcp_port=comm.credit_router_port,
+        credit_return_push_pull_tcp_port=comm.credit_return_push_pull_port,
         control_tcp_port=comm.control_port,
         event_bus_proxy_config=ZMQDualBindProxyConfig(
             name="event_bus_proxy",
@@ -93,8 +94,10 @@ def build_comm_config(config: BenchmarkConfig) -> BaseZMQCommunicationConfig:
     K8s env-var auto-detection for dual-bind controller_host, and fallback
     to IPC when no communication config is set.
 
-    Note: credit_return_router_port is not exposed on user-facing inputs and
-    falls back to ZMQ defaults.
+    Note: credit_return_router_port is the one channel port not exposed on
+    user-facing inputs; it falls back to the ZMQ config defaults. Every other
+    port -- including the credit-return PUSH/PULL fan-in -- is passed through
+    from the user-facing model in both TCP and dual-bind mode.
     """
     comm = config.runtime.communication
     if comm is None:

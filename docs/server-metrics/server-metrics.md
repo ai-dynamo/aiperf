@@ -197,6 +197,71 @@ aiperf profile --model MODEL ... --server-metrics \
     http://node2:8081
 ```
 
+### Kubernetes auto-discovery
+
+When AIPerf runs in Kubernetes, `server_metrics.discovery` can add inference-pod
+Prometheus endpoints to the endpoints derived from `endpoint.urls` and the explicit
+`server_metrics.urls` list:
+
+```yaml
+server_metrics:
+  discovery:
+    mode: kubernetes
+    namespace: dynamo-server
+    label_selector: app.kubernetes.io/name=dynamo
+    timeout_seconds: 10
+```
+
+`mode: auto` (the default) uses Kubernetes discovery only when AIPerf is running
+in-cluster. `mode: kubernetes` requires the Kubernetes path and warns when used
+outside a cluster. `mode: disabled` uses only URL-derived and explicit endpoints.
+Discovery is best-effort: a timeout or API error does not prevent the benchmark
+from using its other endpoints.
+
+If `namespace` is omitted, discovery searches only the benchmark pod's own
+namespace, resolved from `AIPERF_NAMESPACE` or its mounted ServiceAccount namespace.
+It never silently expands to cluster scope. `namespace: "*"` is the explicit
+all-namespace mode and requires a cluster-scoped `pods: list` grant. To discover a
+server in another named namespace, add that namespace to the operator chart's
+`serverMetricsDiscoveryNamespaces` value; if the benchmark pod uses a custom
+ServiceAccount, use the chart's `{namespace, serviceAccounts}` entry form. See
+[Kubernetes RBAC and security](../kubernetes/rbac-security.md#benchmark-pod-permissions).
+
+The built-in eligibility rules select Dynamo's
+`nvidia.com/metrics-enabled=true` pods, pods with
+`aiperf.nvidia.com/metrics-paths`, and recognized inference-server images. A supplied
+`label_selector` explicitly selects matching pods. A generic
+`prometheus.io/scrape=true` annotation alone is not enough, which avoids collecting
+unrelated Loki, Grafana, and cluster-monitoring endpoints. Eligible pods can use the
+standard `prometheus.io/{port,path,scheme}` annotations; the AIPerf paths annotation
+accepts a comma-separated path list. Discovered paths are used as declared after
+adding a leading slash when needed; AIPerf does not append `/metrics` to a custom
+annotation path.
+
+#### RBAC prerequisites
+
+Discovery lists pods using the benchmark pod's ServiceAccount:
+
+| `discovery.namespace` | Searches | RBAC required |
+|---|---|---|
+| omitted | The benchmark pod's own namespace | None beyond the operator chart's normal benchmark Role (`pods: get/list/watch`) |
+| A named inference namespace | That namespace | Add it to `serverMetricsDiscoveryNamespaces`, using `{namespace, serviceAccounts}` when benchmarks use a custom ServiceAccount |
+| `"*"` | All namespaces | A manually provisioned ClusterRole with `pods: list`, bound to the benchmark ServiceAccount; the chart intentionally does not create this grant |
+
+For example, to allow benchmarks in the chart-configured benchmark namespace to
+discover Dynamo in `dynamo-server`:
+
+```bash
+helm upgrade aiperf-operator deploy/helm/aiperf-operator \
+  --namespace aiperf-system \
+  --reuse-values \
+  --set 'serverMetricsDiscoveryNamespaces={dynamo-server}'
+```
+
+Then set `server_metrics.discovery.namespace: dynamo-server` in the AIPerf YAML.
+A denied pod list emits a warning naming the namespace and required grant; it does
+not fail the benchmark.
+
 ### Disabling Server Metrics
 
 ```bash
@@ -249,6 +314,7 @@ WARNING  Disabling server metrics collection for http://127.0.0.1:60000/metrics:
 |---------------------|---------|-------------|
 | `AIPERF_SERVER_METRICS_COLLECTION_INTERVAL` | 0.333s | Collection frequency (333ms, ~3Hz) |
 | `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` | 2.0s | Wait time for final metrics after benchmark |
+| `AIPERF_SERVER_METRICS_PROFILE_COMPLETE_RELAY_TIMEOUT` | 60s | Maximum wait for the manager-owned final scrape and artifact flush command |
 | `AIPERF_SERVER_METRICS_REACHABILITY_TIMEOUT` | 10s | Timeout for endpoint reachability tests |
 | `AIPERF_SERVER_METRICS_EXPORT_BATCH_SIZE` | 100 | Batch size for JSONL writer |
 | `AIPERF_SERVER_METRICS_SHUTDOWN_DELAY` | 5.0s | Shutdown delay for command response transmission |
@@ -659,4 +725,3 @@ with open('server_metrics_export.json') as f:
 latency = data['metrics']['vllm:e2e_request_latency_seconds']['series'][0]['stats']
 assert latency['p99_estimate'] < 5.0, f"P99 latency too high: {latency['p99_estimate']}"
 ```
-

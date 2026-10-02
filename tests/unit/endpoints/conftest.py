@@ -63,6 +63,7 @@ def create_request_info(
     system_message: str | None = None,
     user_context_message: str | None = None,
     cache_bust_target: CacheBustTarget | None = None,
+    previous_response_id: str | None = None,
     **turn_kwargs,
 ) -> RequestInfo:
     """Helper to create RequestInfo with all required fields.
@@ -95,6 +96,7 @@ def create_request_info(
         system_message=system_message,
         user_context_message=user_context_message,
         cache_bust_target=cache_bust_target,
+        previous_response_id=previous_response_id,
     )
 
 
