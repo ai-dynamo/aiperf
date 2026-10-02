@@ -410,7 +410,7 @@ class BailianTrace(AIPerfBaseModel):
 
     The ``hash_ids`` lists above are abbreviated. A real row carries one id per
     16-token block, so 521 and 676 input tokens give 33 and 43 ids respectively,
-    and a follow-up's list starts with all of its parent's full blocks.
+    and a follow-up's list typically starts with its parent's full blocks.
 
     Note:
     The ``type`` field in Bailian JSONL is the request type (text/search/image/file),
