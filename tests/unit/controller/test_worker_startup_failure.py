@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, MagicMock
 import orjson
 import pytest
 
-from aiperf.common.control_structs import Command
+from aiperf.common.control_structs import Command, Registration
 from aiperf.common.enums import (
     CommandType,
     LifecycleState,
@@ -398,3 +398,56 @@ async def test_the_viability_check_reads_liveness_once_per_report(
 
     manager.get_service_liveness.assert_not_called()
     manager.live_worker_ids.assert_called_once()
+
+
+def _register_then_reap(system_controller: SystemController, service_id: str) -> None:
+    """Register a worker through the real handler, then reap it the way the
+    heartbeat watchdog does, which drops it from service_id_map."""
+    system_controller._on_registration(
+        Registration(
+            sid=service_id,
+            rid=f"rid-{service_id}",
+            stype=ServiceType.WORKER,
+            state=LifecycleState.RUNNING,
+        )
+    )
+    system_controller._forget_reaped_service(service_id)
+
+
+class TestRegisteredThenReapedWorkers:
+    """A worker that registered and was later reaped leaves service_id_map but
+    stays in spawned_worker_ids(). Judged by service_id_map alone it looked
+    never-registered, so its death was diagnosed as "exited before registering"
+    while a sibling was still starting."""
+
+    @pytest.mark.asyncio
+    async def test_the_watch_does_not_call_it_a_start_up_failure(
+        self, system_controller: SystemController, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _local_workers(
+            system_controller,
+            spawned={"worker_a", "worker_b"},
+            dead=frozenset({"worker_a"}),
+            exit_codes={"worker_a": -9},
+        )
+        _register_then_reap(system_controller, "worker_a")
+        manager = system_controller.service_manager
+
+        async def worker_b_registers_late(tick: int) -> None:
+            if tick == 10:
+                manager.service_id_map["worker_b"] = MagicMock()
+
+        _on_each_tick(monkeypatch, worker_b_registers_late)
+
+        await system_controller._watch_workers_until_registered()
+
+        assert "worker_a" not in system_controller._worker_startup_failures
+
+    def test_its_errors_are_not_classified_as_start_up_failures(
+        self, system_controller: SystemController
+    ) -> None:
+        _local_workers(system_controller, spawned={"worker_a", "worker_b"})
+        _register_then_reap(system_controller, "worker_a")
+
+        assert not system_controller._is_unregistered_local_worker("worker_a")
+        assert system_controller._is_unregistered_local_worker("worker_b")

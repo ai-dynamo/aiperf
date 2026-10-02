@@ -239,6 +239,10 @@ class SystemController(
         # Set when every worker failed while _start_services was still running;
         # that task aborts at its next checkpoint (see _on_worker_startup_failure).
         self._startup_abort_reason: str | None = None
+        # Workers that have ever registered. Kept past reaping, which drops a
+        # worker from service_id_map, so a reaped worker is never mistaken for
+        # one that failed before registering.
+        self._registered_worker_ids: set[str] = set()
         self._worker_start_watch_task: asyncio.Task | None = None
         self._export_failed = False
         self._failed_exporters: list[str] = []
@@ -910,10 +914,13 @@ class SystemController(
         Workers report a start-up failure before registering, so they are
         absent from ``service_id_map`` and ``_is_required_service`` would count
         them as required -- cancelling the run over a single flaky worker.
+        ``_registered_worker_ids`` covers workers that registered and were then
+        reaped, which drops them from ``service_id_map``.
         """
         return (
-            service_id not in self.service_manager.service_id_map
-            and service_id in self.service_manager.spawned_worker_ids()
+            service_id in self.service_manager.spawned_worker_ids()
+            and service_id not in self.service_manager.service_id_map
+            and service_id not in self._registered_worker_ids
         )
 
     async def _on_worker_startup_failure(
@@ -1003,6 +1010,7 @@ class SystemController(
             pending = (
                 self.service_manager.spawned_worker_ids()
                 - self.service_manager.service_id_map.keys()
+                - self._registered_worker_ids
                 - self._worker_startup_failures.keys()
             )
             if not pending:
