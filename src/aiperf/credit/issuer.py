@@ -642,6 +642,9 @@ class CreditIssuer:
             cache_bust_target=pending.parent_cache_bust_target,
         )
         gate = getattr(self, "replay_gate", ReplayIssueGate(None))
+        # Unlike children, a barrier-retained join must not report DEFERRED: the
+        # orchestrator would re-store it in _active_joins, pinning the parent's
+        # slot and handing it off as both blocked and barrier-pending.
         result = await gate.submit(turn, lambda: self._dispatch_join_turn_ready(turn))
         return ChildDispatchResult.normalize(result)
 
