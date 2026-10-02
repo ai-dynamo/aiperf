@@ -96,3 +96,58 @@ async def test_defaults_reject_noncanonical_keys_without_changing_child_environm
     stdout, stderr = await asyncio.wait_for(child.communicate(), timeout=30)
     assert child.returncode == 0, stderr.decode()
     assert stdout.decode().strip() == "33"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+@pytest.mark.parametrize("untargeted_group", [False, True])
+async def test_defaults_normalize_parent_and_child_and_restore(
+    monkeypatch: pytest.MonkeyPatch, untargeted_group: bool
+) -> None:
+    for key in tuple(os.environ):
+        if key.startswith("AIPERF_"):
+            monkeypatch.delenv(key)
+    settings = _Environment()
+    if untargeted_group:
+        settings.DEV.SHOW_INTERNAL_METRICS = True
+    original_dev = settings.DEV
+    original_fields_set = settings.DEV.model_fields_set.copy()
+    defaults = (
+        {"HTTP": {"TCP_KEEPIDLE": 90}}
+        if untargeted_group
+        else {"DEV": {"SHOW_INTERNAL_METRICS": True}}
+    )
+
+    with (
+        pytest.raises(RuntimeError, match="finish run"),
+        settings.defaults(defaults),
+    ):
+        assert settings.DEV.SHOW_INTERNAL_METRICS is False
+        assert settings.DEV.model_fields_set == original_fields_set | (
+            set() if untargeted_group else {"SHOW_INTERNAL_METRICS"}
+        )
+        normalized_dev = settings.DEV
+        with settings.defaults({"DEV": {"MODE": True}}):
+            assert settings.DEV.MODE is True
+            assert settings.DEV.SHOW_INTERNAL_METRICS is False
+            child = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-c",
+                "from aiperf.common.environment import Environment as e; "
+                "print(e.DEV.MODE, e.DEV.SHOW_INTERNAL_METRICS)",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(child.communicate(), timeout=30)
+            assert child.returncode == 0, stderr.decode()
+            assert stdout.decode().strip() == "True False"
+        assert settings.DEV is normalized_dev
+        assert settings.DEV.MODE is False
+        assert "AIPERF_DEV_MODE" not in os.environ
+        raise RuntimeError("finish run")
+
+    assert settings.DEV is original_dev
+    assert settings.DEV.SHOW_INTERNAL_METRICS is untargeted_group
+    assert settings.DEV.model_fields_set == original_fields_set
+    assert "AIPERF_DEV_SHOW_INTERNAL_METRICS" not in os.environ
+    assert "AIPERF_HTTP_TCP_KEEPIDLE" not in os.environ

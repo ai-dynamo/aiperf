@@ -2621,7 +2621,7 @@ class _Environment(BaseSettings):
     ) -> Iterator[None]:
         """Scope missing settings to this process and children spawned within the context."""
         previous: dict[str, BaseSettings] = {}
-        inserted: list[str] = []
+        inserted: dict[str, tuple[str, str]] = {}
         try:
             for group, fields in values.items():
                 settings = getattr(self, group)
@@ -2635,7 +2635,7 @@ class _Environment(BaseSettings):
                         and key not in settings.model_fields_set
                     ):
                         os.environ[env_key] = str(value)
-                        inserted.append(env_key)
+                        inserted[env_key] = (group, key)
                         updates[key] = value
                 previous[group] = settings
                 updated = type(settings)(**{**settings.model_dump(), **updates})
@@ -2644,7 +2644,17 @@ class _Environment(BaseSettings):
                 )
                 setattr(self, group, updated)
             if values:
-                type(self).model_validate(self.model_dump())
+                validated = type(self).model_validate(self.model_dump())
+                for group in type(self).model_fields:
+                    settings = getattr(self, group)
+                    normalized = getattr(validated, group)
+                    previous.setdefault(group, settings)
+                    normalized.__pydantic_fields_set__ = (
+                        settings.model_fields_set.copy()
+                    )
+                    setattr(self, group, normalized)
+                for env_key, (group, key) in inserted.items():
+                    os.environ[env_key] = str(getattr(getattr(self, group), key))
             yield
         finally:
             for group, settings in previous.items():
