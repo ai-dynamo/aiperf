@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Guides whose documented examples are genuinely long-running, covered at full
+# documented scale rather than shrinking the examples to suit CI.
+#
+# A Bayesian search runs 30 iterations x 3 trials (~90 benchmarks, ~100 min);
+# a search recipe self-terminates on improvement-patience after ~25 iterations
+# (~30 min). Together that is ~2h15m, which would roughly triple the nightly
+# matrix's ~45 min wall clock every weeknight.
+#
+# Weekly rather than nightly: the search machinery changes about once a week
+# (13 of 191 commits over 90 days), so a nightly run would re-test unchanged
+# code four nights in five. Everything else stays in test-docs-end-to-end.yml,
+# which nightly.yml invokes.
+#
+# Triggers:
+#   schedule          — Sundays 06:00 UTC.
+#   workflow_dispatch — on demand, for when the search machinery changes and
+#                       you do not want to wait for Sunday.
+
+name: Test Docs Long-Running Guides
+
+on:
+  schedule:
+    - cron: '0 6 * * 0'
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Commit SHA or ref to check out. Defaults to the default branch."
+        required: false
+        type: string
+
+jobs:
+  test-docs-end-to-end-long:
+    name: Test Docs End-to-End (long-running guides)
+    runs-on: prod-aiperf-tester-amd-gpu-v1
+    # ~2h15m of benchmarks plus image build and vLLM boot; the per-command
+    # ceilings live on the tags themselves (timeout=9000 / timeout=5400).
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - id: vllm-longrun-openai
+            server: vllm-longrun-openai
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+
+      - name: Run test_docs_end_to_end
+        env:
+          AIPERF_SOURCE_DIR: ${{ github.workspace }}
+          CI_JOB_NAME: test_docs_end_to_end
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          SERVER_NAME: ${{ matrix.shard.server }}
+        run: bash -x tests/ci/test_docs_end_to_end/setup_test.sh
+
+      - name: Cleanup Docker containers
+        if: always()
+        run: |
+          docker ps -aq --filter 'name=aiperf-test-' \
+            | xargs -r docker rm -f 2>/dev/null || true
