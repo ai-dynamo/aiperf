@@ -88,6 +88,30 @@ Provide a finite materialization bound through `--num-conversations`, `--num-dat
 
 Select a source harness and source model independently from the target model served by the endpoint:
 
+Replaying an agent corpus means the server has to accept `tools` in the
+request. vLLM only does that when tool calling is switched on explicitly:
+
+<!-- setup-vllm-tools-openai-endpoint-server -->
+```bash
+docker pull vllm/vllm-openai:latest
+docker run -d --gpus all -p 8000:8000 -e HF_TOKEN vllm/vllm-openai:latest \
+  --model Qwen/Qwen3-0.6B \
+  --enforce-eager \
+  --reasoning-parser qwen3 \
+  --enable-auto-tool-choice \
+  --tool-call-parser hermes \
+  --host 0.0.0.0 --port 8000
+```
+<!-- /setup-vllm-tools-openai-endpoint-server -->
+
+<!-- health-check-vllm-tools-openai-endpoint-server -->
+```bash
+timeout 900 bash -c 'until curl -sf http://localhost:8000/v1/models >/dev/null; do sleep 2; done' \
+  || { echo "vLLM not ready after 15min"; exit 1; }
+```
+<!-- /health-check-vllm-tools-openai-endpoint-server -->
+
+<!-- aiperf-run-vllm-tools-openai-endpoint-server weight=120 -->
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
@@ -100,6 +124,7 @@ aiperf profile \
   --num-conversations 1 \
   --fixed-schedule
 ```
+<!-- /aiperf-run-vllm-tools-openai-endpoint-server -->
 
 `source_model` selects the model that produced the trace; `--model` selects the target model receiving the replay. `benchmark` selects an Exgentic v2 workload. Invalid filters report the available harness/model combinations. The v1 dataset contains 22 combinations across five harnesses and six canonical source models.
 

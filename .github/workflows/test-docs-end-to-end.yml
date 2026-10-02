@@ -140,6 +140,10 @@ jobs:
           # rather than only parsed.
           - id: otel-mlflow-openai
             server: otel-mlflow-openai
+          # Same small model, started with tool calling on, so agent corpora
+          # that send `tools` are replayable.
+          - id: vllm-tools-openai
+            server: vllm-tools-openai
     steps:
       - name: Checkout
         uses: actions/checkout@v6
