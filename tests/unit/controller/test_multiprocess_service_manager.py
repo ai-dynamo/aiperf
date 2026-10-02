@@ -361,6 +361,46 @@ class TestMultiProcessServiceManager:
         )
 
 
+class TestShutdownSuppressesHeartbeatWatchdog:
+    """The controller stops every service, then exports results.
+
+    Services are silent from the moment they are stopped, while the controller
+    keeps exporting. A long export (e.g. aggregating GBs of raw records) outlived
+    the heartbeat window and the watchdog reaped the stopped services as
+    ``RequiredServiceReaped``, turning a complete run into exit code 1.
+    """
+
+    @pytest.mark.asyncio
+    async def test_services_stopped_for_export_are_not_reaped(
+        self, benchmark_run, monkeypatch
+    ):
+        service_manager = MultiProcessServiceManager(
+            required_services={ServiceType.DATASET_MANAGER: 1},
+            run=benchmark_run,
+        )
+        service_manager.activate_heartbeat_monitoring()
+        monkeypatch.setattr(
+            "aiperf.controller.base_service_manager.ServiceRegistry.get_stale_services",
+            lambda _threshold: [
+                MagicMock(
+                    service_id="dataset_manager_1",
+                    service_type=ServiceType.DATASET_MANAGER,
+                )
+            ],
+        )
+        failed: list[str] = []
+        monkeypatch.setattr(
+            "aiperf.controller.base_service_manager.ServiceRegistry.fail_service",
+            lambda service_id, _service_type: failed.append(service_id),
+        )
+
+        await service_manager.shutdown_all_services()
+        for _ in range(3):
+            await service_manager._monitor_heartbeats()
+
+        assert failed == []
+
+
 class TestWaitForProcess:
     """Test _wait_for_process force-kill after bus shutdown grace.
 
