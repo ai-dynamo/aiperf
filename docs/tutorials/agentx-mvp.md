@@ -125,7 +125,14 @@ what you must set, what you may tune, and what you shouldn't touch:
   it while rejecting the arbitrary client-side cap `--synthesis-max-isl`.
   The flag is optional and the scenario doesn't check it: omit it and no
   client-side filtering happens, so over-length traces fail at the server
-  and count toward the 1% context-overflow threshold instead.
+  and count toward the 1% context-overflow threshold instead. During warmup
+  that is not merely counted: any root warmup failure, including a
+  context-overflow rejection, aborts the run as `run_cancelled`. Setting
+  `--max-context-length` to the server's real limit avoids that.
+- **`--use-legacy-max-tokens`**: each request's recorded output length is sent
+  as `max_completion_tokens`. If your server only honors `max_tokens`, add
+  this flag; otherwise, with `ignore_eos` locked on, responses may not be
+  length-bounded.
 - **`--concurrency`** sets how many session trees stay live throughout the
   run, i.e. the sustained load. It must be a single integer under
   `--scenario`; comma-list sweeps are rejected. When concurrency exceeds the
@@ -145,7 +152,14 @@ can omit all of them (AIPerf fills in exactly these values under
 you pass one of them with a *conflicting* value, AIPerf errors up front
 rather than silently producing an invalid result. The scenario forbids
 `--inter-turn-delay-cap-seconds`; `--trace-idle-gap-cap-seconds` remains an
-optional CLI control and is unset by default.
+optional CLI control and is unset by default. Only the `ignore_eos` key of
+`--extra-inputs` is checked: other keys are merged into every request body
+after the trace's own fields, so `max_tokens`, `max_completion_tokens` or
+`stream` there would override the recorded output length or streaming
+without a lock error. Keep extra inputs to `ignore_eos` plus knobs that do
+not affect length or streaming. Likewise, don't add `--request-count` or
+`--num-sessions`: they are not rejected, but act as extra stop conditions
+(see [Troubleshooting](#troubleshooting)).
 
 **Flags the scenario only defaults** — auto-filled when omitted, but an
 explicit value is honored *silently*, with no error and no change to the
@@ -156,6 +170,13 @@ explicit value is honored *silently*, with no error and no change to the
   scenario never validates these — override them and the run still stamps
   `submission_valid: true` while replaying a materially different workload.
   Leave them at `0.0`/`1.0` for any run you intend to compare.
+- **`--dataset-sampling-strategy`**, **`--synthesis-max-osl`**,
+  **`--burst-phase-starts`**: not validated. `random`/`shuffle` sampling
+  changes lane assignment and recycle order; `--synthesis-max-osl` caps the
+  requested `max_tokens`, so the server decodes fewer tokens than recorded;
+  `--burst-phase-starts` also starts every lane's first profiling request
+  immediately instead of keeping its recorded offset. The run still stamps `submission_valid: true`, so
+  leave all three unset for comparable runs.
 - **`--benchmark-duration 1800`** (30 minutes) is the scenario default;
   900 seconds (15 minutes) is the enforced minimum, and AIPerf rejects
   anything shorter. Longer values are accepted without complaint.
@@ -172,7 +193,12 @@ explicit value is honored *silently*, with no error and no change to the
 - **`--num-profile-runs N`** repeats the benchmark N times and adds an
   aggregate file with confidence intervals across the runs. See
   [Reading the Result](#reading-the-result-submission_valid) below for where
-  the `submission_valid` stamp lands.
+  the `submission_valid` stamp lands. Only the first run performs the
+  optional cache-pressure warmup (`--agentic-cache-warmup-duration` /
+  `--warmup-requests-per-lane`); later runs still send the trajectory
+  primers but skip the extra stage. Pass
+  `--no-profile-run-disable-warmup-after-first` to give every run the same
+  warmup.
 - Every eligible trace loads by default: all 393 when `--max-context-length`
   is unset, otherwise every trace that fits under it. `--num-dataset-entries N`
   keeps the first N *eligible* traces after `--max-context-length` filtering
@@ -251,14 +277,23 @@ from killing a healthy run (a Ctrl+C stamps it `run_cancelled` / invalid):
    plus any active subagents): that stream's final request before the lane's
    starting instant `t*`, which primes the server's KV cache. Every warmup
    request, primers and optional cache-pressure traffic alike, is limited to
-   one output token. With deep histories in real
-   coding traces this is a meaningful chunk of wall time on its own.
+   one output token. With deep histories in real coding traces this is a
+   meaningful chunk of wall time on its own. Every 30 s the log prints a
+   `Phase warmup progress` line with `returned`, `sent`, `in_flight`,
+   `errors`, and `elapsed` counts (interval:
+   `AIPERF_SERVICE_WARMUP_PROGRESS_LOG_INTERVAL`, 0 disables). If `returned`
+   stops climbing while `in_flight` stays non-zero, a request is stuck;
+   snapshot warmup waits indefinitely by default, so set
+   `--agentic-warmup-grace-period` to bound it.
 3. **Profiling** for `--benchmark-duration` (1800 s by default) — with
    `--ui simple`, per-phase progress and request counts tick along as
    traffic flows.
 4. **Drain and export.** In-flight requests finish during a grace-period
    drain, then the console prints the metrics tables and the exact artifact
-   paths (under `./artifacts/` unless you set `--artifact-dir`).
+   paths (under `./artifacts/` unless you set `--artifact-dir`). The console
+   tables do not show `submission_valid` or the context-overflow count: open
+   `profile_export_aiperf.json` and check `metadata.submission_valid` before
+   trusting a run.
 
 End to end, a cold first run therefore takes noticeably longer than the 30
 minutes the duration flag suggests — reconstruction, warmup, and drain all
@@ -288,7 +323,7 @@ a Weka dataset entirely is an error even then.
 | `--cache-bust first_turn_prefix` | A unique per-trajectory-tree marker (shared by the root session and its subagents) is injected at the start of the first user turn of the request prefix for every play (each fresh dispatch of a trace, initial or recycled); a tree that continues from warmup into profiling keeps its marker | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker gives every recycled play a fresh prompt prefix. |
 | Loader is a pinned Weka with-subagents corpus | The dataset must be a with-subagents `--public-dataset` alias or `--hf-weka-dataset semianalysisai/cc-traces-weka-062126` (`weka_hf`). A local `weka_trace` directory is format-compatible but unpinned — the run refuses unless you pass `--unsafe-override` (which stamps `submission_valid: false`). The [Troubleshooting](#troubleshooting) entry for this lock lists the exact flag forms. | Submission validity requires a known public corpus identity; arbitrary local dirs are not hash-verifiable. |
 | `--benchmark-duration >= 900` (defaults to 1800 when unset) | The run lasts at least 15 minutes; if omitted, it runs for 30 minutes | Steady-state needs time to stabilize; short runs are noise. |
-| No client-side input truncation | `--synthesis-max-isl` (the synthesis ISL filter) is rejected for both `--public-dataset` / `--hf-weka-dataset` and file-based Weka inputs, because it drops traces whose input length exceeds the cap | Truncating prompts on the client side would falsify the workload. |
+| No client-side input truncation | `--synthesis-max-isl` (the synthesis ISL filter) is rejected for both `--public-dataset` / `--hf-weka-dataset` and file-based Weka inputs, because it drops traces whose input length exceeds the cap. `--synthesis-max-osl` is not checked (see [Quick Start](#quick-start)) | Truncating prompts on the client side would falsify the workload. |
 | `--random-seed` is set | If you didn't pass one, AIPerf picks a strong random one and logs it | Reproducibility — every replayed result can be regenerated. |
 
 If you forget to pass the `ignore_eos` extra-input, `--streaming`,
@@ -342,6 +377,10 @@ directory) carries it too:
 (In the per-run file, metric results are top-level fields alongside
 `metadata`; the aggregate file nests them under a `metrics` key instead.)
 
+`metadata.dataset` records the corpus that actually ran: `loader` (your
+alias), `hf_dataset_name` (the resolved HF repo), and `num_dataset_entries` if
+you capped it. Use it to confirm two results used the same drop.
+
 Three possible states for `submission_valid`:
 
 - **`submission_valid: true`** — the run honored every scenario rule AIPerf
@@ -357,7 +396,18 @@ Three possible states for `submission_valid`:
     accepted), which means the server is rejecting prompts the benchmark
     requires it to handle. This usually
     means the server was started with a reduced max model length;
-    AgentX MVP requires the model's default.
+    AgentX MVP requires the model's default. A failed response counts as an
+    overflow only if its body (or `error.message`) contains `context length`,
+    `maximum context`, `context_length_exceeded`, or `prompt is too long`
+    (case-insensitive). If your server words it differently, extend the list
+    with `AIPERF_AGENTX_CONTEXT_OVERFLOW_SUBSTRINGS`; otherwise those
+    rejections are ordinary errors and do not count toward this threshold
+    (an empty list disables detection).
+    When the server rejects a non-final turn as too long, AIPerf ends that
+    trajectory there and the lane recycles once the tree drains. Overflowed
+    requests are left out of the latency metrics, error counts and
+    `profile_export.jsonl`; they appear only in `context_overflow_count` and
+    `skipped_context_overflow_count` and in the 1% rate check.
   - `"run_cancelled"` — the run was cancelled early (Ctrl+C). On a single
     Ctrl+C AIPerf cancels gracefully and still writes the export files with
     whatever partial metrics it collected (a second Ctrl+C force-quits
@@ -383,6 +433,10 @@ Three possible states for `submission_valid`:
 - **Field absent** — you ran without `--scenario`. The submission-validity
   machinery is gated on the scenario flag.
 
+Also check the top-level `is_complete` field of the per-run file. When
+`false`, `incomplete_reason` says why. It is not part of `submission_valid`,
+so treat an incomplete run as unusable even if stamped `true`.
+
 If you see `submission_valid: false`, look at `submission_invalid_reasons` and
 the AIPerf log. The reasons correspond to a scenario rule you broke or a
 runtime check that failed or could not be validated.
@@ -393,7 +447,11 @@ runtime thresholds it tracks. `true` means AIPerf detected no rule violation;
 it can't attest to anything outside its view (a server started with a reduced
 context window, for example, only shows up indirectly through the
 context-overflow rate). Whether two results are genuinely comparable still
-depends on the full setup on both sides.
+depends on the full setup on both sides. The stamp also ignores environment
+variables: the `AIPERF_DATASET_WEKA_*` reconstruction knobs from the
+[Weka tutorial](weka-trace.md) change session structure or wire shape yet
+leave `submission_valid: true`. Leave them at defaults for comparable runs and
+check none are set in your shell or pod environment.
 
 ---
 
@@ -403,7 +461,12 @@ depends on the full setup on both sides.
 
 Before AIPerf measures anything, it runs a **warmup phase** that primes the
 server's KV cache. This isn't the generic AIPerf warmup — it's a
-trajectory-based warmup specific to the agentic-replay scheduler.
+trajectory-based warmup specific to the agentic-replay scheduler. The generic
+warmup flags (`--warmup-request-count`, `--warmup-num-sessions`,
+`--warmup-duration`, `--warmup-concurrency`, or a `warmup` phase in YAML) are
+accepted without a warning but have no effect: agentic replay replaces any
+declared warmup phase with its own. To add warmup load use
+`--agentic-cache-warmup-duration` or `--warmup-requests-per-lane`.
 
 Because the scheduler synthesizes this phase rather than reading it from your
 `phases:` list, it reports under the reserved name `agentic.warmup` in logs,
@@ -465,7 +528,11 @@ snapshot warmup (including `--warmup-requests-per-lane`), so a merely slow
 warmup runs to completion.
 With `--agentic-cache-warmup-duration` the default drain is bounded to the
 larger of the benchmark grace period and `min(duration, 300s)` unless
-`--agentic-warmup-grace-period` is set explicitly.
+`--agentic-warmup-grace-period` is set explicitly. If warmup requests are
+still on the wire when that limit is reached, AIPerf cancels them and the run
+fails with `Accelerated warmup drain timed out before all wire requests
+returned`. Raise `--agentic-warmup-grace-period` (or pass `inf`) if your
+server is slow to drain deep one-token warmup requests.
 
 #### Optional cache-pressure warmup
 
@@ -501,7 +568,10 @@ exclusive: choose a time-bounded warmup or a deterministic request-bounded
 warmup.
 
 These requests remain part of warmup, so they are excluded from exported
-request metrics.
+request metrics. They are reported separately under the top-level
+`warmup_metrics` key of `profile_export_aiperf.json`. `profile_export.jsonl`
+still contains warmup rows, tagged `metadata.benchmark_phase: "warmup"`;
+filter them out when analyzing profiling records.
 
 ### Profiling Phase: Faithful Replay, Recycle, Global Idle Guard
 
@@ -573,7 +643,21 @@ A few wrinkles worth knowing:
   behavior). An *empty* pool after filtering is still an error.
 - **Profiling ends** when `--benchmark-duration` elapses. Anything in flight
   finishes during a grace-period drain and is included in the metrics; nothing
-  *new* starts after the duration ends.
+  *new* starts after the duration ends. The drain is bounded by
+  `--benchmark-grace-period` (default 30 s, also applied when the scenario
+  fills in the default duration; `inf` waits indefinitely). Requests still in
+  flight when it expires are cancelled (logged as `Phase profiling timed out,
+  cancelling all credits`), so raise it if long responses are being cut off.
+- **A context-overflow error ends that trajectory.** If the server rejects a
+  non-final turn as too long, AIPerf sends no further turns on that stream and
+  logs `Terminating trajectory <id> early at turn i/n: context-overflow error
+  from server`. If it was the root, the tree drains and the lane recycles into
+  a fresh trace. Other errors don't stop the trajectory.
+- **Other errors during profiling don't stop the run.** A failed request is
+  recorded as an error and its stream moves on to the next recorded turn. A
+  subagent that fails on its final turn still releases the parent's join. Set
+  `AIPERF_DAG_FAIL_FAST=1` to abort the parent and its sibling subagents
+  instead.
 
 ### Subagents
 
@@ -606,6 +690,13 @@ in-subagent request schedule replays on the recorded timeline; and the
 parent's SPAWN_JOIN waits on *all* of a subagent's child streams. For the
 detection rules and the `::sa:`/`::aux:`/`::wg:`/`::fa:` stream-naming
 scheme, see the [Weka Traces tutorial](weka-trace.md).
+
+To check subagent behavior, read the top-level `branch_stats` block in
+`profile_export_aiperf.json` (`children_spawned`, `children_completed`,
+`children_errored`, `parents_suspended`, ...; see
+[DAG benchmarks](../benchmark-modes/dag.md)). A failed subagent is counted in
+`children_errored`, and the phase-end `BranchOrchestrator stats:` log line
+reports the same `errored=` counts.
 
 ---
 
@@ -721,7 +812,12 @@ a rate), top-level in `profile_export_aiperf.json` and under `metrics` in
 the aggregate file — divide it by
 `request_count + error_request_count + skipped_context_overflow_count`
 (the same denominator the aggregate exporter uses for the 1% threshold)
-to see how close you were to the limit.
+to see how close you were to the limit. If you see overflows in the server log
+but nothing in `error_summary` or `profile_export.jsonl`, that is expected:
+under the scenario an overflowed request is not counted as an error, does
+not count toward `--failed-request-threshold`, and shows up only in
+`context_overflow_count` and `skipped_context_overflow_count` in
+`profile_export_aiperf.json`.
 
 **Run exits non-zero with `ProfileMetricCoverageError`**
 The server stopped producing both TTFT and inter-token-latency observations before 95% of the
@@ -731,6 +827,10 @@ the result artifact, marks it invalid with
 `insufficient_profile_metric_coverage`, and reports the observed coverage for both signals. Check
 the inference-server logs for a crash or stalled request processing. Warmup metrics and profiling
 phases shorter than the scenario's minimum valid duration are excluded.
+If you added `--request-count` or `--num-sessions`, the scenario does not
+reject them but they act as extra stop conditions: when one ends profiling
+before `--benchmark-duration`, the 95% coverage check fails with this error.
+Remove them.
 
 **"scenario `'inferencex-agentx-mvp'` requires loader=any of …" / cannot verify corpus identity for a local weka_trace directory**
 The AgentX MVP scenario stamps `submission_valid: true` only for a pinned
@@ -792,6 +892,12 @@ to ~1800 seconds for a cold run. The cost is one-time: the reconstructed
 dataset lands in an on-disk cache (default `~/.cache/aiperf/dataset_mmap`)
 whose key includes the random seed, so pin `--random-seed` and later runs
 restore it in seconds.
+
+**On Kubernetes**, each `AIPerfJob` starts with empty per-pod HuggingFace and
+dataset directories, so every job downloads and rebuilds the corpus even with
+a pinned `--random-seed`. Local `export`s don't reach the pods; pass raised
+timeouts and `HF_TOKEN` through the pod template (see
+[Kubernetes configuration](../kubernetes/configuration.md)).
 
 **Run is slower than I expected**
 On a cold first run, the corpus reconstruction described in the previous
