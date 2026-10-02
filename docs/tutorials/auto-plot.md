@@ -21,8 +21,8 @@ Single-run: the callback only fires on exit 0. Multi-run / sweep: the callback f
 
 ```bash
 aiperf profile \
-    --model meta-llama/Llama-3.1-8B-Instruct \
-    --url http://vllm.internal:8000 \
+    --model Qwen/Qwen3-0.6B \
+    --url http://localhost:8000 \
     --concurrency 16 \
     --request-count 200 \
     --auto-plot

@@ -123,6 +123,13 @@ If you inline more than 500 records, AIPerf logs a warning recommending a file. 
 
 A bundled template demonstrates all three formats:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=90 -->
 ```bash
 aiperf config init --template inline_dataset --output bench.yaml
+
+# The template parameterizes the model and endpoint, so it runs as-is:
+MODEL_NAME=Qwen/Qwen3-0.6B \
+INFERENCE_URL=http://localhost:8000/v1/chat/completions \
+  aiperf profile --config bench.yaml
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->

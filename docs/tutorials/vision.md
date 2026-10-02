@@ -89,6 +89,9 @@ JSON Export: artifacts/Qwen_Qwen2-VL-2B-Instruct-chat-concurrency4/profile_expor
 
 Create a JSONL file with text prompts and image URLs:
 
+
+Run AIPerf using the custom input file:
+
 <!-- aiperf-run-vllm-vision-openai-endpoint-server -->
 ```bash
 cat <<EOF > inputs.jsonl
@@ -98,13 +101,7 @@ cat <<EOF > inputs.jsonl
 {"texts": ["What is the main subject of this image?"], "images": ["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlLaY4AAAAASUVORK5CYII="]}
 {"texts": ["Provide a caption for this image."], "images": ["data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlLaY4AAAAASUVORK5CYII="], "output_length": 50}
 EOF
-```
-<!-- /aiperf-run-vllm-vision-openai-endpoint-server -->
 
-Run AIPerf using the custom input file:
-
-<!-- aiperf-run-vllm-vision-openai-endpoint-server -->
-```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
     --endpoint-type chat \
