@@ -42,6 +42,40 @@ def test_explicit_cli_values_override_defaults(preset: str) -> None:
     assert config.benchmark.gpu_telemetry.enabled is True
 
 
+@pytest.mark.parametrize(
+    ("defaults", "explicit", "section", "enabled"),
+    [
+        param(
+            {"gpu_telemetry": ["http://localhost:9400/metrics"]},
+            {"no_gpu_telemetry": True}, "gpu_telemetry", False, id="disable-gpu",
+        ),
+        param(
+            {"server_metrics": ["http://localhost:8000/metrics"]},
+            {"no_server_metrics": True}, "server_metrics", False, id="disable-server",
+        ),
+        param(
+            {"no_server_metrics": True},
+            {"server_metrics": ["http://localhost:8000/metrics"]},
+            "server_metrics", True, id="enable-server",
+        ),
+    ],
+)  # fmt: skip
+def test_explicit_telemetry_flags_override_opposite_defaults(
+    preset: str,
+    defaults: dict[str, object],
+    explicit: dict[str, object],
+    section: str,
+    enabled: bool,
+) -> None:
+    SCENARIOS[preset] = SCENARIOS[preset].model_copy(update={"cli_defaults": defaults})
+
+    config = resolve_config(
+        CLIConfig(scenario=preset, model_names=["test-model"], **explicit)
+    )
+
+    assert getattr(config.benchmark, section).enabled is enabled
+
+
 def test_scenario_duration_prevents_fallback_request_limit(preset: str) -> None:
     config = resolve_config(
         CLIConfig(

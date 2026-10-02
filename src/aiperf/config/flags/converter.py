@@ -520,8 +520,14 @@ def _apply_scenario_defaults(cli: CLIConfig) -> CLIConfig:
         for key, value in defaults.items()
         if value is not None and key not in cli.model_fields_set
     }
-    if "gpu_telemetry" in cli.model_fields_set:
-        defaults.pop("no_gpu_telemetry", None)
+    for enabled, disabled in (
+        ("gpu_telemetry", "no_gpu_telemetry"),
+        ("server_metrics", "no_server_metrics"),
+    ):
+        if enabled in cli.model_fields_set:
+            defaults.pop(disabled, None)
+        if disabled in cli.model_fields_set:
+            defaults.pop(enabled, None)
     unknown = sorted(defaults.keys() - type(cli).model_fields.keys())
     if unknown:
         raise TypeError(
