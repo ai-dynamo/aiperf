@@ -54,9 +54,10 @@ curl -s localhost:8000/v1/chat/completions \
 
 LibriSpeech is the standard read-speech benchmark and requires no authentication:
 
+<!-- aiperf-run-vllm-audio-openai-endpoint-server weight=300 timeout=1800 -->
 ```bash
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -64,6 +65,7 @@ aiperf profile \
     --request-count 10 \
     --concurrency 4
 ```
+<!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
 
 **Sample Output:**
 
