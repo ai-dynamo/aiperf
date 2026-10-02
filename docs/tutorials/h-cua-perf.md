@@ -74,6 +74,18 @@ The screenshot window and the session selection are `--dataset-filter` options:
 | `max_trace_length` | Keep each session's first N turns. |
 | `avg_trace_length` | Scale every session's length by the same factor until the mean reaches the target. |
 
+### Replay a local build
+
+A build derived with the dataset's `trace_processor.py` is replayed from disk. Point `--input-file` at the trace and name the format:
+
+```bash
+aiperf profile ... \
+    --input-file ./build/h_cua.jsonl.zst \
+    --custom-dataset-type h_cua_perf
+```
+
+The trace may be plain or zstd-compressed, as `trace_processor.py` wrote it. Its `h_cua.meta.json` manifest must sit beside it and carry its sha256; any other file is refused. Every session of the build is loaded. `--dataset-filter` applies to `--public-dataset` only: a derived build already carries its screenshot window and session selection, so shape it when deriving it.
+
 ## Related Tutorials
 
 - [Trace Replay with Mooncake Traces](../benchmark-modes/trace-replay.md)

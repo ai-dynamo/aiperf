@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import statistics
 from collections.abc import Iterator
 from itertools import groupby, islice
@@ -10,6 +11,7 @@ from operator import itemgetter
 from pathlib import Path
 from typing import Any, TextIO
 
+import psutil
 import zstandard
 from pydantic import ConfigDict, Field, model_validator
 
@@ -27,6 +29,9 @@ IMAGE_OMITTED_TEXT = f"\n\n{IMAGE_PLACEHOLDER}\n\n\n\n"
 
 SCREENSHOT_ROLES = frozenset({"user", "tool"})
 """Observations carry the screenshots: user messages for GUI agents, tool results for tool-calling ones."""
+
+LIVE_OBJECT_FACTOR = 2.0
+"""Live bytes per on-disk byte once a record is parsed; measured at 1.4 to 1.7, rounded up for text-heavy sessions."""
 
 _BISECTION_STEPS = 32
 
@@ -144,6 +149,46 @@ def open_dataset(path: Path) -> TextIO:
     if path.suffix != ".zst":
         return open(path, encoding="utf-8")
     return zstandard.open(path, "rt", encoding="utf-8")
+
+
+def manifest_path(trace: Path) -> Path:
+    """Where trace_processor.py writes the manifest: beside its output, named without the compression suffix."""
+    name = trace.name.removesuffix(".zst").removesuffix(".jsonl")
+    return trace.with_name(f"{name}.meta.json")
+
+
+def verify_trace(meta: dict[str, Any], trace: Path, *, mismatch_hint: str = "") -> str:
+    """Refuse any trace but the one the manifest names; return its sha256 so it is hashed once."""
+    digests = meta.get("sha256")
+    expected = digests.get(trace.name) if isinstance(digests, dict) else None
+    if not expected:
+        raise ValueError(f"the manifest carries no sha256 for {trace.name}")
+    with open(trace, "rb") as f:
+        actual = hashlib.file_digest(f, "sha256").hexdigest()
+    if actual != expected:
+        raise ValueError(
+            f"{trace.name} does not match the manifest "
+            f"(sha256 {actual[:12]}, manifest says {expected[:12]}){mismatch_hint}"
+        )
+    return actual
+
+
+def memory_shortfall(meta: dict[str, Any], plan: dict[str, int]) -> str | None:
+    """How far the selection overshoots the RAM available once parsed, or None when it fits.
+
+    The whole selection is parsed into memory, so the caller warns before the read.
+    """
+    if not meta.get("size_mb") or not meta.get("num_turns"):
+        return None
+    planned = sum(plan.values())
+    estimate = meta["size_mb"] * 1e6 * planned / meta["num_turns"] * LIVE_OBJECT_FACTOR
+    available = psutil.virtual_memory().available
+    if estimate <= available:
+        return None
+    return (
+        f"the {planned:,} selected requests need about {estimate / 1e9:.1f} GB of RAM "
+        f"once parsed and {available / 1e9:.1f} GB is available"
+    )
 
 
 def iter_selected_records(

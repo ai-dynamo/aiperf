@@ -4,12 +4,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 import orjson
-import psutil
 import zstandard
 from pydantic import ValidationError
 
@@ -21,9 +19,11 @@ from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 from aiperf.dataset.loader.h_cua_perf_processing import (
     HCuaPerfFilters,
     iter_selected_records,
+    memory_shortfall,
     open_dataset,
     select_trace_lengths,
     supported_filter_keys,
+    verify_trace,
 )
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
@@ -31,9 +31,6 @@ from aiperf.plugin.enums import DatasetSamplingStrategy
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
-
-LIVE_OBJECT_FACTOR = 2.0
-"""Live bytes per on-disk byte once a record is parsed; measured at 1.4 to 1.7, rounded up for text-heavy sessions."""
 
 
 class HCuaPerfDatasetLoader(BaseHFDatasetLoader):
@@ -150,38 +147,20 @@ class HCuaPerfDatasetLoader(BaseHFDatasetLoader):
         return data
 
     def _verify_trace(self, meta: dict[str, Any], trace: Path) -> None:
-        """The manifest names the sha256 of the trace it describes; any other file is refused."""
-        digests = meta.get("sha256")
-        expected = digests.get(self.hf_filename) if isinstance(digests, dict) else None
-        if not expected:
-            raise DatasetLoaderError(
-                f"{self.tag}: the manifest carries no sha256 for {self.hf_filename}"
-            )
-        with open(trace, "rb") as f:
-            actual = hashlib.file_digest(f, "sha256").hexdigest()
-        if actual != expected:
-            raise DatasetLoaderError(
-                f"{self.tag}: {self.hf_filename} does not match the manifest "
-                f"(sha256 {actual[:12]}, manifest says {expected[:12]}); "
-                "delete it from the Hub cache and download again"
-            )
+        """The Hub cache persists across runs, so a mismatch is fixed by downloading again."""
+        verify_trace(
+            meta,
+            trace,
+            mismatch_hint="; delete it from the Hub cache and download again",
+        )
 
     def _warn_if_selection_exceeds_memory(
         self, meta: dict[str, Any], plan: dict[str, int]
     ) -> None:
-        """The whole corpus is parsed into memory; say so before the read when it will not fit."""
-        if not meta.get("size_mb") or not meta.get("num_turns"):
-            return
-        planned = sum(plan.values())
-        estimate = (
-            meta["size_mb"] * 1e6 * planned / meta["num_turns"] * LIVE_OBJECT_FACTOR
-        )
-        available = psutil.virtual_memory().available
-        if estimate > available:
+        if shortfall := memory_shortfall(meta, plan):
             self.warning(
-                f"{self.tag}: the {planned:,} selected requests need about "
-                f"{estimate / 1e9:.1f} GB of RAM once parsed and {available / 1e9:.1f} GB "
-                "is available; select fewer with --num-dataset-entries or --dataset-filter"
+                f"{self.tag}: {shortfall}; select fewer with --num-dataset-entries "
+                "or --dataset-filter"
             )
 
     async def convert_to_conversations(
