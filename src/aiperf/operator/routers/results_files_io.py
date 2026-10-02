@@ -334,6 +334,8 @@ def _serve_sanitized_job_spec(request: Request, path: Path) -> StreamingResponse
         request.headers.get("accept-encoding"),
         default=CompressionEncoding.IDENTITY,
     )
+    if encoding is None:
+        raise HTTPException(status_code=406, detail="No acceptable content encoding")
     headers = _download_headers(JOB_SPEC_FILENAME)
     if encoding != CompressionEncoding.IDENTITY:
         headers["Content-Encoding"] = encoding
@@ -467,6 +469,8 @@ def _accepts_encoding(accept_encoding: str | None, encoding: str) -> bool:
         return False
 
     accepted = parse_accept_encoding(accept_encoding)
+    if encoding == "identity":
+        return accepted.get("identity", 0.0 if accepted.get("*") == 0 else 1.0) > 0
     if encoding in accepted:
         return accepted[encoding] > 0
     return accepted.get("*", 0.0) > 0
@@ -496,6 +500,9 @@ def _serve_zst_file(
             headers=headers,
         )
 
+    if accept and not _accepts_encoding(accept, "identity"):
+        raise HTTPException(status_code=406, detail="No acceptable content encoding")
+
     return StreamingResponse(
         _stream_zstd_decompress(zst_path),
         media_type=_artifact_media_type(display_name),
@@ -513,6 +520,8 @@ def _serve_raw_file(request: Request, file_path: Path) -> StreamingResponse:
 
     accept = request.headers.get("accept-encoding")
     encoding = select_encoding(accept, default=CompressionEncoding.IDENTITY)
+    if encoding is None:
+        raise HTTPException(status_code=406, detail="No acceptable content encoding")
 
     headers = _download_headers(file_path.name)
     if encoding != CompressionEncoding.IDENTITY:

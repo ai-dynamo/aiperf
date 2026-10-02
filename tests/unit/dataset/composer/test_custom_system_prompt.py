@@ -202,7 +202,7 @@ class TestSpeedBenchSystemPrompt:
             CLIConfig(
                 model_names=["test-model"],
                 input_file=str(speed_bench_file),
-                custom_dataset_type="speed_bench_coding",
+                custom_dataset_type="speed_bench_qualitative",
                 **kwargs,
             )
         )
@@ -314,6 +314,7 @@ class TestPublicComposerSystemPrompt:
                     multi_turn=False,
                     streaming=False,
                     is_trace=False,
+                    category=None,
                 ),
             ),
         ):

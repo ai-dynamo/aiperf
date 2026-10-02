@@ -154,6 +154,7 @@ class TraceLabTraceDatasetLoader(BaseFileLoader):
             run=self.run,
             prompt_generator=prompt_generator,
             default_block_size=self._block_size,
+            nested_timestamp_basis="absolute",
         )
 
     @classmethod

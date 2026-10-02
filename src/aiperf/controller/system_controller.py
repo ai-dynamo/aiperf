@@ -1353,7 +1353,7 @@ class SystemController(
         self.trace_or_debug(
             lambda: f"Received profile results message: {message}",
             lambda: (
-                f"Received profile results message: {len(message.results.results.records) if message.results.results else 0} records"
+                f"Received profile results message: {len(message.results.results.records or []) if message.results.results else 0} records"
             ),
         )
         if message.results.errors:

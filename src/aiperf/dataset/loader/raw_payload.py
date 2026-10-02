@@ -45,8 +45,9 @@ class RawPayloadDatasetLoader(BaseRawPayloadLoader):
     ) -> bool:
         """Return True when data is a chat API payload or filename is a directory of JSONL files.
 
-        Rejects agentic trajectory records (``conversation_id`` present) and
-        InputsFile structures (``data`` key holding a list).
+        Rejects agentic trajectory records (``conversation_id`` present),
+        declared Mooncake response modes, and InputsFile structures (``data``
+        key holding a list).
         """
         if data is not None:
             # Type-dispatch plugins feed arbitrary first-record shapes here;
@@ -55,6 +56,10 @@ class RawPayloadDatasetLoader(BaseRawPayloadLoader):
             if not isinstance(data, dict):
                 return False
             if is_speed_bench_row(data):
+                return False
+            # Mooncake must report invalid modes instead of replaying trace
+            # metadata as an API payload and discarding session semantics.
+            if "assistant_responses" in data or "message_mode" in data:
                 return False
             if not isinstance(data.get("messages"), list):
                 return False
