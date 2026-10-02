@@ -142,7 +142,6 @@ def test_swept_prompt_shorthand_rerenders_its_source_reference(
 
 
 def test_named_dataset_prompt_shorthand_rerenders_its_source_reference() -> None:
-    """Named dataset lists use the same prompt shorthand as singular inputs."""
     config = load_config_from_mapping(
         {
             "benchmark": {
@@ -171,14 +170,60 @@ def test_named_dataset_prompt_shorthand_rerenders_its_source_reference() -> None
     ] == [128, 512]
 
 
-def test_scalar_prompt_shorthand_can_be_overridden_by_distribution_path() -> None:
-    """A canonical nested override can replace a scalar with a distribution."""
+@pytest.mark.parametrize("prompt", ["isl", "osl"])
+@pytest.mark.parametrize("named", [False, True], ids=["singular", "named"])
+def test_scalar_prompt_shorthand_can_be_overridden_by_distribution_path(
+    prompt: str, named: bool
+) -> None:
+    reference = f"{'datasets.default' if named else 'dataset'}.{prompt}"
+    dataset = {
+        prompt: 64,
+        "entries": f"{{{{ {reference}.mean | default({reference}) }}}}",
+    }
+    source = {
+        "benchmark": {
+            "model": "test-model",
+            "endpoint": {"url": "http://localhost:8000"},
+            **(
+                {"datasets": [{"name": "default", **dataset}]}
+                if named
+                else {"dataset": dataset}
+            ),
+            "phases": {"type": "concurrency", "requests": 10},
+        },
+        "sweep": {
+            "type": "grid",
+            "parameters": {f"datasets.default.prompts.{prompt}.mean": [128, 512]},
+        },
+    }
+    original = copy.deepcopy(source)
+    config = load_config_from_mapping(source)
+    raw_before = copy.deepcopy(config._raw_envelope)
+    plan = build_benchmark_plan(config)
+    assert [benchmark.datasets[0].entries for benchmark in plan.configs] == [128, 512]
+    assert [
+        getattr(benchmark.datasets[0].prompts, prompt).mean
+        for benchmark in plan.configs
+    ] == [
+        128,
+        512,
+    ]
+    assert source == original
+    assert config._raw_envelope == raw_before
+
+
+def test_scalar_prompt_mean_sweep_retains_explicit_prompt_precedence() -> None:
+    """A scalar alias remains unchanged when explicit prompts supply the mean."""
     config = load_config_from_mapping(
         {
             "benchmark": {
                 "model": "test-model",
                 "endpoint": {"url": "http://localhost:8000"},
-                "dataset": {"type": "synthetic", "isl": 64},
+                "dataset": {
+                    "isl": 64,
+                    "prompts": {"isl": {"mean": 96}},
+                    "entries": "{{ dataset.isl }}",
+                },
                 "phases": {"type": "concurrency", "requests": 10},
             },
             "sweep": {
@@ -188,10 +233,31 @@ def test_scalar_prompt_shorthand_can_be_overridden_by_distribution_path() -> Non
         }
     )
     plan = build_benchmark_plan(config)
+    assert [benchmark.datasets[0].entries for benchmark in plan.configs] == [64, 64]
     assert [benchmark.datasets[0].prompts.isl.mean for benchmark in plan.configs] == [
         128,
         512,
     ]
+
+
+def test_scalar_prompt_stddev_sweep_does_not_inherit_a_mean() -> None:
+    """A stddev-only override still requires an explicit distribution mean."""
+    config = load_config_from_mapping(
+        {
+            "benchmark": {
+                "model": "test-model",
+                "endpoint": {"url": "http://localhost:8000"},
+                "dataset": {"isl": 64},
+                "phases": {"type": "concurrency", "requests": 10},
+            },
+            "sweep": {
+                "type": "grid",
+                "parameters": {"datasets.default.prompts.isl.stddev": [8, 16]},
+            },
+        }
+    )
+    with pytest.raises(ValueError, match=r"prompts.isl.normal.mean\s+Field required"):
+        build_benchmark_plan(config)
 
 
 def test_shorthand_sweep_rejects_wrong_dataset_name() -> None:

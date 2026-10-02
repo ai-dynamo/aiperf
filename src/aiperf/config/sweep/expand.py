@@ -500,6 +500,14 @@ def _resolve_prompt_shorthand_path(
     field = keys[1]
     explicit = prompts.get(field)
     shorthand = dataset[field]
+    if (
+        field not in prompts
+        and keys[2:] == ["mean"]
+        and isinstance(shorthand, (int, float))
+    ):
+        # A mean override replaces the fixed scalar with a normal distribution.
+        dataset[field] = {"mean": shorthand}
+        return keys[1:]
     # Explicit prompts win; omitted distribution fields inherit shorthand.
     if (
         field not in prompts
