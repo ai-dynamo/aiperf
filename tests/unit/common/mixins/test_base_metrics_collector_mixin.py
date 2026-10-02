@@ -261,3 +261,135 @@ class TestFetchRejectsJsonContentType:
         # The body should never have been read — Content-Type rejection is
         # cheaper than full parse and avoids any work on a bad endpoint.
         mock_response.text.assert_not_awaited()
+
+
+class BodyOnHeadServer:
+    """Serves a HEAD reply that illegally carries a body, as Triton does.
+
+    Raw sockets because no compliant HTTP framework will emit a body on a HEAD
+    reply, which is the behavior under test.
+    """
+
+    GET_BODY = b"# HELP up Server is up\n# TYPE up gauge\nup 1\n"
+    HEAD_ERROR_BODY = b'{"error":"Method Not Allowed"}'
+
+    def __init__(self) -> None:
+        self.methods_seen: list[str] = []
+        self._server: asyncio.AbstractServer | None = None
+
+    async def __aenter__(self) -> "BodyOnHeadServer":
+        self._server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        if self._server is not None:
+            self._server.close()
+            await self._server.wait_closed()
+
+    @property
+    def url(self) -> str:
+        assert self._server is not None
+        return f"http://127.0.0.1:{self._server.sockets[0].getsockname()[1]}/metrics"
+
+    async def _handle(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        try:
+            while True:
+                request_line = await reader.readline()
+                if not request_line:
+                    return
+                while True:
+                    header = await reader.readline()
+                    if header in (b"\r\n", b"\n", b""):
+                        break
+
+                method = request_line.split(b" ")[0].decode()
+                self.methods_seen.append(method)
+
+                if method == "HEAD":
+                    body = self.HEAD_ERROR_BODY
+                    writer.write(
+                        b"HTTP/1.1 405 Method Not Allowed\r\n"
+                        b"Content-Type: application/json\r\n"
+                        b"Content-Length: "
+                        + str(len(body)).encode()
+                        + b"\r\n\r\n"
+                        + body
+                    )
+                else:
+                    writer.write(
+                        b"HTTP/1.1 200 OK\r\n"
+                        b"Content-Type: text/plain\r\n"
+                        b"Content-Length: "
+                        + str(len(self.GET_BODY)).encode()
+                        + b"\r\n\r\n"
+                        + self.GET_BODY
+                    )
+                await writer.drain()
+        except (ConnectionResetError, BrokenPipeError):
+            pass
+        finally:
+            writer.close()
+
+
+class TestReachabilityAgainstMalformedHeadReplies:
+    """Reachability must hold for a server that mishandles HEAD.
+
+    Drives the real aiohttp client against a real socket server. The
+    pre-existing reachability tests mock `_check_reachability_with_session`
+    outright, so they cannot catch a regression in the probe itself.
+    """
+
+    @pytest.mark.asyncio
+    async def test_body_on_head_reply_does_not_block_reachability(self) -> None:
+        """Triton's RFC-violating HEAD reply must not hide a GET-serving endpoint."""
+        async with BodyOnHeadServer() as server:
+            collector = ConcreteCollector(
+                endpoint_url=server.url,
+                collection_interval=1.0,
+                reachability_timeout=5.0,
+            )
+
+            assert await collector.is_url_reachable() is True
+            assert server.methods_seen == ["GET"], (
+                "the probe must reach the server with GET and never send HEAD"
+            )
+
+    @pytest.mark.asyncio
+    async def test_unreachable_endpoint_reports_false(self) -> None:
+        collector = ConcreteCollector(
+            endpoint_url="http://127.0.0.1:1/metrics",
+            collection_interval=1.0,
+            reachability_timeout=2.0,
+        )
+
+        assert await collector.is_url_reachable() is False
+
+
+class TestReachabilityProbeRedactsCredentials:
+    """The reachability probe must never log endpoint credentials.
+
+    Two separate leak paths: the endpoint URL itself may embed userinfo, and
+    some aiohttp errors render the requested URL verbatim in their repr --
+    InvalidUrlClientError is an aiohttp.ClientError subclass, so it reaches the
+    probe's except clause with credentials attached.
+    """
+
+    SECRET = "sup3rs3cret"  # noqa: S105 - test fixture, not a real credential
+
+    @pytest.mark.asyncio
+    async def test_probe_failure_never_logs_credentials(self, caplog) -> None:
+        endpoint_url = f"http://admin:{self.SECRET}@/metrics"
+        collector = ConcreteCollector(
+            endpoint_url=endpoint_url,
+            collection_interval=1.0,
+            reachability_timeout=2.0,
+        )
+
+        with caplog.at_level("DEBUG"):
+            assert await collector.is_url_reachable() is False
+
+        assert self.SECRET not in caplog.text, (
+            "endpoint credentials leaked into the reachability probe log"
+        )
