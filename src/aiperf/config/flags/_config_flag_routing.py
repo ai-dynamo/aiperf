@@ -291,11 +291,11 @@ def _build_routed_under_config() -> frozenset[str]:
             "model_selection_strategy",
         }
         | {
-            # probe sub-blocks, via _maybe_build_reset_kv_cache /
-            # _maybe_build_server_profiler
+            # nested endpoint sub-blocks, via _maybe_build_reset_kv_cache /
+            # _maybe_build_server_profiler / _maybe_build_sagemaker
             field
             for field in ENDPOINT_FIELDS
-            if field.startswith(("reset_kv_cache", "server_profiler"))
+            if field.startswith(("reset_kv_cache", "server_profiler", "sagemaker"))
         }
     )
 

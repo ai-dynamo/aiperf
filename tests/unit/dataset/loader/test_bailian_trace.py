@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError
 from pytest import param
 
+from aiperf.common.enums import ConversationContextMode
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.bailian_trace import BailianTraceDatasetLoader
 from aiperf.dataset.loader.models import BailianTrace
@@ -570,6 +571,7 @@ class TestBailianTraceDatasetLoader:
 
         assert len(conversations) == 1
         conv = conversations[0]
+        assert conv.context_mode == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
         assert len(conv.turns) == 3
         assert conv.turns[0].timestamp == 1000.0
         assert conv.turns[1].timestamp == 2000.0
