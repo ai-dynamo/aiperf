@@ -101,10 +101,12 @@ Pareto sweep is the wrong answer when you want a single **best** concurrency rat
 | Characterize ITL across concurrency × OSL | `decode-itl-curve` |
 | Pareto frontier across paired ISL/OSL workload shapes | `pareto-sweep` |
 
+<!-- aiperf-run-vllm-longrun-openai-endpoint-server weight=2400 timeout=5400 -->
 ```bash
-aiperf profile --model my-model --url http://infer.example.com --streaming \
+aiperf profile --model Qwen/Qwen3-0.6B --url http://localhost:8000 --streaming \
   --search-recipe max-throughput-ttft-sla --ttft-sla-ms 200
 ```
+<!-- /aiperf-run-vllm-longrun-openai-endpoint-server -->
 
 Reach for a recipe when your question is in the table above. Skip the manual `--search-*` flag stack and let the recipe pick the right metric, direction, and termination conditions. Recipes are the wrong answer when your question isn't in the table, or when you need to tweak something the recipe doesn't expose — drop down to the explicit `--search-*` flags or to a YAML sweep block; the underlying machinery is the same. Full catalog: [Search Recipes](../sweeping/search-recipes.md).
 
