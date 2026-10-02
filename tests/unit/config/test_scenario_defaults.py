@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Scenario presets respect explicit choices during CLI conversion."""
 
+from pathlib import Path
+
 import pytest
 
 from aiperf.common.scenario import SCENARIOS, get_scenario
@@ -49,3 +51,40 @@ def test_scenario_duration_prevents_fallback_request_limit(preset: str) -> None:
     phase = config.benchmark.get_profiling_phases()[0]
     assert phase.duration == get_scenario(preset).default_benchmark_duration_seconds
     assert phase.requests is None
+
+
+def test_config_file_values_are_not_replaced_by_scenario_defaults(
+    preset: str, tmp_path: Path
+) -> None:
+    config_file = tmp_path / "benchmark.yaml"
+    config_file.write_text(
+        """\
+benchmark:
+  models:
+    items: [{name: test-model}]
+  endpoint:
+    urls: [http://localhost:8000]
+    useServerTokenCount: false
+  gpuTelemetry:
+    enabled: true
+  datasets:
+    - name: workload
+      type: synthetic
+      prompts:
+        isl: {mean: 128}
+        osl: {mean: 32}
+  phases:
+    - name: profiling
+      kind: profiling
+      type: concurrency
+      concurrency: 1
+      duration: 1200
+""",
+        encoding="utf-8",
+    )
+
+    config = resolve_config(CLIConfig(scenario=preset, config_file=config_file))
+
+    assert config.benchmark.get_profiling_phases()[0].duration == 1200
+    assert config.benchmark.endpoint.use_server_token_count is False
+    assert config.benchmark.gpu_telemetry.enabled is True
