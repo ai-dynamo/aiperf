@@ -808,12 +808,13 @@ class SSEMessage:
 
 @dataclass(slots=True)
 class AwsEventStreamMessage:
-    """One decoded PayloadPart line from an AWS eventstream response.
+    """One decoded line from an AWS eventstream response's PayloadPart bytes.
 
     Distinct from SSEMessage: SageMaker's PayloadPart format has no SSE field
-    typing (event/id/retry) and no \\n\\n message delimiter -- it's one line of
-    text per stream chunk (optionally ``data: ``-prefixed by convention, not
-    spec). Modeling it as its own type instead of a fake single-field
+    typing (event/id/retry) and no \\n\\n message delimiter -- the payload bytes
+    are newline-delimited lines of text (optionally ``data: ``-prefixed by
+    convention, not spec), and a line may span PayloadParts or share one with
+    other lines. Modeling it as its own type instead of a fake single-field
     SSEMessage means it can't silently miss SSEMessage.parse()'s behavior
     (continuation-line stitching, multi-field parsing) it was never entitled to.
 

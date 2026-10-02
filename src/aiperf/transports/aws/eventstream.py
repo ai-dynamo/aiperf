@@ -9,8 +9,11 @@ produced the bytes, so Bedrock's streaming responses decode through this same
 reader with no change here -- SageMaker is simply the first caller.
 
 The framing is NOT SSE: no ``event:``/``id:``/``retry:`` field typing and no
-``\\n\\n`` message delimiter -- just one line of (optionally ``data: ``-prefixed)
-text per PayloadPart. :class:`AwsEventStreamMessage` models that directly rather
+``\\n\\n`` message delimiter -- the PayloadPart bytes are newline-delimited
+lines of (optionally ``data: ``-prefixed) text. A line can span several
+PayloadParts, and one PayloadPart can carry several lines, so the reader
+buffers across parts and splits on newlines. :class:`AwsEventStreamMessage`
+models one such line directly rather
 than faking an ``SSEMessage`` shape, so this reader never silently inherits (or
 misses) ``SSEMessage.parse()``'s SSE-specific behavior (continuation-line
 stitching, multi-field parsing) that does not apply here.
