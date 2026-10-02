@@ -64,10 +64,24 @@ Sync captured data from S3 and point AIPerf at the directory:
 aws s3 sync \
   s3://my-bucket/datacapture/my-endpoint/primary/ \
   ./captured_data/
+```
 
-# Replay against a target server
+Replay against a target server. Nothing here talks to AWS -- the captured
+files are read from disk:
+
+On disk each capture is a single line -- the expanded form above is the same
+record, pretty-printed:
+
+<!-- setup-file-vllm-default-openai-endpoint-server path=captured_data/capture.jsonl -->
+```jsonl
+{"captureData":{"endpointInput":{"observedContentType":"application/json","mode":"INPUT","data":"{\"messages\":[{\"role\":\"user\",\"content\":\"What is AI?\"}],\"max_tokens\":50}","encoding":"JSON"},"endpointOutput":{"observedContentType":"application/json","mode":"OUTPUT","data":"{\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":30,\"total_tokens\":42}}","encoding":"JSON"}},"eventMetadata":{"eventId":"e4378ff2-2b43-4031-a21f-401bb3c3e038","inferenceTime":"2026-04-29T00:03:18Z"},"eventVersion":"0"}
+```
+<!-- /setup-file-vllm-default-openai-endpoint-server -->
+
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=40 -->
+```bash
 aiperf profile \
-    --model my-model \
+    --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
     --url localhost:8000 \
     --input-file ./captured_data/ \
@@ -75,6 +89,7 @@ aiperf profile \
     --fixed-schedule \
     --fixed-schedule-auto-offset
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 The loader recursively finds all `.jsonl` files in the directory, parses them, and sorts records by timestamp. No manual file concatenation is needed.
 

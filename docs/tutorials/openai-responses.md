@@ -56,6 +56,7 @@ curl -s http://localhost:8000/v1/responses \
 
 Run AIPerf against the Responses API endpoint using synthetic inputs:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=60 -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -69,6 +70,7 @@ aiperf profile \
     --url localhost:8000 \
     --request-count 20
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output:**
 
