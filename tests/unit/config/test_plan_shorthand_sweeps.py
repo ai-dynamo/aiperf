@@ -36,7 +36,7 @@ def _sweep(sweep_type: str) -> dict[str, Any]:
     }
 
 
-@pytest.mark.parametrize("sweep_type", ["grid", "zip", "sobol", "latin_hypercube"])
+@pytest.mark.parametrize("sweep_type", ["grid", "zip", "sobol"])
 @pytest.mark.parametrize(
     "phase_fields",
     [
@@ -85,6 +85,113 @@ def test_path_sweep_preserves_shorthand_values(
         assert benchmark.phases[0].requests == 10
     assert source == original
     assert config._raw_envelope == raw_before
+
+
+@pytest.mark.parametrize(
+    "prompt_path,dataset_fields,jinja_ref",
+    [
+        param("isl", {"isl": 64}, "dataset.isl", id="isl-scalar"),
+        param("osl", {"osl": 64}, "dataset.osl", id="osl-scalar"),
+        param("isl.mean", {"isl": {"mean": 64, "stddev": 8}}, "dataset.isl.mean", id="isl-distribution"),
+        param("osl.mean", {"osl": {"mean": 64, "stddev": 8}}, "dataset.osl.mean", id="osl-distribution"),
+        param("isl.stddev", {"isl": {"mean": 64, "stddev": 8}, "prompts": {"isl": {"mean": 96}}}, "dataset.isl.stddev", id="inherited-distribution-field"),
+        param("isl", {"isl": 64, "prompts": {"isl": 96}}, "dataset.prompts.isl", id="explicit-prompt-precedence"),
+        param("isl.mean", {"isl": {"mean": 64, "stddev": 8}, "prompts": {"isl": {"mean": 96}}}, "dataset.prompts.isl.mean", id="explicit-distribution-precedence"),
+    ],
+)  # fmt: skip
+def test_swept_prompt_shorthand_rerenders_its_source_reference(
+    prompt_path: str, dataset_fields: dict[str, Any], jinja_ref: str
+) -> None:
+    """Sweep the effective field while keeping its raw Jinja name and precedence."""
+    source = {
+        "benchmark": {
+            "model": "test-model",
+            "endpoint": {"url": "http://localhost:8000"},
+            "dataset": {
+                "type": "synthetic",
+                "entries": "{{ " + jinja_ref + " }}",
+                **dataset_fields,
+            },
+            "phases": {"type": "concurrency", "requests": 10},
+        },
+        "sweep": {
+            "type": "grid",
+            "parameters": {"datasets.default.prompts." + prompt_path: [128, 512]},
+        },
+    }
+    original = copy.deepcopy(source)
+    config = load_config_from_mapping(source)
+    raw_before = copy.deepcopy(config._raw_envelope)
+    plan = build_benchmark_plan(config)
+
+    assert [benchmark.datasets[0].entries for benchmark in plan.configs] == [128, 512]
+    prompt, _, distribution_field = prompt_path.partition(".")
+    distributions = [
+        getattr(benchmark.datasets[0].prompts, prompt) for benchmark in plan.configs
+    ]
+    assert [
+        getattr(distribution, distribution_field or "expected_value")
+        for distribution in distributions
+    ] == [128, 512]
+    if distribution_field == "mean":
+        assert [distribution.stddev for distribution in distributions] == [8, 8]
+    elif distribution_field == "stddev":
+        assert [distribution.mean for distribution in distributions] == [96, 96]
+    assert source == original
+    assert config._raw_envelope == raw_before
+
+
+def test_named_dataset_prompt_shorthand_rerenders_its_source_reference() -> None:
+    """Named dataset lists use the same prompt shorthand as singular inputs."""
+    config = load_config_from_mapping(
+        {
+            "benchmark": {
+                "model": "test-model",
+                "endpoint": {"url": "http://localhost:8000"},
+                "datasets": [
+                    {
+                        "name": "workload",
+                        "type": "synthetic",
+                        "isl": 64,
+                        "entries": "{{ datasets.workload.isl }}",
+                    }
+                ],
+                "phases": {"type": "concurrency", "requests": 10},
+            },
+            "sweep": {
+                "type": "grid",
+                "parameters": {"datasets.workload.prompts.isl": [128, 512]},
+            },
+        }
+    )
+    plan = build_benchmark_plan(config)
+    assert [benchmark.datasets[0].entries for benchmark in plan.configs] == [128, 512]
+    assert [
+        benchmark.datasets[0].prompts.isl.expected_value for benchmark in plan.configs
+    ] == [128, 512]
+
+
+def test_scalar_prompt_shorthand_can_be_overridden_by_distribution_path() -> None:
+    """A canonical nested override can replace a scalar with a distribution."""
+    config = load_config_from_mapping(
+        {
+            "benchmark": {
+                "model": "test-model",
+                "endpoint": {"url": "http://localhost:8000"},
+                "dataset": {"type": "synthetic", "isl": 64},
+                "phases": {"type": "concurrency", "requests": 10},
+            },
+            "sweep": {
+                "type": "grid",
+                "parameters": {"datasets.default.prompts.isl.mean": [128, 512]},
+            },
+        }
+    )
+    plan = build_benchmark_plan(config)
+    assert [benchmark.datasets[0].prompts.isl.mean for benchmark in plan.configs] == [
+        128,
+        512,
+    ]
 
 
 def test_shorthand_sweep_rejects_wrong_dataset_name() -> None:

@@ -483,13 +483,48 @@ def _expand_magic_lists(
     return results
 
 
-def _resolve_shorthand_path(data: dict, path: str) -> list[str]:
-    """Resolve canonical paths without changing the raw envelope's Jinja names."""
-    keys = path.split(".")
-    if len(keys) < 3:
+def _resolve_prompt_shorthand_path(
+    dataset: dict[str, Any], keys: list[str]
+) -> list[str]:
+    """Keep prompt sweeps on their raw source, honoring normalization precedence."""
+    prompts = dataset.get("prompts", {})
+    if (
+        len(keys) < 2
+        or keys[0] != "prompts"
+        or keys[1] not in ("isl", "osl")
+        or keys[1] not in dataset
+        or dataset.get("type") not in ("synthetic", None)
+        or not isinstance(prompts, dict)
+    ):
         return keys
+    field = keys[1]
+    explicit = prompts.get(field)
+    shorthand = dataset[field]
+    # Explicit prompts win; omitted distribution fields inherit shorthand.
+    if (
+        field not in prompts
+        and (len(keys) == 2 or (isinstance(shorthand, dict) and keys[2] in shorthand))
+    ) or (
+        len(keys) > 2
+        and isinstance(explicit, dict)
+        and isinstance(shorthand, dict)
+        and keys[2] not in explicit
+        and keys[2] in shorthand
+    ):
+        return keys[1:]
+    return keys
 
-    if keys[0] == "datasets" and "datasets" not in data:
+
+def _resolve_dataset_shorthand_path(
+    data: dict[str, Any], path: str, keys: list[str]
+) -> list[str]:
+    """Resolve either dataset container while retaining raw prompt aliases."""
+    datasets = data.get("datasets")
+    if isinstance(datasets, list) and _is_named_dict_list(datasets):
+        dataset = _find_named(datasets, keys[1])
+        if dataset is not None:
+            return [*keys[:2], *_resolve_prompt_shorthand_path(dataset, keys[2:])]
+    elif "datasets" not in data:
         dataset = data.get("dataset")
         if isinstance(dataset, dict):
             entries = [{"name": "default", **dataset}]
@@ -497,7 +532,18 @@ def _resolve_shorthand_path(data: dict, path: str) -> list[str]:
                 _raise_named_list_resolution_error(
                     path, keys[1], entries, parent_key="datasets"
                 )
-            return ["dataset", *keys[2:]]
+            return ["dataset", *_resolve_prompt_shorthand_path(dataset, keys[2:])]
+    return keys
+
+
+def _resolve_shorthand_path(data: dict, path: str) -> list[str]:
+    """Resolve canonical paths without changing the raw envelope's Jinja names."""
+    keys = path.split(".")
+    if len(keys) < 3:
+        return keys
+
+    if keys[0] == "datasets":
+        return _resolve_dataset_shorthand_path(data, path, keys)
 
     if keys[0] == "phases":
         phases = data.get("phases")
