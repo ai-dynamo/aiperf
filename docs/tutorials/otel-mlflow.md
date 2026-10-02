@@ -28,25 +28,49 @@ You also need:
 
 | Component | Purpose | Quick start |
 |-----------|---------|-------------|
-| OTel Collector | Receives OTLP/HTTP metrics | `docker run -p 4318:4318 otel/opentelemetry-collector-contrib` |
+| OTel Collector | Receives OTLP/HTTP metrics on /v1/metrics | `docker run -p 4318:4318 otel/opentelemetry-collector-contrib` |
 | MLflow Tracking Server | Stores runs, metrics, artifacts | `mlflow ui` (uses `file:./mlruns` by default) |
 
 Verify both are reachable before continuing:
 
+<!-- setup-otel-mlflow-openai-endpoint-server -->
 ```bash
-# OTel Collector health (returns 200 on the base path when running)
-curl -sf http://localhost:4318/ && echo "OTel Collector reachable"
+docker pull vllm/vllm-openai:latest
+docker run -d --gpus all -p 8000:8000 -e HF_TOKEN vllm/vllm-openai:latest \
+  --model Qwen/Qwen3-0.6B \
+  --enforce-eager \
+  --reasoning-parser qwen3 \
+  --host 0.0.0.0 --port 8000
+
+docker run -d -p 4318:4318 otel/opentelemetry-collector-contrib
+docker run -d -p 5000:5000 ghcr.io/mlflow/mlflow:latest \
+  mlflow server --host 0.0.0.0 --port 5000
+```
+<!-- /setup-otel-mlflow-openai-endpoint-server -->
+
+<!-- health-check-otel-mlflow-openai-endpoint-server -->
+```bash
+timeout 900 bash -c 'until curl -sf http://localhost:8000/v1/models >/dev/null; do sleep 2; done' \
+  || { echo "vLLM not ready after 15min"; exit 1; }
+
+# OTel Collector: the base path answers 404 (it only serves /v1/metrics), so
+# any HTTP response means the collector is up -- curl -f would reject it.
+timeout 300 bash -c 'until curl -s -o /dev/null http://localhost:4318/; do sleep 2; done' \
+  && echo "OTel Collector reachable"
 
 # MLflow tracking server health
-curl -sf http://localhost:5000/health && echo "MLflow reachable"
+timeout 300 bash -c 'until curl -sf http://localhost:5000/health >/dev/null; do sleep 2; done' \
+  && echo "MLflow reachable"
 ```
+<!-- /health-check-otel-mlflow-openai-endpoint-server -->
 
 ## Run a Profile with Telemetry Enabled
 
+<!-- aiperf-run-otel-mlflow-openai-endpoint-server weight=150 -->
 ```bash
 aiperf profile \
     --url http://localhost:8000 \
-    --model my-model \
+    --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
     --endpoint /v1/chat/completions \
     --streaming \
@@ -59,6 +83,7 @@ aiperf profile \
     --mlflow-experiment my-experiment \
     --stream default
 ```
+<!-- /aiperf-run-otel-mlflow-openai-endpoint-server -->
 
 ### Flag breakdown
 
