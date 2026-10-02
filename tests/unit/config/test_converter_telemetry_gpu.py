@@ -248,10 +248,16 @@ DCGM_FI_DEV_POWER_USAGE{gpu="0"} 212
 
 
 class _ExporterHandler(BaseHTTPRequestHandler):
-    pages = {"/amd": _DME_PAGE, "/dcgm": _DCGM_PAGE, "/amd-cold": _DME_PAGE}
+    pages = {
+        # Exporters serve at a /metrics path and answer 404 at their root.
+        "/metrics": _DME_PAGE,
+        "/amd/metrics": _DME_PAGE,
+        "/dcgm/metrics": _DCGM_PAGE,
+        "/cold/metrics": _DME_PAGE,
+    }
 
     def do_GET(self):
-        if self.path == "/amd-cold":
+        if self.path == "/cold/metrics":
             time.sleep(1.5)  # a cold exporter answering its first scrape
         body = self.pages.get(self.path)
         self.send_response(200 if body is not None else 404)
@@ -291,21 +297,23 @@ def real_probe(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.usefixtures("real_probe")
 class TestAmdProbe:
     def test_an_amd_exporter_is_detected(self, exporter: str):
-        cli = _make_cli(gpu_telemetry=[f"{exporter}/amd"])
+        cli = _make_cli(gpu_telemetry=[f"{exporter}/amd/metrics"])
         assert build_gpu_telemetry(cli)["collector"] == "amd_dme"
 
     def test_a_dcgm_exporter_stays_on_dcgm(self, exporter: str):
-        cli = _make_cli(gpu_telemetry=[f"{exporter}/dcgm"])
+        cli = _make_cli(gpu_telemetry=[f"{exporter}/dcgm/metrics"])
         assert build_gpu_telemetry(cli)["collector"] == "dcgm"
 
     def test_any_amd_endpoint_among_several_is_enough(self, exporter: str):
-        cli = _make_cli(gpu_telemetry=[f"{exporter}/missing", f"{exporter}/amd"])
+        cli = _make_cli(
+            gpu_telemetry=[f"{exporter}/missing/metrics", f"{exporter}/amd/metrics"]
+        )
         assert build_gpu_telemetry(cli)["collector"] == "amd_dme"
 
     async def test_the_probe_runs_inside_an_event_loop(self, exporter: str):
         """`aiperf kube profile` converts the CLI from inside its own loop."""
         asyncio.get_running_loop()
-        cli = _make_cli(gpu_telemetry=[f"{exporter}/amd"])
+        cli = _make_cli(gpu_telemetry=[f"{exporter}/amd/metrics"])
         assert build_gpu_telemetry(cli)["collector"] == "amd_dme"
 
     def test_an_unreachable_endpoint_warns_without_leaking_credentials(
@@ -327,12 +335,23 @@ class TestAmdProbe:
         )
         assert "s3cr3t" not in caplog.text
 
+    @pytest.mark.parametrize("scheme", ["http://", ""], ids=["http", "scheme-less"])
+    def test_a_pathless_exporter_url_is_probed_at_metrics(
+        self, exporter: str, scheme: str
+    ):
+        """The manager appends /metrics to a pathless endpoint, and an exporter
+        answers 404 at its root, so the probe has to ask where the collector
+        will scrape or `host:port` silently stays on DCGM."""
+        host_port = exporter.removeprefix("http://")
+        cli = _make_cli(gpu_telemetry=[f"{scheme}{host_port}"])
+        assert build_gpu_telemetry(cli)["collector"] == "amd_dme"
+
     def test_an_exporter_slow_on_its_first_scrape_is_still_detected(
         self, exporter: str
     ):
         """Seen on an MI300X node: the first scrape after the exporter sat idle
         took over a second, and a one-second probe left it on DCGM."""
-        cli = _make_cli(gpu_telemetry=[f"{exporter}/amd-cold"])
+        cli = _make_cli(gpu_telemetry=[f"{exporter}/cold/metrics"])
         assert build_gpu_telemetry(cli)["collector"] == "amd_dme"
 
     def test_a_timeout_says_so_rather_than_an_empty_error(
@@ -348,7 +367,7 @@ class TestAmdProbe:
             logging.WARNING, logger="aiperf.config.flags._converter_telemetry"
         )
 
-        cli = _make_cli(gpu_telemetry=[f"{exporter}/amd-cold"])
+        cli = _make_cli(gpu_telemetry=[f"{exporter}/cold/metrics"])
         assert build_gpu_telemetry(cli)["collector"] == "dcgm"
 
         assert "no response within 0.2 s" in caplog.text

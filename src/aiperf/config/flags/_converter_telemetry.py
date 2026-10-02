@@ -303,6 +303,7 @@ def build_gpu_telemetry(cli: CLIConfig) -> dict[str, Any]:
     metrics file exists at convert time, and warns when a local collector
     is paired with non-localhost server URLs.
     """
+    from aiperf.common.metric_utils import normalize_metrics_endpoint_url
     from aiperf.plugin.enums import GPUTelemetryCollectorType
 
     cli_set = cli.model_fields_set
@@ -325,7 +326,11 @@ def build_gpu_telemetry(cli: CLIConfig) -> dict[str, Any]:
         )
     )
 
-    if detect_urls and _detect_amd_exporter(detect_urls):
+    # Probe the URL the collector will scrape: the telemetry manager appends
+    # /metrics to a pathless endpoint, and an exporter answers 404 at its root.
+    if detect_urls and _detect_amd_exporter(
+        [normalize_metrics_endpoint_url(url) for url in detect_urls]
+    ):
         collector_type = GPUTelemetryCollectorType.AMD_DME
 
     cli._gpu_telemetry_collector_type = collector_type
