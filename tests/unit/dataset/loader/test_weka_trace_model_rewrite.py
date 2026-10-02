@@ -35,13 +35,16 @@ def _normal(t=0.0, model="m", in_=10, out=1):
 
 
 def _subagent(t, agent_id, inner_requests, models=("m",)):
+    absolute_inner_requests = [
+        {**request, "t": t + request["t"]} for request in inner_requests
+    ]
     return {
         "t": t,
         "type": "subagent",
         "agent_id": agent_id,
         "subagent_type": "Explore",
         "status": "completed",
-        "requests": inner_requests,
+        "requests": absolute_inner_requests,
         "models": list(models),
     }
 

@@ -164,6 +164,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                     # return accepted/created responses without being rejected.
                     if response.status < 200 or response.status >= 300:
                         error_text = await response.text()
+                        record.end_perf_ns = time.perf_counter_ns()
                         record.error = ErrorDetails(
                             code=response.status,
                             type=response.reason,
@@ -349,6 +350,7 @@ class AioHttpClient(AIPerfLoggerMixin):
             first_token_callback=first_token_callback,
             connector=connector,
             connector_owner=connector_owner,
+            **kwargs,
         )
 
     async def _request_with_cancellation(
@@ -361,6 +363,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         first_token_callback: "FirstTokenCallback | None" = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
+        **kwargs: Any,
     ) -> RequestRecord:
         """Send POST request with cancellation after specified delay.
 
@@ -392,6 +395,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                 trace_data=trace_data,
                 connector=connector,
                 connector_owner=connector_owner,
+                **kwargs,
             )
         )
 
