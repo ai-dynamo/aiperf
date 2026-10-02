@@ -79,12 +79,13 @@ What you gain over the flag form:
 
 The smallest legal config is short:
 
+<!-- setup-file-vllm-default-openai-endpoint-server path=minimal.yaml -->
 ```yaml
 # minimal.yaml
 schemaVersion: "2.0"
 
 benchmark:
-  model: meta-llama/Llama-3.1-8B-Instruct
+  model: Qwen/Qwen3-0.6B
   endpoint:
     url: http://localhost:8000
   dataset:
@@ -96,12 +97,15 @@ benchmark:
     concurrency: 8
     requests: 100
 ```
+<!-- /setup-file-vllm-default-openai-endpoint-server -->
 
 Then:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=60 -->
 ```bash
 aiperf profile --config minimal.yaml
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 That's a complete benchmark — model, endpoint, dataset, and one profiling phase. The endpoint path (`/v1/chat/completions`) is auto-detected from `endpoint.type` (defaulting to `chat`).
 

@@ -37,12 +37,14 @@ Before you begin, ensure you have:
 
 Send one message and exit with `--quick`:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=40 -->
 ```bash
 aiperf chat \
     --model Qwen/Qwen3-0.6B \
     --url http://localhost:8000 \
     --quick "say hello in one short sentence"
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output:**
 
