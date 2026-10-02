@@ -234,9 +234,11 @@ from killing a healthy run (a Ctrl+C stamps it `run_cancelled` / invalid):
    [Troubleshooting](#troubleshooting) if it exceeds the default
    configuration timeout. Later runs with the same corpus, settings, and a
    pinned `--random-seed` restore it from the on-disk cache in seconds.
-2. **Warmup.** Each lane replays one deep-prefix turn to prime the server's
-   KV cache. With deep histories in real coding traces this is a meaningful
-   chunk of wall time on its own.
+2. **Warmup.** Each lane sends one primer request per live stream at its
+   starting instant (the root plus any active subagents) to prime the server's
+   KV cache. Every warmup request, primers and optional cache-pressure
+   traffic alike, is limited to one output token. With deep histories in real
+   coding traces this is a meaningful chunk of wall time on its own.
 3. **Profiling** for `--benchmark-duration` (1800 s by default) — with
    `--ui simple`, per-phase progress and request counts tick along as
    traffic flows.
@@ -261,7 +263,7 @@ flag.
 |---|---|---|
 | `timing_mode` is `agentic_replay` | Use the multi-turn agentic-replay scheduler (locked in by the scenario; not a user-selectable flag) | This is the scheduling discipline AgentX MVP requires (warmup → steady-state — the [profiling phase](#profiling-phase-faithful-replay-recycle-global-idle-guard) — with sampler-driven trace recycle and per-session-tree concurrency). |
 | `extra_inputs.ignore_eos = true` | Server is told to ignore its end-of-stream token and generate the full requested length | Without this, models stop early and you measure their decision to stop, not the server. |
-| `--streaming` is on | Responses stream token-by-token (auto-enabled when unset; explicit `--no-streaming` errors) | The per-token latency metrics (TTFT, ITL) are core to this benchmark and need streaming responses. |
+| `--streaming` is on | Responses stream token-by-token (auto-enabled when unset; explicitly setting streaming to false, e.g. `streaming: false` in YAML, errors) | The per-token latency metrics (TTFT, ITL) are core to this benchmark and need streaming responses. |
 | Replay delays are end-to-start (always on, no flag) | Each turn's replay delay is the recorded idle gap from the previous response's *end* to the next request's *start*, not the start-to-start delta. This is unconditional for weka trace replay — there is no toggle. | Replay dispatches each turn after the previous one completes, so start-to-start deltas would double-count the previous request's server time, making every session drift later turn by turn and overstating how many sessions overlap at once. |
 | `--ignore-trace-delays` is off | Trace-derived delays are preserved | The replay retains the captured agent pacing and KV-cache reuse intervals. |
 | Per-trace idle-gap cap is optional | `--trace-idle-gap-cap-seconds` is unset by default and accepts an explicit CLI value | Setting it bounds observed runtime idle across the root and every descendant stream without rewriting dataset timestamps or bypassing spawn/join dependencies. |
@@ -342,12 +344,20 @@ Three possible states for `submission_valid`:
     re-apply the scenario lock on the base config (import/env breakage).
     Fail-closed: the aggregate stamps `submission_valid: false` rather than
     assuming the lock held.
+  - `"insufficient_profile_metric_coverage"` — neither TTFT nor
+    inter-token-latency observations reached 95% of the configured profiling
+    duration; see [Troubleshooting](#troubleshooting).
+  - `"profile_metric_coverage_validation_failed"` — AIPerf could not validate
+    that coverage because required accumulator data or phase timestamps were
+    unavailable.
+  - `"scenario_with_sweep"` — aggregate of a parameter sweep run under
+    `--scenario` with `--unsafe-override`.
 - **Field absent** — you ran without `--scenario`. The submission-validity
   machinery is gated on the scenario flag.
 
 If you see `submission_valid: false`, look at `submission_invalid_reasons` and
-the AIPerf log. The reasons map one-to-one to either a scenario rule you broke
-or a runtime threshold you crossed.
+the AIPerf log. The reasons correspond to a scenario rule you broke or a
+runtime check that failed or could not be validated.
 
 Treat the stamp as a guideline, not a certification. It reflects only the
 checks AIPerf can perform itself — the flag locks applied at startup plus the
@@ -391,6 +401,14 @@ history (turns 0 through `k_i-1`) attached as message context. Lanes whose
 subagent branches are already live at `k_i` dispatch one warmup request per
 active stream.
 
+By default primers are dispatched on a ramp that aligns every trajectory's
+`t*` to a common instant: a primer that fired `lead` seconds before its `t*`
+is sent at `max_lead - lead`. Each lead is clamped to
+`--system-idle-gap-cap-seconds` (10 s under the scenario), so alignment is
+approximate and the ramp is at most about 10 s long;
+`--trace-idle-gap-cap-seconds` does not apply to warmup. With
+`--burst-phase-starts` all primers are sent at once.
+
 The point is that the server's prefix cache fills with a realistic mix of
 multi-turn coding contexts before any measurement starts. When the profiling
 phase begins, every trajectory resumes from `k_i + 1` — and the server's cache
@@ -411,15 +429,22 @@ warmup failure does not trigger the abort — only root (depth-0)
 conversations gate it. Slow-but-healthy warmups are also *not* aborted: the
 warmup grace period (`--agentic-warmup-grace-period`; under `--scenario`,
 `--warmup-grace-period` aliases onto it when the dedicated flag is unset —
-see the [Warmup Phase tutorial](warmup.md)) has no limit by default, so a
-warmup that is merely slow runs to completion.
+see the [Warmup Phase tutorial](warmup.md)) is unlimited by default for the
+snapshot warmup (including `--warmup-requests-per-lane`), so a merely slow
+warmup runs to completion.
+With `--agentic-cache-warmup-duration` the default drain is bounded to the
+larger of the benchmark grace period and `min(duration, 300s)` unless
+`--agentic-warmup-grace-period` is set explicitly.
 
 #### Optional cache-pressure warmup
 
 Set `--agentic-cache-warmup-duration SECONDS` to add a sustained
 cache-pressure stage after the initial trajectory warmup described above.
 AIPerf continues the same live session trees for that duration with recorded
-idle delays removed and every request limited to one output token. When the
+idle delays removed and every request limited to one output token. Because
+the delays are removed outright, the system-idle guard is not applied during
+this stage; the per-trace idle cap applies to profiling only, and during
+warmup the system-idle cap only clamps the baseline primer leads. When the
 duration expires, it stops issuing new requests, drains requests already on
 the wire, snapshots each live root, subagent, and unresolved join, and starts
 profiling from that exact state. Each stream's full next-turn delay is carried
