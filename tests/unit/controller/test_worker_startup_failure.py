@@ -451,3 +451,35 @@ class TestRegisteredThenReapedWorkers:
 
         assert not system_controller._is_unregistered_local_worker("worker_a")
         assert system_controller._is_unregistered_local_worker("worker_b")
+
+
+@pytest.mark.asyncio
+async def test_a_failure_during_profile_start_cancels_on_the_start_up_task(
+    system_controller: SystemController,
+) -> None:
+    """Every worker failing while PROFILE_START is in flight is past the last
+    start-up checkpoint. The handler defers to the start-up task, so the end of
+    _start_services must run the cancel itself, on that task."""
+    tasks: dict[str, asyncio.Task | None] = {}
+    system_controller._profile_configure_all_services = AsyncMock()
+    system_controller._verify_pods_healthy = AsyncMock()
+    system_controller._wait_for_dispatchable_worker_pods = AsyncMock()
+    system_controller._check_and_trigger_shutdown = AsyncMock()
+
+    async def workers_fail_during_profile_start() -> None:
+        tasks["start_up"] = asyncio.current_task()
+        system_controller._startup_abort_reason = "Every worker failed to start (1)"
+
+    async def record_cancel() -> None:
+        tasks["cancel"] = asyncio.current_task()
+
+    system_controller._start_profiling_all_services = AsyncMock(
+        side_effect=workers_fail_during_profile_start
+    )
+    system_controller._cancel_profiling = AsyncMock(side_effect=record_cancel)
+
+    await system_controller._start_services()
+
+    system_controller._cancel_profiling.assert_awaited_once()
+    assert tasks["cancel"] is tasks["start_up"]
+    system_controller._check_and_trigger_shutdown.assert_not_awaited()
