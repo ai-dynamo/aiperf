@@ -11,7 +11,7 @@ a known worker as optional, which would never cancel at all.
 Neither is right. In multi-process mode workers are spawned later through
 ``SPAWN_WORKERS`` and are not required services, so one failing while another
 can still start is a degraded run. But once no worker can start, nothing will
-ever send a request: waiting out ``PhaseOrchestrator``'s 30s credit-router
+ever send a request: waiting out ``PhaseOrchestrator``'s credit-router
 timeout only buries the workers' own error under "No workers registered with
 the credit router".
 """
@@ -245,11 +245,11 @@ def _on_each_tick(monkeypatch: pytest.MonkeyPatch, callback) -> None:
 
 
 class TestWorkersThatDieWithoutReporting:
-    """Workers start after the registration-wait reaper has finished, so one
-    that dies without publishing SERVICE_ERROR -- killed, or crashed before its
-    comms were up -- is seen by nothing until PhaseOrchestrator's 30s
-    credit-router timeout. The watch polls process liveness until every
-    spawned worker has registered or failed."""
+    """Workers may start after the registration-wait reaper has finished, so
+    one that dies without publishing SERVICE_ERROR -- killed, or crashed before
+    its comms were up -- can go unseen until PhaseOrchestrator's credit-router
+    timeout. The watch polls process liveness until every spawned worker has
+    registered or failed."""
 
     @pytest.mark.asyncio
     async def test_the_only_worker_dying_silently_cancels_with_its_exit_code(

@@ -997,10 +997,10 @@ class SystemController(
         """Catch workers that die before registering without reporting why.
 
         A worker killed by a signal, or crashing before its comms are up, sends
-        no SERVICE_ERROR, and it starts after the registration-wait reaper has
-        finished, so nothing else sees it before PhaseOrchestrator's
-        credit-router timeout. Such a death feeds the same decision as a
-        reported one, with the exit code as its only evidence.
+        no SERVICE_ERROR. Workers may start after the registration-wait reaper
+        has finished, in which case nothing else sees such a death before
+        PhaseOrchestrator's credit-router timeout. Such a death feeds the same
+        decision as a reported one, with the exit code as its only evidence.
         """
         dead_ticks: dict[str, int] = {}
         while not self._all_workers_failed_to_start and self._system_state not in {
