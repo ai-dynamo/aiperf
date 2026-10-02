@@ -60,3 +60,39 @@ async def test_defaults_inherit_and_restore(monkeypatch: pytest.MonkeyPatch) -> 
     assert "AIPERF_DATASET_CONFIGURATION_TIMEOUT" not in os.environ
     assert "AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT" not in os.environ
     assert os.environ["AIPERF_HTTP_TCP_USER_TIMEOUT"] == "450000"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_defaults_reject_noncanonical_keys_without_changing_child_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("AIPERF_HTTP_TCP_KEEPIDLE", "33")
+    monkeypatch.delenv("AIPERF_HTTP_tcp_keepidle", raising=False)
+    monkeypatch.delenv("AIPERF_HTTP_TCP_KEEPINTVL", raising=False)
+    settings = _Environment()
+    original_http = settings.HTTP
+
+    with (
+        pytest.raises(
+            ValueError, match=r"Unknown environment setting: HTTP\.tcp_keepidle"
+        ),
+        settings.defaults({"HTTP": {"TCP_KEEPINTVL": 17, "tcp_keepidle": 90}}),
+    ):
+        pytest.fail("Noncanonical setting must be rejected before entering the context")
+
+    assert settings.HTTP is original_http
+    assert settings.HTTP.TCP_KEEPIDLE == 33
+    assert "AIPERF_HTTP_tcp_keepidle" not in os.environ
+    assert "AIPERF_HTTP_TCP_KEEPINTVL" not in os.environ
+    child = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-c",
+        "from aiperf.common.environment import Environment; "
+        "print(Environment.HTTP.TCP_KEEPIDLE)",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await asyncio.wait_for(child.communicate(), timeout=30)
+    assert child.returncode == 0, stderr.decode()
+    assert stdout.decode().strip() == "33"

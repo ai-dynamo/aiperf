@@ -28,7 +28,9 @@ to own those values.
 
 `aiperf profile` applies runtime defaults with
 `Environment.defaults(spec.environment_defaults)`. Keys refer to existing
-settings subsystems and scalar fields. The context uses each subsystem's
+settings subsystems and scalar fields, using their exact declared names (for
+example, `HTTP.TCP_KEEPIDLE`). Unknown or incorrectly cased field names are rejected.
+The context uses each subsystem's
 environment prefix and Pydantic validation, preserves explicitly configured
 values, and sets missing environment variables for newly spawned children.
 Previous parent settings and inserted variables are restored on exit, including

@@ -2627,6 +2627,8 @@ class _Environment(BaseSettings):
                 settings = getattr(self, group)
                 updates = {}
                 for key, value in fields.items():
+                    if key not in type(settings).model_fields:
+                        raise ValueError(f"Unknown environment setting: {group}.{key}")
                     env_key = f"{settings.model_config['env_prefix']}{key}"
                     if (
                         env_key not in os.environ
