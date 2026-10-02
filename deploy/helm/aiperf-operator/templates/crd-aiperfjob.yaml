@@ -778,6 +778,7 @@ spec:
                         - gsm8k
                         - gpqa_diamond
                         - lcb_codegeneration
+                        - bfcl_ast
                         description: 'Accuracy benchmark to run. When set, enables accuracy benchmarking alongside performance
                           profiling. AIME variants: ''aime'' is the legacy combined set (deprecated for new runs); prefer
                           the year-pinned ''aime24'' or ''aime25'' for reproducibility.'
@@ -811,12 +812,14 @@ spec:
                         - lighteval_gpqa
                         - lighteval_gsm8k
                         - mmlu_pro
+                        - tool_call_ast
                         description: Override the default grader for the selected benchmark (e.g., exact_match, math, multiple_choice,
                           code_execution). If not set, uses the benchmark's default grader.
                       systemPrompt:
                         type: string
                         description: Custom system prompt to use for accuracy evaluation. Overrides any benchmark-specific
-                          system prompt.
+                          system prompt. Not supported by 'bfcl_ast', which builds a per-problem system prompt from each problem's
+                          tool schemas and rejects this flag rather than discarding them.
                       verbose:
                         type: boolean
                         description: Enable verbose output for accuracy evaluation, showing per-problem grading details.

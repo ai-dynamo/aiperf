@@ -34,6 +34,7 @@ from aiperf.accuracy.graders._bfcl_compat import (
 from aiperf.accuracy.graders._bfcl_compat import require_bfcl as _real_require_bfcl
 from aiperf.accuracy.graders.tool_call_ast import (
     GRADER_ERROR,
+    GROUND_TRUTH_ERROR,
     PARAM_TYPE_ERROR,
     PARAM_VALUE_ERROR,
     UNCLASSIFIED,
@@ -283,7 +284,15 @@ class TestErrorBucketMapping:
 
 
 class TestMalformedGroundTruth:
-    """A bad payload degrades to unparsed rather than raising."""
+    """A bad payload degrades to a labeled integration error, not ``unparsed``.
+
+    An invalid ``ground_truth`` is a loader/configuration fault - the response
+    is never even inspected - so it must not be reported through the same
+    ``unparsed`` signal that means "the model's answer didn't parse" (see
+    ``_ground_truth_error``'s docstring). This was flagged on review:
+    ``grade("A", "A")`` under an accidental grader/benchmark mismatch used to
+    read as a model format failure.
+    """
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -298,8 +307,9 @@ class TestMalformedGroundTruth:
     ) -> None:
         result = await _grader().grade("[get_weather(city='SF')]", ground_truth)
         assert result.correct is False
-        assert result.unparsed is True
-        assert "not orjson" in result.reasoning
+        assert result.unparsed is False
+        assert result.reasoning.startswith(f"{GROUND_TRUTH_ERROR}:")
+        assert "not valid JSON" in result.reasoning
 
     @pytest.mark.asyncio
     async def test_grade_ground_truth_missing_fields_returns_failure(self) -> None:
@@ -307,7 +317,8 @@ class TestMalformedGroundTruth:
             "[get_weather(city='SF')]", orjson.dumps({"id": "x"}).decode("utf-8")
         )
         assert result.correct is False
-        assert result.unparsed is True
+        assert result.unparsed is False
+        assert result.reasoning.startswith(f"{GROUND_TRUTH_ERROR}:")
         assert "malformed ground_truth" in result.reasoning
 
 

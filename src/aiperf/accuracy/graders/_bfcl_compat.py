@@ -51,11 +51,14 @@ posture for the ``datasets`` package).
 
 from __future__ import annotations
 
+import ast
 import importlib
 import importlib.metadata
 import importlib.util
 import inspect
 import logging
+import operator
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +90,9 @@ _AST_PARSE_CANDIDATES: tuple[tuple[str, str], ...] = (
 )
 _PROMPT_BUILDER_CANDIDATES: tuple[tuple[str, str], ...] = (
     ("bfcl_eval.model_handler.utils", "system_prompt_pre_processing_chat_model"),
+)
+_FUNC_DOC_PREPROCESSOR_CANDIDATES: tuple[tuple[str, str], ...] = (
+    ("bfcl_eval.utils", "_func_doc_language_specific_pre_processing"),
 )
 _LANGUAGE_ENUM_CANDIDATES: tuple[tuple[str, str], ...] = (
     ("bfcl_eval.constants.enums", "Language"),
@@ -387,6 +393,56 @@ def build_chat_messages(
     )
 
 
+def preprocess_function_docs(
+    function_docs: list[dict[str, Any]], test_category: str
+) -> list[dict[str, Any]]:
+    """Apply BFCL's language-specific preprocessing to a *copy* of the tool schemas.
+
+    Upstream only ever builds a Prompt-mode prompt from preprocessed schemas:
+    ``load_dataset_entry`` runs every entry through this exact step before
+    generation (``include_language_specific_hint=True`` by default; see
+    ``_llm_response_generation.py`` calling it, and
+    ``add_language_specific_hint_to_function_doc`` applying it per entry in
+    ``bfcl_eval/utils.py``). Before this function existed, this integration
+    sent the raw schema straight to the prompt builder, which (flagged on
+    review) produced a prompt upstream never actually generates against a
+    model: Java/JavaScript lost the required "this is a Java/JavaScript x
+    type parameter in string representation" instructions and `type`/
+    `properties` rewrites entirely, since those are added by this exact
+    preprocessing step and nowhere else. **Verified 2026-10-02** against the
+    installed ``bfcl-eval==2026.3.23`` wheel: comparing this function's output
+    (via :func:`build_chat_messages`) against upstream's own
+    ``load_dataset_entry`` + ``system_prompt_pre_processing_chat_model``
+    pipeline across 150 real entries (simple_python/java/javascript,
+    multiple, irrelevance; 30 entries each) produced byte-identical prompts
+    in all 150 cases.
+
+    This must run on a **copy**: the function mutates its input in place
+    (appending to ``description`` and, for Java/JavaScript, rewriting
+    ``type``/``properties``), and the AST checker needs the original,
+    unmodified schema to grade against - the Java/JavaScript rewrite in
+    particular replaces real parameter types with ``"string"``, which would
+    silently break type checking if it ever reached the grader. Callers must
+    keep using the original ``function_docs`` for ground truth and pass only
+    this function's return value to :func:`build_chat_messages`.
+
+    Args:
+        function_docs: The entry's function documentation (tool schemas),
+            never mutated by this call.
+        test_category: BFCL category; selects the Java/JavaScript/Python hint
+            and parameter rewrite.
+
+    Returns:
+        A deep copy of ``function_docs`` with upstream's language-specific
+        hints and type rewrites applied.
+    """
+    preprocess = _resolve(
+        _FUNC_DOC_PREPROCESSOR_CANDIDATES, "the function-doc language preprocessor"
+    )
+    copied = deepcopy(function_docs)
+    return list(preprocess(copied, test_category))
+
+
 def _bind_checker_kwargs(checker: Any, kwargs: dict[str, Any]) -> dict[str, Any]:
     """Map our canonical keyword names onto the live ``ast_checker`` signature.
 
@@ -466,13 +522,209 @@ def ast_check(
     return result
 
 
+# ---------------------------------------------------------------------------
+# Non-executing Python-call decoder.
+#
+# Upstream's own ``resolve_ast_by_type`` (bfcl_eval.model_handler.utils) calls
+# ``eval(ast.unparse(node))`` for ``ast.BinOp`` and ``ast.Lambda`` argument
+# values. The AST-node check only restricts which *shape* of expression is
+# allowed to reach ``eval`` - the re-serialized source text it hands to
+# ``eval`` is then re-parsed and executed by CPython with no further
+# restriction. Confirmed directly against the pinned wheel: a response whose
+# decoded call contained a ``BinOp``-shaped argument built from
+# ``__import__('builtins').print('PROBE')`` executed in-process through the
+# real grader - i.e. inference-server output (fully attacker-controlled, in
+# the threat-model sense that aiperf does not trust the model under test) can
+# run arbitrary Python with aiperf's own credentials and filesystem access.
+#
+# This reimplements the value-resolution step BFCL's Python-language
+# Prompt-mode decoder needs, mirroring every non-executing branch of
+# ``resolve_ast_by_type``/``resolve_ast_call`` one-for-one, and replacing the
+# two executing branches with a bounded, non-executing arithmetic evaluator
+# (``BinOp``) or an outright refusal (``Lambda`` - already unreachable
+# upstream in practice, since its own body indexes ``Lambda.body[0]`` against
+# a single AST node rather than a list and raises on any real lambda, so
+# refusing it here costs no decoding capability). ``ast.parse`` itself only
+# builds a syntax tree and never executes code, so that step is unchanged
+# from upstream.
+#
+# Java and JavaScript still route through upstream's tree-sitter-based
+# ``parse_java_function_call``/``parse_javascript_function_call`` below
+# (verified against the installed wheel: no ``eval``/``exec`` anywhere under
+# ``bfcl_eval/model_handler/parser/``), so only the Python path needs this.
+# ---------------------------------------------------------------------------
+
+#: Binary operators safe to apply once both operands are already confirmed
+#: numeric. Deliberately excludes anything that could reach a non-numeric
+#: type (string concatenation/repetition, matrix multiply, etc.) - operands
+#: are validated through :func:`_safe_numeric` before any operator here runs.
+_SAFE_BINOPS: dict[type, Any] = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+    ast.BitAnd: operator.and_,
+    ast.BitOr: operator.or_,
+    ast.BitXor: operator.xor,
+    ast.LShift: operator.lshift,
+    ast.RShift: operator.rshift,
+}
+
+#: Upper bound on ``**`` exponent magnitude. Unbounded exponentiation on
+#: attacker-controlled operands is a CPU/memory exhaustion vector even
+#: without ``eval`` (nested powers grow arbitrarily large integers); no
+#: legitimate BFCL tool-call argument needs an exponent this large.
+_MAX_POW_EXPONENT = 1024
+
+
+def _safe_numeric(node: ast.AST) -> int | float:
+    """Resolve a numeric literal/unary/binary expression without executing it.
+
+    Raises:
+        BFCLDecodeError: the node is not built entirely from numeric
+            constants, unary +/-, and the operators in :data:`_SAFE_BINOPS` -
+            i.e. it is not provably safe to evaluate.
+    """
+    if (
+        isinstance(node, ast.Constant)
+        and isinstance(node.value, (int, float))
+        and not isinstance(node.value, bool)
+    ):
+        return node.value
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        value = _safe_numeric(node.operand)
+        return -value if isinstance(node.op, ast.USub) else value
+    if isinstance(node, ast.BinOp):
+        return _safe_binop(node)
+    raise BFCLDecodeError(
+        f"unsupported value in numeric expression: {ast.dump(node, annotate_fields=False)}"
+    )
+
+
+def _safe_binop(node: ast.BinOp) -> int | float:
+    """Apply one binary operator to two recursively-validated numeric operands."""
+    op_fn = _SAFE_BINOPS.get(type(node.op))
+    if op_fn is None:
+        raise BFCLDecodeError(
+            f"unsupported operator in numeric expression: {type(node.op).__name__}"
+        )
+    left = _safe_numeric(node.left)
+    right = _safe_numeric(node.right)
+    if isinstance(node.op, ast.Pow) and abs(right) > _MAX_POW_EXPONENT:
+        raise BFCLDecodeError(
+            f"exponent {right} exceeds the {_MAX_POW_EXPONENT} bound for a "
+            f"tool-call argument expression"
+        )
+    try:
+        return op_fn(left, right)
+    except (ZeroDivisionError, OverflowError, ValueError) as e:
+        raise BFCLDecodeError(f"could not evaluate numeric expression: {e}") from e
+
+
+def _resolve_value(value: ast.AST) -> Any:
+    """Non-executing equivalent of upstream's ``resolve_ast_by_type``.
+
+    Mirrors every branch of the upstream function except ``BinOp`` (routed
+    through the bounded :func:`_safe_numeric` evaluator instead of ``eval``)
+    and ``Lambda`` (refused outright instead of ``eval`` - see the module
+    note above :data:`_SAFE_BINOPS`).
+    """
+    if isinstance(value, ast.Constant):
+        return "..." if value.value is Ellipsis else value.value
+    if isinstance(value, ast.UnaryOp):
+        return _safe_numeric(value)
+    if isinstance(value, ast.List):
+        return [_resolve_value(v) for v in value.elts]
+    if isinstance(value, ast.Dict):
+        return {
+            _resolve_value(k): _resolve_value(v)
+            for k, v in zip(value.keys, value.values, strict=True)
+        }
+    if isinstance(value, ast.BinOp):
+        return _safe_numeric(value)
+    if isinstance(value, ast.Name):
+        return value.id
+    if isinstance(value, ast.Call):
+        if len(value.keywords) == 0:
+            return ast.unparse(value)
+        return _resolve_call(value)
+    if isinstance(value, ast.Tuple):
+        return tuple(_resolve_value(v) for v in value.elts)
+    if isinstance(value, ast.Lambda):
+        raise BFCLDecodeError(
+            "lambda expressions are not supported as a tool-call argument "
+            "value (refused rather than evaluated - see the security note "
+            "above _SAFE_BINOPS)"
+        )
+    if isinstance(value, ast.Subscript):
+        try:
+            return ast.unparse(value.value) + "[" + ast.unparse(value.slice) + "]"
+        except Exception as e:  # pragma: no cover - mirrors upstream's bare except
+            raise BFCLDecodeError(f"unsupported subscript expression: {e}") from e
+    raise BFCLDecodeError(f"unsupported AST node type: {type(value).__name__}")
+
+
+def _resolve_call(elem: ast.Call) -> dict[str, Any]:
+    """Non-executing equivalent of upstream's ``resolve_ast_call``."""
+    func_parts: list[str] = []
+    func_part: ast.AST = elem.func
+    while isinstance(func_part, ast.Attribute):
+        func_parts.append(func_part.attr)
+        func_part = func_part.value
+    if isinstance(func_part, ast.Name):
+        func_parts.append(func_part.id)
+    func_name = ".".join(reversed(func_parts))
+    args_dict = {arg.arg: _resolve_value(arg.value) for arg in elem.keywords}
+    return {func_name: args_dict}
+
+
+def _decode_python_calls(input_str: str) -> list[dict[str, Any]]:
+    """Non-executing equivalent of upstream's ``ast_parse`` Python branch.
+
+    ``ast.parse`` only builds a syntax tree - it never executes code - so
+    this step is unchanged from upstream. The value resolution that follows
+    is reimplemented through :func:`_resolve_call`/:func:`_resolve_value`
+    instead of calling into ``bfcl_eval``, to keep model-controlled text out
+    of ``eval``/``exec`` entirely.
+    """
+    cleaned = input_str.strip().strip("'")
+    parsed = ast.parse(cleaned, mode="eval")
+    body = parsed.body
+    if isinstance(body, ast.Call):
+        return [_resolve_call(body)]
+    elements = getattr(body, "elts", None)
+    if elements is None:
+        raise BFCLDecodeError(
+            f"expected a call or a list of calls, got {type(body).__name__}"
+        )
+    calls: list[dict[str, Any]] = []
+    for elem in elements:
+        if not isinstance(elem, ast.Call):
+            raise BFCLDecodeError(
+                f"expected every list element to be a call, got {type(elem).__name__}"
+            )
+        calls.append(_resolve_call(elem))
+    return calls
+
+
 def decode_calls(response_text: str, language: str) -> list[dict[str, Any]]:
     """Decode a Prompt-mode response into BFCL's canonical call list.
 
     In Prompt mode the model answers in plain text with a Python-style call list
-    (``[get_weather(city='SF')]``), which upstream's ``ast_parse`` turns into
-    ``[{"get_weather": {"city": "SF"}}]``. Java and JavaScript go through the
-    same entry point, which dispatches to its tree-sitter grammars.
+    (``[get_weather(city='SF')]``), decoded into ``[{"get_weather": {"city":
+    "SF"}}]``.
+
+    Security: the Python-language path never calls into ``bfcl_eval``'s own
+    decoder. That decoder calls ``eval()`` on re-serialized source text for
+    ``BinOp``/``Lambda`` argument values - a confirmed arbitrary-code-execution
+    path through the grader process (see the module note above
+    :data:`_SAFE_BINOPS`). Instead this calls :func:`_decode_python_calls`, a
+    non-executing reimplementation that resolves every value node itself.
+    Java/JavaScript still delegate to upstream's tree-sitter-based parsers,
+    which do not call ``eval``/``exec`` (verified against the installed wheel).
 
     Args:
         response_text: The model's answer channel.
@@ -491,19 +743,28 @@ def decode_calls(response_text: str, language: str) -> list[dict[str, Any]]:
             "answer channel. Usually the generation was cut off (max_tokens "
             "too low), or the model emitted only a reasoning channel."
         )
-    parse = _resolve(_AST_PARSE_CANDIDATES, "the response decoder (ast_parse)")
-    # Resolved OUTSIDE the try below: a failure here means upstream drift (no
-    # ReturnFormat member for this language), which must surface as a loud
-    # RuntimeError. Folded into the decode failure it would instead mark every
-    # problem in the affected language `unparsed` - reading as a model that
-    # never emits a parseable call rather than as a broken integration.
-    return_format = _return_format_enum(language)
-    try:
-        decoded = parse(response_text.strip(), return_format)
-    except Exception as e:
-        # Upstream raises SyntaxError/ValueError/AssertionError depending on how
-        # the response is malformed; all of them mean the same thing here.
-        raise BFCLDecodeError(f"{type(e).__name__}: {e}") from e
+    if language == "python":
+        try:
+            decoded = _decode_python_calls(response_text.strip())
+        except BFCLDecodeError:
+            raise
+        except Exception as e:
+            # ast.parse raises SyntaxError/ValueError depending on how the
+            # response is malformed; all of them mean the same thing here.
+            raise BFCLDecodeError(f"{type(e).__name__}: {e}") from e
+    else:
+        parse = _resolve(_AST_PARSE_CANDIDATES, "the response decoder (ast_parse)")
+        # Resolved OUTSIDE the try below: a failure here means upstream drift
+        # (no ReturnFormat member for this language), which must surface as a
+        # loud RuntimeError. Folded into the decode failure it would instead
+        # mark every problem in the affected language `unparsed` - reading as
+        # a model that never emits a parseable call rather than as a broken
+        # integration.
+        return_format = _return_format_enum(language)
+        try:
+            decoded = parse(response_text.strip(), return_format)
+        except Exception as e:
+            raise BFCLDecodeError(f"{type(e).__name__}: {e}") from e
     if not isinstance(decoded, list):  # pragma: no cover - upstream drift
         raise BFCLDecodeError(
             f"decoder returned {type(decoded).__name__}, expected a list of calls"

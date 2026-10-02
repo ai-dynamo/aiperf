@@ -1511,12 +1511,19 @@ accuracy_grader:
       with bfcl-eval's deterministic ``ast_checker`` (function-name match,
       required-vs-optional parameters, strict type checking, value matching,
       order-independent parallel calls). The hallucination categories
-      (``irrelevance`` / ``live_relevance``) are graded on whether a call was
-      emitted at all. ``unparsed`` means no call list was extractable - a model
-      format-adherence failure, distinct from a wrong call. Failure modes are
-      normalized into ``wrong_tool`` / ``param_type_error`` /
-      ``param_value_error`` / ``should_not_have_called`` and surfaced in the
-      grader's explanation. Requires the ``[bfcl]`` install.
+      (``irrelevance`` / ``live_irrelevance`` / ``live_relevance``) are graded
+      on whether a call was emitted at all, not by the AST checker. ``unparsed``
+      means no call list was extractable from the response - a model
+      format-adherence failure, distinct from a wrong call - with one
+      qualification for the hallucination categories: a nonempty prose
+      response there (a refusal, or an answer) is a real verdict, not
+      ``unparsed``; only a genuinely empty answer channel is. Failure modes
+      are normalized into buckets surfaced in the grader's explanation, e.g.
+      ``wrong_tool`` / ``param_type_error`` / ``param_value_error`` /
+      ``should_not_have_called`` / ``should_have_called`` /
+      ``ground_truth_error`` / ``grader_error`` - see
+      ``aiperf.accuracy.graders.tool_call_ast`` for the full, current set.
+      Requires the ``[bfcl]`` install.
 
 # =============================================================================
 # Accuracy Benchmarks

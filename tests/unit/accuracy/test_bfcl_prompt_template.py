@@ -23,6 +23,8 @@ Reference: bfcl_eval.model_handler.utils.system_prompt_pre_processing_chat_model
 
 from __future__ import annotations
 
+import copy
+
 import pytest
 
 # This file is a parity oracle against the real dependency; skip cleanly when
@@ -31,6 +33,9 @@ pytest.importorskip("bfcl_eval")
 
 from bfcl_eval.model_handler.utils import (  # noqa: E402
     system_prompt_pre_processing_chat_model,
+)
+from bfcl_eval.utils import (  # noqa: E402
+    _func_doc_language_specific_pre_processing,
 )
 
 from aiperf.accuracy.benchmarks.bfcl_ast import BFCLASTBenchmark  # noqa: E402
@@ -56,12 +61,36 @@ _FUNCTION = [
 
 
 def _upstream_messages() -> list[dict]:
-    """What upstream produces for this entry, from a fresh input list.
+    """What upstream's prompt builder alone produces, given a raw schema.
 
-    Upstream mutates the list it is handed, so each call gets its own copy.
+    Upstream mutates the list and the function docs it is handed, so each
+    call gets its own copies. Pins ``_bfcl_compat.build_chat_messages`` (the
+    low-level shim), which - like upstream's own
+    ``system_prompt_pre_processing_chat_model`` - performs no language-hint
+    preprocessing itself; that is the caller's responsibility. See
+    :func:`_upstream_generation_ready_messages` for the full pipeline a real
+    benchmark run actually sends to a model.
     """
     return system_prompt_pre_processing_chat_model(
-        [dict(m) for m in _QUESTION], _FUNCTION, _ENTRY_ID
+        [dict(m) for m in _QUESTION], copy.deepcopy(_FUNCTION), _ENTRY_ID
+    )
+
+
+def _upstream_generation_ready_messages() -> list[dict]:
+    """What upstream actually sends a model for this entry.
+
+    This is ``load_dataset_entry``'s real pipeline
+    (``include_language_specific_hint=True`` by default) -
+    ``_func_doc_language_specific_pre_processing`` then
+    ``system_prompt_pre_processing_chat_model`` - which is what
+    ``BFCLASTBenchmark._build_problem`` must match (see
+    ``_bfcl_compat.preprocess_function_docs``).
+    """
+    hinted_function = _func_doc_language_specific_pre_processing(
+        copy.deepcopy(_FUNCTION), "simple_python"
+    )
+    return system_prompt_pre_processing_chat_model(
+        [dict(m) for m in _QUESTION], hinted_function, _ENTRY_ID
     )
 
 
@@ -88,7 +117,7 @@ class TestPromptByteEquality:
             {"id": _ENTRY_ID, "question": [_QUESTION], "function": _FUNCTION},
             [{"get_weather": {"city": ["SF"]}}],
         )
-        expected = _upstream_messages()
+        expected = _upstream_generation_ready_messages()
         assert [m["content"] for m in problem.raw_messages] == [
             m["content"] for m in expected
         ]

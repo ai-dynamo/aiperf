@@ -97,6 +97,7 @@ SHOULD_HAVE_CALLED = "should_have_called"
 UNPARSED = "unparsed"
 UNCLASSIFIED = "unclassified"
 GRADER_ERROR = "grader_error"
+GROUND_TRUTH_ERROR = "ground_truth_error"
 
 # Buckets keyed on the family (the part before the first colon).
 _FAMILY_BUCKETS = {
@@ -187,16 +188,42 @@ def _grader_error(response_text: str, possible_answer: Any) -> GradingResult:
 def _grading_failure(
     response_text: str, ground_truth: str, reason: str
 ) -> GradingResult:
-    """Result for a response that could not be graded at all.
+    """Result for a response that held no gradeable call list.
 
-    Flagged ``unparsed`` because nothing gradeable was recovered - either the
-    ground-truth payload was malformed or the response held no call list.
+    Flagged ``unparsed``: the *response* is what failed to yield anything
+    gradeable (no call list, or an empty answer channel). For a ``ground_truth``
+    payload that is itself invalid, use :func:`_ground_truth_error` instead -
+    that is never the model's fault.
     """
     return GradingResult(
         correct=False,
         unparsed=True,
         confidence=1.0,
         reasoning=f"{UNPARSED}: {reason}",
+        extracted_answer=response_text[:500],
+        ground_truth=ground_truth[:500],
+    )
+
+
+def _ground_truth_error(
+    response_text: str, ground_truth: str, reason: str
+) -> GradingResult:
+    """Result for a ``ground_truth`` payload the grader cannot use at all.
+
+    Deliberately **not** flagged ``unparsed``, for the same reason
+    :func:`_grader_error` isn't: an invalid ``ground_truth`` is a loader or
+    configuration fault (e.g. ``tool_call_ast`` paired with a benchmark whose
+    problems were never built by ``BFCLASTBenchmark``, or a corrupted problem
+    set), not a signal about the model's response format. Concretely,
+    ``grade("A", "A")`` under such a mismatch must not read as "the model's
+    answer was unparseable" - the response was never even inspected, so
+    nothing says whether it would have parsed.
+    """
+    return GradingResult(
+        correct=False,
+        unparsed=False,
+        confidence=1.0,
+        reasoning=f"{GROUND_TRUTH_ERROR}: {reason}",
         extracted_answer=response_text[:500],
         ground_truth=ground_truth[:500],
     )
@@ -250,8 +277,8 @@ class ToolCallASTGrader(BaseGrader):
             payload = orjson.loads(ground_truth)
         except orjson.JSONDecodeError as exc:
             _log.debug("BFCL ground_truth payload not JSON: %s", exc)
-            return _grading_failure(
-                response_text, ground_truth, "ground_truth not orjson"
+            return _ground_truth_error(
+                response_text, ground_truth, "ground_truth is not valid JSON"
             )
 
         try:
@@ -261,7 +288,7 @@ class ToolCallASTGrader(BaseGrader):
             function_docs = payload["function"]
         except (KeyError, TypeError) as exc:
             _log.debug("BFCL ground_truth payload malformed: %s", exc)
-            return _grading_failure(
+            return _ground_truth_error(
                 response_text, ground_truth, f"malformed ground_truth: {exc}"
             )
 
@@ -323,17 +350,26 @@ class ToolCallASTGrader(BaseGrader):
     ) -> dict[str, Any] | None:
         """Run the AST checker with crash-safety.
 
-        Grading happens inside the daemon record processor, where an unhandled
-        exception takes down the whole run: the parent then waits forever on
-        records that never arrive. Upstream's checker is not defensive about
-        malformed input (a missing ``possible_answer`` entry indexes straight
-        into ``None``), and it is an optional third-party dependency whose
-        internals move between releases, so a raise here is treated the same
-        way the lighteval graders treat theirs - report the record as unparsed
-        and keep the run alive.
+        Upstream's checker is not defensive about malformed input (a missing
+        ``possible_answer`` entry indexes straight into ``None``), and it is an
+        optional third-party dependency whose internals move between releases.
+        An uncaught raise here would still propagate out of ``grade`` and get
+        isolated generically by the record processor's per-producer exception
+        handling (``record_processor_service.py``'s ``asyncio.gather(...,
+        return_exceptions=True)`` around every producer's ``process_record``,
+        which does not hang the run - the per-request envelope is always
+        pushed to keep the completion barrier in lockstep regardless of any
+        one producer's outcome). What that generic path does NOT do is emit a
+        ``GradingResult`` for the record at all: it would be silently dropped
+        from the accuracy export entirely, undercounting the per-task
+        denominator instead of surfacing a visible error. Catching it here
+        keeps every attempted record represented, via :func:`_grader_error`'s
+        own ``grader_error`` bucket (``unparsed=False`` - see its docstring
+        for why that is not folded into the model's format-adherence rate).
 
         Returns:
-            The checker's verdict, or ``None`` when it raised.
+            The checker's verdict, or ``None`` when it raised (turned into a
+            :func:`_grader_error` result by the caller).
         """
         try:
             return _bfcl_compat.ast_check(

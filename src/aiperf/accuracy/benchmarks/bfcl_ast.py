@@ -363,8 +363,15 @@ class BFCLASTBenchmark(AIPerfLoggerMixin):
         # BFCL nests each entry's turns one level deep (``question[0]`` is the
         # first - and for single-turn categories, only - turn).
         question_turns = entry.get("question") or [[]]
+        # The prompt gets upstream's language-specific hint/type-rewrite
+        # preprocessing (see ``preprocess_function_docs``'s docstring) on its
+        # OWN copy - never the raw ``function_docs`` passed to
+        # ``_build_ground_truth`` below, which the checker needs unmodified.
+        prompt_function_docs = _bfcl_compat.preprocess_function_docs(
+            function_docs, category
+        )
         messages = _bfcl_compat.build_chat_messages(
-            question_turns[0], function_docs, entry_id
+            question_turns[0], prompt_function_docs, entry_id
         )
         raw_messages: list[AccuracyChatMessage] = [
             {"role": m["role"], "content": m["content"]} for m in messages
