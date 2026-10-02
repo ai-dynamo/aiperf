@@ -247,9 +247,9 @@ from killing a healthy run (a Ctrl+C stamps it `run_cancelled` / invalid):
    [Troubleshooting](#troubleshooting) if it exceeds the default
    configuration timeout. Later runs with the same corpus, settings, and a
    pinned `--random-seed` restore it from the on-disk cache in seconds.
-2. **Warmup.** Each lane sends one primer request per live stream at its
-   starting instant (the root plus any active subagents) to prime the server's
-   KV cache. Every warmup request, primers and optional cache-pressure
+2. **Warmup.** Each lane sends one primer request per live stream (the root
+   plus any active subagents): that stream's final request before the lane's
+   starting instant `t*`, which primes the server's KV cache. Every warmup request, primers and optional cache-pressure
    traffic alike, is limited to one output token. With deep histories in real
    coding traces this is a meaningful chunk of wall time on its own.
 3. **Profiling** for `--benchmark-duration` (1800 s by default) — with
@@ -392,8 +392,7 @@ runtime thresholds it tracks. `true` means AIPerf detected no rule violation;
 it can't attest to anything outside its view (a server started with a reduced
 context window, for example, only shows up indirectly through the
 context-overflow rate). Whether two results are genuinely comparable still
-depends on the full setup on both sides, and the MVP rule set itself is
-evolving (see the status note at the top).
+depends on the full setup on both sides.
 
 ---
 
