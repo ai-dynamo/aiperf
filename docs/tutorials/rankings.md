@@ -18,24 +18,33 @@ These models take a query and one or more passages, returning a similarity or re
 
 Launch a Hugging Face Text Embeddings Inference (TEI) container in re-ranker mode:
 
+<!-- setup-tei-rankings-endpoint-server -->
 ```bash
-docker run --gpus all --rm -it \
+docker run --gpus all --rm -d \
   -p 8080:80 \
   -e MODEL_ID=BAAI/bge-reranker-base \
   ghcr.io/huggingface/text-embeddings-inference:latest \
   --model-id BAAI/bge-reranker-base --port 80
 ```
+<!-- /setup-tei-rankings-endpoint-server -->
 
+<!-- health-check-tei-rankings-endpoint-server -->
 ```bash
+# Wait for the server: TEI downloads and loads the model on first start.
+timeout 900 bash -c 'until curl -sf http://localhost:8080/health >/dev/null; do sleep 2; done' \
+  || { echo "TEI not ready after 15min"; exit 1; }
+
 # Verify server is running
 curl -s http://localhost:8080/rerank \
   -H "Content-Type: application/json" \
   -d '{"query":"What is AI?", "texts":["AI is artificial intelligence.","Bananas are yellow."]}' | jq
 ```
+<!-- /health-check-tei-rankings-endpoint-server -->
 
 ### Profile using Synthetic Inputs
 
 Run AIPerf using the following command:
+<!-- aiperf-run-tei-rankings-endpoint-server weight=60 -->
 ```bash
 aiperf profile \
     -m BAAI/bge-reranker-base \
@@ -49,6 +58,7 @@ aiperf profile \
     --rankings-query-prompt-token-mean 16 \
     --rankings-query-prompt-token-stddev 4
 ```
+<!-- /aiperf-run-tei-rankings-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```
@@ -78,6 +88,9 @@ JSON Export: artifacts/BAAI_bge-reranker-base-rankings/profile_export_aiperf.jso
 
 Create a file named rankings.jsonl where each line represents a ranking request with a query and one or more passages.
 
+
+Run AIPerf using the following command:
+<!-- aiperf-run-tei-rankings-endpoint-server weight=60 -->
 ```bash
 cat <<EOF > rankings.jsonl
 {"texts":[{"name":"query","contents":["What is AI topic 0?"]},{"name":"passages","contents":["AI passage 0"]}]}
@@ -86,10 +99,7 @@ cat <<EOF > rankings.jsonl
 {"texts":[{"name":"query","contents":["What is AI topic 3?"]},{"name":"passages","contents":["AI passage 3"]}]}
 {"texts":[{"name":"query","contents":["What is AI topic 4?"]},{"name":"passages","contents":["AI passage 4"]}]}
 EOF
-```
 
-Run AIPerf using the following command:
-```bash
 aiperf profile \
     -m BAAI/bge-reranker-base \
     --endpoint-type hf_tei_rankings \
@@ -98,6 +108,7 @@ aiperf profile \
     --custom-dataset-type single_turn \
     --request-count 10
 ```
+<!-- /aiperf-run-tei-rankings-endpoint-server -->
 
 ## Section 2. Profile Cohere Re-Rank API
 
