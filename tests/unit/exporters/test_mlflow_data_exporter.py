@@ -213,6 +213,226 @@ def mlflow_cfg(tmp_path: Path) -> BenchmarkConfig:
 
 
 class TestMLflowDataExporter:
+    @pytest.mark.parametrize(
+        ("tag", "expected_key"),
+        [
+            param("http_req_waiting", "system/http_req_waiting", id="http-timing"),
+            param("http_req_connection_reused", "system/http_req_connection_reused", id="http-counter"),
+            param("credit_drop_latency", "system/credit_drop_latency", id="internal"),
+            param("inter_chunk_latency", "system/inter_chunk_latency", id="stream-diagnostic"),
+            param("error_isl", "system/error_isl", id="error-input"),
+            param("total_error_isl", "system/total_error_isl", id="total-error-input"),
+            param("num_images", "system/num_images", id="image-count"),
+            param("video_peak_memory", "system/video_peak_memory", id="video-memory"),
+            param("usage_prompt_cache_read_tokens", "system/usage_prompt_cache_read_tokens", id="usage-cache"),
+            param("total_usage_completion_tokens", "system/total_usage_completion_tokens", id="total-usage"),
+            param("overall_usage_prompt_cache_read_pct", "system/overall_usage_prompt_cache_read_pct", id="cache-percent"),
+            param("usage_prompt_tokens_diff_pct", "system/usage_prompt_tokens_diff_pct", id="usage-discrepancy"),
+            param("requested_osl", "system/requested_osl", id="output-target"),
+            param("osl_mismatch_count", "system/osl_mismatch_count", id="output-mismatch"),
+            param("nvidia_total_gpu_power", "system/nvidia_total_gpu_power", id="nvidia-power"),
+            param("amd_energy_per_user", "system/amd_energy_per_user", id="amd-energy"),
+            param("nvidia_energy_delay_product", "system/nvidia_energy_delay_product", id="nvidia-efficiency"),
+            param("amd_goodput_per_watt", "system/amd_goodput_per_watt", id="amd-efficiency"),
+            param("time_to_first_token", "time_to_first_token", id="primary-latency"),
+            param("request_throughput", "request_throughput", id="primary-throughput"),
+            param("error_request_count", "error_request_count", id="primary-error-count"),
+            param("benchmark_duration", "benchmark_duration", id="hidden-primary"),
+            param("min_request_timestamp", "min_request_timestamp", id="internal-primary-start"),
+            param("max_response_timestamp", "max_response_timestamp", id="internal-primary-end"),
+            param("accuracy.correct", "accuracy.correct", id="model-quality"),
+            param("video_inference_time", "video_inference_time", id="video-latency"),
+            param("custom_latency", "custom_latency", id="custom"),
+            param("http_req_custom", "http_req_custom", id="custom-http-prefix"),
+            param("usage_custom", "usage_custom", id="custom-usage-prefix"),
+            param("nvidia_custom_power", "nvidia_custom_power", id="custom-vendor-prefix"),
+            param("system/http_req_waiting", "system/http_req_waiting", id="already-prefixed"),
+        ],
+    )  # fmt: skip
+    def test_build_metric_payload_uses_system_namespace_for_diagnostics(
+        self,
+        tag: str,
+        expected_key: str,
+        sample_results: ProfileResults,
+        mlflow_cfg: BenchmarkConfig,
+    ) -> None:
+        sample_results.records = [MetricResult(tag=tag, header=tag, unit="ms", avg=2.5)]
+        exporter = MLflowDataExporter(
+            ExporterConfig(
+                results=sample_results, cfg=mlflow_cfg, telemetry_results=None
+            )
+        )
+
+        assert exporter._build_metric_payload() == {
+            expected_key: 2.5,
+            "aiperf.completed_requests": 10.0,
+            "aiperf.total_expected_requests": 12.0,
+        }
+
+    @pytest.mark.asyncio
+    async def test_export_categorizes_metrics_without_changing_records(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        sample_results: ProfileResults,
+        mlflow_cfg: BenchmarkConfig,
+    ) -> None:
+        sample_results.records = [
+            MetricResult(
+                tag="http_req_waiting",
+                header="HTTP waiting",
+                unit="ms",
+                avg=2.5,
+                p95=4.0,
+                count=2,
+                sum=5.0,
+            ),
+            MetricResult(
+                tag="time_to_first_token",
+                header="TTFT",
+                unit="ms",
+                avg=12.0,
+            ),
+            MetricResult(
+                tag="usage_completion_tokens",
+                header="Usage",
+                unit="tokens",
+                avg=3.0,
+            ),
+            MetricResult(
+                tag="amd_total_gpu_energy",
+                header="Energy",
+                unit="J",
+                avg=9.0,
+            ),
+        ]
+        original_results = sample_results.model_dump()
+        state = _install_fake_mlflow_modules(monkeypatch)
+        exporter = MLflowDataExporter(
+            ExporterConfig(
+                results=sample_results, cfg=mlflow_cfg, telemetry_results=None
+            )
+        )
+
+        await asyncio.to_thread(exporter._export_sync)
+
+        assert len(state["log_batch_calls"]) == 1
+        metrics = state["log_batch_calls"][0]["metrics"]
+        expected = {
+            "system/http_req_waiting": 2.5,
+            "system/http_req_waiting.p95": 4.0,
+            "system/http_req_waiting.count": 2.0,
+            "system/http_req_waiting.sum": 5.0,
+            "time_to_first_token": 12.0,
+            "system/usage_completion_tokens": 3.0,
+            "system/amd_total_gpu_energy": 9.0,
+            "aiperf.completed_requests": 10.0,
+            "aiperf.total_expected_requests": 12.0,
+        }
+        assert len(metrics) == len(expected)
+        assert {metric.key: metric.value for metric in metrics} == expected
+        assert sample_results.model_dump() == original_results
+
+    @pytest.mark.parametrize(
+        ("field", "reverse"),
+        [
+            param("avg", False, id="avg-generated-first"),
+            param("avg", True, id="avg-prefixed-first"),
+            param("p95", False, id="p95-generated-first"),
+            param("p95", True, id="p95-prefixed-first"),
+        ],
+    )
+    def test_build_metric_payload_rejects_normalized_key_collisions(
+        self,
+        field: str,
+        reverse: bool,
+        sample_results: ProfileResults,
+        mlflow_cfg: BenchmarkConfig,
+    ) -> None:
+        values = {field: 2.5}
+        records = [
+            MetricResult(
+                tag="http_req_waiting",
+                header="HTTP waiting",
+                unit="ms",
+                **values,
+            ),
+            MetricResult(
+                tag="system/http_req_waiting",
+                header="Already prefixed HTTP waiting",
+                unit="ms",
+                **values,
+            ),
+        ]
+        sample_results.records = list(reversed(records)) if reverse else records
+        exporter = MLflowDataExporter(
+            ExporterConfig(
+                results=sample_results, cfg=mlflow_cfg, telemetry_results=None
+            )
+        )
+
+        expected_key = (
+            "system/http_req_waiting"
+            if field == "avg"
+            else f"system/http_req_waiting.{field}"
+        )
+        with pytest.raises(
+            ValueError,
+            match=rf"Duplicate MLflow metric key '{expected_key}'",
+        ):
+            exporter._build_metric_payload()
+
+    @pytest.mark.parametrize(
+        ("tag", "total_expected"),
+        [
+            param("aiperf.completed_requests", None, id="completed"),
+            param("aiperf.total_expected_requests", 12, id="total-expected"),
+        ],
+    )
+    def test_build_metric_payload_rejects_bookkeeping_key_collisions(
+        self,
+        tag: str,
+        total_expected: int | None,
+        sample_results: ProfileResults,
+        mlflow_cfg: BenchmarkConfig,
+    ) -> None:
+        sample_results.total_expected = total_expected
+        sample_results.records = [
+            MetricResult(tag=tag, header="Custom count", unit="requests", avg=42.0)
+        ]
+        exporter = MLflowDataExporter(
+            ExporterConfig(
+                results=sample_results, cfg=mlflow_cfg, telemetry_results=None
+            )
+        )
+
+        with pytest.raises(ValueError, match=rf"Duplicate MLflow metric key '{tag}'"):
+            exporter._build_metric_payload()
+
+    def test_build_metric_payload_allows_absent_bookkeeping_key(
+        self,
+        sample_results: ProfileResults,
+        mlflow_cfg: BenchmarkConfig,
+    ) -> None:
+        sample_results.total_expected = None
+        sample_results.records = [
+            MetricResult(
+                tag="aiperf.total_expected_requests",
+                header="Custom count",
+                unit="requests",
+                avg=42.0,
+            )
+        ]
+        exporter = MLflowDataExporter(
+            ExporterConfig(
+                results=sample_results, cfg=mlflow_cfg, telemetry_results=None
+            )
+        )
+
+        assert exporter._build_metric_payload() == {
+            "aiperf.completed_requests": 10.0,
+            "aiperf.total_expected_requests": 42.0,
+        }
+
     def test_disabled_without_tracking_uri(
         self, tmp_path: Path, sample_results: ProfileResults
     ) -> None:
