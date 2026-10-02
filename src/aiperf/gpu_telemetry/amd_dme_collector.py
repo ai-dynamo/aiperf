@@ -1,4 +1,10 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+from __future__ import annotations
+
 import time
+from typing import TYPE_CHECKING
 
 from prometheus_client.parser import text_string_to_metric_families
 from pydantic import ValidationError
@@ -12,6 +18,9 @@ from aiperf.common.mixins import (
 )
 from aiperf.common.models import GpuMetadata, TelemetryMetrics, TelemetryRecord
 from aiperf.gpu_telemetry.constants import AMD_GPU_TELEMETRY_PLATFORM
+
+if TYPE_CHECKING:
+    from prometheus_client.samples import Sample
 
 __all__ = ["AMDDMETelemetryCollector"]
 
@@ -116,7 +125,7 @@ class AMDDMETelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
             return None
 
     @classmethod
-    def _resolve(cls, sample) -> tuple[str, int] | None:
+    def _resolve(cls, sample: Sample) -> tuple[str, int] | None:
         """The (field, rank) this sample would set, or None if nothing uses it."""
         mapped = cls._METRIC_FIELDS.get(sample.name)
         if mapped is not None:
@@ -136,7 +145,7 @@ class AMDDMETelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
 
     def _ingest_sample(
         self,
-        sample,
+        sample: Sample,
         gpu_data: dict[int, dict[str, tuple[int, float]]],
         gpu_metadata: dict[int, GpuMetadata],
     ) -> None:
