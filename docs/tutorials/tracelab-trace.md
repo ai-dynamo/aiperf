@@ -51,7 +51,29 @@ zcat syfi_coding_trace.jsonl.gz | head -20000 | gzip > tracelab_slice.jsonl.gz
 
 ## Profile
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=40 -->
 ```bash
+# Without the corpus to hand, a three-round slice exercises the same path.
+# These are the fields the loader reads:
+python - <<'PY_EOF'
+import json, gzip, datetime
+iso = lambda t: datetime.datetime.fromtimestamp(t, datetime.UTC).isoformat().replace("+00:00", "Z")
+with gzip.open("tracelab_slice.jsonl.gz", "wt") as f:
+    for i in range(3):
+        f.write(json.dumps({
+            "provider": "claude", "project": "demo", "user": "user_a",
+            "session_id": f"claude:s{i}", "round_index": 0, "model": "claude-opus-4-7",
+            "input_tokens_total": 128, "prefix_tokens": 0, "newly_append_tokens": 128,
+            "output_tokens": 32, "reasoning_output_tokens": None,
+            "first_input_event_type": "user_message",
+            "timing_events": [
+                {"event_type": "user_message", "timestamp": iso(i * 2)},
+                {"event_type": "text", "timestamp": iso(i * 2 + 1)},
+            ],
+            "tools": [],
+        }) + "\n")
+PY_EOF
+
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
   --tokenizer Qwen/Qwen3-0.6B \
@@ -64,6 +86,7 @@ aiperf profile \
   --no-fixed-schedule \
   --inter-turn-delay-cap-seconds 5
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 `--no-fixed-schedule` keeps the run in concurrency mode so `--inter-turn-delay-cap-seconds` takes effect. Without it, AIPerf auto-promotes TraceLab (which carries per-round timestamps) to fixed-schedule replay, where the recorded timestamps are authoritative and the cap has no influence.
 

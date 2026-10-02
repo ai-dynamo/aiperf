@@ -180,20 +180,22 @@ Warmup options work **independently of the main benchmark configuration**. The w
 
 Sends requests at a target average rate with configurable arrival patterns.
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=300 -->
 ```bash
 # Poisson arrivals at 10 QPS
-aiperf profile --url localhost:8000 --model llama \
+aiperf profile --url localhost:8000 --model Qwen/Qwen3-0.6B \
     --request-rate 10 \
     --arrival-pattern poisson \
     --request-count 100
 
 # Constant arrivals with concurrency limit
-aiperf profile --url localhost:8000 --model llama \
+aiperf profile --url localhost:8000 --model Qwen/Qwen3-0.6B \
     --request-rate 20 \
     --arrival-pattern constant \
     --concurrency 5 \
     --benchmark-duration 60
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 ### Using `--concurrency` Only (Burst Mode)
 

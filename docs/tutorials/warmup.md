@@ -40,16 +40,18 @@ Latency                                  Latency
 
 Add warmup with a simple request count:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=240 -->
 ```bash
 aiperf profile \
-    --model your-model \
+    --model Qwen/Qwen3-0.6B \
     --url localhost:8000 \
     --endpoint-type chat \
     --streaming \
     --request-rate 10 \
-    --warmup-request-count 50 \
-    --request-count 500
+    --warmup-request-count 20 \
+    --request-count 100
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```
