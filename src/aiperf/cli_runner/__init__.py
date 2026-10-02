@@ -22,6 +22,8 @@ from aiperf.cli_runner._multi_run import (
 from aiperf.cli_runner._preflight import (
     _preflight_accuracy_deps,
     _preflight_artifact_dir,
+    _preflight_dataset_access,
+    _preflight_dataset_materialize,
     _preflight_endpoint_ready,
     _preflight_fd_limit,
 )
@@ -65,7 +67,9 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
     _preflight_artifact_dir(plan)
     _preflight_accuracy_deps(plan)
     _preflight_fd_limit()
+    _preflight_dataset_access(plan)
     _preflight_endpoint_ready(plan)
+    _preflight_dataset_materialize(plan)
 
     callbacks: list[OnComplete] = []
     if plan.configs[0].artifacts.auto_plot:

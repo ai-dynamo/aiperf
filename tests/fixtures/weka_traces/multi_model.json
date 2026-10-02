@@ -38,7 +38,7 @@
       "status": "completed",
       "requests": [
         {
-          "t": 0.0,
+          "t": 2.0,
           "type": "n",
           "model": "claude-haiku-4-5-20251001",
           "in": 100,

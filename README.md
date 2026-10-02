@@ -139,6 +139,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [User Interface](docs/tutorials/ui-types.md) - Dashboard, simple, or headless
 - [Hugging Face TGI](docs/tutorials/huggingface-tgi.md) - Profile Hugging Face TGI models
 - [OpenAI Text Endpoints](docs/tutorials/openai-text-endpoints.md) - Profile OpenAI-compatible text APIs
+- [AWS SigV4 Authentication](docs/tutorials/aws-sigv4-auth.md) - Benchmark AWS endpoints (API Gateway, SageMaker, Bedrock) protected by IAM auth
 
 ### Load Control and Timing
 - [Request Rate with Max Concurrency](docs/tutorials/request-rate-concurrency.md) - Dual request control
@@ -178,6 +179,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Agentic Code Generator](docs/tutorials/agentic-code-generator.md) - Generate multi-turn coding-agent traces for KV cache benchmarking
 - [Weka Traces](docs/tutorials/weka-trace.md) - Replay real agentic coding sessions with KV-cache-aware Weka traces
 - [TraceLab Traces](docs/tutorials/tracelab-trace.md) - Replay the public TraceLab corpus of real agentic coding sessions
+- [H CUA Perf Traces](docs/tutorials/h-cua-perf.md) - Replay H Company's computer-use agent traces (tool calling, screenshots, recorded think time) from HuggingFace
 - [InferenceX AgentX MVP](docs/tutorials/agentx-mvp.md) - SemiAnalysis AgentX-MVP submission benchmark (`--scenario inferencex-agentx-mvp`)
 - [Fixed Schedule](docs/tutorials/fixed-schedule.md) - Precise timestamp-based execution
 - [Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md) - Duration-based testing
@@ -252,6 +254,10 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, coding conventions, and contribution guidelines.
+
+## License
+
+AIPerf is licensed under the [Apache License 2.0](LICENSE). Because `helm package` only includes files beneath the chart directory, the [aiperf-operator Helm chart](deploy/helm/aiperf-operator) contains a [symlink to the repository's top-level license](deploy/helm/aiperf-operator/LICENSE) solely so the license is included in the packaged chart archive. Helm dereferences the symlink at packaging time, so the archive contains a regular `LICENSE` file with the top-level license contents.
 
 ## Known Issues
 

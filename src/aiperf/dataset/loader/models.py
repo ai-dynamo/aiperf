@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from pydantic import ConfigDict, Field, model_validator
 
+from aiperf.common.enums import AssistantResponseMode
 from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
 from aiperf.plugin.enums import CustomDatasetType
 
@@ -265,6 +266,7 @@ class MooncakeTrace(AIPerfBaseModel):
     - With messages: {"messages": [{"role": "user", "content": "Hello"}], "output_length": 4}
     - With payload: {"payload": {"prompt": "Hello", "max_tokens": 50}, "timestamp": 1000}
     - With timestamp and hash ID: {"timestamp": 1000, "input_length": 10, "hash_ids": [123]}
+    - Delta messages: {"session_id": "s1", "assistant_responses": "live", "messages": [{"role": "user", "content": "Hi"}]}
     """
 
     type: Literal[CustomDatasetType.MOONCAKE_TRACE] = CustomDatasetType.MOONCAKE_TRACE
@@ -289,6 +291,16 @@ class MooncakeTrace(AIPerfBaseModel):
         description="Complete pre-built API request payload sent verbatim "
         "to the transport. Bypasses all endpoint formatting. Cannot be "
         "combined with other input modes.",
+    )
+    assistant_responses: AssistantResponseMode = Field(
+        default=AssistantResponseMode.RECORDED,
+        description="Source of assistant responses for 'messages' input. "
+        "'recorded' (default): replay each row's complete authored history. "
+        "'live': preserve the first row's initial history (which may include recorded "
+        "assistant messages), then append subsequent rows' new messages and the "
+        "responses generated during this run, including tool calls. Live mode "
+        "requires delta-shaped rows after the first row, not repeated full histories. "
+        "Declare the same value on every row in a session. Live is only valid with 'messages'.",
     )
 
     # Optional fields
@@ -347,7 +359,12 @@ class MooncakeTrace(AIPerfBaseModel):
 
     @model_validator(mode="after")
     def validate_messages(self) -> "MooncakeTrace":
-        """Validate the messages and tools field structure."""
+        """Validate messages/tools structure and assistant_responses combinations."""
+        if "message_mode" in (self.model_extra or {}):
+            raise ValueError(
+                "'message_mode' has been renamed to 'assistant_responses'; "
+                "use 'live' or 'recorded'"
+            )
         if self.tools is not None:
             if self.messages is None:
                 raise ValueError("'tools' is only allowed when 'messages' is provided")
@@ -355,6 +372,20 @@ class MooncakeTrace(AIPerfBaseModel):
                 raise ValueError("'tools' must be a non-empty list")
         if self.messages is not None:
             validate_chat_messages(self.messages)
+        if self.assistant_responses == AssistantResponseMode.LIVE:
+            if self.messages is None:
+                raise ValueError(
+                    "assistant_responses='live' is only supported with 'messages'; "
+                    "'payload', 'text_input', and 'input_length' (synthesized) entries cannot be delta turns"
+                )
+            if self.extra is not None and (
+                history_keys := {"messages", "input"}.intersection(self.extra)
+            ):
+                raise ValueError(
+                    "assistant_responses='live': 'extra' must not contain "
+                    f"conversation input keys {sorted(history_keys)}; "
+                    "it would overwrite the assembled conversation history at dispatch time"
+                )
         return self
 
 
@@ -375,7 +406,11 @@ class BailianTrace(AIPerfBaseModel):
 
     Examples:
     - Root request:  ``{"chat_id": 159, "parent_chat_id": -1, "timestamp": 61.114, "input_length": 521, "output_length": 132, "type": "text", "turn": 1, "hash_ids": [1089, 1090, 1091]}``
-    - Follow-up:     ``{"chat_id": 160, "parent_chat_id": 159, "timestamp": 62.5, "input_length": 400, "output_length": 80, "type": "text", "turn": 2, "hash_ids": [1089, 1090]}``
+    - Follow-up:     ``{"chat_id": 160, "parent_chat_id": 159, "timestamp": 62.5, "input_length": 676, "output_length": 80, "type": "text", "turn": 2, "hash_ids": [1089, 1090, 1091, 1092]}``
+
+    The ``hash_ids`` lists above are abbreviated. A real row carries one id per
+    16-token block, so 521 and 676 input tokens give 33 and 43 ids respectively,
+    and a follow-up's list typically starts with its parent's full blocks.
 
     Note:
     The ``type`` field in Bailian JSONL is the request type (text/search/image/file),
