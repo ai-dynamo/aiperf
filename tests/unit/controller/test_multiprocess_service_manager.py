@@ -625,6 +625,7 @@ class TestGetServiceLiveness:
         mgr = MultiProcessServiceManager.__new__(MultiProcessServiceManager)
         mgr.multi_process_info = []
         mgr._spawned_worker_ids = set()
+        mgr._reaped_exit_codes = {}
         return mgr
 
     def _add(self, manager, service_id: str, alive: bool | None) -> None:
@@ -671,3 +672,28 @@ class TestGetServiceLiveness:
         """Services this manager never spawned have no ground truth to offer."""
         self._add(manager, "worker_1", alive=True)
         assert manager.get_service_liveness("worker_2") is None
+
+
+class TestReapedWorkerExitCodeSurvives:
+    """Reaping removes the process entry. The reaper's own warning reads the
+    exit code first, but a later lookup -- the controller's watcher, and so the
+    final exit panel -- found nothing and reported ``exit code None``."""
+
+    @pytest.fixture
+    def service_manager(self, benchmark_run) -> MultiProcessServiceManager:
+        return MultiProcessServiceManager(required_services={}, run=benchmark_run)
+
+    @pytest.mark.asyncio
+    async def test_a_reaped_worker_keeps_its_exit_code(
+        self, service_manager: MultiProcessServiceManager, monkeypatch
+    ) -> None:
+        (killed,) = await _spawn_workers(service_manager, monkeypatch, 1)
+        killed.process.is_alive.return_value = False
+        killed.process.exitcode = -9
+
+        service_manager._reap_dead_processes_during_registration(
+            Counter({ServiceType.WORKER: 1})
+        )
+
+        assert killed not in service_manager.multi_process_info
+        assert service_manager.get_service_exit_code(killed.service_id) == -9

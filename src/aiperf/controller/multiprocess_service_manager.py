@@ -72,6 +72,9 @@ class MultiProcessServiceManager(BaseServiceManager):
         # Kept past reaping: a worker's SERVICE_ERROR can arrive after the
         # registration-wait reaper has dropped it from multi_process_info.
         self._spawned_worker_ids: set[str] = set()
+        # Exit codes of processes the registration wait reaped, which removes
+        # their entries: the controller's start-up diagnosis reads them later.
+        self._reaped_exit_codes: dict[str, int | None] = {}
 
     async def run_service(
         self, service_type: ServiceTypeT, num_replicas: int = 1
@@ -282,7 +285,7 @@ class MultiProcessServiceManager(BaseServiceManager):
         for info in self.multi_process_info:
             if info.service_id == service_id and info.process is not None:
                 return info.process.exitcode
-        return None
+        return self._reaped_exit_codes.get(service_id)
 
     def _reap_dead_processes_during_registration(
         self, required_counts: "Counter[ServiceTypeT]"
@@ -313,6 +316,7 @@ class MultiProcessServiceManager(BaseServiceManager):
                     f"registering (exit code {exit_code})"
                 )
             required_counts[info.service_type] -= 1
+            self._reaped_exit_codes[info.service_id] = exit_code
             self.multi_process_info.remove(info)
             if info.service_type == ServiceType.WORKER:
                 # Not "continuing without it": whether the run can continue is
