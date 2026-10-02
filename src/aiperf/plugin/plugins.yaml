@@ -513,6 +513,17 @@ transport:
     metadata:
       transport_type: http
       url_schemes: [http, https]
+  sagemaker:
+    class: aiperf.transports.aws.sagemaker:SageMakerTransport
+    description: |
+      Invokes an AWS SageMaker Runtime endpoint (InvokeEndpoint, or
+      InvokeEndpointWithResponseStream with --streaming), with SigV4-signed
+      requests and eventstream response decoding. Selected by
+      --sagemaker-endpoint-name, or explicitly with --transport sagemaker; it is
+      never auto-detected from the URL.
+    metadata:
+      transport_type: sagemaker
+      url_schemes: []
 
 # =============================================================================
 # Request Signers
