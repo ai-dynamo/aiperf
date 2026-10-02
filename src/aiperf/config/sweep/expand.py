@@ -483,6 +483,42 @@ def _expand_magic_lists(
     return results
 
 
+def _resolve_shorthand_path(data: dict, path: str) -> list[str]:
+    """Resolve canonical paths without changing the raw envelope's Jinja names."""
+    keys = path.split(".")
+    if len(keys) < 3:
+        return keys
+
+    if keys[0] == "datasets" and "datasets" not in data:
+        dataset = data.get("dataset")
+        if isinstance(dataset, dict):
+            entries = [{"name": "default", **dataset}]
+            if _find_named(entries, keys[1]) is None:
+                _raise_named_list_resolution_error(
+                    path, keys[1], entries, parent_key="datasets"
+                )
+            return ["dataset", *keys[2:]]
+
+    if keys[0] == "phases":
+        phases = data.get("phases")
+        if isinstance(phases, dict) and "type" in phases:
+            entries = [{"name": "profiling", "kind": "profiling", **phases}]
+            roots = ["phases"]
+        elif "phases" not in data and "profiling" in data:
+            roots = [name for name in ("warmup", "profiling") if name in data]
+            entries = [{"name": name, "kind": name, **data[name]} for name in roots]
+        else:
+            return keys
+        match = _find_phase_or_recipe_alias(entries, keys[1], parent_key="phases")
+        if match is None:
+            _raise_named_list_resolution_error(
+                path, keys[1], entries, parent_key="phases"
+            )
+        return [roots[entries.index(match)], *keys[2:]]
+
+    return keys
+
+
 def _set_nested_value(data: dict, path: str, value: Any) -> None:
     """Set a nested value using dot-notation path.
 
@@ -497,7 +533,7 @@ def _set_nested_value(data: dict, path: str, value: Any) -> None:
     Legacy pre-kind configs with exactly one non-warmup phase keep the
     old recipe-friendly fallback. See ``_find_phase_or_recipe_alias``.
     """
-    keys = path.split(".")
+    keys = _resolve_shorthand_path(data, path)
     current: Any = data
     for i, key in enumerate(keys[:-1]):
         if isinstance(current, list) and _is_named_dict_list(current):

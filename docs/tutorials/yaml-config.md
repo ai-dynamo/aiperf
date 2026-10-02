@@ -407,6 +407,10 @@ The `parameters:` keys are dot-paths into the `benchmark:` body. For phase lists
 - `phases.profiling.rate` → the phase named `profiling`, or the unique profiling-kind phase when unambiguous
 - `datasets.default.prompts.isl` → the dataset named `default` (the singular `dataset:` shorthand auto-names it `default`)
 
+The same named paths work with the singular `dataset:` and single mapping-shaped
+`phases:` forms. Jinja expressions can keep referencing the shorthand fields;
+for example, `{{ dataset.entries }}` still refers to the sole dataset.
+
 The 12 most-swept phase fields also have bare-name sugar: `concurrency`, `prefill_concurrency`, `rate`, `requests`, `duration`, `sessions`, `users`, `smoothness`, `grace_period`, `concurrency_ramp`, `prefill_ramp`, `rate_ramp`. Each expands to `phases.profiling.<name>` and must still resolve unambiguously. The two forms are equivalent — see [Bare-Name Aliases](sweeps.md#bare-name-aliases-for-common-phase-fields).
 
 Other sweep modes available in YAML:
