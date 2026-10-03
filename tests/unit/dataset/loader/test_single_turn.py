@@ -98,6 +98,31 @@ class TestSingleTurn:
         with pytest.raises(ValueError):
             SingleTurn(text="Hello", output_length=-1)
 
+    def test_create_with_audio_duration_seconds(self):
+        data = SingleTurn(
+            audio="https://example.com/audio.wav", audio_duration_seconds=30.0
+        )
+
+        assert data.audio_duration_seconds == 30.0
+
+    def test_create_with_audio_duration_seconds_default_is_none(self):
+        data = SingleTurn(text="Hello")
+
+        assert data.audio_duration_seconds is None
+
+    def test_create_with_audio_duration_seconds_negative_raises(self):
+        with pytest.raises(ValueError):
+            SingleTurn(text="Hello", audio_duration_seconds=-1.0)
+
+    def test_create_with_audio_duration_seconds_infinite_raises(self):
+        with pytest.raises(ValueError):
+            SingleTurn(text="Hello", audio_duration_seconds=float("inf"))
+
+    def test_create_with_audio_duration_seconds_zero_allowed(self):
+        data = SingleTurn(text="Hello", audio_duration_seconds=0.0)
+
+        assert data.audio_duration_seconds == 0.0
+
     def test_create_with_delay(self):
         """Test creating SingleTurn with delay."""
         data = SingleTurn(text="Who are you?", delay=1234)
@@ -502,6 +527,24 @@ class TestSingleTurnDatasetLoaderConvertToConversations:
 
         assert len(conversations) == 1
         assert conversations[0].turns[0].max_tokens is None
+
+    def test_convert_with_audio_duration_seconds(self, default_cfg):
+        loader = SingleTurnDatasetLoader(
+            filename="dummy.jsonl", run=make_run_from_cli(default_cfg)
+        )
+        data = {
+            "session_1": [
+                SingleTurn(
+                    audio="https://example.com/audio.wav",
+                    audio_duration_seconds=30.0,
+                )
+            ],
+        }
+
+        conversations = loader.convert_to_conversations(data)
+
+        assert len(conversations) == 1
+        assert conversations[0].turns[0].audio_duration_seconds == 30.0
 
     def test_convert_multimodal_with_output_length(self, default_cfg):
         """Test converting multimodal data with output_length sets Turn.max_tokens."""

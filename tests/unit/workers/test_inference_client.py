@@ -426,6 +426,43 @@ class TestInferenceClient:
         assert result.request_info.scheduled_send_ms == 42.5
         assert "turns" not in result.request_info.model_dump()
 
+    def test_finalize_request_record_uses_last_turn_audio_duration_seconds(
+        self, inference_client
+    ):
+        """audio_duration_seconds must be hoisted from the dispatched (last) turn."""
+        first_turn = Turn(
+            texts=[Text(contents=["first turn"])],
+            role="user",
+            audio_duration_seconds=10.0,
+        )
+        second_turn = Turn(
+            texts=[Text(contents=["second turn"])],
+            role="user",
+            audio_duration_seconds=25.0,
+        )
+        request_info = RequestInfo(
+            model_endpoint=inference_client.model_endpoint,
+            turns=[first_turn, second_turn],
+            turn_index=1,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-id",
+            x_correlation_id="test-corr",
+            conversation_id="test-conv",
+        )
+        record = RequestRecord(
+            request_info=request_info,
+            start_perf_ns=1000,
+            timestamp_ns=1000,
+            end_perf_ns=2000,
+        )
+
+        result = inference_client._finalize_request_record(
+            record=record, request_info=request_info
+        )
+
+        assert result.request_info.audio_duration_seconds == 25.0
+
     @pytest.mark.parametrize(
         "strip,expected_payload_bytes",
         [

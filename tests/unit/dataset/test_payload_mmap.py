@@ -330,14 +330,16 @@ async def test_adopt_existing_files_compress_only_missing_zst_raises(
 
 @pytest.mark.asyncio
 async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
-    """PAYLOAD_BYTES index must round-trip max_tokens, timestamp, and source_kind.
+    """PAYLOAD_BYTES index must round-trip max_tokens, timestamp, source_kind,
+    and audio_duration_seconds.
 
     Turn scalars live outside the wire body for some loaders (e.g. mooncake
-    ``output_length`` / ``timestamp``, SPEED-Bench and Weka ``source_kind``).
-    Persisting them on PayloadOffset keeps OSL-mismatch and schedule-lag metrics
-    alive on the verbatim path, and keeps each record attributable to the
-    dataset row it came from -- without it a per-category split collapses to a
-    single run-level label.
+    ``output_length`` / ``timestamp``, SPEED-Bench and Weka ``source_kind``,
+    self-reported ``audio_duration_seconds`` for custom ASR datasets).
+    Persisting them on PayloadOffset keeps OSL-mismatch, schedule-lag, and
+    audio-duration/RTFx metrics alive on the verbatim path, and keeps each
+    record attributable to the dataset row it came from -- without it a
+    per-category split collapses to a single run-level label.
     """
     from aiperf.dataset.memory_map_utils import (
         PayloadOffset,
@@ -363,6 +365,7 @@ async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
                 max_tokens=128,
                 timestamp=42.5,
                 source_kind="coding",
+                audio_duration_seconds=30.0,
             )
         ],
     )
@@ -380,12 +383,14 @@ async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
     assert entry.max_tokens == 128
     assert entry.timestamp == 42.5
     assert entry.source_kind == "coding"
+    assert entry.audio_duration_seconds == 30.0
     assert orjson.loads(entry.payload_bytes) == payload
 
     turn = turn_from_payload_turn(entry)
     assert turn.max_tokens == 128
     assert turn.timestamp == 42.5
     assert turn.source_kind == "coding"
+    assert turn.audio_duration_seconds == 30.0
     assert turn.raw_payload == payload
 
     # Wire-JSON fallback recovers max_tokens when index scalars are absent
@@ -393,6 +398,7 @@ async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
     legacy = PayloadOffset(offset=0, size=0)
     assert legacy.max_tokens is None
     assert legacy.source_kind is None
+    assert legacy.audio_duration_seconds is None
     assert (
         max_tokens_from_wire_payload({"max_completion_tokens": 16, "messages": []})
         == 16
