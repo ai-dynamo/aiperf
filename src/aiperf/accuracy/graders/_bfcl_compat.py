@@ -624,47 +624,90 @@ def _safe_binop(node: ast.BinOp) -> int | float:
         raise BFCLDecodeError(f"could not evaluate numeric expression: {e}") from e
 
 
+def _resolve_constant(value: ast.Constant) -> Any:
+    return "..." if value.value is Ellipsis else value.value
+
+
+def _resolve_list(value: ast.List) -> list[Any]:
+    return [_resolve_value(v) for v in value.elts]
+
+
+def _resolve_dict(value: ast.Dict) -> dict[Any, Any]:
+    return {
+        _resolve_value(k): _resolve_value(v)
+        for k, v in zip(value.keys, value.values, strict=True)
+    }
+
+
+def _resolve_name(value: ast.Name) -> str:
+    return value.id
+
+
+def _resolve_call_value(value: ast.Call) -> Any:
+    """A call with no keyword arguments is stringified, never evaluated.
+
+    Mirrors upstream's own behavior for this shape: a bare
+    ``ast.unparse(value)`` reproduces the call's source text (e.g. for a
+    default-value sentinel like ``some_enum.MEMBER``), it does not execute
+    anything. A call WITH keywords is a nested BFCL function call, resolved
+    through :func:`_resolve_call` the same as the top level.
+    """
+    if len(value.keywords) == 0:
+        return ast.unparse(value)
+    return _resolve_call(value)
+
+
+def _resolve_tuple(value: ast.Tuple) -> tuple[Any, ...]:
+    return tuple(_resolve_value(v) for v in value.elts)
+
+
+def _resolve_lambda(value: ast.Lambda) -> Any:  # noqa: ARG001
+    raise BFCLDecodeError(
+        "lambda expressions are not supported as a tool-call argument "
+        "value (refused rather than evaluated - see the security note "
+        "above _SAFE_BINOPS)"
+    )
+
+
+def _resolve_subscript(value: ast.Subscript) -> str:
+    try:
+        return ast.unparse(value.value) + "[" + ast.unparse(value.slice) + "]"
+    except Exception as e:  # pragma: no cover - mirrors upstream's bare except
+        raise BFCLDecodeError(f"unsupported subscript expression: {e}") from e
+
+
+#: Dispatch table for :func:`_resolve_value`, keyed by exact AST node type
+#: (not a subclass check - every node type BFCL's grammar can produce is
+#: listed explicitly, so an unhandled type falls through to the function's
+#: own refusal rather than silently matching the wrong handler).
+_VALUE_RESOLVERS: dict[type, Any] = {
+    ast.Constant: _resolve_constant,
+    ast.UnaryOp: _safe_numeric,
+    ast.List: _resolve_list,
+    ast.Dict: _resolve_dict,
+    ast.BinOp: _safe_numeric,
+    ast.Name: _resolve_name,
+    ast.Call: _resolve_call_value,
+    ast.Tuple: _resolve_tuple,
+    ast.Lambda: _resolve_lambda,
+    ast.Subscript: _resolve_subscript,
+}
+
+
 def _resolve_value(value: ast.AST) -> Any:
     """Non-executing equivalent of upstream's ``resolve_ast_by_type``.
 
     Mirrors every branch of the upstream function except ``BinOp`` (routed
     through the bounded :func:`_safe_numeric` evaluator instead of ``eval``)
     and ``Lambda`` (refused outright instead of ``eval`` - see the module
-    note above :data:`_SAFE_BINOPS`).
+    note above :data:`_SAFE_BINOPS`). Dispatches by exact node type through
+    :data:`_VALUE_RESOLVERS` rather than an if/elif chain, so each node kind
+    is its own small, independently testable function.
     """
-    if isinstance(value, ast.Constant):
-        return "..." if value.value is Ellipsis else value.value
-    if isinstance(value, ast.UnaryOp):
-        return _safe_numeric(value)
-    if isinstance(value, ast.List):
-        return [_resolve_value(v) for v in value.elts]
-    if isinstance(value, ast.Dict):
-        return {
-            _resolve_value(k): _resolve_value(v)
-            for k, v in zip(value.keys, value.values, strict=True)
-        }
-    if isinstance(value, ast.BinOp):
-        return _safe_numeric(value)
-    if isinstance(value, ast.Name):
-        return value.id
-    if isinstance(value, ast.Call):
-        if len(value.keywords) == 0:
-            return ast.unparse(value)
-        return _resolve_call(value)
-    if isinstance(value, ast.Tuple):
-        return tuple(_resolve_value(v) for v in value.elts)
-    if isinstance(value, ast.Lambda):
-        raise BFCLDecodeError(
-            "lambda expressions are not supported as a tool-call argument "
-            "value (refused rather than evaluated - see the security note "
-            "above _SAFE_BINOPS)"
-        )
-    if isinstance(value, ast.Subscript):
-        try:
-            return ast.unparse(value.value) + "[" + ast.unparse(value.slice) + "]"
-        except Exception as e:  # pragma: no cover - mirrors upstream's bare except
-            raise BFCLDecodeError(f"unsupported subscript expression: {e}") from e
-    raise BFCLDecodeError(f"unsupported AST node type: {type(value).__name__}")
+    resolver = _VALUE_RESOLVERS.get(type(value))
+    if resolver is None:
+        raise BFCLDecodeError(f"unsupported AST node type: {type(value).__name__}")
+    return resolver(value)
 
 
 def _resolve_call(elem: ast.Call) -> dict[str, Any]:
