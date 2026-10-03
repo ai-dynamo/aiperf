@@ -95,6 +95,14 @@ class K8sTestSettings:
     skip_cleanup: bool = False
     """Keep cluster and resources after tests."""
 
+    keep_cluster: bool = False
+    """Skip only the end-of-session cluster delete; per-test resource cleanup still runs.
+
+    For CI, where a post-step collects diagnostics from the cluster and a
+    later always() step deletes it. Unlike skip_cleanup this leaves job,
+    operator, and mock-server teardown intact so the fixtures are exercised.
+    """
+
     reuse_cluster: bool = False
     """Reuse an existing cluster instead of creating a new one."""
 
@@ -176,6 +184,7 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-skip-build", "K8S_TEST_SKIP_BUILD", None, "bool", "Skip building Docker images (use existing)"),
     ("--k8s-skip-load", "K8S_TEST_SKIP_LOAD", None, "bool", "Skip loading images into cluster"),
     ("--k8s-skip-cleanup", "K8S_TEST_SKIP_CLEANUP", None, "bool", "Keep cluster and resources after tests"),
+    ("--k8s-keep-cluster", "K8S_TEST_KEEP_CLUSTER", None, "bool", "Skip only the final cluster delete (CI diagnostics); resource cleanup still runs"),
     ("--k8s-reuse-cluster", "K8S_TEST_REUSE_CLUSTER", None, "bool", "Reuse existing cluster"),
     ("--k8s-skip-preflight", "K8S_TEST_SKIP_PREFLIGHT", None, "bool", "Skip preflight checks"),
     ("--k8s-stream-logs", "K8S_TEST_STREAM_LOGS", None, "bool", "Stream pod logs in real time during deploys"),
@@ -295,6 +304,7 @@ def _resolve_settings(config: pytest.Config) -> K8sTestSettings:
         "skip_build",
         "skip_load",
         "skip_cleanup",
+        "keep_cluster",
         "reuse_cluster",
         "skip_preflight",
         "stream_logs",
@@ -791,37 +801,33 @@ async def local_cluster(
     yield cluster
 
     # Cleanup
-    if not s.skip_cleanup and not s.reuse_cluster:
-        try:
-            await cluster.delete()
-        except RuntimeError as exc:
-            # Docker occasionally refuses to kill kind containers on Linux
-            # (containerd cgroup race). Force-remove the container so the next
-            # test run can create a new cluster with the same name; without
-            # this, `kind create cluster` silently reuses the dead container.
-            logger.warning(
-                f"[cleanup] cluster delete failed (stale Docker state): {exc}"
-            )
-            node_container = f"{cluster.name}-control-plane"
-            try:
-                proc = await asyncio.create_subprocess_exec(
-                    "docker",
-                    "rm",
-                    "-f",
-                    node_container,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.DEVNULL,
-                )
-                await proc.wait()
-                logger.info(
-                    f"[cleanup] force-removed Docker container: {node_container}"
-                )
-            except Exception as docker_exc:
-                logger.warning(
-                    f"[cleanup] docker rm -f {node_container} also failed: {docker_exc}"
-                )
-    else:
+    if s.skip_cleanup or s.reuse_cluster or s.keep_cluster:
         logger.info(f"Keeping cluster: {cluster.name}")
+        return
+    try:
+        await cluster.delete()
+    except RuntimeError as exc:
+        # Docker occasionally refuses to kill kind containers on Linux
+        # (containerd cgroup race). Force-remove the container so the next
+        # test run can create a new cluster with the same name; without
+        # this, `kind create cluster` silently reuses the dead container.
+        logger.warning(f"[cleanup] cluster delete failed (stale Docker state): {exc}")
+        node_container = f"{cluster.name}-control-plane"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker",
+                "rm",
+                "-f",
+                node_container,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await proc.wait()
+            logger.info(f"[cleanup] force-removed Docker container: {node_container}")
+        except Exception as docker_exc:
+            logger.warning(
+                f"[cleanup] docker rm -f {node_container} also failed: {docker_exc}"
+            )
 
 
 @pytest.fixture(scope="package")

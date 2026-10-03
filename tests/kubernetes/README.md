@@ -175,7 +175,8 @@ All local settings can be set via CLI (`--k8s-*`) or env var (`K8S_TEST_*`). CLI
 | `--k8s-runtime` | `K8S_TEST_RUNTIME` | Cluster runtime: `kind` or `minikube` | `kind` |
 | `--k8s-quick` | `K8S_TEST_QUICK` | Reuse cluster, skip build/load/cleanup/preflight | `false` |
 | `--k8s-skip-build` | `K8S_TEST_SKIP_BUILD` | Skip image building | `false` |
-| `--k8s-skip-cleanup` | `K8S_TEST_SKIP_CLEANUP` | Keep cluster after tests | `false` |
+| `--k8s-skip-cleanup` | `K8S_TEST_SKIP_CLEANUP` | Keep cluster and all deployed resources after tests | `false` |
+| `--k8s-keep-cluster` | `K8S_TEST_KEEP_CLUSTER` | Skip only the final cluster delete; per-test resource cleanup still runs (CI sets this so the post-failure diagnostics step can read the cluster before its own teardown) | `false` |
 | `--k8s-reuse-cluster` | `K8S_TEST_REUSE_CLUSTER` | Reuse existing cluster | `false` |
 | `--k8s-skip-load` | `K8S_TEST_SKIP_LOAD` | Skip loading images into cluster | `false` |
 | `--k8s-skip-preflight` | `K8S_TEST_SKIP_PREFLIGHT` | Skip preflight checks | `false` |
