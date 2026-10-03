@@ -26,7 +26,10 @@ Reference:
 
 from __future__ import annotations
 
+import ast
+import builtins
 import inspect
+import os
 
 import pytest
 from pytest import param
@@ -42,7 +45,10 @@ from bfcl_eval.constants.category_mapping import (  # noqa: E402
 )
 from bfcl_eval.constants.enums import Language, ReturnFormat  # noqa: E402
 from bfcl_eval.eval_checker.ast_eval.ast_checker import ast_checker  # noqa: E402
-from bfcl_eval.model_handler.utils import ast_parse  # noqa: E402
+from bfcl_eval.model_handler.utils import (  # noqa: E402
+    ast_parse,
+    resolve_ast_by_type,
+)
 
 from aiperf.accuracy.benchmarks.bfcl_ast import (  # noqa: E402
     DEFAULT_CATEGORIES,
@@ -422,3 +428,115 @@ class TestDottedFunctionNames:
             model_name=CHECKER_MODEL_NAME,
         )
         assert verdict["valid"] is True
+
+
+class TestDecoderDoesNotExecuteModelOutput:
+    """The decoder must never execute the response it is decoding.
+
+    ``bfcl-eval``'s own ``resolve_ast_by_type`` resolves ``BinOp`` and
+    ``Lambda`` argument values with ``eval(ast.unparse(node))``. The AST-node
+    check in front of it only restricts the *shape* of the expression; the
+    source text handed to ``eval`` is then re-parsed and executed with no
+    further restriction. Inference-server output is attacker-controlled in
+    aiperf's threat model, so routing it through that function would let the
+    model under test run Python with aiperf's credentials and filesystem
+    access.
+
+    ``_bfcl_compat`` therefore reimplements the value-resolution step without
+    ``eval``. These tests pin that boundary from both sides: the first
+    documents that the upstream function really does execute (so the local
+    decoder is load-bearing, not redundant), and the rest assert that the
+    decoder refuses every executing shape while still decoding the benign
+    arithmetic upstream supports.
+    """
+
+    #: Shapes whose resolution upstream routes through ``eval``. Each embeds a
+    #: distinct execution vector; all must be refused without running.
+    EXECUTING_PAYLOADS = [
+        param(
+            "[calculate_triangle_area(base=(__import__('builtins').print('PROBE') or 10)+0, height=5)]",
+            id="binop_over_boolop_call",
+        ),
+        param(
+            "[calculate_triangle_area(base=(lambda: __import__('builtins').print('PROBE'))()+0, height=5)]",
+            id="binop_over_called_lambda",
+        ),
+        param(
+            "[calculate_triangle_area(base=lambda: __import__('builtins').print('PROBE'), height=5)]",
+            id="lambda_argument",
+        ),
+    ]
+
+    @staticmethod
+    def _tripwire(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        """Record any execution of the payload's side effect."""
+        fired: list[str] = []
+        real_print = builtins.print
+
+        def watched_print(*args: object, **kwargs: object) -> None:
+            if args and args[0] == "PROBE":
+                fired.append("print")
+            real_print(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(builtins, "print", watched_print)
+        monkeypatch.setattr(os, "system", lambda cmd: fired.append("os.system") or 0)
+        return fired
+
+    def test_upstream_resolver_executes_binop_arguments(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Oracle: upstream really does execute, which is why we do not call it.
+
+        If a future ``bfcl-eval`` stops executing here this test fails, which
+        is the signal to re-evaluate whether the local decoder is still needed
+        - not a reason to route model output back through upstream.
+        """
+        fired = self._tripwire(monkeypatch)
+        node = ast.parse(
+            "(__import__('builtins').print('PROBE') or 10)+0", mode="eval"
+        ).body
+        resolve_ast_by_type(node)
+        assert fired, (
+            "upstream resolve_ast_by_type no longer executes BinOp arguments; "
+            "re-check whether the non-executing decoder is still required"
+        )
+
+    @pytest.mark.parametrize("payload", EXECUTING_PAYLOADS)
+    def test_decode_refuses_executing_shapes(
+        self, payload: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fired = self._tripwire(monkeypatch)
+        with pytest.raises(_bfcl_compat.BFCLDecodeError):
+            _bfcl_compat.decode_calls(payload, "python")
+        assert not fired, f"decoding executed model output: {fired}"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("payload", EXECUTING_PAYLOADS)
+    async def test_grade_reports_unparsed_without_executing(
+        self, payload: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """End-to-end: the full grader path, not just the decoder.
+
+        A refusal has to surface as an ordinary ``unparsed`` verdict - the
+        response genuinely did not decode - rather than raising out of
+        ``grade`` into the record processor.
+        """
+        fired = self._tripwire(monkeypatch)
+        result = await _grader().grade(
+            payload,
+            _ground_truth("simple_python", _WEATHER_FUNCTION, _WEATHER_GOLD),
+        )
+        assert not fired, f"grading executed model output: {fired}"
+        assert result.correct is False
+        assert result.unparsed is True
+
+    def test_decode_still_resolves_benign_arithmetic(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Refusing ``eval`` must not cost the arithmetic upstream accepts."""
+        fired = self._tripwire(monkeypatch)
+        decoded = _bfcl_compat.decode_calls(
+            "[calculate_triangle_area(base=5+5, height=2*3)]", "python"
+        )
+        assert decoded == [{"calculate_triangle_area": {"base": 10, "height": 6}}]
+        assert not fired

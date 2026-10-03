@@ -12,8 +12,9 @@ Pins:
    folded into a real bucket.
 3. The hallucination categories are graded on call-or-no-call, before the AST
    checker is consulted.
-4. Malformed ground truth degrades to an unparsed failure instead of raising
-   into the record processor.
+4. Malformed ground truth is a labeled ``ground_truth_error`` (an integration
+   fault, ``unparsed=False``) rather than a model format failure, and never
+   raises into the record processor.
 
 These run against the fake-bfcl harness (see ``conftest.py``); verdict parity
 with the real checker is pinned separately in ``test_bfcl_ast_parity.py``.
