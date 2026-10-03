@@ -7,6 +7,7 @@ import contextlib
 import gc
 import tempfile
 import time
+from collections.abc import Iterator
 from io import BytesIO
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -76,6 +77,45 @@ if TYPE_CHECKING:
         DatasetClientStoreProtocol,
     )
     from aiperf.plugin.schema.schemas import EndpointMetadata
+
+
+@contextlib.contextmanager
+def _suspended_cyclic_gc() -> Iterator[None]:
+    """Suspend cyclic GC while a dataset is built, restoring the prior state.
+
+    Dataset construction allocates one container-typed object per trace,
+    conversation, turn, and message -- tens of millions of them for a
+    full agentic trace corpus -- and every one is GC-tracked. Each
+    threshold-triggered gen-2 collection then re-traverses the entire
+    live heap, so the cost of building a dataset of N objects is
+    quadratic in N rather than linear: on the 393-trace AgentX corpus,
+    sampling the builder thread caught it inside
+    ``gc_collect_main``/``deduce_unreachable`` in 100% of samples.
+
+    Nothing built here is cyclic garbage that refcounting cannot
+    reclaim, so suspending the collector loses no memory. The
+    already-live baseline heap is frozen into the permanent generation
+    first, which keeps it out of the explicit ``gc.collect()`` passes in
+    ``_configure_dataset_client_and_free_memory`` -- those still run,
+    and still reach the (unfrozen) dataset objects they exist to free.
+
+    No-op when ``AIPERF_DATASET_SUSPEND_GC_DURING_BUILD`` is false, which
+    trades startup time back for a lower peak heap.
+    """
+    if not Environment.DATASET.SUSPEND_GC_DURING_BUILD:
+        yield
+        return
+
+    was_enabled = gc.isenabled()
+    gc.collect()
+    gc.freeze()
+    gc.disable()
+    try:
+        yield
+    finally:
+        gc.unfreeze()
+        if was_enabled:
+            gc.enable()
 
 
 def _dataset_generation_of(client_metadata: DatasetClientMetadata) -> str | None:
@@ -280,12 +320,13 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
         self.info(lambda: f"Configuring dataset for {self.service_id}")
         begin = time.perf_counter()
-        await self._configure_dataset()
-        if self._should_skip_inputs_json():
-            self.info("Skipping inputs.json generation")
-        else:
-            await self._generate_inputs_json_file()
-        await self._configure_dataset_client_and_free_memory()
+        with _suspended_cyclic_gc():
+            await self._configure_dataset()
+            if self._should_skip_inputs_json():
+                self.info("Skipping inputs.json generation")
+            else:
+                await self._generate_inputs_json_file()
+            await self._configure_dataset_client_and_free_memory()
 
         if self._cache_key_for_run is not None:
             await asyncio.to_thread(self._populate_cache_after_run)
