@@ -225,7 +225,8 @@ Two details matter behind an IAM-protected endpoint:
 - **`--api-key` is suppressed on these paths when `--auth-type sigv4` is set**,
   exactly as it is on the request path. The signer owns the `Authorization`
   header; a stray `Authorization: Bearer ...` or `x-api-key` would overwrite or
-  conflict with it.
+  conflict with it. AIPerf logs a warning at startup when both are set, so a
+  key that is never sent does not go unnoticed.
 
 If the probe were unsigned, API Gateway would answer `403`, and the readiness
 rule treats any status below `500` as "the server is up" -- so the run would
@@ -322,7 +323,14 @@ aws sts get-caller-identity
 
 If that also fails, you need to set up credentials -- see [Setting Up Credentials](#setting-up-credentials).
 
-### "SigV4 auth requires botocore"
+### "the optional botocore dependency is not installed"
+
+The full message starts with what needed botocore, for example:
+
+```text
+SigV4 request signing is enabled but the optional botocore dependency is not
+installed.
+```
 
 Install the AWS extra:
 
