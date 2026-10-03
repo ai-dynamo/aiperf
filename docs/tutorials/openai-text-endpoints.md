@@ -68,6 +68,21 @@ INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency1/
 JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-concurrency1/profile_export_aiperf.json
 ```
 
+#### Strict stream completion checks
+
+For OpenAI-compatible streaming chat runs, add `--require-stream-completion`
+to count abruptly ended streams as failed requests. The check requires
+`--streaming --endpoint-type chat`.
+
+- A `[DONE]` event completes the stream. Without it, every observed choice must
+  have a nonempty `finish_reason`.
+- Empty data events, malformed JSON chunks, unsupported chunk shapes, and SSE
+  data after `[DONE]` fail the request. Comments and metadata may follow `[DONE]`.
+- A non-SSE response fails with its content type and a bounded text or JSON
+  body prefix to help diagnose server errors.
+- If an individual request overrides `stream` to `false`, this check is skipped
+  for that request's non-streaming response.
+
 ### Profile with custom input file
 
 Create a JSONL input file:

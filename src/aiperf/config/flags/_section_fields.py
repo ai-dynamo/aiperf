@@ -40,6 +40,7 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "server_profiler_timeout_seconds",
         "session_header",
         "streaming",
+        "require_stream_completion",
         "timeout_seconds",
         "transport",
         "endpoint_type",

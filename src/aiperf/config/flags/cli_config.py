@@ -181,6 +181,19 @@ class CLIConfig(BaseConfig):
         ),
     ] = EndpointDefaults.STREAMING
 
+    require_stream_completion: Annotated[
+        bool,
+        Field(
+            description="Fail streamed chat responses without [DONE] or a nonempty "
+            "finish_reason for every observed choice. Malformed chunks also fail; "
+            "requires streaming chat."
+        ),
+        CLIParameter(
+            name=("--require-stream-completion",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.REQUIRE_STREAM_COMPLETION
+
     urls: Annotated[
         list[str],
         Field(
