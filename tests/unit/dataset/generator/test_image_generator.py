@@ -415,6 +415,30 @@ class TestImageGeneratorNoiseMode:
 class TestImageGeneratorCustomDirectory:
     """Tests for custom directory source mode."""
 
+    @pytest.mark.parametrize("matching_sibling", [False, True])
+    def test_custom_directory_treats_brackets_literally(
+        self, tmp_path: Path, matching_sibling: bool
+    ) -> None:
+        source = tmp_path / "images[1]"
+        source.mkdir()
+        Image.new("RGB", (5, 5), color="blue").save(source / "source.png")
+        if matching_sibling:
+            sibling = tmp_path / "images1"
+            sibling.mkdir()
+            Image.new("RGB", (5, 5), color="red").save(sibling / "other.png")
+
+        config = make_image_config(
+            width_mean=5,
+            width_stddev=0,
+            height_mean=5,
+            height_stddev=0,
+            source=source,
+        )
+        result = ImageGenerator(config).generate()
+        image_bytes = base64.b64decode(result.split(",", 1)[1])
+        with Image.open(BytesIO(image_bytes)) as image:
+            assert image.getpixel((0, 0)) == (0, 0, 255)
+
     def test_custom_directory_loads_images(self, tmp_path):
         img = Image.new("RGB", (5, 5), color="blue")
         img.save(tmp_path / "test.png")
