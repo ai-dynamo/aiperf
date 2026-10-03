@@ -184,6 +184,7 @@ AIPerf output files can be parsed using the native Pydantic models for type-safe
 
 ### Synchronous Loading
 ```python
+from pathlib import Path
 from aiperf.common.models import MetricRecordInfo
 
 def load_records(file_path: Path) -> list[MetricRecordInfo]:
@@ -202,6 +203,7 @@ def load_records(file_path: Path) -> list[MetricRecordInfo]:
 For large benchmark runs with thousands of requests, use async file I/O for better performance:
 
 ```python
+from pathlib import Path
 import aiofiles
 from aiperf.common.models import MetricRecordInfo
 
