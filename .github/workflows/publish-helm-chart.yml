@@ -53,6 +53,13 @@ jobs:
           if [[ "$chart_version" != "$version" ]]; then
             echo "::warning::Chart.yaml version '$chart_version' does not match tag '$TAG'; packaging as $version."
           fi
+          # A suffixed tag such as v0.6.0-post.1 is a SemVer prerelease to Helm,
+          # so an unpinned install keeps resolving the previous X.Y.Z even when
+          # the GitHub release itself is not marked as a prerelease.
+          if [[ "$version" == *-* ]] && \
+             [[ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)" == "false" ]]; then
+            echo "::warning::Chart $version is a SemVer prerelease; helm install without --version $version will not select it."
+          fi
           echo "CHART_VERSION=$version" >> "$GITHUB_ENV"
 
       # Plain helm rather than Makefile targets: workflow_dispatch checks out an

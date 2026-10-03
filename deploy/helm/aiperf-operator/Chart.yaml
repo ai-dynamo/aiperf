@@ -13,7 +13,7 @@ keywords:
   - benchmarking
   - inference
   - nvidia
-home: https://github.com/nvidia/aiperf
+home: https://github.com/ai-dynamo/aiperf
 sources:
   - https://github.com/ai-dynamo/aiperf
 maintainers:
