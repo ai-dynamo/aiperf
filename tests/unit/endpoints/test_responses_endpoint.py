@@ -64,6 +64,16 @@ def _reasoning(text: str) -> dict:
     return {"type": "reasoning", "summary": [{"type": "summary_text", "text": text}]}
 
 
+def _reasoning_text(text: str) -> dict:
+    """Shorthand for a reasoning item carrying ``reasoning_text`` content and an
+    empty summary, as vLLM returns for gpt-oss."""
+    return {
+        "type": "reasoning",
+        "summary": [],
+        "content": [{"type": "reasoning_text", "text": text}],
+    }
+
+
 class TestResponsesEndpoint:
     """Tests for ResponsesEndpoint.format_payload."""
 
@@ -820,6 +830,29 @@ class TestResponsesEndpointParseResponse:
                 "Valid reasoning",
                 "Valid text",
                 id="non_dict_parts_filtered",
+            ),
+            param(
+                {"object": "response", "output": [_reasoning_text("Hmm...")]},
+                "Hmm...",
+                None,
+                id="reasoning_text_only",
+            ),
+            param(
+                {
+                    "object": "response",
+                    "output": [
+                        {
+                            "type": "reasoning",
+                            "summary": [{"type": "summary_text", "text": "Short."}],
+                            "content": [
+                                {"type": "reasoning_text", "text": "Full reasoning."}
+                            ],
+                        },
+                    ],
+                },
+                "Full reasoning.",
+                None,
+                id="reasoning_text_preferred_over_summary",
             ),
         ],
     )  # fmt: skip
