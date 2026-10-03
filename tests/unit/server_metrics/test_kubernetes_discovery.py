@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from kubernetes_asyncio.client.exceptions import ApiException
+from pytest import param
 
 from aiperf.server_metrics.discovery.kubernetes import (
     ALL_NAMESPACES,
@@ -72,13 +73,23 @@ def test_resolve_own_namespace_uses_serviceaccount_mount(tmp_path) -> None:
         assert resolve_own_namespace() == "mounted"
 
 
-def test_pod_to_urls_rejects_prometheus_annotation_without_inference_marker() -> None:
+@pytest.mark.parametrize(
+    "label_selector",
+    [
+        param(None, id="omitted"),
+        param("", id="explicit-empty"),
+    ],
+)  # fmt: skip
+def test_pod_to_urls_rejects_unselected_non_inference_pod(
+    label_selector: str | None,
+) -> None:
+    """Require built-in eligibility when no effective selector exists."""
     pod = _pod(
         image="grafana/loki:latest",
         annotations={"prometheus.io/scrape": "true"},
         ports=[(3100, None)],
     )
-    assert _pod_to_urls(pod, None) == []
+    assert _pod_to_urls(pod, label_selector) == []
 
 
 def test_pod_to_urls_honors_inference_annotations_and_ipv6() -> None:

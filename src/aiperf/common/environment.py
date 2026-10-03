@@ -1332,6 +1332,11 @@ class _ServerMetricsSettings(BaseSettings):
         env_parse_enums=True,
     )
 
+    DISCOVERY_LABEL_SELECTOR: str | None = Field(
+        default=None,
+        description="Default Kubernetes label selector for server metrics discovery",
+    )
+
     COLLECTION_FLUSH_PERIOD: float = Field(
         ge=0.0,
         le=30.0,
