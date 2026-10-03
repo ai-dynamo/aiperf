@@ -56,6 +56,7 @@ from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset import FileDataset, PublicDataset
 from aiperf.dataset import mmap_cache
 from aiperf.dataset.memory_map_utils import turn_from_payload_turn
+from aiperf.dataset.payload_formatting import iter_inputs_json_chunks
 from aiperf.dataset.utils import encode_image
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
@@ -520,7 +521,8 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         return inputs
 
     async def _generate_inputs_json_file(self) -> None:
-        """Generate inputs.json file in the artifact directory."""
+        """Generate inputs.json in the artifact directory, streamed in bounded chunks
+        so the fully encoded document is never held in memory."""
         file_path = self.run.cfg.artifacts.dir / OutputDefaults.INPUTS_JSON_FILE
         temp_file_path = file_path.with_suffix(".tmp")
         self.info(f"Generating inputs.json file at {file_path.resolve()}")
@@ -533,13 +535,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             inputs = self._generate_input_payloads(model_endpoint)
 
             async with aiofiles.open(temp_file_path, "wb") as f:
-                await f.write(
-                    orjson.dumps(
-                        inputs.model_dump(exclude_none=True, mode="json"),
-                        option=orjson.OPT_INDENT_2,
-                    )
-                )
-            temp_file_path.replace(file_path)
+                for chunk in iter_inputs_json_chunks(inputs):
+                    await f.write(chunk)
+            await asyncio.to_thread(temp_file_path.replace, file_path)
 
             duration = time.perf_counter() - start_time
             self.info(f"inputs.json file generated in {duration:.2f} seconds")
