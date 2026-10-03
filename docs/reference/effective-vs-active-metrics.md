@@ -56,6 +56,8 @@ The full set of Effective metrics emitted today:
 | `effective_prefill_throughput_per_user` | tokens/sec/user | Prefill throughput divided by prefill concurrency |
 | `tokens_in_flight` | tokens | KV-cache occupancy proxy: tokens currently being processed |
 
+> **"Prefill" here is the client-observed TTFT window.** The prefill phase of a request is `[request_start_ns, request_start_ns + time_to_first_token)`, measured by the AIPerf worker. It includes request serialization and send, network, server-side queueing, tokenization and scheduling, as well as engine prefill. It equals engine prefill only when everything else is negligible. A slower client CPU, a busy network path or a queued server can therefore raise `effective_prefill_concurrency` and lower `*_prefill_throughput` while engine prefill is unchanged. For engine-side prefill time, collect server metrics (for example `vllm:request_prefill_time_seconds` or `trtllm_request_prefill_time_seconds`, see [Server Metrics](../server-metrics/server-metrics.md)) and compare.
+
 ## Active metrics: phase-restricted views
 
 Active variants use the same sweep-line rate curve, but the integration window is restricted to segments where the relevant **phase mask** is strictly positive. For `active_prefill_throughput` the mask is `prefill_concurrency > 0`; for `active_decode_throughput` it is `decode_concurrency > 0`. Time when no request is in that phase contributes zero duration to the denominator, so the average reflects intensity *during* the phase rather than diluted by gaps.
@@ -98,7 +100,7 @@ Selected rows from the end-of-run console tables:
 Two observations:
 
 - **Decode is almost always active**, so Effective Decode and Active Decode track each other (727 vs 755 tok/s). Decode dominates the run window — the mean decode concurrency of 14.63 is ≈ 91% of the 16 offered slots (`14.63/16.0`), so at almost every instant nearly all in-flight requests are in decode.
-- **Prefill is sparse**, so Effective and Active disagree by ~19×. `effective_prefill_concurrency` averages 0.75 across the whole window — prefill is in flight only a small fraction of the time. When you ask "what is the prefill throughput of this system?", **Active** (28k tok/s) is the answer about hardware capability; **Effective** (1.5k tok/s) is the answer about how much prefill work the workload demanded on average. Both are correct; they answer different questions.
+- **Prefill is sparse**, so Effective and Active disagree by ~19×. `effective_prefill_concurrency` averages 0.75 across the whole window — prefill is in flight only a small fraction of the time. When you ask "what is the prefill throughput of this system?", **Active** (28k tok/s) is the answer about prefill-phase intensity as the client observed it; **Effective** (1.5k tok/s) is the answer about how much prefill work the workload demanded on average. Both are correct; they answer different questions. Note that the mock server here has no prefill compute at all: its TTFT is a fixed 100 ms delay, so 28k tok/s is roughly 16 requests x 200 tokens / 100 ms, a property of the configured TTFT rather than of any hardware.
 
 The Effective row's `p50 = 0` for prefill is not a bug — it correctly reports that for more than half of the run window, no request was in prefill, so the time-weighted median of the prefill-throughput step function is exactly zero.
 
@@ -133,7 +135,7 @@ The failure-aware view is `adj_effective_latency`, rendered as **Effective Laten
 |---|---|
 | "What sustained decode throughput should I plan for at this concurrency level?" | `effective_decode_throughput` |
 | "What was the peak decode throughput the GPU achieved while decoding?" | `active_decode_throughput` (close to `effective_decode_throughput` when decode is rarely idle) |
-| "What is this server's prefill capability under bursty arrival?" | `active_prefill_throughput` — Effective will dilute it by decode-only time |
+| "What prefill-phase throughput did clients observe under bursty arrival?" | `active_prefill_throughput`. Effective will dilute it by decode-only time. For engine-side prefill, use server metrics |
 | "How saturated was my load generator? Did the credit queue back up?" | Compare `effective_latency` against `request_latency` |
 | "What latency does a user actually perceive under this load?" | `effective_latency` (when emitted) |
 | "What did users perceive on a run where some requests failed?" | `adj_effective_latency` — failures enter as `+inf` |
