@@ -1465,3 +1465,59 @@ class TestSweepAnalyzerLatencyResolution:
         result = SweepAnalyzer.compute(per_combination_stats, sweep_params)
 
         assert result["best_configurations"]["best_latency_p99"]["metric"] == 10.0
+
+
+class TestSingleTrialLayout:
+    """A single-trial sweep, the default, keys stats by metric tag with the stat
+    inside the block, not by the flattened ``<tag>_<stat>`` key repeated trials
+    produce. Averages and p99s rank the two runs in opposite orders here, so
+    reading a block's mean (its average) instead of its p99 picks the wrong run.
+    """
+
+    @staticmethod
+    def _compute() -> dict:
+        stats = {
+            ParameterCombination({"concurrency": 1}): {
+                "request_throughput": {
+                    "mean": 10.0,
+                    "avg": 10.0,
+                    "unit": "requests/sec",
+                },
+                "time_to_first_token": {
+                    "mean": 20.0,
+                    "avg": 20.0,
+                    "p99": 90.0,
+                    "unit": "ms",
+                },
+            },
+            ParameterCombination({"concurrency": 4}): {
+                "request_throughput": {
+                    "mean": 30.0,
+                    "avg": 30.0,
+                    "unit": "requests/sec",
+                },
+                "time_to_first_token": {
+                    "mean": 40.0,
+                    "avg": 40.0,
+                    "p99": 60.0,
+                    "unit": "ms",
+                },
+            },
+        }
+        return SweepAnalyzer.compute(stats, [{"name": "concurrency", "values": [1, 4]}])
+
+    def test_best_configurations_are_found(self):
+        best = self._compute()["best_configurations"]
+        assert best["best_throughput"] == {
+            "parameters": {"concurrency": 4},
+            "metric": 30.0,
+            "unit": "requests/sec",
+        }
+        assert best["best_latency_p99"] == {
+            "parameters": {"concurrency": 4},
+            "metric": 60.0,
+            "unit": "ms",
+        }
+
+    def test_the_pareto_frontier_is_found(self):
+        assert self._compute()["pareto_optimal"] == [{"concurrency": 4}]
