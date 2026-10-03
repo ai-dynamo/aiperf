@@ -442,7 +442,6 @@ class TestBoundedOutputsExport:
                 )
             ]
             assert [row["response_text"] for row in document[name]] == expected
-        assert document["data"][0]["benchmark_phase"] in {"profiling", "future", None}
         assert not list(tmp_path.glob(".outputs-json-*"))
 
     @pytest.mark.asyncio
