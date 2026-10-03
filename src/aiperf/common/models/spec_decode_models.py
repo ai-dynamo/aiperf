@@ -49,12 +49,17 @@ class SpecDecodeAcceptanceRecord(AIPerfBaseModel):
         "num_accepted_draft_tokens / num_draft_tokens. Draft-only; excludes the "
         "bonus token.",
     )
-    acceptance_histogram: dict[NonNegativeInt, NonNegativeInt] = Field(
+    acceptance_histogram: dict[NonNegativeInt, NonNegativeInt] | None = Field(
+        default=None,
         description="Sparse map from accepted draft count j to the number of "
         "verification steps that accepted exactly j draft tokens. Engine "
         "adapters populate it (e.g. vLLM inflates its dense on-the-wire "
         "list[int], dropping zero-count buckets); keys are integers and "
-        "zero-count buckets are omitted. Excludes the bonus token.",
+        "zero-count buckets are omitted. Excludes the bonus token. None when "
+        "the engine reports only request-level aggregates and no genuine "
+        "per-step breakdown -- adapters must not fabricate one to satisfy this "
+        "field, since a distribution invented from aggregate counters alone is "
+        "indistinguishable on the wire from real per-step data downstream.",
     )
     num_accepted_draft_tokens: int = Field(
         ge=0,
@@ -114,19 +119,24 @@ class SpecDecodeAcceptanceRecord(AIPerfBaseModel):
         are intentionally not re-derived here to avoid rounding false-positives.
         The vLLM adapter catches the resulting ValidationError and degrades to
         None.
+
+        Skipped entirely when ``acceptance_histogram`` is None: an engine that
+        reports only aggregate counters (no genuine per-step breakdown) has
+        nothing to reconcile against.
         """
-        step_count = sum(self.acceptance_histogram.values())
-        if step_count != self.num_spec_steps:
-            raise ValueError(
-                f"acceptance_histogram counts sum to {step_count}, but "
-                f"num_spec_steps is {self.num_spec_steps}"
-            )
-        accepted = sum(j * count for j, count in self.acceptance_histogram.items())
-        if accepted != self.num_accepted_draft_tokens:
-            raise ValueError(
-                f"acceptance_histogram j-weighted sum is {accepted}, but "
-                f"num_accepted_draft_tokens is {self.num_accepted_draft_tokens}"
-            )
+        if self.acceptance_histogram is not None:
+            step_count = sum(self.acceptance_histogram.values())
+            if step_count != self.num_spec_steps:
+                raise ValueError(
+                    f"acceptance_histogram counts sum to {step_count}, but "
+                    f"num_spec_steps is {self.num_spec_steps}"
+                )
+            accepted = sum(j * count for j, count in self.acceptance_histogram.items())
+            if accepted != self.num_accepted_draft_tokens:
+                raise ValueError(
+                    f"acceptance_histogram j-weighted sum is {accepted}, but "
+                    f"num_accepted_draft_tokens is {self.num_accepted_draft_tokens}"
+                )
         if self.num_accepted_draft_tokens > self.num_draft_tokens:
             raise ValueError(
                 f"num_accepted_draft_tokens ({self.num_accepted_draft_tokens}) "

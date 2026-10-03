@@ -13,6 +13,7 @@ from aiperf.common.models import ParsedResponse, SpecDecodeAcceptanceRecord
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.records.inference_result_parser import InferenceResultParser
+from tests.unit.spec_decode.test_llamacpp_adapter import TIMINGS_PAYLOAD
 from tests.unit.spec_decode.test_vllm_adapter import SUMMARY_PAYLOAD
 
 
@@ -22,7 +23,27 @@ def test_vllm_adapter_is_registered() -> None:
     assert adapter.__name__ == "VLLMSpecDecodeAdapter"
 
 
+def test_llamacpp_adapter_is_registered() -> None:
+    """The llamacpp adapter resolves through the spec_decode_adapter category."""
+    adapter = plugins.get_class(PluginType.SPEC_DECODE_ADAPTER, "llamacpp")
+    assert adapter.__name__ == "LlamaCppSpecDecodeAdapter"
+
+
+def test_extract_returns_llamacpp_record_for_timings_payload() -> None:
+    """Auto-detection resolves the llama.cpp adapter end-to-end via the registry."""
+    responses = [
+        ParsedResponse(perf_ns=1, spec_decode_stats=TIMINGS_PAYLOAD),
+        ParsedResponse(perf_ns=2, usage={"completion_tokens": 20}),
+    ]
+    record = InferenceResultParser._extract_spec_decode_acceptance(responses)
+
+    assert isinstance(record, SpecDecodeAcceptanceRecord)
+    assert record.engine == "llamacpp"
+    assert record.completion_tokens == 20
+
+
 def test_extract_returns_record_when_stats_present() -> None:
+    """Auto-detection resolves the vLLM adapter end-to-end via the registry."""
     responses = [
         ParsedResponse(perf_ns=1, spec_decode_stats=SUMMARY_PAYLOAD),
         ParsedResponse(perf_ns=2, usage={"completion_tokens": 7}),
@@ -74,6 +95,38 @@ def test_extract_suppresses_multi_sequence_stats() -> None:
         ParsedResponse(perf_ns=3, usage={"completion_tokens": 10}),
     ]
     assert InferenceResultParser._extract_spec_decode_acceptance(responses) is None
+
+
+def test_extract_coalesces_cumulative_llamacpp_timings_across_chunks() -> None:
+    """llama.cpp's ``timings`` payload rides every chunk when the request sets
+    ``timings_per_token``, growing cumulatively toward the final chunk's totals.
+
+    Those duplicates describe one request, not distinct sequences, so they must
+    not trip the n > 1 guard: only the last (most complete) chunk should count,
+    and its values -- not an earlier partial chunk's -- must be adapted.
+    """
+    partial_payload = {
+        **TIMINGS_PAYLOAD,
+        "predicted_n": 5,
+        "draft_n": 3,
+        "draft_n_accepted": 3,
+    }
+    responses = [
+        ParsedResponse(perf_ns=1, spec_decode_stats=partial_payload),
+        ParsedResponse(perf_ns=2, spec_decode_stats=partial_payload),
+        ParsedResponse(
+            perf_ns=3,
+            spec_decode_stats=TIMINGS_PAYLOAD,
+            usage={"completion_tokens": 20},
+        ),
+    ]
+    record = InferenceResultParser._extract_spec_decode_acceptance(responses)
+
+    assert isinstance(record, SpecDecodeAcceptanceRecord)
+    assert record.engine == "llamacpp"
+    assert record.num_draft_tokens == TIMINGS_PAYLOAD["draft_n"]
+    assert record.num_accepted_draft_tokens == TIMINGS_PAYLOAD["draft_n_accepted"]
+    assert record.completion_tokens == 20
 
 
 def test_extract_treats_empty_dict_payload_as_absent() -> None:

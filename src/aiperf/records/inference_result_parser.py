@@ -32,6 +32,7 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.records.payload_retention import resolve_disable_tokenization
+from aiperf.spec_decode.llamacpp_adapter import is_llamacpp_payload
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -373,11 +374,27 @@ class InferenceResultParser(CommunicationMixin):
         populates ``metrics.speculative_decoding`` only for single-sequence
         requests and leaves it null otherwise.
 
+        llama.cpp's ``timings`` payload is cumulative and, when the request
+        enables ``timings_per_token``, rides every streaming chunk rather than
+        just the last -- those duplicates all describe the same single request,
+        not distinct sequences, so they are coalesced to the last (most
+        complete) one before the guard runs. Otherwise every chunk would count
+        toward the ``n > 1`` guard and streaming llama.cpp requests would never
+        produce a record.
+
         Counts payloads by truthiness (not ``is not None``) to match the
         adapter's ``_find_spec_decode_payload``: an empty ``{}`` is treated as
         absent at both sites, so it never spuriously trips the n > 1 guard.
         """
         with_stats = [r for r in responses if r.spec_decode_stats]
+        llamacpp_indices = [
+            i
+            for i, r in enumerate(with_stats)
+            if is_llamacpp_payload(r.spec_decode_stats)
+        ]
+        if len(llamacpp_indices) > 1:
+            drop = set(llamacpp_indices[:-1])
+            with_stats = [r for i, r in enumerate(with_stats) if i not in drop]
         if len(with_stats) != 1:
             return None
         for _entry, AdapterClass in plugins.iter_all(PluginType.SPEC_DECODE_ADAPTER):

@@ -1251,6 +1251,7 @@ console_exporter:
       Console exporter for SGLang speculative decoding server metrics. Displays
       acceptance rate and acceptance length when the server exposes them.
 
+
   telemetry:
     class: aiperf.exporters.gpu_telemetry_console_exporter:GPUTelemetryConsoleExporter
     description: |
@@ -1443,6 +1444,16 @@ spec_decode_adapter:
       engine-neutral SpecDecodeAcceptanceRecord. Handles chat and completions,
       streaming and non-streaming; inflates the dense ``acceptance_histogram``
       list into the record's sparse map.
+    metadata: {}
+
+  llamacpp:
+    class: aiperf.spec_decode.llamacpp_adapter:LlamaCppSpecDecodeAdapter
+    description: |
+      Reads llama.cpp's per-response ``timings`` object (present when
+      llama-server runs with a draft model) and fills the engine-neutral
+      SpecDecodeAcceptanceRecord. Derives num_spec_steps from predicted_n and
+      draft_n_accepted; reconstructs the acceptance histogram from aggregate
+      totals using integer-division bucketing.
     metadata: {}
 
 accuracy_grader:
