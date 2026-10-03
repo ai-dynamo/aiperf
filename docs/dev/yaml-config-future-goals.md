@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # YAML Config — Future Goals
 
 This document captures **scoped-out** design ideas from prior YAML-config feature brainstorms. Each entry has motivation, a sketch, design questions still open, and prior-art references. None of these are committed to a release; they are durable idea-storage so we don't redo the design conversation when a user request resurrects one.

@@ -33,7 +33,7 @@ def _compare_helper_script(body: str) -> str:
         const helpers = source
           .slice(0, source.indexOf('export function Compare()'))
           .replace(/^import .*$/gm, '')
-          .replace(/^export \{{[^\\r\\n]+\}};$/gm, '');
+          .replace(/^export \\{{[^\\r\\n]+\\}};$/gm, '');
         eval(helpers + '\\n' + {json.dumps(body)});
     """
 
