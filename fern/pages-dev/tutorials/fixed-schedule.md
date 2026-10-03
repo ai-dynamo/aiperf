@@ -181,6 +181,10 @@ JSON Export: artifacts/Qwen_Qwen3-0.6B-chat-fixed-schedule/profile_export_aiperf
 - `--fixed-schedule-start-offset 2000`: Start execution at 2000ms timestamp
 - `--fixed-schedule-end-offset 4000`: End execution at 4000ms timestamp
 
+If the window selects no entries, AIPerf fails at startup with an error naming
+the offsets and how many entries fell outside them, rather than running a
+benchmark with zero requests.
+
 
 ## Use Cases
 
