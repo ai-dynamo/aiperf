@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import orjson
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import ExportLevel
 from aiperf.common.hooks import on_init
 from aiperf.common.mixins import CommunicationMixin
@@ -35,6 +36,11 @@ from aiperf.records.payload_retention import resolve_disable_tokenization
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
+
+
+# ``_extract_spec_decode_acceptance`` is a staticmethod, so it cannot use the
+# instance logger CommunicationMixin provides.
+_logger = AIPerfLogger(__name__)
 
 
 # TODO: Should we create non-tokenizer based parsers?
@@ -374,16 +380,57 @@ class InferenceResultParser(CommunicationMixin):
         requests and leaves it null otherwise.
 
         Counts payloads by truthiness (not ``is not None``) to match the
-        adapter's ``_find_spec_decode_payload``: an empty ``{}`` is treated as
+        adapter's ``find_spec_decode_payload``: an empty ``{}`` is treated as
         absent at both sites, so it never spuriously trips the n > 1 guard.
+
+        Collects every match rather than returning on the first, so a payload
+        two adapters both claim is a reported error and a dropped record instead
+        of whichever adapter ``iter_all`` happened to reach first. That order is
+        ``plugins.yaml`` declaration order -- ``priority`` only resolves
+        conflicts between plugins registering the same name -- so first-match
+        would silently make YAML line order decide which engine a record is
+        attributed to.
         """
         with_stats = [r for r in responses if r.spec_decode_stats]
         if len(with_stats) != 1:
             return None
-        for _entry, AdapterClass in plugins.iter_all(PluginType.SPEC_DECODE_ADAPTER):
-            if AdapterClass.can_adapt(responses):
-                return AdapterClass.adapt(responses)
-        return None
+        matches = []
+        for entry, AdapterClass in plugins.iter_all(PluginType.SPEC_DECODE_ADAPTER):
+            try:
+                if AdapterClass.can_adapt(responses):
+                    matches.append(AdapterClass)
+            except Exception as e:  # noqa: BLE001 - one bad plugin must not fail the record
+                # ``can_adapt`` is a third-party plugin callback: the protocol
+                # asks for it to be cheap and side-effect free but cannot stop
+                # an implementation from raising. Isolating each call keeps one
+                # bad adapter from failing the whole record and from hiding
+                # every adapter registered after it.
+                error = e
+                _logger.warning(
+                    lambda name=entry.name,
+                    error=error: f"Spec-decode adapter {name!r} raised during "
+                    f"detection; skipping it: {error!r}"
+                )
+        if len(matches) > 1:
+            # Always a bug in AIPerf's own signatures, not in the payload: two
+            # adapters cannot both be right about which engine produced it.
+            _logger.warning(
+                lambda: "Ambiguous spec-decode payload claimed by "
+                f"{[a.__name__ for a in matches]}; dropping record"
+            )
+            return None
+        if not matches:
+            # A payload is present -- the guard above returned otherwise -- yet
+            # no adapter recognized it. Either an engine changed its wire format
+            # or this run targets an engine AIPerf has no adapter for. Debug
+            # rather than warning: on an unsupported engine it would fire for
+            # every record in the run.
+            _logger.debug(
+                lambda: "Spec-decode payload present but claimed by no adapter: "
+                f"{with_stats[0].spec_decode_stats!r}"
+            )
+            return None
+        return matches[0].adapt(responses)
 
     async def compute_input_token_count(
         self,
