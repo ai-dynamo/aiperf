@@ -89,10 +89,12 @@ class InterTokenLatencyMetric(BaseRecordMetric[float]):
                 if not type(self)._mismatch_warned:
                     type(self)._mismatch_warned = True
                     _logger.warning(
-                        lambda: f"Inter-token latency: server-reported first content chunk "
-                        f"token count ({first_chunk_tokens}) is inconsistent with output "
-                        f"sequence length ({osl}); falling back to (OSL - 1). Check "
-                        f"--per-chunk-usage server support."
+                        lambda: (
+                            f"Inter-token latency: server-reported first content chunk "
+                            f"token count ({first_chunk_tokens}) is inconsistent with output "
+                            f"sequence length ({osl}); falling back to (OSL - 1). Check "
+                            f"--per-chunk-usage server support."
+                        )
                     )
                 decode_tokens = osl - 1  # type: ignore
 

@@ -1005,13 +1005,13 @@ class TestGPUTelemetryJSONLWriterErrorHandling:
             return AsyncMock()
 
         async with aiperf_lifecycle(processor):
-            with patch.object(
-                processor, "buffered_write", side_effect=side_effect_once
+            with (
+                patch.object(processor, "buffered_write", side_effect=side_effect_once),
+                patch.object(processor, "error"),
             ):
-                with patch.object(processor, "error"):
-                    for i in range(3):
-                        record = make_telemetry_record(timestamp_ns=1_000_000_000 + i)
-                        await processor.process_telemetry_record(record)
+                for i in range(3):
+                    record = make_telemetry_record(timestamp_ns=1_000_000_000 + i)
+                    await processor.process_telemetry_record(record)
 
         assert call_count == 3
 
