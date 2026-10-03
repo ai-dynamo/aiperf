@@ -165,7 +165,7 @@ helm install aiperf-operator \
   --create-namespace
 ```
 
-Omitting `--version` installs the latest release. Pin `--version X.Y.Z` to match your local `aiperf` CLI. The chart's default operator and benchmark image is `nvcr.io/nvidia/aiperf:<chart version>`. The chart installs both CRDs itself. The packaged chart and standalone CRD manifests attached to each [GitHub Release](https://github.com/ai-dynamo/aiperf/releases) are for GitOps pipelines; do not `kubectl apply` them before `helm install`.
+Omitting `--version` installs the latest stable release; prereleases and suffixed releases such as `X.Y.Z-post.1` need an explicit `--version`. Pin `--version X.Y.Z` to match your local `aiperf` CLI. The chart's default operator and benchmark image is `nvcr.io/nvidia/aiperf:<chart version>`. The chart installs both CRDs itself. The packaged chart and standalone CRD manifests attached to each [GitHub Release](https://github.com/ai-dynamo/aiperf/releases) are for GitOps pipelines; do not `kubectl apply` them before `helm install`.
 
 From a source checkout, install the local chart instead:
 
