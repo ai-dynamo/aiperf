@@ -2992,3 +2992,367 @@ async def test_profiling_setup_logs_rootless_lane_count(caplog):
 
     msgs = [r.getMessage() for r in caplog.records]
     assert any("rootless" in m and "1" in m for m in msgs), msgs
+
+
+@pytest.mark.asyncio
+async def test_baseline_warmup_context_overflow_short_circuit() -> None:
+    trajectory = Trajectory(conversation_id="trace_0", start_turn_index=1)
+    strategy, issuer, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[trajectory],
+        cache_warmup_duration=600.0,
+    )
+
+    await strategy.execute_phase()
+    baseline = issuer.issue_credit.await_args_list[0].args[0]
+    assert baseline.turn_index == 1
+
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0",
+            x_correlation_id=baseline.x_correlation_id,
+            turn_index=1,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+        ),
+        error="This model's maximum context length is 131072 tokens",
+    )
+
+    assert len(issuer.issue_credit.await_args_list) == 2
+    recycled = issuer.issue_credit.await_args_list[1].args[0]
+    assert recycled.turn_index == 0
+    assert recycled.is_session_start is True
+
+
+@pytest.mark.asyncio
+async def test_baseline_root_overflow_replacement_owns_accelerated_stage() -> None:
+    """After a baseline root overflow recycles the lane, the accelerated stage
+    must continue the recycled replacement, not re-dispatch the terminated
+    trajectory: its ``start_turn_index + 1`` prompt is strictly larger than the
+    one the server refused, and the re-overflow's return would recycle the
+    trajectory's correlation id a second time and trip the double-recycle
+    guard."""
+    trajectory = Trajectory(conversation_id="trace_0", start_turn_index=1)
+    strategy, issuer, _, src = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[trajectory],
+        cache_warmup_duration=600.0,
+    )
+
+    await strategy.execute_phase()
+    baseline = issuer.issue_credit.await_args_list[0].args[0]
+    assert baseline.x_correlation_id == trajectory.x_correlation_id
+
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0",
+            x_correlation_id=baseline.x_correlation_id,
+            turn_index=1,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+        ),
+        error="This model's maximum context length is 131072 tokens",
+    )
+    assert src.warmup_terminated_correlations == {trajectory.x_correlation_id}
+    recycled = issuer.issue_credit.await_args_list[-1].args[0]
+    assert recycled.turn_index == 0
+
+    # The replacement's clean return fills the baseline tally and starts the
+    # accelerated stage.
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id=recycled.conversation_id,
+            x_correlation_id=recycled.x_correlation_id,
+            turn_index=0,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+        )
+    )
+
+    assert strategy._accelerated_warmup_started is True
+    issued = [c.args[0] for c in issuer.issue_credit.await_args_list]
+    assert len(issued) == 3
+    pressure = issued[-1]
+    assert pressure.x_correlation_id == recycled.x_correlation_id
+    assert pressure.turn_index == 1
+    assert all(
+        turn.x_correlation_id != trajectory.x_correlation_id for turn in issued[1:]
+    )
+
+
+@pytest.mark.asyncio
+async def test_baseline_snapshot_root_overflow_not_redispatched_into_pressure() -> None:
+    """A timestamped root whose baseline warm turn overflowed must be excluded
+    from the accelerated dispatchable states (its terminal accounting already
+    ran on the baseline overflow return), while its live child keeps the
+    load-bearing pressure dispatch."""
+    root_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="root",
+        next_turn_index=2,
+        agent_depth=0,
+    )
+    child_state = ConversationState(
+        conversation_id="trace_1",
+        x_correlation_id="child",
+        next_turn_index=1,
+        agent_depth=1,
+        parent_correlation_id="root",
+        root_correlation_id="root",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    trajectories = [
+        Trajectory(
+            conversation_id="trace_0",
+            start_turn_index=2,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=0.0,
+                states=(root_state, child_state),
+            ),
+        )
+    ]
+    strategy, issuer, _, src = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=trajectories,
+        cache_warmup_duration=600.0,
+    )
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+    baseline = [c.args[0] for c in issuer.issue_credit.await_args_list]
+    by_corr = {t.x_correlation_id: t for t in baseline}
+    assert set(by_corr) == {"root", "child"}
+
+    # Root's baseline warm turn overflows: marked terminated, lane recycled.
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0",
+            x_correlation_id="root",
+            turn_index=by_corr["root"].turn_index,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+        ),
+        error="This model's maximum context length is 131072 tokens",
+    )
+    assert src.warmup_terminated_correlations == {"root"}
+    recycled = issuer.issue_credit.await_args_list[-1].args[0]
+    assert recycled.turn_index == 0
+
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_1",
+            x_correlation_id="child",
+            turn_index=by_corr["child"].turn_index,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+            agent_depth=1,
+            parent_correlation_id="root",
+        )
+    )
+    assert strategy._accelerated_warmup_started is False
+
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id=recycled.conversation_id,
+            x_correlation_id=recycled.x_correlation_id,
+            turn_index=0,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+        )
+    )
+    assert strategy._accelerated_warmup_started is True
+
+    issued = [c.args[0] for c in issuer.issue_credit.await_args_list]
+    root_credits = [t for t in issued if t.x_correlation_id == "root"]
+    assert root_credits == [by_corr["root"]]
+    child_credits = [t for t in issued if t.x_correlation_id == "child"]
+    assert len(child_credits) == 2
+    assert child_credits[-1].turn_index == 1
+
+
+@pytest.mark.asyncio
+async def test_warmup_overflow_without_cache_pressure_marks_lane_terminated() -> None:
+    """Without ``--agentic-cache-warmup-duration`` a warmup return is otherwise
+    a strategy no-op, but a root context overflow must still mark the lane on
+    the shared source so the PROFILING instance recycles it."""
+    trajectory = Trajectory(conversation_id="trace_0", start_turn_index=1)
+    strategy, issuer, _, src = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[trajectory],
+    )
+
+    await strategy.execute_phase()
+    issued_before = len(issuer.issue_credit.await_args_list)
+
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0",
+            x_correlation_id=trajectory.x_correlation_id,
+            turn_index=1,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+        ),
+        error="This model's maximum context length is 131072 tokens",
+    )
+
+    assert src.warmup_terminated_correlations == {trajectory.x_correlation_id}
+    assert len(issuer.issue_credit.await_args_list) == issued_before
+
+
+@pytest.mark.asyncio
+async def test_profiling_recycles_lane_terminated_by_warmup_overflow() -> None:
+    """PROFILING must not resume a trajectory whose root overflowed during
+    WARMUP; the lane recycles into a fresh turn-0 session instead."""
+    trajectory = Trajectory(conversation_id="trace_0", start_turn_index=1)
+    strategy, issuer, _, src = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=[trajectory],
+    )
+    src.warmup_terminated_correlations.add(trajectory.x_correlation_id)
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+
+    issued = [c.args[0] for c in issuer.issue_credit.await_args_list]
+    assert len(issued) == 1
+    assert issued[0].turn_index == 0
+    assert issued[0].is_session_start is True
+    assert issued[0].x_correlation_id != trajectory.x_correlation_id
+
+
+@pytest.mark.asyncio
+async def test_accelerated_warmup_context_overflow_cleans_handoff_state() -> None:
+    """An overflow on a PRESSURE credit (accelerated stage) must remove the
+    stream's handoff state so finalize_phase cannot persist a doomed
+    continuation into the profiling snapshot."""
+    trajectory = Trajectory(conversation_id="trace_0", start_turn_index=1)
+    strategy, issuer, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[trajectory],
+        cache_warmup_duration=600.0,
+    )
+
+    await strategy.execute_phase()
+    baseline = issuer.issue_credit.await_args_list[0].args[0]
+
+    # Clean baseline return -> accelerated stage starts and dispatches the
+    # lane's resume turn.
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0",
+            x_correlation_id=baseline.x_correlation_id,
+            turn_index=1,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+        )
+    )
+    assert strategy._accelerated_warmup_started is True
+    pressure = issuer.issue_credit.await_args_list[-1].args[0]
+    assert pressure.turn_index == 2
+
+    issued_before = len(issuer.issue_credit.await_args_list)
+    overflowed = _make_credit(
+        conversation_id="trace_0",
+        x_correlation_id=pressure.x_correlation_id,
+        turn_index=2,
+        num_turns=4,
+        phase=CreditPhase.WARMUP,
+    )
+    # The callback handler records the non-final return into handoff state
+    # before dispatching to the strategy; mirror that ordering.
+    strategy.observe_credit_return(overflowed)
+    assert pressure.x_correlation_id in strategy._handoff_credits
+
+    await strategy.handle_credit_return(
+        overflowed,
+        error="This model's maximum context length is 131072 tokens",
+    )
+
+    assert pressure.x_correlation_id not in strategy._handoff_credits
+    assert pressure.x_correlation_id not in strategy._handoff_returned_at_ns
+    # Terminated early: recycled at turn 0, no next pressure turn for the
+    # doomed stream.
+    recycled = issuer.issue_credit.await_args_list[-1].args[0]
+    assert recycled.turn_index == 0
+    assert recycled.is_session_start is True
+    assert len(issuer.issue_credit.await_args_list) == issued_before + 1
+
+
+@pytest.mark.asyncio
+async def test_baseline_warmup_child_overflow_still_reaches_accelerated_stage() -> None:
+    """A DAG child's baseline overflow must still fill its slot in the baseline
+    tally. Children have no recycle rescue during baseline warmup (a child
+    overflow never clears root_pending, so no replacement credit is spawned);
+    dropping the return would leave warmup_credit_count unreachable and hang
+    the phase before _start_accelerated_warmup / mark_sending_complete."""
+    parent_state = ConversationState(
+        conversation_id="trace_0",
+        x_correlation_id="parent",
+        next_turn_index=2,
+        agent_depth=0,
+        waiting_on_children=True,
+        join_target_turn_index=2,
+    )
+    child_state = ConversationState(
+        conversation_id="trace_1",
+        x_correlation_id="child",
+        next_turn_index=1,
+        agent_depth=1,
+        parent_correlation_id="parent",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+    trajectories = [
+        Trajectory(
+            conversation_id="trace_0",
+            start_turn_index=2,
+            snapshot=TrajectorySnapshot(
+                t_star_ms=0.0,
+                states=(parent_state, child_state),
+            ),
+        )
+    ]
+    strategy, issuer, _, src = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=trajectories,
+        cache_warmup_duration=600.0,
+    )
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+    issued = [c.args[0] for c in issuer.issue_credit.await_args_list]
+    by_cid = {t.conversation_id: t for t in issued}
+    assert set(by_cid) == {"trace_0", "trace_1"}
+    assert src.warmup_credit_count == 2
+
+    # Child's baseline credit returns with a context overflow.
+    child_turn = by_cid["trace_1"]
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_1",
+            x_correlation_id=child_turn.x_correlation_id,
+            turn_index=child_turn.turn_index,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+            agent_depth=1,
+            parent_correlation_id="parent",
+        ),
+        error="This model's maximum context length is 131072 tokens",
+    )
+    assert strategy._accelerated_warmup_started is False
+    # Children are deliberately NOT marked terminated: their single accelerated
+    # re-dispatch is load-bearing (its return drains the parent join).
+    assert src.warmup_terminated_correlations == set()
+
+    # Parent's baseline credit returns cleanly; the tally is now complete and
+    # the accelerated stage must start instead of hanging one slot short.
+    parent_turn = by_cid["trace_0"]
+    await strategy.handle_credit_return(
+        _make_credit(
+            conversation_id="trace_0",
+            x_correlation_id=parent_turn.x_correlation_id,
+            turn_index=parent_turn.turn_index,
+            num_turns=4,
+            phase=CreditPhase.WARMUP,
+        )
+    )
+    assert strategy._accelerated_warmup_started is True
