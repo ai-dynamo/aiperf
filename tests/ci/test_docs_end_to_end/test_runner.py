@@ -6,12 +6,14 @@ Test runner for executing server setup, health checks, and AIPerf tests.
 
 import logging
 import os
+import re
 import signal
 import subprocess
 import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
+from pathlib import PurePosixPath
 from types import SimpleNamespace
 from typing import Any
 
@@ -24,6 +26,24 @@ from data_types import Server
 from utils import get_repo_root
 
 logger = logging.getLogger(__name__)
+
+
+# Matches an explicit --ui / --ui-type the doc already chose. The lookbehind
+# keeps it from firing inside a longer token (``--no-ui-type-x``), and the
+# trailing ``=|\s`` keeps ``--ui-types`` from counting as ``--ui-type``.
+_UI_FLAG_RE = re.compile(r"(?<!\S)--ui(-type)?(=|\s)")
+
+
+def inject_ui_type(command: str, ui_type: str = AIPERF_UI_TYPE) -> str:
+    """Force the non-interactive UI unless the doc already selected one.
+
+    cyclopts rejects a repeated parameter with "Parameter --ui-type specified
+    multiple times" and exits 1, so injecting unconditionally would make every
+    guide that teaches ``--ui-type``/``--ui`` impossible to tag for docs-e2e.
+    """
+    if _UI_FLAG_RE.search(command):
+        return command
+    return command.replace("aiperf profile", f"aiperf profile --ui-type {ui_type}")
 
 
 class _ProcessGroupKillGuard:
@@ -49,13 +69,14 @@ def _make_process_group_timeout_killer(
     test_num: int,
     server_name: str,
     guard: _ProcessGroupKillGuard,
+    timeout: int = AIPERF_COMMAND_TIMEOUT,
 ) -> Callable[[], None]:
     def _kill_on_timeout() -> None:
         if not guard.mark_killing_if_running(proc):
             return
         logger.error(
             f"AIPerf test {test_num} exceeded "
-            f"{AIPERF_COMMAND_TIMEOUT}s timeout for {server_name}; "
+            f"{timeout}s timeout for {server_name}; "
             f"sending SIGKILL to process group"
         )
         with suppress(ProcessLookupError):
@@ -368,6 +389,9 @@ class EndToEndTestRunner:
         logger.info("=" * 60)
         logger.info(f"Server {server.name} health check passed - ready for testing")
 
+        if not self._materialize_files(server):
+            return False
+
         # Run all aiperf commands for this server
         all_aiperf_passed = True
         for i, aiperf_cmd in enumerate(server.aiperf_commands):
@@ -376,11 +400,21 @@ class EndToEndTestRunner:
             )
 
             # Execute aiperf command in the container with verbose output
-            # Add --ui-type simple to all aiperf commands
-            aiperf_command_with_ui = aiperf_cmd.command.replace(
-                "aiperf profile", f"aiperf profile --ui-type {AIPERF_UI_TYPE}"
-            )
-            exec_command = f"docker exec {self.aiperf_container_id} bash -c '{aiperf_command_with_ui}'"
+            aiperf_command_with_ui = inject_ui_type(aiperf_cmd.command)
+            # The command goes in over stdin, not interpolated into a
+            # single-quoted `bash -c '...'`. Guides routinely pass JSON in
+            # single quotes (--extra-inputs '{"temperature": 0}'), and wrapping
+            # that in single quotes strips them: the payload arrives as
+            # {temperature: 0} and fails JSON validation. Any guide using a
+            # single quote is otherwise impossible to tag.
+            exec_argv = [
+                "docker",
+                "exec",
+                "-i",
+                self.aiperf_container_id,
+                "bash",
+                "-s",
+            ]
 
             logger.info(
                 f"Executing AIPerf command {i + 1}/{len(server.aiperf_commands)} against {server.name}:"
@@ -391,8 +425,8 @@ class EndToEndTestRunner:
             logger.info("=" * 60)
 
             aiperf_process = subprocess.Popen(
-                exec_command,
-                shell=True,
+                exec_argv,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -400,15 +434,20 @@ class EndToEndTestRunner:
                 universal_newlines=True,
                 start_new_session=True,
             )
+            assert aiperf_process.stdin is not None
+            aiperf_process.stdin.write(aiperf_command_with_ui + "\n")
+            aiperf_process.stdin.close()
 
             kill_guard = _ProcessGroupKillGuard()
+            command_timeout = aiperf_cmd.timeout or AIPERF_COMMAND_TIMEOUT
             watchdog = threading.Timer(
-                AIPERF_COMMAND_TIMEOUT,
+                command_timeout,
                 _make_process_group_timeout_killer(
                     proc=aiperf_process,
                     test_num=i + 1,
                     server_name=server.name,
                     guard=kill_guard,
+                    timeout=command_timeout,
                 ),
             )
             watchdog.daemon = True
@@ -459,6 +498,48 @@ class EndToEndTestRunner:
         )
 
         return all_aiperf_passed
+
+    def _materialize_files(self, server) -> bool:
+        """Write a server's declared file fixtures into the AIPerf container.
+
+        Content is piped in over stdin rather than interpolated into the shell
+        command: YAML and JSON routinely contain quotes, ``$`` and newlines,
+        which would otherwise be re-interpreted by the shell wrapping the
+        docker exec.
+        """
+        for fixture in server.files:
+            target = PurePosixPath(fixture.path)
+            if target.is_absolute() or ".." in target.parts:
+                logger.error(
+                    f"Refusing to write fixture outside the working directory: "
+                    f"{fixture.path} ({fixture.file_path}:{fixture.start_line})"
+                )
+                return False
+
+            logger.info(f"Writing fixture {fixture.path} for {server.name}")
+            parent = target.parent
+            mkdir = f"mkdir -p {parent} && " if str(parent) != "." else ""
+            result = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    "-i",
+                    self.aiperf_container_id,
+                    "bash",
+                    "-c",
+                    f"{mkdir}cat > {target}",
+                ],
+                input=fixture.content,
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                logger.error(
+                    f"Failed to write fixture {fixture.path}: {result.stderr.strip()}"
+                )
+                return False
+        return True
 
     def _cleanup(self):
         """Cleanup all containers (nuclear approach)"""
