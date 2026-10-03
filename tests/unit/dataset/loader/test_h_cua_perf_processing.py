@@ -14,6 +14,7 @@ from aiperf.dataset.loader.h_cua_perf_processing import (
     HCuaPerfFilters,
     apply_screenshot_window,
     drop_screenshot,
+    drop_structured_output,
     fit_lengths,
     iter_selected_records,
     screenshot_slots,
@@ -40,6 +41,15 @@ def _record(step: int, *, image_slots: set[int] | None = None) -> dict[str, Any]
 
 def _image_slots(rec: dict[str, Any]) -> list[int]:
     return image_slots(rec["messages"])
+
+
+def _references(rec: dict[str, Any]) -> list[tuple[int, bool]]:
+    """(slot, carries its data) of every image part still in the record, in order."""
+    return [
+        (slot, parts[idx]["image_url"] is not None)
+        for slot, (parts, idx) in enumerate(screenshot_slots(rec["messages"]))
+        if parts[idx].get("type") == "image_url"
+    ]
 
 
 class TestSelectTraceLengths:
@@ -83,7 +93,7 @@ class TestFitLengths:
 class TestIterSelectedRecords:
     def test_yields_planned_prefixes_in_file_order(self) -> None:
         plan = {"traj-a": 2, "traj-c": 2}
-        out = list(iter_selected_records(iter(RECORDS), plan, None))
+        out = list(iter_selected_records(iter(RECORDS), plan, HCuaPerfFilters()))
         assert [(r["session_id"], r["output_length"]) for r in out] == [
             ("traj-a", 10), ("traj-a", 11), ("traj-c", 10), ("traj-c", 11),
         ]  # fmt: skip
@@ -96,7 +106,8 @@ class TestIterSelectedRecords:
                 consumed.append(r["session_id"])
                 yield r
 
-        list(iter_selected_records(records(), {"traj-a": 3, "traj-b": 1}, None))
+        plan = {"traj-a": 3, "traj-b": 1}
+        list(iter_selected_records(records(), plan, HCuaPerfFilters()))
         assert consumed == ["traj-a"] * 3 + ["traj-b"]
 
 
@@ -181,6 +192,37 @@ class TestScreenshotWindow:
         drop_screenshot(parts, next(i for i, p in enumerate(parts) if "uuid" in p))
         assert parts == [{"type": "text", "text": expected_text}]
         assert IMAGE_PLACEHOLDER in parts[0]["text"]
+
+
+class TestRequestShaping:
+    def test_uuid_cache_sends_each_screenshot_in_full_once_per_trajectory(self) -> None:
+        filters = HCuaPerfFilters(n_screenshots=2, uuid_cache=True)
+        plan = {"traj-a": 3, "traj-b": 1}
+        out = list(iter_selected_records(iter(RECORDS), plan, filters))
+
+        assert [_references(r) for r in out] == [
+            [(0, True)],
+            [(0, False), (1, True)],
+            [(1, False), (2, True)],
+            [(0, True)],
+        ]
+        parts, idx = screenshot_slots(out[1]["messages"])[0]
+        assert parts[idx] == {
+            "type": "image_url",
+            "image_url": None,
+            "uuid": image("traj-a", 0)["uuid"],
+        }
+
+    def test_disable_structured_output_keeps_tool_choice(self) -> None:
+        record = {
+            "extra": {
+                "tool_choice": "auto",
+                "response_format": {"type": "json_object"},
+                "structured_outputs": {"json": {"type": "object"}},
+            }
+        }
+        drop_structured_output(record)
+        assert record == {"extra": {"tool_choice": "auto"}}
 
 
 class TestFilters:

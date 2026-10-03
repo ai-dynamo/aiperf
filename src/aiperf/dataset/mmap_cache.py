@@ -901,6 +901,11 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
             system_prompt.encode("utf-8")
         ).hexdigest()
 
+    # --dataset-filter values change the loaded records, e.g. h_cua_perf's screenshot window.
+    dataset_filters = getattr(dataset, "filters", None)
+    if dataset_filters:
+        payload["dataset_filters"] = dict(dataset_filters)
+
     return payload
 
 
