@@ -68,5 +68,10 @@ def profile(
         quiet_for=(ConfigurationError,),
     ):
         from aiperf.cli_runner import run_benchmark
+        from aiperf.common.environment import Environment
+        from aiperf.common.scenario import get_scenario
 
-        run_benchmark(plan)
+        scenario = config.benchmark.scenario
+        defaults = get_scenario(scenario).environment_defaults if scenario else {}
+        with Environment.defaults(defaults):
+            run_benchmark(plan)
