@@ -186,6 +186,7 @@ It carries its own `schema_version` (`OutputsJsonExporter.SCHEMA_VERSION`, curre
 - **`response_text`** is the concatenated generated text. For models that emit a separate reasoning channel, reasoning and answer are concatenated. It is `null` when the response carried no content.
 - **`metrics`** holds an allowlisted subset in display units (`input_sequence_length`, `output_token_count`, `output_sequence_length`, `request_latency`, `time_to_first_token`, `inter_token_latency`). Streaming-only metrics are absent from non-streaming records.
 - Schema `1.1` added `warmup` and `benchmark_phase`; both are additive over `1.0`.
+- The exporter sorts fragments through temporary files beside the final artifact and replaces `outputs.json` only after the complete document is written. Working memory depends on the sorting chunk size, read/write buffers, and merge fan-in. Each merge input can retain a full record, so oversized responses can increase merge memory in proportion to the number of inputs. Failure or cancellation before final replacement preserves the source fragments and any previous `outputs.json`.
 
 ### Named phase artifacts
 
