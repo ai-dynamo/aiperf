@@ -15,15 +15,16 @@ This guide walks you through benchmarking inference endpoints protected by AWS I
 | Scenario | Non-Streaming | Streaming | Notes |
 |----------|:---:|:---:|-------|
 | API Gateway + vLLM/TGI/NIM | Yes | Yes | Standard HTTP + SSE |
-| SageMaker + vLLM/LMI container | Yes | No | Non-streaming only. SageMaker uses proprietary event framing instead of SSE. |
+| SageMaker + vLLM/LMI container | Yes | Yes | Use the SageMaker transport (`--sagemaker-endpoint-name`), which decodes SageMaker's eventstream framing. See [AWS SageMaker](aws-sagemaker.md). |
 | Bedrock Converse / InvokeModel | No | No | Different request/response schema -- not OpenAI-compatible |
 
 Endpoints that send `multipart/form-data` (`image_edit`, `video_generation`) are
 not supported: signing a multipart body is not implemented, so AIPerf rejects
 `--auth-type sigv4` for them at startup rather than sending unauthenticated
-requests. `--aws-region` and `--aws-service` are both required with
-`--auth-type sigv4`, and the `--aws-*` flags are rejected if `--auth-type sigv4`
-is not set, since they would otherwise be silently ignored.
+requests. `--aws-region` is required with `--auth-type sigv4`. `--aws-service` is
+required too, unless the transport supplies the signing name itself -- the SageMaker
+transport does. The `--aws-*` flags are rejected if `--auth-type sigv4` is not set,
+since they would otherwise be silently ignored.
 
 ## Before You Start
 
@@ -76,9 +77,14 @@ aiperf profile \
     --request-count 100
 ```
 
-### SageMaker with vLLM or LMI (Non-Streaming)
+### SageMaker with vLLM or LMI
 
-SageMaker endpoints running vLLM or DJL LMI containers accept OpenAI-format request bodies through the `/invocations` path. The response body is passed through unchanged, so non-streaming works. Use `--endpoint` to set the SageMaker invocation path:
+Use the SageMaker transport: `--sagemaker-endpoint-name` derives the URL, the
+invocation path, the signing name and the streaming operation, and supports
+`--streaming`. See [AWS SageMaker](aws-sagemaker.md).
+
+The plain HTTP transport can also reach a SageMaker endpoint through an explicit
+`--endpoint` path:
 
 ```bash
 aiperf profile \
@@ -92,7 +98,11 @@ aiperf profile \
     --request-count 100
 ```
 
-Streaming is not supported for SageMaker endpoints because SageMaker uses a proprietary event stream format instead of SSE. Do not pass `--streaming` with SageMaker.
+This `/invocations` route is non-streaming. To stream, add `--streaming` and
+change `--endpoint` to `/endpoints/my-endpoint/invocations-response-stream`;
+AIPerf decodes the AWS eventstream response on either transport. Keep the two
+in step by hand: `--streaming` against `/invocations` gets one buffered
+response, so TTFT equals total latency.
 
 ## Figuring Out Your Region and Service Name
 
