@@ -10,6 +10,7 @@ C3 (cyclopts plumbing on the v1 ``CLIConfig``) of the auto-plot design.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -88,11 +89,17 @@ def test_v2_artifacts_accepts_combinations(
 
 
 def test_auto_plot_quick_start_uses_url_for_server_address() -> None:
+    """The server address must ride ``--url``, never ``--endpoint``.
+
+    Asserted on the flag rather than a literal host: the quick start is
+    executed verbatim by the docs end-to-end test, so its address tracks
+    whatever server that harness boots.
+    """
     doc = Path("docs/tutorials/auto-plot.md").read_text()
     quick_start = doc.split("## Quick start", 1)[1].split("```", 2)[1]
 
-    assert "--url http://vllm.internal:8000" in quick_start
-    assert "--endpoint http://vllm.internal:8000" not in quick_start
+    assert re.search(r"--url\s+https?://\S+", quick_start)
+    assert not re.search(r"--endpoint\s+https?://", quick_start)
 
 
 # --- Cyclopts CLI flag plumbing ----------------------------------------------
