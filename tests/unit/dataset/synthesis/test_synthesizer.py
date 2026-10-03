@@ -165,6 +165,50 @@ class TestSynthesizer:
 
         assert synthetic[0].get("timestamp") == expected_ts
 
+    def test_speedup_ratio_with_partial_final_block(self) -> None:
+        """Traces whose shared prefix ends in a partial block should not crash."""
+        # block_size=16; 756 tokens = 47 full blocks + a 4-token remainder.
+        # All hash_ids are shared, so the prefix consumes the partial final block.
+        hash_ids = list(range(1, 49))
+        traces = [
+            {
+                "input_length": 756,
+                "output_length": 10,
+                "timestamp": 1000,
+                "hash_ids": hash_ids,
+            },
+            {
+                "input_length": 756,
+                "output_length": 10,
+                "timestamp": 2000,
+                "hash_ids": hash_ids,
+            },
+        ]
+        params = SynthesisParams(speedup_ratio=2.0, block_size=16)
+        synthesizer = Synthesizer(params=params)
+        synthetic = synthesizer.synthesize_traces(traces)
+
+        assert synthetic[0].get("timestamp") == 500
+        assert synthetic[1].get("timestamp") == 1000
+        assert synthetic[0]["input_length"] == 756
+        assert synthetic[1]["input_length"] == 756
+        assert len(synthetic[0]["hash_ids"]) == 48
+        assert len(synthetic[1]["hash_ids"]) == 48
+
+    def test_shared_prefix_overshoot_rejected(self) -> None:
+        """Reject traces whose shared prefix overshoots input_length by a full block."""
+        # 3 shared blocks * 16 = 48 tokens, but input_length claims only 16.
+        # The overshoot (32) is >= block_size, so this is not just a partial block.
+        traces = [
+            {"input_length": 16, "output_length": 10, "hash_ids": [1, 2, 3]},
+            {"input_length": 16, "output_length": 10, "hash_ids": [1, 2, 3]},
+        ]
+        params = SynthesisParams(speedup_ratio=2.0, block_size=16)
+        synthesizer = Synthesizer(params=params)
+
+        with pytest.raises(ValueError, match="trace has fewer tokens than"):
+            synthesizer.synthesize_traces(traces)
+
     # ============================================================================
     # Prefix Multiplier Tests
     # ============================================================================
