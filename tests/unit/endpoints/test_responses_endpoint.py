@@ -168,6 +168,117 @@ class TestResponsesEndpoint:
 
         assert "instructions" not in payload
 
+    def test_format_payload_authored_system_item_merges_not_duplicates(
+        self, endpoint, model_endpoint
+    ):
+        """An authored ``role: system`` input item collides with instructions.
+
+        Both used to ship, so the server saw two system prompts. The verbatim
+        prompt is now folded into the authored item and ``instructions`` is
+        dropped, matching ChatEndpoint._format_messages.
+        """
+        turn = Turn(
+            raw_messages=[
+                {"role": "system", "content": "SYS-A", "type": "message"},
+                {"role": "user", "content": "hi", "type": "message"},
+            ],
+            model="test-model",
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            system_message="VERBATIM-SYS",
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert "instructions" not in payload
+        system_items = [i for i in payload["input"] if i.get("role") == "system"]
+        assert len(system_items) == 1
+        assert system_items[0]["content"] == "VERBATIM-SYS\n\nSYS-A"
+
+    def test_format_payload_authored_system_item_list_content_merges(
+        self, endpoint, model_endpoint
+    ):
+        """List content gets the Responses part shape, with the separator."""
+        turn = Turn(
+            raw_messages=[
+                {
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": "SYS-A"}],
+                    "type": "message",
+                },
+            ],
+            model="test-model",
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            system_message="VERBATIM-SYS",
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert "instructions" not in payload
+        assert payload["input"][0]["content"] == [
+            {"type": "input_text", "text": "VERBATIM-SYS\n\n"},
+            {"type": "input_text", "text": "SYS-A"},
+        ]
+
+    def test_format_payload_merge_does_not_mutate_turn_state(
+        self, endpoint, model_endpoint
+    ):
+        """``raw_messages`` is reused across credits; a replay must not restack."""
+        raw_messages = [
+            {"role": "system", "content": "SYS-A", "type": "message"},
+        ]
+        turn = Turn(raw_messages=raw_messages, model="test-model")
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            system_message="VERBATIM-SYS",
+        )
+
+        first = endpoint.format_payload(request_info)
+        second = endpoint.format_payload(request_info)
+
+        assert first["input"][0]["content"] == "VERBATIM-SYS\n\nSYS-A"
+        assert second["input"][0]["content"] == "VERBATIM-SYS\n\nSYS-A"
+        assert raw_messages[0]["content"] == "SYS-A"
+
+    def test_format_payload_merged_system_item_precedes_user_context(
+        self, endpoint, model_endpoint
+    ) -> None:
+        """The merged system item must be the leading input item.
+
+        ``user_context_message`` used to be appended before the rendered turns
+        were extended, so the merged system item landed at index 1 behind a
+        user message -- user-controlled context ahead of the system policy,
+        diverging from ChatEndpoint and defeating SYSTEM_PREFIX cache-bust.
+        """
+        turn = Turn(
+            raw_messages=[
+                {"role": "system", "content": "DATASET POLICY", "type": "message"},
+                {"role": "user", "content": "QUESTION", "type": "message"},
+            ],
+            model="test-model",
+        )
+        request_info = create_request_info(
+            model_endpoint=model_endpoint,
+            turns=[turn],
+            system_message="CLI POLICY",
+            user_context_message="USER CONTEXT",
+        )
+
+        payload = endpoint.format_payload(request_info)
+
+        assert "instructions" not in payload
+        assert [(i["role"], i["content"]) for i in payload["input"]] == [
+            ("system", "CLI POLICY\n\nDATASET POLICY"),
+            ("user", "USER CONTEXT"),
+            ("user", "QUESTION"),
+        ]
+
     def test_format_payload_user_context_message(self, endpoint, model_endpoint):
         """user_context_message is prepended as a user input item."""
         turn = Turn(texts=[Text(contents=["Hello"])], model="test-model")
@@ -1203,3 +1314,102 @@ class TestResponsesStatefulChaining:
         assert payload["previous_response_id"] == "resp_b6c65395f4fb8c7d"
         assert len(payload["input"]) == 1
         assert payload["input"][0]["content"] == "Second message"
+
+    @staticmethod
+    def _system_user_turn(system: str, user: str) -> Turn:
+        return Turn(
+            raw_messages=[
+                {"role": "system", "content": system, "type": "message"},
+                {"role": "user", "content": user, "type": "message"},
+            ],
+        )
+
+    @staticmethod
+    def _user_turn(user: str) -> Turn:
+        return Turn(raw_messages=[{"role": "user", "content": user, "type": "message"}])
+
+    def test_format_payload_chain_after_merged_system_item_omits_instructions(
+        self, store_endpoint: ResponsesEndpoint
+    ) -> None:
+        """Request 1 stores the merged prompt server-side; request 2 must not resend it."""
+        turn0 = self._system_user_turn("DATASET POLICY", "FIRST")
+        turn1 = self._user_turn("SECOND")
+
+        first = store_endpoint.format_payload(
+            create_request_info(
+                model_endpoint=store_endpoint.model_endpoint,
+                turns=[turn0],
+                system_message="CLI POLICY",
+            )
+        )
+        second = store_endpoint.format_payload(
+            create_request_info(
+                model_endpoint=store_endpoint.model_endpoint,
+                turns=[turn0, turn1],
+                system_message="CLI POLICY",
+                previous_response_id="resp_first",
+            )
+        )
+
+        assert "instructions" not in first
+        assert first["input"][0]["content"] == "CLI POLICY\n\nDATASET POLICY"
+        assert "instructions" not in second
+        assert [i["content"] for i in second["input"]] == ["SECOND"]
+
+    def test_format_payload_chain_without_authored_system_item_keeps_instructions(
+        self, store_endpoint: ResponsesEndpoint
+    ) -> None:
+        """``instructions`` does not carry across the chain, so it is resent."""
+        turns = [self._user_turn("FIRST"), self._user_turn("SECOND")]
+        payload = store_endpoint.format_payload(
+            create_request_info(
+                model_endpoint=store_endpoint.model_endpoint,
+                turns=turns,
+                system_message="CLI POLICY",
+                previous_response_id="resp_first",
+            )
+        )
+        assert payload["instructions"] == "CLI POLICY"
+
+    def test_format_payload_chain_merged_system_item_before_reset_is_ignored(
+        self, store_endpoint: ResponsesEndpoint
+    ) -> None:
+        """A reset restarts the chain, so a merge before it is not in history."""
+        turns = [
+            self._system_user_turn("DATASET POLICY", "FIRST"),
+            Turn(
+                raw_messages=[
+                    {"role": "user", "content": "RESTART", "type": "message"}
+                ],
+                reset_context=True,
+            ),
+            self._user_turn("THIRD"),
+        ]
+        payload = store_endpoint.format_payload(
+            create_request_info(
+                model_endpoint=store_endpoint.model_endpoint,
+                turns=turns,
+                system_message="CLI POLICY",
+                previous_response_id="resp_after_reset",
+            )
+        )
+        assert payload["instructions"] == "CLI POLICY"
+
+    def test_format_payload_chained_turn_with_own_system_item_does_not_remerge(
+        self, store_endpoint: ResponsesEndpoint
+    ) -> None:
+        """A later authored system item ships as authored once history has the prompt."""
+        turns = [
+            self._system_user_turn("DATASET POLICY", "FIRST"),
+            self._system_user_turn("TURN POLICY", "SECOND"),
+        ]
+        payload = store_endpoint.format_payload(
+            create_request_info(
+                model_endpoint=store_endpoint.model_endpoint,
+                turns=turns,
+                system_message="CLI POLICY",
+                previous_response_id="resp_first",
+            )
+        )
+        assert "instructions" not in payload
+        assert payload["input"][0]["content"] == "TURN POLICY"
