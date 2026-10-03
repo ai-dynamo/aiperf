@@ -62,8 +62,8 @@ jobs:
           fi
           echo "CHART_VERSION=$version" >> "$GITHUB_ENV"
 
-      # Plain helm rather than Makefile targets: workflow_dispatch checks out an
-      # older tag, whose Makefile may predate any target this step relies on.
+      # Plain helm sets tag-derived version/appVersion and renders from the
+      # package; the Makefile targets use committed metadata and source templates.
       - name: Package chart and render CRDs
         run: |
           chart=deploy/helm/aiperf-operator
