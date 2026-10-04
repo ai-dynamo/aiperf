@@ -172,13 +172,27 @@ def test_named_dataset_prompt_shorthand_rerenders_its_source_reference() -> None
 
 @pytest.mark.parametrize("prompt", ["isl", "osl"])
 @pytest.mark.parametrize("named", [False, True], ids=["singular", "named"])
+@pytest.mark.parametrize(
+    "distribution_fields",
+    [
+        param(("mean",), id="grid-mean"),
+        param(("mean", "stddev"), id="qmc-mean-first"),
+        param(("stddev", "mean"), id="qmc-stddev-first"),
+        param(("max", "mean"), id="qmc-max-first"),
+    ],
+)  # fmt: skip
 def test_scalar_prompt_shorthand_can_be_overridden_by_distribution_path(
-    prompt: str, named: bool
+    prompt: str, named: bool, distribution_fields: tuple[str, ...]
 ) -> None:
     reference = f"{'datasets.default' if named else 'dataset'}.{prompt}"
     dataset = {
         prompt: 64,
         "entries": f"{{{{ {reference}.mean | default({reference}) }}}}",
+    }
+    values = {"mean": [128, 512], "stddev": [8, 16], "max": [1024, 2048]}
+    parameters = {
+        f"datasets.default.prompts.{prompt}.{field}": values[field]
+        for field in distribution_fields
     }
     source = {
         "benchmark": {
@@ -191,29 +205,44 @@ def test_scalar_prompt_shorthand_can_be_overridden_by_distribution_path(
             ),
             "phases": {"type": "concurrency", "requests": 10},
         },
-        "sweep": {
-            "type": "grid",
-            "parameters": {f"datasets.default.prompts.{prompt}.mean": [128, 512]},
-        },
+        "sweep": (
+            {"type": "grid", "parameters": parameters}
+            if len(distribution_fields) == 1
+            else {
+                "type": "sobol",
+                "samples": 4,
+                "seed": 42,
+                "dimensions": [
+                    {"path": path, "choices": choices}
+                    for path, choices in parameters.items()
+                ],
+            }
+        ),
     }
     original = copy.deepcopy(source)
     config = load_config_from_mapping(source)
     raw_before = copy.deepcopy(config._raw_envelope)
     plan = build_benchmark_plan(config)
-    assert [benchmark.datasets[0].entries for benchmark in plan.configs] == [128, 512]
-    assert [
-        getattr(benchmark.datasets[0].prompts, prompt).mean
-        for benchmark in plan.configs
-    ] == [
-        128,
-        512,
+    expected_means = [
+        variation.values[f"datasets.default.prompts.{prompt}.mean"]
+        for variation in plan.variations
     ]
+    assert [
+        benchmark.datasets[0].entries for benchmark in plan.configs
+    ] == expected_means
+    for field in distribution_fields:
+        assert [
+            getattr(getattr(benchmark.datasets[0].prompts, prompt), field)
+            for benchmark in plan.configs
+        ] == [
+            variation.values[f"datasets.default.prompts.{prompt}.{field}"]
+            for variation in plan.variations
+        ]
     assert source == original
     assert config._raw_envelope == raw_before
 
 
 def test_scalar_prompt_mean_sweep_retains_explicit_prompt_precedence() -> None:
-    """A scalar alias remains unchanged when explicit prompts supply the mean."""
     config = load_config_from_mapping(
         {
             "benchmark": {
@@ -241,7 +270,6 @@ def test_scalar_prompt_mean_sweep_retains_explicit_prompt_precedence() -> None:
 
 
 def test_scalar_prompt_stddev_sweep_does_not_inherit_a_mean() -> None:
-    """A stddev-only override still requires an explicit distribution mean."""
     config = load_config_from_mapping(
         {
             "benchmark": {

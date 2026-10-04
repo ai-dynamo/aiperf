@@ -50,6 +50,17 @@ def _map_dim(u: float, dim: SamplingDimension) -> Any:
     return float(v)
 
 
+def _promote_prompt_shorthand_means(
+    body: dict[str, Any], values: dict[str, Any]
+) -> None:
+    """Promote scalar means before sibling dimensions can create explicit prompts."""
+    from aiperf.config.sweep.expand import _resolve_shorthand_path
+
+    for path in values:
+        if path.startswith("datasets.") and path.endswith(".mean"):
+            _resolve_shorthand_path(body, path)
+
+
 def expand_qmc_sweep(
     data: dict[str, Any],
     *,
@@ -109,6 +120,7 @@ def expand_qmc_sweep(
         }
         variant = copy.deepcopy(base)
         body = variant.setdefault("benchmark", {})
+        _promote_prompt_shorthand_means(body, values)
         for path, value in values.items():
             # Mirror the grid-sweep convention: dotted paths are body-rooted
             # under `benchmark:`. The single envelope-level escape is

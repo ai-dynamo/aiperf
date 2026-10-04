@@ -416,6 +416,8 @@ as `{{ dataset.isl }}` see each swept value. Explicit `prompts` fields take
 precedence; distribution fields omitted there inherit their top-level shorthand.
 A `.mean` sweep replaces a numeric shorthand with a distribution at the same raw
 field, so `{{ dataset.isl.mean | default(dataset.isl) }}` sees the varied mean.
+For QMC sweeps, this behavior is independent of the order of sibling dimensions
+such as `.mean` and `.stddev`.
 
 The 12 most-swept phase fields also have bare-name sugar: `concurrency`, `prefill_concurrency`, `rate`, `requests`, `duration`, `sessions`, `users`, `smoothness`, `grace_period`, `concurrency_ramp`, `prefill_ramp`, `rate_ramp`. Each expands to `phases.profiling.<name>` and must still resolve unambiguously. The two forms are equivalent — see [Bare-Name Aliases](sweeps.md#bare-name-aliases-for-common-phase-fields).
 
