@@ -12,6 +12,7 @@ from aiperf.auth.base_signer import SignedRequest
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
+    AwsEventStreamMessage,
     RequestInfo,
     RequestRecord,
     SSEMessage,
@@ -23,13 +24,20 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.plugin.schema.schemas import TransportMetadata
 
-FirstTokenCallback = Callable[[int, SSEMessage], Awaitable[bool]]
+FirstTokenCallback = Callable[
+    [int, SSEMessage | AwsEventStreamMessage], Awaitable[bool]
+]
 """
-Type alias for a callback that is called with the ttft_ns and the first SSE message:
+Type alias for a callback called with the ttft_ns and the first streamed message.
+
+The message type depends on the response framing the transport decoded: an
+``SSEMessage`` for ``text/event-stream``, an ``AwsEventStreamMessage`` for AWS
+binary eventstream. Callbacks read it through the ``InferenceServerResponse``
+protocol, so they do not branch on which one arrived.
 
 Args:
     ttft_ns: duration from request start
-    message: the first SSE message
+    message: the first streamed message
 
 Returns:
     True if this is meaningful content (stop looking for first token), False otherwise
