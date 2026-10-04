@@ -333,6 +333,38 @@ def test_readiness_preserves_query_while_appending_endpoint(
     assert client.urls == ["http://server" + path + query for path in expected_paths]
 
 
+@pytest.mark.parametrize("suffix", ["", "?tag=first&tag=&tag=last#fragment"])
+@pytest.mark.parametrize("trailing_slash", ["", "/"])
+def test_readiness_preserves_semicolon_path_parameters(
+    monkeypatch: pytest.MonkeyPatch, suffix: str, trailing_slash: str
+) -> None:
+    client = _FakeMultiClient()
+    monkeypatch.setattr(
+        "aiperf.transports.aiohttp_client.AioHttpClient",
+        lambda *args, **kwargs: client,
+    )
+    base_url = "http://server/proxy;tenant=blue"
+
+    asyncio.run(
+        readiness_probe.wait_for_endpoint(
+            urls=[base_url + trailing_slash + suffix],
+            model_names=["served-model"],
+            mode="both",
+            endpoint_type="chat",
+            custom_endpoint="/generate",
+            timeout_s=1.0,
+            interval_s=0.1,
+            headers={},
+            signer=None,
+        )
+    )
+
+    assert client.urls == [
+        base_url + "/v1/models" + suffix,
+        base_url + "/generate" + suffix,
+    ]
+
+
 class _KwargCapturingClient:
     """Records the keyword arguments each probe request was issued with."""
 

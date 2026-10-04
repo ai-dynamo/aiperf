@@ -29,7 +29,7 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import TYPE_CHECKING, Any, Literal
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 import orjson
@@ -265,7 +265,7 @@ def _build_inference_probe_request(
     endpoint_type: str,
     custom_endpoint: str | None,
 ) -> tuple[str, bytes]:
-    parsed = urlparse(url)
+    parsed = urlsplit(url)
     endpoint_path = _DEFAULT_PATHS.get(endpoint_type)
     payload_template = _CANNED_PAYLOADS.get(endpoint_type)
     if endpoint_path is None or payload_template is None:
@@ -285,7 +285,7 @@ def _build_inference_probe_request(
 
     payload = dict(payload_template or _CANNED_PAYLOADS["chat"])
     payload["model"] = model_name
-    return urlunparse(parsed._replace(path=request_path)), orjson.dumps(payload)
+    return urlunsplit(parsed._replace(path=request_path)), orjson.dumps(payload)
 
 
 async def _wait_models(
@@ -307,8 +307,8 @@ async def _wait_models(
     to the timeout — see ``_raise_if_signed_auth_rejected``.
     """
     deadline = time.monotonic() + timeout_s
-    parsed = urlparse(url)
-    models_url = urlunparse(
+    parsed = urlsplit(url)
+    models_url = urlunsplit(
         parsed._replace(path=parsed.path.rstrip("/") + "/v1/models")
     )
     request_timeout_base = max(interval_s, _MIN_REQUEST_TIMEOUT_S)
