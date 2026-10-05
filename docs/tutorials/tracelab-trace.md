@@ -53,10 +53,13 @@ zcat syfi_coding_trace.jsonl.gz | head -20000 | gzip > tracelab_slice.jsonl.gz
 
 <!-- aiperf-run-vllm-default-openai-endpoint-server weight=40 -->
 ```bash
-# Without the corpus to hand, a three-round slice exercises the same path.
+# If you ran the download above, your real slice is used as-is. Otherwise a
+# three-round sample is synthesized so the command below is still runnable.
 # These are the fields the loader reads:
 python - <<'PY_EOF'
-import json, gzip, datetime
+import json, gzip, datetime, os, sys
+if os.path.exists("tracelab_slice.jsonl.gz"):
+    sys.exit(0)
 iso = lambda t: datetime.datetime.fromtimestamp(t, datetime.UTC).isoformat().replace("+00:00", "Z")
 with gzip.open("tracelab_slice.jsonl.gz", "wt") as f:
     for i in range(3):
