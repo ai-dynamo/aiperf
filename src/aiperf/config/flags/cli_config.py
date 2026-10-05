@@ -342,9 +342,10 @@ class CLIConfig(BaseConfig):
         TransportType | None,
         Field(
             description="Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme "
-            "(`http`/`https` -> `TransportType.HTTP`). `http` uses aiohttp with connection pooling, TCP optimization, and "
-            "Server-Sent Events (SSE) for streaming. `sagemaker` invokes AWS SageMaker Runtime and is normally derived from "
-            "`--sagemaker-endpoint-name` rather than set here. Explicit override rarely needed.",
+            "(`http`/`https` -> `TransportType.HTTP`, `ws`/`wss` -> `TransportType.WEBSOCKET`). `http` uses aiohttp with "
+            "connection pooling, TCP optimization, and Server-Sent Events (SSE) for streaming; `websocket` implements OpenAI "
+            "Responses WebSocket mode with a dedicated socket per conversation. `sagemaker` invokes AWS SageMaker Runtime "
+            "and is normally derived from `--sagemaker-endpoint-name` rather than set here. Explicit override rarely needed.",
         ),
         CLIParameter(
             name=("--transport", "--transport-type"),

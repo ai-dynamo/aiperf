@@ -6,7 +6,7 @@ import re
 from collections.abc import Sequence
 from copy import deepcopy
 from typing import Any
-from urllib.parse import unquote_plus
+from urllib.parse import parse_qsl, unquote_plus, urlsplit
 
 REDACTED_VALUE = "<redacted>"
 
@@ -424,6 +424,33 @@ def _redact_sensitive_query_parameters(url: str) -> str:
         return f"{separator}{name}={REDACTED_VALUE}"
 
     return _URL_QUERY_PARAMETER_PATTERN.sub(_redact_parameter, url)
+
+
+def url_carries_credentials(url: str) -> bool:
+    """Whether a URL embeds credentials in its userinfo or a sensitive query param.
+
+    Detects credentials that would actually travel to the server -- userinfo
+    (``ws://user:secret@host``) or a real query parameter
+    (``ws://host?api_key=secret``) -- so a gate can reject a cleartext transport
+    for exactly the URLs that would leak on the wire. ``parse_qsl`` percent-decodes
+    each parameter name once (the same single decode :func:`redact_url` applies),
+    so ``api%5Fkey`` is caught here and redacted there, while a doubly-encoded
+    ``api%255Fkey`` (which no server decodes to ``api_key``) is non-sensitive to
+    both. A second decode would break that agreement.
+
+    This is deliberately *not* a full mirror of :func:`redact_url`: that function
+    also over-redacts a secret hidden in the URL *fragment*
+    (``ws://host/v1#?api_key=secret``) for cosmetic/export safety, but a fragment
+    is never transmitted (RFC 3986; aiohttp does not send it), so it cannot leak
+    and this returns ``False`` -- rejecting it would be a false positive.
+    """
+    split = urlsplit(url)
+    if split.username or split.password:
+        return True
+    for name, _ in parse_qsl(split.query, keep_blank_values=True):
+        if _SENSITIVE_URL_QUERY_PARAMETER_NAME_PATTERN.fullmatch(name):
+            return True
+    return False
 
 
 def redact_url(url: str) -> str:

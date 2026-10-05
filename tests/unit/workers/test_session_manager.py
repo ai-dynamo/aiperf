@@ -507,3 +507,27 @@ class TestSessionPreviousResponseId:
         manager.seed_from_parent("child-corr", "parent-corr")
 
         assert child.previous_response_id == "resp_parent_last"
+
+    def test_seed_from_parent_skips_chain_when_not_inheriting(self) -> None:
+        manager = UserSessionManager()
+        conv = Conversation(
+            conversation_id="test-conv-fork-replay",
+            turns=[Turn(messages=[{"role": "user", "content": "Q1"}])],
+        )
+        parent = manager.create_and_store("parent-corr", conv, num_turns=1)
+        parent.store_response(Turn(messages=[{"role": "assistant", "content": "A1"}]))
+        parent.store_response_id("resp_parent_last")
+        child = manager.create_and_store(
+            "child-corr",
+            conv,
+            num_turns=1,
+            parent_correlation_id="parent-corr",
+            branch_mode=ConversationBranchMode.FORK,
+        )
+
+        manager.seed_from_parent(
+            "child-corr", "parent-corr", inherit_response_chain=False
+        )
+
+        assert child.previous_response_id is None
+        assert child.turn_list == parent.turn_list

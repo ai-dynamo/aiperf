@@ -525,6 +525,20 @@ transport:
       transport_type: sagemaker
       url_schemes: []
 
+  websocket:
+    class: aiperf.transports.websocket_transport:WebSocketTransport
+    description: |
+      WebSocket transport for the OpenAI Responses API (wss://.../v1/responses).
+      Holds a dedicated socket per conversation for its whole lifetime (a hard
+      lease, like the HTTP sticky-user-sessions strategy) and streams response.*
+      lifecycle events like the HTTP SSE path, so every turn reuses the same
+      connection and previous_response_id chaining stays in the server's
+      connection-local cache. Open sockets track concurrently active
+      conversations, which --concurrency caps. Auto-selected for ws/wss URLs.
+    metadata:
+      transport_type: websocket
+      url_schemes: [ws, wss]
+
 # =============================================================================
 # Request Signers
 # =============================================================================
@@ -537,6 +551,7 @@ request_signer:
     description: |
       AWS SigV4 request signing for SageMaker, Bedrock, API Gateway,
       and any SigV4-protected endpoint. Uses botocore credential chain.
+
 
 # =============================================================================
 # Dataset Composers
