@@ -127,6 +127,10 @@ jobs:
             server: vllm-video-openai
           - id: vllm-embeddings-openai
             server: vllm-embeddings-openai
+          # Two replicas of Qwen3-0.6B on adjacent ports; the multi-URL guide
+          # is the only one that needs more than a single endpoint.
+          - id: vllm-dual-openai
+            server: vllm-dual-openai
           # First non-vLLM backend. TinyLlama-1.1B on TGI, so the boot cost is
           # comparable to the modality servers.
           - id: tgi-generate
