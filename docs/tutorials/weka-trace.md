@@ -84,6 +84,39 @@ Whatever you pass to `--model` becomes the model the server actually sees. Trace
 
 The `--fixed-schedule` flag replays requests at their recorded timestamps; subagents run in parallel and the parent's next turn waits until they complete.
 
+### Finite agentic replay
+
+Use finite replay to admit each root trace once and keep its lane occupied until
+its background descendants finish:
+
+```bash
+aiperf profile \
+    --url localhost:8000 \
+    --model claude-opus-4-5-20251101 \
+    --endpoint-type chat \
+    --streaming \
+    --input-file artifacts/kv-cache-tester/traces/ \
+    --agentic-replay-lifecycle finite \
+    --concurrency 2 \
+    --export-level raw
+```
+
+Finite mode uses the first HTTP request in each root as its timeline origin.
+Subsequent requests wait for their root-relative timestamp floor and any
+recorded predecessor transport events. The Weka loader currently infers
+zero-delay cross-stream completion edges and SPAWN timing from trace timestamps;
+it does not accept the typed dependency format in issue #1458. Finite mode
+requires HTTP and excludes warmup, request/duration caps, cancellation, dataset
+wrapping, and trace-delay compression.
+
+For successful finite requests, `profile_export.jsonl` records the client-side
+response-body EOF separately as `metadata.response_body_eof_ns`. With
+`--export-level raw`, `profile_export_raw.jsonl` also contains
+`response_body_eof_perf_ns`, in the same worker monotonic clock domain as
+`start_perf_ns`. The existing `request_end_ns` and last raw SSE event retain
+their existing meanings. Client HTTP start is a request invocation boundary;
+EOF is receipt of the response body, not the engine's final token.
+
 ### Directory vs Single File
 
 Both work:

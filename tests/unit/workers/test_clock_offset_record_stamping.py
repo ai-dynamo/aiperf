@@ -99,6 +99,7 @@ async def test_worker_announces_connectivity_without_awaiting_the_rtt_probe(
 
     sent: list[object] = []
     worker = MagicMock(spec=Worker)
+    worker._finite_replay_enabled = False
     # The probe is enabled exactly when the worker runs under Kubernetes.
     worker._tracks_clock_offset = group_managed
     probe_coros: list[object] = []
@@ -171,7 +172,8 @@ async def test_probe_budget_bounds_a_router_that_never_echoes(
     monkeypatch.setattr(Environment.WORKER, "CLOCK_PROBE_COUNT", 7)
 
     worker = MagicMock(spec=Worker)
-    worker.clock_offset_tracker = MagicMock()
+    worker._finite_replay_enabled = False
+    worker.clock_offset_tracker = MagicMock(_finite_replay_enabled=False)
 
     # Stands in for the serial probe loop when no TimePong ever arrives: the
     # real call would run probe_count timeouts back to back.
@@ -209,6 +211,7 @@ async def test_kubernetes_worker_stamps_records_before_the_tracker_calibrates() 
     from aiperf.workers.worker import Worker
 
     worker = MagicMock(spec=Worker)
+    worker._finite_replay_enabled = False
     worker.clock_offset_tracker = ClockOffsetTracker()
     worker._tracks_clock_offset = True
     worker.clock_offset_tracker.observe(issued_at_ns=1_000, received_at_ns=3_500)
@@ -230,6 +233,7 @@ async def test_kubernetes_worker_stamps_offset_after_clock_calibrates() -> None:
     from aiperf.workers.worker import Worker
 
     worker = MagicMock(spec=Worker)
+    worker._finite_replay_enabled = False
     worker.clock_offset_tracker = ClockOffsetTracker()
     worker._tracks_clock_offset = True
     for _ in range(5):
@@ -256,6 +260,7 @@ async def test_worker_stamps_the_transit_corrected_offset_not_the_raw_sample() -
     from aiperf.workers.worker import Worker
 
     worker = MagicMock(spec=Worker)
+    worker._finite_replay_enabled = False
     worker.clock_offset_tracker = ClockOffsetTracker()
     worker._tracks_clock_offset = True
     for _ in range(5):
@@ -292,6 +297,7 @@ async def test_credit_to_start_latency_keeps_the_delivery_hop_it_measures() -> N
     queue_wait_ns = 1_000_000  # worker-side wait after the credit lands
 
     worker = MagicMock(spec=Worker)
+    worker._finite_replay_enabled = False
     worker.clock_offset_tracker = ClockOffsetTracker()
     worker._tracks_clock_offset = True
     for _ in range(5):
@@ -339,6 +345,7 @@ async def test_clock_remeasure_task_reprobes_only_under_kubernetes() -> None:
     from aiperf.workers.worker import Worker
 
     worker = MagicMock(spec=Worker)
+    worker._finite_replay_enabled = False
     worker._measure_baseline_rtt = AsyncMock()
 
     worker._tracks_clock_offset = False
@@ -362,6 +369,7 @@ async def test_concurrent_probe_rounds_are_serialized() -> None:
     from aiperf.workers.worker import Worker
 
     worker = MagicMock(spec=Worker)
+    worker._finite_replay_enabled = False
     worker._clock_probe_lock = asyncio.Lock()
     worker.credit_dealer_client = AsyncMock()
     worker.warning = MagicMock()

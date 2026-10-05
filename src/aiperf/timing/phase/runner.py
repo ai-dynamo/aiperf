@@ -19,6 +19,7 @@ from aiperf.common.enums import BaselineKind, CacheBustTarget, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.mixins import TaskManagerMixin
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.common.phase import phase_runtime_key
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.plugin import plugins
@@ -199,7 +200,9 @@ class PhaseRunner(TaskManagerMixin):
 
         # Per-phase components - order matters
         self._scheduler = LoopScheduler()
-        self._lifecycle = PhaseLifecycle(self._config)
+        clock_candidate = getattr(self._credit_router, "clock", None)
+        clock = clock_candidate if isinstance(clock_candidate, MonotonicClock) else None
+        self._lifecycle = PhaseLifecycle(self._config, clock=clock)
         self._progress = PhaseProgressTracker(self._config)
         self._stop_checker = StopConditionChecker(
             config=self._config,
@@ -211,6 +214,9 @@ class PhaseRunner(TaskManagerMixin):
                 self._conversation_source.dataset_metadata,
                 scheduler=self._scheduler,
                 root_idle_gap_cap_seconds=self._root_idle_gap_cap_seconds(),
+                strict_finite=self._config.finite_replay,
+                scheduler=self._scheduler,
+                fail_finite=self._record_finite_error,
             )
             if (
                 self._config.timing_mode == TimingMode.AGENTIC_REPLAY
@@ -282,7 +288,12 @@ class PhaseRunner(TaskManagerMixin):
             ),
             replay_barrier=self._replay_barrier,
             cache_bust_target=self._resolve_cache_bust_target(),
+            finite_replay=self._config.finite_replay,
         )
+
+    def _record_finite_error(self, error: BaseException) -> None:
+        self._progress.record_fatal_error(error)
+        self._progress.all_credits_sent_event.set()
 
     def _maybe_construct_branch_orchestrator(
         self, conversation_source: ConversationSource
@@ -737,16 +748,7 @@ class PhaseRunner(TaskManagerMixin):
         await self._wait_for_sending_complete(strategy)
 
         if self._was_cancelled:
-            if not self._lifecycle.is_complete:
-                self._lifecycle.mark_complete(grace_period_triggered=False)
-                self._progress.freeze_completed_counts()
-            self._progress.all_credits_returned_event.set()
-            self._baseline_end_ns = (
-                await self._capture_baseline_boundary_before_completion(
-                    phase_id, BaselineKind.END
-                )
-            )
-            return self._create_final_stats()
+            return await self._finish_cancelled_phase(phase_id)
 
         # Seamless mode: phase flows into next without waiting for returns.
         # Progress task continues in background until phase complete.
@@ -763,6 +765,9 @@ class PhaseRunner(TaskManagerMixin):
             # including the "all credits already returned" fast path that the
             # fatal-error callback itself unblocks -- so it is never swallowed.
             self._raise_if_control_node_failed()
+
+        if self._config.finite_replay:
+            self._log_finite_replay_diagnostics()
 
         for ramper in self._rampers:
             ramper.stop()
@@ -785,6 +790,29 @@ class PhaseRunner(TaskManagerMixin):
             self._report_warmup_failures(strategy)
 
         return self._create_final_stats()
+
+    async def _finish_cancelled_phase(self, phase_id: str) -> CreditPhaseStats:
+        if not self._lifecycle.is_complete:
+            self._lifecycle.mark_complete(grace_period_triggered=False)
+            self._progress.freeze_completed_counts()
+        self._progress.all_credits_returned_event.set()
+        self._baseline_end_ns = await self._capture_baseline_boundary_before_completion(
+            phase_id, BaselineKind.END
+        )
+        return self._create_final_stats()
+
+    def _log_finite_replay_diagnostics(self) -> None:
+        count, total_ns, max_ns, spread_ns = (
+            self._credit_issuer.replay_gate.finite_diagnostics()
+        )
+        mean_ns = total_ns / count if count else 0
+        self.info(
+            "Finite replay timing diagnostics: "
+            f"scheduled dispatches={count}, "
+            f"mean lateness={mean_ns / 1e6:.3f}ms, "
+            f"max lateness={max_ns / 1e6:.3f}ms, "
+            f"max clock-offset sample spread={spread_ns / 1e6:.3f}ms"
+        )
 
     def _create_final_stats(self) -> CreditPhaseStats:
         return self._progress.create_stats_with_baseline_window(

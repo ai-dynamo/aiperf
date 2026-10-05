@@ -417,6 +417,23 @@ class TestBufferedWritePayloadBytesFastPath:
 class TestBuildExportRecord:
     """Pin ``_build_export_record`` behaviour for edge shapes."""
 
+    def test_exact_eof_exports_separately_from_last_response(self, run_raw) -> None:
+        processor = RawRecordWriterProcessor(service_id="processor-eof", run=run_raw)
+        record = _make_parsed_record(payload_bytes=b"{}")
+        record.request.response_body_eof_perf_ns = 2_100_000_000
+        metadata = create_metric_metadata()
+
+        exported = processor._build_export_record(record, metadata)
+
+        assert exported.response_body_eof_perf_ns == 2_100_000_000
+        assert exported.responses[-1].perf_ns == 2_000_000_000
+        assert (
+            RawRecordInfo.model_validate_json(
+                exported.model_dump_json()
+            ).response_body_eof_perf_ns
+            == 2_100_000_000
+        )
+
     def test_build_export_record_error_record_produces_null_payload_and_bytes(
         self,
         run_raw,

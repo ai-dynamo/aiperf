@@ -140,6 +140,10 @@ class CreditReturn(
             channel (CommAddress.CREDIT_RETURN), where there is no ZMQ envelope
             identity; None on the ROUTER/DEALER path (identity comes from the
             envelope). Lets the router attribute the return to the right worker.
+        transport_eof_wall_ns: Successful response-body EOF in the worker's
+            monotonic wall-clock domain. Finite replay only.
+        clock_offset_ns: Worker-to-controller wall-clock correction sampled at
+            the EOF event. Finite replay only.
     """
 
     credit: Credit
@@ -150,6 +154,21 @@ class CreditReturn(
     inter_token_latency_ns: float | None = None
     output_sequence_length: int | None = None
     worker_id: str | None = None
+    transport_eof_wall_ns: int | None = None
+    clock_offset_ns: int | None = None
+    clock_offset_spread_ns: int | None = None
+
+
+class TransportDispatched(Struct, frozen=True, kw_only=True, tag_field="t", tag="td"):
+    """Request invocation boundary on the existing credit return channel."""
+
+    credit_id: int
+    phase: CreditPhase
+    phase_index: int | None
+    worker_id: str
+    transport_start_wall_ns: int
+    clock_offset_ns: int
+    clock_offset_spread_ns: int
 
 
 class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):
@@ -197,17 +216,20 @@ class TimePing(Struct, frozen=True, kw_only=True, tag_field="t", tag="tp"):
 class TimePong(Struct, frozen=True, kw_only=True, tag_field="t", tag="tpo"):
     """Router echoes back a TimePing as TimePong.
 
-    Both fields are echoed verbatim so the worker can match the reply to its probe
-    and compute RTT entirely against its own clock -- no router clock is involved,
-    which is what makes the RTT measurement immune to cross-machine skew.
+    The probe sequence and send timestamp are echoed so the worker can measure
+    RTT using its own clock. Finite Kubernetes replay also uses the optional
+    router wall timestamp to bootstrap the existing cross-machine offset tracker.
 
     Attributes:
         sequence: Probe sequence number (echoed from TimePing).
         sent_at_ns: Original worker send timestamp (echoed from TimePing).
+        router_sent_wall_ns: Router monotonic wall timestamp at send time, present
+            for finite replay calibration probes.
     """
 
     sequence: int
     sent_at_ns: int
+    router_sent_wall_ns: int | None = None
 
 
 # Union type for decoding worker -> router messages
@@ -217,6 +239,7 @@ WorkerToRouterMessage: TypeAlias = (
     | WorkerShutdown
     | CreditReturn
     | FirstToken
+    | TransportDispatched
     | TimePing
 )
 

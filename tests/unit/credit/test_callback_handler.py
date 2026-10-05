@@ -76,6 +76,9 @@ def mock_branch_orchestrator():
     """Mock BranchOrchestrator that records ``set_drain_observer`` calls."""
     mock = MagicMock()
     mock.set_drain_observer = MagicMock()
+    mock.intercept = AsyncMock(return_value=False)
+    mock.has_pending_branch_work = MagicMock(return_value=False)
+    mock.get_branch_ids = MagicMock(return_value=[])
     return mock
 
 
@@ -134,6 +137,294 @@ def make_credit_return(
         first_token_sent=first_token_sent,
         error=error,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancelled,error", [(False, "HTTP failed"), (True, None)])
+async def test_finite_terminal_failure_marks_phase_fatal(
+    registered_handler,
+    mock_progress,
+    mock_strategy,
+    cancelled: bool,
+    error: str | None,
+) -> None:
+    mock_progress.all_credits_sent_event = asyncio.Event()
+    mock_strategy.observe_credit_return.side_effect = RuntimeError(
+        "Finite replay terminal request failed"
+    )
+    credit = Credit(
+        id=1,
+        phase=CreditPhase.PROFILING,
+        conversation_id="root",
+        x_correlation_id="root-correlation",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=1,
+        finite_replay=True,
+    )
+
+    await registered_handler.on_credit_return(
+        "worker-1", CreditReturn(credit=credit, cancelled=cancelled, error=error)
+    )
+
+    mock_progress.record_fatal_error.assert_called_once()
+    assert mock_progress.all_credits_sent_event.is_set()
+    mock_strategy.handle_credit_return.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_finite_background_child_terminal_failure_real_graph(
+    callback_handler,
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+) -> None:
+    """Realistic trace replay test: root with a background SPAWN child.
+    When the root succeeds and the last background child fails terminally with HTTP 500,
+    the failure must be recorded by the replay barrier before the root can be closed."""
+    from aiperf.common.enums import ConversationBranchMode
+    from aiperf.common.models.branch import ConversationBranchInfo
+    from aiperf.common.models.dataset_models import (
+        ConversationMetadata,
+        DatasetMetadata,
+        TurnMetadata,
+    )
+    from aiperf.plugin.enums import DatasetSamplingStrategy
+    from aiperf.timing.branch_orchestrator import BranchOrchestrator, ChildJoinEntry
+    from aiperf.timing.replay_dependencies import (
+        ReplayBarrierCoordinator,
+        ReplayIssueGate,
+    )
+    from aiperf.timing.session_tree import SessionTreeRegistry
+
+    # 1. Real trace metadata: root conversation with a background SPAWN child
+    dataset_meta = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="root",
+                is_root=True,
+                turns=[
+                    TurnMetadata(
+                        timestamp_ms=0.0,
+                        api_time_ms=10.0,
+                        branch_ids=["spawn_bg"],
+                    )
+                ],
+                branches=[
+                    ConversationBranchInfo(
+                        branch_id="spawn_bg",
+                        child_conversation_ids=["child_agent"],
+                        mode=ConversationBranchMode.SPAWN,
+                        is_background=True,
+                        start_timestamp_ms=5.0,
+                    )
+                ],
+            ),
+            ConversationMetadata(
+                conversation_id="child_agent",
+                is_root=False,
+                agent_depth=1,
+                parent_conversation_id="root",
+                turns=[
+                    TurnMetadata(
+                        timestamp_ms=5.0,
+                        api_time_ms=10.0,
+                    )
+                ],
+            ),
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+
+    # 2. Real replay barrier coordinator + issue gate
+    mock_scheduler = MagicMock()
+    coordinator = ReplayBarrierCoordinator(
+        dataset_meta, strict_finite=True, scheduler=mock_scheduler
+    )
+    coordinator.activate_finite()
+    replay_gate = ReplayIssueGate(coordinator)
+
+    # 3. Real session tree registry wired to close_root on drain
+    registry = SessionTreeRegistry(mock_concurrency)
+    registry.set_drain_callback(
+        lambda root_corr, phase: replay_gate.close_root(root_corr)
+    )
+
+    # 4. Real BranchOrchestrator tracking the background child
+    cs = MagicMock()
+    cs.dataset_metadata = dataset_meta
+    cs.get_metadata = lambda cid: next(
+        c for c in dataset_meta.conversations if c.conversation_id == cid
+    )
+    issuer = MagicMock()
+    issuer.replay_gate = replay_gate
+
+    orch = BranchOrchestrator(
+        conversation_source=cs,
+        credit_issuer=issuer,
+        session_tree_registry=registry,
+    )
+    orch.intercept = AsyncMock(return_value=False)
+    orch._child_to_join["child-corr"] = [
+        ChildJoinEntry(
+            parent_correlation_id="root-corr",
+            gated_turn_index=None,
+            prereq_key=None,
+        )
+    ]
+    orch._child_root["child-corr"] = "root-corr"
+
+    # 5. Wire strategy with real observe_credit_return that calls replay_gate.record_completion
+    strategy = MagicMock()
+    strategy.handle_credit_return = AsyncMock()
+
+    def observe_return(credit, **kwargs):
+        replay_gate.record_completion(
+            credit,
+            kwargs.get("transport_eof_perf_ns"),
+            clock_spread_ns=kwargs.get("transport_eof_clock_spread_ns"),
+            failed=kwargs.get("error") is not None or kwargs.get("cancelled", False),
+        )
+
+    strategy.observe_credit_return = MagicMock(side_effect=observe_return)
+
+    mock_lifecycle.started_at_ns = 1_000_000_000
+    mock_lifecycle.started_at_perf_ns = 1_000_000_000
+
+    # Register phase on callback_handler
+    callback_handler.set_branch_orchestrator(orch)
+    callback_handler.register_phase(
+        phase=CreditPhase.PROFILING,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=strategy,
+    )
+
+    # Open session tree: root is in-flight, 1 descendant is in-flight
+    root_corr = "root-corr"
+    registry.open_tree(root_corr, CreditPhase.PROFILING, root_pending=True)
+    registry.register_descendants(root_corr, 1)
+
+    # Credits for root and background child
+    root_credit = Credit(
+        id=1,
+        phase=CreditPhase.PROFILING,
+        conversation_id="root",
+        x_correlation_id=root_corr,
+        turn_index=0,
+        num_turns=1,
+        agent_depth=0,
+        issued_at_ns=1,
+        finite_replay=True,
+    )
+    child_credit = Credit(
+        id=2,
+        phase=CreditPhase.PROFILING,
+        conversation_id="child_agent",
+        x_correlation_id="child-corr",
+        parent_correlation_id=root_corr,
+        root_correlation_id=root_corr,
+        turn_index=0,
+        num_turns=1,
+        agent_depth=1,
+        issued_at_ns=2,
+        finite_replay=True,
+    )
+
+    # Record dispatches in coordinator
+    coordinator.record_dispatch(root_credit, perf_ns=1_000_000_000, clock_spread_ns=100)
+    coordinator.record_dispatch(
+        child_credit, perf_ns=1_005_000_000, clock_spread_ns=100
+    )
+
+    # Step A: Root request succeeds (HTTP 200)
+    root_return = CreditReturn(
+        credit=root_credit,
+        transport_eof_wall_ns=1_010_000_000,
+        clock_offset_ns=0,
+        clock_offset_spread_ns=100,
+    )
+    await callback_handler.on_credit_return("worker-1", root_return)
+
+    # Mark root terminal in registry (what callback_handler does at end of root turn)
+    registry.on_root_terminal(root_corr)
+
+    # Root is done, but tree is held open because child is still running
+    assert registry.has_tree(root_corr) is True
+    assert root_corr not in coordinator._closed_roots
+
+    # Step B: Background child finishes with terminal failure (HTTP 500)
+    child_return = CreditReturn(
+        credit=child_credit,
+        error="HTTP 500: internal server error",
+    )
+    mock_progress.all_credits_sent_event = asyncio.Event()
+
+    await callback_handler.on_credit_return("worker-1", child_return)
+
+    # VERIFY: Because observe_credit_return ran BEFORE orchestrator child hook closed root,
+    # record_completion saw failed=True while root was still open, raised RuntimeError,
+    # and callback_handler recorded the fatal error!
+    mock_progress.record_fatal_error.assert_called_once()
+    fatal_err = mock_progress.record_fatal_error.call_args.args[0]
+    assert isinstance(fatal_err, RuntimeError)
+    assert "Finite replay terminal request failed" in str(fatal_err)
+    assert "child_agent" in str(fatal_err)
+    assert mock_progress.all_credits_sent_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_finite_successful_child_observes_before_leaf_reached(
+    callback_handler,
+    mock_concurrency,
+    mock_progress,
+    mock_lifecycle,
+    mock_stop_checker,
+    mock_strategy,
+    mock_branch_orchestrator,
+) -> None:
+    """In finite mode, successful child completion is observed before on_child_leaf_reached."""
+    order: list[str] = []
+    mock_strategy.observe_credit_return.side_effect = (
+        lambda *args, **kwargs: order.append("observe")
+    )
+    mock_branch_orchestrator.on_child_leaf_reached = AsyncMock(
+        side_effect=lambda *args, **kwargs: order.append("leaf_reached")
+    )
+    callback_handler.set_branch_orchestrator(mock_branch_orchestrator)
+    callback_handler.register_phase(
+        phase=CreditPhase.PROFILING,
+        progress=mock_progress,
+        lifecycle=mock_lifecycle,
+        stop_checker=mock_stop_checker,
+        strategy=mock_strategy,
+    )
+
+    child_credit = Credit(
+        id=2,
+        phase=CreditPhase.PROFILING,
+        conversation_id="child",
+        x_correlation_id="child-corr",
+        parent_correlation_id="root-corr",
+        root_correlation_id="root-corr",
+        turn_index=0,
+        num_turns=1,
+        agent_depth=1,
+        issued_at_ns=1,
+        finite_replay=True,
+    )
+
+    credit_return = CreditReturn(
+        credit=child_credit,
+        cancelled=False,
+        error=None,
+    )
+
+    await callback_handler.on_credit_return("worker-1", credit_return)
+
+    assert order == ["observe", "leaf_reached"]
 
 
 # =============================================================================
