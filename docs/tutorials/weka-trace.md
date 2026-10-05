@@ -68,17 +68,51 @@ AIPerf maps the format directly onto its DAG datastructure:
 
 ## Quick Start
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=60 -->
 ```bash
+# If you already produced a corpus with kv-cache-tester, it is used as-is.
+# Otherwise a three-turn trace is synthesized so the command below is still
+# runnable. These are the fields the loader reads:
+python - <<'PY_EOF'
+import json, pathlib, sys
+traces = pathlib.Path("artifacts/kv-cache-tester/traces")
+if traces.exists() and any(traces.glob("*.json")):
+    sys.exit(0)
+traces.mkdir(parents=True, exist_ok=True)
+BLOCK = 64
+def call(t, hash_ids, out):
+    # input_length must match len(hash_ids) * block_size: the prompt is
+    # reconstructed block by block from the hash ids, and a shared leading
+    # run of ids is what replays as a shared prefix.
+    return {"t": t, "type": "n", "model": "Qwen/Qwen3-0.6B",
+            "in": len(hash_ids) * BLOCK, "out": out,
+            "hash_ids": hash_ids, "stop": "end_turn"}
+(traces / "trace_0001.json").write_text(json.dumps({
+    "id": "demo_0001",
+    "models": ["Qwen/Qwen3-0.6B"],
+    "block_size": BLOCK,
+    "hash_id_scope": "local",
+    "tool_tokens": 0,
+    "system_tokens": 0,
+    "requests": [
+        call(0.0, [1, 2, 3, 4], 32),
+        call(5.0, [1, 2, 3, 4, 5, 6], 32),
+        call(8.0, [1, 2, 3, 4, 5, 6, 7], 32),
+    ],
+}))
+PY_EOF
+
 aiperf profile \
     --url localhost:8000 \
-    --model claude-opus-4-5-20251101 \
-    --model claude-haiku-4-5-20251001 \
+    --model Qwen/Qwen3-0.6B \
+    --tokenizer Qwen/Qwen3-0.6B \
     --endpoint-type chat \
     --streaming \
     --input-file artifacts/kv-cache-tester/traces/ \
     --weka-nested-timestamp-basis auto \
     --fixed-schedule
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 Whatever you pass to `--model` becomes the model the server actually sees. Trace requests are rewritten to use your configured model(s) — the trace's recorded model names don't have to match what you're serving. See [Per-Trace Model Rewriting](#per-trace-model-rewriting) below for how multi-model traces map onto multiple `--model` values.
 
