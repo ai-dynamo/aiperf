@@ -2054,6 +2054,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_no_subagents:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2074,6 +2075,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2098,6 +2100,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2118,6 +2121,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060226:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2137,6 +2141,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060226_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2156,6 +2161,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060526:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2174,6 +2180,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060526_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2194,6 +2201,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060826:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2212,6 +2220,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060826_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2232,6 +2241,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_061326:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2255,6 +2265,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_061326_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2275,6 +2286,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_061526:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2297,6 +2309,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_061526_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2318,6 +2331,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_062126:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2338,6 +2352,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_062126_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2358,6 +2373,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   weka_hf:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2373,6 +2389,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   # ---------------------------------------------------------------------------
   # SPEED-Bench. Prompt text for rows whose source datasets forbid
