@@ -85,6 +85,17 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
             if not conv.turns:
                 continue
 
+            # DAG children belong to their root's session and are dispatched by
+            # the BranchOrchestrator when the parent's SPAWN branch fires.
+            # Scheduling them here too dispatches every child request twice,
+            # and the duplicates consume the phase's credit budget, so the
+            # parent's join turn is later refused by the stop check and every
+            # parent turn after the spawn is silently dropped. Mirrors the same
+            # filter in ``PhaseOrchestrator`` -- on ``is_root`` rather than
+            # ``agent_depth``, since SPAWN children keep ``agent_depth == 0``.
+            if not getattr(conv, "is_root", True):
+                continue
+
             # Validate first turn has timestamp (required for fixed schedule mode)
             if conv.turns[0].timestamp_ms is None:
                 raise ValueError(
