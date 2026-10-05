@@ -334,6 +334,23 @@ class TrajectorySource(ConversationSource):
             self._cache_bust_ledger = ledger
         return ledger
 
+    @property
+    def warmup_terminated_correlations(self) -> set[str]:
+        """Root ``x_correlation_id``s terminated by a WARMUP context overflow.
+
+        Shared by the WARMUP and PROFILING strategy instances (like
+        ``cache_bust_ledger``) so a lane whose sampled root already blew past
+        the context window is recycled instead of resumed: every later turn's
+        cumulative prompt is strictly larger than the one the server refused.
+        Created lazily so sources built through ``__new__`` in tests get a set
+        on first access.
+        """
+        terminated = getattr(self, "_warmup_terminated_correlations", None)
+        if terminated is None:
+            terminated = set()
+            self._warmup_terminated_correlations = terminated
+        return terminated
+
     def _log_trajectory_summary(self) -> None:
         """Log a table of every trajectory's start position, one record per line.
 
