@@ -604,7 +604,7 @@ def _maybe_auto_promote_trace(
         or cli.scenario is not None
         or prof["type"] == PhaseType.FIXED_SCHEDULE
         or not plugins.is_trace_dataset(str(dataset_type))
-        or not _first_record_has_timestamp(file_path)
+        or not _trace_carries_timing(dataset_type, file_path)
     ):
         return
 
@@ -707,6 +707,30 @@ def _has_timing_events_timestamp(data: dict) -> bool:
         and isinstance(events[0], dict)
         and events[0].get("timestamp") is not None
     )
+
+
+def _trace_carries_timing(dataset_type: object, file_path: object) -> bool:
+    """Whether a trace dataset has timing worth auto-promoting on.
+
+    Deliberately shares ``_implicit_timing_types`` with the resolver's
+    validation path. The two used to disagree: validation knew that some
+    loaders always produce timing their nesting hides, while this probe only
+    looked for a top-level ``timestamp`` key and refused directories outright.
+    A weka_trace keeps timing in ``requests[].t`` and is documented as a
+    directory of files, so it failed the probe, never auto-promoted, and
+    replayed as plain concurrency -- silently discarding the recorded timeline
+    the user chose a trace dataset to replay.
+    """
+    from aiperf.config.dataset.resolver import _implicit_timing_types
+    from aiperf.plugin.enums import CustomDatasetType
+
+    try:
+        resolved = CustomDatasetType(str(dataset_type))
+    except ValueError:
+        resolved = None
+    if resolved is not None and resolved in _implicit_timing_types():
+        return True
+    return _first_record_has_timestamp(file_path)
 
 
 def _first_record_has_timestamp(file_path: object) -> bool:
