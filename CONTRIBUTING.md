@@ -202,6 +202,12 @@ Contributions intended to add significant new functionality must follow a more c
 
 Feature branches use `<username>/feature-name` format, forked from `main`.
 
+## Required Checks
+
+A PR can merge into `main` only after the `pre-commit` and `Unit Tests Gate` checks pass. `Unit Tests Gate` is the last job in `.github/workflows/run-unit-tests.yml` and fails unless every unit test job passed.
+
+Unit tests run on NVIDIA runners, so copy-pr-bot copies each PR to a `pull-request/<number>` branch to run them. A PR from a fork is copied only after a maintainer reviews it and comments `/ok to test <sha>`. Until then the PR shows `Unit Tests Gate` as expected and cannot merge. Docs-only PRs are not exempt, because several unit tests check the docs. Repository admins can bypass the requirement when needed.
+
 ## Running GitHub Actions Locally
 
 You can use the `act` tool to run GitHub Actions locally. See [act usage](https://nektosact.com/introduction.html).
