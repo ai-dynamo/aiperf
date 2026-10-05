@@ -225,6 +225,22 @@ aiperf profile \
     --request-count 3
 ```
 
+The download comes from the `url` field of the completed job, or from
+`<poll URL>/content` when the job has none. Two rules keep your credentials
+with the server you are benchmarking, with or without request signing:
+
+- **A download from a different host gets no credentials.** When `url` names a
+  different scheme, host or port than `--url`, only `User-Agent` is sent: no
+  `--api-key` and no `-H` headers. A presigned S3 URL needs nothing more, since
+  it authenticates through its own query string.
+- **Redirects are not followed.** A `3xx` response fails the download with a
+  `VideoDownloadError` instead of fetching from wherever it points, because
+  following it would forward your headers to a host the server chose.
+
+If your server redirects `/content` to a CDN, or serves videos from another
+host that needs your auth headers, have it return the final, presigned
+location in the job's `url` field instead.
+
 **Example with advanced parameters:**
 ```bash
 aiperf profile \
@@ -453,6 +469,14 @@ If requests time out during generation:
 1. Increase the request timeout: `--request-timeout-seconds 1200`
 2. Check server logs for errors
 3. Reduce video resolution or duration for faster generation
+
+### Video Download Fails with a 3xx or 401/403
+
+With `--download-video-content`, a download that is redirected, or that goes to
+a host other than `--url` and needs your auth headers there, fails with a
+`VideoDownloadError`. See [Video Download Option](#generation-parameters) for
+why, and have the server return a final, presigned location in the job's `url`
+field.
 
 ### Out of Memory
 

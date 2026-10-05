@@ -20,6 +20,7 @@ For other use cases:
 - **Custom prompts without timing**: See [Custom Prompt Benchmarking](../tutorials/custom-prompt-benchmarking.md)
 - **Precise timestamp control for any dataset**: See [Fixed Schedule](../tutorials/fixed-schedule.md)
 - **Multi-turn conversations from files**: See [Multi-Turn Conversations](../tutorials/multi-turn.md)
+- **Alibaba Bailian traces**: See [Bailian Traces](../tutorials/bailian-trace.md). Unlike Mooncake sessions, each Bailian row already covers its full request context, so turns are replayed as self-contained prompts ([`message_array_with_responses`](../reference/conversation-context-mode.md)) rather than accumulating history
 
 ## Start a vLLM Server
 
