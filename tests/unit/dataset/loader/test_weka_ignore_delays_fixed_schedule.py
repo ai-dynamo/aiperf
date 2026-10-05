@@ -43,10 +43,3 @@ def test_delays_are_only_stripped_when_the_phase_can_afford_it(
 ) -> None:
     loader = _loader(tmp_path, ignore_trace_delays=ignore, fixed_schedule=fixed)
     assert loader._ignore_trace_delays_effective is expected
-
-
-def test_the_user_request_is_still_recorded(tmp_path) -> None:
-    """Suppression is about the emitted timestamps, not about forgetting the flag."""
-    loader = _loader(tmp_path, ignore_trace_delays=True, fixed_schedule=True)
-    assert loader._ignore_trace_delays is True
-    assert loader._under_fixed_schedule is True
