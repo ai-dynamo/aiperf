@@ -47,9 +47,11 @@ class TestCrossClaim:
 
     The two payloads share ``acceptance_histogram``, ``num_spec_steps``, and
     ``num_spec_tokens``, so a signature built only from shared keys would match
-    both. Because the shared field names parse, the wrong adapter would build a
-    record and label it with the wrong engine -- no exception, no dropped
-    record, just a run attributed to a server that never produced it.
+    both. What follows depends on whether the foreign payload parses. The vLLM
+    adapter's old signature claimed TensorRT-LLM payloads and then failed on
+    the missing ``mean_acceptance_length``, silently dropping every TensorRT-LLM
+    record; an adapter whose fields did parse would instead attribute the run
+    to the wrong engine. Both failures are silent, so neither may claim.
     """
 
     def test_vllm_defers_on_trtllm_payload(self) -> None:
@@ -201,9 +203,11 @@ class TestPayloadPresence:
 def test_signature_keys_are_disjoint() -> None:
     """Mechanical guard on the property the whole design rests on.
 
-    Fails the moment someone adds a key to one adapter's signature that the
-    other engine also emits, instead of waiting for a mislabelled benchmark to
-    surface it.
+    Fails if either signature stops requiring a key unique to its own engine --
+    removing ``mean_acceptance_length`` from the vLLM signature, say -- because
+    the other engine's payload would then satisfy it. Adding a key, even a
+    shared one, only narrows a signature, so it cannot cause a cross-claim and
+    is not what this catches.
     """
     from aiperf.spec_decode.trtllm_adapter import _TRTLLM_SIGNATURE_KEYS
     from aiperf.spec_decode.vllm_adapter import _VLLM_SIGNATURE_KEYS
