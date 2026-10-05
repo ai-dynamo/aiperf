@@ -39,6 +39,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError, LifecycleOperationError
+from aiperf.common.exit_hooks import run_pre_exit_hooks
 from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_stop
 from aiperf.common.logging import cleanup_global_log_queue, get_global_log_queue
 from aiperf.common.messages import (
@@ -2452,8 +2453,20 @@ class SystemController(
         # Clean up the global log queue to prevent semaphore leaks
         await cleanup_global_log_queue()
 
+        # Post-run work registered by the CLI (auto-plot and friends) runs here
+        # or never: os._exit bypasses every teardown path below this frame,
+        # including the code after the call that started this controller.
+        exit_code = 1 if self._exit_errors else 0
+        try:
+            exit_code = run_pre_exit_hooks(exit_code)
+        except Exception:
+            # Nothing can propagate past the os._exit below, so a raising hook
+            # must still fail the run loudly rather than exit 0 silently.
+            self.exception("Post-run hook failed")
+            exit_code = exit_code or 1
+
         # Exit the process in a more explicit way, to ensure that it stops
-        os._exit(1 if self._exit_errors else 0)
+        os._exit(exit_code)
 
     def _has_exportable_results(self) -> bool:
         """Whether the run produced records worth writing out.
