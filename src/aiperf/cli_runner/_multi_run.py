@@ -177,7 +177,7 @@ def _estimate_and_log_duration(
         variables=dict(plan.variables),
     )
     ArtifactDirResolver().resolve(probe_run, for_probe=True)
-    DatasetResolver().resolve(probe_run)
+    DatasetResolver().resolve(probe_run, for_probe=True)
     TimingResolver().resolve(probe_run)
 
     per_run_duration = probe_run.resolved.total_expected_duration
