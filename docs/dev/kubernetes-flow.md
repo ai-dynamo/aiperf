@@ -115,16 +115,20 @@ AIPerfJob recovery callbacks also pin the parent resource version and accept
 JobSet state only when its controller owner API version, kind, name, and UID
 match the callback's immutable parent UID. Timeout, startup-failure, and result
 salvage cleanup re-read that ownership and delete with the JobSet UID as a
-precondition. A stable startup-blocker deadline first atomically adds
-`aiperf.nvidia.com/startup-failure-claimed` with JSON Patch tests for the
-parent UID, resource version, spec cancellation state, phase, exact
-`status.startupIssue`, and annotation map. The annotation-map test makes this
-failure-cleanup claim mutually exclusive with the durable completion claim;
-only the winner may enter JobSet deletion. A matching persisted failure claim
-resumes cleanup after an operator restart. Pod watches and stale-heartbeat
-recovery only persist critical startup diagnosis; the cached-state deadline is
-the sole path that may claim, delete, and terminalize that blocker. JobSet
-failure events use the same ownership fence before a direct status patch.
+precondition. A stable startup-blocker deadline first re-reads the live parent
+and requires a matching UID, a non-terminal phase, no spec or in-process
+cancellation, no completion claim, no foreign failure claim, and a
+`status.startupIssue` fingerprint matching the cached blocker. It then
+atomically adds `aiperf.nvidia.com/startup-failure-claimed` with JSON Patch
+tests for the parent UID, the resource version of that live read, and phase.
+The resource-version test fences every other write, including the durable
+completion claim, so the failure-cleanup claim and completion claim are
+mutually exclusive; only the winner may enter JobSet deletion. A matching
+persisted failure claim resumes cleanup after an operator restart. Pod watches
+and stale-heartbeat recovery only persist critical startup diagnosis; the
+cached-state deadline is the sole path that may claim, delete, and terminalize
+that blocker. JobSet failure events use the same ownership fence before a
+direct status patch.
 Event status changes are rebased onto the fenced live status so every condition
 type not demonstrably changed by the event survives concurrent controller
 writes. Pod events resolve the full Pod to batch Job to JobSet to AIPerfJob
