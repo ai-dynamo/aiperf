@@ -174,6 +174,8 @@ aiperf profile \
 - `--audio-num-channels`: 1 (mono) or 2 (stereo) (default: 1)
 - `--audio-batch-size`: Number of audio files per request (default: 1)
 
+When configuring audio in YAML, `sample_rates` and `depths` must each contain at least one value. Empty lists are rejected during configuration validation.
+
 **Note**: Set `--audio-length-mean` > 0 to enable audio generation. MP3 supports a limited set of sample rates; use WAV for custom rates.
 
 ---
