@@ -54,8 +54,8 @@ def _make_loader(filename, uc, monkeypatch, *, start=None, end=None):
     from tests.unit.dataset.loader.conftest import stub_hash_id_corpus_rng
 
     stub_hash_id_corpus_rng(loader.prompt_generator)
-    loader.prompt_generator.tokenizer.decode.side_effect = (
-        lambda toks: f"<dec:{len(toks)}>"
+    loader.prompt_generator.tokenizer.decode.side_effect = lambda toks: (
+        f"<dec:{len(toks)}>"
     )
     loader._tokenizer_name = "t"
     loader._trust_remote_code = False

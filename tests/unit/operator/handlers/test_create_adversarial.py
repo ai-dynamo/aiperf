@@ -623,12 +623,14 @@ class TestCreateCancellationBoundaries:
         async with _patched_create_dependencies(
             jobset_side_effect=cancel_during_jobset,
         ):
-            with mock_patch(
-                "aiperf.operator.handlers.create.delete_owned_aiperfjob_jobset",
-                new=AsyncMock(side_effect=kopf.TemporaryError("apiserver down")),
+            with (
+                mock_patch(
+                    "aiperf.operator.handlers.create.delete_owned_aiperfjob_jobset",
+                    new=AsyncMock(side_effect=kopf.TemporaryError("apiserver down")),
+                ),
+                pytest.raises(kopf.TemporaryError, match="apiserver down"),
             ):
-                with pytest.raises(kopf.TemporaryError, match="apiserver down"):
-                    await _call_on_create(patch=patch)
+                await _call_on_create(patch=patch)
 
         assert patch.status["jobSetName"]
         assert patch.status["jobId"] == "aiperf-bench-7f2a"

@@ -249,8 +249,10 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
             )
         except Exception as publish_error:
             self.warning(
-                lambda err=publish_error: "Could not report start-up failure to the "
-                f"SystemController (comms may not be up yet): {err!r}"
+                lambda err=publish_error: (
+                    "Could not report start-up failure to the "
+                    f"SystemController (comms may not be up yet): {err!r}"
+                )
             )
 
     async def _kill(self) -> None:
@@ -273,7 +275,9 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
             )
         except Exception as publish_error:
             self.debug(
-                lambda e=publish_error: f"Failed to publish BaseServiceErrorMessage during _kill (comms may already be down): {e!r}"
+                lambda e=publish_error: (
+                    f"Failed to publish BaseServiceErrorMessage during _kill (comms may already be down): {e!r}"
+                )
             )
         self.stop_requested = True
         self.stopped_event.set()
