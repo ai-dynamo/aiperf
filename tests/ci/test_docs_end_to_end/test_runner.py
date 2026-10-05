@@ -7,6 +7,7 @@ Test runner for executing server setup, health checks, and AIPerf tests.
 import logging
 import os
 import re
+import shlex
 import signal
 import subprocess
 import threading
@@ -44,6 +45,32 @@ def inject_ui_type(command: str, ui_type: str = AIPERF_UI_TYPE) -> str:
     if _UI_FLAG_RE.search(command):
         return command
     return command.replace("aiperf profile", f"aiperf profile --ui-type {ui_type}")
+
+
+def resolve_command_timeout(aiperf_cmd) -> int:
+    """Pick the per-command ``timeout=`` if the guide set one, else the global.
+
+    Shared with the unit tests so the per-command value is pinned where it is
+    consumed: asserting only that the parser produced it leaves the runner free
+    to ignore it, which is exactly the regression this guards.
+    """
+    return aiperf_cmd.timeout or AIPERF_COMMAND_TIMEOUT
+
+
+def build_fixture_write_command(target: PurePosixPath) -> str:
+    """Build the shell command that writes one fixture, with the path quoted.
+
+    `path=` is an attribute of a markdown comment, so it is ordinary
+    documentation text that reaches a shell. The absolute/`..` guard stops the
+    file being written outside the working directory but does nothing about
+    metacharacters, and an unquoted `cat > {target}` turns `path=x;touch PWNED`
+    into a second command running inside the CI container. Shared with the unit
+    tests so the quoting is pinned where it is actually used.
+    """
+    quoted = shlex.quote(str(target))
+    parent = target.parent
+    mkdir = f"mkdir -p {shlex.quote(str(parent))} && " if str(parent) != "." else ""
+    return f"{mkdir}cat > {quoted}"
 
 
 class _ProcessGroupKillGuard:
@@ -439,7 +466,7 @@ class EndToEndTestRunner:
             aiperf_process.stdin.close()
 
             kill_guard = _ProcessGroupKillGuard()
-            command_timeout = aiperf_cmd.timeout or AIPERF_COMMAND_TIMEOUT
+            command_timeout = resolve_command_timeout(aiperf_cmd)
             watchdog = threading.Timer(
                 command_timeout,
                 _make_process_group_timeout_killer(
@@ -517,8 +544,7 @@ class EndToEndTestRunner:
                 return False
 
             logger.info(f"Writing fixture {fixture.path} for {server.name}")
-            parent = target.parent
-            mkdir = f"mkdir -p {parent} && " if str(parent) != "." else ""
+            write_command = build_fixture_write_command(target)
             result = subprocess.run(
                 [
                     "docker",
@@ -527,7 +553,7 @@ class EndToEndTestRunner:
                     self.aiperf_container_id,
                     "bash",
                     "-c",
-                    f"{mkdir}cat > {target}",
+                    write_command,
                 ],
                 input=fixture.content,
                 text=True,

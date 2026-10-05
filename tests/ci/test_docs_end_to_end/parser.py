@@ -105,17 +105,63 @@ class MarkdownParser:
                                 start_line=i + 1,
                                 end_line=i + len(bash_content.split("\n")) + 2,
                             )
-                            if weight_str is not None:
-                                command_kwargs["weight"] = int(weight_str)
                             timeout_str = attrs.get("timeout")
-                            if timeout_str is not None:
-                                command_kwargs["timeout"] = int(timeout_str)
+                            weight = self._positive_int(
+                                weight_str, "weight", tag_name, file_path, i + 1
+                            )
+                            timeout = self._positive_int(
+                                timeout_str, "timeout", tag_name, file_path, i + 1
+                            )
+                            if (weight_str is not None and weight is None) or (
+                                timeout_str is not None and timeout is None
+                            ):
+                                i += 1
+                                continue
+                            if weight is not None:
+                                command_kwargs["weight"] = weight
+                            if timeout is not None:
+                                command_kwargs["timeout"] = timeout
                             command = Command(**command_kwargs)
 
                             self._categorize_command(command)
                         else:
                             logger.warning(f"No bash block found after tag {tag_name}")
             i += 1
+
+    @staticmethod
+    def _positive_int(
+        raw: str | None,
+        attr: str,
+        tag_name: str,
+        file_path: Path,
+        line: int,
+    ) -> int | None:
+        """Parse a positive-integer tag attribute, or None if absent or invalid.
+
+        An invalid value isolates to its own command rather than aborting
+        discovery for every document: one typo in one guide must not silently
+        drop the whole docs-e2e suite. Zero and negatives are rejected because
+        both are quietly destructive -- ``timeout=0`` falls through to the
+        global default and ``timeout=-1`` kills the command the moment it
+        starts.
+        """
+        if raw is None:
+            return None
+        try:
+            value = int(raw)
+        except ValueError:
+            logger.error(
+                f"Ignoring command with non-integer {attr}={raw!r} in tag "
+                f"{tag_name} ({file_path}:{line})"
+            )
+            return None
+        if value <= 0:
+            logger.error(
+                f"Ignoring command with non-positive {attr}={value} in tag "
+                f"{tag_name} ({file_path}:{line})"
+            )
+            return None
+        return value
 
     def _is_file_tag(self, tag_name: str) -> bool:
         """Whether this tag declares a file to materialize before the run."""
