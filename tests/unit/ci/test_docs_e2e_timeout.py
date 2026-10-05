@@ -70,3 +70,23 @@ def test_weight_alone_still_works(tmp_path: Path) -> None:
     command = _cmd(tmp_path, " weight=300")
     assert command.weight == 300
     assert command.timeout is None
+
+
+def test_the_runner_uses_the_per_command_timeout() -> None:
+    """Pins the value at the point the watchdog consumes it.
+
+    Asserting only that the parser produced `timeout=` leaves the runner free
+    to pass `AIPERF_COMMAND_TIMEOUT` to `threading.Timer` regardless, which no
+    parser-level test can detect.
+    """
+    from test_runner import resolve_command_timeout
+
+    class _Cmd:
+        timeout = 5400
+
+    assert resolve_command_timeout(_Cmd()) == 5400
+
+    class _NoTimeout:
+        timeout = None
+
+    assert resolve_command_timeout(_NoTimeout()) == AIPERF_COMMAND_TIMEOUT
