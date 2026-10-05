@@ -155,6 +155,8 @@ from aiperf.common.models.trace_models import (
     AioHttpTraceDataExport,
     BaseTraceData,
     TraceDataExport,
+    WebSocketTraceData,
+    WebSocketTraceDataExport,
 )
 from aiperf.common.models.usage_models import Usage
 from aiperf.common.models.worker_models import WorkerTaskStats
@@ -287,6 +289,8 @@ __all__ = [
     "Usage",
     "Video",
     "VideoResponseData",
+    "WebSocketTraceData",
+    "WebSocketTraceDataExport",
     "WorkerGroupStats",
     "WorkerProcessingStats",
     "WorkerStats",

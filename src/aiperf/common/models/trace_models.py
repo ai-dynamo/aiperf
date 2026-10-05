@@ -634,3 +634,30 @@ class AioHttpTraceData(BaseTraceData):
         le=65535,
         description="Remote port of the server.",
     )
+
+
+class WebSocketTraceDataExport(TraceDataExport):
+    """Export model for the WebSocket transport.
+
+    The WebSocket transport has no connection-pool / DNS / TCP phase model like
+    aiohttp; it reuses the base timing and byte fields. ``request_bytes_total``
+    and ``response_bytes_total`` count application-frame payload bytes (the UTF-8
+    JSON put on / read off the socket), the closest analog to aiohttp's
+    transport-layer byte totals for a like-for-like bandwidth comparison.
+    """
+
+    trace_type: Literal["websocket"] = "websocket"
+
+
+class WebSocketTraceData(BaseTraceData):
+    """Runtime trace data for the WebSocket transport.
+
+    Captures per-turn bandwidth: ``request_bytes_total`` is the size of the
+    single JSON ``response.create`` frame sent, ``response_bytes_total`` is the
+    summed size of every JSON event frame read back. Frame counts land in
+    ``request_chunks_count`` / ``response_chunks_count``. Byte totals count the
+    application payload (UTF-8 JSON), not WebSocket framing overhead, matching
+    how the aiohttp trace counts HTTP body chunk bytes.
+    """
+
+    trace_type: Literal["websocket"] = "websocket"

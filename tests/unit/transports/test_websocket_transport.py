@@ -392,6 +392,33 @@ class TestSendRequest:
         assert "background" not in payload
         await transport.stop()
 
+    async def test_trace_data_records_bandwidth(self) -> None:
+        transport = await self._transport()
+        events = [
+            {"type": "response.created", "response": {"id": "resp_1"}},
+            {"type": "response.output_text.delta", "delta": "Hi there"},
+            {"type": "response.completed", "response": {"id": "resp_1"}},
+        ]
+        # Mix TEXT and BINARY frames to cover both counting paths.
+        fake = FakeWS([_text(events[0]), _binary(events[1]), _text(events[2])])
+        transport._open = AsyncMock(return_value=fake)
+
+        record = await transport.send_request(_request_info(), {"model": "m"})
+
+        trace = record.trace_data
+        assert trace is not None
+        assert trace.trace_type == "websocket"
+        # Uplink: exactly the single response.create frame that was sent.
+        assert trace.request_chunks_count == 1
+        assert trace.request_bytes_total == len(fake.sent[0].encode("utf-8"))
+        # Downlink: summed payload bytes across every received data frame.
+        expected_recv = sum(
+            len(orjson.dumps(e)) for e in events
+        )  # BINARY frame bytes == TEXT frame bytes for the same JSON
+        assert trace.response_chunks_count == 3
+        assert trace.response_bytes_total == expected_recv
+        await transport.stop()
+
     async def test_first_token_callback_fires(self) -> None:
         transport = await self._transport()
         fake = FakeWS(

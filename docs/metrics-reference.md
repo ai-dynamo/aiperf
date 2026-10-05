@@ -2077,6 +2077,7 @@ http_req_data_sent = trace.request_bytes_total
 **Notes:**
 - k6 equivalent: `data_sent` (per request)
 - Measures total bytes written to the transport layer.
+- WebSocket transport: the UTF-8 JSON payload of the single `response.create` frame sent for the turn, excluding WebSocket framing and the upgrade handshake.
 
 ---
 
@@ -2094,6 +2095,7 @@ http_req_data_received = trace.response_bytes_total
 **Notes:**
 - k6 equivalent: `data_received` (per request)
 - Measures total bytes read from the transport layer.
+- WebSocket transport: the summed UTF-8 JSON payload of every event frame received for the turn, excluding WebSocket framing and the upgrade handshake.
 
 ---
 
@@ -2127,6 +2129,7 @@ http_req_chunks_sent = trace.request_chunks_count
 
 **Notes:**
 - Not displayed in console output (`console_group = MetricConsoleGroup.NONE`).
+- WebSocket transport: always 1, since a turn is a single `response.create` frame.
 
 ---
 
@@ -2143,6 +2146,7 @@ http_req_chunks_received = trace.response_chunks_count
 
 **Notes:**
 - Not displayed in console output (`console_group = MetricConsoleGroup.NONE`).
+- WebSocket transport: the number of text/binary data frames received for the turn.
 
 ---
 

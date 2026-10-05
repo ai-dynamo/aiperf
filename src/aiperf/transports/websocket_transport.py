@@ -23,6 +23,7 @@ from aiperf.common.models import (
     RequestRecord,
     SSEField,
     SSEMessage,
+    WebSocketTraceData,
 )
 from aiperf.common.redact import (
     is_sensitive_header_name,
@@ -259,6 +260,7 @@ class WebSocketTransport(BaseTransport):
             request_info=request_info,
             timestamp_ns=time.time_ns(),
             start_perf_ns=start_perf_ns,
+            trace_data=WebSocketTraceData(),
         )
         # Opening the socket can fail (refused connection, or a handshake that
         # exceeds the endpoint timeout); fold both into the failed-record path
@@ -335,6 +337,11 @@ class WebSocketTransport(BaseTransport):
             await ws.send_str(envelope_bytes.decode())
             # Now that the exact frame is on the wire, record it for raw export.
             request_info.payload_bytes = envelope_bytes
+            # Bandwidth: one JSON text frame carries the whole turn (the
+            # response.create envelope), so uplink is exactly its payload size.
+            if record.trace_data is not None:
+                record.trace_data.request_bytes_total = len(envelope_bytes)
+                record.trace_data.request_chunks_count = 1
             dirty = await self._read_bounded(
                 ws,
                 record,
@@ -525,6 +532,14 @@ class WebSocketTransport(BaseTransport):
             raise TimeoutError
         return await asyncio.wait_for(ws.receive(), timeout=remaining)
 
+    @staticmethod
+    def _count_received_frame(record: RequestRecord, byte_len: int) -> None:
+        """Accumulate downlink bandwidth for one received data frame."""
+        if record.trace_data is None:
+            return
+        record.trace_data.response_bytes_total += byte_len
+        record.trace_data.response_chunks_count += 1
+
     def _frame_payload(
         self,
         msg: aiohttp.WSMessage,
@@ -538,8 +553,10 @@ class WebSocketTransport(BaseTransport):
         errored (in which case ``record.error`` is set).
         """
         if msg.type is aiohttp.WSMsgType.TEXT:
+            self._count_received_frame(record, len(msg.data.encode("utf-8")))
             return msg.data
         if msg.type is aiohttp.WSMsgType.BINARY:
+            self._count_received_frame(record, len(msg.data))
             return msg.data.decode("utf-8")
         if msg.type in (
             aiohttp.WSMsgType.CLOSE,
