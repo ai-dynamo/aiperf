@@ -102,13 +102,22 @@ def _implicit_timing_types() -> frozenset[object]:
 class DatasetResolver:
     """Resolve file-based dataset paths, detect types, timing, and sampling."""
 
-    def resolve(self, run: BenchmarkRun) -> None:
+    def resolve(self, run: BenchmarkRun, *, for_probe: bool = False) -> None:
         """Populate dataset-derived fields on ``run.resolved``.
 
         Resolves file dataset paths, maps configured formats to loader dataset types,
         records loader-preferred sampling, detects first-record timing fields for
         ``fixed_schedule`` validation, and counts records/sessions. Raises
         ``FileNotFoundError`` when a file dataset path does not exist.
+
+        Args:
+            run: The BenchmarkRun whose ``cfg.datasets`` to resolve.
+            for_probe: When True, populate only ``dataset_has_timing_data``.
+                The multi-run duration-estimate probe clones the first config
+                only to satisfy ``TimingResolver``'s ``fixed_schedule`` check;
+                record/session/root counts are discarded with the probe run, so
+                the full-file scans are skipped to avoid a startup regression
+                on large trace datasets.
         """
         from aiperf.config.dataset import FileDataset, PublicDataset
         from aiperf.plugin import plugins
@@ -123,7 +132,9 @@ class DatasetResolver:
                 continue
             if not isinstance(ds, FileDataset):
                 continue
-            self._resolve_one(name=ds.name, ds=ds, format_map=format_map, acc=acc)
+            self._resolve_one(
+                name=ds.name, ds=ds, format_map=format_map, acc=acc, for_probe=for_probe
+            )
 
         self._publish(run, acc)
 
@@ -155,6 +166,7 @@ class DatasetResolver:
         ds: object,
         format_map: dict[str, object],
         acc: _DatasetResolution,
+        for_probe: bool = False,
     ) -> None:
         records = getattr(ds, "records", None)
         if records is not None:
@@ -165,7 +177,8 @@ class DatasetResolver:
         resolved = ds.path.resolve()  # type: ignore[attr-defined]
         if not resolved.exists():
             raise FileNotFoundError(f"Dataset '{name}' file not found: {resolved}")
-        acc.paths[name] = resolved
+        if not for_probe:
+            acc.paths[name] = resolved
 
         # 2. Detect dataset type from explicit format or via can_load.
         # Pydantic defaults ``format`` to SINGLE_TURN, so a falsy check isn't
@@ -182,11 +195,15 @@ class DatasetResolver:
             dataset_type, first_record = self._detect_type(str(resolved))
 
         if dataset_type is not None:
-            acc.types[name] = dataset_type
-            acc.sampling[name] = self._resolve_sampling(ds, dataset_type)
             acc.has_timing[name] = self._check_timing_data(
                 str(resolved), first_record, dataset_type
             )
+            if for_probe:
+                return
+            acc.types[name] = dataset_type
+            acc.sampling[name] = self._resolve_sampling(ds, dataset_type)
+        elif for_probe:
+            return
         _warn_ignored_baseten_only_fields(name, ds, dataset_type)
 
         # 3. Count records and sessions (for validation and fixed_schedule)

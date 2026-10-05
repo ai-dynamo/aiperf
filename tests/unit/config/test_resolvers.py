@@ -641,6 +641,77 @@ class TestDatasetResolver:
         # Pair with TimingResolver to confirm fixed_schedule validation passes.
         TimingResolver().resolve(run)
 
+    def test_for_probe_populates_only_timing_data(self, tmp_path) -> None:
+        """Probe mode must skip full-file record/session/root scans.
+
+        ``cli_runner._estimate_and_log_duration`` clones the first config only
+        to satisfy ``TimingResolver``'s ``fixed_schedule`` check; counts are
+        discarded with the probe run, so they must not trigger file scans.
+        """
+        dataset_file = tmp_path / "data.jsonl"
+        dataset_file.write_text(
+            '{"text": "hello", "timestamp": 1.0}\n{"text": "world", "timestamp": 2.0}\n'
+        )
+
+        config = BenchmarkConfig(
+            models=["test-model"],
+            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+            datasets=[
+                {
+                    "name": "main",
+                    "type": "file",
+                    "path": str(dataset_file),
+                    "format": "single_turn",
+                }
+            ],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "fixed_schedule",
+                }
+            ],
+        )
+        run = _make_run(config, artifact_dir=tmp_path / "out")
+
+        with (
+            patch.object(DatasetResolver, "_count_records_and_sessions") as mock_count,
+            patch.object(DatasetResolver, "_count_dag_roots") as mock_roots,
+        ):
+            DatasetResolver().resolve(run, for_probe=True)
+            mock_count.assert_not_called()
+            mock_roots.assert_not_called()
+
+        assert run.resolved.dataset_has_timing_data == {"main": True}
+        assert run.resolved.dataset_total_records is None
+        assert run.resolved.dataset_session_count is None
+        assert run.resolved.dataset_root_count is None
+        assert run.resolved.dataset_file_paths is None
+        assert run.resolved.dataset_types is None
+        # Pair with TimingResolver to confirm fixed_schedule validation passes.
+        TimingResolver().resolve(run)
+
+    def test_for_probe_still_raises_on_missing_file(self, tmp_path) -> None:
+        """Probe mode still fails fast when a file dataset path is missing."""
+        config = BenchmarkConfig(
+            models=["test-model"],
+            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+            datasets=[
+                {"name": "main", "type": "file", "path": "/nonexistent/data.jsonl"}
+            ],
+            phases=[
+                {
+                    "name": "profiling",
+                    "type": "concurrency",
+                    "requests": 10,
+                    "concurrency": 1,
+                }
+            ],
+        )
+        run = _make_run(config, artifact_dir=tmp_path / "out")
+
+        with pytest.raises(FileNotFoundError, match="Dataset 'main' file not found"):
+            DatasetResolver().resolve(run, for_probe=True)
+
 
 # ---------------------------------------------------------------------------
 # TimingResolver
