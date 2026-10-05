@@ -20,9 +20,9 @@ AIPerf handles this polling workflow automatically.
 ## References
 
 For the most up-to-date information, please refer to the following resources:
-- [SGLang Diffusion OpenAI API Reference](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/api/openai_api.md)
-- [SGLang Diffusion Installation Guide](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/installation.md)
-- [SGLang Diffusion CLI Reference](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/api/cli.md)
+- [SGLang Diffusion OpenAI API Reference](https://github.com/sgl-project/sglang/blob/main/docs/docs/sglang-diffusion/api/openai_api.mdx)
+- [SGLang Diffusion Installation Guide](https://github.com/sgl-project/sglang/blob/main/docs/docs/sglang-diffusion/installation.mdx)
+- [SGLang Diffusion CLI Reference](https://github.com/sgl-project/sglang/blob/main/docs/docs/sglang-diffusion/api/cli.mdx)
 - [OpenAI Videos API](https://platform.openai.com/docs/api-reference/videos)
 
 ## Supported Models
@@ -60,10 +60,9 @@ docker run --gpus all \
 > [!NOTE]
 > The following steps are to be performed _inside_ the SGLang Docker container.
 
-**Install the diffusion dependencies:**
-```bash
-uv pip install "sglang[diffusion]" --prerelease=allow --system
-```
+`lmsysorg/sglang:dev` already ships the diffusion stack, so there is no
+`pip install` step inside the container — that extra is only needed for the
+native install in Option 2 below.
 
 **Set the server arguments:**
 
