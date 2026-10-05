@@ -691,7 +691,14 @@ class WebSocketTransport(BaseTransport):
         # which ``build_headers`` merges into the actual handshake headers. Re-check
         # the *resolved* header set here so a dataset-supplied Authorization (or any
         # sensitive header) cannot ride an unencrypted ws:// socket in cleartext.
-        self._reject_cleartext_credentials(url, headers)
+        self._reject_cleartext_credentials(
+            url,
+            headers,
+            routing_ids={
+                request_info.x_correlation_id,
+                request_info.parent_correlation_id,
+            },
+        )
 
         # Terminal 'response.completed' frames carry the whole assembled response,
         # which can exceed aiohttp's 4 MiB default and discard otherwise-complete
@@ -723,15 +730,32 @@ class WebSocketTransport(BaseTransport):
             raise
 
     @staticmethod
-    def _reject_cleartext_credentials(url: str, headers: dict[str, str]) -> None:
+    def _reject_cleartext_credentials(
+        url: str,
+        headers: dict[str, str],
+        routing_ids: set[str | None] | None = None,
+    ) -> None:
         """Refuse to send credential-bearing headers over an unencrypted ws://.
 
         Complements the config-time gate for the one credential source it cannot
         see: per-turn ``Turn.extra_headers`` resolved into the handshake headers.
+
+        ``routing_ids`` are the aiperf-minted correlation ids. ``build_headers``
+        copies them into session-routing headers (``X-Session-Affinity``,
+        ``X-Session-ID``, ``X-Dynamo-Session-ID``, a renamed ``--session-header``)
+        whose names trip the fail-safe ``"session"`` fragment in
+        ``is_sensitive_header_name``. A header carrying one of those ids is a
+        routing key, not a credential, so it is exempt; matching on the value
+        rather than the name keeps a user-supplied ``X-Session-Token`` rejected.
         """
         if not url.lower().startswith("ws://"):
             return
-        leaked = [name for name in headers if is_sensitive_header_name(name)]
+        exempt_values = {rid for rid in routing_ids or () if rid}
+        leaked = [
+            name
+            for name, value in headers.items()
+            if is_sensitive_header_name(name) and value not in exempt_values
+        ]
         if leaked:
             raise ValueError(
                 f"Refusing to send credential headers ({', '.join(sorted(leaked))}) "

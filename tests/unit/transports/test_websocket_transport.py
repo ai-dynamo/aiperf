@@ -11,9 +11,11 @@ from unittest.mock import AsyncMock
 import aiohttp
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NotInitializedError
 from aiperf.common.models import RequestInfo, SSEMessage
 from aiperf.plugin.enums import TransportType
@@ -1141,6 +1143,56 @@ class TestRejectCleartextCredentials:
             )
         assert "topsecret" not in str(exc_info.value)
         assert "supersecret" not in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        "header",
+        [
+            param("X-Session-Affinity", id="session-affinity"),
+            param("X-Session-ID", id="session-id"),
+            param("X-Dynamo-Session-ID", id="dynamo-session-id"),
+        ],
+    )  # fmt: skip
+    def test_routing_header_carrying_correlation_id_over_ws_allowed(
+        self, header: str
+    ) -> None:
+        WebSocketTransport._reject_cleartext_credentials(
+            "ws://host/v1/responses", {header: "corr-1"}, routing_ids={"corr-1"}
+        )
+
+    def test_parent_correlation_id_exempt_over_ws(self) -> None:
+        WebSocketTransport._reject_cleartext_credentials(
+            "ws://host/v1/responses",
+            {"X-Dynamo-Parent-Session-ID": "parent-1"},
+            routing_ids={"corr-1", "parent-1"},
+        )
+
+    def test_session_named_header_with_other_value_over_ws_raises(self) -> None:
+        with pytest.raises(ValueError, match="X-Session-Token"):
+            WebSocketTransport._reject_cleartext_credentials(
+                "ws://host/v1/responses",
+                {"X-Session-Affinity": "corr-1", "X-Session-Token": "secret"},
+                routing_ids={"corr-1"},
+            )
+
+    def test_empty_routing_id_does_not_exempt_empty_credential(self) -> None:
+        with pytest.raises(ValueError, match="X-Session-ID"):
+            WebSocketTransport._reject_cleartext_credentials(
+                "ws://host/v1/responses", {"X-Session-ID": ""}, routing_ids={"", None}
+            )
+
+    def test_default_build_headers_pass_ws_gate(self) -> None:
+        # Regression: X-Session-Affinity is on by default and its name matches
+        # the "session" fragment, which hard-failed every plain ws:// run.
+        assert Environment.HTTP.X_SESSION_AFFINITY_FROM_CORRELATION_ID
+        request_info = _request_info(x_correlation_id="conv-uuid")
+        transport = WebSocketTransport(model_endpoint=request_info.model_endpoint)
+        headers = transport.build_headers(request_info)
+        assert headers["X-Session-Affinity"] == "conv-uuid"
+        WebSocketTransport._reject_cleartext_credentials(
+            "ws://host/v1/responses",
+            headers,
+            routing_ids={request_info.x_correlation_id},
+        )
 
 
 @pytest.mark.asyncio
