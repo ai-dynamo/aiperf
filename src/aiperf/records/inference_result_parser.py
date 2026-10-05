@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 
@@ -43,6 +44,25 @@ if TYPE_CHECKING:
 _logger = AIPerfLogger(__name__)
 
 
+def _warn_once(warned: set[str] | None, key: str, message: Callable[[], str]) -> None:
+    """Warn on a detection problem's first occurrence in a run, debug after.
+
+    Ambiguity and a raising adapter come from the installed adapters, not from
+    any one response, so they recur on every record. ``warned`` is the parser's
+    per-run memory of what it has already reported; ``None`` warns every time.
+    """
+    if warned is None:
+        _logger.warning(message)
+        return
+    if key in warned:
+        _logger.debug(message)
+        return
+    warned.add(key)
+    _logger.warning(
+        lambda: f"{message()} (further occurrences this run are logged at debug)"
+    )
+
+
 # TODO: Should we create non-tokenizer based parsers?
 class InferenceResultParser(CommunicationMixin):
     """InferenceResultParser is responsible for parsing the inference results."""
@@ -55,6 +75,9 @@ class InferenceResultParser(CommunicationMixin):
             run=run,
         )
         self.tokenizers: dict[str, Tokenizer] = {}
+        # Spec-decode detection problems already warned about this run; see
+        # _warn_once.
+        self._spec_decode_warned: set[str] = set()
         self.tokenizer_lock: asyncio.Lock = asyncio.Lock()
         # Pod-local tokenizer bundles advertised by the WorkerGroupManager.
         # Populated in Kubernetes; empty elsewhere, where the configured name
@@ -356,12 +379,15 @@ class InferenceResultParser(CommunicationMixin):
             responses=resp,
             token_counts=token_counts,
             media_counts=media_counts or MediaCounts(),
-            spec_decode_acceptance=self._extract_spec_decode_acceptance(resp),
+            spec_decode_acceptance=self._extract_spec_decode_acceptance(
+                resp, self._spec_decode_warned
+            ),
         )
 
     @staticmethod
     def _extract_spec_decode_acceptance(
         responses: list[ParsedResponse],
+        warned: set[str] | None = None,
     ) -> SpecDecodeAcceptanceRecord | None:
         """Build the engine-neutral acceptance record via adapter auto-detection.
 
@@ -406,17 +432,22 @@ class InferenceResultParser(CommunicationMixin):
                 # bad adapter from failing the whole record and from hiding
                 # every adapter registered after it.
                 error = e
-                _logger.warning(
+                _warn_once(
+                    warned,
+                    f"raised:{entry.name}",
                     lambda name=entry.name,
                     error=error: f"Spec-decode adapter {name!r} raised during "
-                    f"detection; skipping it: {error!r}"
+                    f"detection; skipping it: {error!r}",
                 )
         if len(matches) > 1:
             # Always a bug in AIPerf's own signatures, not in the payload: two
             # adapters cannot both be right about which engine produced it.
-            _logger.warning(
-                lambda: "Ambiguous spec-decode payload claimed by "
-                f"{[a.__name__ for a in matches]}; dropping record"
+            claimants = sorted(a.__name__ for a in matches)
+            _warn_once(
+                warned,
+                f"ambiguous:{','.join(claimants)}",
+                lambda: f"Ambiguous spec-decode payload claimed by {claimants}; "
+                "dropping record",
             )
             return None
         if not matches:
