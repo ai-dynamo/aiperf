@@ -15,17 +15,56 @@ benchmark requests and does **not** appear in metrics or profile exports.
 
 ## Quick start
 
+Both hooks are fatal on failure, so the server has to expose the routes before
+you enable them. On vLLM that means `VLLM_SERVER_DEV_MODE=1` for the cache
+reset and a configured profiler for start/stop:
+
+<!-- setup-vllm-devmode-openai-endpoint-server -->
+```bash
+docker pull vllm/vllm-openai:latest
+docker run -d --gpus all -p 8000:8000 -e HF_TOKEN -e VLLM_SERVER_DEV_MODE=1 \
+  vllm/vllm-openai:latest \
+  --model Qwen/Qwen3-0.6B \
+  --enforce-eager \
+  --profiler-config.profiler torch \
+  --profiler-config.torch_profiler_dir /tmp/vllm-profile \
+  --host 0.0.0.0 --port 8000
+```
+<!-- /setup-vllm-devmode-openai-endpoint-server -->
+
+Wait for the model, then confirm all three routes are actually mounted --
+a missing route is a 404, which AIPerf reports as a fatal control-hook error
+partway into the run rather than at startup:
+
+<!-- health-check-vllm-devmode-openai-endpoint-server -->
+```bash
+timeout 900 bash -c 'until curl -sf http://localhost:8000/v1/models >/dev/null; do sleep 2; done' \
+  || { echo "vLLM not ready after 15min"; exit 1; }
+for path in reset_prefix_cache start_profile stop_profile; do
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:8000/$path")
+  case "$code" in
+    2*) echo "/$path ok ($code)" ;;
+    *) echo "/$path returned $code; the server did not mount it"; exit 1 ;;
+  esac
+done
+```
+<!-- /health-check-vllm-devmode-openai-endpoint-server -->
+
+Then run the benchmark with both hooks on:
+
+<!-- aiperf-run-vllm-devmode-openai-endpoint-server weight=180 -->
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
   --url http://localhost:8000 \
   --endpoint-type chat \
   --streaming \
-  --concurrency 8 \
-  --request-count 100 \
+  --concurrency 4 \
+  --request-count 20 \
   --reset-kv-cache \
   --server-profiler
 ```
+<!-- /aiperf-run-vllm-devmode-openai-endpoint-server -->
 
 With defaults this issues:
 

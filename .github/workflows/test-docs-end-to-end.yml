@@ -148,6 +148,12 @@ jobs:
           # that send `tools` are replayable.
           - id: vllm-tools-openai
             server: vllm-tools-openai
+          # VLLM_SERVER_DEV_MODE=1 plus a configured torch profiler, so the
+          # control-hook routes (/reset_prefix_cache, /start_profile,
+          # /stop_profile) exist. Both hooks are fatal on failure, which is
+          # why they cannot ride the stock vllm-default-openai server.
+          - id: vllm-devmode-openai
+            server: vllm-devmode-openai
     steps:
       - name: Checkout
         uses: actions/checkout@v6
