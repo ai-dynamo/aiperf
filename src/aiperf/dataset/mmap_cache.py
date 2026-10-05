@@ -732,6 +732,32 @@ def _public_dataset_source_from_run(run: BenchmarkRun) -> dict[str, object] | No
     return source
 
 
+def _effective_ignore_trace_delays(cfg, dataset) -> bool:
+    """What the loader actually did with ``--ignore-trace-delays``.
+
+    The weka_trace loader lets fixed-schedule replay win over the flag, so the
+    raw flag is not what bakes into the cached Turn timestamps. Keying on it
+    would let a plain ``--fixed-schedule`` run (which sets no start/end offsets,
+    so every other timing key matches) share an entry with a non-fixed run that
+    had timestamps stripped -- serving the wrong mode in either direction.
+
+    Scoped to weka_trace, and to the flag actually being set, so no other
+    dataset's existing cache key shifts.
+    """
+    from aiperf.plugin.enums import CustomDatasetType, PhaseType
+
+    raw = getattr(dataset, "ignore_trace_delays", False)
+    if not raw:
+        return False
+    fmt = getattr(dataset, "format", None)
+    if fmt is None or str(fmt) != str(CustomDatasetType.WEKA_TRACE):
+        return True
+    return not any(
+        str(getattr(phase, "type", "")) == str(PhaseType.FIXED_SCHEDULE)
+        for phase in cfg.phases
+    )
+
+
 def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
     """Stable dict of input/prompt settings that affect mmap layout.
 
@@ -849,7 +875,7 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         # Load-time timing knobs bake into the cached Turn timestamps/delays
         # (applied during reconstruction, not at request time), so they must
         # key the cache or a warm entry silently serves the other mode.
-        "ignore_trace_delays": getattr(dataset, "ignore_trace_delays", False),
+        "ignore_trace_delays": _effective_ignore_trace_delays(cfg, dataset),
         "use_think_time_only": getattr(dataset, "use_think_time_only", False),
         "inter_turn_delay_cap_seconds": getattr(
             dataset, "inter_turn_delay_cap_seconds", None

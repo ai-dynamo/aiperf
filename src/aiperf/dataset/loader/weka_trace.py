@@ -1268,8 +1268,8 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         from aiperf.plugin.enums import PhaseType
 
         self._under_fixed_schedule = any(
-            str(getattr(phase, "type", "")) == str(PhaseType.FIXED_SCHEDULE)
-            for phase in cfg.phases
+            phase.type == PhaseType.FIXED_SCHEDULE
+            for phase in cfg.get_profiling_phases()
         )
         self._ignore_trace_delays_effective = (
             self._ignore_trace_delays and not self._under_fixed_schedule
