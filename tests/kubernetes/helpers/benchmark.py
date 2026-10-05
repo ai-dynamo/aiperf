@@ -596,7 +596,9 @@ class BenchmarkDeployer:
             async with timed_operation("Generating Kubernetes manifest"):
                 manifest = await self._generate_manifest(config, config_path)
                 logger.debug(
-                    lambda manifest=manifest: f"Generated manifest ({len(manifest)} bytes)"
+                    lambda manifest=manifest: (
+                        f"Generated manifest ({len(manifest)} bytes)"
+                    )
                 )
 
             # Patch imagePullPolicy for kind clusters (locally loaded images)

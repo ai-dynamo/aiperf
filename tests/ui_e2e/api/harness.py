@@ -148,9 +148,11 @@ def dashboard_harness_for_browser(browser: Browser) -> Iterator[DashboardHarness
 
     page.on(
         "console",
-        lambda msg: console_errors.append(f"[{msg.type}] {msg.text}")
-        if msg.type in ("error",)
-        else None,
+        lambda msg: (
+            console_errors.append(f"[{msg.type}] {msg.text}")
+            if msg.type in ("error",)
+            else None
+        ),
     )
     page.on("pageerror", lambda exc: console_errors.append(f"[pageerror] {exc}"))
 
