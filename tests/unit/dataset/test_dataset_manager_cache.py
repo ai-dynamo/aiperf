@@ -95,6 +95,11 @@ def _make_run(
             tokenizer_name=tokenizer_name,
             input_file=str(file_path),
             custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+            # Keep artifacts inside the test's own tmp dir. The default resolves
+            # to a repo-root `artifacts/` shared by every xdist worker, so a
+            # concurrently-running test writing inputs.json there makes the
+            # assertions here fail depending only on worker scheduling.
+            artifact_directory=str(file_path.parent / "artifacts"),
         )
     )
 
