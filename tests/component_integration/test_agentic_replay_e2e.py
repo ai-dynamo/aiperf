@@ -248,6 +248,7 @@ def _build_phase_strategy(
     cfg = MagicMock()
     cfg.phase = phase
     cfg.concurrency = len(source.trajectories)
+    cfg.finite_replay = False
     return AgenticReplayStrategy(
         config=cfg,
         conversation_source=source,

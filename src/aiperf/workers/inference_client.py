@@ -23,7 +23,10 @@ from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TransportType
 
 if TYPE_CHECKING:
-    from aiperf.transports.base_transports import FirstTokenCallback
+    from aiperf.transports.base_transports import (
+        FirstTokenCallback,
+        TransportBoundaryCallback,
+    )
 
 
 def detect_transport_from_url(url: str) -> str:
@@ -94,6 +97,8 @@ class InferenceClient(AIPerfLifecycleMixin):
         self,
         request_info: RequestInfo,
         first_token_callback: FirstTokenCallback | None = None,
+        transport_start_callback: TransportBoundaryCallback | None = None,
+        transport_eof_callback: TransportBoundaryCallback | None = None,
     ) -> RequestRecord:
         """Send request via transport.
 
@@ -140,16 +145,21 @@ class InferenceClient(AIPerfLifecycleMixin):
             wire_payload = formatted_payload if is_multipart else encoded
         else:
             request_info.payload_bytes = formatted_payload
+        kwargs: dict[str, Any] = {"first_token_callback": first_token_callback}
+        if transport_start_callback is not None:
+            kwargs["transport_start_callback"] = transport_start_callback
+        if transport_eof_callback is not None:
+            kwargs["transport_eof_callback"] = transport_eof_callback
         return await self.transport.send_request(
-            request_info,
-            payload=wire_payload,
-            first_token_callback=first_token_callback,
+            request_info, payload=wire_payload, **kwargs
         )
 
     async def _send_request_internal(
         self,
         request_info: RequestInfo,
         first_token_callback: FirstTokenCallback | None = None,
+        transport_start_callback: TransportBoundaryCallback | None = None,
+        transport_eof_callback: TransportBoundaryCallback | None = None,
     ) -> RequestRecord:
         """Send request to transport and handle exceptions.
 
@@ -167,7 +177,10 @@ class InferenceClient(AIPerfLifecycleMixin):
 
             # Transport handles cancellation internally (cancel_after_ns is in request_info)
             result = await self._send_request_to_transport(
-                request_info=request_info, first_token_callback=first_token_callback
+                request_info=request_info,
+                first_token_callback=first_token_callback,
+                transport_start_callback=transport_start_callback,
+                transport_eof_callback=transport_eof_callback,
             )
 
             if self.is_debug_enabled:
@@ -192,6 +205,8 @@ class InferenceClient(AIPerfLifecycleMixin):
         self,
         request_info: RequestInfo,
         first_token_callback: FirstTokenCallback | None = None,
+        transport_start_callback: TransportBoundaryCallback | None = None,
+        transport_eof_callback: TransportBoundaryCallback | None = None,
     ) -> RequestRecord:
         """Send a request to the inference API. Will return an error record if the call fails.
 
@@ -209,7 +224,12 @@ class InferenceClient(AIPerfLifecycleMixin):
             )
         if self.is_trace_enabled and request_info.turns:
             self.trace(f"Calling inference API for turn: {request_info.turns[-1]}")
-        record = await self._send_request_internal(request_info, first_token_callback)
+        record = await self._send_request_internal(
+            request_info,
+            first_token_callback,
+            transport_start_callback,
+            transport_eof_callback,
+        )
         # Redact sensitive headers on the request_info now that the transport has
         # consumed them.  This prevents raw credentials from flowing back through
         # ZMQ messages (which are TRACE-logged as serialised JSON / repr).

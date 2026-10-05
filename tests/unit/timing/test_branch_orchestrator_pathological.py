@@ -78,6 +78,7 @@ def _mk_credit(conv_id: str, corr_id: str, turn_index: int, agent_depth: int = 0
         agent_depth=agent_depth,
         parent_correlation_id=None,
         branch_mode=ConversationBranchMode.FORK,
+        finite_replay=False,
     )
 
 

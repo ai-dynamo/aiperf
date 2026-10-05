@@ -89,6 +89,7 @@ def _make_strategy(
     cfg = MagicMock()
     cfg.phase = phase
     cfg.concurrency = len(trajectories)
+    cfg.finite_replay = False
     cfg.agentic_cache_warmup_duration_sec = cache_warmup_duration
     cfg.warmup_requests_per_lane = cache_warmup_requests_per_lane
     issuer = issuer if issuer is not None else AsyncMock()
@@ -146,6 +147,7 @@ def test_constructor_rejects_unknown_phase():
     cfg = MagicMock()
     cfg.phase = "unknown"
     cfg.concurrency = 1
+    cfg.finite_replay = False
     with pytest.raises(ValueError):
         AgenticReplayStrategy(
             config=cfg,
@@ -162,6 +164,7 @@ def test_constructor_rejects_non_trajectory_source():
     cfg = MagicMock()
     cfg.phase = CreditPhase.WARMUP
     cfg.concurrency = 1
+    cfg.finite_replay = False
     plain_src = MagicMock()  # not a TrajectorySource instance
     with pytest.raises(TypeError):
         AgenticReplayStrategy(
@@ -1256,6 +1259,7 @@ async def test_warmup_spreads_globally_aligned_on_t_star_by_default():
     cfg = MagicMock()
     cfg.phase = CreditPhase.WARMUP
     cfg.concurrency = 3
+    cfg.finite_replay = False
     strategy = AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,
@@ -1342,6 +1346,7 @@ async def test_warmup_lead_clamped_to_idle_gap_cap():
     cfg = MagicMock()
     cfg.phase = CreditPhase.WARMUP
     cfg.concurrency = 2
+    cfg.finite_replay = False
     strategy = AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,
@@ -1594,6 +1599,7 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
     cfg = MagicMock()
     cfg.phase = CreditPhase.PROFILING
     cfg.concurrency = 1
+    cfg.finite_replay = False
     strategy = AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,
@@ -1729,6 +1735,7 @@ async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
     cfg = MagicMock()
     cfg.phase = CreditPhase.PROFILING
     cfg.concurrency = 1
+    cfg.finite_replay = False
     strategy = AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,
@@ -1844,6 +1851,7 @@ async def test_profiling_global_anchor_preserves_subagent_spacing():
     cfg = MagicMock()
     cfg.phase = CreditPhase.PROFILING
     cfg.concurrency = 1
+    cfg.finite_replay = False
     strategy = AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,
@@ -1964,7 +1972,8 @@ async def test_profiling_globally_anchors_earliest_request_preserving_spacing():
 
     cfg = MagicMock()
     cfg.phase = CreditPhase.PROFILING
-    cfg.concurrency = 2
+    cfg.concurrency = 2 
+    cfg.finite_replay = False
     strategy = AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,
@@ -2055,6 +2064,7 @@ async def test_profiling_gated_parent_not_dispatched_child_profiles():
     cfg = MagicMock()
     cfg.phase = CreditPhase.PROFILING
     cfg.concurrency = 1
+    cfg.finite_replay = False
     strategy = AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,
@@ -2126,6 +2136,7 @@ async def test_profiling_single_turn_root_profiles_its_own_turn_zero():
     issuer.issue_credit.side_effect = capture
     cfg = MagicMock()
     cfg.phase = CreditPhase.PROFILING
+    cfg.finite_replay = False
     strategy = AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,
@@ -2304,6 +2315,7 @@ async def test_continuing_session_keeps_warmup_marker_across_phase_boundary():
     def _strategy_for(phase: CreditPhase, issuer: AsyncMock) -> AgenticReplayStrategy:
         cfg = MagicMock()
         cfg.phase = phase
+        cfg.finite_replay = False
         return AgenticReplayStrategy(
             config=cfg,
             conversation_source=src,
@@ -2544,6 +2556,7 @@ async def test_handle_credit_return_honors_delay_ms_via_scheduler():
     cfg = MagicMock()
     cfg.phase = CreditPhase.PROFILING
     cfg.concurrency = 1
+    cfg.finite_replay = False
     strategy = AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,

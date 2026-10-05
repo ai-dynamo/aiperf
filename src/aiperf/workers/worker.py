@@ -17,6 +17,7 @@ from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.constants import BYTES_PER_MIB
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import (
+    AgenticReplayLifecycle,
     CacheBustTarget,
     CommAddress,
     CommandType,
@@ -36,6 +37,7 @@ from aiperf.common.hooks import (
     on_stop,
 )
 from aiperf.common.messages import (
+    BaseServiceErrorMessage,
     DatasetConfiguredNotification,
     DatasetDownloadedNotification,
     ErrorMessage,
@@ -93,6 +95,7 @@ from aiperf.credit.messages import (
     FirstToken,
     RouterToWorkerMessage,
     TimePong,
+    TransportDispatched,
     WorkerConnected,
     WorkerDispatchable,
     WorkerShutdown,
@@ -113,7 +116,10 @@ from aiperf.workers.session_manager import UserSession, UserSessionManager
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
-    from aiperf.transports.base_transports import FirstTokenCallback
+    from aiperf.transports.base_transports import (
+        FirstTokenCallback,
+        TransportBoundaryCallback,
+    )
 
 
 def _phase_needs_first_token_callback(phase) -> bool:
@@ -649,16 +655,24 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # the same bare id recurs while the prior phase is still draining.
         # Mirrors StickyCreditRouter.WorkerLoad.active_credit_ids.
         self.credit_tasks: dict[tuple[str, int | None, int], asyncio.Task] = {}
+        self._transport_start_tasks: dict[
+            tuple[str, int | None, int], asyncio.Task
+        ] = {}
 
         # Worker clocks are not the controller's clock once workers live in
         # their own pods; every credit receipt is an offset sample.
+        self._is_kubernetes = (
+            self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+        )
+        self._finite_replay_enabled = any(
+            phase.agentic_replay_lifecycle == AgenticReplayLifecycle.FINITE
+            for phase in self.run.cfg.get_profiling_phases()
+        )
         self.clock_offset_tracker = ClockOffsetTracker(
             logger_name=self.service_id,
             window_size=Environment.WORKER.CLOCK_OFFSET_WINDOW_SIZE,
             min_samples=Environment.WORKER.CLOCK_OFFSET_MIN_SAMPLES,
-        )
-        self._is_kubernetes = (
-            self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES
+            finite_preflight=self._finite_replay_enabled and self._is_kubernetes,
         )
         self._tracks_clock_offset = self._is_kubernetes
         self._clock_probe_lock = asyncio.Lock()
@@ -814,7 +828,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         await self._publish_startup_state(WorkerStartupState.STARTING)
         await self.credit_dealer_client.send(WorkerConnected(worker_id=self.service_id))
 
-        if self._tracks_clock_offset:
+        if self._tracks_clock_offset and not self._finite_replay_enabled:
             # Fire-and-forget: the baseline RTT is a diagnostic, so it must never
             # sit on the readiness path. It previously ran before the worker
             # announced itself, to keep pings from queueing behind real credits
@@ -1026,6 +1040,20 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         if self._worker_ready_event.is_set():
             return
         await self._await_return_channel_ready()
+        if self._finite_replay_enabled and self._tracks_clock_offset:
+            await self._measure_baseline_rtt(
+                probe_count=max(
+                    Environment.WORKER.CLOCK_PROBE_COUNT,
+                    Environment.WORKER.CLOCK_OFFSET_MIN_SAMPLES,
+                )
+            )
+            if (
+                not self.clock_offset_tracker.is_currently_calibrated
+                or self.clock_offset_tracker.baseline_rtt_ns is None
+            ):
+                raise RuntimeError(
+                    "Finite replay clock calibration did not converge before readiness"
+                )
         await self.credit_dealer_client.send(
             WorkerDispatchable(worker_id=self.service_id)
         )
@@ -1089,7 +1117,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
         )
 
-    async def _measure_baseline_rtt(self) -> None:
+    async def _measure_baseline_rtt(self, probe_count: int | None = None) -> None:
         """Probe credit-channel RTT under a hard total time budget.
 
         Launched fire-and-forget from the startup path, so it runs concurrently
@@ -1113,14 +1141,21 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """
         budget = Environment.WORKER.CLOCK_PROBE_BUDGET
         probe_timeout = Environment.WORKER.CLOCK_PROBE_TIMEOUT
+        required_probes = probe_count or Environment.WORKER.CLOCK_PROBE_COUNT
+        max_attempts = max(1, int(budget / probe_timeout))
+        if self._finite_replay_enabled:
+            max_attempts = max(
+                required_probes,
+                2 * Environment.WORKER.CLOCK_OFFSET_MIN_SAMPLES,
+            )
         async with self._clock_probe_lock:
             try:
                 await asyncio.wait_for(
                     self.clock_offset_tracker.measure_baseline_rtt(
                         send_ping=self.credit_dealer_client.send,
-                        probe_count=Environment.WORKER.CLOCK_PROBE_COUNT,
+                        probe_count=required_probes,
                         timeout=probe_timeout,
-                        max_attempts=max(1, int(budget / probe_timeout)),
+                        max_attempts=max_attempts,
                     ),
                     timeout=budget,
                 )
@@ -1135,6 +1170,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     @background_task(
         immediate=False,
         interval=Environment.WORKER.CLOCK_REMEASURE_INTERVAL,
+        stop_on_error=True,
     )
     async def _clock_remeasure_task(self) -> None:
         """Re-probe credit-channel RTT so the transit estimate does not go stale.
@@ -1149,10 +1185,54 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         Skipped outside Kubernetes, where both clocks are the same clock and no
         correction is meaningful. Failures are inert: the previous baseline
         stays in place.
+
+        In finite replay mode, a failed re-measurement is terminal: the worker
+        invalidates its calibration, publishes a service error, and transitions
+        to FAILED so the run aborts rather than emitting TransportDispatched
+        with stale timestamps.
         """
         if not self._tracks_clock_offset:
             return
+
+        if not self._finite_replay_enabled:
+            await self._measure_baseline_rtt()
+            return
+
+        previous_measurement_count = (
+            self.clock_offset_tracker.baseline_measurement_count
+        )
         await self._measure_baseline_rtt()
+        if (
+            not self.clock_offset_tracker.is_currently_calibrated
+            or self.clock_offset_tracker.baseline_rtt_ns is None
+            or self.clock_offset_tracker.baseline_measurement_count
+            == previous_measurement_count
+        ):
+            await self._handle_finite_clock_calibration_failure()
+
+    async def _handle_finite_clock_calibration_failure(self) -> None:
+        """Terminate the worker after unrecoverable finite replay clock calibration loss"""
+        self.clock_offset_tracker.baseline_rtt_ns = None
+        self.clock_offset_tracker.estimated_one_way_ns = None
+
+        error = RuntimeError("Finite replay clock calibration was lost")
+        self.error(str(error))
+
+        try:
+            await self.publish(
+                BaseServiceErrorMessage(
+                    service_id=self.service_id,
+                    error=ErrorDetails.from_exception(error),
+                )
+            )
+        except Exception as publish_error:
+            self.debug(
+                lambda e=publish_error: (
+                    f"Failed to publish calibration-loss error: {e!r}"
+                )
+            )
+
+        await self._fail(error)
 
     async def _publish_startup_state(self, state: WorkerStartupState) -> None:
         """Publish a worker startup-state transition, skipping repeats."""
@@ -1374,23 +1454,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Update credit_context with cancellation status
         credit_context.cancelled = credit_context.cancelled or task.cancelled()
 
-        # Build and send return message (synchronous context, need to schedule send)
-        credit_return = CreditReturn(
-            credit=credit_context.credit,
-            cancelled=credit_context.cancelled,
-            first_token_sent=credit_context.first_token_sent,
-            error=str(credit_context.error) if credit_context.error else None,
-            request_latency_ns=credit_context.request_latency_ns,
-            inter_token_latency_ns=credit_context.inter_token_latency_ns,
-            output_sequence_length=credit_context.output_sequence_length,
-            worker_id=self.service_id,
-        )
-        self.execute_async(self.credit_return_push_client.send(credit_return))
-        credit_context.returned = True
-
-        # Explicitly clear references to help refcounting (GC is disabled on workers)
-        credit_context.credit = None
-        credit_context.error = None
+        self.execute_async(self._send_ordered_credit_return(credit_context))
 
     async def _on_cancel_credits_message(self, message: CancelCredits) -> None:
         """Handle incoming cancel credits message from TimingManager via StickyCreditRouter."""
@@ -1475,23 +1539,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                         f"{credit_context.credit.id}: {e!r}"
                     )
             # ALWAYS return the credit here to ensure accurate tracking
-            credit_return = CreditReturn(
-                credit=credit_context.credit,
-                cancelled=credit_context.cancelled,
-                first_token_sent=credit_context.first_token_sent,
-                error=str(credit_context.error) if credit_context.error else None,
-                request_latency_ns=credit_context.request_latency_ns,
-                inter_token_latency_ns=credit_context.inter_token_latency_ns,
-                output_sequence_length=credit_context.output_sequence_length,
-                worker_id=self.service_id,
-            )
-            await self.credit_return_push_client.send(credit_return)
-            # Mark as returned AFTER send succeeds
-            # If send fails/cancelled, done callback will retry
-            # Router idempotency guard handles duplicates
-            credit_context.returned = True
-            # Note: Don't null credit_context.credit here - done callback needs
-            # credit.id for cleanup. Done callback handles all reference clearing.
+            await self._send_ordered_credit_return(credit_context)
 
     async def _emit_credit_failure_record(self, credit_context: CreditContext) -> None:
         """Forward an error record for a credit whose processing failed before
@@ -1606,6 +1654,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             if parsed is None or parsed.data is None:
                 return False
 
+            await self._await_transport_start(credit_context)
             await self.credit_return_push_client.send(
                 FirstToken(
                     credit_id=credit.id,
@@ -1618,6 +1667,126 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             return True
 
         return on_first_token
+
+    def _snapshot_finite_clock_state(
+        self, *, error_message: str = "Finite replay worker clock is not calibrated"
+    ) -> tuple[int, int]:
+        """Validate and snapshot clock offset correction and spread for finite replay."""
+        correction = (
+            self.clock_offset_tracker.correction_ns if self._tracks_clock_offset else 0
+        )
+        if correction is None or (
+            self._tracks_clock_offset
+            and (
+                not self.clock_offset_tracker.is_currently_calibrated
+                or self.clock_offset_tracker.baseline_rtt_ns is None
+            )
+        ):
+            raise RuntimeError(error_message)
+        spread = (
+            self.clock_offset_tracker.offset_range_ns
+            if self._tracks_clock_offset
+            else 0
+        )
+        if spread is None:
+            raise RuntimeError("Finite replay worker clock spread is unavailable")
+        return correction, spread
+
+    def _make_transport_start_callback(
+        self, context: CreditContext
+    ) -> TransportBoundaryCallback | None:
+        credit = context.credit
+        if not credit.finite_replay or credit.no_request:
+            return None
+        key = _credit_task_key(credit)
+
+        def on_start(perf_ns: int) -> None:
+            correction, spread = self._snapshot_finite_clock_state(
+                error_message="Finite replay worker clock is not calibrated"
+            )
+            event = TransportDispatched(
+                credit_id=credit.id,
+                phase=credit.phase,
+                phase_index=credit.phase_index,
+                worker_id=self.service_id,
+                transport_start_wall_ns=(
+                    self.clock_offset_tracker.wall_time_for_perf_ns(perf_ns)
+                ),
+                clock_offset_ns=correction,
+                clock_offset_spread_ns=spread,
+            )
+            task = asyncio.create_task(self.credit_return_push_client.send(event))
+            self._transport_start_tasks[key] = task
+            context.transport_start_sent = True
+
+        return on_start
+
+    def _make_transport_eof_callback(
+        self, context: CreditContext
+    ) -> TransportBoundaryCallback | None:
+        credit = context.credit
+        if not credit.finite_replay or credit.no_request:
+            return None
+
+        def on_eof(perf_ns: int) -> None:
+            correction, spread = self._snapshot_finite_clock_state(
+                error_message="Finite replay worker clock lost calibration"
+            )
+            context.transport_eof_wall_ns = (
+                self.clock_offset_tracker.wall_time_for_perf_ns(perf_ns)
+            )
+            context.transport_eof_correction_ns = correction
+            context.transport_eof_clock_offset_spread_ns = spread
+
+        return on_eof
+
+    async def _await_transport_start(self, context: CreditContext) -> None:
+        task = self._transport_start_tasks.get(_credit_task_key(context.credit))
+        if task is not None:
+            await task
+
+    async def _send_ordered_credit_return(self, context: CreditContext) -> None:
+        credit = context.credit
+        key = _credit_task_key(credit)
+        start_task = self._transport_start_tasks.pop(key, None)
+        if (
+            credit.finite_replay
+            and not credit.no_request
+            and not context.transport_start_sent
+        ):
+            context.error = "Finite transport-start notification was not queued"
+        if start_task is not None:
+            try:
+                await start_task
+            except Exception as exc:
+                context.error = f"Finite transport-start notification failed: {exc}"
+        credit_return = CreditReturn(
+            credit=credit,
+            cancelled=context.cancelled,
+            first_token_sent=context.first_token_sent,
+            error=str(context.error) if context.error else None,
+            request_latency_ns=context.request_latency_ns,
+            inter_token_latency_ns=context.inter_token_latency_ns,
+            output_sequence_length=context.output_sequence_length,
+            worker_id=self.service_id,
+            transport_eof_wall_ns=(
+                context.transport_eof_wall_ns
+                if context.error is None and not context.cancelled
+                else None
+            ),
+            clock_offset_ns=(
+                context.transport_eof_correction_ns
+                if context.error is None and not context.cancelled
+                else None
+            ),
+            clock_offset_spread_ns=(
+                context.transport_eof_clock_offset_spread_ns
+                if context.error is None and not context.cancelled
+                else None
+            ),
+        )
+        await self.credit_return_push_client.send(credit_return)
+        context.returned = True
 
     async def _process_credit_with_session(
         self,
@@ -1734,8 +1903,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             ],
         )
         record = await self.inference_client.send_request(
-            request_info, first_token_callback=first_token_callback
+            request_info,
+            first_token_callback=first_token_callback,
+            transport_start_callback=self._make_transport_start_callback(
+                credit_context
+            ),
+            transport_eof_callback=self._make_transport_eof_callback(credit_context),
         )
+        if record.error is not None:
+            record.response_body_eof_perf_ns = None
+            credit_context.transport_eof_wall_ns = None
+            credit_context.transport_eof_correction_ns = None
+            credit_context.transport_eof_clock_offset_spread_ns = None
         self._populate_response_metrics(credit_context, record)
         await self._send_inference_result_message(record)
         credit_context.record_emitted = True
@@ -2026,8 +2205,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         """
         self.task_stats.total += 1
         record = await self.inference_client.send_request(
-            request_info, first_token_callback=first_token_callback
+            request_info,
+            first_token_callback=first_token_callback,
+            transport_start_callback=self._make_transport_start_callback(
+                credit_context
+            ),
+            transport_eof_callback=self._make_transport_eof_callback(credit_context),
         )
+        if record.error is not None:
+            record.response_body_eof_perf_ns = None
+            credit_context.transport_eof_wall_ns = None
+            credit_context.transport_eof_correction_ns = None
+            credit_context.transport_eof_clock_offset_spread_ns = None
         await self._send_inference_result_message(record)
         credit_context.record_emitted = True
         if record.error is not None:

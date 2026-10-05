@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CaseInsensitiveStrEnum
+from aiperf.common.monotonic_clock import MonotonicClock
 
 if TYPE_CHECKING:
     from aiperf.timing.config import CreditPhaseConfig
@@ -47,8 +48,13 @@ class PhaseLifecycle:
     across services and need to be comparable. perf_counter is process-local.
     """
 
-    def __init__(self, config: CreditPhaseConfig) -> None:
+    def __init__(
+        self,
+        config: CreditPhaseConfig,
+        clock: MonotonicClock | None = None,
+    ) -> None:
         self._config = config
+        self._clock = clock
         self.state: PhaseState = PhaseState.CREATED
 
         # Timestamps (wall clock - time.time_ns())
@@ -93,6 +99,8 @@ class PhaseLifecycle:
         Falls back to a raw wall-clock read before the phase has started, when
         there is no anchor to advance from.
         """
+        if self._clock is not None:
+            return self._clock.now_ns()
         if self.started_at_ns is None or self.started_at_perf_ns is None:
             return time.time_ns()
         return self.started_at_ns + (time.perf_counter_ns() - self.started_at_perf_ns)
@@ -106,9 +114,12 @@ class PhaseLifecycle:
         if self.state != PhaseState.CREATED:
             raise ValueError("Credit phase already started")
         self.state = PhaseState.STARTED
-        perf_ns, time_ns = time.perf_counter_ns(), time.time_ns()
-        self.started_at_ns = time_ns
+        perf_ns = time.perf_counter_ns()
         self.started_at_perf_ns = perf_ns
+        if self._clock is not None:
+            self.started_at_ns = self._clock.wall_time_for_perf_ns(perf_ns)
+        else:
+            self.started_at_ns = time.time_ns()
 
     def mark_sending_complete(self, *, timeout_triggered: bool = False) -> None:
         """Transition to SENDING_COMPLETE state.
@@ -121,7 +132,9 @@ class PhaseLifecycle:
         if self.state in _SENDING_COMPLETE_STATES:
             raise ValueError("Credit phase already completed sending")
         self.state = PhaseState.SENDING_COMPLETE
-        self.sending_complete_at_ns = time.time_ns()
+        self.sending_complete_at_ns = (
+            self._clock.now_ns() if self._clock is not None else time.time_ns()
+        )
         if timeout_triggered:
             self.timeout_triggered = True
 
@@ -138,7 +151,9 @@ class PhaseLifecycle:
                 "Credit phase has not completed sending. Call mark_sending_complete() first."
             )
         self.state = PhaseState.COMPLETE
-        self.complete_at_ns = time.time_ns()
+        self.complete_at_ns = (
+            self._clock.now_ns() if self._clock is not None else time.time_ns()
+        )
         if grace_period_triggered:
             self.grace_period_triggered = True
 
