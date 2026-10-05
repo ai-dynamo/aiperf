@@ -269,10 +269,12 @@ Find the largest concurrency at which every configured SLA filter passes. Compos
 - `optuna` — same penalty-BO formulation as `bo`, routed through the `OptunaSearchPlanner` (TPE / GP / BoTorch samplers, selected via `--optuna-sampler`). Optuna ships by default; BoTorch requires the optional `botorch` extra.
 - `grid` — 8 log-spaced points + `sla_breach_knee` post-process emitting `sweep_aggregate/sla_breach.json`.
 
+<!-- aiperf-run-vllm-longrun-openai-endpoint-server weight=1800 timeout=4200 -->
 ```bash
-aiperf profile --model my-model --url http://infer.example.com --streaming \
+aiperf profile --model Qwen/Qwen3-0.6B --url http://localhost:8000 --streaming \
   --search-recipe max-concurrency-under-sla --ttft-sla-ms 200
 ```
+<!-- /aiperf-run-vllm-longrun-openai-endpoint-server -->
 
 The full reference — including artifact schemas, comparison-to-other-tools, and caveats — is at [Bayesian Optimization — 1D SLA saturation](bayesian-optimization.md).
 
@@ -291,10 +293,12 @@ aiperf profile --model my-model --url http://infer.example.com --streaming \
 
 8-step log-spaced grid over concurrency in [1, 1000]; post-process detects the first concurrency where `p99(request_latency)` exceeds `baseline * (1 + --degradation-threshold)`. Streaming is **not** required (`request_latency` is end-to-end).
 
+<!-- aiperf-run-vllm-longrun-openai-endpoint-server weight=900 timeout=2400 -->
 ```bash
-aiperf profile --model my-model --url http://infer.example.com \
+aiperf profile --model Qwen/Qwen3-0.6B --url http://localhost:8000 \
   --search-recipe concurrency-ramp --degradation-threshold 0.20
 ```
+<!-- /aiperf-run-vllm-longrun-openai-endpoint-server -->
 
 Output: `sweep_aggregate/degradation_knee.json` with `baseline_concurrency`, `knee_concurrency` (or `null` if no knee found), threshold, and the full point series.
 
