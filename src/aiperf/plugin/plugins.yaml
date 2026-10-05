@@ -2986,7 +2986,7 @@ search_planner:
       noisy probe margins, PCHIP interpolates the denoised points, root-find
       recovers the saturation boundary. Strictly more accurate than
       monotonic_sla under noise; opt-in Phase-3 replicates (via
-      --sla-replicates) bound the boundary with a bootstrap CI. Cliff guard
+      `sla_replicates` in the `sweep:` block) bound the boundary with a bootstrap CI. Cliff guard
       reports `boundary_type: cliff` for prefill-prioritizing servers where
       the curve is genuinely discontinuous. Accepts int or real search-space
       dimensions (int requires lo >= 1; real requires lo > 0). Same dependency

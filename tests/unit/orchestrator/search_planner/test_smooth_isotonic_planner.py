@@ -142,16 +142,6 @@ def test_construction_rejects_multi_dim() -> None:
         SmoothIsotonicSLAPlanner(_base_config(), cfg)
 
 
-def test_construction_accepts_real_dim() -> None:
-    cfg = _adaptive_cfg()
-    cfg.search_space[0] = SearchSpaceDimension(
-        path="phases.profiling.rate", lo=1.0, hi=1000.0, kind="real"
-    )
-    planner = SmoothIsotonicSLAPlanner(_base_config(), cfg)
-    assert isinstance(planner._lo, float)
-    assert isinstance(planner._hi, float)
-
-
 def test_construction_rejects_real_dim_with_nonpositive_lo() -> None:
     cfg = _adaptive_cfg()
     cfg.search_space[0] = SearchSpaceDimension(

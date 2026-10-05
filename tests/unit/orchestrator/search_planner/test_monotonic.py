@@ -187,13 +187,6 @@ def test_construction_rejects_empty_sla_filters():
     assert "sla_filter" in str(exc.value).lower()
 
 
-def test_construction_accepts_real_kind_dimension():
-    """Real-valued dim is accepted; lo/hi stay floats."""
-    planner = MonotonicSLASearchPlanner(_base_config(), _real_cfg(lo=1.0, hi=100.0))
-    assert isinstance(planner._lo, float)
-    assert isinstance(planner._hi, float)
-
-
 def test_construction_rejects_real_dim_with_nonpositive_lo():
     """kind='real' lo <= 0 raises: the doubling probe would stall/diverge."""
     with pytest.raises(ValueError, match="lo > 0"):

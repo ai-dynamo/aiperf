@@ -15,7 +15,13 @@ from aiperf.config.config import BenchmarkConfig
 from aiperf.config.sweep import AdaptiveSearchSweep, _set_nested_value
 from aiperf.config.sweep.adaptive import SearchSpaceDimension
 
-_WARMUP_LOAD_KEYS: tuple[str, ...] = ("type", "rate", "rate_series", "concurrency")
+_WARMUP_LOAD_KEYS: tuple[str, ...] = (
+    "type",
+    "rate",
+    "rate_series",
+    "concurrency",
+    "users",
+)
 """Allowlist of load-defining keys copied to warmup; ramps, grace, and cancellation are dropped."""
 
 
