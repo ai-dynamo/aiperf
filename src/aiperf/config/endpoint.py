@@ -60,6 +60,7 @@ class EndpointDefaults:
     CUSTOM_ENDPOINT = None
     TYPE = EndpointType.CHAT
     STREAMING = False
+    REQUIRE_STREAM_COMPLETION = False
     URL = "http://localhost:8000"
     URL_STRATEGY = URLSelectionStrategy.ROUND_ROBIN
     TIMEOUT = 6 * 60 * 60  # 6 hours, match vLLM benchmark default
@@ -391,6 +392,16 @@ class EndpointConfig(BaseConfig):
             description="Enable streaming (Server-Sent Events) responses. "
             "Required for accurate TTFT (time to first token) measurement. "
             "Server must support streaming for this to work.",
+        ),
+    ]
+
+    require_stream_completion: Annotated[
+        bool,
+        Field(
+            default=EndpointDefaults.REQUIRE_STREAM_COMPLETION,
+            description="Fail streamed chat responses without [DONE] or a nonempty "
+            "finish_reason for every observed choice. Malformed chunks also fail; "
+            "requires streaming chat.",
         ),
     ]
 
@@ -857,6 +868,16 @@ class EndpointConfig(BaseConfig):
                 "(continuous_usage_stats and inter-token latency apply only to "
                 "streaming responses)"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_stream_completion(self) -> Self:
+        if self.require_stream_completion and self.type != EndpointType.CHAT:
+            raise ValueError(
+                "--require-stream-completion requires endpoint type 'chat'"
+            )
+        if self.require_stream_completion and not self.streaming:
+            raise ValueError("--require-stream-completion requires --streaming")
         return self
 
     @model_validator(mode="after")
