@@ -181,3 +181,97 @@ class TestPlacementMatchesTheEngine:
         )
         assert "metrics" not in response
         assert "speculative_decoding" not in response["choices"][0]
+
+
+class TestStreamingEndToEnd:
+    """Each mock streaming path, through the real parser and adapter.
+
+    The tests above call the payload helpers directly, so they cannot see which
+    chunk a generator attaches the payload to. These drive the mock's streaming
+    routes over HTTP, parse every chunk with AIPerf's own endpoint, and run the
+    result through adapter auto-detection -- so a payload attached to the wrong
+    chunk, attached twice, or dropped fails here.
+    """
+
+    @staticmethod
+    def _stream(route: str, body: dict[str, Any]) -> list[dict[str, Any]]:
+        import orjson
+        from aiperf_mock_server.app import asgi_app
+        from fastapi.testclient import TestClient
+
+        with TestClient(asgi_app) as client:
+            resp = client.post(route, json=body)
+        assert resp.status_code == 200
+        return [
+            orjson.loads(line[len("data: ") :])
+            for line in resp.text.splitlines()
+            if line.startswith("data: ") and line != "data: [DONE]"
+        ]
+
+    @pytest.mark.parametrize(
+        "flavor, engine", [("vllm", "vllm"), ("trtllm", "tensorrt_llm")]
+    )
+    @pytest.mark.parametrize(
+        "route, body_key, endpoint_name",
+        [
+            param("/v1/chat/completions", "messages", "chat", id="chat"),
+            param("/v1/completions", "prompt", "completions", id="completions"),
+        ],
+    )
+    def test_streamed_payload_yields_a_record(
+        self,
+        spec_decode_config,
+        monkeypatch,
+        flavor,
+        engine,
+        route,
+        body_key,
+        endpoint_name,
+    ) -> None:
+        from aiperf_mock_server import utils as mock_utils
+
+        from aiperf.endpoints.openai_chat import ChatEndpoint
+        from aiperf.endpoints.openai_completions import CompletionsEndpoint
+        from aiperf.plugin.enums import EndpointType
+        from aiperf.records.inference_result_parser import InferenceResultParser
+        from tests.unit.endpoints.test_spec_decode_capture import (
+            _make_endpoint,
+            _mock_response,
+        )
+
+        monkeypatch.setattr(mock_utils.server_config, "ttft", 0.0)
+        monkeypatch.setattr(mock_utils.server_config, "itl", 0.0)
+        spec_decode_config(flavor=flavor)
+        prompt = (
+            [{"role": "user", "content": "Write a few sentences."}]
+            if body_key == "messages"
+            else "Write a few sentences."
+        )
+        chunks = self._stream(
+            route,
+            {
+                "model": "m",
+                body_key: prompt,
+                "max_tokens": 24,
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            },
+        )
+        endpoint = (
+            _make_endpoint(EndpointType.CHAT, ChatEndpoint)
+            if endpoint_name == "chat"
+            else _make_endpoint(EndpointType.COMPLETIONS, CompletionsEndpoint)
+        )
+        parsed = [
+            p
+            for p in (endpoint.parse_response(_mock_response(c)) for c in chunks)
+            if p is not None
+        ]
+
+        record = InferenceResultParser._extract_spec_decode_acceptance(parsed)
+
+        assert record is not None
+        assert record.engine == engine
+        streamed_usage = [c["usage"] for c in chunks if c.get("usage")]
+        assert record.completion_tokens == streamed_usage[-1]["completion_tokens"]
+        _assert_identities(record)
