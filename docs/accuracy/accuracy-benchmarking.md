@@ -24,8 +24,8 @@ aiperf profile --model Qwen/Qwen3-0.6B \
   --url http://localhost:8000 \
   --endpoint-type chat \
   --accuracy-benchmark aime \
-  --num-requests 30 \
-  --concurrency 10 \
+  --num-requests 4 \
+  --concurrency 4 \
   --extra-inputs '{"temperature": 0}'
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
