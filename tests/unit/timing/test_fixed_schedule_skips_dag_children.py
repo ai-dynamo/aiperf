@@ -104,8 +104,10 @@ def test_a_conversation_without_is_root_still_schedules() -> None:
     assert _scheduled_ids([plain]) == ["plain"]
 
 
-def test_all_children_raises_rather_than_scheduling_nothing() -> None:
-    """A schedule that filtered down to nothing must fail loudly, not run empty."""
+def test_all_children_raises_naming_the_real_cause() -> None:
+    """Failing loudly is right; blaming timestamps would misdirect the reader."""
     convs = [_Conv("root::sa:a", [_Turn(0.0)], is_root=False)]
-    with pytest.raises(ValueError, match="No conversations"):
+    with pytest.raises(
+        ValueError, match="every conversation in this dataset is a DAG child"
+    ):
         _scheduled_ids(convs)
