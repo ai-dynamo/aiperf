@@ -1080,3 +1080,56 @@ class TestSpecDecodeDetectionWarnings:
         )
         raised = [r for r in records if "raised during detection" in r.getMessage()]
         assert [r.levelno for r in raised] == [logging.WARNING, logging.DEBUG]
+
+
+@pytest.mark.asyncio
+class TestSpecDecodeRequestCardinality:
+    """An ``n > 1`` request never yields a single-sequence acceptance record.
+
+    Counting payloads alone is not enough: a sibling sequence that never
+    drafted carries no payload, so an ``n = 2`` stream can arrive with exactly
+    one, beside request-level usage covering both sequences. The request's own
+    ``n`` is the ground truth for how many sequences the usage spans.
+    """
+
+    @staticmethod
+    def _with_n(request_record, n: int | None):
+        payload = orjson.loads(request_record.request_info.payload_bytes)
+        if n is None:
+            payload.pop("n", None)
+        else:
+            payload["n"] = n
+        request_record.request_info.payload_bytes = orjson.dumps(payload)
+        return request_record
+
+    async def _parse(self, parser, request_record, spy_tokenizer):
+        from tests.unit.spec_decode.test_vllm_adapter import SUMMARY_PAYLOAD
+
+        parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        setup_parser_responses(
+            parser,
+            [
+                ParsedResponse(perf_ns=1, spec_decode_stats=SUMMARY_PAYLOAD),
+                make_parsed_response(prompt_tokens=10, completion_tokens=7),
+            ],
+        )
+        # The same single decode parse_request_record hands to
+        # process_valid_record.
+        inputs = parser._extract_payload_inputs_for_record(request_record)
+        return await parser.process_valid_record(request_record, inputs=inputs)
+
+    async def test_single_sequence_request_yields_a_record(
+        self, server_token_parser, request_record, spy_tokenizer
+    ):
+        result = await self._parse(
+            server_token_parser, self._with_n(request_record, None), spy_tokenizer
+        )
+        assert result.spec_decode_acceptance is not None
+
+    async def test_multi_sequence_request_with_one_payload_yields_none(
+        self, server_token_parser, request_record, spy_tokenizer
+    ):
+        result = await self._parse(
+            server_token_parser, self._with_n(request_record, 2), spy_tokenizer
+        )
+        assert result.spec_decode_acceptance is None

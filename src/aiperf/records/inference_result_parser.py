@@ -380,7 +380,9 @@ class InferenceResultParser(CommunicationMixin):
             token_counts=token_counts,
             media_counts=media_counts or MediaCounts(),
             spec_decode_acceptance=self._extract_spec_decode_acceptance(
-                resp, self._spec_decode_warned
+                resp,
+                self._spec_decode_warned,
+                num_choices=inputs.num_choices if inputs is not None else 1,
             ),
         )
 
@@ -388,6 +390,8 @@ class InferenceResultParser(CommunicationMixin):
     def _extract_spec_decode_acceptance(
         responses: list[ParsedResponse],
         warned: set[str] | None = None,
+        *,
+        num_choices: int = 1,
     ) -> SpecDecodeAcceptanceRecord | None:
         """Build the engine-neutral acceptance record via adapter auto-detection.
 
@@ -397,13 +401,13 @@ class InferenceResultParser(CommunicationMixin):
         priority order and uses the first whose ``can_adapt`` recognizes the
         payload -- mirroring custom-dataset-loader auto-detection.
 
-        Suppresses the record when more than one response carried stats (an
-        ``n > 1`` streaming request, where each sequence's stats ride its own
-        finish chunk): the per-request record can't attribute request-level
-        ``completion_tokens`` to a single sequence, so a mixed record is worse
-        than none. ``n > 1`` non-streaming needs no client-side guard: vLLM
-        populates ``metrics.speculative_decoding`` only for single-sequence
-        requests and leaves it null otherwise.
+        Suppresses the record for any ``n > 1`` request: the per-request record
+        can't attribute request-level ``completion_tokens`` to a single
+        sequence, so a mixed record is worse than none. ``num_choices`` is the
+        request's own ``n`` and is the primary guard -- a sibling that never
+        drafted carries no payload, so counting payloads alone would let an
+        ``n = 2`` stream through with one. More than one response carrying
+        stats is still refused as a backstop for callers without the request.
 
         Counts payloads by truthiness (not ``is not None``) to match the
         adapter's ``find_spec_decode_payload``: an empty ``{}`` is treated as
@@ -417,6 +421,8 @@ class InferenceResultParser(CommunicationMixin):
         would silently make YAML line order decide which engine a record is
         attributed to.
         """
+        if num_choices > 1:
+            return None
         with_stats = [r for r in responses if r.spec_decode_stats]
         if len(with_stats) != 1:
             return None

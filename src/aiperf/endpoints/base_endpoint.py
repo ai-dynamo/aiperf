@@ -137,7 +137,8 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         per-request record cannot attribute request-level usage to one sequence
         -- reporting one choice's acceptance alongside all choices' token count
         would be a mixed, misleading record. (``n > 1`` streaming is suppressed
-        in the parser, where each sequence's stats arrive on separate chunks.)
+        in the parser from the request's own ``n``, since each sequence's stats
+        arrive on separate chunks and a sequence that never drafted sends none.)
         The root placement needs no such guard: vLLM populates it only for
         single-sequence requests, leaving it ``null`` otherwise.
         """
