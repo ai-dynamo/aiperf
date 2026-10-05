@@ -5,9 +5,12 @@
 These corpora are replayed by ``WekaTraceLoader``, which reads a per-request
 timestamp out of ``requests[].t``. The resolver cannot see that by probing the
 first record, so it relies on ``metadata.has_timing_data``. Without the flag,
-fixed-schedule replay is rejected outright -- and, worse, auto-promotion never
-fires, so a run that omits the flag silently degrades to plain concurrency and
-discards the recorded timeline that is the entire point of replaying a trace.
+``--fixed-schedule`` is rejected outright on every one of them.
+
+Scope note: this is purely permissive. Auto-promotion is gated on
+``cli.input_file``, which ``--public-dataset`` never sets, so these corpora
+still require an explicit ``--fixed-schedule`` -- the flag unblocks that, it
+does not make them auto-promote.
 """
 
 from __future__ import annotations
@@ -39,7 +42,6 @@ def test_weka_public_dataset_declares_timing_data(name: str) -> None:
     metadata = entry.get("metadata") or {}
     assert metadata.get("has_timing_data") is True, (
         f"public dataset '{name}' is replayed by WekaTraceLoader, which emits "
-        "per-request timestamps, but does not declare has_timing_data. "
-        "Fixed-schedule replay will be rejected and auto-promotion will never "
-        "fire, silently degrading the run to plain concurrency."
+        "per-request timestamps, but does not declare has_timing_data, so "
+        "--fixed-schedule is rejected for it at config resolution."
     )

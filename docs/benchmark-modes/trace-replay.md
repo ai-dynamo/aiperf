@@ -93,7 +93,9 @@ The `--fixed-schedule` flag tells AIPerf to send requests at the exact timestamp
 
 When you supply a trace dataset (`--custom-dataset-type mooncake_trace`, `bailian_trace`, `burst_gpt_trace`, ...) and the file's first record carries a `timestamp` field, AIPerf automatically switches the profiling phase to fixed-schedule mode and fills `--request-count` from the number of trace entries. You can pass `--fixed-schedule` explicitly for clarity, but it's no longer required.
 
-A few formats carry timing somewhere other than a top-level `timestamp` and are recognized by type instead: `sagemaker_data_capture` nests it under `eventMetadata`, `burst_gpt_trace` enforces a `Timestamp` column, and `tracelab` derives a submission time per round from its `timing_events[]` array.
+`weka_trace` is recognized by type rather than by probing: its timing lives at `requests[].t` and it is normally given as a *directory*, so neither is visible to a first-record probe. It also skips the `--request-count` autofill, because a weka trace is one JSON object per file — counting lines would measure formatting rather than workload. The real total comes from the dataset at run time.
+
+Several other formats also carry timing somewhere a first-record probe cannot see — `sagemaker_data_capture` nests it under `eventMetadata`, `burst_gpt_trace` enforces a `Timestamp` column, and `tracelab` derives a submission time per round from `timing_events[]`. Fixed-schedule **validation** accepts all of these by type, so `--fixed-schedule` works with them. Auto-promotion does not yet cover them, so for those formats pass `--fixed-schedule` explicitly.
 
 To override the auto-promotion — for example, to replay the same trace under a fresh `--concurrency` or `--request-rate` setting and ignore the captured timestamps — pass `--no-fixed-schedule`:
 

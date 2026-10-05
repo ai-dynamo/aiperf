@@ -116,6 +116,19 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
             )
 
         if not self._absolute_schedule:
+            # Distinguish the two causes: a dataset of only DAG children would
+            # otherwise be reported as a timestamp problem, sending whoever
+            # hits it looking in the wrong place entirely.
+            if any(
+                not getattr(conv, "is_root", True)
+                for conv in self._conversation_source.dataset_metadata.conversations
+            ):
+                raise ValueError(
+                    "No root conversations to schedule: every conversation in "
+                    "this dataset is a DAG child, which the BranchOrchestrator "
+                    "dispatches from its parent's SPAWN branch rather than the "
+                    "schedule"
+                )
             raise ValueError("No conversations with valid first-turn timestamps found")
 
         self._absolute_schedule.sort(key=lambda x: x.timestamp_ms)

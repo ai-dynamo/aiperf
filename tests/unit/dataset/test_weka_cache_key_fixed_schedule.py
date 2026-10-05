@@ -49,14 +49,19 @@ def _key(trace: Path, *, dataset_type, ignore: bool, fixed: bool) -> str | None:
         "custom_dataset_type": dataset_type,
         "ignore_trace_delays": ignore,
     }
-    if not fixed:
+    # Explicit, not auto-promoted: --ignore-trace-delays now opts out of
+    # auto-promotion (it is a statement about not replaying recorded timing),
+    # so the flag combination this key must separate is only reachable when the
+    # user asks for fixed schedule outright.
+    if fixed:
+        kwargs["fixed_schedule"] = True
+    else:
         kwargs["disable_auto_fixed_schedule"] = True
     return mmap_cache.compute_cache_key_from_run(make_run_from_cli(CLIConfig(**kwargs)))
 
 
 def test_fixed_schedule_weka_does_not_share_a_key_with_non_fixed(tmp_path) -> None:
-    """weka_trace auto-promotes to fixed schedule, so the contrast needs
-    --disable-auto-fixed-schedule on the other side."""
+    """Explicit --fixed-schedule against --disable-auto-fixed-schedule."""
     trace = _trace(tmp_path)
     fixed = _key(
         trace, dataset_type=CustomDatasetType.WEKA_TRACE, ignore=True, fixed=True
@@ -91,3 +96,34 @@ def test_non_weka_keys_are_unchanged(tmp_path) -> None:
     )
     assert a is not None and b is not None
     assert a == b
+
+
+def _public_key(dataset: str, *, ignore: bool, fixed: bool) -> str | None:
+    kwargs: dict = {
+        "model_names": ["test-model"],
+        "tokenizer_name": "test-tokenizer",
+        "public_dataset": dataset,
+        "ignore_trace_delays": ignore,
+        "artifact_directory": "/tmp/aiperf-public-key-test",
+    }
+    if fixed:
+        kwargs["fixed_schedule"] = True
+    else:
+        kwargs["disable_auto_fixed_schedule"] = True
+    return mmap_cache.compute_cache_key_from_run(make_run_from_cli(CLIConfig(**kwargs)))
+
+
+def test_weka_public_datasets_are_keyed_on_the_effective_mode() -> None:
+    """The HuggingFace corpora reach WekaTraceLoader by delegation.
+
+    `PublicDataset` carries no `format` field at all, so scoping the key on a
+    format comparison silently missed every one of these -- the exact path the
+    public-dataset timing metadata opens. They must separate like the
+    file-based path does.
+    """
+    fixed = _public_key("semianalysis_cc_traces_weka_062126", ignore=True, fixed=True)
+    non_fixed = _public_key(
+        "semianalysis_cc_traces_weka_062126", ignore=True, fixed=False
+    )
+    assert fixed is not None and non_fixed is not None
+    assert fixed != non_fixed

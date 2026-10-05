@@ -743,7 +743,7 @@ Run requests according to timestamps specified in the input dataset. When enable
 
 #### `--no-fixed-schedule`
 
-Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
+Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule; weka_trace is promoted by type instead, since its timing is nested per request and its input is usually a directory. --ignore-trace-delays and --use-think-time-only also suppress promotion, because both say the recorded timeline should not be replayed. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
 
 #### `--fixed-schedule-auto-offset`
 
@@ -2357,7 +2357,7 @@ Run requests according to timestamps specified in the input dataset. When enable
 
 #### `--no-fixed-schedule`
 
-Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
+Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule; weka_trace is promoted by type instead, since its timing is nested per request and its input is usually a directory. --ignore-trace-delays and --use-think-time-only also suppress promotion, because both say the recorded timeline should not be replayed. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
 
 #### `--fixed-schedule-auto-offset`
 
@@ -3966,7 +3966,7 @@ Run requests according to timestamps specified in the input dataset. When enable
 
 #### `--no-fixed-schedule`
 
-Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
+Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule; weka_trace is promoted by type instead, since its timing is nested per request and its input is usually a directory. --ignore-trace-delays and --use-think-time-only also suppress promotion, because both say the recorded timeline should not be replayed. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
 
 #### `--fixed-schedule-auto-offset`
 
@@ -6082,7 +6082,7 @@ Run requests according to timestamps specified in the input dataset. When enable
 
 #### `--no-fixed-schedule`
 
-Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
+Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule; weka_trace is promoted by type instead, since its timing is nested per request and its input is usually a directory. --ignore-trace-delays and --use-think-time-only also suppress promotion, because both say the recorded timeline should not be replayed. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
 
 #### `--fixed-schedule-auto-offset`
 
