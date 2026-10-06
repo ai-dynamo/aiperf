@@ -22,6 +22,7 @@ from pydantic import (
     model_validator,
 )
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import (
     ConnectionReuseStrategy,
     ModelSelectionStrategy,
@@ -49,6 +50,8 @@ __all__ = [
     "EndpointDefaults",
     "TemplateConfig",
 ]
+
+_logger = AIPerfLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -1054,5 +1057,20 @@ class EndpointConfig(BaseConfig):
                 "token into the request headers; sending those over plain HTTP "
                 f"would disclose them: {', '.join(insecure)}. Use https:// URLs, "
                 "or drop --auth-type."
+            )
+
+        # A warning, not an error: rejecting this stops anyone who keeps a key in
+        # a shared config from enabling signing. The endpoints drop the key
+        # whenever auth_type is set (base_endpoint, anthropic_messages). The
+        # serialized placeholder is skipped: Kubernetes service containers
+        # validate before the real key is injected, and sweep subprocesses
+        # revalidate per variation, so it would repeat in every log.
+        from aiperf.common.redact import REDACTED_VALUE
+
+        if self.api_key and self.api_key != REDACTED_VALUE:
+            _logger.warning(
+                f"--api-key is ignored when --auth-type {self.auth_type} is set: "
+                "request signing replaces API-key auth, so the key is not sent. "
+                "Drop --api-key to silence this warning."
             )
         return self

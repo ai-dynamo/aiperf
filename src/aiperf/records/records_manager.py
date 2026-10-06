@@ -35,6 +35,7 @@ from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
+    ProfileCancelReason,
     make_result_producer_capability,
 )
 from aiperf.common.environment import Environment
@@ -64,11 +65,13 @@ from aiperf.common.models import (
     PhaseRecordsStats,
     ProcessRecordsResult,
     ProcessTelemetryResult,
+    ProfileMetricDurationCoverage,
     ProfileResults,
     TimesliceResult,
     WorkerProcessingStats,
 )
 from aiperf.common.results_markers import CHECKPOINTS_DIR_NAME
+from aiperf.common.scenario.registry import get_scenario
 from aiperf.common.types import MetricTagT
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.config.comm import ZMQDualBindConfig
@@ -121,6 +124,24 @@ ERROR_FATAL_DETAIL_KEY = "fatal"
 failure; ``False`` (or absent) means the error is diagnostic only -- report it,
 but never suppress an otherwise valid export because of it.
 """
+
+_PROFILE_METRIC_COVERAGE_ERROR = "ProfileMetricCoverageError"
+_PROFILE_METRIC_COVERAGE_VALIDATION_ERROR = "ProfileMetricCoverageValidationError"
+_PROFILE_METRIC_COVERAGE_REASON = "insufficient_profile_metric_coverage"
+_PROFILE_METRIC_COVERAGE_VALIDATION_REASON = "profile_metric_coverage_validation_failed"
+
+
+def _profile_metric_coverage_reasons(
+    fatal_errors: Sequence[ErrorDetails],
+) -> list[str]:
+    """Translate coverage failures to stable runtime submission reason tags."""
+    error_types = {error.type for error in fatal_errors}
+    reasons: list[str] = []
+    if _PROFILE_METRIC_COVERAGE_ERROR in error_types:
+        reasons.append(_PROFILE_METRIC_COVERAGE_REASON)
+    if _PROFILE_METRIC_COVERAGE_VALIDATION_ERROR in error_types:
+        reasons.append(_PROFILE_METRIC_COVERAGE_VALIDATION_REASON)
+    return reasons
 
 
 def build_failed_request_abort_config(
@@ -1033,7 +1054,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             f"(grace floor {grace_floor}, phase_index {phase_index}). "
             "Requesting PROFILE_CANCEL to terminate the run."
         )
-        payload = orjson.dumps({"origin_service_id": self.service_id})
+        payload = orjson.dumps(
+            {
+                "origin_service_id": self.service_id,
+                "reason": ProfileCancelReason.FAILED_REQUEST_THRESHOLD,
+                "reason_detail": (
+                    f"{error_records}/{total} profiling requests failed "
+                    f"({rate:.1%}), exceeding the --failed-request-threshold "
+                    f"limit of {threshold:.1%}. Check inference server logs."
+                ),
+            }
+        )
         try:
             await self.send_command_to_controller(
                 CommandType.PROFILE_CANCEL, payload=payload
@@ -2210,6 +2241,126 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
         return records_results, error_results
 
+    def _validate_profile_metric_duration_coverage(
+        self,
+        phase: CreditPhase,
+        cancelled: bool,
+    ) -> tuple[list[ProfileMetricDurationCoverage], list[ErrorDetails]]:
+        """Apply a scenario's post-run latency-signal coverage requirement."""
+        if phase != CreditPhase.PROFILING or cancelled:
+            return [], []
+
+        scenario_name = self.run.cfg.scenario
+        if scenario_name is None:
+            return [], []
+        # Scenario resolution validates the name before services start.
+        scenario_spec = get_scenario(scenario_name)
+        required_ratio = scenario_spec.minimum_profile_metric_coverage_ratio
+        if required_ratio is None:
+            return [], []
+
+        accumulator = self._accumulators.get(AccumulatorType.METRIC_RESULTS)
+        calculate = getattr(accumulator, "profile_metric_duration_coverage", None)
+        if not callable(calculate):
+            error = ErrorDetails(
+                type=_PROFILE_METRIC_COVERAGE_VALIDATION_ERROR,
+                message=(
+                    "Profiling metric coverage could not be validated because the "
+                    "metrics accumulator does not expose coverage timestamps."
+                ),
+            )
+            return [], [error]
+
+        phase_configs = self.run.cfg.get_profiling_phases()
+        concrete_stats = self._iter_concrete_phase_stats(CreditPhase.PROFILING)
+        aggregate_stats = RecordsManager._create_result_stats_for_phase(
+            self, CreditPhase.PROFILING
+        )
+        coverage_results: list[ProfileMetricDurationCoverage] = []
+        fatal_errors: list[ErrorDetails] = []
+
+        for profiling_index, phase_config in enumerate(phase_configs):
+            if phase_config.duration is None:
+                continue
+            if phase_config.duration < scenario_spec.min_benchmark_duration_seconds:
+                self.info(
+                    "Skipping profiling metric coverage validation for "
+                    f"{phase_config.name!r}: configured duration "
+                    f"{float(phase_config.duration):.1f}s is below scenario minimum "
+                    f"{scenario_spec.min_benchmark_duration_seconds}s."
+                )
+                continue
+            stats = next(
+                (
+                    item
+                    for item in concrete_stats
+                    if item.phase_name == phase_config.name
+                    or item.profiling_index == profiling_index
+                ),
+                aggregate_stats if len(phase_configs) == 1 else None,
+            )
+            if stats is None or stats.start_ns is None:
+                fatal_errors.append(
+                    ErrorDetails(
+                        type=_PROFILE_METRIC_COVERAGE_VALIDATION_ERROR,
+                        message=(
+                            "Profiling metric coverage could not be validated for "
+                            f"phase {phase_config.name!r} because its start time is "
+                            "unavailable."
+                        ),
+                    )
+                )
+                continue
+
+            ctx = ExportContext(
+                start_ns=stats.start_ns,
+                end_ns=stats.requests_end_ns,
+                phase=CreditPhase.PROFILING,
+                phase_index=stats.phase_index,
+                phase_name=phase_config.name,
+                phase_kind="profiling",
+                is_phase_scoped=True,
+                cancelled=False,
+            )
+            coverage = calculate(
+                ctx,
+                phase_name=phase_config.name,
+                expected_duration_seconds=float(phase_config.duration),
+                required_ratio=required_ratio,
+            )
+            coverage_results.append(coverage)
+            if coverage.passed:
+                self.info(
+                    "Profiling metric coverage passed for "
+                    f"{phase_config.name!r}: TTFT={coverage.ttft_ratio:.1%}, "
+                    "inter-token latency="
+                    f"{coverage.inter_token_latency_ratio:.1%} "
+                    f"(required={required_ratio:.1%})."
+                )
+                continue
+
+            allowed_tail_seconds = float(phase_config.duration) * (1.0 - required_ratio)
+            message = (
+                f"Profiling metric coverage below the required {required_ratio:.1%} "
+                f"for phase {phase_config.name!r}: TTFT={coverage.ttft_ratio:.1%}, "
+                "inter-token latency="
+                f"{coverage.inter_token_latency_ratio:.1%} over the configured "
+                f"{float(phase_config.duration):.1f}s duration. Neither latency "
+                f"signal extended into the final {allowed_tail_seconds:.1f}s before "
+                "the nominal profiling end; check inference server logs for a stalled "
+                "or unavailable server."
+            )
+            self.error(message)
+            fatal_errors.append(
+                ErrorDetails(
+                    type=_PROFILE_METRIC_COVERAGE_ERROR,
+                    message=message,
+                    details=coverage.model_dump(mode="json"),
+                )
+            )
+
+        return coverage_results, fatal_errors
+
     async def _phase_telemetry_results(
         self,
         stats: PhaseRecordsStats,
@@ -2491,6 +2642,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         phase_records = await RecordsManager._build_phase_profile_results(
             self, phase, cancelled
         )
+        metric_duration_coverage, fatal_errors = (
+            self._validate_profile_metric_duration_coverage(phase, cancelled)
+        )
+
         # Cross-accumulator analyzer plugins (e.g. energy efficiency) run after
         # all accumulators have summarized, reading peers via the SummaryContext.
         records_results.extend(await self._run_analyzers(summary_ctx))
@@ -2521,12 +2676,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 context_overflow_count=self._skipped_context_overflow_counts_by_phase.get(
                     phase, 0
                 ),
+                metric_duration_coverage=metric_duration_coverage,
+                runtime_submission_invalid_reasons=_profile_metric_coverage_reasons(
+                    fatal_errors
+                ),
                 phase_records=phase_records,
                 pooled_spec_decode_acceptance_histogram=_pooled_spec_decode_histogram(
                     summary_ctx
                 ),
             ),
             errors=error_results,
+            fatal_errors=fatal_errors,
         )
         self.debug(lambda: f"Process records result: {result}")
         self.debug("Publishing ProcessRecordsResultMessage...")

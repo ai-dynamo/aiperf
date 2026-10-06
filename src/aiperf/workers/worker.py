@@ -624,6 +624,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     - StickyCreditRouter ensures all turns route to same worker for cache hits
     """
 
+    reports_startup_failure = True
+
     def __init__(
         self,
         run: BenchmarkRun,
