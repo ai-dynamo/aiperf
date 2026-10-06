@@ -7,6 +7,11 @@ drive that mode before they could be ignored)". Honouring it matters because
 fixed_schedule has nothing else to schedule on -- emitting None timestamps
 fails in PhaseOrchestrator on the first turn, long after config resolution has
 already accepted the run.
+
+Of the four rows below only ``fixed-schedule-wins-over-ignore`` is a new
+boundary; the rest hold on main. The full 2x2 is kept because the rule is about
+the interaction of two booleans, and a truth table with rows missing invites
+exactly the wrong reading of what the flag does.
 """
 
 from __future__ import annotations

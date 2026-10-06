@@ -7,6 +7,11 @@ timing. That belief comes from a generic probe of the first record, which only
 sees top-level ``timestamp``/``delay`` fields. Formats that nest their timing
 have to be named explicitly, or every guide documenting ``--fixed-schedule``
 against them describes a combination that cannot run.
+
+Only the ``weka_trace`` row is new here; the other four already pass on main.
+They are kept deliberately as a drift guard -- dropping a format from the set
+is silent, and the symptom is a documented command that stops working -- but
+they are not coverage of this change and should not be counted as such.
 """
 
 from __future__ import annotations
