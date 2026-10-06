@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
-from aiperf.common.enums import BaselineKind
+from aiperf.common.enums import BaselineKind, ProfileCancelReason
 from aiperf.common.messages import PhaseBaselineRequestMessage
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
@@ -40,7 +40,7 @@ class PhasePublisher:
         *,
         pub_client: PubClientProtocol,
         service_id: str,
-        profile_cancel_sender: Callable[[], Awaitable[None]],
+        profile_cancel_sender: Callable[[ProfileCancelReason | None], Awaitable[None]],
     ):
         """Initialize publisher with message bus client.
 
@@ -130,7 +130,9 @@ class PhasePublisher:
         msg = CreditsCompleteMessage(service_id=self._service_id)
         await self._pub_client.publish(msg)
 
-    async def request_profile_cancel(self) -> None:
+    async def request_profile_cancel(
+        self, reason: ProfileCancelReason | None = None
+    ) -> None:
         """Ask the controller to fan PROFILE_CANCEL out and abort the run.
 
         Used by the agentic-replay WARMUP early-abort path: a terminal warmup
@@ -142,5 +144,11 @@ class PhasePublisher:
 
         The controller's relay excludes this service, so the caller must still
         cancel its own orchestrator locally.
+
+        Args:
+            reason: Why the run is being aborted, surfaced by the controller's
+                relay as an exit error. ``None`` for callers that predate the
+                reason-tagging (e.g. worker-loss aborts, which have no
+                dedicated ``ProfileCancelReason`` member yet).
         """
-        await self._profile_cancel_sender()
+        await self._profile_cancel_sender(reason)
