@@ -177,6 +177,11 @@ jobs:
         # ships no docker-compose.yml -- the previous `compose down` here was
         # a no-op, so a run killed mid-test leaked its container onto the
         # self-hosted runner and flaked the next job that reused the name.
+        # --filter name= is a substring match, so anchor it: an unrelated
+        # container such as `other-aiperf-test-debug` would otherwise be
+        # removed from a shared self-hosted runner. No `|| true`: xargs -r
+        # already handles an empty list, so a real docker failure should
+        # surface rather than be reported as a successful cleanup.
         run: |
-          docker ps -aq --filter 'name=aiperf-test-' \
-            | xargs -r docker rm -f 2>/dev/null || true
+          docker ps -aq --filter 'name=^aiperf-test-' \
+            | xargs -r docker rm -f
