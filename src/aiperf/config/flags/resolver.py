@@ -378,6 +378,7 @@ def _merge_overrides_into_envelope(
         phase_identity=identity,
     )
     _apply_warmup_overrides(merged, cli_config, phase_identity=identity)
+    _strip_recipe_consumed_magic_lists(merged, cli_config)
     promote_benchmark_magic_lists(
         merged,
         cli_config,
@@ -389,6 +390,27 @@ def _merge_overrides_into_envelope(
     return _MergedEnvelope(
         envelope=merged, phase_shape_decision=decision, phase_identity=identity
     )
+
+
+def _strip_recipe_consumed_magic_lists(
+    envelope: dict[str, Any], cli: CLIConfig
+) -> None:
+    """Keep list values a recipe consumes off the phases, as CLI-only does.
+
+    ``pareto-sweep`` reads ``--concurrency 1,4`` itself and emits one scenario
+    per value. Promoting the same list would add ``parameters`` to its
+    scenarios sweep, which that sweep type forbids.
+    """
+    from aiperf.config.flags.converter import (
+        _lookup_recipe_class,
+        _strip_consumed_magic_lists_from_phases,
+    )
+
+    recipe_cls = _lookup_recipe_class(cli)
+    consumed = getattr(recipe_cls, "consumed_magic_lists", frozenset())
+    benchmark = envelope.get("benchmark")
+    if consumed and isinstance(benchmark, dict):
+        _strip_consumed_magic_lists_from_phases(benchmark, consumed)
 
 
 def _normalize_loaded_benchmark_shorthands(yaml_dict: dict[str, Any]) -> None:
@@ -599,6 +621,10 @@ def _apply_recipe_and_multirun(
         build_sweep,
         expand_search_recipe,
     )
+    from aiperf.config.flags.converter import (
+        _lookup_recipe_class,
+        _reject_recipe_plus_magic_lists,
+    )
 
     if benchmark_config is None:
         recipe_output = None
@@ -607,7 +633,14 @@ def _apply_recipe_and_multirun(
     if recipe_output is not None:
         sweep_params = recipe_output.get("sweep_parameters")
         if sweep_params:
+            _reject_recipe_plus_magic_lists(cli, recipe_cls=_lookup_recipe_class(cli))
             out["sweep"] = {"type": "grid", "parameters": dict(sweep_params)}
+        scenarios = recipe_output.get("scenarios")
+        if scenarios:
+            out["sweep"] = {"type": "scenarios", "runs": list(scenarios)}
+        recipe_name = recipe_output.get("recipe_name")
+        if recipe_name and "sweep" in out:
+            out["sweep"]["recipe_name"] = recipe_name
         # Recipe-emitted per-request SLOs (e.g. MaxGoodputUnderSLO) land on the
         # body's `slos` block. The envelope wrapper (`_wrap_under_envelope`) is
         # applied in `resolve_config` after this builder, so we write the body
