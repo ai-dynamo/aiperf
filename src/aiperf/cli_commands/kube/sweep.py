@@ -237,6 +237,9 @@ def _normalized_config_parts(
     in-cluster.
     """
     from aiperf.config import AIPerfConfig, load_config_from_mapping
+    from aiperf.config.flags._config_flag_routing import (
+        reject_cli_flags_against_hoisted_blocks,
+    )
     from aiperf.config.flags.resolver import apply_cli_overrides
     from aiperf.kubernetes.spec_converter import (
         dataset_names,
@@ -250,6 +253,9 @@ def _normalized_config_parts(
     }
     config = load_config_from_mapping(envelope, file_path=file_path)
     if cli_config is not None:
+        reject_cli_flags_against_hoisted_blocks(
+            cli_config, sweep_cfg=sweep_cfg, multirun_cfg=multirun_cfg
+        )
         config = apply_cli_overrides(config, cli_config)
     rendered = config.model_dump(
         mode="json",

@@ -831,3 +831,71 @@ async def test_sweep_dry_run_propagates_convergence_metric_from_cli_config(
         "it may still be coming from a now-removed local parameter shadow"
     )
     assert call_kwargs["convergence_threshold"] == pytest.approx(0.03)
+
+
+# ---------------------------------------------------------------------------
+# The shared resolver must see the file's sweep / multiRun blocks, or its
+# companion rules answer from an envelope that never contains them.
+# ---------------------------------------------------------------------------
+
+_YAML_SWEEP = """\
+sweep:
+  type: grid
+  parameters:
+    phases.profiling.concurrency: [1, 2]
+"""
+
+_YAML_CONVERGENCE = """\
+multiRun:
+  numRuns: 5
+  convergence:
+    metric: time_to_first_token
+    stat: avg
+"""
+
+
+def _build_with_flags(tmp_path: Path, yaml_extra: str, **flags) -> dict:
+    from aiperf.config.flags import CLIConfig
+
+    config_file = tmp_path / "sweep-flags.yaml"
+    config_file.write_text(_yaml_with(yaml_extra))
+    return sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        cli_config=CLIConfig(**flags),
+        kube_options=_kube_options(),
+        **_kwargs(),
+    )
+
+
+def test_search_recipe_against_yaml_sweep_is_rejected(tmp_path: Path) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="--search-recipe"):
+        _build_with_flags(tmp_path, _YAML_SWEEP, search_recipe="concurrency-ramp")
+
+
+def test_convergence_detail_against_yaml_convergence_block_is_rejected(
+    tmp_path: Path,
+) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    with pytest.raises(ConfigurationError) as excinfo:
+        _build_with_flags(tmp_path, _YAML_CONVERGENCE, convergence_stat="p90")
+    message = str(excinfo.value)
+    assert "--convergence-stat" in message
+    assert "multiRun.convergence" in message
+
+
+def test_parameter_sweep_flag_against_yaml_sweep_is_rejected(tmp_path: Path) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    with pytest.raises(ConfigurationError) as excinfo:
+        _build_with_flags(tmp_path, _YAML_SWEEP, parameter_sweep_cooldown_seconds=3.0)
+    assert "--parameter-sweep-cooldown-seconds" in str(excinfo.value)
+
+
+def test_sweep_type_against_yaml_sweep_is_rejected(tmp_path: Path) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="--sweep-type"):
+        _build_with_flags(tmp_path, _YAML_SWEEP, sweep_type="zip", concurrency=[1, 2])

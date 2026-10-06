@@ -544,3 +544,65 @@ def reject_missing_sweep_companions(cli: CLIConfig, yaml_dict: dict[str, Any]) -
         raise ConfigurationError(
             f"Sweep flags passed with --config cannot take effect:\n  - {details}"
         )
+
+
+# Flags that build or reshape a sweep block.
+FILE_SWEEP_BLOCK_FLAGS: frozenset[str] = frozenset(
+    {
+        "search_recipe",
+        "sweep_type",
+        "sweep_variants",
+        "parameter_sweep_mode",
+        "parameter_sweep_same_seed",
+        "parameter_sweep_cooldown_seconds",
+    }
+)
+
+
+def reject_cli_flags_against_hoisted_blocks(
+    cli: CLIConfig, *, sweep_cfg: Any, multirun_cfg: Any
+) -> None:
+    """Raise when a flag would have to merge into a block ``kube sweep`` hoisted.
+
+    ``aiperf kube sweep`` hoists the file's ``sweep:`` / ``multiRun:`` blocks
+    out before the shared resolver runs and merges them back afterwards, so
+    flags that must merge INTO those blocks cannot be applied there; they are
+    rejected rather than mis-merged.
+
+    Args:
+        cli: the parsed ``CLIConfig`` for this invocation.
+        sweep_cfg: the file's hoisted ``sweep:`` block, or None.
+        multirun_cfg: the file's hoisted ``multiRun:`` block, or None.
+
+    Raises:
+        ConfigurationError: naming every offending flag at once.
+    """
+    from aiperf.config.loader.errors import ConfigurationError
+
+    set_fields = cli.model_fields_set
+    problems: list[str] = []
+    if isinstance(sweep_cfg, dict):
+        problems.extend(
+            f"{_describe(field)} cannot be combined with the sweep: block in "
+            f"the file under `aiperf kube sweep`; set it in the file"
+            for field in sorted(set_fields & FILE_SWEEP_BLOCK_FLAGS)
+        )
+    has_metric = (
+        "convergence_metric" in set_fields and cli.convergence_metric is not None
+    )
+    if (
+        isinstance(multirun_cfg, dict)
+        and isinstance(multirun_cfg.get("convergence"), dict)
+        and not has_metric
+    ):
+        problems.extend(
+            f"{_describe(field)} cannot be merged into the file's "
+            f"multiRun.convergence block under `aiperf kube sweep`; set it "
+            f"in the file"
+            for field in sorted(set_fields & CONVERGENCE_DETAIL_FIELDS)
+        )
+    if problems:
+        details = "\n  - ".join(problems)
+        raise ConfigurationError(
+            f"Sweep flags cannot be applied to the file's blocks:\n  - {details}"
+        )
