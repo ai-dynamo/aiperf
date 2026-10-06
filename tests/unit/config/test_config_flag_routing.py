@@ -303,15 +303,13 @@ def test_dataset_source_in_type_fields_names_input_file_and_custom_dataset_type(
     assert DATASET_SOURCE_IN_TYPE_FIELDS <= ROUTED_UNDER_CONFIG
 
 
-def test_error_lists_every_spelling_of_a_multi_alias_flag(base_yaml: Path) -> None:
+def test_error_lists_every_spelling_of_a_multi_alias_flag() -> None:
     """Naming only the first declared spelling sends users looking for a flag
     they never typed.
 
     ``--sweep-variant`` was reported as ``--variant``. Since the resolver
     cannot see which spelling was typed, it names them all.
     """
-    with pytest.raises(ConfigurationError) as excinfo:
-        resolve_config(cli(sweep_variants=["concurrency=2"]), base_yaml)
-    message = str(excinfo.value)
-    assert "--variant" in message
-    assert "--sweep-variant" in message
+    from aiperf.config.flags._config_flag_routing import _describe
+
+    assert _describe("sweep_variants") == "--variant/--sweep-variant"

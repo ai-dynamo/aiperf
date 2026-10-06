@@ -180,7 +180,20 @@ def _resolve_config_envelopes(
         phase_identity=merged.phase_identity,
     )
 
+    variant_runs = _build_variant_runs(
+        cli_config,
+        yaml_dict,
+        merged.envelope,
+        benchmark_config=base_config.benchmark,
+        dataset_type=base_dataset.type,
+        dataset_format=getattr(base_dataset, "format", None),
+    )
     for envelope in (merged.envelope, raw_merged.envelope):
+        if variant_runs is not None:
+            envelope["sweep"] = {
+                "type": "scenarios",
+                "runs": copy.deepcopy(variant_runs),
+            }
         _apply_parameter_sweep_overrides(envelope, cli_config)
         _apply_convergence_overrides(envelope, cli_config)
 
@@ -258,6 +271,75 @@ def _apply_parameter_sweep_overrides(envelope: dict[str, Any], cli: CLIConfig) -
     for cli_field, key in requested:
         _pop_config_value(sweep, key)
         sweep[key] = getattr(cli, cli_field)
+
+
+def _build_variant_runs(
+    cli_config: CLIConfig,
+    yaml_dict: dict[str, Any],
+    base_envelope: dict[str, Any],
+    *,
+    benchmark_config: BenchmarkConfig,
+    dataset_type: Any,
+    dataset_format: Any,
+) -> list[dict[str, Any]] | None:
+    """Build ``ScenarioSweep`` runs from `--variant` against the config file.
+
+    Each variant CLI goes through the same override pipeline as the command
+    line, against the rendered config file, and its ``benchmark`` subtree is
+    diffed against the base. Computed once from the rendered envelope:
+    diffing the raw one would compare Jinja template strings.
+    """
+    from aiperf.config.flags._config_flag_routing import (
+        reject_missing_sweep_companions,
+        reject_unrouted_cli_flags,
+    )
+    from aiperf.config.flags.converter import (
+        _build_variant_clis,
+        _diff_envelope_benchmark,
+        _validate_variant_flags,
+        _wrap_under_envelope,
+    )
+    from aiperf.config.loader.errors import ConfigurationError
+
+    if not cli_config.sweep_variants:
+        return None
+    _validate_variant_flags(cli_config)
+    if base_envelope.get("sweep") is not None:
+        raise ConfigurationError(
+            "--variant declares its own scenarios sweep and cannot be combined "
+            "with the sweep the config file declares or that --search-* flags "
+            "build. Remove one."
+        )
+
+    runs: list[dict[str, Any]] = []
+    for name, variant_cli in _build_variant_clis(cli_config):
+        # A variant key can be any CLI flag, so it gets the command line's checks.
+        reject_unrouted_cli_flags(variant_cli)
+        reject_missing_sweep_companions(variant_cli, yaml_dict)
+        overrides = build_cli_overrides(variant_cli, benchmark_config=benchmark_config)
+        variant = _merge_overrides_into_envelope(
+            copy.deepcopy(yaml_dict),
+            _wrap_under_envelope(overrides) if overrides else overrides,
+            variant_cli,
+            dataset_type=dataset_type,
+            dataset_format=dataset_format,
+        ).envelope
+        for key in sorted((base_envelope.keys() | variant.keys()) - {"benchmark"}):
+            if variant.get(key) != base_envelope.get(key):
+                raise ConfigurationError(
+                    f"--variant {name!r} changes {key!r}, which applies to the "
+                    f"whole run rather than one variant. Pass that flag "
+                    f"outside --variant."
+                )
+        run: dict[str, Any] = {"name": name}
+        run_benchmark = _diff_envelope_benchmark(
+            base=base_envelope.get("benchmark", {}),
+            override=variant.get("benchmark", {}),
+        )
+        if run_benchmark:
+            run["benchmark"] = run_benchmark
+        runs.append(run)
+    return runs
 
 
 def _validate_search_space_phase_targets(

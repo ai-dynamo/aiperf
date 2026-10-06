@@ -155,9 +155,6 @@ _ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
 )
 
 
-# Sweep flags the resolver does not route yet.
-SWEEP_FIELDS_NOT_ROUTED: frozenset[str] = frozenset({"sweep_variants"})
-
 # Inputs to a --search-recipe: SLA targets and sweep-range overrides the
 # recipe reads from SearchRecipeContext. Derived from the tuples the recipe
 # context is built from, so the two cannot drift. Without a recipe nothing
@@ -323,11 +320,10 @@ def _build_routed_under_config() -> frozenset[str]:
     # + resolve_auto_plot, build_tokenizer, build_accuracy.
     whole_sections = OUTPUT_FIELDS | TOKENIZER_FIELDS | ACCURACY_FIELDS
 
-    # SWEEPING minus the members that need the final sweep block (see
-    # SWEEP_FIELDS_NOT_ROUTED). Recipe inputs and convergence details take
-    # effect only beside their companion; reject_missing_sweep_companions
+    # Every SWEEPING member is routed. Recipe inputs and convergence details
+    # take effect only beside their companion; reject_missing_sweep_companions
     # turns a missing companion into an error instead of a silent no-op.
-    sweeping = set(SWEEPING_FIELDS) - SWEEP_FIELDS_NOT_ROUTED
+    sweeping = set(SWEEPING_FIELDS)
 
     return frozenset(
         endpoint
@@ -370,8 +366,6 @@ UNROUTED_UNDER_CONFIG: frozenset[str] = frozenset(
         # Every other INPUT field now routes through _apply_dataset_overrides;
         # these would swap the dataset the YAML declared rather than shape it.
         *DATASET_SOURCE_FIELDS,
-        # ----- sweep flags that resolve cleanly and do nothing -----
-        *SWEEP_FIELDS_NOT_ROUTED,
         # ----- outside every section frozenset -----
         # Still dropped: consumed by phase construction, which this path does
         # not rebuild.

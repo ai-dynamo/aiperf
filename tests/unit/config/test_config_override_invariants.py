@@ -122,7 +122,12 @@ FIELD_PROBE_VALUES: dict[str, list[Any]] = {
     # --goodput takes space-separated "metric:value" pairs, not a list.
     "goodput": ["ttft:200", "ttft:300"],
     "server_metrics_formats": [["json"], ["csv"]],
-    "sweep_variants": [["concurrency=2"], ["concurrency=4"]],
+    # A single --variant is always rejected, so a one-element probe would
+    # only ever raise and the no-op test would check nothing.
+    "sweep_variants": [
+        ["a: concurrency=2", "b: concurrency=4"],
+        ["a: concurrency=3", "b: concurrency=5"],
+    ],
     # --search-recipe names a registered plugin, not an arbitrary string.
     "search_recipe": ["prefill-ttft-curve", "concurrency-ramp"],
 }

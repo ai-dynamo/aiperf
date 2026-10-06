@@ -24,6 +24,7 @@ from aiperf.config.flags._config_flag_routing import (
 )
 from aiperf.config.flags.converter import convert_cli_to_aiperf
 from aiperf.config.flags.resolver import resolve_config
+from aiperf.config.loader import build_benchmark_plan
 from aiperf.config.loader.errors import ConfigurationError
 
 _PLAIN_YAML = textwrap.dedent("""\
@@ -359,3 +360,72 @@ def test_cli_only_ordering_flags_apply_to_zip_sweep() -> None:
         )
     )
     assert config.model_dump(mode="json")["sweep"]["iteration_order"] == "independent"
+
+
+# --- variants ---------------------------------------------------------------
+
+_VARIANTS = ["low: concurrency=2", "high: concurrency=8"]
+
+
+def test_variants_build_a_scenarios_sweep_over_the_yaml(tmp_path: Path) -> None:
+    config = _resolve(tmp_path, sweep_variants=_VARIANTS)
+    sweep = _sweep(config)
+    assert sweep["type"] == "scenarios"
+    assert [run["name"] for run in sweep["runs"]] == ["low", "high"]
+
+    plan = build_benchmark_plan(config)
+    concurrencies = [
+        next(p for p in bench.phases if p.name == "profiling").concurrency
+        for bench in plan.configs
+    ]
+    assert concurrencies == [2, 8]
+    assert all(bench.datasets[0].entries == 16 for bench in plan.configs)
+
+    raw_runs = config._raw_envelope["sweep"]["runs"]
+    assert [run["name"] for run in raw_runs] == ["low", "high"]
+
+
+def test_parameter_sweep_flags_apply_to_variant_runs(tmp_path: Path) -> None:
+    sweep = _sweep(
+        _resolve(tmp_path, sweep_variants=_VARIANTS, parameter_sweep_mode="independent")
+    )
+    assert sweep["iteration_order"] == "independent"
+
+
+def test_variants_against_yaml_sweep_are_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match="--variant"):
+        _resolve(
+            tmp_path, yaml_text=_PLAIN_YAML + _SWEEP_BLOCK, sweep_variants=_VARIANTS
+        )
+
+
+def test_variants_against_search_space_sweep_are_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match="--variant"):
+        _resolve(tmp_path, **_SEARCH_SPACE_FLAGS, sweep_variants=_VARIANTS)
+
+
+def test_single_variant_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(TypeError, match="single occurrence is rejected"):
+        _resolve(tmp_path, sweep_variants=["concurrency=2"])
+
+
+def test_variant_with_recipe_input_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError) as excinfo:
+        _resolve(tmp_path, sweep_variants=["a: concurrency-min=4", "b: concurrency=2"])
+    message = str(excinfo.value)
+    assert "--concurrency-min" in message
+    assert "--search-recipe" in message
+
+
+def test_variant_with_unrouted_flag_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match="--no-fixed-schedule"):
+        _resolve(
+            tmp_path,
+            sweep_variants=["a: no-fixed-schedule=true", "b: concurrency=2"],
+        )
+
+
+def test_variant_changing_a_run_level_setting_is_rejected(tmp_path: Path) -> None:
+    """Runs carry only benchmark overlays; a multi_run change would vanish."""
+    with pytest.raises(ConfigurationError, match="multi_run"):
+        _resolve(tmp_path, sweep_variants=["a: num_profile_runs=3", "b: concurrency=2"])
