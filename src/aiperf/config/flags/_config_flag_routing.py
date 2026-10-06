@@ -503,6 +503,11 @@ def _missing_companion_problems(cli: CLIConfig, yaml_dict: dict[str, Any]) -> li
             "--search-recipe defines its own sweep and cannot be combined "
             "with the sweep the config file declares; remove one"
         )
+    if "search_space" in set_fields and cli.search_space and yaml_sweep:
+        problems.append(
+            f"{_describe('search_space')} defines its own sweep and cannot be "
+            f"combined with the sweep the config file declares; remove one"
+        )
     return problems
 
 
@@ -536,6 +541,7 @@ def reject_missing_sweep_companions(cli: CLIConfig, yaml_dict: dict[str, Any]) -
 FILE_SWEEP_BLOCK_FLAGS: frozenset[str] = frozenset(
     {
         "search_recipe",
+        "search_space",
         "sweep_type",
         "sweep_variants",
         "parameter_sweep_mode",

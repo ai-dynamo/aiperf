@@ -308,6 +308,8 @@ a missing companion raises instead of resolving to a silent no-op:
 - `--convergence-mode/stat/threshold` need `--convergence-metric` or a
   `multi_run.convergence` block in the config file.
 - `--sweep-type` needs list-valued CLI flags and no `sweep:` in the file.
+- `--search-recipe` and `--search-space` each build their own sweep, so
+  either one beside a `sweep:` in the file raises.
 - `--parameter-sweep-*` need a final sweep to write to, and
   `--parameter-sweep-mode/same-seed` a non-adaptive one.
 - `--variant` keys cannot set flags the resolver applies to the whole sweep
@@ -317,8 +319,8 @@ a missing companion raises instead of resolving to a silent no-op:
 - `aiperf kube sweep` hoists the file's `sweep:` / `multiRun:` blocks out
   before the resolver runs, so flags that would merge into them are rejected
   up front (`reject_cli_flags_against_hoisted_blocks`): `--search-recipe`,
-  `--sweep-type`, `--variant`, and `--parameter-sweep-*` against a file
-  `sweep:`, and `--convergence-mode/stat/threshold` against a file
+  `--search-space`, `--sweep-type`, `--variant`, and `--parameter-sweep-*`
+  against a file `sweep:`, and `--convergence-mode/stat/threshold` against a file
   `multiRun.convergence` without `--convergence-metric`.
 
 The pre-merge rules live in `reject_missing_sweep_companions`

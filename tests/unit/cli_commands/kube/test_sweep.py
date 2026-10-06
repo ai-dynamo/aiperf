@@ -874,6 +874,20 @@ def test_search_recipe_against_yaml_sweep_is_rejected(tmp_path: Path) -> None:
         _build_with_flags(tmp_path, _YAML_SWEEP, search_recipe="concurrency-ramp")
 
 
+def test_search_space_against_yaml_sweep_is_rejected(tmp_path: Path) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="--search-space"):
+        _build_with_flags(
+            tmp_path,
+            _YAML_SWEEP,
+            search_space=["phases.profiling.concurrency:1,1000:int"],
+            search_metric="output_token_throughput",
+            search_direction="maximize",
+            search_max_iterations=10,
+        )
+
+
 def test_convergence_detail_against_yaml_convergence_block_is_rejected(
     tmp_path: Path,
 ) -> None:

@@ -269,6 +269,49 @@ _SEARCH_SPACE_FLAGS: dict[str, Any] = {
 }
 
 
+_SCENARIOS_SWEEP_BLOCK = textwrap.dedent("""\
+    sweep:
+      type: scenarios
+      runs:
+        - name: a
+        - name: b
+""")
+
+_ADAPTIVE_SWEEP_BLOCK = textwrap.dedent("""\
+    sweep:
+      type: adaptive_search
+      max_iterations: 40
+      planner: optuna
+      n_initial_points: 8
+      search_space:
+        - path: phases.profiling.concurrency
+          lo: 1
+          hi: 64
+          kind: int
+      objectives:
+        - metric: request_throughput
+          direction: maximize
+""")
+
+
+@pytest.mark.parametrize(
+    "sweep_block",
+    [
+        param(_SWEEP_BLOCK, id="grid"),
+        param(_SCENARIOS_SWEEP_BLOCK, id="scenarios"),
+        param(_ADAPTIVE_SWEEP_BLOCK, id="adaptive_search"),
+    ],
+)
+def test_search_space_against_yaml_sweep_is_rejected(
+    tmp_path: Path, sweep_block: str
+) -> None:
+    with pytest.raises(ConfigurationError) as excinfo:
+        _resolve(tmp_path, yaml_text=_PLAIN_YAML + sweep_block, **_SEARCH_SPACE_FLAGS)
+    message = str(excinfo.value)
+    assert "--search-space" in message
+    assert "sweep the config file declares" in message
+
+
 def test_parameter_sweep_flags_apply_to_promoted_lists(tmp_path: Path) -> None:
     sweep = _sweep(
         _resolve(
