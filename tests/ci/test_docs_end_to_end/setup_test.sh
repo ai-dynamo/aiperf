@@ -7,7 +7,13 @@
 # SHARD_TOTAL is also set (>1), the named server's command list is sliced.
 # With nothing set, behavior is unchanged: --all-servers, one big sequential run.
 ARGS=()
-if [ -n "${SERVER_NAME:-}" ]; then
+if [ -n "${SWEEP_NAME:-}" ]; then
+  # Replays a documented group's commands against another model family.
+  ARGS+=("--sweep" "${SWEEP_NAME}")
+  if [ -n "${SHARD_TOTAL:-}" ]; then
+    ARGS+=("--shard-index" "${SHARD_INDEX:-0}" "--shard-total" "${SHARD_TOTAL}")
+  fi
+elif [ -n "${SERVER_NAME:-}" ]; then
   ARGS+=("--server" "${SERVER_NAME}")
   if [ -n "${SHARD_TOTAL:-}" ]; then
     ARGS+=("--shard-index" "${SHARD_INDEX:-0}" "--shard-total" "${SHARD_TOTAL}")

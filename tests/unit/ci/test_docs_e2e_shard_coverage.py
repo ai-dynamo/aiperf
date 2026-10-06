@@ -52,8 +52,57 @@ def _matrix_servers() -> set[str]:
                 continue
             shards = job.get("strategy", {}).get("matrix", {}).get("shard")
             if shards:
-                servers.update(shard["server"] for shard in shards)
+                # A sweep shard names a model-sweep target rather than a
+                # documented server: it replays another group's commands
+                # against a different family, so its server is synthetic.
+                servers.update(shard["server"] for shard in shards if "server" in shard)
     return servers
+
+
+def _matrix_sweeps() -> set[str]:
+    """Every model-sweep target named by a matrix shard."""
+    sweeps: set[str] = set()
+    for path in WORKFLOWS:
+        spec = yaml.safe_load(path.read_text(encoding="utf-8"))
+        for name, job in spec["jobs"].items():
+            if not name.startswith("test-docs-end-to-end"):
+                continue
+            shards = job.get("strategy", {}).get("matrix", {}).get("shard") or []
+            sweeps.update(shard["sweep"] for shard in shards if "sweep" in shard)
+    return sweeps
+
+
+def test_every_sweep_shard_names_a_real_target() -> None:
+    """A sweep shard pointing at nothing would run zero commands and pass."""
+    import sys
+    from pathlib import Path as _Path
+
+    harness = _Path(__file__).resolve().parents[3] / "tests/ci/test_docs_end_to_end"
+    sys.path.insert(0, str(harness))
+    from model_sweep import SWEEP_TARGETS
+
+    dangling = _matrix_sweeps() - set(SWEEP_TARGETS)
+    assert not dangling, (
+        f"matrix sweep shards with no target in model_sweep.SWEEP_TARGETS: "
+        f"{sorted(dangling)}"
+    )
+
+
+def test_every_sweep_target_replays_a_documented_server() -> None:
+    """The corpus it borrows must exist, or the sweep tests nothing."""
+    import sys
+    from pathlib import Path as _Path
+
+    harness = _Path(__file__).resolve().parents[3] / "tests/ci/test_docs_end_to_end"
+    sys.path.insert(0, str(harness))
+    from model_sweep import SWEEP_TARGETS
+
+    documented = _documented_servers()
+    for name, target in SWEEP_TARGETS.items():
+        assert target.replays in documented, (
+            f"sweep '{name}' replays '{target.replays}', which is not a "
+            f"documented server group"
+        )
 
 
 def test_every_documented_server_has_a_shard() -> None:
