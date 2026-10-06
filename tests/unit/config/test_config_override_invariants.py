@@ -33,8 +33,10 @@ import pytest
 from aiperf.common.enums import DatasetType
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags._config_flag_routing import (
+    CONVERGENCE_DETAIL_FIELDS,
     DATASET_OVERRIDE_FIELDS,
     MAGIC_LIST_ONLY_UNDER_CONFIG,
+    RECIPE_INPUT_FIELDS,
     ROUTED_UNDER_CONFIG,
 )
 from aiperf.config.flags._converter_dataset import build_dataset
@@ -105,7 +107,18 @@ FIELD_PROBE_VALUES: dict[str, list[Any]] = {
         ["http://localhost:9400/metrics"],
         ["http://localhost:9401/metrics"],
     ],
-    "isl_osl_pairs": [["128,16"], ["256,32"]],
+    "isl_osl_pairs": ["128/16", "256/32"],
+    # Recipe inputs and convergence details whose annotation-derived probes
+    # (2.0 / 3.0, or a free-form string) fail validation; a raise would count
+    # as loud and the test would pass without checking anything.
+    "degradation_metric_tag": ["time_to_first_token", "inter_token_latency"],
+    "degradation_threshold": [0.1, 0.3],
+    "error_rate_sla": [0.05, 0.1],
+    "slo_attainment_fraction": [0.8, 0.9],
+    "convergence_threshold": [0.05, 0.1],
+    # The recipe's default lower bound is above 2 / 3.
+    "isl_max": [4096, 8192],
+    "osl_max": [512, 2048],
     # --goodput takes space-separated "metric:value" pairs, not a list.
     "goodput": ["ttft:200", "ttft:300"],
     "server_metrics_formats": [["json"], ["csv"]],
@@ -375,11 +388,80 @@ SINGLE_VALUED_FIELDS: frozenset[str] = frozenset(
 )
 
 
+_STREAMING: dict[str, Any] = {"streaming": True}
+_MAX_CONCURRENCY_UNDER_SLA: dict[str, Any] = {
+    "search_recipe": "max-concurrency-under-sla",
+    "ttft_sla_ms": 100.0,
+    **_STREAMING,
+}
+_CONVERGENCE_ON: dict[str, Any] = {
+    "convergence_metric": "time_to_first_token",
+    "num_profile_runs": 5,
+}
+
+# Flags that only mean something beside a companion, mapped to a companion
+# that actually reads them. An entry may carry a baseline value for the field
+# itself when its recipe refuses to expand without one; the field under test
+# overrides it.
+SWEEP_FLAG_COMPANIONS: dict[str, dict[str, Any]] = {
+    "concurrency_min": {"search_recipe": "concurrency-ramp"},
+    "concurrency_max": {"search_recipe": "concurrency-ramp"},
+    "concurrency_steps": {"search_recipe": "concurrency-ramp"},
+    "degradation_metric_tag": {"search_recipe": "concurrency-ramp"},
+    "degradation_stat": {"search_recipe": "concurrency-ramp"},
+    "degradation_threshold": {"search_recipe": "concurrency-ramp"},
+    "isl_min": {"search_recipe": "prefill-ttft-curve", **_STREAMING},
+    "isl_max": {"search_recipe": "prefill-ttft-curve", **_STREAMING},
+    "isl_steps": {"search_recipe": "prefill-ttft-curve", **_STREAMING},
+    "osl_min": {"search_recipe": "decode-itl-curve", **_STREAMING},
+    "osl_max": {"search_recipe": "decode-itl-curve", **_STREAMING},
+    "osl_steps": {"search_recipe": "decode-itl-curve", **_STREAMING},
+    "ttft_sla_ms": {
+        "search_recipe": "max-throughput-ttft-sla",
+        "ttft_sla_ms": 50.0,
+        **_STREAMING,
+    },
+    "itl_sla_ms": {
+        "search_recipe": "max-throughput-itl-sla",
+        "itl_sla_ms": 5.0,
+        **_STREAMING,
+    },
+    "tpot_sla_ms": {
+        "search_recipe": "max-throughput-itl-sla",
+        "tpot_sla_ms": 5.0,
+        **_STREAMING,
+    },
+    "e2e_sla_ms": _MAX_CONCURRENCY_UNDER_SLA,
+    "error_rate_sla": _MAX_CONCURRENCY_UNDER_SLA,
+    "search_style": _MAX_CONCURRENCY_UNDER_SLA,
+    "slo_attainment_fraction": {
+        "search_recipe": "max-goodput-under-slo",
+        "ttft_sla_ms": 100.0,
+        "tpot_sla_ms": 10.0,
+        "e2e_sla_ms": 1000.0,
+        **_STREAMING,
+    },
+    "isl_osl_pairs": {
+        "search_recipe": "pareto-sweep",
+        "isl_osl_pairs": "64/64",
+        **_STREAMING,
+    },
+    "convergence_mode": _CONVERGENCE_ON,
+    "convergence_stat": _CONVERGENCE_ON,
+    "convergence_threshold": _CONVERGENCE_ON,
+    "sweep_type": {"concurrency": [1, 2]},
+}
+
+_COMPANION_REQUIRED_FIELDS: frozenset[str] = (
+    RECIPE_INPUT_FIELDS | CONVERGENCE_DETAIL_FIELDS | {"sweep_type"}
+)
+
+
 def _companions_for(field: str) -> dict[str, Any]:
     """Flags that must accompany ``field`` for it to mean anything."""
     from aiperf.config.flags._config_flag_routing import COMPANION_ROUTED
 
-    companions: dict[str, Any] = {}
+    companions: dict[str, Any] = dict(SWEEP_FLAG_COMPANIONS.get(field, {}))
     for companion in COMPANION_ROUTED.get(field, ()):  # type: ignore[call-overload]
         if companion == "model_names":
             companions["model_names"] = ["companion-model"]
@@ -443,7 +525,7 @@ def test_routed_field_never_silently_no_ops(
         for value in candidates:
             try:
                 resolved = resolve_config(
-                    cli(**{field: value}, **companions), config_yaml
+                    cli(**{**companions, field: value}), config_yaml
                 ).model_dump(mode="json")
             except (ValueError, TypeError, ConfigurationError):
                 continue  # loud: acceptable
@@ -463,6 +545,16 @@ def test_routed_field_never_silently_no_ops(
         f"--{field.replace('_', '-')} (both raised on companions alone), so "
         f"this case checked nothing. Fix the companion/fixture combination, "
         f"or move the field to UNDRIVABLE_FIELDS with a reason."
+    )
+
+
+def test_every_companion_required_flag_has_test_companions() -> None:
+    """A companion-required flag driven alone only ever raises, so the no-op
+    test would pass for it without checking anything."""
+    missing = _COMPANION_REQUIRED_FIELDS - SWEEP_FLAG_COMPANIONS.keys()
+    assert not missing, (
+        f"{sorted(missing)} need a companion to take effect; add each to "
+        f"SWEEP_FLAG_COMPANIONS with a companion that reads it."
     )
 
 

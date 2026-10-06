@@ -128,7 +128,10 @@ def _resolve_config_envelopes(
 ) -> AIPerfConfig:
     """Resolve rendered and pre-Jinja envelopes through one override pipeline."""
     from aiperf.config import AIPerfConfig
-    from aiperf.config.flags._config_flag_routing import reject_unrouted_cli_flags
+    from aiperf.config.flags._config_flag_routing import (
+        reject_missing_sweep_companions,
+        reject_unrouted_cli_flags,
+    )
     from aiperf.config.flags.converter import _wrap_under_envelope
 
     # Fail before any merging: a flag this path cannot route would otherwise
@@ -137,6 +140,7 @@ def _resolve_config_envelopes(
     reject_unrouted_cli_flags(cli_config)
     _normalize_loaded_benchmark_shorthands(yaml_dict)
     _normalize_loaded_benchmark_shorthands(raw_yaml_dict)
+    reject_missing_sweep_companions(cli_config, yaml_dict)
     # Build the recipe's view of BenchmarkConfig from YAML + the
     # endpoint/input CLI overrides ONLY: the recipe inspects fields like
     # ``endpoint.streaming`` (via ``require_streaming``) before emitting
@@ -176,10 +180,36 @@ def _resolve_config_envelopes(
         phase_identity=merged.phase_identity,
     )
 
+    for envelope in (merged.envelope, raw_merged.envelope):
+        _apply_convergence_overrides(envelope, cli_config)
+
     config = AIPerfConfig.model_validate(merged.envelope)
     config._raw_envelope = raw_merged.envelope
     _validate_search_space_phase_targets(config, merged.envelope)
     return config
+
+
+def _apply_convergence_overrides(envelope: dict[str, Any], cli: CLIConfig) -> None:
+    """Overlay ``--convergence-*`` details onto a YAML convergence block.
+
+    With ``--convergence-metric`` set, ``build_multi_run`` already emits the
+    whole block and the merge handles precedence. Without it, the details can
+    only refine a block the config file declares.
+    """
+    from aiperf.config.flags._config_flag_routing import CONVERGENCE_DETAIL_FIELDS
+
+    set_fields = cli.model_fields_set
+    details = set_fields & CONVERGENCE_DETAIL_FIELDS
+    if not details or (
+        "convergence_metric" in set_fields and cli.convergence_metric is not None
+    ):
+        return
+    multi_run = _get_config_value(envelope, "multi_run")
+    convergence = multi_run.get("convergence") if isinstance(multi_run, dict) else None
+    if not isinstance(convergence, dict):
+        return
+    for name in details:
+        convergence[name.removeprefix("convergence_")] = getattr(cli, name)
 
 
 def _validate_search_space_phase_targets(

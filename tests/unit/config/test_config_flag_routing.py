@@ -85,13 +85,11 @@ def test_unrouted_input_flag_raises_naming_the_flag(base_yaml: Path) -> None:
         resolve_config(cli(public_dataset="sharegpt"), base_yaml)
 
 
-def test_unrouted_sweeping_flag_raises(base_yaml: Path) -> None:
-    """Sweep bounds resolve cleanly and change nothing, so they must error.
-
-    (The warmup flags this used to check are routed now.)
-    """
-    with pytest.raises(ConfigurationError, match=r"--concurrency-min"):
-        resolve_config(cli(concurrency_min=2), base_yaml)
+def test_unrouted_phase_flag_raises(base_yaml: Path) -> None:
+    """--no-fixed-schedule is consumed by phase construction, which this path
+    does not rebuild, so it must error rather than be dropped."""
+    with pytest.raises(ConfigurationError, match=r"--no-fixed-schedule"):
+        resolve_config(cli(disable_auto_fixed_schedule=True), base_yaml)
 
 
 def test_dataset_type_switch_flag_raises(base_yaml: Path) -> None:
@@ -103,16 +101,18 @@ def test_dataset_type_switch_flag_raises(base_yaml: Path) -> None:
 def test_error_names_every_offending_flag(base_yaml: Path) -> None:
     """All unrouted flags are reported at once, not one per run."""
     with pytest.raises(ConfigurationError) as excinfo:
-        resolve_config(cli(concurrency_min=2, public_dataset="sharegpt"), base_yaml)
+        resolve_config(
+            cli(disable_auto_fixed_schedule=True, public_dataset="sharegpt"), base_yaml
+        )
     message = str(excinfo.value)
-    assert "--concurrency-min" in message
+    assert "--no-fixed-schedule" in message
     assert "--public-dataset" in message
 
 
 def test_error_mentions_config_flag_as_the_cause(base_yaml: Path) -> None:
     """The message must tell users WHY the flag was rejected."""
     with pytest.raises(ConfigurationError, match=r"--config"):
-        resolve_config(cli(concurrency_min=2), base_yaml)
+        resolve_config(cli(disable_auto_fixed_schedule=True), base_yaml)
 
 
 # ---------------------------------------------------------------------------
