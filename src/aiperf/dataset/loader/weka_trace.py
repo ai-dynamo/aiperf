@@ -1277,13 +1277,12 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         )
         # Only synthetic datasets carry prompts.block_size; FileDataset (the
         # weka home) has none, so the user override is None and the precedence
-        # collapses to trace-declared > 64.
+        # collapses to trace-declared > 64. ``default_block_size`` (plugin
+        # metadata) is not an override: every weka trace declares its own.
         prompts = getattr(dataset, "prompts", None)
         user_block_size = getattr(prompts, "block_size", None) if prompts else None
         if user_block_size is not None:
             self._user_block_size_override: int | None = user_block_size
-        elif default_block_size is not None:
-            self._user_block_size_override = default_block_size
         else:
             self._user_block_size_override = None
         # ``self._block_size`` is preserved for callbacks (``_decode_block_tokens``
