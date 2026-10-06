@@ -34,6 +34,9 @@ STAT_KEYS = [
     "std",
 ]
 
+DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS: float = 30.0
+"""Default ``--benchmark-grace-period``; also applied when a scenario auto-fills the duration."""
+
 GOOD_REQUEST_COUNT_TAG = "good_request_count"
 """GoodRequestCount metric tag"""
 

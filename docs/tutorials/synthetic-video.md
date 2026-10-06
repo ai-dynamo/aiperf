@@ -295,6 +295,8 @@ This generates videos with a mono audio track using an auto-selected codec (libv
 | `--video-audio-codec` | `string` | auto | Audio codec (`libvorbis`, `libopus`, `aac`; `aac` is not in the AIPerf container) |
 | `--video-audio-depth` | `int` | `16` | Bit depth per sample (8, 16, 24, or 32) |
 
+Audio samples are clipped to [-1, 1] and scaled to the integer sample type's full range to preserve signal amplitude, including at 24-bit depth. `--video-audio-depth` controls the intermediate WAV's PCM bit depth; the selected audio codec then encodes that WAV into the video track.
+
 #### Audio Codec Selection
 
 When `--video-audio-codec` is not specified, the codec is automatically selected based on the video format:
@@ -343,7 +345,7 @@ aiperf profile \
 #### How It Works
 
 1. A Gaussian noise audio signal is generated matching the video duration
-2. The audio is encoded as 16-bit PCM WAV
+2. The audio is encoded as PCM WAV at the configured `--video-audio-depth` (16-bit by default)
 3. FFmpeg muxes the video and audio streams together using `-shortest` to ensure duration alignment
 4. The audio codec converts the WAV data to the target format (Vorbis or Opus)
 5. The resulting video+audio file is base64-encoded for API requests
