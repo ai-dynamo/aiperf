@@ -1403,13 +1403,6 @@ plot:
       category: comparison
 
 # =============================================================================
-# GPU Telemetry Collector
-# =============================================================================
-# GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.
-# Supports DCGM HTTP endpoints and plugin-defined local collectors.
-# One-to-one mapping based on gpu_telemetry_collector configuration.
-# =============================================================================
-# =============================================================================
 # Host Telemetry Collector
 # =============================================================================
 # Host-side power/energy collectors, the sibling of gpu_telemetry_collector.
@@ -1427,6 +1420,13 @@ host_telemetry_collector:
       NOT YET WIRED: no CLI flag instantiates this collector yet; it becomes
       reachable when the host telemetry manager lands.
 
+# =============================================================================
+# GPU Telemetry Collector
+# =============================================================================
+# GPU telemetry collectors gather GPU metrics from various sources and deliver them via callbacks.
+# Supports DCGM HTTP endpoints and plugin-defined local collectors.
+# One-to-one mapping based on gpu_telemetry_collector configuration.
+# =============================================================================
 gpu_telemetry_collector:
   dcgm:
     class: aiperf.gpu_telemetry.dcgm_collector:DCGMTelemetryCollector

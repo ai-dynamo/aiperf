@@ -9,13 +9,18 @@ root, and they run on every platform the rest of the suite runs on.
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 
 from aiperf.common.models import ErrorDetails
-from aiperf.common.models.host_telemetry_models import HostTelemetryRecord
+from aiperf.common.models.host_telemetry_models import (
+    HostTelemetryMetrics,
+    HostTelemetryRecord,
+)
 from aiperf.host_telemetry.rapl_collector import (
     RAPLDomain,
     RAPLTelemetryCollector,
@@ -407,16 +412,36 @@ class TestResetVersusWrap:
     def test_reset_far_from_range_is_absorbed_not_credited_as_wrap(
         self, powercap: Path
     ) -> None:
-        """A counter reset at 10% of range must not inject a full range."""
+        """A counter reset at 10% of range must not inject a full range, and the
+        energy used since the counter restarted still counts."""
         d = discover_domains(powercap)[0]
         assert d.max_energy_uj == 262143328850.0
         (d.path / "energy_uj").write_text("26214332885")  # 10% of range
         first = d.read_energy_uj()
         (d.path / "energy_uj").write_text("1000")  # backwards, far from ceiling
-        second = d.read_energy_uj()
-        assert second == first  # absorbed, nondecreasing
+        assert d.read_energy_uj() == first + 1000
         (d.path / "energy_uj").write_text("2000")
-        assert d.read_energy_uj() == first + 1000  # counting resumes
+        assert d.read_energy_uj() == first + 2000
+
+    def test_a_backwards_step_from_exactly_half_the_range_is_a_wrap(
+        self, powercap: Path
+    ) -> None:
+        d = discover_domains(powercap)[0]
+        (d.path / "energy_uj").write_text(str(int(d.max_energy_uj) // 2))
+        d.read_energy_uj()
+        (d.path / "energy_uj").write_text("1000")
+        assert d.read_energy_uj() == 1000 + d.max_energy_uj
+
+    def test_a_reset_is_logged(
+        self, powercap: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="aiperf.host_telemetry.rapl_collector")
+        d = discover_domains(powercap)[0]
+        (d.path / "energy_uj").write_text("26214332885")
+        d.read_energy_uj()
+        (d.path / "energy_uj").write_text("1000")
+        d.read_energy_uj()
+        assert "treating as a reset, not a wrap" in caplog.text
 
     def test_backwards_step_near_range_ceiling_is_still_a_wrap(
         self, powercap: Path
@@ -475,6 +500,41 @@ class TestFailureVisibility:
         assert len(ids) == len(c.domains) - 1
 
 
+class TestNonFiniteValues:
+    """'inf' and 'nan' parse as floats, and a non-finite energy would otherwise
+    be serialised as null and lost."""
+
+    @pytest.mark.parametrize("text", ["inf", "nan"])
+    def test_a_non_finite_counter_reads_as_unreadable(
+        self, tmp_path: Path, text: str
+    ) -> None:
+        make_domain(tmp_path, "intel-rapl:0", "package-0", None)
+        (tmp_path / "intel-rapl:0" / "energy_uj").write_text(text)
+        assert RAPLDomain(tmp_path / "intel-rapl:0", 0).read_energy_uj() is None
+
+    @pytest.mark.parametrize(
+        "field", ["energy_consumption_uj", "power_usage_w", "energy_range_uj"]
+    )
+    @pytest.mark.parametrize("value", [float("inf"), float("nan")])
+    def test_the_model_rejects_a_non_finite_value(
+        self, field: str, value: float
+    ) -> None:
+        with pytest.raises(ValidationError):
+            HostTelemetryMetrics(**{field: value})
+
+
+class TestUnparseableRange:
+    def test_a_garbage_range_is_logged(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="aiperf.host_telemetry.rapl_collector")
+        make_domain(tmp_path, "intel-rapl:0", "package-0", 1000, max_range=None)
+        (tmp_path / "intel-rapl:0" / "max_energy_range_uj").write_text("garbage")
+        d = RAPLDomain(tmp_path / "intel-rapl:0", 0)
+        assert d.max_energy_uj is None
+        assert "max_energy_range_uj is present but unparseable" in caplog.text
+
+
 class TestDomainOrdering:
     def test_double_digit_domains_sort_numerically(self, tmp_path: Path) -> None:
         for i in (0, 1, 2, 10, 11):
@@ -490,4 +550,16 @@ class TestDomainOrdering:
             (2, "intel-rapl:2"),
             (3, "intel-rapl:10"),
             (4, "intel-rapl:11"),
+        ]
+
+    def test_double_digit_subdomains_sort_numerically(self, tmp_path: Path) -> None:
+        parent = make_domain(tmp_path, "intel-rapl:0", "package-0", 1)
+        for i in (0, 2, 10):
+            make_domain(parent, f"intel-rapl:0:{i}", f"sub-{i}", 1)
+        order = [d.domain_id for d in discover_domains(tmp_path)]
+        assert order == [
+            "intel-rapl:0",
+            "intel-rapl:0:0",
+            "intel-rapl:0:2",
+            "intel-rapl:0:10",
         ]

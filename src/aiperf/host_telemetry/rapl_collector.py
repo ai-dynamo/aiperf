@@ -138,12 +138,18 @@ class RAPLDomain:
         near zero on suspend/resume, an intel_rapl module reload, or a
         container restart, and crediting a reset as a wrap would inject a full
         range of phantom energy. So a backwards step only counts as a wrap
-        when the previous reading was in the upper half of the declared range;
-        otherwise the jump is absorbed, the interval is lost, and the running
-        total stays nondecreasing. The same absorption is the fallback when no
-        range is declared, and in both absorbed cases the total is permanently
-        biased low by the unknowable lost interval, which compounds if it
-        happens again. That bias is the price of never inventing energy.
+        when the previous reading was in the upper half of the declared range.
+        Otherwise it is treated as a reset: the counter restarted from zero, so
+        the new reading is the energy used since, and only the energy between
+        the last read and the reset is lost. The same treatment is the fallback
+        when no range is declared, where the energy between the last read and
+        the wrap is the part lost.
+
+        The split at half the range is a heuristic and errs both ways. A reset
+        from the upper half is still credited as a wrap, adding up to half a
+        range of energy that was never consumed. A true wrap from the lower
+        half would need more than half a range consumed in one interval, which
+        a reader polling at any normal rate does not see.
         """
         raw = self._read_float("energy_uj")
         if raw is None:
@@ -162,7 +168,9 @@ class RAPLDomain:
                         self._last_raw,
                         100.0 * self._last_raw / self.max_energy_uj,
                     )
-                self._wrap_offset += self._last_raw - raw
+                # A reset: the counter restarted from zero, so raw is the
+                # energy used since.
+                self._wrap_offset += self._last_raw
 
         self._last_raw = raw
         return raw + self._wrap_offset
@@ -211,6 +219,34 @@ def discover_domains(root: Path = POWERCAP_ROOT) -> list[RAPLDomain]:
             domains.append(RAPLDomain(child_path, index, parent_id=parent.domain_id))
             index += 1
     return domains
+
+
+def _readable_domains(root: Path) -> list[RAPLDomain]:
+    """The readable RAPL domains under ``root``, or RAPLUnavailableError saying why."""
+    if not IS_LINUX:
+        raise RAPLUnavailableError(
+            f"RAPL is a Linux powercap interface and this host is {platform.system()}."
+        )
+    if not root.is_dir():
+        raise RAPLUnavailableError(
+            f"{root} does not exist, so this kernel exposes no powercap interface. "
+            "On a supported CPU this usually means the intel_rapl_common module is "
+            "not loaded."
+        )
+    domains = discover_domains(root)
+    if not domains:
+        raise RAPLUnavailableError(
+            f"{root} exists but contains no intel-rapl domains. "
+            f"Detected machine: {platform.machine()}."
+        )
+    readable = [d for d in domains if d.is_readable()]
+    if not readable:
+        raise RAPLUnavailableError(
+            f"Found {len(domains)} RAPL domain(s) but none has a readable energy_uj. "
+            "Since CVE-2020-8694 most distributions restrict it to mode 0400, so this "
+            "normally means the process is not running as root."
+        )
+    return readable
 
 
 class RAPLTelemetryCollector(AIPerfLifecycleMixin):
@@ -262,29 +298,7 @@ class RAPLTelemetryCollector(AIPerfLifecycleMixin):
         exists. An instance's configured ``root`` is honoured at initialize
         time, not here.
         """
-        if not IS_LINUX:
-            raise RAPLUnavailableError(
-                f"RAPL is a Linux powercap interface and this host is "
-                f"{platform.system()}."
-            )
-        if not Path(root).is_dir():
-            raise RAPLUnavailableError(
-                f"{root} does not exist, so this kernel exposes no powercap interface. "
-                "On a supported CPU this usually means the intel_rapl_common module is "
-                "not loaded."
-            )
-        domains = discover_domains(Path(root))
-        if not domains:
-            raise RAPLUnavailableError(
-                f"{root} exists but contains no intel-rapl domains. "
-                f"Detected machine: {platform.machine()}."
-            )
-        if not any(d.is_readable() for d in domains):
-            raise RAPLUnavailableError(
-                f"Found {len(domains)} RAPL domain(s) but none has a readable energy_uj. "
-                "Since CVE-2020-8694 most distributions restrict it to mode 0400, so this "
-                "normally means the process is not running as root."
-            )
+        _readable_domains(Path(root))
 
     @on_init
     async def _discover_readable_domains(self) -> None:
@@ -301,32 +315,7 @@ class RAPLTelemetryCollector(AIPerfLifecycleMixin):
 
     def _discover_readable_sync(self) -> list[RAPLDomain]:
         """One walk of the tree, validated and filtered to readable domains."""
-        if not IS_LINUX:
-            raise RAPLUnavailableError(
-                f"RAPL is a Linux powercap interface and this host is "
-                f"{platform.system()}."
-            )
-        if not self.root.is_dir():
-            raise RAPLUnavailableError(
-                f"{self.root} does not exist, so this kernel exposes no "
-                "powercap interface. On a supported CPU this usually means "
-                "the intel_rapl_common module is not loaded."
-            )
-        domains = discover_domains(self.root)
-        if not domains:
-            raise RAPLUnavailableError(
-                f"{self.root} exists but contains no intel-rapl domains. "
-                f"Detected machine: {platform.machine()}."
-            )
-        readable = [d for d in domains if d.is_readable()]
-        if not readable:
-            raise RAPLUnavailableError(
-                f"Found {len(domains)} RAPL domain(s) but none has a readable "
-                "energy_uj. Since CVE-2020-8694 most distributions restrict it "
-                "to mode 0400, so this normally means the process is not "
-                "running as root."
-            )
-        return readable
+        return _readable_domains(self.root)
 
     async def is_url_reachable(self) -> bool:
         """Whether at least one RAPL domain can be read."""
