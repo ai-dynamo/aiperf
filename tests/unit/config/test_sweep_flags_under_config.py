@@ -429,3 +429,33 @@ def test_variant_changing_a_run_level_setting_is_rejected(tmp_path: Path) -> Non
     """Runs carry only benchmark overlays; a multi_run change would vanish."""
     with pytest.raises(ConfigurationError, match="multi_run"):
         _resolve(tmp_path, sweep_variants=["a: num_profile_runs=3", "b: concurrency=2"])
+
+
+def test_variant_setting_parameter_sweep_flag_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match="--parameter-sweep-mode"):
+        _resolve(
+            tmp_path,
+            sweep_variants=["a: parameter-sweep-mode=independent", "b: concurrency=2"],
+        )
+
+
+def test_variant_setting_convergence_detail_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match="--convergence-stat"):
+        _resolve(
+            tmp_path,
+            yaml_text=_PLAIN_YAML + _CONVERGENCE_BLOCK,
+            sweep_variants=["a: convergence-stat=p90", "b: concurrency=2"],
+        )
+
+
+def test_variant_repeating_outer_parameter_sweep_value_is_allowed(
+    tmp_path: Path,
+) -> None:
+    sweep = _sweep(
+        _resolve(
+            tmp_path,
+            sweep_variants=_VARIANTS,
+            parameter_sweep_cooldown_seconds=3.0,
+        )
+    )
+    assert sweep["cooldown_seconds"] == 3.0

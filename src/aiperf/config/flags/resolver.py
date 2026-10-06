@@ -316,6 +316,13 @@ def _build_variant_runs(
         # A variant key can be any CLI flag, so it gets the command line's checks.
         reject_unrouted_cli_flags(variant_cli)
         reject_missing_sweep_companions(variant_cli, yaml_dict)
+        run_level_flags = _variant_run_level_flags(variant_cli, cli_config)
+        if run_level_flags:
+            raise ConfigurationError(
+                f"--variant {name!r} sets {', '.join(run_level_flags)}, which "
+                f"apply to the whole sweep rather than one variant. Pass them "
+                f"outside --variant."
+            )
         overrides = build_cli_overrides(variant_cli, benchmark_config=benchmark_config)
         variant = _merge_overrides_into_envelope(
             copy.deepcopy(yaml_dict),
@@ -340,6 +347,32 @@ def _build_variant_runs(
             run["benchmark"] = run_benchmark
         runs.append(run)
     return runs
+
+
+def _variant_run_level_flags(
+    variant_cli: CLIConfig, cli_config: CLIConfig
+) -> list[str]:
+    """Name the sweep-wide flags a variant sets to a value the outer CLI did not.
+
+    ``--parameter-sweep-*``, ``--convergence-*`` and ``--sweep-type`` are
+    applied after the merge, from the outer CLI only, so a variant-level value
+    would be silently dropped. Values copied in from the outer CLI are fine.
+    """
+    from aiperf.config.flags._config_flag_routing import (
+        CONVERGENCE_DETAIL_FIELDS,
+        flag_names_for,
+    )
+    from aiperf.config.flags.converter import _PARAMETER_SWEEP_KEYS
+
+    run_level = {cli_field for cli_field, _ in _PARAMETER_SWEEP_KEYS}
+    run_level |= CONVERGENCE_DETAIL_FIELDS | {"sweep_type"}
+    outer_set = cli_config.model_fields_set
+    return [
+        flag_names_for(name)[0]
+        for name in sorted(run_level & variant_cli.model_fields_set)
+        if name not in outer_set
+        or getattr(variant_cli, name) != getattr(cli_config, name)
+    ]
 
 
 def _validate_search_space_phase_targets(
