@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import io
 import logging
+import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -75,6 +77,37 @@ class TestCreateBasicHandler:
         assert "%(levelname)" in fmt._fmt
         assert "%(filename)s" in fmt._fmt
         assert fmt.datefmt == "%H:%M:%S"
+
+    def test_console_stream_tolerates_non_utf8_codepage(self, monkeypatch):
+        """issue #1466: a legacy console code page must not crash the emit.
+
+        A non-UTF-8 code page (e.g. Windows cp1252) previously raised
+        UnicodeEncodeError inside StreamHandler.emit() for any message
+        containing a character outside that page; logging's own
+        handleError() turned that into a "Logging error" banner in place of
+        the real line. The stream is now reconfigured to escape what the
+        code page can't represent instead of losing the message.
+        """
+        buffer = io.BytesIO()
+        cp1252_stream = io.TextIOWrapper(buffer, encoding="cp1252", newline="")
+        monkeypatch.setattr(sys, "stdout", cp1252_stream)
+
+        handler = _create_basic_handler("INFO")
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname=__file__,
+            lineno=1,
+            msg="sweep row 日 done",
+            args=(),
+            exc_info=None,
+        )
+        handler.emit(record)
+        handler.stream.flush()
+
+        written = buffer.getvalue().decode("cp1252")
+        assert "Logging error" not in written
+        assert "\\u65e5" in written
 
 
 # ---------------------------------------------------------------------------
