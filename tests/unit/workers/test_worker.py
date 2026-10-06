@@ -12,6 +12,7 @@ from aiperf.common.models import (
     Conversation,
     ErrorDetails,
     ParsedResponse,
+    RequestInfo,
     RequestRecord,
     SSEMessage,
     TextResponseData,
@@ -1090,6 +1091,101 @@ class TestFinalizeSessionResponseChaining:
         mock_worker._finalize_session_response(session, sample_credit_context, record)
 
         assert session.previous_response_id == "resp_new"
+
+    async def test_finalize_session_response_success_records_system_prompt_flag(
+        self,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The flag is computed from the full RequestInfo that was sent, not the
+        slim RecordContext on the record."""
+        monkeypatch.setattr(
+            mock_worker, "_process_responses_for_record", Mock(return_value=([], None))
+        )
+        monkeypatch.setattr(mock_worker, "_populate_response_metrics", Mock())
+        endpoint = mock_worker.inference_client.endpoint
+        monkeypatch.setattr(
+            endpoint, "extract_response_id", Mock(return_value="resp_new")
+        )
+        stored = Mock(return_value=True)
+        monkeypatch.setattr(
+            endpoint, "stored_history_has_system_prompt", stored, raising=False
+        )
+        session = self._chaining_session()
+        request_info = Mock(spec=RequestInfo)
+        record = RequestRecord(timestamp_ns=1, start_perf_ns=1, end_perf_ns=2)
+
+        mock_worker._finalize_session_response(
+            session, sample_credit_context, record, request_info
+        )
+
+        stored.assert_called_once_with(request_info)
+        assert session.previous_response_id == "resp_new"
+        assert session.system_prompt_in_stored_history is True
+
+    @pytest.mark.parametrize("last_good_flag", [param(True, id="flag_true"), param(False, id="flag_false")])  # fmt: skip
+    async def test_finalize_session_response_error_keeps_last_good_system_prompt_flag(
+        self,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        monkeypatch: pytest.MonkeyPatch,
+        last_good_flag: bool,
+    ) -> None:
+        """A failed request never reached stored history, so neither the id nor
+        the flag may move off the last successful response."""
+        monkeypatch.setattr(
+            mock_worker, "_process_responses_for_record", Mock(return_value=([], None))
+        )
+        monkeypatch.setattr(mock_worker, "_populate_response_metrics", Mock())
+        endpoint = mock_worker.inference_client.endpoint
+        monkeypatch.setattr(
+            endpoint, "extract_response_id", Mock(return_value="resp_partial")
+        )
+        stored = Mock(return_value=not last_good_flag)
+        monkeypatch.setattr(
+            endpoint, "stored_history_has_system_prompt", stored, raising=False
+        )
+        session = self._chaining_session()
+        session.store_response_id("resp_good", system_prompt_in_history=last_good_flag)
+        record = RequestRecord(error=ErrorDetails(message="boom", type="TestError"))
+
+        mock_worker._finalize_session_response(
+            session, sample_credit_context, record, Mock(spec=RequestInfo)
+        )
+
+        stored.assert_not_called()
+        assert session.previous_response_id == "resp_good"
+        assert session.system_prompt_in_stored_history is last_good_flag
+
+    async def test_process_credit_with_session_finalizes_with_sent_request_info(
+        self,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The record only carries a slim RecordContext, so the full RequestInfo
+        that was sent must reach the finalizer for the flag to be computed."""
+        session = self._chaining_session()
+        monkeypatch.setattr(
+            mock_worker.session_manager, "get", Mock(return_value=session)
+        )
+        sent = Mock(spec=RequestInfo)
+        monkeypatch.setattr(
+            mock_worker, "_create_request_info", Mock(return_value=sent)
+        )
+        record = RequestRecord(timestamp_ns=1, start_perf_ns=1, end_perf_ns=2)
+        monkeypatch.setattr(
+            mock_worker, "_execute_request", AsyncMock(return_value=record)
+        )
+        finalize = Mock()
+        monkeypatch.setattr(mock_worker, "_finalize_session_response", finalize)
+
+        await mock_worker._process_credit_with_session(
+            sample_credit_context, "x-req", "test-corr", None
+        )
+
+        finalize.assert_called_once_with(session, sample_credit_context, record, sent)
 
 
 @pytest.mark.asyncio

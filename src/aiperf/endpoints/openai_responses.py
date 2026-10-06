@@ -207,18 +207,7 @@ class ResponsesEndpoint(BaseEndpoint):
                 if request_info.user_context_message
                 else []
             )
-        instructions = request_info.system_message or None
-        if (
-            instructions
-            and request_info.previous_response_id
-            and self._chain_history_embeds_system_prompt(turns)
-        ):
-            # An earlier request in this chain merged the system prompt into an
-            # authored input item, which the server now replays from stored
-            # history. Top-level ``instructions`` is not carried across
-            # ``previous_response_id``, so re-sending it -- or merging it into
-            # this turn's own system item -- would double the prompt.
-            instructions = None
+        instructions, merge_prefix = self._system_prompt_carrier(request_info, rendered)
 
         # A dataset that authored its own leading ``role: system`` input item
         # collides with ``instructions``: both ship, and the server sees two
@@ -236,21 +225,15 @@ class ResponsesEndpoint(BaseEndpoint):
         # any extra fields on the authored item; the dataset's explicit wire
         # shape wins here.
         leading_system: list[dict[str, Any]] = []
-        if (
-            instructions
-            and rendered
-            and isinstance(rendered[0], dict)
-            and rendered[0].get("role") == "system"
-        ):
+        if merge_prefix is not None:
             # Copy rather than mutate: ``rendered`` aliases the turn's
             # raw_messages, reused across credits in a session.
             merged = dict(rendered[0])
             merged["content"] = self._prepend_system_text(
-                instructions, merged.get("content")
+                merge_prefix, merged.get("content")
             )
             leading_system = [merged]
             rendered = rendered[1:]
-            instructions = None
 
         input_items: list[dict[str, Any]] = [
             *leading_system,
@@ -291,30 +274,54 @@ class ResponsesEndpoint(BaseEndpoint):
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
 
-    def _chain_history_embeds_system_prompt(self, turns: list[Turn]) -> bool:
-        """Whether a prior request in this chain merged the system prompt.
+    @staticmethod
+    def _system_prompt_already_stored(request_info: RequestInfo) -> bool:
+        return bool(
+            request_info.previous_response_id
+            and request_info.system_prompt_in_stored_history
+        )
 
-        ``format_payload`` merges into the leading input item of every request
-        that has one with ``role: system``. The chain's first request was sent
-        statelessly from the last ``reset_context`` turn (the session clears
-        ``previous_response_id`` there), and each chained request sent a single
-        turn, so a prior turn whose first emitted item is a system item marks
-        a merge already sitting in server-side history.
+    def _system_prompt_carrier(
+        self, request_info: RequestInfo, rendered: list[dict[str, Any]]
+    ) -> tuple[str | None, str | None]:
+        """Decide how this request carries ``system_message``.
+
+        Returns ``(instructions, merge_prefix)``: at most one is set, and
+        ``merge_prefix`` means "prepend to the authored leading system item".
+        When the chained response's stored history already holds the prompt
+        as an input item, neither is set: top-level ``instructions`` is not
+        carried across ``previous_response_id``, but stored input items are,
+        so sending it again would double the prompt.
         """
-        start = 0
-        for i in range(len(turns) - 2, -1, -1):
-            if turns[i].reset_context and turns[i].raw_messages is not None:
-                start = i
-                break
-        for turn in turns[start:-1]:
-            rendered = self.build_messages([turn])
-            if (
-                rendered
-                and isinstance(rendered[0], dict)
-                and rendered[0].get("role") == "system"
-            ):
-                return True
-        return False
+        system_message = request_info.system_message or None
+        if system_message is None or self._system_prompt_already_stored(request_info):
+            return None, None
+        if (
+            rendered
+            and isinstance(rendered[0], dict)
+            and rendered[0].get("role") == "system"
+        ):
+            return None, system_message
+        return system_message, None
+
+    def stored_history_has_system_prompt(self, request_info: RequestInfo) -> bool:
+        """Whether the stored history of the response to ``request_info``
+        contains the system prompt.
+
+        The worker records this next to the response ID on success only, so
+        the flag always describes the response being chained onto. It holds
+        when the chain already carried the prompt, or when this request merged
+        it into an input item; prompts sent as ``instructions`` are not stored.
+        """
+        if not request_info.system_message:
+            return False
+        if self._system_prompt_already_stored(request_info):
+            return True
+        turns = request_info.turns
+        rendered = self.build_messages(
+            [turns[-1]] if request_info.previous_response_id else turns
+        )
+        return self._system_prompt_carrier(request_info, rendered)[1] is not None
 
     _warned_chaining_isl: bool = False
 

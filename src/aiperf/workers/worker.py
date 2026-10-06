@@ -1696,7 +1696,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             credit_context, request_info, first_token_callback
         )
 
-        self._finalize_session_response(session, credit_context, record)
+        self._finalize_session_response(session, credit_context, record, request_info)
 
     async def _try_payload_bytes_fast_path(
         self,
@@ -1793,9 +1793,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         session: UserSession,
         credit_context: CreditContext,
         record: RequestRecord,
+        request_info: RequestInfo | None = None,
     ) -> None:
         """Store the assistant turn (when retained) and populate metrics from a
-        single response-processing pass, shared with the payload-bytes path."""
+        single response-processing pass, shared with the payload-bytes path.
+
+        ``request_info`` is the full request that produced ``record``; the
+        record itself only carries the slim ``RecordContext``.
+        """
         parsed_responses, assistant_turn = self._process_responses_for_record(
             record,
             capture_assistant_turn=session.should_store_response(),
@@ -1818,7 +1823,19 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 )
             )
         ):
-            session.store_response_id(extract_response_id(record))
+            stored_has_system_prompt = getattr(
+                self.inference_client.endpoint,
+                "stored_history_has_system_prompt",
+                None,
+            )
+            session.store_response_id(
+                extract_response_id(record),
+                system_prompt_in_history=bool(
+                    stored_has_system_prompt
+                    and request_info is not None
+                    and stored_has_system_prompt(request_info)
+                ),
+            )
         self._populate_response_metrics(credit_context, record, parsed_responses)
 
     def _populate_response_metrics(
@@ -2124,6 +2141,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             source_kind=source_turn.source_kind if source_turn else None,
             turns=turns,
             previous_response_id=session.previous_response_id if session else None,
+            system_prompt_in_stored_history=session.system_prompt_in_stored_history
+            if session
+            else False,
             drop_perf_ns=credit_context.drop_perf_ns,
             credit_issued_ns=credit.issued_at_ns,
             system_message=system_message,

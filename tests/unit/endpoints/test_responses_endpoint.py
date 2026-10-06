@@ -1328,88 +1328,129 @@ class TestResponsesStatefulChaining:
     def _user_turn(user: str) -> Turn:
         return Turn(raw_messages=[{"role": "user", "content": user, "type": "message"}])
 
-    def test_format_payload_chain_after_merged_system_item_omits_instructions(
+    def _request(
+        self,
+        endpoint: ResponsesEndpoint,
+        turns: list[Turn],
+        *,
+        previous_response_id: str | None = None,
+        in_history: bool = False,
+    ):
+        return create_request_info(
+            model_endpoint=endpoint.model_endpoint,
+            turns=turns,
+            system_message="CLI POLICY",
+            previous_response_id=previous_response_id,
+            system_prompt_in_stored_history=in_history,
+        )
+
+    def test_merged_request_reports_system_prompt_stored_and_next_omits_instructions(
         self, store_endpoint: ResponsesEndpoint
     ) -> None:
-        """Request 1 stores the merged prompt server-side; request 2 must not resend it."""
+        """Request 1 merges into an input item; request 2 must not resend it."""
         turn0 = self._system_user_turn("DATASET POLICY", "FIRST")
-        turn1 = self._user_turn("SECOND")
+        first_info = self._request(store_endpoint, [turn0])
+        first = store_endpoint.format_payload(first_info)
+        stored = store_endpoint.stored_history_has_system_prompt(first_info)
 
-        first = store_endpoint.format_payload(
-            create_request_info(
-                model_endpoint=store_endpoint.model_endpoint,
-                turns=[turn0],
-                system_message="CLI POLICY",
-            )
-        )
         second = store_endpoint.format_payload(
-            create_request_info(
-                model_endpoint=store_endpoint.model_endpoint,
-                turns=[turn0, turn1],
-                system_message="CLI POLICY",
+            self._request(
+                store_endpoint,
+                [turn0, self._user_turn("SECOND")],
                 previous_response_id="resp_first",
+                in_history=stored,
             )
         )
 
         assert "instructions" not in first
         assert first["input"][0]["content"] == "CLI POLICY\n\nDATASET POLICY"
+        assert stored is True
         assert "instructions" not in second
         assert [i["content"] for i in second["input"]] == ["SECOND"]
 
-    def test_format_payload_chain_without_authored_system_item_keeps_instructions(
+    def test_chain_after_failed_system_bearing_request_keeps_instructions(
+        self, store_endpoint: ResponsesEndpoint
+    ) -> None:
+        """Request 2 merged the prompt but failed, so ``resp_1`` never stored it.
+
+        The session still chains onto ``resp_1`` with the flag request 1 left,
+        and the attempted turn's system item must not suppress ``instructions``.
+        """
+        first_info = self._request(store_endpoint, [self._user_turn("FIRST")])
+        assert store_endpoint.stored_history_has_system_prompt(first_info) is False
+
+        third = store_endpoint.format_payload(
+            self._request(
+                store_endpoint,
+                [
+                    self._user_turn("FIRST"),
+                    self._system_user_turn("DATASET POLICY", "SECOND"),
+                    self._user_turn("THIRD"),
+                ],
+                previous_response_id="resp_1",
+                in_history=False,
+            )
+        )
+
+        assert third["instructions"] == "CLI POLICY"
+        assert [i["content"] for i in third["input"]] == ["THIRD"]
+
+    def test_stateless_request_with_mid_history_system_item_reports_not_stored(
+        self, store_endpoint: ResponsesEndpoint
+    ) -> None:
+        """After request 1 fails, request 2 goes stateless with the system item
+        mid-array; the prompt rides ``instructions``, which is not stored."""
+        turns = [
+            self._user_turn("FIRST"),
+            self._system_user_turn("DATASET POLICY", "SECOND"),
+        ]
+        info = self._request(store_endpoint, turns)
+        payload = store_endpoint.format_payload(info)
+
+        assert payload["instructions"] == "CLI POLICY"
+        assert [i["content"] for i in payload["input"]] == [
+            "FIRST",
+            "DATASET POLICY",
+            "SECOND",
+        ]
+        assert store_endpoint.stored_history_has_system_prompt(info) is False
+
+    def test_chain_without_stored_system_prompt_keeps_instructions(
         self, store_endpoint: ResponsesEndpoint
     ) -> None:
         """``instructions`` does not carry across the chain, so it is resent."""
-        turns = [self._user_turn("FIRST"), self._user_turn("SECOND")]
-        payload = store_endpoint.format_payload(
-            create_request_info(
-                model_endpoint=store_endpoint.model_endpoint,
-                turns=turns,
-                system_message="CLI POLICY",
-                previous_response_id="resp_first",
-            )
+        info = self._request(
+            store_endpoint,
+            [self._user_turn("FIRST"), self._user_turn("SECOND")],
+            previous_response_id="resp_first",
         )
-        assert payload["instructions"] == "CLI POLICY"
+        assert store_endpoint.format_payload(info)["instructions"] == "CLI POLICY"
+        assert store_endpoint.stored_history_has_system_prompt(info) is False
 
-    def test_format_payload_chain_merged_system_item_before_reset_is_ignored(
-        self, store_endpoint: ResponsesEndpoint
-    ) -> None:
-        """A reset restarts the chain, so a merge before it is not in history."""
-        turns = [
-            self._system_user_turn("DATASET POLICY", "FIRST"),
-            Turn(
-                raw_messages=[
-                    {"role": "user", "content": "RESTART", "type": "message"}
-                ],
-                reset_context=True,
-            ),
-            self._user_turn("THIRD"),
-        ]
-        payload = store_endpoint.format_payload(
-            create_request_info(
-                model_endpoint=store_endpoint.model_endpoint,
-                turns=turns,
-                system_message="CLI POLICY",
-                previous_response_id="resp_after_reset",
-            )
-        )
-        assert payload["instructions"] == "CLI POLICY"
-
-    def test_format_payload_chained_turn_with_own_system_item_does_not_remerge(
+    def test_chained_turn_with_own_system_item_does_not_remerge(
         self, store_endpoint: ResponsesEndpoint
     ) -> None:
         """A later authored system item ships as authored once history has the prompt."""
-        turns = [
-            self._system_user_turn("DATASET POLICY", "FIRST"),
-            self._system_user_turn("TURN POLICY", "SECOND"),
-        ]
-        payload = store_endpoint.format_payload(
-            create_request_info(
-                model_endpoint=store_endpoint.model_endpoint,
-                turns=turns,
-                system_message="CLI POLICY",
-                previous_response_id="resp_first",
-            )
+        info = self._request(
+            store_endpoint,
+            [
+                self._system_user_turn("DATASET POLICY", "FIRST"),
+                self._system_user_turn("TURN POLICY", "SECOND"),
+            ],
+            previous_response_id="resp_first",
+            in_history=True,
         )
+        payload = store_endpoint.format_payload(info)
+
         assert "instructions" not in payload
         assert payload["input"][0]["content"] == "TURN POLICY"
+        assert store_endpoint.stored_history_has_system_prompt(info) is True
+
+    def test_stored_history_has_system_prompt_false_without_system_message(
+        self, store_endpoint: ResponsesEndpoint
+    ) -> None:
+        info = create_request_info(
+            model_endpoint=store_endpoint.model_endpoint,
+            turns=[self._system_user_turn("DATASET POLICY", "FIRST")],
+        )
+        assert store_endpoint.stored_history_has_system_prompt(info) is False
