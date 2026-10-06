@@ -118,13 +118,6 @@ class ScenarioSpec(AIPerfBaseModel):
             "request timers shift uniformly only when no request is active."
         ),
     )
-    forbid_trace_idle_gap_cap: bool = Field(
-        default=False,
-        description=(
-            "Reject trace_idle_gap_cap_seconds so the scenario preserves each "
-            "trace's original request timeline."
-        ),
-    )
     forbid_inter_turn_delay_cap: bool = Field(
         default=False,
         description=(

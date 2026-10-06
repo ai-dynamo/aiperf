@@ -36,6 +36,7 @@ from typing import Annotated, Any, Literal, TypeAlias
 from cyclopts import Parameter
 from pydantic import AfterValidator, BeforeValidator, Field
 
+from aiperf.common.constants import DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS
 from aiperf.common.enums import (
     AIPerfLogLevel,
     AudioFormat,
@@ -2198,7 +2199,7 @@ class CLIConfig(BaseConfig):
             name=("--benchmark-grace-period",),
             group=Groups.LOAD_GENERATOR,
         ),
-    ] = 30.0
+    ] = DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS
 
     concurrency: Annotated[
         Any,
