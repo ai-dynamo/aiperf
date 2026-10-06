@@ -185,6 +185,54 @@ def _parse_sequence_as_tuple_list(input: Any) -> list[tuple[str, Any]]:
     return output
 
 
+_DEPTH_DELTA = {"{": 1, "[": 1, "(": 1, "}": -1, "]": -1, ")": -1}
+
+
+def _split_top_level_commas(input: str) -> list[str]:
+    """Split on commas that separate items, not commas inside a value.
+
+    A plain ``input.split(",")`` cuts a value at its first comma and then parses
+    each remaining fragment as its own ``key:value`` pair -- so
+    ``payload_template:{"a": 1, "b": 2}`` loses everything after ``1`` and
+    silently gains a bogus ``"b"`` entry in the request payload. Any value
+    carrying a comma is affected: a JSON array, a list-valued field, a prompt
+    with a comma in it.
+
+    Commas inside brackets/braces or inside a quoted string therefore belong to
+    the value. Unbalanced delimiters leave the remainder as a single item, which
+    surfaces as a clear ``key:value`` format error rather than a silently
+    truncated value.
+    """
+    parts: list[str] = []
+    buf: list[str] = []
+    depth = 0
+    quote: str | None = None
+    escaped = False
+
+    for char in input:
+        if escaped:
+            buf.append(char)
+            escaped = False
+            continue
+        if quote is not None:
+            buf.append(char)
+            escaped = char == "\\"
+            quote = None if char == quote else quote
+            continue
+        if char == "," and depth == 0:
+            parts.append("".join(buf))
+            buf = []
+            continue
+        if char in "\"'":
+            quote = char
+        depth += _DEPTH_DELTA.get(char, 0)
+        depth = max(0, depth)
+        buf.append(char)
+
+    parts.append("".join(buf))
+    return parts
+
+
 def _parse_str_as_tuple_list(input: str) -> list[tuple[str, Any]]:
     """Parse a string (JSON object or comma-separated key:value pairs) into a list of tuples."""
     if input.startswith("{"):
@@ -196,7 +244,7 @@ def _parse_str_as_tuple_list(input: str) -> list[tuple[str, Any]]:
             ) from e
 
     result: list[tuple[str, Any]] = []
-    for item in input.split(","):
+    for item in _split_top_level_commas(input):
         parts = item.split(":", 1)
         if len(parts) != 2:
             raise ValueError(
