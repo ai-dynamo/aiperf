@@ -206,7 +206,9 @@ Feature branches use `<username>/feature-name` format, forked from `main`.
 
 A PR can merge into `main` only after the `pre-commit` and `Unit Tests Gate` checks pass. `Unit Tests Gate` is the last job in `.github/workflows/run-unit-tests.yml` and fails unless every unit test job passed.
 
-Unit tests run on NVIDIA runners, so copy-pr-bot copies each PR to a `pull-request/<number>` branch to run them. A PR from a fork is copied only after a maintainer reviews it and comments `/ok to test <sha>`. Until then the PR shows `Unit Tests Gate` as expected and cannot merge. Docs-only PRs are not exempt, because several unit tests check the docs. Repository admins can bypass the requirement when needed.
+Unit tests run on NVIDIA runners, so copy-pr-bot copies each PR to a `pull-request/<number>` branch to run them. A PR is copied automatically only when its author is trusted and every commit is cryptographically signed (GPG or SSH; this is separate from the DCO sign-off below). Fork PRs, PRs with unsigned commits, and bot PRs such as Dependabot's wait for a maintainer to review them and comment `/ok to test <sha>`. Until then the PR shows `Unit Tests Gate` as expected and cannot merge. Docs-only PRs are not exempt, because several unit tests check the docs. Repository admins can bypass the requirement when needed.
+
+A PR must also be up to date with `main` before it merges, and every branch update creates a new head commit that needs a full unit test run. For a PR that is not copied automatically, a maintainer must comment `/ok to test <sha>` again after each update. If a job fails from a known flake, rerun the failed jobs with `gh run rerun <run-id> --failed`, which also reruns `Unit Tests Gate`.
 
 ## Running GitHub Actions Locally
 
