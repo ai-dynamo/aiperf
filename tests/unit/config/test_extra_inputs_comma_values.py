@@ -68,3 +68,20 @@ def test_an_item_without_a_colon_still_errors() -> None:
     """Unbalanced delimiters must surface, not silently swallow the remainder."""
     with pytest.raises(ValueError, match="key:value"):
         _parse_str_as_tuple_list("a:1,bare")
+
+
+def test_an_escaped_quote_does_not_end_the_value() -> None:
+    """A backslash-escaped quote is part of the string, not its terminator.
+
+    Without this, the value would be considered closed at the inner quote and
+    the comma after it would split mid-value -- the same truncation this fix
+    exists to prevent, just one level deeper.
+    """
+    raw = 'prompt:"he said \\"hi\\", ok"'
+    assert _parse_str_as_tuple_list(raw) == [("prompt", '"he said \\"hi\\", ok"')]
+
+
+def test_a_separator_after_an_escaped_quote_still_splits() -> None:
+    """The escape must not swallow the rest of the input either."""
+    raw = 'a:"x\\"y",b:2'
+    assert _parse_str_as_tuple_list(raw) == [("a", '"x\\"y"'), ("b", 2)]
