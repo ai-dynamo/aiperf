@@ -72,19 +72,15 @@ def _scheduled_ids(conversations) -> list[str]:
 
 
 def test_dag_children_are_not_scheduled() -> None:
-    """The child is spawned by the BranchOrchestrator, not scheduled here."""
+    """The child is spawned by the BranchOrchestrator, not scheduled here.
+
+    `_Conv.agent_depth` defaults to 0, so this is also the SPAWN case: those
+    children keep `agent_depth == 0` for fresh-context semantics, which is why
+    the filter is on `is_root`.
+    """
     convs = [
         _Conv("root", [_Turn(0.0)]),
         _Conv("root::sa:agent_001", [_Turn(1500.0)], is_root=False),
-    ]
-    assert _scheduled_ids(convs) == ["root"]
-
-
-def test_spawn_children_are_excluded_despite_agent_depth_zero() -> None:
-    """SPAWN children keep agent_depth == 0, so agent_depth is not the filter."""
-    convs = [
-        _Conv("root", [_Turn(0.0)]),
-        _Conv("root::sa:a", [_Turn(1500.0)], is_root=False, agent_depth=0),
     ]
     assert _scheduled_ids(convs) == ["root"]
 

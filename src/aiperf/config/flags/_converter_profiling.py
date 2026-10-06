@@ -602,14 +602,7 @@ def _maybe_auto_promote_trace(
         # --fixed-schedule conflicts with a scenario; the auto-derived
         # promotion is simply skipped so the phase keeps its default shape.
         or cli.scenario is not None
-        # Both flags are statements about NOT replaying the recorded timeline:
-        # --ignore-trace-delays drops it, --use-think-time-only replaces it.
-        # Fixed schedule dispatches on recorded timestamps, so promoting a run
-        # that passed either one would accept the flag and then quietly ignore
-        # it -- the silent no-op CLAUDE.md's flag-routing rule exists to
-        # prevent. Treat them as opting out instead.
-        or cli.ignore_trace_delays
-        or cli.use_think_time_only
+        or _timeline_opt_out_suppresses_promotion(cli, dataset_type)
         or prof["type"] == PhaseType.FIXED_SCHEDULE
         or not plugins.is_trace_dataset(str(dataset_type))
         or not _trace_carries_timing(dataset_type, file_path)
@@ -740,16 +733,38 @@ def _has_timing_events_timestamp(data: dict) -> bool:
     )
 
 
+def _timeline_opt_out_suppresses_promotion(
+    cli: CLIConfig, dataset_type: object
+) -> bool:
+    """Whether a timing opt-out should block auto-promotion for this format.
+
+    Only for weka_trace. Its loader lets fixed schedule win over
+    ``--ignore-trace-delays``, so promoting a run that passed the flag would
+    accept it and then quietly ignore it -- the silent no-op CLAUDE.md's
+    flag-routing rule exists to prevent.
+
+    Applying it to every format instead is a regression: a 50-row timestamped
+    mooncake trace with either flag drops from fixed_schedule/50 to
+    concurrency/10, silently replacing most of the workload. Those loaders do
+    not suppress the flags under fixed schedule, and ``--use-think-time-only``
+    documents no effect on non-Weka loaders, so there is no no-op to prevent
+    there -- only workload to lose.
+    """
+    from aiperf.plugin.enums import CustomDatasetType
+
+    if str(dataset_type) != str(CustomDatasetType.WEKA_TRACE):
+        return False
+    return bool(cli.ignore_trace_delays or cli.use_think_time_only)
+
+
 def _trace_carries_timing(dataset_type: object, file_path: object) -> bool:
     """Whether a trace dataset has timing worth auto-promoting on.
 
     ``_first_record_has_timestamp`` looks for a top-level ``timestamp`` key and
     refuses directories outright. A weka_trace keeps its timing in
-    ``requests[].t`` and is documented as a *directory* of files, so it failed
-    that probe, never auto-promoted, and replayed as plain concurrency --
-    silently discarding the recorded timeline the user chose a trace dataset to
-    replay. ``docs/tutorials/weka-trace.md`` documents auto-promotion as the
-    default, so the code was contradicting its own documentation.
+    ``requests[].t`` and is documented as a *directory* of files, so neither is
+    visible to that probe, and ``docs/tutorials/weka-trace.md`` documents
+    auto-promotion as the default for trace datasets.
 
     Scoped to weka_trace on purpose. The resolver's ``_implicit_timing_types``
     is the natural shared source of truth, and routing through it reads better,

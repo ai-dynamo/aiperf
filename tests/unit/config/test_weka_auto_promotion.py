@@ -176,3 +176,37 @@ def test_a_rate_flag_still_works_for_other_trace_types(tmp_path) -> None:
         CustomDatasetType.BURST_GPT_TRACE, csv, request_rate=10.0
     )
     assert resolved != "fixed_schedule"
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        param("ignore_trace_delays", id="ignore-trace-delays"),
+        param("use_think_time_only", id="use-think-time-only"),
+    ],
+)  # fmt: skip
+def test_timeline_opt_outs_do_not_touch_other_trace_formats(
+    tmp_path, flag: str
+) -> None:
+    """Scoping, pinned.
+
+    Suppressing promotion for every format is a regression, not a safeguard: a
+    50-row timestamped mooncake trace with either flag drops from
+    fixed_schedule/50 to concurrency/10, silently replacing most of the
+    workload. Only weka_trace's loader lets fixed schedule override these flags,
+    so only there is there a silent no-op to prevent.
+    """
+    import json
+
+    trace = tmp_path / "mooncake.jsonl"
+    trace.write_text(
+        "".join(
+            json.dumps({"timestamp": i * 100, "input_length": 8, "output_length": 4})
+            + "\n"
+            for i in range(50)
+        )
+    )
+    resolved = _resolved_phase_type(
+        CustomDatasetType.MOONCAKE_TRACE, trace, **{flag: True}
+    )
+    assert resolved == "fixed_schedule"

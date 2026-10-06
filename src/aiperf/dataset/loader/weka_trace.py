@@ -1267,12 +1267,12 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         # the phase cannot use.
         from aiperf.plugin.enums import PhaseType
 
-        self._under_fixed_schedule = any(
+        under_fixed_schedule = any(
             phase.type == PhaseType.FIXED_SCHEDULE
             for phase in cfg.get_profiling_phases()
         )
         self._ignore_trace_delays_effective = (
-            self._ignore_trace_delays and not self._under_fixed_schedule
+            self._ignore_trace_delays and not under_fixed_schedule
         )
 
         tok_name = tokenizer_cfg.name if tokenizer_cfg is not None else None

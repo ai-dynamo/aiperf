@@ -738,7 +738,6 @@ def _public_dataset_source_from_run(run: BenchmarkRun) -> dict[str, object] | No
 # flag (h_cua_perf) apply it unconditionally, so keying them on the effective
 # value would introduce the same mismatch in the opposite direction.
 _WEKA_RECONSTRUCTED_FORMATS = frozenset({"weka_trace", "tracelab"})
-_WEKA_RECONSTRUCTED_LOADER = "SemiAnalysisCCTracesWekaLoader"
 
 
 def _is_weka_reconstructed(dataset: object) -> bool:
@@ -757,23 +756,30 @@ def _is_weka_reconstructed(dataset: object) -> bool:
     name = getattr(dataset, "dataset", None)
     if name is None:
         return False
-    try:
-        from aiperf.plugin import plugins
 
+    from aiperf.dataset.loader.semianalysis_cc_traces_weka import (
+        SemiAnalysisCCTracesWekaLoader,
+    )
+    from aiperf.plugin import plugins
+
+    try:
         loader = plugins.get_class("public_dataset_loader", str(name))
-    except Exception:
+    except (KeyError, ValueError):
+        # An unregistered public dataset cannot be weka-reconstructed. Anything
+        # else (a broken plugin import) must surface rather than silently
+        # degrade the cache key.
         return False
-    return loader.__name__ == _WEKA_RECONSTRUCTED_LOADER
+    return issubclass(loader, SemiAnalysisCCTracesWekaLoader)
 
 
 def _effective_ignore_trace_delays(cfg: AIPerfConfig, dataset: object) -> bool:
     """What the loader actually did with ``--ignore-trace-delays``.
 
     ``WekaTraceLoader`` lets fixed-schedule replay win over the flag, so the raw
-    flag is not what bakes into the cached Turn timestamps. Keying on it would
-    let a plain ``--fixed-schedule`` run (which sets no start/end offsets, so
-    every other timing key matches) share an entry with a non-fixed run that had
-    timestamps stripped -- serving the wrong mode in either direction.
+    flag is not what bakes into the cached Turn timestamps. Keying on the raw flag lets a plain
+    ``--fixed-schedule`` run (which sets no start/end offsets, so every other
+    timing key matches) share an entry with a non-fixed run whose timestamps
+    were stripped, serving the wrong mode in either direction.
 
     Reads the same phase set the loader does (``get_profiling_phases``) so the
     two cannot disagree; a fixed-schedule *warmup* phase must not be mistaken
