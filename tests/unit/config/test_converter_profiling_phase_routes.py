@@ -207,6 +207,25 @@ class TestGracePeriodRequiresDuration:
         ):
             build_profiling(user)
 
+    def test_grace_period_without_duration_under_scenario_raises_with_hint(
+        self,
+    ) -> None:
+        loadgen = CLIConfig(
+            scenario="inferencex-agentx-mvp", benchmark_grace_period=120, concurrency=1
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(
+            ValueError, match="Under --scenario inferencex-agentx-mvp, pass --benchmark-duration"
+        ):
+            build_profiling(user)
+
+    def test_grace_period_without_duration_no_scenario_omits_hint(self) -> None:
+        loadgen = CLIConfig(benchmark_grace_period=30, request_count=10, concurrency=1)
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError) as exc_info:
+            build_profiling(user)
+        assert "--scenario" not in str(exc_info.value)
+
     def test_grace_period_with_duration_succeeds(self) -> None:
         loadgen = CLIConfig(
             benchmark_duration=60.0, benchmark_grace_period=30, concurrency=1
