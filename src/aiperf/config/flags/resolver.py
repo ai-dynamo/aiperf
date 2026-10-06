@@ -621,33 +621,13 @@ def _apply_recipe_and_multirun(
         build_sweep,
         expand_search_recipe,
     )
-    from aiperf.config.flags.converter import (
-        _lookup_recipe_class,
-        _reject_recipe_plus_magic_lists,
-    )
 
     if benchmark_config is None:
         recipe_output = None
     else:
         recipe_output = expand_search_recipe(cli, benchmark_config=benchmark_config)
     if recipe_output is not None:
-        sweep_params = recipe_output.get("sweep_parameters")
-        if sweep_params:
-            _reject_recipe_plus_magic_lists(cli, recipe_cls=_lookup_recipe_class(cli))
-            out["sweep"] = {"type": "grid", "parameters": dict(sweep_params)}
-        scenarios = recipe_output.get("scenarios")
-        if scenarios:
-            out["sweep"] = {"type": "scenarios", "runs": list(scenarios)}
-        recipe_name = recipe_output.get("recipe_name")
-        if recipe_name and "sweep" in out:
-            out["sweep"]["recipe_name"] = recipe_name
-        # Recipe-emitted per-request SLOs (e.g. MaxGoodputUnderSLO) land on the
-        # body's `slos` block. The envelope wrapper (`_wrap_under_envelope`) is
-        # applied in `resolve_config` after this builder, so we write the body
-        # path here -- ``benchmark.slos`` after wrapping.
-        recipe_slos = recipe_output.get("slos")
-        if recipe_slos:
-            out["slos"] = dict(recipe_slos)
+        _apply_recipe_output(out, recipe_output, cli)
     sweep = build_sweep(cli, recipe_output=recipe_output)
     if sweep:
         # ``build_sweep`` returns a sweep envelope without ``parameters`` for
@@ -665,6 +645,30 @@ def _apply_recipe_and_multirun(
     multi_run = build_multi_run(cli, recipe_output=recipe_output)
     if multi_run:
         out["multi_run"] = multi_run
+
+
+def _apply_recipe_output(
+    out: dict[str, Any], recipe_output: dict[str, Any], cli: CLIConfig
+) -> None:
+    """Apply grid/scenario sweeps, recipe_name, and SLOs from recipe output."""
+    from aiperf.config.flags.converter import (
+        _lookup_recipe_class,
+        _reject_recipe_plus_magic_lists,
+    )
+
+    sweep_params = recipe_output.get("sweep_parameters")
+    if sweep_params:
+        _reject_recipe_plus_magic_lists(cli, recipe_cls=_lookup_recipe_class(cli))
+        out["sweep"] = {"type": "grid", "parameters": dict(sweep_params)}
+    scenarios = recipe_output.get("scenarios")
+    if scenarios:
+        out["sweep"] = {"type": "scenarios", "runs": list(scenarios)}
+    recipe_name = recipe_output.get("recipe_name")
+    if recipe_name and "sweep" in out:
+        out["sweep"]["recipe_name"] = recipe_name
+    recipe_slos = recipe_output.get("slos")
+    if recipe_slos:
+        out["slos"] = dict(recipe_slos)
 
 
 def _apply_artifacts_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
