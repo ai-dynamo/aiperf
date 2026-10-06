@@ -98,13 +98,13 @@ def test_non_weka_keys_are_unchanged(tmp_path) -> None:
     assert a == b
 
 
-def _public_key(dataset: str, *, ignore: bool, fixed: bool) -> str | None:
+def _public_key(dataset: str, tmp_path, *, ignore: bool, fixed: bool) -> str | None:
     kwargs: dict = {
         "model_names": ["test-model"],
         "tokenizer_name": "test-tokenizer",
         "public_dataset": dataset,
         "ignore_trace_delays": ignore,
-        "artifact_directory": "/tmp/aiperf-public-key-test",
+        "artifact_directory": str(tmp_path / "artifacts"),
     }
     if fixed:
         kwargs["fixed_schedule"] = True
@@ -113,7 +113,7 @@ def _public_key(dataset: str, *, ignore: bool, fixed: bool) -> str | None:
     return mmap_cache.compute_cache_key_from_run(make_run_from_cli(CLIConfig(**kwargs)))
 
 
-def test_weka_public_datasets_are_keyed_on_the_effective_mode() -> None:
+def test_weka_public_datasets_are_keyed_on_the_effective_mode(tmp_path) -> None:
     """The HuggingFace corpora reach WekaTraceLoader by delegation.
 
     `PublicDataset` carries no `format` field at all, so scoping the key on a
@@ -121,9 +121,11 @@ def test_weka_public_datasets_are_keyed_on_the_effective_mode() -> None:
     public-dataset timing metadata opens. They must separate like the
     file-based path does.
     """
-    fixed = _public_key("semianalysis_cc_traces_weka_062126", ignore=True, fixed=True)
+    fixed = _public_key(
+        "semianalysis_cc_traces_weka_062126", tmp_path, ignore=True, fixed=True
+    )
     non_fixed = _public_key(
-        "semianalysis_cc_traces_weka_062126", ignore=True, fixed=False
+        "semianalysis_cc_traces_weka_062126", tmp_path, ignore=True, fixed=False
     )
     assert fixed is not None and non_fixed is not None
     assert fixed != non_fixed

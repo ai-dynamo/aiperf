@@ -173,7 +173,7 @@ If you need different replay pacing, several flags are available (recent additio
 |---|---|
 | `--no-fixed-schedule` | Opt out of the auto-enabled fixed-schedule. Turns dispatch at whatever pace your other timing flags imply (concurrency, request rate, `agentic_replay`, etc.) instead of the recorded `t` timestamps. |
 | `--ignore-trace-delays` | Strip per-turn timestamps and inter-turn delays at load time — every turn becomes back-to-back. Mutually exclusive with `--use-think-time-only`. |
-| `--use-think-time-only` | Inter-turn delay uses only the trace's recorded `think_time` (client-side wait before each request), not `t_curr - t_prev` (which would include the original server's response time). Useful when your server is faster or slower than the recording — you don't want it punished or rewarded for the *previous* server's latency. Mutually exclusive with `--ignore-trace-delays`. |
+| `--use-think-time-only` | Inter-turn delay uses only the trace's recorded `think_time` (client-side wait before each request), not `t_curr - t_prev` (which would include the original server's response time). Useful when your server is faster or slower than the recording — you don't want it punished or rewarded for the *previous* server's latency. Mutually exclusive with `--ignore-trace-delays`. Has no effect under fixed schedule (recorded timestamps drive dispatch), so passing it suppresses auto-promotion; an explicit `--fixed-schedule` still wins. |
 | `--inter-turn-delay-cap-seconds <S>` | Clamp any single inter-turn delay to at most `S` seconds. Defaults to `None` (no clamp); pass `60` to cap "coffee-break" gaps in real coding traces. |
 
 `--no-fixed-schedule` is the opt-out from the auto-promotion described above:
