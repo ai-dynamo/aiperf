@@ -56,6 +56,7 @@ _CONFLICTING_PHASE_TYPES = frozenset(
 _AGENTX_WEKA_HF_REPO = "semianalysisai/cc-traces-weka-062126"
 _WEKA_HF_LOADER = "weka_hf"
 _WEKA_TRACE_LOADER = "weka_trace"
+_MOONCAKE_TRACE_LOADER = "mooncake_trace"
 
 
 def apply_scenario(run: BenchmarkRun) -> ScenarioOutcome:
@@ -462,7 +463,9 @@ def _apply_require_loader(
     # AgentX submission_valid requires a pinned corpus identity. Public-dataset
     # aliases are pinned by name; weka_hf is pinned to a known HF repo below.
     # Local weka_trace only proves format compatibility — any directory of
-    # Weka-shaped JSON passes — so it cannot stamp submission_valid=true.
+    # Weka-shaped JSON passes — so it cannot stamp submission_valid=true. A
+    # local mooncake_trace file likewise only proves raw-content replay
+    # compatibility — any messages+tools JSONL passes.
     if spec.name == _AGENTX_SCENARIO and detected == _WEKA_TRACE_LOADER:
         violations.append(
             ScenarioViolation(
@@ -475,6 +478,26 @@ def _apply_require_loader(
                 message=(
                     f"scenario {spec.name!r} cannot verify corpus identity for a "
                     "local weka_trace directory; use a with-subagents "
+                    "--public-dataset alias or "
+                    f"--hf-weka-dataset {_AGENTX_WEKA_HF_REPO} for "
+                    "submission_valid=true, or pass --unsafe-override for "
+                    "offline smoke tests (submission_valid=false)"
+                ),
+            )
+        )
+
+    if spec.name == _AGENTX_SCENARIO and detected == _MOONCAKE_TRACE_LOADER:
+        violations.append(
+            ScenarioViolation(
+                flag="--custom-dataset-type / --input-file",
+                current_value="mooncake_trace (local, unpinned)",
+                required_value=(
+                    "pinned --public-dataset alias or "
+                    f"--hf-weka-dataset {_AGENTX_WEKA_HF_REPO}"
+                ),
+                message=(
+                    f"scenario {spec.name!r} cannot verify corpus identity for a "
+                    "local mooncake_trace file; use a with-subagents "
                     "--public-dataset alias or "
                     f"--hf-weka-dataset {_AGENTX_WEKA_HF_REPO} for "
                     "submission_valid=true, or pass --unsafe-override for "
