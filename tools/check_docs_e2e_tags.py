@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import subprocess
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -95,15 +96,38 @@ def has_runnable_command(path: Path) -> bool:
     Only fenced blocks count: prose naming a flag is not a command, and gating
     on prose would flag every reference page.
     """
-    infence = False
-    for line in path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if stripped.startswith("```"):
-            infence = not infence
-            continue
-        if infence and stripped.startswith("aiperf "):
+    for line in _fenced_lines(path.read_text(encoding="utf-8")):
+        if line.strip().startswith("aiperf "):
             return True
     return False
+
+
+def _fenced_lines(text: str) -> Iterator[str]:
+    """Yield the lines inside fenced code blocks.
+
+    CommonMark allows tildes as well as backticks, and a closing fence must use
+    the opener's character and be at least as long. Toggling on any backtick
+    run missed tilde-fenced blocks entirely -- so a guide written with tildes
+    had its commands invisible here and slipped through untagged -- and let a
+    short backtick run inside a longer fence close it early.
+    """
+    opener: tuple[str, int] | None = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        marker = stripped[:1]
+        if marker in ("`", "~"):
+            run = len(stripped) - len(stripped.lstrip(marker))
+            if opener is None:
+                if run >= 3:
+                    opener = (marker, run)
+                continue
+            char, length = opener
+            closes = marker == char and run >= length and not stripped[run:].strip()
+            if closes:
+                opener = None
+            continue
+        if opener is not None:
+            yield line
 
 
 def tagged_run_count(path: Path) -> int:
@@ -117,7 +141,18 @@ def tagged_run_count(path: Path) -> int:
     except Exception as e:  # pragma: no cover - parser has its own tests
         print(f"::warning::Could not parse {path}: {e}", file=sys.stderr)
         return 0
-    return sum(len(server.aiperf_commands) for server in parser.servers.values())
+    # Count only tagged blocks that actually invoke aiperf. The parser
+    # categorises a block by its tag without inspecting the body, so a doc
+    # could tag an `echo ok` block and satisfy this gate while its real
+    # `aiperf profile` command sits untagged beside it.
+    return sum(
+        1
+        for server in parser.servers.values()
+        for command in server.aiperf_commands
+        if any(
+            line.strip().startswith("aiperf ") for line in command.command.splitlines()
+        )
+    )
 
 
 def main() -> None:
