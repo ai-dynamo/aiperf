@@ -267,7 +267,7 @@ flag.
 | Per-trace and per-turn caps are forbidden | `--trace-idle-gap-cap-seconds` and `--inter-turn-delay-cap-seconds` must remain unset | Independently compressing each trace changes think-time and cache-TTL behavior even while other trajectories keep the server busy. |
 | `--system-idle-gap-cap-seconds = 10` | When no request is active or ready, all pending replay timers shift uniformly so the next request arrives within 10 seconds | The benchmark avoids measuring long periods with no server work while preserving request order and relative spacing across every pending trajectory. |
 | `--cache-bust first_turn_prefix` | A unique per-conversation marker is injected at the start of the first user turn for every play (each dispatch of a trace, initial or recycled) | Without this, every time a trace is recycled the server's prefix cache would warm up further on identical content, and steady-state cache-hit rates would inflate the longer the run goes. The marker gives every recycled play a fresh prompt prefix. |
-| Loader is a pinned Weka with-subagents corpus | The dataset must be a with-subagents `--public-dataset` alias or `--hf-weka-dataset semianalysisai/cc-traces-weka-062126` (`weka_hf`). A local `weka_trace` directory is format-compatible but unpinned — the run refuses unless you pass `--unsafe-override` (which stamps `submission_valid: false`). The [Troubleshooting](#troubleshooting) entry for this lock lists the exact flag forms. | Submission validity requires a known public corpus identity; arbitrary local dirs are not hash-verifiable. |
+| Loader is a pinned Weka with-subagents corpus | The dataset must be a with-subagents `--public-dataset` alias or `--hf-weka-dataset semianalysisai/cc-traces-weka-062126` (`weka_hf`). A local `weka_trace` directory is format-compatible but unpinned — the run refuses unless you pass `--unsafe-override` (which stamps `submission_valid: false`). A local `mooncake_trace` file (raw-content replay: messages + tools verbatim, no hash_ids) is likewise admitted format-compatible but unpinned, with the same `--unsafe-override` requirement. The [Troubleshooting](#troubleshooting) entry for this lock lists the exact flag forms. | Submission validity requires a known public corpus identity; arbitrary local files are not hash-verifiable. |
 | `--benchmark-duration >= 900` (defaults to 1800 when unset) | The run lasts at least 15 minutes; if omitted, it runs for 30 minutes | Steady-state needs time to stabilize; short runs are noise. |
 | No client-side input truncation | `--synthesis-max-isl` — the file-based synthesis ISL filter — is rejected because it drops traces whose input length exceeds the cap (the `--public-dataset` corpus has no synthesis filter, so there the flag has no effect either way) | Truncating prompts on the client side would falsify the workload. |
 | `--random-seed` is set | If you didn't pass one, AIPerf picks a strong random one and logs it | Reproducibility — every replayed result can be regenerated. |
@@ -645,7 +645,10 @@ A local `--custom-dataset-type weka_trace --input-file <dir>` (or a bare
 offline smoke tests only with `--unsafe-override` — the result is marked
 `submission_valid: false`, because AIPerf cannot fingerprint an arbitrary
 local directory as the public corpus. The same override path applies if you
-intentionally replay a *different* Weka-format corpus under this scenario.
+intentionally replay a *different* Weka-format corpus under this scenario,
+and to `--custom-dataset-type mooncake_trace --input-file <file>` (raw-content
+mooncake replay: messages + tools verbatim, no hash_ids) — admitted for
+offline smoke tests of non-Weka corpora under the same override.
 
 **"scenario `'inferencex-agentx-mvp'` requires `cache_bust.target=first_turn_prefix`; got `<other>`"**
 You explicitly passed `--cache-bust <other>` (e.g. `system_suffix` or `none`)
