@@ -311,9 +311,18 @@ def _append_string_or_list(
 
 
 def _append_query_passages(payload: dict[str, Any], result: ExtractedPayload) -> bool:
-    """Rankings shape: ``query`` + ``passages`` (strings or {"text": ...} dicts)."""
+    """Rankings query and candidates in NIM, Cohere, and HuggingFace TEI shapes."""
     query = payload.get("query")
-    passages = payload.get("passages")
+    if isinstance(query, dict):
+        query = query.get("text")
+    passages = next(
+        (
+            payload[key]
+            for key in ("passages", "documents", "texts")
+            if isinstance(payload.get(key), list)
+        ),
+        None,
+    )
     if not (isinstance(query, str) and isinstance(passages, list)):
         return False
     result.texts.append(query)
