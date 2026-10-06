@@ -94,6 +94,7 @@ import logging
 import math
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -261,6 +262,9 @@ class BranchOrchestrator:
         # prefix-cache domain; None when no ledger is wired (e.g. unit tests with
         # cache-bust disabled).
         self._marker_ledger = cache_bust_ledger
+        # Set by PhaseRunner only for fixed schedule; see
+        # set_schedule_target_resolver.
+        self._schedule_target_perf_sec: Callable[[float], float] | None = None
         # Per-tree session-slot ledger (agentic replay only; None otherwise).
         # Every descendant this orchestrator spawns or snapshot-seeds is
         # registered against its tree's root_correlation_id so the tree's
@@ -1618,6 +1622,46 @@ class BranchOrchestrator:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._cleanup_event.wait(), timeout=seconds)
 
+    def set_schedule_target_resolver(
+        self, resolver: Callable[[float], float] | None
+    ) -> None:
+        """Teach the orchestrator when a gated turn is *scheduled* to fire.
+
+        Only fixed schedule supplies one. Every other timing mode leaves it
+        None and joins stay purely reactive, which is their documented
+        behaviour.
+        """
+        self._schedule_target_perf_sec = resolver
+
+    async def _await_recorded_join_target(self, pending: PendingBranchJoin) -> None:
+        """Hold a fixed-schedule join until its recorded timestamp as well.
+
+        A gated parent has two independent constraints: its children must
+        finish, and -- under fixed schedule -- its own recorded timestamp must
+        arrive. Releasing on the children alone makes the turn fire early, so
+        every turn after a subagent lands sooner than it was recorded and the
+        replay silently compresses the trace it exists to reproduce.
+
+        Waits for whichever is later. A target already in the past (children
+        overran their recorded window) dispatches immediately: the recorded
+        time cannot be honoured any more, and delaying further would only
+        compound the drift.
+        """
+        resolver = getattr(self, "_schedule_target_perf_sec", None)
+        if resolver is None or pending.gated_turn_index is None:
+            return
+        meta = self._cs.get_metadata(pending.parent_conversation_id)
+        turns = getattr(meta, "turns", None) or []
+        if pending.gated_turn_index >= len(turns):
+            return
+        timestamp_ms = getattr(turns[pending.gated_turn_index], "timestamp_ms", None)
+        if timestamp_ms is None:
+            return
+
+        remaining = resolver(timestamp_ms) - time.perf_counter()
+        if remaining > 0:
+            await self._sleep_think_ms(remaining)
+
     async def _release_blocked_join(self, pending: PendingBranchJoin) -> None:
         """Dispatch the parent's gated turn and update stats."""
         assert pending.gated_turn_index is not None, (
@@ -1628,6 +1672,7 @@ class BranchOrchestrator:
         think_ms = self._resolve_think_ms(pending)
         if think_ms > 0.0 and math.isfinite(think_ms):
             await self._sleep_think_ms(think_ms / 1000.0)
+        await self._await_recorded_join_target(pending)
         issued = await self._issuer.dispatch_join_turn(pending)
         if issued:
             self.stats.parents_resumed += 1

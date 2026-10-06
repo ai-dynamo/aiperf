@@ -516,6 +516,7 @@ class PhaseRunner(TaskManagerMixin):
         strategy = self._build_strategy()
         try:
             self._register_strategy_with_callback_handler(strategy)
+            self._wire_join_schedule_target(strategy)
             return await self._run_strategy(
                 strategy, is_final_phase, seamless_to_next=seamless_to_next
             )
@@ -524,6 +525,25 @@ class PhaseRunner(TaskManagerMixin):
             raise e
         finally:
             self._detach_orchestrator_and_cleanup()
+
+    def _wire_join_schedule_target(self, strategy) -> None:
+        """Let the orchestrator honour recorded timestamps on gated turns.
+
+        A turn gated on a SPAWN_JOIN is released by the BranchOrchestrator when
+        its children finish, which bypasses the timestamp scheduling the
+        fixed-schedule strategy applies to ordinary turns. Without this the
+        gated turn fires as soon as the children do, so a trace with subagents
+        replays faster than it was recorded.
+
+        Only fixed schedule has a notion of "when should this fire", so only it
+        supplies a resolver; every other mode keeps its reactive behaviour.
+        """
+        if self._branch_orchestrator is None:
+            return
+        resolver = getattr(strategy, "_timestamp_to_perf_sec", None)
+        self._branch_orchestrator.set_schedule_target_resolver(
+            resolver if self._config.timing_mode == TimingMode.FIXED_SCHEDULE else None
+        )
 
     def _build_strategy(self) -> TimingStrategyProtocol:
         """Construct the timing strategy class for this phase."""
