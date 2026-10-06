@@ -21,16 +21,25 @@ For example, if `vllm:num_requests_running` is scraped from 3 endpoints with 2 l
 
 ### Example Command
 
+Two vLLM replicas of the same model, on adjacent ports. The benchmark drives
+`localhost:8000`; `localhost:8001` is scraped for server metrics only.
+
+<!-- aiperf-run-vllm-dual-openai-endpoint-server weight=90 -->
 ```bash
 aiperf profile \
   -m Qwen/Qwen3-0.6B \
-  --url localhost:10000 \
-  --server-metrics localhost:10001 localhost:10002 \
+  --url localhost:8000 \
+  --server-metrics localhost:8001 \
   --request-count 50 \
   --concurrency 50
 ```
+<!-- /aiperf-run-vllm-dual-openai-endpoint-server -->
 
-Note: The `--url` endpoint (`localhost:10000`) is automatically scraped for server metrics.
+Note: The `--url` endpoint (`localhost:8000`) is automatically scraped for server
+metrics, so `--server-metrics` only needs the endpoints that are not already
+driving load. Each value is normalized to `http://<host>:<port>/metrics`, which
+is where vLLM, SGLang, and TensorRT-LLM expose their Prometheus registries, so a
+bare `host:port` is enough.
 
 **Format selection:** By default, AIPerf generates JSON and CSV exports. This document describes the JSON format. To control which formats are generated, use `--server-metrics-formats`:
 - Default: `--server-metrics-formats json csv` (JSONL and Parquet excluded to avoid large files)

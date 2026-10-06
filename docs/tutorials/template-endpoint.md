@@ -210,6 +210,52 @@ aiperf profile \
   --concurrency 2
 ```
 
+### OpenAI-Compatible Chat, from a Template
+
+The examples above target APIs you would have to stand up yourself. This one
+targets an endpoint you almost certainly already have -- a vLLM server on
+`/v1/chat/completions` -- and rebuilds the standard chat payload from a
+template. It is the cheapest way to confirm your template mechanics are sound
+before pointing them at a bespoke API, because the same workload can be run
+through `--endpoint-type chat` and the two sets of numbers compared.
+
+The template lives in a file rather than inline: `--extra-inputs` splits its
+value on commas before the template is ever compiled, so an inline
+`payload_template` with more than one field is truncated at the first comma.
+
+<!-- setup-file-vllm-dual-openai-endpoint-server path=vllm_chat_template.json -->
+```jinja2
+{
+  "model": {{ model|tojson }},
+  "messages": [{"role": "user", "content": {{ text|tojson }}}],
+  "max_tokens": {{ max_tokens|tojson }},
+  "stream": {{ stream|tojson }}
+}
+```
+<!-- /setup-file-vllm-dual-openai-endpoint-server -->
+
+<!-- aiperf-run-vllm-dual-openai-endpoint-server weight=90 -->
+```bash
+aiperf profile \
+  --model Qwen/Qwen3-0.6B \
+  --url http://localhost:8000/v1/chat/completions \
+  --endpoint-type template \
+  --extra-inputs payload_template:./vllm_chat_template.json \
+  --extra-inputs response_field:'choices[0].message.content' \
+  --extra-inputs ignore_eos:true \
+  --synthetic-input-tokens-mean 100 \
+  --output-tokens-mean 50 \
+  --concurrency 4 \
+  --request-count 20
+```
+<!-- /aiperf-run-vllm-dual-openai-endpoint-server -->
+
+The template endpoint appends no path of its own, so `--url` carries the full
+endpoint path. `stream` renders from `--streaming`, and `max_tokens` from
+`--output-tokens-mean`. `ignore_eos` is not a template variable -- it is an
+ordinary extra input, merged into the rendered payload alongside the
+template's own fields, which is what makes the output length deterministic.
+
 ## Tips
 
 - **Always use `|tojson`** for string/list values to properly escape JSON
