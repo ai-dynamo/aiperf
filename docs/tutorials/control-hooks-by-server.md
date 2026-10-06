@@ -58,14 +58,19 @@ endpoint:
   server_profiler: true
 ```
 
+<!-- aiperf-run-vllm-devmode-openai-endpoint-server weight=120 -->
 ```bash
 aiperf profile \
-  --model <model> \
+  --model Qwen/Qwen3-0.6B \
   --url http://127.0.0.1:8000 \
+  --endpoint-type chat \
+  --streaming \
+  --concurrency 4 \
+  --request-count 20 \
   --reset-kv-cache \
-  --server-profiler \
-  ...
+  --server-profiler
 ```
+<!-- /aiperf-run-vllm-devmode-openai-endpoint-server -->
 
 ## SGLang
 
