@@ -93,7 +93,7 @@ async def test_stall_warns_then_fails(monkeypatch) -> None:
 async def test_stall_is_measured_from_last_progress_not_from_start(
     monkeypatch,
 ) -> None:
-    """A long run that progressed recently must not fail on total elapsed time."""
+    """Elapsed run time is not the measure; time since the last completion is."""
     mgr = _Manager()
     await _tick(mgr, monkeypatch, total=1, now=0.0)
     await _tick(mgr, monkeypatch, total=2, now=5000.0)  # progress 5000s in
@@ -105,22 +105,27 @@ async def test_stall_is_measured_from_last_progress_not_from_start(
 
 @pytest.mark.asyncio
 async def test_watchdog_disarmed_until_profiling_starts(monkeypatch) -> None:
-    """Dataset generation produces no records for as long as it takes."""
+    """Dataset generation can run arbitrarily long before the first request."""
     mgr = _Manager()
     mgr._profiling_started = False
-    for now in (0.0, 10.0, 100_000.0):
-        await _tick(mgr, monkeypatch, total=0, now=now)
+    await _tick(mgr, monkeypatch, total=0, now=100_000.0)
     assert mgr.warnings == []
+    assert mgr.terminal_failures == []
 
 
 @pytest.mark.asyncio
 async def test_completed_phase_is_not_treated_as_a_stall(monkeypatch) -> None:
-    """After the profiling phase completes, no further progress is expected."""
+    """A finished phase has nothing outstanding, so it cannot stall.
+
+    Asserting on the terminal failure and not only on warnings: the watchdog
+    goes straight to failing the run once the timeout passes, so a test
+    watching ``warnings`` alone would stay green while the run was killed.
+    """
     mgr = _Manager()
-    mgr._complete_credit_phases.add(CreditPhase.PROFILING)
     for now in (0.0, 10.0, 100_000.0):
-        await _tick(mgr, monkeypatch, total=200, now=now)
+        await _tick(mgr, monkeypatch, total=200, now=now, in_flight=0)
     assert mgr.warnings == []
+    assert mgr.terminal_failures == []
 
 
 @pytest.mark.asyncio
