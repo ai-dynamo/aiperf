@@ -254,8 +254,9 @@ def _apply_parameter_sweep_overrides(envelope: dict[str, Any], cli: CLIConfig) -
     sweep = envelope.get("sweep")
     if not isinstance(sweep, dict):
         flags = ", ".join(flag_names_for(cli_field)[0] for cli_field, _ in requested)
+        verb = "configures" if len(requested) == 1 else "configure"
         raise ConfigurationError(
-            f"{flags} configure a sweep, but neither the config file nor the "
+            f"{flags} {verb} a sweep, but neither the config file nor the "
             f"command line declares one. Add a sweep: block to the config "
             f"file, or pass list-valued flags (e.g. --concurrency 1,2,4), "
             f"--variant, or --search-recipe."
@@ -264,10 +265,11 @@ def _apply_parameter_sweep_overrides(envelope: dict[str, Any], cli: CLIConfig) -
     ordering = [cli_field for cli_field, key in requested if key in _ORDERING_KEYS]
     if ordering and not _sweep_accepts_ordering(sweep_type):
         flags = ", ".join(flag_names_for(cli_field)[0] for cli_field in ordering)
+        verb, pronoun = ("does", "it") if len(ordering) == 1 else ("do", "them")
         raise ConfigurationError(
-            f"{flags} do not apply to a {sweep_type} sweep, which chooses its "
-            f"own trial order. Drop them; --parameter-sweep-cooldown-seconds "
-            f"still applies."
+            f"{flags} {verb} not apply to a sweep of type {sweep_type}, which "
+            f"chooses its own trial order. Drop {pronoun}; "
+            f"--parameter-sweep-cooldown-seconds still applies."
         )
     for cli_field, key in requested:
         _pop_config_value(sweep, key)
@@ -290,10 +292,7 @@ def _build_variant_runs(
     diffed against the base. Computed once from the rendered envelope:
     diffing the raw one would compare Jinja template strings.
     """
-    from aiperf.config.flags._config_flag_routing import (
-        reject_missing_sweep_companions,
-        reject_unrouted_cli_flags,
-    )
+    from aiperf.config.flags._config_flag_routing import _describe
     from aiperf.config.flags.converter import (
         _build_variant_clis,
         _diff_envelope_benchmark,
@@ -305,25 +304,27 @@ def _build_variant_runs(
     if not cli_config.sweep_variants:
         return None
     _validate_variant_flags(cli_config)
+    variant_flag = _describe("sweep_variants")
     if base_envelope.get("sweep") is not None:
         raise ConfigurationError(
-            "--variant declares its own scenarios sweep and cannot be combined "
-            "with the sweep the config file declares or that --search-* flags "
-            "build. Remove one."
+            f"{variant_flag} declares its own scenarios sweep and cannot be "
+            "combined with the sweep the config file declares or that "
+            "--search-* flags build. Remove one."
         )
 
     runs: list[dict[str, Any]] = []
     for name, variant_cli in _build_variant_clis(cli_config):
-        # A variant key can be any CLI flag, so it gets the command line's checks.
-        reject_unrouted_cli_flags(variant_cli)
-        reject_missing_sweep_companions(variant_cli, yaml_dict)
         run_level_flags = _variant_run_level_flags(variant_cli, cli_config)
         if run_level_flags:
-            raise ConfigurationError(
-                f"--variant {name!r} sets {', '.join(run_level_flags)}, which "
-                f"apply to the whole sweep rather than one variant. Pass them "
-                f"outside --variant."
+            verb, pronoun = (
+                ("applies", "it") if len(run_level_flags) == 1 else ("apply", "them")
             )
+            raise ConfigurationError(
+                f"{variant_flag} {name!r} sets {', '.join(run_level_flags)}, "
+                f"which {verb} to the whole sweep rather than one variant. "
+                f"Pass {pronoun} outside {variant_flag}."
+            )
+        _reject_variant_cli_flags(name, variant_cli, yaml_dict)
         overrides = build_cli_overrides(variant_cli, benchmark_config=benchmark_config)
         variant = _merge_overrides_into_envelope(
             copy.deepcopy(yaml_dict),
@@ -335,9 +336,9 @@ def _build_variant_runs(
         for key in sorted((base_envelope.keys() | variant.keys()) - {"benchmark"}):
             if variant.get(key) != base_envelope.get(key):
                 raise ConfigurationError(
-                    f"--variant {name!r} changes {key!r}, which applies to the "
-                    f"whole run rather than one variant. Pass that flag "
-                    f"outside --variant."
+                    f"{variant_flag} {name!r} changes {key!r}, which applies to "
+                    f"the whole run rather than one variant. Pass that flag "
+                    f"outside {variant_flag}."
                 )
         run: dict[str, Any] = {"name": name}
         run_benchmark = _diff_envelope_benchmark(
@@ -348,6 +349,31 @@ def _build_variant_runs(
             run["benchmark"] = run_benchmark
         runs.append(run)
     return runs
+
+
+def _reject_variant_cli_flags(
+    name: str, variant_cli: CLIConfig, yaml_dict: dict[str, Any]
+) -> None:
+    """Apply the command line's flag checks to one variant, naming the variant.
+
+    A variant key can be any CLI flag, so it gets the same checks; the prefix
+    tells the user the offending flag came from ``--variant``, not their
+    top-level flags.
+    """
+    from aiperf.config.flags._config_flag_routing import (
+        _describe,
+        reject_missing_sweep_companions,
+        reject_unrouted_cli_flags,
+    )
+    from aiperf.config.loader.errors import ConfigurationError
+
+    try:
+        reject_unrouted_cli_flags(variant_cli)
+        reject_missing_sweep_companions(variant_cli, yaml_dict)
+    except ConfigurationError as exc:
+        raise ConfigurationError(
+            f"{_describe('sweep_variants')} {name!r}: {exc.message}"
+        ) from exc
 
 
 def _variant_run_level_flags(

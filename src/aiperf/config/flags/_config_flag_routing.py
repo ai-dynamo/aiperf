@@ -170,9 +170,9 @@ CONVERGENCE_DETAIL_FIELDS: frozenset[str] = frozenset(
 )
 
 
-# Kept as the invariant suite's source of companion test inputs. The resolver
-# now evaluates the effective YAML+CLI configuration, so none of the routed
-# flags require a CLI-only companion before reaching that validation.
+# Kept (empty) as the invariant suite's hook; companion-required sweep flags are
+# covered by reject_missing_sweep_companions here and by SWEEP_FLAG_COMPANIONS
+# in tests/unit/config/test_config_override_invariants.py.
 COMPANION_ROUTED: dict[str, frozenset[str]] = {}
 
 

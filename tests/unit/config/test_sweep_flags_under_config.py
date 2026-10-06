@@ -415,6 +415,17 @@ def test_variant_with_recipe_input_is_rejected(tmp_path: Path) -> None:
     message = str(excinfo.value)
     assert "--concurrency-min" in message
     assert "--search-recipe" in message
+    assert "'a'" in message
+
+
+def test_variant_sweep_type_reports_run_level_message(tmp_path: Path) -> None:
+    """The run-level check runs before the companion check, so it wins."""
+    with pytest.raises(ConfigurationError) as excinfo:
+        _resolve(tmp_path, sweep_variants=["a: sweep-type=zip", "b: concurrency=2"])
+    message = str(excinfo.value)
+    assert "--sweep-type" in message
+    assert "whole sweep" in message
+    assert "list-valued" not in message
 
 
 def test_variant_with_unrouted_flag_is_rejected(tmp_path: Path) -> None:
