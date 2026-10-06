@@ -13,12 +13,17 @@ files are a few MB, so every family on the list below can be checked on an
 ordinary runner in seconds -- which is the only reason covering current families
 is affordable at all, given the smallest non-Qwen member upstream is ~31B.
 
-These make REAL network calls to HuggingFace. Run with:
-    uv run pytest tests/integration/test_model_family_tokenizers_live.py -m integration
+These make REAL network calls to HuggingFace, so they are opt-in: the
+integration suite runs with ``HF_HUB_OFFLINE`` set and would fail every case on
+a cache miss. Same gating as ``test_tokenizer_alias_resolution_live.py``.
+
+    RUN_HF_INTEGRATION_TESTS=1 uv run pytest \
+        tests/integration/test_model_family_tokenizers_live.py
 """
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 
 import pytest
@@ -26,7 +31,23 @@ from pytest import param
 
 from aiperf.common.tokenizer import Tokenizer
 
-pytestmark = [pytest.mark.integration, pytest.mark.network]
+pytestmark = pytest.mark.network
+
+
+@pytest.fixture(autouse=True)
+def _require_live_hf(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Opt in explicitly, and only then allow the network.
+
+    Deliberately NOT marked ``integration``: that suite runs offline by design,
+    so collecting these there turns a missing cache entry into a fleet of
+    assertion failures that look like real findings.
+    """
+    if os.environ.get("RUN_HF_INTEGRATION_TESTS") != "1":
+        pytest.skip(
+            "skipping live HuggingFace tests; set RUN_HF_INTEGRATION_TESTS=1 to enable"
+        )
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
 
 
 @dataclass(frozen=True)
@@ -104,9 +125,12 @@ def test_trust_remote_code_requirement_is_unchanged(fam: Family) -> None:
         Tokenizer.from_pretrained(fam.model, trust_remote_code=False)
         needed = False
     except Exception as e:  # noqa: BLE001
-        text = str(e).lower()
-        if any(k in text for k in ("connection", "timeout", "resolve", "network")):
-            pytest.skip(f"HuggingFace unreachable: {e}")
+        # Only a refusal that NAMES trust_remote_code means the flag is
+        # required. Treating any failure as "requires it" turns an unreachable
+        # hub, a cache miss or a gated repo into a confident false finding --
+        # which is exactly what happened when this ran in the offline suite.
+        if "trust_remote_code" not in str(e):
+            pytest.skip(f"could not load {fam.model} without the flag: {e}")
 
     assert needed == fam.trust_remote_code, (
         f"{fam.family} ({fam.model}) now "
