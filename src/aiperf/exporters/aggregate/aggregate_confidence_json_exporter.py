@@ -103,6 +103,9 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
         _overflow = result_metadata.pop("_context_overflow_count", 0)
         context_overflow_count = int(_overflow) if is_finite_value(_overflow) else 0
         was_cancelled = bool(result_metadata.pop("_was_cancelled", False))
+        runtime_invalid_reasons = result_metadata.pop(
+            "_runtime_submission_invalid_reasons", None
+        )
 
         submission_valid, submission_invalid_reasons = compute_submission_outcome(
             scenario_name=scenario_name,
@@ -111,6 +114,7 @@ class AggregateConfidenceJsonExporter(AggregateBaseExporter):
             total_responses=total_responses,
             context_overflow_count=context_overflow_count,
             was_cancelled=was_cancelled,
+            runtime_invalid_reasons=runtime_invalid_reasons,
         )
 
         run_metadata = _build_run_metadata_dict(
