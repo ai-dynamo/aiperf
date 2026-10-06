@@ -410,6 +410,9 @@ SWEEP_FLAG_COMPANIONS: dict[str, dict[str, Any]] = {
     "degradation_metric_tag": {"search_recipe": "concurrency-ramp"},
     "degradation_stat": {"search_recipe": "concurrency-ramp"},
     "degradation_threshold": {"search_recipe": "concurrency-ramp"},
+    "parameter_sweep_mode": {"concurrency": [1, 2]},
+    "parameter_sweep_same_seed": {"concurrency": [1, 2]},
+    "parameter_sweep_cooldown_seconds": {"concurrency": [1, 2]},
     "isl_min": {"search_recipe": "prefill-ttft-curve", **_STREAMING},
     "isl_max": {"search_recipe": "prefill-ttft-curve", **_STREAMING},
     "isl_steps": {"search_recipe": "prefill-ttft-curve", **_STREAMING},
@@ -453,7 +456,14 @@ SWEEP_FLAG_COMPANIONS: dict[str, dict[str, Any]] = {
 }
 
 _COMPANION_REQUIRED_FIELDS: frozenset[str] = (
-    RECIPE_INPUT_FIELDS | CONVERGENCE_DETAIL_FIELDS | {"sweep_type"}
+    RECIPE_INPUT_FIELDS
+    | CONVERGENCE_DETAIL_FIELDS
+    | {
+        "sweep_type",
+        "parameter_sweep_mode",
+        "parameter_sweep_same_seed",
+        "parameter_sweep_cooldown_seconds",
+    }
 )
 
 

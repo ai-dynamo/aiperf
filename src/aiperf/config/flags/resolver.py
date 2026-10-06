@@ -181,6 +181,7 @@ def _resolve_config_envelopes(
     )
 
     for envelope in (merged.envelope, raw_merged.envelope):
+        _apply_parameter_sweep_overrides(envelope, cli_config)
         _apply_convergence_overrides(envelope, cli_config)
 
     config = AIPerfConfig.model_validate(merged.envelope)
@@ -210,6 +211,53 @@ def _apply_convergence_overrides(envelope: dict[str, Any], cli: CLIConfig) -> No
         return
     for name in details:
         convergence[name.removeprefix("convergence_")] = getattr(cli, name)
+
+
+def _apply_parameter_sweep_overrides(envelope: dict[str, Any], cli: CLIConfig) -> None:
+    """Write ``--parameter-sweep-*`` onto the final sweep block.
+
+    Runs after the merge, so it sees the sweep whichever source produced it:
+    the config file, promoted magic lists, a recipe, or ``--variant``. Where
+    the CLI-only helper skips silently (no sweep; ordering knobs on an
+    adaptive sweep) this raises, because under ``--config`` a flag must take
+    effect or say why it cannot.
+    """
+    from aiperf.config.flags._config_flag_routing import flag_names_for
+    from aiperf.config.flags.converter import (
+        _ORDERING_KEYS,
+        _PARAMETER_SWEEP_KEYS,
+        _sweep_accepts_ordering,
+    )
+    from aiperf.config.loader.errors import ConfigurationError
+
+    requested = [
+        (cli_field, key)
+        for cli_field, key in _PARAMETER_SWEEP_KEYS
+        if cli_field in cli.model_fields_set
+    ]
+    if not requested:
+        return
+    sweep = envelope.get("sweep")
+    if not isinstance(sweep, dict):
+        flags = ", ".join(flag_names_for(cli_field)[0] for cli_field, _ in requested)
+        raise ConfigurationError(
+            f"{flags} configure a sweep, but neither the config file nor the "
+            f"command line declares one. Add a sweep: block to the config "
+            f"file, or pass list-valued flags (e.g. --concurrency 1,2,4), "
+            f"--variant, or --search-recipe."
+        )
+    sweep_type = sweep.get("type", "grid")
+    ordering = [cli_field for cli_field, key in requested if key in _ORDERING_KEYS]
+    if ordering and not _sweep_accepts_ordering(sweep_type):
+        flags = ", ".join(flag_names_for(cli_field)[0] for cli_field in ordering)
+        raise ConfigurationError(
+            f"{flags} do not apply to a {sweep_type} sweep, which chooses its "
+            f"own trial order. Drop them; --parameter-sweep-cooldown-seconds "
+            f"still applies."
+        )
+    for cli_field, key in requested:
+        _pop_config_value(sweep, key)
+        sweep[key] = getattr(cli, cli_field)
 
 
 def _validate_search_space_phase_targets(

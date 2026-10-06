@@ -155,16 +155,8 @@ _ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
 )
 
 
-# Sweep flags the resolver does not route yet; each needs post-merge state
-# (the final sweep block) that the pre-merge override builders cannot see.
-SWEEP_FIELDS_NOT_ROUTED: frozenset[str] = frozenset(
-    {
-        "parameter_sweep_cooldown_seconds",
-        "parameter_sweep_mode",
-        "parameter_sweep_same_seed",
-        "sweep_variants",
-    }
-)
+# Sweep flags the resolver does not route yet.
+SWEEP_FIELDS_NOT_ROUTED: frozenset[str] = frozenset({"sweep_variants"})
 
 # Inputs to a --search-recipe: SLA targets and sweep-range overrides the
 # recipe reads from SearchRecipeContext. Derived from the tuples the recipe

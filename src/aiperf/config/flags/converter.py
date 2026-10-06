@@ -586,6 +586,21 @@ def _apply_scenario_fields(nested: dict[str, Any], cli: CLIConfig) -> None:
         nested["unsafe_override"] = cli.unsafe_override
 
 
+# (CLIConfig field, sweep key) for the --parameter-sweep-* knobs, shared by
+# the CLI-only converter and the --config resolver.
+_PARAMETER_SWEEP_KEYS: tuple[tuple[str, str], ...] = (
+    ("parameter_sweep_mode", "iteration_order"),
+    ("parameter_sweep_same_seed", "same_seed"),
+    ("parameter_sweep_cooldown_seconds", "cooldown_seconds"),
+)
+_ORDERING_KEYS: frozenset[str] = frozenset({"iteration_order", "same_seed"})
+
+
+def _sweep_accepts_ordering(sweep_type: str) -> bool:
+    """Every sweep type but adaptive_search carries iteration_order / same_seed."""
+    return sweep_type != "adaptive_search"
+
+
 def _apply_parameter_sweep_meta_to_sweep(
     nested: dict[str, Any], cli: CLIConfig
 ) -> None:
@@ -598,26 +613,23 @@ def _apply_parameter_sweep_meta_to_sweep(
     ``_assemble_optional`` / ``_promote_magic_lists_to_sweep_block``
     already produced. No-op when no sweep is in flight.
 
-    ``iteration_order`` and ``same_seed`` only exist on grid-shaped sweeps
-    (``GridSweep`` / ``ScenarioSweep`` via ``_GridSweepBase``); the
-    adaptive-search envelope inherits from ``_SweepBase`` directly and
-    sets ``extra="forbid"``, so writing those keys onto an
-    ``adaptive_search`` sweep would crash Pydantic validation. Gate the
-    stamp on the sweep being grid-shaped. ``cooldown_seconds`` lives on
-    ``_SweepBase`` and applies to all sweep types, so it stays
-    unconditional.
+    ``iteration_order`` and ``same_seed`` exist on every sweep type except
+    ``adaptive_search``, which sets ``extra="forbid"``; writing them there
+    would crash Pydantic validation, so they are skipped for it.
+    ``cooldown_seconds`` lives on ``_SweepBase`` and applies to all sweep
+    types.
     """
     sweep = nested.get("sweep")
     if not isinstance(sweep, dict):
         return
     set_fields = cli.model_fields_set
-    is_grid_shaped = sweep.get("type") in ("grid", "scenarios")
-    if is_grid_shaped and "parameter_sweep_mode" in set_fields:
-        sweep["iteration_order"] = cli.parameter_sweep_mode
-    if is_grid_shaped and "parameter_sweep_same_seed" in set_fields:
-        sweep["same_seed"] = cli.parameter_sweep_same_seed
-    if "parameter_sweep_cooldown_seconds" in set_fields:
-        sweep["cooldown_seconds"] = cli.parameter_sweep_cooldown_seconds
+    accepts_ordering = _sweep_accepts_ordering(sweep.get("type", "grid"))
+    for cli_field, key in _PARAMETER_SWEEP_KEYS:
+        if cli_field not in set_fields:
+            continue
+        if key in _ORDERING_KEYS and not accepts_ordering:
+            continue
+        sweep[key] = getattr(cli, cli_field)
 
 
 def _apply_variants_scenario_sweep(

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pytest import param
 
 from aiperf.config import AIPerfConfig
 from aiperf.config.flags import CLIConfig
@@ -21,6 +22,7 @@ from aiperf.config.flags._config_flag_routing import (
     RECIPE_INPUT_FIELDS,
     flag_names_for,
 )
+from aiperf.config.flags.converter import convert_cli_to_aiperf
 from aiperf.config.flags.resolver import resolve_config
 from aiperf.config.loader.errors import ConfigurationError
 
@@ -245,3 +247,115 @@ def test_recipe_against_yaml_sweep_is_rejected(tmp_path: Path) -> None:
             yaml_text=_PLAIN_YAML + _SWEEP_BLOCK,
             search_recipe="concurrency-ramp",
         )
+
+
+# --- parameter-sweep knobs --------------------------------------------------
+
+_CAMEL_SWEEP_BLOCK = textwrap.dedent("""\
+    sweep:
+      type: grid
+      iterationOrder: repeated
+      cooldownSeconds: 1.0
+      parameters:
+        phases.profiling.concurrency: [1, 2]
+""")
+
+_SEARCH_SPACE_FLAGS: dict[str, Any] = {
+    "search_space": ["phases.profiling.concurrency:1,1000:int"],
+    "search_metric": "output_token_throughput",
+    "search_direction": "maximize",
+    "search_max_iterations": 10,
+}
+
+
+def test_parameter_sweep_flags_apply_to_promoted_lists(tmp_path: Path) -> None:
+    sweep = _sweep(
+        _resolve(
+            tmp_path,
+            concurrency=[1, 2],
+            parameter_sweep_mode="independent",
+            parameter_sweep_same_seed=True,
+            parameter_sweep_cooldown_seconds=3.0,
+        )
+    )
+    assert sweep["iteration_order"] == "independent"
+    assert sweep["same_seed"] is True
+    assert sweep["cooldown_seconds"] == 3.0
+
+
+def test_parameter_sweep_flags_override_yaml_sweep(tmp_path: Path) -> None:
+    config = _resolve(
+        tmp_path,
+        yaml_text=_PLAIN_YAML + _CAMEL_SWEEP_BLOCK,
+        parameter_sweep_mode="independent",
+        parameter_sweep_cooldown_seconds=3.0,
+    )
+    sweep = _sweep(config)
+    assert sweep["iteration_order"] == "independent"
+    assert sweep["cooldown_seconds"] == 3.0
+    raw_sweep = config._raw_envelope["sweep"]
+    assert raw_sweep["iteration_order"] == "independent"
+    assert "iterationOrder" not in raw_sweep
+    assert "cooldownSeconds" not in raw_sweep
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        param({"parameter_sweep_mode": "independent"}, id="mode"),
+        param({"parameter_sweep_mode": "repeated"}, id="mode-explicit-default"),
+        param({"parameter_sweep_cooldown_seconds": 3.0}, id="cooldown"),
+    ],
+)
+def test_parameter_sweep_flag_without_a_sweep_is_rejected(
+    tmp_path: Path, flags: dict[str, Any]
+) -> None:
+    with pytest.raises(ConfigurationError, match="declares one"):
+        _resolve(tmp_path, **flags)
+
+
+def test_ordering_flag_on_adaptive_recipe_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError) as excinfo:
+        _resolve(
+            tmp_path,
+            search_recipe="max-throughput-ttft-sla",
+            ttft_sla_ms=100.0,
+            parameter_sweep_mode="independent",
+        )
+    message = str(excinfo.value)
+    assert "--parameter-sweep-mode" in message
+    assert "adaptive_search" in message
+
+
+def test_ordering_flag_on_search_space_sweep_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigurationError, match="--parameter-sweep-same-seed"):
+        _resolve(tmp_path, **_SEARCH_SPACE_FLAGS, parameter_sweep_same_seed=True)
+
+
+def test_cooldown_applies_to_adaptive_sweep(tmp_path: Path) -> None:
+    sweep = _sweep(
+        _resolve(
+            tmp_path,
+            search_recipe="max-throughput-ttft-sla",
+            ttft_sla_ms=100.0,
+            parameter_sweep_cooldown_seconds=3.0,
+        )
+    )
+    assert sweep["type"] == "adaptive_search"
+    assert sweep["cooldown_seconds"] == 3.0
+
+
+def test_cli_only_ordering_flags_apply_to_zip_sweep() -> None:
+    """The CLI-only helper used to stamp ordering only on grid/scenarios."""
+    config = convert_cli_to_aiperf(
+        CLIConfig(
+            model_names=["test-model"],
+            urls=["http://localhost:8000"],
+            request_count=5,
+            concurrency=[1, 2],
+            prompt_input_tokens_mean=[64, 128],
+            sweep_type="zip",
+            parameter_sweep_mode="independent",
+        )
+    )
+    assert config.model_dump(mode="json")["sweep"]["iteration_order"] == "independent"
