@@ -544,13 +544,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         in a recorded idle gap, a slow dataset build. Only an outstanding
         request that never lands is a stall, and that is what makes the run
         unable to finish on its own.
+
+        That also removes the need to gate on phase completion. A completed
+        phase has nothing in flight, and ``_complete_credit_phases`` holds the
+        phase *kind*, so gating on it would have disarmed the watchdog for
+        every profiling phase after the first in a multi-phase run.
         """
         timeout = Environment.RECORD.PROGRESS_STALL_TIMEOUT
         if timeout <= 0:
             raise asyncio.CancelledError("progress stall watchdog disabled")
         if not self._profiling_started:
-            return
-        if CreditPhase.PROFILING in self._complete_credit_phases:
             return
 
         stats = self._records_tracker.create_aggregate_stats_for_phase(
@@ -763,10 +766,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._records_tracker = RecordsTracker()
         self._last_checkpoint_records = -1
         self._error_tracker = ErrorTracker()
-
-        # Stall detection: a phase completes only once the credit phase reports
-        # its final count, so a credit that is never returned leaves that
-        # condition unevaluable and the wait never ends.
 
         # DatasetConfiguredNotification (SUB) and metric records (PULL) arrive on
         # independent channels with no ordering guarantee. Gate record processing on
