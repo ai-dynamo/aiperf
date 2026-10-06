@@ -144,6 +144,7 @@ class PhaseRunner(TaskManagerMixin):
         # reflects the actual filtered dataset after start/end offset filtering.
         metadata = conversation_source.dataset_metadata
         if config.timing_mode == TimingMode.FIXED_SCHEDULE and metadata:
+            self._warn_if_request_count_is_overridden(config, metadata)
             self._config = config.model_copy(
                 update={
                     "total_expected_requests": metadata.total_turn_count,
@@ -567,6 +568,29 @@ class PhaseRunner(TaskManagerMixin):
             raise e
         finally:
             self._detach_orchestrator_and_cleanup(strategy)
+
+    def _warn_if_request_count_is_overridden(self, config, metadata) -> None:
+        """Say so when fixed schedule replaces a configured request count.
+
+        Fixed schedule replays the trace's own entries, so the count comes from
+        the dataset and a configured one cannot bound the run. Replacing it
+        silently is the failure mode CLAUDE.md forbids for flags under
+        ``--config`` -- "never be silently ignored" -- and for a benchmarking
+        tool it means publishing a number of requests the user did not ask for.
+
+        Warn rather than reject: the trace is the authority here, and refusing
+        the run would break every trace replay that also carries a count.
+        """
+        configured = getattr(config, "total_expected_requests", None)
+        actual = metadata.total_turn_count
+        if configured is None or configured == actual:
+            return
+        self.warning(
+            f"--request-count {configured:,} is not used under fixed-schedule "
+            f"replay: the schedule is the trace itself, so all {actual:,} "
+            "recorded requests are sent. Pass --no-fixed-schedule to replay "
+            "the dataset under a request count or concurrency instead."
+        )
 
     def _build_strategy(self) -> TimingStrategyProtocol:
         """Construct the timing strategy class for this phase."""

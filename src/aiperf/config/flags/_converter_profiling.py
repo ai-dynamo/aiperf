@@ -666,6 +666,17 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
 
     _maybe_auto_promote_trace(prof, cli, file_path)
 
+    if prof["type"] == PhaseType.FIXED_SCHEDULE and "requests" in prof:
+        # Fixed schedule replays the trace's own entries, so the dataset decides
+        # how many requests are sent and a configured count cannot bound the
+        # run. Say so rather than discarding the flag in silence: CLAUDE.md's
+        # rule for flags under --config is that they either change the resolved
+        # config or raise naming the flag, and for a benchmarking tool a
+        # silently different request count means publishing numbers nobody
+        # asked for. Warned, not rejected -- the trace is the authority, and
+        # refusing would break every replay that also carries a count.
+        _warn_request_count_unused_under_fixed_schedule(prof["requests"])
+
     # fixed_schedule autodefault: dataset entry count -> requests.
     if (
         prof["type"] == PhaseType.FIXED_SCHEDULE
@@ -677,6 +688,38 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
             prof["requests"] = records
 
     _maybe_set_dag_root_sessions(prof, cli, file_path)
+
+
+def _warn_request_count_unused_under_fixed_schedule(configured: int) -> None:
+    """Tell the user on the console, not only in the log file.
+
+    A log-only warning is barely better than silence here: the console does not
+    surface WARNING records, so the first sign would be a request count in the
+    results table that does not match what was asked for.
+    """
+    message = (
+        f"--request-count {configured:,} is not used under fixed-schedule "
+        "replay: the schedule is the trace itself, so every recorded request "
+        "is sent. Pass --no-fixed-schedule to replay the dataset under a "
+        "request count or concurrency instead."
+    )
+    _logger.warning(message)
+    try:
+        from rich.panel import Panel
+        from rich.text import Text
+
+        from aiperf.cli_utils import console
+
+        console.print(
+            Panel(
+                Text(message, style="yellow"),
+                title="Request Count Not Applied",
+                border_style="bold yellow",
+                title_align="left",
+            )
+        )
+    except Exception:  # noqa: BLE001 - console output must never fail a run
+        _logger.debug("Could not render the request-count console panel")
 
 
 def _columnar_file_has_timestamp(path: Path) -> bool | None:
