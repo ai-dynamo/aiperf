@@ -293,16 +293,40 @@ covers the dataset block specifically.
 
 ### Known gaps
 
-`--sweep-type` and `--disable-auto-fixed-schedule` are unrouted and
-loud: the first needs a sweep block to attach to, the second is
-consumed during phase construction, which this path does not rebuild.
+`--no-fixed-schedule` (`disable_auto_fixed_schedule`) is unrouted and loud:
+it is consumed during phase construction, which this path does not rebuild.
 
-The flags in `SWEEP_FIELDS_NOT_ROUTED` (`--concurrency-min/max/steps`,
-`--isl-*`/`--osl-*`, the `*-sla-ms` filters, `--parameter-sweep-*`)
-resolve cleanly and change nothing, so they are rejected. Verified
-individually — notably `--ttft-sla-ms` does **not** take effect even
-alongside `--search-recipe` and `--streaming`. Routing them is
-follow-up work; until then the failure is loud.
+### Companion-required flags
+
+Some routed flags only mean something beside another flag. Under `--config`
+a missing companion raises instead of resolving to a silent no-op:
+
+- Recipe inputs (`RECIPE_INPUT_FIELDS`: `--concurrency-min/max/steps`,
+  `--isl-*`, `--osl-*`, `--degradation-*`, the `*-sla-ms` targets,
+  `--error-rate-sla`, `--slo-attainment-fraction`, `--search-style`,
+  `--isl-osl-pairs`) need `--search-recipe`.
+- `--convergence-mode/stat/threshold` need `--convergence-metric` or a
+  `multi_run.convergence` block in the config file.
+- `--sweep-type` needs list-valued CLI flags and no `sweep:` in the file.
+- `--parameter-sweep-*` need a final sweep to write to, and
+  `--parameter-sweep-mode/same-seed` a non-adaptive one.
+- `--variant` keys cannot set flags the resolver applies to the whole sweep
+  after the merge (`--parameter-sweep-*`, `--convergence-mode/stat/threshold`,
+  `--sweep-type`), cannot be unrouted or miss a companion, and cannot change
+  anything outside `benchmark:` (e.g. `--num-profile-runs`); each raises.
+- `aiperf kube sweep` hoists the file's `sweep:` / `multiRun:` blocks out
+  before the resolver runs, so flags that would merge into them are rejected
+  up front (`reject_cli_flags_against_hoisted_blocks`): `--search-recipe`,
+  `--sweep-type`, `--variant`, and `--parameter-sweep-*` against a file
+  `sweep:`, and `--convergence-mode/stat/threshold` against a file
+  `multiRun.convergence` without `--convergence-metric`.
+
+The pre-merge rules live in `reject_missing_sweep_companions`
+(`_config_flag_routing.py`); the final-sweep rules in the resolver's
+`_apply_parameter_sweep_overrides`. The CLI-only path does not enforce them
+yet. `SWEEP_FLAG_COMPANIONS` in the invariant test maps each of these flags
+to a companion that reads it, so `test_routed_field_never_silently_no_ops`
+checks them for real.
 
 ## Extending the suite
 

@@ -15,8 +15,9 @@ Not every flag can be applied this way. Anything this path cannot route is
 rejected up front by ``reject_unrouted_cli_flags`` with an error naming the
 flag, rather than being silently discarded -- see ``_config_flag_routing``
 and ``docs/dev/global-invariants.md`` for the classification and the tests
-that keep it honest. ``--ttft-sla-ms`` is one such flag today: it does not
-take effect under ``--config`` even alongside a recipe, so it errors.
+that keep it honest. Flags that only mean something beside a companion
+(``--ttft-sla-ms`` needs ``--search-recipe``) raise when the companion is
+missing; see ``reject_missing_sweep_companions``.
 """
 
 from __future__ import annotations

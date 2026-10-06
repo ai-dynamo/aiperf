@@ -459,3 +459,105 @@ def test_variant_repeating_outer_parameter_sweep_value_is_allowed(
         )
     )
     assert sweep["cooldown_seconds"] == 3.0
+
+
+# --- parity with the CLI-only path -----------------------------------------
+
+_CLI_BASE: dict[str, Any] = {
+    "model_names": ["test-model"],
+    "urls": ["http://localhost:8000"],
+    "streaming": True,
+    "request_count": 5,
+}
+
+
+def _sweep_sections(config: AIPerfConfig) -> dict[str, Any]:
+    dump = config.model_dump(mode="json", exclude_none=True)
+    return {
+        "sweep": dump.get("sweep"),
+        "multi_run": dump.get("multi_run"),
+        "slos": dump["benchmark"].get("slos"),
+    }
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        param(
+            {
+                "search_recipe": "concurrency-ramp",
+                "concurrency_min": 2,
+                "concurrency_max": 64,
+                "concurrency_steps": 4,
+                "degradation_metric_tag": "time_to_first_token",
+                "degradation_stat": "p90",
+            },
+            id="concurrency-ramp",
+        ),
+        param(
+            {"search_recipe": "prefill-ttft-curve", "isl_min": 64, "isl_max": 1024, "isl_steps": 3},
+            id="prefill-ttft-curve",
+        ),
+        param(
+            {"search_recipe": "decode-itl-curve", "osl_min": 16, "osl_max": 256, "osl_steps": 3},
+            id="decode-itl-curve",
+        ),
+        param({"search_recipe": "max-throughput-ttft-sla", "ttft_sla_ms": 123.0}, id="ttft-sla"),
+        param({"search_recipe": "max-throughput-itl-sla", "itl_sla_ms": 7.0}, id="itl-sla"),
+        param(
+            {
+                "search_recipe": "max-concurrency-under-sla",
+                "ttft_sla_ms": 100.0,
+                "e2e_sla_ms": 999.0,
+                "error_rate_sla": 0.05,
+                "search_style": "monotonic",
+            },
+            id="max-concurrency-under-sla",
+        ),
+        param(
+            {
+                "search_recipe": "max-goodput-under-slo",
+                "ttft_sla_ms": 100.0,
+                "tpot_sla_ms": 10.0,
+                "e2e_sla_ms": 1000.0,
+                "slo_attainment_fraction": 0.9,
+            },
+            id="max-goodput-under-slo",
+        ),
+        param(
+            {"search_recipe": "pareto-sweep", "isl_osl_pairs": "128/128,256/256", "concurrency": [1, 4]},
+            id="pareto-sweep",
+        ),
+        param(
+            {
+                "convergence_metric": "time_to_first_token",
+                "num_profile_runs": 5,
+                "convergence_mode": "ci_width",
+                "convergence_stat": "p90",
+                "convergence_threshold": 0.05,
+            },
+            id="convergence",
+        ),
+        param(
+            {
+                "concurrency": [1, 2],
+                "prompt_input_tokens_mean": [64, 128],
+                "sweep_type": "zip",
+                "parameter_sweep_mode": "independent",
+                "parameter_sweep_same_seed": True,
+                "parameter_sweep_cooldown_seconds": 3.0,
+            },
+            id="zip-with-parameter-sweep-knobs",
+        ),
+        param(
+            {"sweep_variants": ["low: concurrency=2", "high: concurrency=8"], "parameter_sweep_cooldown_seconds": 3.0},
+            id="variants",
+        ),
+    ],
+)  # fmt: skip
+def test_config_path_matches_cli_only_path(
+    tmp_path: Path, flags: dict[str, Any]
+) -> None:
+    cli_only = convert_cli_to_aiperf(CLIConfig(**_CLI_BASE, **flags))
+    with_config = _resolve(tmp_path, **_CLI_BASE, **flags)
+    assert _sweep_sections(with_config) == _sweep_sections(cli_only)
