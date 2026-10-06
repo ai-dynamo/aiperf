@@ -506,20 +506,23 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         immediate=False,
     )
     async def _watch_for_progress_stall(self) -> None:
-        """Fail a run whose profiling phase stops producing records entirely.
+        """Fail a run whose in-flight requests stop completing.
 
         Distinct from :meth:`_watch_for_record_stall`, which handles aggregation
         falling behind *after* every credit has come back and finalizes with
         partial results. Here no credit ever comes back: a request that is
-        dispatched and never completes leaves ``final_requests_completed`` unset,
-        so the completion barrier is not merely unmet but unevaluable, and
-        nothing downstream can ever re-trigger it. ``--request-timeout-seconds``
-        is not a backstop -- it defaults to six hours and never applies to a
-        request that was never dispatched at all.
+        dispatched and never completes leaves ``final_requests_completed``
+        unset, so the completion barrier is not merely unmet but unevaluable,
+        and nothing downstream can re-trigger it.
+        ``--request-timeout-seconds`` is not a backstop -- it defaults to six
+        hours and never applies to a request that was never dispatched.
 
-        Armed only between profiling start and profiling completion, so neither
-        a slow dataset build (no records yet, by design) nor a finished run (no
-        records ever again, by design) is mistaken for a stall.
+        The condition is "requests are in flight and none are completing", not
+        "no records arrived". Zero records is normal and expected whenever
+        nothing is pending: a low request rate, a fixed-schedule replay sitting
+        in a recorded idle gap, a slow dataset build. Only an outstanding
+        request that never lands is a stall, and that is what makes the run
+        unable to finish on its own.
         """
         timeout = Environment.RECORD.PROGRESS_STALL_TIMEOUT
         if timeout <= 0:
@@ -529,28 +532,49 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if CreditPhase.PROFILING in self._complete_credit_phases:
             return
 
-        total = self._records_tracker.total_records_for_phase(CreditPhase.PROFILING)
-        now = time.monotonic()
-        if total != self._progress_stall_last_total:
+        stats = self._records_tracker.create_aggregate_stats_for_phase(
+            CreditPhase.PROFILING
+        )
+        in_flight = stats.in_flight_requests
+        total = stats.requests_completed
+
+        # Nothing outstanding means nothing to wait for. Reset the clock so a
+        # quiet stretch does not accumulate toward a later, unrelated stall.
+        if in_flight <= 0 or total != self._progress_stall_last_total:
             self._progress_stall_last_total = total
-            self._progress_stall_since = now
+            self._progress_stall_since = time.monotonic()
             return
 
-        stalled_for = now - self._progress_stall_since
+        stalled_for = time.monotonic() - self._progress_stall_since
         if stalled_for < timeout:
-            self.warning(
-                f"No records received for {stalled_for:.0f}s; {total:,} so far. "
-                f"Failing at {timeout:.0f}s "
-                f"(AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to wait indefinitely)."
-            )
+            # Stay quiet until a full check interval has genuinely elapsed:
+            # the tick right after the clock resets would otherwise report
+            # "0s with no completion", which reads as alarming and is not.
+            if stalled_for >= Environment.RECORD.PROGRESS_STALL_CHECK_INTERVAL:
+                self.warning(
+                    f"{in_flight:,} request(s) in flight with no completion "
+                    f"for {stalled_for:.0f}s ({total:,} completed so far). "
+                    f"Failing at {timeout:.0f}s "
+                    "(AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to wait "
+                    "indefinitely)."
+                )
             return
 
-        raise RuntimeError(
-            f"Benchmark stalled: no records received for {stalled_for:.0f}s with "
-            f"the profiling phase still in flight ({total:,} records received). A "
-            f"request was dispatched but never completed, or a credit was never "
-            f"returned, so the phase can never report complete. Set "
-            f"AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to disable this check."
+        # Raising here would only be logged: @background_task defaults to
+        # stop_on_error=False, so the task would retry forever and the run
+        # would still hang -- the exact outcome this watchdog exists to end.
+        # Publish a fatal, explicitly-incomplete result instead, which is the
+        # path the rest of this service uses to terminate a run.
+        await self._publish_terminal_failure_result(
+            CreditPhase.PROFILING,
+            cancelled=False,
+            error=RuntimeError(
+                f"Benchmark stalled: {in_flight:,} request(s) in flight with no "
+                f"completion for {stalled_for:.0f}s ({total:,} completed). A "
+                f"request was dispatched but never returned, so the phase can "
+                f"never report complete. Set "
+                f"AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to disable this check."
+            ),
         )
 
     @background_task(
