@@ -54,23 +54,47 @@ ALLOWLIST = {
 
 
 def added_markdown_files(base: str) -> list[Path]:
-    """Return docs/*.md files added (not modified) relative to ``base``."""
+    """Return docs/*.md files added (not modified) relative to ``base``.
+
+    Raises on a failed diff rather than returning nothing: an unavailable base
+    ref would otherwise make the gate report success having inspected no files
+    at all, which is worse than no gate -- it reads as a passing check.
+
+    ``-z`` because ``--name-only`` quotes paths containing whitespace and
+    splitting on whitespace would shear them into fragments that resolve to
+    nothing, silently skipping exactly the file being added.
+    """
     try:
         out = subprocess.run(
-            ["git", "diff", "--diff-filter=A", "--name-only", base, "--", "docs/"],
+            [
+                "git",
+                "diff",
+                "-z",
+                "--diff-filter=A",
+                "--name-only",
+                base,
+                "--",
+                "docs/",
+            ],
             capture_output=True,
             text=True,
             check=True,
             cwd=REPO_ROOT,
         ).stdout
     except subprocess.CalledProcessError as e:
-        print(f"::warning::Could not diff against {base}: {e}", file=sys.stderr)
-        return []
-    return [Path(line) for line in out.split() if line.endswith(".md")]
+        raise SystemExit(
+            f"::error::Could not diff against {base}: {e.stderr.strip() or e}. "
+            "Refusing to report success without checking any files."
+        ) from e
+    return [Path(entry) for entry in out.split("\0") if entry.endswith(".md")]
 
 
 def has_runnable_command(path: Path) -> bool:
-    """Whether the file contains at least one ``aiperf`` command in a code block."""
+    """Whether the file shows an ``aiperf`` command a reader could copy.
+
+    Only fenced blocks count: prose naming a flag is not a command, and gating
+    on prose would flag every reference page.
+    """
     infence = False
     for line in path.read_text(encoding="utf-8").splitlines():
         stripped = line.strip()
@@ -83,11 +107,9 @@ def has_runnable_command(path: Path) -> bool:
 
 
 def tagged_run_count(path: Path) -> int:
-    """Number of runnable commands the harness's own parser finds in ``path``.
-
-    Reuses ``MarkdownParser`` rather than matching the tag with a local regex,
-    so this gate and the test that consumes the tags can never disagree about
-    what counts as tagged.
+    """Reuses ``MarkdownParser`` rather than matching the tag with a local
+    regex, so this gate and the suite that consumes the tags can never disagree
+    about what counts as tagged.
     """
     try:
         parser = MarkdownParser()
