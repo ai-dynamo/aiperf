@@ -154,6 +154,12 @@ jobs:
           # why they cannot ride the stock vllm-default-openai server.
           - id: vllm-devmode-openai
             server: vllm-devmode-openai
+          # The README quick start, which is the first thing a new user runs.
+          # Ollama rather than vLLM: granite4:350m is a 350M model, so the
+          # shard's cost is the ~3.8 GB image pull plus a ~700 MB model pull
+          # rather than a GPU model load. Nothing is cached between runs.
+          - id: ollama-chat
+            server: ollama-chat
     steps:
       - name: Checkout
         uses: actions/checkout@v6
