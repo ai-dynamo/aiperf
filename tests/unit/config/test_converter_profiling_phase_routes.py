@@ -215,7 +215,8 @@ class TestGracePeriodRequiresDuration:
         )
         user = _make_user(loadgen=loadgen)
         with pytest.raises(
-            ValueError, match="Under --scenario inferencex-agentx-mvp, pass --benchmark-duration"
+            ValueError,
+            match="Under --scenario inferencex-agentx-mvp, pass --benchmark-duration",
         ):
             build_profiling(user)
 
