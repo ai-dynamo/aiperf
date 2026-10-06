@@ -377,6 +377,22 @@ class CreditCallbackHandler:
         credit = credit_return.credit
         phase = credit.phase
         key = self._phase_key(phase, credit.phase_index)
+        from aiperf._dbg_join import dbg
+
+        dbg(
+            "RET",
+            phase=str(phase),
+            conv=credit.conversation_id,
+            corr=credit.x_correlation_id,
+            parent=credit.parent_correlation_id,
+            root=credit.root_correlation_id,
+            turn=credit.turn_index,
+            final=credit.is_final_turn,
+            depth=credit.agent_depth,
+            issued_ns=credit.issued_at_ns,
+            err=credit_return.error is not None,
+            registered=key in self._phase_handlers,
+        )
 
         # Get phase handler (returns None if phase already cleaned up)
         handler = self._phase_handlers.get(key)

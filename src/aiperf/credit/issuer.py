@@ -517,6 +517,16 @@ class CreditIssuer:
             max_tokens_override=turn.max_tokens_override,
         )
 
+        from aiperf._dbg_join import dbg
+
+        dbg(
+            "ISSUE",
+            phase=str(credit.phase),
+            conv=credit.conversation_id,
+            corr=credit.x_correlation_id,
+            turn=credit.turn_index,
+            depth=credit.agent_depth,
+        )
         await self._credit_router.send_credit(credit=credit)
         replay_gate = getattr(self, "replay_gate", None)
         if replay_gate is not None:

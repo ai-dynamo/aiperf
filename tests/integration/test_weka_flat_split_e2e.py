@@ -509,7 +509,11 @@ def _assert_complete_play_order_and_joins(
                 child_last = children_by_suffix[suffix][-1]
                 assert gated.request_start_ns >= child_last.request_end_ns, (
                     f"{play.trace_id}: root turn {root_turn_index} crossed "
-                    f"SPAWN_JOIN before child {suffix} completed"
+                    f"SPAWN_JOIN before child {suffix} completed: gated start "
+                    f"{gated.request_start_ns} on {gated.worker_id}, child end "
+                    f"{child_last.request_end_ns} on {child_last.worker_id} "
+                    f"(margin {(gated.request_start_ns - child_last.request_end_ns) / 1e6:.3f}ms, "
+                    f"root {play.root_corr})"
                 )
             if assert_timing:
                 previous = play.root[root_turn_index - 1]

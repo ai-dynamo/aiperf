@@ -1772,6 +1772,15 @@ class BranchOrchestrator:
         result = ChildDispatchResult.normalize(
             await self._issuer.dispatch_join_turn(pending)
         )
+        from aiperf._dbg_join import dbg
+
+        dbg(
+            "RELEASE",
+            parent=pending.parent_x_correlation_id,
+            gated=pending.gated_turn_index,
+            orch=id(self),
+            result=str(result),
+        )
         if result is ChildDispatchResult.ISSUED:
             self.stats.parents_resumed += 1
         elif result is ChildDispatchResult.DEFERRED:
@@ -1813,6 +1822,17 @@ class BranchOrchestrator:
         duplicate calls (children that have already drained are silently
         ignored).
         """
+        from aiperf._dbg_join import caller, dbg
+
+        dbg(
+            "STOP",
+            corr=child_x_correlation_id,
+            orch=id(self),
+            has_entries=bool(self._child_to_join.get(child_x_correlation_id)),
+            cleaning=self._cleaning_up,
+            accel=self._accelerated_warmup_started,
+            caller=caller(),
+        )
         if self._cleaning_up:
             return
         entries = self._child_to_join.get(child_x_correlation_id)
