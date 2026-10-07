@@ -460,6 +460,18 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         # exported timeline; record.timestamp_ns stays raw for provenance.
         start_time_ns = record.controller_timestamp_ns
         start_perf_ns = record.start_perf_ns
+        from aiperf._dbg_join import dbg
+
+        dbg(
+            "REC",
+            corr=record.request_info.x_correlation_id,
+            conv=record.request_info.conversation_id,
+            turn=record.request_info.turn_index,
+            worker=worker_id,
+            ts_ns=record.timestamp_ns,
+            start_perf_ns=record.start_perf_ns,
+            clock_offset_ns=record.clock_offset_ns,
+        )
 
         end_perf_ns = (
             last_response_perf_ns or record.end_perf_ns or record.start_perf_ns

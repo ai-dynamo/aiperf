@@ -17,6 +17,7 @@ workers; a controller violation is a real early release.
 
 from __future__ import annotations
 
+import bisect
 import warnings
 from pathlib import Path
 
@@ -92,6 +93,33 @@ def _controller_view(
     return gated, violations, min_margin, stops, drift_ms
 
 
+def _start_skews(log_path: Path) -> dict[tuple[str, int], float]:
+    """Per-request start skew in ms, keyed by (x_correlation_id, turn_index).
+
+    A record's start is two clock reads: ``start_perf_ns`` (perf_counter) and
+    ``timestamp_ns`` (wall). ``timestamp_ns - start_perf_ns`` should equal the
+    system's wall-minus-monotonic offset at that moment; both clocks are
+    system-wide, so any instrumented event (``t_ns - m_ns``) nearest in
+    monotonic time is the reference. A positive skew means the wall read was
+    taken that much later than the perf read, shifting the exported start and
+    end later by the same amount.
+    """
+    events = [orjson.loads(line) for line in log_path.read_bytes().splitlines() if line]
+    refs = sorted(
+        (e["m_ns"], e["t_ns"] - e["m_ns"]) for e in events if e["ev"] != "REC"
+    )
+    ref_m = [m for m, _ in refs]
+    skews: dict[tuple[str, int], float] = {}
+    for e in events:
+        if e["ev"] != "REC" or not refs:
+            continue
+        i = bisect.bisect_left(ref_m, e["start_perf_ns"])
+        nearby = [refs[j] for j in (i - 1, i) if 0 <= j < len(refs)]
+        _, offset = min(nearby, key=lambda r: abs(r[0] - e["start_perf_ns"]))
+        skews[(e["corr"], e["turn"])] = (e["ts_ns"] - e["start_perf_ns"] - offset) / 1e6
+    return skews
+
+
 @pytest.mark.parametrize("iteration", range(ITERATIONS))
 async def test_zz_weka_spawn_join_flake_probe(
     tmp_path: Path, mock_server_factory: MockServerFactory, iteration: int
@@ -119,7 +147,10 @@ async def test_zz_weka_spawn_join_flake_probe(
     _assert_success(result, f"flake probe iteration {iteration}")
 
     gated, problems, controller_min, stops, drift_ms = _controller_view(log_path)
+    skew_of = _start_skews(log_path)
+    max_skew_ms = max(skew_of.values(), default=0.0)
     client_min = float("inf")
+    corrected_min = float("inf")
     client_checks = 0
     for play in _collect_plays(result):
         if not _is_complete_play(play, FANOUT_EXPECTED):
@@ -127,11 +158,20 @@ async def test_zz_weka_spawn_join_flake_probe(
         kids = {_child_suffix(cid): recs for cid, recs in play.children.items()}
         for turn, suffixes in JOINS[play.trace_id].items():
             g = play.root[turn]
+            g_skew = skew_of.get((g.x_correlation_id, g.turn_index))
             for suffix in suffixes:
                 last = kids[suffix][-1]
                 margin_ms = (g.request_start_ns - last.request_end_ns) / 1e6
+                c_skew = skew_of.get((last.x_correlation_id, last.turn_index))
+                corrected_ms = (
+                    None
+                    if g_skew is None or c_skew is None
+                    else margin_ms - g_skew + c_skew
+                )
                 client_checks += 1
                 client_min = min(client_min, margin_ms)
+                if corrected_ms is not None:
+                    corrected_min = min(corrected_min, corrected_ms)
                 if margin_ms >= 0:
                     continue
                 ctl = gated.get((play.root_corr, turn, suffix))
@@ -140,11 +180,17 @@ async def test_zz_weka_spawn_join_flake_probe(
                     if ctl is None
                     else f"controller monotonic margin {ctl[0]:.3f}ms"
                 )
+                skew_text = (
+                    "start skew unavailable"
+                    if corrected_ms is None
+                    else f"start skew gated {g_skew:.3f}ms, child {c_skew:.3f}ms; "
+                    f"skew-corrected margin {corrected_ms:.3f}ms"
+                )
                 problems.append(
                     f"CLIENT {play.trace_id} turn {turn} vs {suffix}: margin "
                     f"{margin_ms:.3f}ms; gated start {g.request_start_ns} on "
                     f"{g.worker_id}, child end {last.request_end_ns} on "
-                    f"{last.worker_id}; {ctl_text}; root {play.root_corr}"
+                    f"{last.worker_id}; {ctl_text}; {skew_text}; root {play.root_corr}"
                 )
     stop_lines = [
         f"STOP {s['corr']} has_entries={s['has_entries']} caller={s['caller']}"
@@ -152,6 +198,8 @@ async def test_zz_weka_spawn_join_flake_probe(
     ]
     summary = (
         f"iteration {iteration}: client checks={client_checks} min={client_min:.3f}ms; "
+        f"skew-corrected min={corrected_min:.3f}ms; max start skew={max_skew_ms:.3f}ms "
+        f"over {len(skew_of)} records; "
         f"controller checks={len(gated)} min={controller_min:.3f}ms; stops={len(stops)}; "
         f"wall-vs-monotonic drift={drift_ms:.3f}ms"
     )
