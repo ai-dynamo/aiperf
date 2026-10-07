@@ -683,7 +683,7 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
         prof["type"] == PhaseType.FIXED_SCHEDULE
         and "requests" not in prof
         and file_path is not None
-        and not _record_count_is_line_count(cli.custom_dataset_type)
+        and not _line_count_misreports_records(cli.custom_dataset_type)
     ):
         records = _count_dataset_records(file_path)
         if records > 0:
@@ -692,7 +692,7 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
     _maybe_set_dag_root_sessions(prof, cli, file_path)
 
 
-def _record_count_is_line_count(dataset_type: object) -> bool:
+def _line_count_misreports_records(dataset_type: object) -> bool:
     """Whether counting lines would misreport this format's record count.
 
     A weka trace nests its requests inside a single JSON object per file, so a
