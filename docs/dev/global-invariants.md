@@ -316,12 +316,11 @@ a missing companion raises instead of resolving to a silent no-op:
   after the merge (`--parameter-sweep-*`, `--convergence-mode/stat/threshold`,
   `--sweep-type`), cannot be unrouted or miss a companion, and cannot change
   anything outside `benchmark:` (e.g. `--num-profile-runs`); each raises.
-- `aiperf kube sweep` hoists the file's `sweep:` / `multiRun:` blocks out
-  before the resolver runs, so flags that would merge into them are rejected
-  up front (`reject_cli_flags_against_hoisted_blocks`): `--search-recipe`,
-  `--search-space`, `--sweep-type`, `--variant`, and `--parameter-sweep-*`
-  against a file `sweep:`, and `--convergence-mode/stat/threshold` against a file
-  `multiRun.convergence` without `--convergence-metric`.
+- `aiperf kube sweep` rejects only the flags that define a sweep
+  (`--search-recipe`, `--search-space`, `--sweep-type`, `--variant`) against a
+  file `sweep:` (`reject_cli_flags_against_hoisted_blocks`).
+  `--parameter-sweep-*` and `--convergence-mode/stat/threshold` apply to the
+  file's `sweep:` / `multiRun.convergence` blocks as they do under `--config`.
 
 The pre-merge rules live in `reject_missing_sweep_companions`
 (`_config_flag_routing.py`); the final-sweep rules in the resolver's

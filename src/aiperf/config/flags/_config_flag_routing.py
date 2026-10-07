@@ -537,48 +537,71 @@ def reject_missing_sweep_companions(cli: CLIConfig, yaml_dict: dict[str, Any]) -
         )
 
 
-# Flags that build or reshape a sweep block.
+# Flags that define a sweep. A sweep may be defined in one place only, so
+# these cannot be combined with a sweep: block in the config file.
 FILE_SWEEP_BLOCK_FLAGS: frozenset[str] = frozenset(
-    {
-        "search_recipe",
-        "search_space",
-        "sweep_type",
-        "sweep_variants",
-        "parameter_sweep_mode",
-        "parameter_sweep_same_seed",
-        "parameter_sweep_cooldown_seconds",
-    }
+    {"search_recipe", "search_space", "sweep_type", "sweep_variants"}
 )
 
 
-def reject_cli_flags_against_hoisted_blocks(
-    cli: CLIConfig, *, sweep_cfg: Any, multirun_cfg: Any
-) -> None:
-    """Raise when a flag would have to merge into a block ``kube sweep`` hoisted.
+def reject_cli_flags_against_hoisted_blocks(cli: CLIConfig, *, sweep_cfg: Any) -> None:
+    """Raise when a sweep-defining flag meets the file's ``sweep:`` block.
 
-    ``aiperf kube sweep`` hoists the file's ``sweep:`` / ``multiRun:`` blocks
-    out before the shared resolver runs and merges them back afterwards, so
-    flags that must merge INTO those blocks cannot be applied there; they are
-    rejected rather than mis-merged.
+    A sweep may be defined only once, so ``aiperf kube sweep`` rejects the
+    defining flags against a file that already declares one. Flags that adjust
+    the sweep (``--parameter-sweep-*``, ``--convergence-*``) are not rejected:
+    kube sweep applies them to the file's blocks after its merge (see
+    :func:`hoisted_block_adjusting_fields`).
 
     Args:
         cli: the parsed ``CLIConfig`` for this invocation.
         sweep_cfg: the file's hoisted ``sweep:`` block, or None.
-        multirun_cfg: the file's hoisted ``multiRun:`` block, or None.
 
     Raises:
         ConfigurationError: naming every offending flag at once.
     """
     from aiperf.config.loader.errors import ConfigurationError
 
-    set_fields = cli.model_fields_set
-    problems: list[str] = []
-    if isinstance(sweep_cfg, dict):
-        problems.extend(
-            f"{_describe(field)} cannot be combined with the sweep: block in "
-            f"the file under `aiperf kube sweep`; set it in the file"
-            for field in sorted(set_fields & FILE_SWEEP_BLOCK_FLAGS)
+    if not isinstance(sweep_cfg, dict):
+        return
+    problems = [
+        f"{_describe(field)} cannot be combined with the sweep: block in "
+        f"the file under `aiperf kube sweep`; set it in the file"
+        for field in sorted(cli.model_fields_set & FILE_SWEEP_BLOCK_FLAGS)
+    ]
+    if problems:
+        details = "\n  - ".join(problems)
+        raise ConfigurationError(
+            f"Sweep flags cannot be applied to the file's blocks:\n  - {details}"
         )
+
+
+def hoisted_block_adjusting_fields(
+    cli: CLIConfig, *, sweep_cfg: Any, multirun_cfg: Any
+) -> frozenset[str]:
+    """Return the user-set flags that adjust a block ``kube sweep`` hoisted.
+
+    ``aiperf kube sweep`` hoists the file's ``sweep:`` / ``multiRun:`` blocks
+    out before the shared resolver runs, so the resolver cannot see them and
+    would report these flags as having nothing to apply to. Kube sweep defers
+    them past the resolver and applies them once the blocks are merged back.
+    Convergence details are deferred only without ``--convergence-metric``;
+    with it, the resolver emits the whole convergence block itself.
+
+    Args:
+        cli: the parsed ``CLIConfig`` for this invocation.
+        sweep_cfg: the file's hoisted ``sweep:`` block, or None.
+        multirun_cfg: the file's hoisted ``multiRun:`` block, or None.
+
+    Returns:
+        The ``CLIConfig`` field names to defer; empty when none apply.
+    """
+    from aiperf.config.flags.converter import _PARAMETER_SWEEP_KEYS
+
+    set_fields = cli.model_fields_set
+    deferred: set[str] = set()
+    if isinstance(sweep_cfg, dict):
+        deferred |= set_fields & {cli_field for cli_field, _ in _PARAMETER_SWEEP_KEYS}
     has_metric = (
         "convergence_metric" in set_fields and cli.convergence_metric is not None
     )
@@ -587,14 +610,5 @@ def reject_cli_flags_against_hoisted_blocks(
         and isinstance(multirun_cfg.get("convergence"), dict)
         and not has_metric
     ):
-        problems.extend(
-            f"{_describe(field)} cannot be merged into the file's "
-            f"multiRun.convergence block under `aiperf kube sweep`; set it "
-            f"in the file"
-            for field in sorted(set_fields & CONVERGENCE_DETAIL_FIELDS)
-        )
-    if problems:
-        details = "\n  - ".join(problems)
-        raise ConfigurationError(
-            f"Sweep flags cannot be applied to the file's blocks:\n  - {details}"
-        )
+        deferred |= set_fields & CONVERGENCE_DETAIL_FIELDS
+    return frozenset(deferred)

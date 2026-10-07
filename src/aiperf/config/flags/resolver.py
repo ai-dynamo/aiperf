@@ -96,6 +96,8 @@ def resolve_config(
 def apply_cli_overrides(
     config: AIPerfConfig,
     cli_config: CLIConfig,
+    *,
+    deferred_fields: frozenset[str] = frozenset(),
 ) -> AIPerfConfig:
     """Overlay explicitly-authored CLI values on an already-loaded config.
 
@@ -107,6 +109,9 @@ def apply_cli_overrides(
     Args:
         config: Loaded Config-v2 envelope that supplies the YAML baseline.
         cli_config: Parsed CLI values; only ``model_fields_set`` entries apply.
+        deferred_fields: Set fields to treat as unset here, so they are
+            neither applied nor companion-checked. For a caller that applies
+            them itself later with :func:`apply_deferred_sweep_overrides`.
 
     Returns:
         A new config with CLI precedence and a matching raw sweep envelope.
@@ -119,7 +124,47 @@ def apply_cli_overrides(
         context={"include_secrets": True},
     )
     raw = copy.deepcopy(config._raw_envelope or rendered)
+    if deferred_fields:
+        cli_config = _cli_with_fields_set(
+            cli_config, cli_config.model_fields_set - deferred_fields
+        )
     return _resolve_config_envelopes(cli_config, rendered, raw)
+
+
+def apply_deferred_sweep_overrides(
+    envelope: dict[str, Any],
+    cli_config: CLIConfig,
+    deferred_fields: frozenset[str],
+) -> None:
+    """Apply sweep-adjusting flags held back from :func:`apply_cli_overrides`.
+
+    Same rules and errors as the resolver's own post-merge step, written in
+    wire form (camelCase keys, JSON values) because ``aiperf kube sweep``
+    applies them to blocks it has already rendered that way.
+
+    Args:
+        envelope: Mapping holding the merged ``sweep`` and ``multiRun``
+            blocks; mutated in place.
+        cli_config: Parsed CLI values.
+        deferred_fields: The fields passed as ``deferred_fields`` to
+            :func:`apply_cli_overrides`.
+    """
+    cli = _cli_with_fields_set(
+        cli_config, cli_config.model_fields_set & deferred_fields
+    )
+    _apply_parameter_sweep_overrides(envelope, cli, wire=True)
+    _apply_convergence_overrides(envelope, cli, wire=True)
+
+
+def _cli_with_fields_set(cli: CLIConfig, fields_set: set[str]) -> CLIConfig:
+    """Copy ``cli`` with ``model_fields_set`` narrowed to ``fields_set``.
+
+    Every resolver decision is gated on ``model_fields_set``, so a field
+    outside it is indistinguishable from one the user never passed.
+    """
+    narrowed = cli.model_copy()
+    narrowed.__pydantic_fields_set__.intersection_update(fields_set)
+    return narrowed
 
 
 def _resolve_config_envelopes(
@@ -204,12 +249,15 @@ def _resolve_config_envelopes(
     return config
 
 
-def _apply_convergence_overrides(envelope: dict[str, Any], cli: CLIConfig) -> None:
+def _apply_convergence_overrides(
+    envelope: dict[str, Any], cli: CLIConfig, *, wire: bool = False
+) -> None:
     """Overlay ``--convergence-*`` details onto a YAML convergence block.
 
     With ``--convergence-metric`` set, ``build_multi_run`` already emits the
     whole block and the merge handles precedence. Without it, the details can
-    only refine a block the config file declares.
+    only refine a block the config file declares. ``wire`` is as for
+    :func:`_write_cli_value`.
     """
     from aiperf.config.flags._config_flag_routing import CONVERGENCE_DETAIL_FIELDS
 
@@ -224,17 +272,21 @@ def _apply_convergence_overrides(envelope: dict[str, Any], cli: CLIConfig) -> No
     if not isinstance(convergence, dict):
         return
     for name in details:
-        convergence[name.removeprefix("convergence_")] = getattr(cli, name)
+        _write_cli_value(
+            convergence, name.removeprefix("convergence_"), cli, name, wire=wire
+        )
 
 
-def _apply_parameter_sweep_overrides(envelope: dict[str, Any], cli: CLIConfig) -> None:
+def _apply_parameter_sweep_overrides(
+    envelope: dict[str, Any], cli: CLIConfig, *, wire: bool = False
+) -> None:
     """Write ``--parameter-sweep-*`` onto the final sweep block.
 
     Runs after the merge, so it sees the sweep whichever source produced it:
     the config file, promoted magic lists, a recipe, or ``--variant``. Where
     the CLI-only helper skips silently (no sweep; ordering knobs on an
     adaptive sweep) this raises, because under ``--config`` a flag must take
-    effect or say why it cannot.
+    effect or say why it cannot. ``wire`` is as for :func:`_write_cli_value`.
     """
     from aiperf.config.flags._config_flag_routing import flag_names_for
     from aiperf.config.flags.converter import (
@@ -273,7 +325,24 @@ def _apply_parameter_sweep_overrides(envelope: dict[str, Any], cli: CLIConfig) -
         )
     for cli_field, key in requested:
         _pop_config_value(sweep, key)
-        sweep[key] = getattr(cli, cli_field)
+        _write_cli_value(sweep, key, cli, cli_field, wire=wire)
+
+
+def _write_cli_value(
+    target: dict[str, Any], key: str, cli: CLIConfig, cli_field: str, *, wire: bool
+) -> None:
+    """Set ``target[key]`` to the value of ``cli_field``.
+
+    With ``wire``, the key is written as its camelCase alias and the value as
+    its JSON form (an enum becomes its string), matching a block already
+    rendered by ``model_dump(mode="json", by_alias=True)``.
+    """
+    if wire:
+        target[to_camel(key)] = cli.model_dump(mode="json", include={cli_field})[
+            cli_field
+        ]
+    else:
+        target[key] = getattr(cli, cli_field)
 
 
 def _build_variant_runs(

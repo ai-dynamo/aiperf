@@ -9,6 +9,7 @@ in that module is a thin wrapper around the helper.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -888,24 +889,107 @@ def test_search_space_against_yaml_sweep_is_rejected(tmp_path: Path) -> None:
         )
 
 
-def test_convergence_detail_against_yaml_convergence_block_is_rejected(
+_YAML_ADAPTIVE_SWEEP = """\
+sweep:
+  type: adaptive_search
+  search_space:
+    - {path: phases.profiling.concurrency, lo: 1, hi: 100, kind: int}
+  objectives:
+    - {metric: output_token_throughput, stat: avg, direction: maximize}
+  max_iterations: 10
+"""
+
+
+def test_parameter_sweep_flags_apply_to_yaml_sweep(tmp_path: Path) -> None:
+    spec = _build_with_flags(
+        tmp_path,
+        _YAML_SWEEP,
+        parameter_sweep_mode="independent",
+        parameter_sweep_cooldown_seconds=3.0,
+    )["spec"]
+    sweep = spec["sweep"]
+    assert sweep["iterationOrder"] == "independent"
+    assert sweep["cooldownSeconds"] == 3
+    assert "iteration_order" not in sweep
+    assert "cooldown_seconds" not in sweep
+    json.dumps(spec)
+
+
+def test_parameter_sweep_mode_overrides_yaml_iteration_order(tmp_path: Path) -> None:
+    yaml_sweep = _YAML_SWEEP + "  iterationOrder: repeated\n"
+    sweep = _build_with_flags(tmp_path, yaml_sweep, parameter_sweep_mode="independent")[
+        "spec"
+    ]["sweep"]
+    assert sweep["iterationOrder"] == "independent"
+
+
+def test_parameter_sweep_mode_against_yaml_adaptive_sweep_is_rejected(
     tmp_path: Path,
 ) -> None:
     from aiperf.config.loader.errors import ConfigurationError
 
     with pytest.raises(ConfigurationError) as excinfo:
-        _build_with_flags(tmp_path, _YAML_CONVERGENCE, convergence_stat="p90")
+        _build_with_flags(
+            tmp_path, _YAML_ADAPTIVE_SWEEP, parameter_sweep_mode="independent"
+        )
     message = str(excinfo.value)
-    assert "--convergence-stat" in message
-    assert "multiRun.convergence" in message
+    assert "--parameter-sweep-mode" in message
+    assert "adaptive_search" in message
 
 
-def test_parameter_sweep_flag_against_yaml_sweep_is_rejected(tmp_path: Path) -> None:
+def test_parameter_sweep_cooldown_applies_to_yaml_adaptive_sweep(
+    tmp_path: Path,
+) -> None:
+    sweep = _build_with_flags(
+        tmp_path, _YAML_ADAPTIVE_SWEEP, parameter_sweep_cooldown_seconds=3.0
+    )["spec"]["sweep"]
+    assert sweep["cooldownSeconds"] == 3
+
+
+def test_parameter_sweep_flag_without_any_sweep_is_rejected(tmp_path: Path) -> None:
     from aiperf.config.loader.errors import ConfigurationError
 
-    with pytest.raises(ConfigurationError) as excinfo:
-        _build_with_flags(tmp_path, _YAML_SWEEP, parameter_sweep_cooldown_seconds=3.0)
-    assert "--parameter-sweep-cooldown-seconds" in str(excinfo.value)
+    with pytest.raises(ConfigurationError, match="declares one"):
+        _build_with_flags(tmp_path, "", parameter_sweep_mode="independent")
+
+
+def test_convergence_detail_applies_to_yaml_convergence_block(tmp_path: Path) -> None:
+    spec = _build_with_flags(tmp_path, _YAML_CONVERGENCE, convergence_stat="p90")[
+        "spec"
+    ]
+    convergence = spec["multiRun"]["convergence"]
+    assert convergence["stat"] == "p90"
+    assert type(convergence["stat"]) is str
+    assert convergence["metric"] == "time_to_first_token"
+    json.dumps(spec)
+
+
+def test_adjusting_flags_write_wire_form_into_hoisted_blocks(tmp_path: Path) -> None:
+    """The merged blocks are camelCase JSON; written values must match that form."""
+    import yaml
+
+    from aiperf.config.flags import CLIConfig
+
+    config_file = tmp_path / "wire.yaml"
+    config_file.write_text(_yaml_with(_YAML_SWEEP + _YAML_CONVERGENCE))
+    parts = sweep_cmd._split_bare_yaml(yaml.safe_load(config_file.read_text()))
+    _, _, sweep, multirun = sweep_cmd._normalized_config_parts(
+        parts.bench_dict,
+        parts.envelope_extras,
+        sweep_cfg=parts.sweep_cfg,
+        multirun_cfg=parts.multirun_cfg,
+        cli_config=CLIConfig(
+            parameter_sweep_mode="independent",
+            parameter_sweep_same_seed=True,
+            convergence_mode="cv",
+        ),
+        file_path=config_file,
+    )
+    assert type(sweep["iterationOrder"]) is str
+    assert sweep["sameSeed"] is True
+    assert not {"iteration_order", "same_seed"} & sweep.keys()
+    assert type(multirun["convergence"]["mode"]) is str
+    json.dumps([sweep, multirun])
 
 
 def test_sweep_type_against_yaml_sweep_is_rejected(tmp_path: Path) -> None:
