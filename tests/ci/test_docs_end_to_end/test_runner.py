@@ -138,6 +138,7 @@ class EndToEndTestRunner:
         self.setup_process = None
         self.log_monitoring_thread = None
         self.stop_log_monitoring = threading.Event()
+        self.detached_log_processes = []
 
     def _cleanup_all_containers(self):
         """Stop all containers and prune (nuclear cleanup)"""
@@ -325,6 +326,56 @@ class EndToEndTestRunner:
         except Exception as e:
             logger.debug(f"Log monitoring thread exception: {e}")
 
+    def _running_container_ids(self) -> set[str]:
+        result = subprocess.run(
+            ["docker", "ps", "-q"], capture_output=True, text=True, check=False
+        )
+        return set(result.stdout.split())
+
+    def _stream_container_logs(self, container_id: str, server_name: str) -> None:
+        """Mirror one detached container's output into the job log."""
+        try:
+            process = subprocess.Popen(
+                ["docker", "logs", "-f", container_id],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as e:
+            logger.debug(f"Could not follow logs for {container_id}: {e}")
+            return
+        self.detached_log_processes.append(process)
+        try:
+            for line in process.stdout:
+                if self.stop_log_monitoring.is_set():
+                    break
+                print(f"SERVER[{server_name}]: {line.rstrip()}", flush=True)
+        except Exception as e:
+            logger.debug(f"Detached log thread exception: {e}")
+
+    def _follow_detached_containers(self, before: set[str], server_name: str) -> None:
+        """Attach a log follower to every container the setup block left running.
+
+        ``docker run -d`` returns as soon as the container is created, so the
+        setup process -- the only handle ``_monitor_server_logs`` can read --
+        exits having printed a container id and nothing else. Without this the
+        engine's own output (CUDA OOM, a rejected flag, a missing weight file)
+        never reaches the job log, and a server that fails to boot reads only
+        as "health check failed, return code 1".
+
+        Diffing ``docker ps`` rather than parsing the setup block keeps this
+        independent of how a guide spells its run command, and covers groups
+        that start several containers (otel-mlflow starts three).
+        """
+        for container_id in sorted(self._running_container_ids() - before):
+            logger.info(f"Following logs for detached container {container_id[:12]}")
+            threading.Thread(
+                target=self._stream_container_logs,
+                args=(container_id, server_name),
+                daemon=True,
+            ).start()
+
     def _test_server(self, server: Server) -> bool:
         """Test a single server: setup + health check + aiperf runs"""
         logger.info(f"Setting up server: {server.name}")
@@ -333,6 +384,8 @@ class EndToEndTestRunner:
         logger.info(f"Starting server setup for {server.name}:")
         logger.info(f"Command: {server.setup_command.command}")
         logger.info("=" * 60)
+
+        containers_before_setup = self._running_container_ids()
 
         setup_process = subprocess.Popen(
             server.setup_command.command,
@@ -379,6 +432,8 @@ class EndToEndTestRunner:
 
         logger.info("=" * 60)
         logger.info(f"Server {server.name} setup started successfully")
+
+        self._follow_detached_containers(containers_before_setup, server.name)
 
         # Start health check immediately in parallel (it has built-in timeout)
         logger.info(f"Starting health check in parallel for server: {server.name}")
