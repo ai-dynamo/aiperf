@@ -31,6 +31,7 @@ def _artifacts_helper_script(body: str) -> str:
     return f"""
         import fs from 'node:fs';
         const palette = {{}};
+        const API_BASE = '/api/v1';
         const source = fs.readFileSync({json.dumps(str(_ARTIFACTS_CARD_PATH))}, 'utf8');
         // Anchored on the first helper the body actually calls. The old anchor
         // (`function fileColor`) was renamed away, and `indexOf` returning -1
@@ -49,7 +50,7 @@ def test_plots_navigation_is_feature_gated_external_dashboard_link() -> None:
 
     assert not _PLOTS_PAGE_PATH.exists()
     assert "currentRoute === '/plots'" not in app_source
-    assert "path: '/dashboard/'" in top_nav_source
+    assert "path: appPath('dashboard/')" in top_nav_source
     assert "features && features.dashboard_enabled" in top_nav_source
     assert "label: 'Plots ↗'" in top_nav_source
     assert 'target="_blank"' in top_nav_source
@@ -166,7 +167,7 @@ def test_detail_pages_pass_archived_epoch_inputs_to_artifact_and_plot_fetches() 
     job_source = _source(_JOB_DETAIL_PATH)
     sweep_source = _source(_SWEEP_DETAIL_PATH)
 
-    assert "const resultsBase = epoch\n    ? `/api/v1/results/" in job_source
+    assert "const resultsBase = epoch\n    ? `${API_BASE}/results/" in job_source
     assert "fetch(resultsBase, { signal: ac.signal })" in job_source
     assert (
         "api.fetchRunRequests(namespace, name, epoch, perRecordFilename)" in job_source

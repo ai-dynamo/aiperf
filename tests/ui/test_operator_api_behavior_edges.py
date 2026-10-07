@@ -35,9 +35,10 @@ def _run_api_script(body: str, set_error: str = "function setError(_) {}") -> ob
   setError,
 }} from './state.js';`;
         const sourceText = fs.readFileSync(sourcePath, 'utf8');
-        const source = sourceText.includes(stateImport)
+        let source = sourceText.includes(stateImport)
           ? sourceText.replace(stateImport, {set_error!r})
           : sourceText.replace("import {{ setError }} from './state.js';", {set_error!r});
+        source = source.replace("import {{ API_BASE }} from './base-path.js';", "const API_BASE = '/api/v1';");
         const moduleUrl = `data:text/javascript;base64,${{Buffer.from(source).toString('base64')}}`;
         const {{ api, poll }} = await import(moduleUrl);
 

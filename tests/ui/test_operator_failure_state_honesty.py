@@ -151,7 +151,7 @@ def test_http_status_of_separates_a_server_answer_from_no_answer() -> None:
         source = source.replace(
           /^import \\{{[\\s\\S]*?\\}} from '\\.\\/state\\.js';$/m,
           {_STATE_STUBS!r},
-        );
+        ).replace("import {{ API_BASE }} from './base-path.js';", "const API_BASE = '/api/v1';");
         const url = 'data:text/javascript;base64,' + Buffer.from(source).toString('base64');
         const {{ httpStatusOf }} = await import(url);
         const withStatus = new Error('API 404: nope');

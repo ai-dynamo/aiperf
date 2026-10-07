@@ -38,6 +38,7 @@ def test_job_ws_accumulates_server_metric_samples() -> None:
           close() {{ this.onclose && this.onclose(); }}
         }};
         globalThis.window = {{ location: {{ protocol: 'http:', host: 'x' }} }};
+        globalThis.document = {{ baseURI: 'http://x/' }};
         const {{ openJobWs }} = await import({JOB_WS!r});
         let last = null;
         const handle = openJobWs('ns', 'name', (snap) => {{ last = snap; }});
