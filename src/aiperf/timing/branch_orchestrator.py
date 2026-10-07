@@ -1702,7 +1702,9 @@ class BranchOrchestrator:
                 self._release_parent_slot_if_drained(parent_corr)
                 releasable.append(pending)
         for pending in releasable:
-            await self._release_blocked_join(pending)
+            # Scheduling has stopped: the issuer will refuse these turns, so
+            # waiting out a recorded timestamp only delays shutdown.
+            await self._release_blocked_join(pending, honor_recorded_target=False)
         self._notify_drain()
 
     async def _satisfy_prerequisite(
@@ -1919,8 +1921,16 @@ class BranchOrchestrator:
                 lambda: self._issuer.can_dispatch_join(pending.parent_agent_depth),
             )
 
-    async def _release_blocked_join(self, pending: PendingBranchJoin) -> None:
-        """Dispatch the parent's gated turn and update stats."""
+    async def _release_blocked_join(
+        self, pending: PendingBranchJoin, *, honor_recorded_target: bool = True
+    ) -> None:
+        """Dispatch the parent's gated turn and update stats.
+
+        ``honor_recorded_target`` is False only when the phase has already
+        stopped sending: the recorded timestamp can no longer be dispatched at,
+        so holding for it cannot produce a legal replay and would stretch the
+        observation window throughput is divided by.
+        """
         assert pending.gated_turn_index is not None, (
             "_release_blocked_join called without a gated_turn_index"
         )
@@ -1932,7 +1942,8 @@ class BranchOrchestrator:
                 think_ms / 1000.0,
                 lambda: self._issuer.can_dispatch_join(pending.parent_agent_depth),
             )
-        await self._await_recorded_join_target(pending)
+        if honor_recorded_target:
+            await self._await_recorded_join_target(pending)
         result = ChildDispatchResult.normalize(
             await self._issuer.dispatch_join_turn(pending)
         )
