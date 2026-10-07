@@ -14,6 +14,7 @@ the run alive to t=20s and divide its requests by that stalled window.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -97,7 +98,7 @@ def recorded_holds(monkeypatch):
     async def _spy(self, seconds: float) -> None:
         holds.append(seconds)
 
-    monkeypatch.setattr(BranchOrchestrator, "_sleep_think_ms", _spy)
+    monkeypatch.setattr(BranchOrchestrator, "_sleep_until_schedule_target", _spy)
     return holds
 
 
@@ -154,3 +155,33 @@ async def test_fixed_schedule_without_the_public_hook_fails_loudly() -> None:
         PhaseRunner._wire_join_schedule_target(runner, strategy)
 
     runner._branch_orchestrator.set_schedule_target_resolver.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_cutoff_releases_a_join_already_holding_for_its_target() -> None:
+    """The hold is interrupted, not merely skipped.
+
+    When a join's children finish *before* the cutoff, the normal deadline path
+    has already popped it from ``_active_joins`` and is sleeping toward its
+    recorded target. ``expire_replay_deadlines`` iterates that dict, so it
+    cannot reach the sleeper -- a fix that only skips the hold for joins still
+    in the dict leaves this path stalling the run for the full target.
+
+    Runs the real wait, so it fails by timing out if the hold is uninterruptible.
+    """
+    orch = _orchestrator()
+    pending = _blocked_join(orch)
+    pending.replay_deadline_armed = True
+
+    holding = asyncio.create_task(orch._on_join_replay_deadline("corr-1", 1))
+    # Let the task reach the hold and drop out of _active_joins.
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert "corr-1" not in orch._active_joins, (
+        "precondition: the sleeper must already be out of the dict"
+    )
+
+    await orch.expire_replay_deadlines()
+
+    await asyncio.wait_for(holding, timeout=2)
+    assert orch._issuer.dispatch_join_turn.await_count == 1

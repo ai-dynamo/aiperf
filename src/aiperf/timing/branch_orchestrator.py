@@ -321,6 +321,10 @@ class BranchOrchestrator:
         # Set by cleanup() so an in-flight think-time sleep returns early instead
         # of making shutdown wait out a full (possibly large, sampled) interval.
         self._cleanup_event: asyncio.Event = asyncio.Event()
+        # Set once the phase stops scheduling. Distinct from ``_cleanup_event``:
+        # cleanup runs at teardown, well after the duration cutoff, so a hold
+        # waiting only on cleanup outlives the window it was supposed to end in.
+        self._schedule_stopped: asyncio.Event = asyncio.Event()
         # SPAWN children whose recorded first request starts after the branch
         # spawn dispatch through the shared replay scheduler (see
         # _start_delayed_first_turn), so the system-idle cap can advance those
@@ -1605,6 +1609,7 @@ class BranchOrchestrator:
         condition is also complete. This preserves the two-condition join
         state machine without leaving cancelled timers as phantom DAG work.
         """
+        self._schedule_stopped.set()
         releasable: list[PendingBranchJoin] = []
         for parent_corr, pending in list(self._active_joins.items()):
             pending.replay_deadline_elapsed = True
@@ -1613,9 +1618,7 @@ class BranchOrchestrator:
                 self._release_parent_slot_if_drained(parent_corr)
                 releasable.append(pending)
         for pending in releasable:
-            # Scheduling has stopped: the issuer will refuse these turns, so
-            # waiting out a recorded timestamp only delays shutdown.
-            await self._release_blocked_join(pending, honor_recorded_target=False)
+            await self._release_blocked_join(pending)
         self._notify_drain()
 
     async def _satisfy_prerequisite(
@@ -1801,20 +1804,37 @@ class BranchOrchestrator:
         if timestamp_ms is None:
             return
 
+        if self._schedule_stopped.is_set():
+            return
+
         remaining = resolver(timestamp_ms) - time.perf_counter()
         if remaining > 0:
-            await self._sleep_think_ms(remaining)
+            await self._sleep_until_schedule_target(remaining)
 
-    async def _release_blocked_join(
-        self, pending: PendingBranchJoin, *, honor_recorded_target: bool = True
-    ) -> None:
-        """Dispatch the parent's gated turn and update stats.
+    async def _sleep_until_schedule_target(self, seconds: float) -> None:
+        """Hold for ``seconds``, or until the run stops wanting the hold.
 
-        ``honor_recorded_target`` is False only when the phase has already
-        stopped sending: the recorded timestamp can no longer be dispatched at,
-        so holding for it cannot produce a legal replay and would stretch the
-        observation window throughput is divided by.
+        Returns early once the phase stops scheduling (or cleanup fires). Past
+        that boundary the issuer refuses the turn anyway, so continuing to wait
+        cannot produce a legal replay -- it only keeps the run alive, and the
+        stalled span is the window throughput gets divided by. A parent
+        recorded at t=20s under ``--benchmark-duration 4`` would otherwise hold
+        to t=20s and report its requests over that window.
         """
+        waiters = [
+            asyncio.ensure_future(self._cleanup_event.wait()),
+            asyncio.ensure_future(self._schedule_stopped.wait()),
+        ]
+        try:
+            await asyncio.wait(
+                waiters, timeout=seconds, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            for waiter in waiters:
+                waiter.cancel()
+
+    async def _release_blocked_join(self, pending: PendingBranchJoin) -> None:
+        """Dispatch the parent's gated turn and update stats."""
         assert pending.gated_turn_index is not None, (
             "_release_blocked_join called without a gated_turn_index"
         )
@@ -1823,8 +1843,7 @@ class BranchOrchestrator:
         think_ms = self._resolve_think_ms(pending)
         if think_ms > 0.0 and math.isfinite(think_ms):
             await self._sleep_think_ms(think_ms / 1000.0)
-        if honor_recorded_target:
-            await self._await_recorded_join_target(pending)
+        await self._await_recorded_join_target(pending)
         result = ChildDispatchResult.normalize(
             await self._issuer.dispatch_join_turn(pending)
         )
