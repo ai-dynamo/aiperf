@@ -124,11 +124,9 @@ def apply_cli_overrides(
         context={"include_secrets": True},
     )
     raw = copy.deepcopy(config._raw_envelope or rendered)
-    if deferred_fields:
-        cli_config = _cli_with_fields_set(
-            cli_config, cli_config.model_fields_set - deferred_fields
-        )
-    return _resolve_config_envelopes(cli_config, rendered, raw)
+    return _resolve_config_envelopes(
+        cli_config, rendered, raw, deferred_fields=deferred_fields
+    )
 
 
 def apply_deferred_sweep_overrides(
@@ -167,12 +165,25 @@ def _cli_with_fields_set(cli: CLIConfig, fields_set: set[str]) -> CLIConfig:
     return narrowed
 
 
+def _cli_without(cli: CLIConfig, fields: frozenset[str]) -> CLIConfig:
+    """Treat ``fields`` as unset on a copy of ``cli``; ``cli`` itself if none are set."""
+    if not fields & cli.model_fields_set:
+        return cli
+    return _cli_with_fields_set(cli, cli.model_fields_set - fields)
+
+
 def _resolve_config_envelopes(
     cli_config: CLIConfig,
     yaml_dict: dict[str, Any],
     raw_yaml_dict: dict[str, Any],
+    *,
+    deferred_fields: frozenset[str] = frozenset(),
 ) -> AIPerfConfig:
-    """Resolve rendered and pre-Jinja envelopes through one override pipeline."""
+    """Resolve rendered and pre-Jinja envelopes through one override pipeline.
+
+    ``deferred_fields`` are treated as unset throughout, except that
+    ``--variant`` keys are still compared against the full command line.
+    """
     from aiperf.config import AIPerfConfig
     from aiperf.config.flags._config_flag_routing import (
         reject_missing_sweep_companions,
@@ -180,6 +191,8 @@ def _resolve_config_envelopes(
     )
     from aiperf.config.flags.converter import _wrap_under_envelope
 
+    full_cli = cli_config
+    cli_config = _cli_without(cli_config, deferred_fields)
     # Fail before any merging: a flag this path cannot route would otherwise
     # be dropped without a word, handing the user a benchmark that silently
     # ignored what they asked for.
@@ -227,12 +240,13 @@ def _resolve_config_envelopes(
     )
 
     variant_runs = _build_variant_runs(
-        cli_config,
+        full_cli,
         yaml_dict,
         merged.envelope,
         benchmark_config=base_config.benchmark,
         dataset_type=base_dataset.type,
         dataset_format=getattr(base_dataset, "format", None),
+        deferred_fields=deferred_fields,
     )
     for envelope in (merged.envelope, raw_merged.envelope):
         if variant_runs is not None:
@@ -353,6 +367,7 @@ def _build_variant_runs(
     benchmark_config: BenchmarkConfig,
     dataset_type: Any,
     dataset_format: Any,
+    deferred_fields: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]] | None:
     """Build ``ScenarioSweep`` runs from `--variant` against the config file.
 
@@ -360,6 +375,10 @@ def _build_variant_runs(
     line, against the rendered config file, and its ``benchmark`` subtree is
     diffed against the base. Computed once from the rendered envelope:
     diffing the raw one would compare Jinja template strings.
+
+    ``cli_config`` is the full command line, so a variant that repeats a
+    sweep-wide flag is accepted even when the caller deferred that flag; the
+    variant then drops ``deferred_fields`` exactly as the command line did.
     """
     from aiperf.config.flags._config_flag_routing import _describe
     from aiperf.config.flags.converter import (
@@ -393,6 +412,7 @@ def _build_variant_runs(
                 f"which {verb} to the whole sweep rather than one variant. "
                 f"Pass {pronoun} outside {variant_flag}."
             )
+        variant_cli = _cli_without(variant_cli, deferred_fields)
         _reject_variant_cli_flags(name, variant_cli, yaml_dict)
         overrides = build_cli_overrides(variant_cli, benchmark_config=benchmark_config)
         variant = _merge_overrides_into_envelope(

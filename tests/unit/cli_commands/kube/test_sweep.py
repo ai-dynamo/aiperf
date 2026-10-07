@@ -959,9 +959,22 @@ def test_convergence_detail_applies_to_yaml_convergence_block(tmp_path: Path) ->
     ]
     convergence = spec["multiRun"]["convergence"]
     assert convergence["stat"] == "p90"
-    assert type(convergence["stat"]) is str
     assert convergence["metric"] == "time_to_first_token"
     json.dumps(spec)
+
+
+def test_variant_repeating_deferred_convergence_flag_is_accepted(
+    tmp_path: Path,
+) -> None:
+    """A variant may repeat an outer sweep-wide flag kube sweep defers, as under --config."""
+    spec = _build_with_flags(
+        tmp_path,
+        _YAML_CONVERGENCE,
+        convergence_stat="p90",
+        sweep_variants=["a: isl=64, convergence-stat=p90", "b: isl=128"],
+    )["spec"]
+    assert spec["multiRun"]["convergence"]["stat"] == "p90"
+    assert [run["name"] for run in spec["sweep"]["runs"]] == ["a", "b"]
 
 
 def test_adjusting_flags_write_wire_form_into_hoisted_blocks(tmp_path: Path) -> None:

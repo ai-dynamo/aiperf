@@ -572,7 +572,8 @@ def reject_cli_flags_against_hoisted_blocks(cli: CLIConfig, *, sweep_cfg: Any) -
     if problems:
         details = "\n  - ".join(problems)
         raise ConfigurationError(
-            f"Sweep flags cannot be applied to the file's blocks:\n  - {details}"
+            f"Sweep-defining flags cannot be combined with the file's sweep: "
+            f"block under `aiperf kube sweep`:\n  - {details}"
         )
 
 
