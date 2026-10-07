@@ -21,6 +21,7 @@ from pydantic import (
     SerializeAsAny,
     field_validator,
     model_serializer,
+    model_validator,
 )
 from pydantic.functional_validators import AfterValidator
 
@@ -44,6 +45,7 @@ from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.models.spec_decode_models import SpecDecodeAcceptanceRecord
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
+from aiperf.common.monotonic_clock import process_clock
 from aiperf.common.types import JsonObject, MetricTagT, PhaseKind
 from aiperf.common.utils import load_json_str
 
@@ -1187,8 +1189,8 @@ class RequestRecord(AIPerfBaseModel):
         description="The name of the model targeted by the request.",
     )
     timestamp_ns: int = Field(
-        default_factory=time.time_ns,
-        description="The wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns).",
+        default=0,
+        description="The wall clock timestamp of the request start in nanoseconds: the wall time of ``start_perf_ns``. When omitted it is derived from ``start_perf_ns`` through the per-process anchor (``process_clock``). DO NOT USE FOR LATENCY CALCULATIONS.",
     )
     start_perf_ns: int = Field(
         default_factory=time.perf_counter_ns,
@@ -1299,6 +1301,18 @@ class RequestRecord(AIPerfBaseModel):
         if isinstance(v, dict):
             return BaseTraceData.from_json(v)
         return v
+
+    @model_validator(mode="after")
+    def _anchor_omitted_timestamp(self) -> RequestRecord:
+        """Derive an omitted ``timestamp_ns`` from ``start_perf_ns``.
+
+        A wall read at construction would describe when the record was built,
+        not when the request started; for records built after a timeout or a
+        poll loop that is seconds late.
+        """
+        if "timestamp_ns" not in self.model_fields_set:
+            self.timestamp_ns = process_clock().wall_ns_at(self.start_perf_ns)
+        return self
 
     @property
     def was_cancelled(self) -> bool:

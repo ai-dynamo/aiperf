@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import time
+
 import pytest
 from pydantic import BaseModel, Field, SerializeAsAny
 
@@ -15,8 +17,38 @@ from aiperf.common.models import (
     SSEMessage,
     TextResponse,
     TimesliceResult,
+    record_models,
 )
 from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.common.monotonic_clock import MonotonicClock, process_clock
+
+
+class TestRequestRecordTimestampAnchor:
+    """An omitted ``timestamp_ns`` must be the wall time of ``start_perf_ns``."""
+
+    def test_omitted_timestamp_is_wall_time_of_start_perf(self) -> None:
+        start_perf_ns = time.perf_counter_ns() - 500_000_000
+        record = RequestRecord(start_perf_ns=start_perf_ns)
+        assert record.timestamp_ns == process_clock().wall_ns_at(start_perf_ns)
+
+    def test_explicit_timestamp_is_kept(self) -> None:
+        record = RequestRecord(timestamp_ns=123, start_perf_ns=456)
+        assert record.timestamp_ns == 123
+
+    def test_fully_defaulted_record_is_in_the_wall_clock_domain(self) -> None:
+        record = RequestRecord()
+        assert abs(record.timestamp_ns - time.time_ns()) < 1_000_000_000
+
+    def test_deserialized_timestamp_is_not_re_anchored(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        payload = RequestRecord(start_perf_ns=time.perf_counter_ns()).model_dump_json()
+        sent = RequestRecord.model_validate_json(payload).timestamp_ns
+        # A receiving process has a different anchor; it must not re-derive.
+        monkeypatch.setattr(
+            record_models, "process_clock", lambda: MonotonicClock(0, 10**18)
+        )
+        assert RequestRecord.model_validate_json(payload).timestamp_ns == sent
 
 
 class TestProfileResults:

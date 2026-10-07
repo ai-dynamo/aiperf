@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Unit tests for the perf-counter-anchored wall clock."""
 
+import contextlib
+import threading
 import time
 
 import pytest
@@ -39,6 +41,24 @@ class TestMonotonicClock:
         clock = MonotonicClock()
         perf_ns = clock.perf_anchor_ns + 1_234_567
         assert clock.wall_ns_at(perf_ns) == clock.wall_anchor_ns + 1_234_567
+
+    def test_explicit_anchors_are_used(self) -> None:
+        clock = MonotonicClock(100, 5_000)
+        assert (clock.perf_anchor_ns, clock.wall_anchor_ns) == (100, 5_000)
+        assert clock.wall_ns_at(150) == 5_050
+
+    @pytest.mark.parametrize(
+        ("perf_anchor_ns", "wall_anchor_ns"),
+        [
+            param(100, None, id="perf-only"),
+            param(None, 5_000, id="wall-only"),
+        ],
+    )  # fmt: skip
+    def test_partial_anchor_raises_value_error(
+        self, perf_anchor_ns: int | None, wall_anchor_ns: int | None
+    ) -> None:
+        with pytest.raises(ValueError, match="must be given together"):
+            MonotonicClock(perf_anchor_ns, wall_anchor_ns)
 
 
 class TestCalibrated:
@@ -116,3 +136,29 @@ class TestProcessClock:
             MonotonicClock, "calibrated", classmethod(lambda cls: sentinel)
         )
         assert process_clock() is sentinel
+
+    def test_process_clock_concurrent_first_calls_share_one_anchor(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(monotonic_clock, "_process_clock", None)
+        real_calibrated = MonotonicClock.calibrated.__func__
+        entered = threading.Barrier(2, timeout=5)
+
+        def slow_calibrated(cls: type[MonotonicClock]) -> MonotonicClock:
+            # Hold the first caller inside creation so the second races it.
+            with contextlib.suppress(threading.BrokenBarrierError):
+                entered.wait(timeout=0.2)
+            return real_calibrated(cls)
+
+        monkeypatch.setattr(MonotonicClock, "calibrated", classmethod(slow_calibrated))
+        results: list[MonotonicClock] = []
+        threads = [
+            threading.Thread(target=lambda: results.append(process_clock()))
+            for _ in range(2)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert results[0] is results[1]

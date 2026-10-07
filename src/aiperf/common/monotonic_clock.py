@@ -17,6 +17,7 @@ timestamp. The controller (CreditIssuer) anchors its own perf_counter baseline
 inline rather than through this class.
 """
 
+import threading
 import time
 
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -43,12 +44,17 @@ class MonotonicClock:
     """
 
     __slots__ = ("perf_anchor_ns", "wall_anchor_ns")
+    perf_anchor_ns: int
+    wall_anchor_ns: int
 
-    def __init__(self) -> None:
-        self.perf_anchor_ns, self.wall_anchor_ns = (
-            time.perf_counter_ns(),
-            time.time_ns(),
-        )
+    def __init__(
+        self, perf_anchor_ns: int | None = None, wall_anchor_ns: int | None = None
+    ) -> None:
+        if perf_anchor_ns is None and wall_anchor_ns is None:
+            perf_anchor_ns, wall_anchor_ns = time.perf_counter_ns(), time.time_ns()
+        elif perf_anchor_ns is None or wall_anchor_ns is None:
+            raise ValueError("perf_anchor_ns and wall_anchor_ns must be given together")
+        self.perf_anchor_ns, self.wall_anchor_ns = perf_anchor_ns, wall_anchor_ns
 
     def now_ns(self) -> int:
         """Current wall-clock time derived from perf_counter delta."""
@@ -79,21 +85,17 @@ class MonotonicClock:
         """
         if samples < 1:
             raise ValueError(f"samples must be at least 1, got {samples}")
-        best_gap_ns = perf_anchor_ns = wall_anchor_ns = None
+        brackets = []
         for _ in range(samples):
             before_ns = time.perf_counter_ns()
             wall_ns = time.time_ns()
-            after_ns = time.perf_counter_ns()
-            if best_gap_ns is None or after_ns - before_ns < best_gap_ns:
-                best_gap_ns = after_ns - before_ns
-                perf_anchor_ns = (before_ns + after_ns) // 2
-                wall_anchor_ns = wall_ns
-        clock = cls.__new__(cls)
-        clock.perf_anchor_ns, clock.wall_anchor_ns = perf_anchor_ns, wall_anchor_ns
-        return clock
+            brackets.append((before_ns, wall_ns, time.perf_counter_ns()))
+        before_ns, wall_ns, after_ns = min(brackets, key=lambda b: b[2] - b[0])
+        return cls((before_ns + after_ns) // 2, wall_ns)
 
 
 _process_clock: MonotonicClock | None = None
+_process_clock_lock = threading.Lock()
 
 
 def process_clock() -> MonotonicClock:
@@ -104,9 +106,12 @@ def process_clock() -> MonotonicClock:
     must come from one anchor. A fresh ``time.time_ns()`` per request shifts
     that request's exported start and end by however long the process was
     preempted between it and the paired ``perf_counter`` read, which on a
-    loaded host reaches milliseconds.
+    loaded host reaches milliseconds. The lock keeps two threads racing the
+    first call from creating two different anchors.
     """
     global _process_clock
     if _process_clock is None:
-        _process_clock = MonotonicClock.calibrated()
+        with _process_clock_lock:
+            if _process_clock is None:
+                _process_clock = MonotonicClock.calibrated()
     return _process_clock
