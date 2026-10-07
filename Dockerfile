@@ -305,11 +305,18 @@ COPY --from=python-licenses /opt/licenses/ /
 # Test stage: env-builder installs only runtime deps now, so reinstall aiperf
 # with the [test] extra (pytest, hypothesis, etc.) from the already-built wheel,
 # and add curl for server health checks.
+#
+# otel, mlflow and wandb are here because this branch tags the guides that use
+# them: --otel-url, --mlflow-tracking-uri and the wandb exporter need those
+# client libraries present, and they are user-facing export paths, so a silent
+# break there is exactly what tagging those guides is meant to catch. They
+# cost ~40 packages on an image every shard builds, so they belong with the
+# tagged commands rather than ahead of them.
 FROM env-builder AS test
 
 COPY --from=wheel-builder /dist /tmp/dist
 RUN WHEEL=$(ls /tmp/dist/aiperf-*.whl) \
-    && uv pip install "aiperf[test] @ file://${WHEEL}" \
+    && uv pip install "aiperf[test,otel,mlflow,wandb] @ file://${WHEEL}" \
     && rm -rf /tmp/dist
 
 RUN apt-get update -y && \
