@@ -494,6 +494,7 @@ class TestAggregatorUnlinkSemantics:
         assert len(inputs_before) == 3
 
         exporter_config = create_exporter_config(cfg_raw)
+        exporter_config.results.completed = 3
         aggregator = RawRecordAggregator(exporter_config=exporter_config)
         await aggregator.export()
 

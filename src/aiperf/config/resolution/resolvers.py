@@ -13,6 +13,7 @@ import os
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from uuid import uuid4
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.results_markers import EPOCH_RE
@@ -79,12 +80,10 @@ class ArtifactDirResolver:
 
         Args:
             run: The BenchmarkRun whose ``cfg.artifacts.dir`` to normalize.
-            for_probe: When True, skip user_files materialization. The probe
-                run in ``cli_runner._estimate_and_log_duration`` clones
-                ``first_config`` only to estimate duration; per-variation runs
-                materialize user_files into their own dirs, so writing them
-                here would produce a stray artifact tree and bake in template
-                values (e.g. ``{{ epoch }}``) that don't match the real run.
+            for_probe: When True, skip stale raw-shard archival and
+                user_files materialization. The probe run in
+                ``cli_runner._estimate_and_log_duration`` exists only to
+                estimate duration; per-variation runs resolve their own dirs.
         """
         cfg = run.cfg
         artifact_dir = run.artifact_dir.resolve()
@@ -101,6 +100,24 @@ class ArtifactDirResolver:
         artifact_dir.mkdir(parents=True, exist_ok=True)
         run.resolved.artifact_dir_created = True
         _logger.debug(f"Artifact directory created: {artifact_dir}")
+
+        if not for_probe:
+            raw_records_dir = artifact_dir / OutputDefaults.RAW_RECORDS_FOLDER
+            stale_raw_files = sorted(raw_records_dir.glob("raw_records_*.jsonl"))
+            if stale_raw_files:
+                archive_dir = (
+                    artifact_dir.parent
+                    / ".aiperf-stale-raw-records"
+                    / (artifact_dir.name or "root")
+                    / uuid4().hex
+                )
+                archive_dir.mkdir(parents=True, exist_ok=False)
+                for stale_file in stale_raw_files:
+                    stale_file.replace(archive_dir / stale_file.name)
+                _logger.warning(
+                    f"Archived {len(stale_raw_files)} stale raw-record shard(s) "
+                    f"outside the artifact directory: {archive_dir}"
+                )
 
         # Purge stale output fragments from a prior failed run. Fragment files
         # use random service IDs as suffixes, so leftovers from a crashed run
