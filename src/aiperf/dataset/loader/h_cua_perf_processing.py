@@ -14,6 +14,7 @@ import zstandard
 from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.enums import AssistantResponseMode
 from aiperf.common.models import AIPerfBaseModel
 
 _logger = AIPerfLogger(__name__)
@@ -178,6 +179,9 @@ def iter_selected_records(
             continue
         kept = list(islice(session, kept_n))
         reshape_trajectory(kept, filters)
+        for record in kept:
+            # Mooncake takes a row without it for a possibly incremental one and warns.
+            record.setdefault("assistant_responses", AssistantResponseMode.RECORDED)
         yield from kept
         if not remaining:
             return

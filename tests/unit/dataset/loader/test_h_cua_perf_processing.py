@@ -110,6 +110,12 @@ class TestIterSelectedRecords:
         list(iter_selected_records(records(), plan, HCuaPerfFilters()))
         assert consumed == ["traj-a"] * 3 + ["traj-b"]
 
+    def test_marks_every_row_recorded_for_mooncake(self) -> None:
+        out = list(
+            iter_selected_records(iter(RECORDS), {"traj-a": 2}, HCuaPerfFilters())
+        )
+        assert [r["assistant_responses"] for r in out] == ["recorded", "recorded"]
+
 
 class TestScreenshotWindow:
     def test_slots_span_user_and_tool_observations(self) -> None:
