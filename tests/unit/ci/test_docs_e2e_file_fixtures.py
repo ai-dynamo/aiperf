@@ -161,3 +161,81 @@ def test_materialize_refuses_to_escape_the_working_directory(
 
     assert runner._materialize_files(_Server([_Fixture(path)])) is False
     assert not called
+
+
+CONFLICT_A = """\
+<!-- setup-dup-endpoint-server -->
+```bash
+echo up
+```
+<!-- /setup-dup-endpoint-server -->
+
+<!-- health-check-dup-endpoint-server -->
+```bash
+echo ok
+```
+<!-- /health-check-dup-endpoint-server -->
+
+<!-- setup-file-dup-endpoint-server path=config.yaml -->
+```yaml
+model: first
+```
+<!-- /setup-file-dup-endpoint-server -->
+
+<!-- aiperf-run-dup-endpoint-server -->
+```bash
+aiperf profile --config config.yaml
+```
+<!-- /aiperf-run-dup-endpoint-server -->
+"""
+
+SAME_FIXTURE = """\
+<!-- setup-file-dup-endpoint-server path=config.yaml -->
+```yaml
+model: first
+```
+<!-- /setup-file-dup-endpoint-server -->
+"""
+
+CONFLICT_B = """\
+<!-- setup-file-dup-endpoint-server path=config.yaml -->
+```yaml
+model: second
+```
+<!-- /setup-file-dup-endpoint-server -->
+
+<!-- aiperf-run-dup-endpoint-server -->
+```bash
+aiperf profile --config config.yaml
+```
+<!-- /aiperf-run-dup-endpoint-server -->
+"""
+
+
+def _parse_docs(tmp_path, **docs):
+    for name, text in docs.items():
+        (tmp_path / f"{name}.md").write_text(text)
+    return MarkdownParser().parse_directory(str(tmp_path))
+
+
+def test_two_guides_claiming_one_path_do_not_silently_overwrite(tmp_path) -> None:
+    """All fixtures are written before any command, so the later content wins.
+
+    The first guide would then benchmark the second guide's config and still
+    report a pass -- a wrong number that looks like a green run.
+    """
+    servers = _parse_docs(tmp_path, a_first=CONFLICT_A, b_second=CONFLICT_B)
+
+    server = servers["dup"]
+    assert server.fixture_conflicts == ["config.yaml"]
+    # Exactly one survives; which one depends on filesystem walk order, which
+    # is precisely why silently keeping one is the wrong behaviour.
+    assert len(server.files) == 1
+
+
+def test_the_same_fixture_documented_twice_is_not_a_conflict(tmp_path) -> None:
+    servers = _parse_docs(tmp_path, a_first=CONFLICT_A, b_same=SAME_FIXTURE)
+
+    server = servers["dup"]
+    assert server.fixture_conflicts == []
+    assert [f.content for f in server.files] == ["model: first\n"]

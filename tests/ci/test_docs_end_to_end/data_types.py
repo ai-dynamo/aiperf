@@ -60,3 +60,8 @@ class Server:
     # Files written into the AIPerf container's working directory before any
     # of this server's commands run, in document order.
     files: list[FileFixture] = field(default_factory=list)
+    # Paths two guides declared with different content. All fixtures are
+    # written before any command, so the later one would silently overwrite the
+    # earlier and the first guide would benchmark the wrong file while still
+    # reporting a pass. Recorded here so validation rejects the server.
+    fixture_conflicts: list[str] = field(default_factory=list)
