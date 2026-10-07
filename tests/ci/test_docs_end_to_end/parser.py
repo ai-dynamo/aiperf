@@ -52,8 +52,17 @@ class MarkdownParser:
             return
 
         i = 0
+        # Tags inside a fenced block are documentation *about* the tag syntax,
+        # not tags. Without this, docs/reference/docs-e2e-tagging.md's own
+        # examples register as real commands against real server groups.
+        fence: tuple[str, int] | None = None
         while i < len(lines):
             line = lines[i].strip()
+
+            fence = self._next_fence_state(fence, line)
+            if fence is not None:
+                i += 1
+                continue
 
             # Look for HTML comment tags. Two forms:
             #   <!-- tag-name -->
@@ -127,6 +136,29 @@ class MarkdownParser:
                         else:
                             logger.warning(f"No bash block found after tag {tag_name}")
             i += 1
+
+    @staticmethod
+    def _next_fence_state(
+        fence: tuple[str, int] | None, line: str
+    ) -> tuple[str, int] | None:
+        """Advance CommonMark fence state by one line.
+
+        Returns the open fence as ``(char, length)``, or None outside one. A
+        closer must use the same character and be at least as long as its
+        opener, so a four-backtick block may quote a three-backtick block.
+        """
+        match = re.match(r"(`{3,}|~{3,})(.*)$", line)
+        if fence is None:
+            return (match.group(1)[0], len(match.group(1))) if match else None
+        char, length = fence
+        if (
+            match
+            and match.group(1)[0] == char
+            and len(match.group(1)) >= length
+            and not match.group(2).strip()
+        ):
+            return None
+        return fence
 
     @staticmethod
     def _positive_int(
