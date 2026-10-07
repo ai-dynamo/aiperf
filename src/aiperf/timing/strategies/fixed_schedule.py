@@ -64,10 +64,15 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         self._absolute_schedule: list[ScheduleEntry] = []
         self._schedule_zero_ms: float = 0.0
 
-    def _timestamp_to_perf_sec(self, timestamp_ms: int | float) -> float:
+    def schedule_target_perf_sec(self, timestamp_ms: int | float) -> float:
         """Convert trace timestamp in milliseconds to perf counter seconds.
 
-        Uses the offset from the schedule zero to calculate the target performance seconds.
+        Uses the offset from the schedule zero to calculate the target
+        performance seconds.
+
+        Public because ``PhaseRunner`` hands this to the ``BranchOrchestrator``
+        so SPAWN_JOIN-gated turns fire at their recorded time rather than as
+        soon as their children finish.
         """
         target_offset_sec = (timestamp_ms - self._schedule_zero_ms) / MILLIS_PER_SECOND
         return self._lifecycle.started_at_perf_sec + target_offset_sec
@@ -159,7 +164,7 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
 
         for entry in self._absolute_schedule:
             self._scheduler.schedule_at_perf_sec(
-                self._timestamp_to_perf_sec(entry.timestamp_ms),
+                self.schedule_target_perf_sec(entry.timestamp_ms),
                 self._credit_issuer.issue_credit(entry.turn),
             )
 
@@ -188,7 +193,7 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
 
         if next_meta.timestamp_ms is not None:
             self._scheduler.schedule_at_perf_sec(
-                self._timestamp_to_perf_sec(next_meta.timestamp_ms),
+                self.schedule_target_perf_sec(next_meta.timestamp_ms),
                 self._credit_issuer.issue_credit(turn),
             )
         elif next_meta.delay_ms is not None:
