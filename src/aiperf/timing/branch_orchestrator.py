@@ -89,7 +89,6 @@ DAG that failed to drain (worker crash, protocol mismatch, bug).
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import math
 import time
@@ -1760,13 +1759,16 @@ class BranchOrchestrator:
             await self._sleep_think_ms(think_ms / 1000.0)
 
     async def _sleep_think_ms(self, seconds: float) -> None:
-        """Sleep for ``seconds``, but return early if ``cleanup()`` fires -- so a
-        shutdown / duration cancel interrupts a pending think-time instead of
-        waiting out the full (possibly large sampled) interval."""
-        # TimeoutError == the full think-time elapsed without cleanup: the
-        # normal path, so suppress it and return.
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(self._cleanup_event.wait(), timeout=seconds)
+        """Sleep for ``seconds``, but return early on shutdown or a duration
+        cancel, instead of waiting out the full (possibly large sampled)
+        interval.
+
+        Waiting on ``cleanup()`` alone did not deliver the duration-cancel half
+        of that promise: cleanup runs at phase teardown, which is *after* the
+        cutoff, so a long think-time still held the run open past the window
+        its requests are measured over.
+        """
+        await self._sleep_until_schedule_target(seconds)
 
     def set_schedule_target_resolver(
         self, resolver: Callable[[float], float] | None
