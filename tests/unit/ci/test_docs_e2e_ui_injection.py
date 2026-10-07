@@ -59,3 +59,31 @@ def test_injected_command_never_repeats_the_parameter() -> None:
         "aiperf profile --model m --ui simple",
     ):
         assert inject_ui_type(command, "simple").count("--ui-type") <= 1
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        param(
+            """aiperf profile --model m --extra-inputs '{"note": "pass --ui-type none here"}'""",
+            id="quoted-flag-is-data-not-an-option",
+        ),
+        param(
+            """aiperf profile --model m --extra-inputs '{"cmd": "aiperf profile"}'""",
+            id="quoted-command-is-data-not-an-invocation",
+        ),
+    ],
+)  # fmt: skip
+def test_quoted_text_does_not_change_ui_injection(command: str) -> None:
+    """Guides pass JSON payloads; their contents are data, not shell options.
+
+    Reading a quoted ``--ui-type`` as an explicit choice leaves the interactive
+    UI on and the command hangs in CI. Rewriting a quoted ``aiperf profile``
+    corrupts the payload the guide meant to send.
+    """
+    injected = inject_ui_type(command)
+
+    assert injected.count("--ui-type") == command.count("--ui-type") + 1
+    assert injected.startswith("aiperf profile --ui-type simple ")
+    # Everything after the invocation is untouched.
+    assert injected.endswith(command[len("aiperf profile") :])
