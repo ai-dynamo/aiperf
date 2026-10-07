@@ -156,7 +156,7 @@ def open_dataset(path: Path) -> TextIO:
 
 
 def manifest_path(trace: Path) -> Path:
-    """Where trace_processor.py writes the manifest: beside its output, named without the compression suffix."""
+    """``<base>.meta.json`` beside the trace, ``<base>`` being its name less ``.jsonl``/``.zst``: trace_processor.py's layout."""
     name = trace.name.removesuffix(".zst").removesuffix(".jsonl")
     return trace.with_name(f"{name}.meta.json")
 

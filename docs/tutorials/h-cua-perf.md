@@ -84,7 +84,7 @@ aiperf profile ... \
     --custom-dataset-type h_cua_perf
 ```
 
-The trace may be plain or zstd-compressed, as `trace_processor.py` wrote it. Its `h_cua.meta.json` manifest must sit beside it and carry its sha256; any other file is refused. Every session of the build is loaded. `--dataset-filter` applies to `--public-dataset` only: a derived build already carries its screenshot window and session selection, so shape it when deriving it.
+`trace_processor.py` writes the trace, zstd-compressed when the output path ends in `.zst`, and its `h_cua.meta.json` manifest beside it with the trace's sha256; any other file is refused. A manifest without a sha256 comes from an older copy of the script: download it again and derive the build again. Every session of the build is loaded. `--dataset-filter` applies to `--public-dataset` only: a derived build already carries its screenshot window and session selection, so shape it when deriving it.
 
 ## Related Tutorials
 
