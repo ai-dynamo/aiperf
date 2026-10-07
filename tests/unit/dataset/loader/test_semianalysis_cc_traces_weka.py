@@ -112,14 +112,17 @@ class TestConstructorWiring:
         )
         assert loader._weka.prompt_generator is pg
 
-    async def test_propagates_default_block_size(self, user_config) -> None:
+    async def test_default_block_size_is_not_a_block_size_override(
+        self, user_config
+    ) -> None:
+        """Each row declares its own block_size; the plugin default must not override it."""
         loader = SemiAnalysisCCTracesWekaLoader(
             run=user_config,
             hf_dataset_name=_NO_SUBAGENTS_HF_DATASET_NAME,
             prompt_generator=MagicMock(),
-            default_block_size=64,
+            default_block_size=128,
         )
-        assert loader._weka._block_size == 64
+        assert loader._weka._user_block_size_override is None
 
     async def test_streaming_forced_off_even_when_caller_passes_true(
         self, user_config
