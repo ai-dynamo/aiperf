@@ -9,8 +9,9 @@ import {
   markFreshnessSuccess,
   setError,
 } from './state.js';
+import { API_BASE } from './base-path.js';
 
-const BASE = '/api/v1';
+const BASE = API_BASE;
 
 // Number of consecutive `poll()` failures before we surface the
 // app-level "Operator API unreachable" banner. Two ticks dampens

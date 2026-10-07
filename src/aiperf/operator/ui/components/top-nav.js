@@ -3,6 +3,7 @@
 
 import { html } from 'htm/preact';
 import { route, navigate } from '../lib/router.js';
+import { appPath } from '../lib/base-path.js';
 
 const PRIMARY_GROUP = {
   label: 'OPERATE',
@@ -28,7 +29,7 @@ function buildNavGroups(features) {
     groups.push({
       items: [
         {
-          path: '/dashboard/',
+          path: appPath('dashboard/'),
           label: 'Plots ↗',
           external: true,
           testId: 'nav-link-plots',
