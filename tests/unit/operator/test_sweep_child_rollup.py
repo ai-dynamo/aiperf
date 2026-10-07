@@ -254,18 +254,9 @@ class TestFindSweepOwner:
 class TestIsOwnedChild:
     """The identity fence must accept the Mapping view kopf actually passes."""
 
-    @pytest.mark.parametrize(
-        "wrap",
-        [
-            param(dict, id="plain_dict"),
-            param(kopf.Body, id="kopf_body"),
-        ],
-    )  # fmt: skip
-    def test_owned_child_passes_fence_regardless_of_mapping_type(
-        self, wrap: Any
-    ) -> None:
+    def test_kopf_body_passes_identity_fence(self) -> None:
         assert child_rollup._is_owned_child(
-            wrap(_child_body()),
+            kopf.Body(_child_body()),
             sweep_uid="u",
             sweep_name="s",
             run_epoch="epoch-1",
@@ -327,15 +318,7 @@ class TestOnChildPhaseTransition:
     async def test_kopf_body_child_reaches_parent_patch(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """kopf delivers ``body`` as a ``kopf.Body`` view, not a ``dict``.
-
-        The identity fence used to start with ``isinstance(child, dict)``,
-        which is False for ``kopf.Body``: every real tick returned before
-        patching, kopf recorded the handler as a success, and the parent's
-        ``completedRuns`` stayed at the create-time 0 for the whole run
-        (``0 / 7`` on the dashboard with five children Succeeded). The
-        plain-dict bodies used elsewhere in this class never hit that path.
-        """
+        """A ``kopf.Body`` (Mapping view, not a ``dict``) must reach the parent patch."""
         captured: dict[str, Any] = {}
 
         async def fake_count(
