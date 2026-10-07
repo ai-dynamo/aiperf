@@ -102,3 +102,24 @@ class TestLoader:
                 prompt_generator=MagicMock(),
                 run=_run(trace, ignore_trace_delays=True),
             )
+
+    @pytest.mark.parametrize(
+        "sha256, match",
+        [
+            param({}, "no sha256", id="trace_not_named"),
+            param({"h_cua.jsonl.zst": "0" * 64}, "does not match", id="stale_digest"),
+        ],
+    )  # fmt: skip
+    def test_a_manifest_not_naming_the_trace_digest_is_refused(
+        self, tmp_path: Path, sha256: dict[str, str], match: str
+    ) -> None:
+        trace = build(tmp_path, "h_cua.jsonl.zst")
+        manifest = tmp_path / "h_cua.meta.json"
+        meta = orjson.loads(manifest.read_bytes()) | {"sha256": sha256}
+        manifest.write_bytes(orjson.dumps(meta))
+        loader = HCuaPerfFileLoader(
+            filename=trace, prompt_generator=MagicMock(), run=_run(trace)
+        )
+
+        with pytest.raises(DatasetLoaderError, match=match):
+            loader.load_dataset()
