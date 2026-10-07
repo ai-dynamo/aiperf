@@ -21,6 +21,7 @@ from aiperf.dataset.loader.h_cua_perf_processing import (
     iter_selected_records,
     memory_shortfall,
     open_dataset,
+    reject_ignore_trace_delays,
     select_trace_lengths,
     supported_filter_keys,
     verify_trace,
@@ -66,13 +67,7 @@ class HCuaPerfDatasetLoader(BaseHFDatasetLoader):
             raise DatasetLoaderError(
                 f"{self.tag}: {hf_dataset_name} has no subsets; drop --hf-subset"
             )
-        dataset = run.cfg.get_default_dataset() if run is not None else None
-        if getattr(dataset, "ignore_trace_delays", False):
-            raise DatasetLoaderError(
-                f"{self.tag}: --ignore-trace-delays applies to the Weka loaders only; "
-                "use --inter-turn-delay-cap-seconds 0 to send each session's turns "
-                "back to back"
-            )
+        reject_ignore_trace_delays(self.tag, run)
         try:
             self.filters = HCuaPerfFilters.model_validate(filters or {})
         except ValidationError as e:

@@ -3,6 +3,7 @@
 
 import hashlib
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import orjson
@@ -35,13 +36,14 @@ def build(directory: Path, name: str) -> Path:
     return trace
 
 
-def _run(trace: Path) -> BenchmarkRun:
+def _run(trace: Path, **cli: Any) -> BenchmarkRun:
     return make_run_from_cli(
         CLIConfig(
             model_names=["test-model"],
             endpoint_type="chat",
             input_file=str(trace),
             custom_dataset_type=CustomDatasetType.H_CUA_PERF,
+            **cli,
         )
     )
 
@@ -87,4 +89,16 @@ class TestLoader:
         with pytest.raises(DatasetLoaderError, match="h_cua.meta.json"):
             HCuaPerfFileLoader(
                 filename=trace, prompt_generator=MagicMock(), run=_run(trace)
+            )
+
+    def test_ignore_trace_delays_is_rejected_like_the_hub_loader(
+        self, tmp_path: Path
+    ) -> None:
+        trace = build(tmp_path, "h_cua.jsonl.zst")
+
+        with pytest.raises(DatasetLoaderError, match="--ignore-trace-delays"):
+            HCuaPerfFileLoader(
+                filename=trace,
+                prompt_generator=MagicMock(),
+                run=_run(trace, ignore_trace_delays=True),
             )

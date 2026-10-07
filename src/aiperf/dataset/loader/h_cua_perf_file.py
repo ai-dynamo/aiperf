@@ -18,6 +18,7 @@ from aiperf.dataset.loader.h_cua_perf_processing import (
     manifest_path,
     memory_shortfall,
     open_dataset,
+    reject_ignore_trace_delays,
     verify_trace,
 )
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
@@ -60,6 +61,7 @@ class HCuaPerfFileLoader(MooncakeTraceDatasetLoader):
             default_block_size=default_block_size,
             **kwargs,
         )
+        reject_ignore_trace_delays(self.tag, run)
         self.manifest = manifest_path(self.filename)
         if not self.manifest.is_file():
             raise DatasetLoaderError(

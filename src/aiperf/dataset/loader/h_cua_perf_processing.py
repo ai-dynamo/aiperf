@@ -9,14 +9,18 @@ from collections.abc import Iterator
 from itertools import groupby, islice
 from operator import itemgetter
 from pathlib import Path
-from typing import Any, TextIO
+from typing import TYPE_CHECKING, Any, TextIO
 
 import psutil
 import zstandard
 from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import AIPerfBaseModel
+
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 _logger = AIPerfLogger(__name__)
 
@@ -171,6 +175,17 @@ def verify_trace(meta: dict[str, Any], trace: Path, *, mismatch_hint: str = "") 
             f"(sha256 {actual[:12]}, manifest says {expected[:12]}){mismatch_hint}"
         )
     return actual
+
+
+def reject_ignore_trace_delays(tag: str, run: BenchmarkRun | None) -> None:
+    """Fail on ``--ignore-trace-delays``: only the Weka loaders honor it, so the replay would keep the recorded waits."""
+    dataset = run.cfg.get_default_dataset() if run is not None else None
+    if getattr(dataset, "ignore_trace_delays", False):
+        raise DatasetLoaderError(
+            f"{tag}: --ignore-trace-delays applies to the Weka loaders only; "
+            "use --inter-turn-delay-cap-seconds 0 to send each session's turns "
+            "back to back"
+        )
 
 
 def memory_shortfall(meta: dict[str, Any], plan: dict[str, int]) -> str | None:
