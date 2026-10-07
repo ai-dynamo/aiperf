@@ -261,7 +261,7 @@ class TestFixedScheduleTimestampConversion:
         "auto_offset,manual_offset",
         [(True, None), (False, None)],
     )  # fmt: skip
-    async def test_timestamp_to_perf_sec(self, auto_offset, manual_offset) -> None:
+    async def testschedule_target_perf_sec(self, auto_offset, manual_offset) -> None:
         """Verify timestamp conversion accounts for schedule_zero_ms offset."""
         schedule = (
             [(100, "c1"), (200, "c2")]
@@ -271,7 +271,7 @@ class TestFixedScheduleTimestampConversion:
         strategy, _, _ = make_strategy(schedule, auto_offset, manual_offset)
         await strategy.setup_phase()
         expected = strategy._lifecycle.started_at_perf_sec + (100 / MILLIS_PER_SECOND)
-        actual = strategy._timestamp_to_perf_sec(1100 if auto_offset else 100)
+        actual = strategy.schedule_target_perf_sec(1100 if auto_offset else 100)
         assert actual == expected
 
 

@@ -569,7 +569,7 @@ class PhaseRunner(TaskManagerMixin):
         finally:
             self._detach_orchestrator_and_cleanup(strategy)
 
-    def _wire_join_schedule_target(self, strategy) -> None:
+    def _wire_join_schedule_target(self, strategy: TimingStrategyProtocol) -> None:
         """Let the orchestrator honour recorded timestamps on gated turns.
 
         A turn gated on a SPAWN_JOIN is released by the BranchOrchestrator when
@@ -583,10 +583,21 @@ class PhaseRunner(TaskManagerMixin):
         """
         if self._branch_orchestrator is None:
             return
-        resolver = getattr(strategy, "_timestamp_to_perf_sec", None)
-        self._branch_orchestrator.set_schedule_target_resolver(
-            resolver if self._config.timing_mode == TimingMode.FIXED_SCHEDULE else None
-        )
+        if self._config.timing_mode != TimingMode.FIXED_SCHEDULE:
+            self._branch_orchestrator.set_schedule_target_resolver(None)
+            return
+
+        resolver = getattr(strategy, "schedule_target_perf_sec", None)
+        if resolver is None:
+            # Loud rather than silent: without the hook every gated turn goes
+            # back to firing as soon as its children finish, which compresses
+            # the very trace this mode exists to reproduce.
+            raise AttributeError(
+                f"{type(strategy).__name__} runs in fixed-schedule mode but does "
+                "not expose schedule_target_perf_sec(); SPAWN_JOIN-gated turns "
+                "would stop honouring their recorded timestamps"
+            )
+        self._branch_orchestrator.set_schedule_target_resolver(resolver)
 
     def _build_strategy(self) -> TimingStrategyProtocol:
         """Construct the timing strategy class for this phase."""
