@@ -56,11 +56,11 @@ timeout 900 bash -c 'until curl -sf http://localhost:8000/v1/models >/dev/null; 
 # OTel Collector: the base path answers 404 (it only serves /v1/metrics), so
 # any HTTP response means the collector is up -- curl -f would reject it.
 timeout 300 bash -c 'until curl -s -o /dev/null http://localhost:4318/; do sleep 2; done' \
-  && echo "OTel Collector reachable"
+  || { echo "OTel Collector not reachable after 5min"; exit 1; }
 
 # MLflow tracking server health
 timeout 300 bash -c 'until curl -sf http://localhost:5000/health >/dev/null; do sleep 2; done' \
-  && echo "MLflow reachable"
+  || { echo "MLflow not reachable after 5min"; exit 1; }
 ```
 <!-- /health-check-otel-mlflow-openai-endpoint-server -->
 
