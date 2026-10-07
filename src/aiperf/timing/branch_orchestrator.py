@@ -323,6 +323,13 @@ class BranchOrchestrator:
         # keeps its authored pacing (e.g. a nested spine still running its rounds
         # after --num-conversations stops root sending).
         self._think_time_wake: asyncio.Event = asyncio.Event()
+        # Latched once the run stops wanting a recorded-timestamp hold: at the
+        # sending cutoff (expire_replay_deadlines) or at teardown (cleanup).
+        # A latch rather than a pulse because, unlike think-time, the hold it
+        # guards can never become legal again -- the issuer refuses the turn
+        # past that boundary, so waiting on would only stretch the measured
+        # window.
+        self._schedule_stopped: asyncio.Event = asyncio.Event()
         # SPAWN children whose recorded first request starts after the branch
         # spawn dispatch through the shared replay scheduler (see
         # _start_delayed_first_turn), so the system-idle cap can advance those
@@ -1692,6 +1699,7 @@ class BranchOrchestrator:
         woken before any join is released here; each returns at once if its
         gated turn would now be refused and otherwise keeps its think-time.
         """
+        self._schedule_stopped.set()
         self._wake_think_time_sleepers()
         await self._abandon_cancelled_child_dispatches()
         releasable: list[PendingBranchJoin] = []
@@ -1702,9 +1710,7 @@ class BranchOrchestrator:
                 self._release_parent_slot_if_drained(parent_corr)
                 releasable.append(pending)
         for pending in releasable:
-            # Scheduling has stopped: the issuer will refuse these turns, so
-            # waiting out a recorded timestamp only delays shutdown.
-            await self._release_blocked_join(pending, honor_recorded_target=False)
+            await self._release_blocked_join(pending)
         self._notify_drain()
 
     async def _satisfy_prerequisite(
@@ -1914,23 +1920,31 @@ class BranchOrchestrator:
         if timestamp_ms is None:
             return
 
+        if self._schedule_stopped.is_set():
+            return
+
         remaining = resolver(timestamp_ms) - time.perf_counter()
         if remaining > 0:
-            await self._sleep_think_ms(
-                remaining,
-                lambda: self._issuer.can_dispatch_join(pending.parent_agent_depth),
-            )
+            await self._sleep_until_schedule_target(remaining)
 
-    async def _release_blocked_join(
-        self, pending: PendingBranchJoin, *, honor_recorded_target: bool = True
-    ) -> None:
-        """Dispatch the parent's gated turn and update stats.
+    async def _sleep_until_schedule_target(self, seconds: float) -> None:
+        """Hold for ``seconds``, or until the run stops wanting the hold.
 
-        ``honor_recorded_target`` is False only when the phase has already
-        stopped sending: the recorded timestamp can no longer be dispatched at,
-        so holding for it cannot produce a legal replay and would stretch the
-        observation window throughput is divided by.
+        Returns early once the phase stops scheduling (or cleanup fires). Past
+        that boundary the issuer refuses the turn anyway, so continuing to wait
+        cannot produce a legal replay -- it only keeps the run alive, and the
+        stalled span is the window throughput gets divided by. A parent
+        recorded at t=20s under ``--benchmark-duration 4`` would otherwise hold
+        to t=20s and report its requests over that window.
         """
+        waiter = asyncio.ensure_future(self._schedule_stopped.wait())
+        try:
+            await asyncio.wait([waiter], timeout=seconds)
+        finally:
+            waiter.cancel()
+
+    async def _release_blocked_join(self, pending: PendingBranchJoin) -> None:
+        """Dispatch the parent's gated turn and update stats."""
         assert pending.gated_turn_index is not None, (
             "_release_blocked_join called without a gated_turn_index"
         )
@@ -1942,8 +1956,7 @@ class BranchOrchestrator:
                 think_ms / 1000.0,
                 lambda: self._issuer.can_dispatch_join(pending.parent_agent_depth),
             )
-        if honor_recorded_target:
-            await self._await_recorded_join_target(pending)
+        await self._await_recorded_join_target(pending)
         result = ChildDispatchResult.normalize(
             await self._issuer.dispatch_join_turn(pending)
         )
@@ -2157,6 +2170,10 @@ class BranchOrchestrator:
             return
         self._cleaning_up = True
         self._wake_think_time_sleepers()
+        # Teardown also ends any recorded-timestamp hold: a phase torn down
+        # without reaching expire_replay_deadlines (cancel, failure) must not
+        # leave a join sleeping to its recorded instant.
+        self._schedule_stopped.set()
         self._drain_observer = None
         for task in self._delayed_dispatch_tasks.values():
             task.cancel()
