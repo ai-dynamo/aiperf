@@ -59,7 +59,7 @@ class MarkdownParser:
         while i < len(lines):
             line = lines[i].strip()
 
-            fence = self._next_fence_state(fence, line)
+            fence = self._next_fence_state(fence, lines[i])
             if fence is not None:
                 i += 1
                 continue
@@ -139,23 +139,29 @@ class MarkdownParser:
 
     @staticmethod
     def _next_fence_state(
-        fence: tuple[str, int] | None, line: str
+        fence: tuple[str, int] | None, raw_line: str
     ) -> tuple[str, int] | None:
         """Advance CommonMark fence state by one line.
 
         Returns the open fence as ``(char, length)``, or None outside one. A
         closer must use the same character and be at least as long as its
         opener, so a four-backtick block may quote a three-backtick block.
+
+        Takes the *unstripped* line: CommonMark allows a fence marker at most
+        three spaces of indentation, and at four it is an indented code block
+        rather than a boundary. Stripping first would let a deeper-indented
+        marker inside an example close the fence early, after which the
+        following example tags parse as real commands.
         """
-        match = re.match(r"(`{3,}|~{3,})(.*)$", line)
+        match = re.match(r"( {0,3})(`{3,}|~{3,})(.*)$", raw_line)
         if fence is None:
-            return (match.group(1)[0], len(match.group(1))) if match else None
+            return (match.group(2)[0], len(match.group(2))) if match else None
         char, length = fence
         if (
             match
-            and match.group(1)[0] == char
-            and len(match.group(1)) >= length
-            and not match.group(2).strip()
+            and match.group(2)[0] == char
+            and len(match.group(2)) >= length
+            and not match.group(3).strip()
         ):
             return None
         return fence
@@ -242,6 +248,19 @@ class MarkdownParser:
                 aiperf_commands=[],
             )
             self.servers[server_name] = server
+        existing = next((f for f in server.files if f.path == path), None)
+        if existing is not None:
+            if existing.content == content:
+                # The same file documented twice: harmless, write it once.
+                return
+            logger.error(
+                f"{file_path}:{line_no}: fixture '{path}' for server "
+                f"'{server_name}' conflicts with {existing.file_path}:"
+                f"{existing.start_line}. Both are written before any command "
+                f"runs, so one guide would silently benchmark the other's file."
+            )
+            server.fixture_conflicts.append(path)
+            return
         server.files.append(
             FileFixture(
                 path=path, content=content, file_path=file_path, start_line=line_no

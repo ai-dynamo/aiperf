@@ -90,3 +90,32 @@ def test_real_tags_outside_a_fence_still_parse(tmp_path) -> None:
     assert servers["real"].setup_command is not None
     assert servers["real"].health_check_command is not None
     assert len(servers["real"].aiperf_commands) == 1
+
+
+INDENTED_CLOSER_DOC = """\
+Explaining a nested block:
+
+````markdown
+<!-- setup-example-endpoint-server -->
+```bash
+docker run -d nginx
+```
+    ````
+<!-- aiperf-run-example-endpoint-server -->
+```bash
+aiperf profile --model m
+```
+<!-- /aiperf-run-example-endpoint-server -->
+````
+"""
+
+
+def test_an_indented_marker_does_not_close_the_fence(tmp_path) -> None:
+    """Four spaces makes it indented content, not a fence boundary.
+
+    The marker matches the opener's character and length, so only its
+    indentation keeps it from closing the block. Stripping before the check
+    would end the example here, and every tag after it would parse as a real
+    command.
+    """
+    assert _parse(tmp_path, indented=INDENTED_CLOSER_DOC) == {}
