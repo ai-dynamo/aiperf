@@ -21,6 +21,7 @@ from typing import Any
 from constants import (
     AIPERF_COMMAND_TIMEOUT,
     AIPERF_UI_TYPE,
+    CONTAINER_DISCOVERY_TIMEOUT,
     SETUP_MONITOR_TIMEOUT,
 )
 from data_types import Server
@@ -35,16 +36,64 @@ logger = logging.getLogger(__name__)
 _UI_FLAG_RE = re.compile(r"(?<!\S)--ui(-type)?(=|\s)")
 
 
+def _has_explicit_ui_flag(command: str) -> bool:
+    """Whether the command really passes ``--ui``/``--ui-type`` as an option.
+
+    Tokenizes so quoted text is not mistaken for an option: guides pass JSON
+    payloads (``--extra-inputs '{"note": "--ui-type none"}'``) whose contents
+    are data, not flags. Treating that as an explicit choice would leave the
+    interactive UI on and hang the command in CI.
+    """
+    try:
+        tokens = shlex.split(command, comments=False)
+    except ValueError:
+        # Unbalanced quotes: bash will fail on this anyway, so fall back to the
+        # textual check rather than guessing at the author's intent.
+        return bool(_UI_FLAG_RE.search(command))
+    return any(
+        token in ("--ui", "--ui-type") or token.startswith(("--ui=", "--ui-type="))
+        for token in tokens
+    )
+
+
+def _first_unquoted_index(command: str, needle: str) -> int:
+    """Index of ``needle`` outside any quoted span, or -1."""
+    quote: str | None = None
+    i = 0
+    while i < len(command):
+        char = command[i]
+        if quote is not None:
+            if char == "\\" and quote == '"':
+                i += 2
+                continue
+            if char == quote:
+                quote = None
+        elif char in "\"'":
+            quote = char
+        elif command.startswith(needle, i):
+            return i
+        i += 1
+    return -1
+
+
 def inject_ui_type(command: str, ui_type: str = AIPERF_UI_TYPE) -> str:
     """Force the non-interactive UI unless the doc already selected one.
 
     cyclopts rejects a repeated parameter with "Parameter --ui-type specified
     multiple times" and exits 1, so injecting unconditionally would make every
     guide that teaches ``--ui-type``/``--ui`` impossible to tag for docs-e2e.
+
+    Injects at the first real invocation only. A plain ``str.replace`` also
+    rewrites the text inside a quoted argument, corrupting a payload that
+    merely mentions the command.
     """
-    if _UI_FLAG_RE.search(command):
+    if _has_explicit_ui_flag(command):
         return command
-    return command.replace("aiperf profile", f"aiperf profile --ui-type {ui_type}")
+    index = _first_unquoted_index(command, "aiperf profile")
+    if index < 0:
+        return command
+    end = index + len("aiperf profile")
+    return f"{command[:end]} --ui-type {ui_type}{command[end:]}"
 
 
 def resolve_command_timeout(aiperf_cmd) -> int:
@@ -174,12 +223,16 @@ class EndToEndTestRunner:
                 return False
 
             # Step 2: Validate servers (no duplicates, complete definitions)
-            if not self._validate_servers(servers):
-                logger.error("Server validation failed - stopping all tests")
+            invalid = self._validate_servers(servers)
+            servers = {n: s for n, s in servers.items() if n not in invalid}
+            if not servers:
+                logger.error("No runnable servers - stopping all tests")
                 return False
 
-            # Step 3: Run tests for each server
-            all_passed = True
+            # Step 3: Run tests for each server. An invalid server already
+            # failed the run; the rest still execute so one broken guide does
+            # not hide every other guide's result.
+            all_passed = not invalid
             for server_name, server in servers.items():
                 logger.info(f"Testing server: {server_name}")
 
@@ -281,32 +334,46 @@ class EndToEndTestRunner:
         logger.info(f"AIPerf version: {verify_result.stdout.strip()}")
         return True
 
-    def _validate_servers(self, servers: dict[str, Server]) -> bool:
-        """Validate that all servers have required commands and no duplicates"""
+    def _validate_servers(self, servers: dict[str, Server]) -> list[str]:
+        """Return the names of servers that cannot run, logging why.
+
+        Incomplete servers are isolated rather than fatal. A single malformed
+        tag attribute drops its own command (see ``MarkdownParser``), which can
+        leave one server with no runnable commands -- and aborting there would
+        take every other documented server down with it, turning one typo in
+        one guide into a suite-wide outage. The caller still fails the run.
+        """
         logger.info(f"Validating {len(servers)} servers...")
 
+        invalid: list[str] = []
         for server_name, server in servers.items():
-            # Check that server has setup command
+            missing = []
             if server.setup_command is None:
-                logger.error(f"Server '{server_name}' missing setup command")
-                return False
-
-            # Check that server has health check command
+                missing.append("setup")
             if server.health_check_command is None:
-                logger.error(f"Server '{server_name}' missing health-check command")
-                return False
-
-            # Check that server has at least one aiperf command
+                missing.append("health-check")
             if not server.aiperf_commands:
-                logger.error(f"Server '{server_name}' missing aiperf-run commands")
-                return False
+                missing.append("aiperf-run")
+            if server.fixture_conflicts:
+                missing.append(
+                    f"non-conflicting fixtures for {sorted(set(server.fixture_conflicts))}"
+                )
+
+            if missing:
+                logger.error(
+                    f"Server '{server_name}' is missing {', '.join(missing)} "
+                    f"command(s); skipping it and failing the run"
+                )
+                invalid.append(server_name)
+                continue
 
             logger.info(
                 f"Server '{server_name}': 1 setup, 1 health-check, {len(server.aiperf_commands)} aiperf commands"
             )
 
-        logger.info("Server validation passed")
-        return True
+        if not invalid:
+            logger.info("Server validation passed")
+        return invalid
 
     def _monitor_server_logs(self, process: subprocess.Popen, server_name: str):
         """Continuously monitor and display server logs in background thread"""
@@ -326,10 +393,27 @@ class EndToEndTestRunner:
         except Exception as e:
             logger.debug(f"Log monitoring thread exception: {e}")
 
-    def _running_container_ids(self) -> set[str]:
-        result = subprocess.run(
-            ["docker", "ps", "-q"], capture_output=True, text=True, check=False
-        )
+    def _known_container_ids(self) -> set[str]:
+        """Every container id docker knows about, running or not.
+
+        ``-a`` matters: a server that boots and dies during setup is gone from
+        ``docker ps`` by the time the snapshot is taken, and that is precisely
+        the container whose logs are worth having. Omitting it loses the boot
+        traceback for the one case this capture exists for.
+        """
+        try:
+            result = subprocess.run(
+                ["docker", "ps", "-aq"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=CONTAINER_DISCOVERY_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "docker ps timed out; detached container logs will not be followed"
+            )
+            return set()
         return set(result.stdout.split())
 
     def _stream_container_logs(self, container_id: str, server_name: str) -> None:
@@ -354,7 +438,9 @@ class EndToEndTestRunner:
         except Exception as e:
             logger.debug(f"Detached log thread exception: {e}")
 
-    def _follow_detached_containers(self, before: set[str], server_name: str) -> None:
+    def _follow_detached_containers(
+        self, before: set[str], server_name: str
+    ) -> list[threading.Thread]:
         """Attach a log follower to every container the setup block left running.
 
         ``docker run -d`` returns as soon as the container is created, so the
@@ -368,13 +454,19 @@ class EndToEndTestRunner:
         independent of how a guide spells its run command, and covers groups
         that start several containers (otel-mlflow starts three).
         """
-        for container_id in sorted(self._running_container_ids() - before):
+        started: list[threading.Thread] = []
+        for container_id in sorted(self._known_container_ids() - before):
             logger.info(f"Following logs for detached container {container_id[:12]}")
-            threading.Thread(
+            thread = threading.Thread(
                 target=self._stream_container_logs,
                 args=(container_id, server_name),
                 daemon=True,
-            ).start()
+            )
+            thread.start()
+            started.append(thread)
+        # Returned so a caller can synchronise on the followers; the run path
+        # deliberately does not, since each one lives as long as its container.
+        return started
 
     def _test_server(self, server: Server) -> bool:
         """Test a single server: setup + health check + aiperf runs"""
@@ -385,7 +477,7 @@ class EndToEndTestRunner:
         logger.info(f"Command: {server.setup_command.command}")
         logger.info("=" * 60)
 
-        containers_before_setup = self._running_container_ids()
+        containers_before_setup = self._known_container_ids()
 
         setup_process = subprocess.Popen(
             server.setup_command.command,
@@ -517,8 +609,6 @@ class EndToEndTestRunner:
                 start_new_session=True,
             )
             assert aiperf_process.stdin is not None
-            aiperf_process.stdin.write(aiperf_command_with_ui + "\n")
-            aiperf_process.stdin.close()
 
             kill_guard = _ProcessGroupKillGuard()
             command_timeout = resolve_command_timeout(aiperf_cmd)
@@ -536,6 +626,12 @@ class EndToEndTestRunner:
             watchdog.start()
 
             try:
+                # Delivered inside the watchdog's scope: if docker exec stops
+                # reading, this write blocks on a full pipe, and a watchdog
+                # armed afterwards would never start to kill it.
+                aiperf_process.stdin.write(aiperf_command_with_ui + "\n")
+                aiperf_process.stdin.close()
+
                 # Show real-time output
                 aiperf_output_lines = []
                 while True:

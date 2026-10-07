@@ -24,7 +24,7 @@ from test_runner import EndToEndTestRunner  # noqa: E402
 def _runner_with(monkeypatch, running: set[str]) -> tuple:
     runner = EndToEndTestRunner()
     followed: list[tuple[str, str]] = []
-    monkeypatch.setattr(runner, "_running_container_ids", lambda: running)
+    monkeypatch.setattr(runner, "_known_container_ids", lambda: running)
     monkeypatch.setattr(
         runner,
         "_stream_container_logs",
@@ -35,7 +35,8 @@ def _runner_with(monkeypatch, running: set[str]) -> tuple:
 
 def test_containers_started_by_setup_are_followed(monkeypatch) -> None:
     runner, followed = _runner_with(monkeypatch, {"aiperf", "vllm", "otel"})
-    runner._follow_detached_containers({"aiperf"}, "otel-mlflow-openai")
+    for thread in runner._follow_detached_containers({"aiperf"}, "otel-mlflow-openai"):
+        thread.join(timeout=5)
 
     assert sorted(cid for cid, _ in followed) == ["otel", "vllm"]
     assert {name for _, name in followed} == {"otel-mlflow-openai"}
@@ -44,6 +45,7 @@ def test_containers_started_by_setup_are_followed(monkeypatch) -> None:
 def test_containers_predating_setup_are_not_followed(monkeypatch) -> None:
     """The AIPerf container itself is already running; it is not the server."""
     runner, followed = _runner_with(monkeypatch, {"aiperf"})
-    runner._follow_detached_containers({"aiperf"}, "vllm-default-openai")
+    started = runner._follow_detached_containers({"aiperf"}, "vllm-default-openai")
 
+    assert started == []
     assert followed == []
