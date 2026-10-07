@@ -35,12 +35,11 @@ jobs:
   test-docs-end-to-end-long:
     name: Test Docs End-to-End (long-running guides)
     runs-on: prod-aiperf-tester-amd-gpu-v1
-    # The per-command ceilings live on the tags themselves (timeout=9000 /
-    # timeout=5400) and already sum to 240 minutes, so the job needs headroom
-    # above that for the image build, the vLLM boot and the model download --
-    # at 240 a shard that actually ran to its ceilings would be killed before
-    # reporting.
-    timeout-minutes: 300
+    # The per-command ceilings live on the tags themselves and now sum to 350
+    # minutes for this shard, so the job needs headroom above that for the
+    # image build, the vLLM boot and the model download -- below it, a shard
+    # that actually ran to its ceilings would be killed before reporting.
+    timeout-minutes: 420
     strategy:
       fail-fast: false
       matrix:
