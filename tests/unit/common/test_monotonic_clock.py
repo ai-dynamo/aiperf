@@ -4,7 +4,7 @@
 
 import time
 
-from aiperf.common.monotonic_clock import MonotonicClock
+from aiperf.common.monotonic_clock import MonotonicClock, process_clock
 
 
 class TestMonotonicClock:
@@ -30,3 +30,20 @@ class TestMonotonicClock:
         elapsed_ns = clock.elapsed_ns()
         assert elapsed_ns >= 0
         assert clock.elapsed_sec() >= elapsed_ns / 1e9
+
+    def test_wall_ns_at_maps_a_perf_reading_through_the_anchor(self) -> None:
+        clock = MonotonicClock()
+        perf_ns = clock.perf_anchor_ns + 1_234_567
+        assert clock.wall_ns_at(perf_ns) == clock.wall_anchor_ns + 1_234_567
+
+
+class TestProcessClock:
+    def test_process_clock_returns_one_instance_per_process(self) -> None:
+        assert process_clock() is process_clock()
+
+    def test_process_clock_ignores_wall_clock_steps(self, monkeypatch) -> None:
+        clock = process_clock()
+        perf_ns = time.perf_counter_ns()
+        before = clock.wall_ns_at(perf_ns)
+        monkeypatch.setattr(time, "time_ns", lambda: 0)
+        assert process_clock().wall_ns_at(perf_ns) == before
