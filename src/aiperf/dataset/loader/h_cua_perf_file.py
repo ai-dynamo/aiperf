@@ -105,5 +105,5 @@ class HCuaPerfFileLoader(MooncakeTraceDatasetLoader):
             with open_dataset(self.filename) as lines:
                 records = (orjson.loads(line) for line in lines if line.strip())
                 yield from iter_selected_records(records, self._plan, None)
-        except (ValueError, zstandard.ZstdError) as e:
+        except (KeyError, ValueError, zstandard.ZstdError) as e:
             raise DatasetLoaderError(f"{self.tag}: {e}") from e
