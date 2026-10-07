@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -17,6 +18,7 @@ from aiperf.common.models import (
     TextResponseData,
     Turn,
 )
+from aiperf.common.monotonic_clock import process_clock
 from aiperf.config.phases import ConcurrencyPhase
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.dataset.memory_map_utils import PayloadTurnData
@@ -645,6 +647,32 @@ class TestEmitCreditFailureRecord:
         assert record.request_info.profiling_index == 1
         assert record.request_info.phase_name == "second-profiling"
         assert record.request_info.phase_kind == "profiling"
+
+    async def test_emit_credit_failure_record_uses_process_clock(
+        self, mock_worker, monkeypatch
+    ):
+        credit_context = CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.PROFILING,
+                conversation_id="test-conv",
+                x_correlation_id="test-correlation",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+            ),
+            drop_perf_ns=0,
+            error=ErrorDetails(message="boom", type="CreditProcessingError", code=500),
+        )
+        mock_worker._send_inference_result_message = AsyncMock()
+        process_clock()
+        # A wall-clock step must not move the record's exported start.
+        monkeypatch.setattr(time, "time_ns", lambda: 0)
+
+        await mock_worker._emit_credit_failure_record(credit_context)
+
+        record = mock_worker._send_inference_result_message.call_args.args[0]
+        assert record.timestamp_ns == process_clock().wall_ns_at(record.start_perf_ns)
 
 
 # --- Fixture for CreditContext ---

@@ -11,7 +11,8 @@ timestamps that are:
 - High resolution (nanosecond, from perf_counter)
 
 Used by the worker-side ClockOffsetTracker to ensure consistent, monotonic
-timestamps for cross-machine offset measurement. The controller (CreditIssuer)
+timestamps for cross-machine offset measurement, and (via ``process_clock``)
+for every worker-side request timestamp. The controller (CreditIssuer)
 anchors its own perf_counter baseline inline rather than through this class.
 """
 
@@ -52,6 +53,10 @@ class MonotonicClock:
         """Current wall-clock time derived from perf_counter delta."""
         return self.wall_anchor_ns + (time.perf_counter_ns() - self.perf_anchor_ns)
 
+    def wall_ns_at(self, perf_ns: int) -> int:
+        """Wall-clock time of an instant already read as ``perf_counter_ns``."""
+        return self.wall_anchor_ns + (perf_ns - self.perf_anchor_ns)
+
     def elapsed_ns(self) -> int:
         """Nanoseconds elapsed since this clock was created."""
         return time.perf_counter_ns() - self.perf_anchor_ns
@@ -59,3 +64,22 @@ class MonotonicClock:
     def elapsed_sec(self) -> float:
         """Seconds elapsed since this clock was created."""
         return self.elapsed_ns() / NANOS_PER_SECOND
+
+
+_process_clock: MonotonicClock | None = None
+
+
+def process_clock() -> MonotonicClock:
+    """The one anchored clock for wall-clock timestamps taken in this process.
+
+    Every request record a worker exports is compared against records from the
+    same worker (SPAWN_JOIN ordering, per-session turn order), so all of them
+    must come from one anchor. A fresh ``time.time_ns()`` per request moves
+    with any wall-clock slew or step, and with any preemption between it and
+    the paired ``perf_counter`` read, which shifts that request's exported
+    start and end by milliseconds relative to its neighbours.
+    """
+    global _process_clock
+    if _process_clock is None:
+        _process_clock = MonotonicClock()
+    return _process_clock

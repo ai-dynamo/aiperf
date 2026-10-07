@@ -19,6 +19,7 @@ from aiperf.common.models import (
     RequestRecord,
     TextResponse,
 )
+from aiperf.common.monotonic_clock import process_clock
 from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
 from aiperf.transports.aws.eventstream import (
     EVENTSTREAM_CONTENT_TYPE,
@@ -156,10 +157,11 @@ class AioHttpClient(AIPerfLoggerMixin):
             ) as session:
                 # Re-pair start_perf_ns with timestamp_ns at the same instant: the Pydantic
                 # default_factory fired at record construction (above), but session setup
-                # has now moved start_perf_ns forward, so timestamp_ns needs the same shift
-                # to keep the (wall, perf) pairing used by compute_time_ns.
+                # has now moved start_perf_ns forward. timestamp_ns is derived from the
+                # process clock rather than read fresh, so every record from this worker
+                # shares one anchor (see process_clock).
                 record.start_perf_ns = time.perf_counter_ns()
-                record.timestamp_ns = time.time_ns()
+                record.timestamp_ns = process_clock().wall_ns_at(record.start_perf_ns)
                 async with session.request(
                     method, url, data=data, headers=headers, **kwargs
                 ) as response:
