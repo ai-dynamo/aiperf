@@ -98,8 +98,11 @@ def test_auto_plot_quick_start_uses_url_for_server_address() -> None:
     doc = Path("docs/tutorials/auto-plot.md").read_text()
     quick_start = doc.split("## Quick start", 1)[1].split("```", 2)[1]
 
-    assert re.search(r"--url\s+https?://\S+", quick_start)
-    assert not re.search(r"--endpoint\s+https?://", quick_start)
+    # Either separator: cyclopts accepts --url=VALUE as well as --url VALUE,
+    # so requiring whitespace would miss a real --endpoint= and fail a valid
+    # --url=.
+    assert re.search(r"--url(?:\s+|=)https?://\S+", quick_start)
+    assert not re.search(r"--endpoint(?:\s+|=)https?://", quick_start)
 
 
 # --- Cyclopts CLI flag plumbing ----------------------------------------------
