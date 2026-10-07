@@ -84,6 +84,19 @@ class TestCalibrated:
         clock = MonotonicClock.calibrated()
         assert abs(clock.now_ns() - time.time_ns()) < 1_000_000_000
 
+    @pytest.mark.parametrize(
+        "samples",
+        [
+            param(0, id="zero"),
+            param(-1, id="negative"),
+        ],
+    )  # fmt: skip
+    def test_calibrated_non_positive_samples_raises_value_error(
+        self, samples: int
+    ) -> None:
+        with pytest.raises(ValueError, match="samples must be at least 1"):
+            MonotonicClock.calibrated(samples=samples)
+
 
 class TestProcessClock:
     def test_process_clock_returns_one_instance_per_process(self) -> None:

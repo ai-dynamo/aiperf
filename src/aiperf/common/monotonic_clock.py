@@ -77,6 +77,8 @@ class MonotonicClock:
         preemption only widens the sample it lands in, so the tightest of a
         few dozen samples is accurate to tens of nanoseconds.
         """
+        if samples < 1:
+            raise ValueError(f"samples must be at least 1, got {samples}")
         best_gap_ns = perf_anchor_ns = wall_anchor_ns = None
         for _ in range(samples):
             before_ns = time.perf_counter_ns()
