@@ -320,7 +320,7 @@ class TestResultsDBReadonlyAndCorruptIndex:
             param(
                 "compare",
                 {
-                    "job_ids": ["llama-index-fast-path-bench-7f2a"],
+                    "job_ids": ["bench-prod/llama-index-fast-path-bench-7f2a"],
                     "metrics": ["request_throughput"],
                 },
                 "request_throughput_avg",
@@ -897,7 +897,6 @@ class TestResultsDBCompareAndFilters:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """The disk fallback must not open summaries of unrelated jobs."""
         base = tmp_path / "results"
         for job_id in ("wanted-bench-1a2b", "unrelated-bench-3c4d"):
             _write_run_artifact(base, "bench-prod", job_id, _EPOCH_NEW)
@@ -914,6 +913,40 @@ class TestResultsDBCompareAndFilters:
 
         assert [row["job_id"] for row in rows] == ["wanted-bench-1a2b"]
         assert [path.parent.name for path in opened] == ["wanted-bench-1a2b"]
+
+    @pytest.mark.asyncio
+    async def test_compare_bare_job_id_reads_disk_for_namespace_missing_from_index(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A bare id must surface every namespace so the 409 ambiguity check can fire.
+
+        With one namespace indexed and the other only on disk, trusting the
+        complete catalog would return a single row and the router would never
+        see the duplicate name.
+        """
+        base = tmp_path / "results"
+        db_path = base / ".aiperf_index.sqlite"
+        job_id = "shared-name-bench-3c1f"
+        for namespace, throughput in (("bench-prod", 210.0), ("bench-stage", 99.0)):
+            _write_run_artifact(
+                base,
+                namespace,
+                job_id,
+                _EPOCH_NEW,
+                summary=_summary(throughput=throughput),
+            )
+        await _open_writable_index(db_path)
+        await _write_index_run(
+            "bench-prod", job_id, _EPOCH_NEW, summary=_summary(throughput=210.0)
+        )
+        runs_index.mark_catalog_complete(base)
+
+        rows = await ResultsDB(base).compare(job_ids=[job_id])
+
+        assert sorted(
+            (row["namespace"], row["request_throughput_avg"]) for row in rows
+        ) == [("bench-prod", 210.0), ("bench-stage", 99.0)]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

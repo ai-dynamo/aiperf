@@ -26,7 +26,6 @@ from aiperf.operator import runs_index
 from aiperf.operator.artifact_names import summary_candidates
 from aiperf.operator.results_layout import (
     is_run_ready,
-    list_run_epochs,
     resolve_latest,
     resolve_run_dir,
 )
@@ -271,13 +270,17 @@ class ResultsDB:
 
     @staticmethod
     def _rows_cover_job_ids(rows: list[dict[str, Any]], job_ids: list[str]) -> bool:
-        """Return whether every requested job identity has at least one row."""
+        """Return whether the index alone can answer for every requested job.
+
+        A bare job id may match runs in several namespaces and the index cannot
+        prove it holds all of them, while the router's 409 ambiguity check needs
+        to see every match. Bare ids therefore always take the disk merge.
+        """
         bare_job_ids, qualified_refs = runs_index._split_compare_job_ids(job_ids)
-        indexed_jobs = {row["job_id"] for row in rows}
+        if bare_job_ids:
+            return False
         indexed_refs = {(row["namespace"], row["job_id"]) for row in rows}
-        return indexed_jobs.issuperset(bare_job_ids) and indexed_refs.issuperset(
-            qualified_refs
-        )
+        return indexed_refs.issuperset(qualified_refs)
 
     async def _filter_current_index_dicts(
         self,
@@ -561,29 +564,14 @@ class ResultsDB:
                     namespace_dir.name, job_dir.name
                 ):
                     continue
-                run_epoch = self._disk_run_epoch(
-                    namespace_dir.name, job_dir.name, epoch
+                run_path = resolve_run_dir(
+                    self._results_dir, namespace_dir.name, job_dir.name, epoch
                 )
-                if run_epoch is None:
+                if run_path is None:
                     continue
-                summary = self._read_summary_file(job_dir / run_epoch)
+                summary = self._read_summary_file(run_path)
                 if summary is not None:
-                    yield namespace_dir.name, job_dir.name, run_epoch, summary
-
-    def _disk_run_epoch(
-        self, namespace: str, job_id: str, epoch: str | None
-    ) -> str | None:
-        """Return the requested (or latest) epoch when its run dir is on disk."""
-        run_epoch = (
-            epoch
-            if epoch is not None
-            else resolve_latest(self._results_dir, namespace, job_id)
-        )
-        if run_epoch is None or run_epoch not in list_run_epochs(
-            self._results_dir, namespace, job_id
-        ):
-            return None
-        return run_epoch
+                    yield namespace_dir.name, job_dir.name, run_path.name, summary
 
     def _read_summary_file(self, run_dir: Path) -> dict[str, Any] | None:
         if not is_run_ready(run_dir):

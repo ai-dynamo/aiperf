@@ -356,7 +356,6 @@ async def _reconcile_index_latest(
 def _published_epochs(
     base: Path, namespace: str, job_id: str, epochs: set[str]
 ) -> set[str]:
-    """Return the epochs whose run directory carries the ready marker."""
     return {
         epoch
         for epoch in epochs

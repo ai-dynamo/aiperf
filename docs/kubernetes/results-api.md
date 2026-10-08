@@ -634,7 +634,7 @@ Entries are ordered newest epoch first. Every metric field is nullable. If the r
 
 ### `GET /api/v1/analytics/compare`
 
-Pull a side-by-side comparison of named jobs across a set of metrics. The response pivots the runs-index rows into `(metric, stat, unit, values={namespace/job_id: value})` entries for the UI. When the runs index has no row for a requested job (for example a sweep child whose CR was reaped by `ttlSecondsAfterFinished` after its results were stored), the endpoint reads that job's on-disk summary instead, so archived runs stay comparable.
+Pull a side-by-side comparison of named jobs across a set of metrics. The response pivots the runs-index rows into `(metric, stat, unit, values={namespace/job_id: value})` entries for the UI. When the runs index has no row for a requested job (for example a sweep child whose CR was reaped by `ttlSecondsAfterFinished` after its results were stored), the endpoint reads that job's on-disk summary instead, so archived runs stay comparable. Bare (namespace-less) job IDs always consult the on-disk summaries so a name shared across namespaces is still reported as ambiguous.
 
 **Query parameters**
 
