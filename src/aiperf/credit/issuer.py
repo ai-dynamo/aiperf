@@ -14,7 +14,7 @@ Key responsibilities:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -30,7 +30,7 @@ from aiperf.timing.strategies.cache_bust import (
     WARMUP_ISOLATION_TARGETS,
 )
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
-from collections.abc import Awaitable, Callable
+
 if TYPE_CHECKING:
     from aiperf.credit.sticky_router import CreditRouterProtocol
     from aiperf.timing.branch_orchestrator import PendingBranchJoin
@@ -536,7 +536,8 @@ class CreditIssuer:
         return not is_final_credit
 
     async def dispatch_first_turn(
-        self, sampled_session: SampledSession,
+        self,
+        sampled_session: SampledSession,
         on_refused: Callable[[], Awaitable[None]] | None = None,
     ) -> ChildDispatchResult:
         """Dispatch the first turn of a mid-run DAG child session.
@@ -548,7 +549,11 @@ class CreditIssuer:
             sampled_session.build_first_turn(), on_refused=on_refused
         )
 
-    async def dispatch_child_turn(self, turn: TurnToSend, on_refused: Callable[[], Awaitable[None]] | None = None,) -> ChildDispatchResult:
+    async def dispatch_child_turn(
+        self,
+        turn: TurnToSend,
+        on_refused: Callable[[], Awaitable[None]] | None = None,
+    ) -> ChildDispatchResult:
         """Dispatch a DAG child turn (first or continuation).
 
         ``DEFERRED`` means the turn is retained by a replay barrier or phase

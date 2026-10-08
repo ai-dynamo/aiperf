@@ -24,7 +24,7 @@ def _make_strategy(
 ) -> tuple[AgenticReplayStrategy, MagicMock, MagicMock]:
     """Build a strategy with only the attributes ``_dispatch_next_turn`` reads."""
     strategy = AgenticReplayStrategy.__new__(AgenticReplayStrategy)
-    strategy.config = MagicMock(phase=phase)
+    strategy.config = MagicMock(phase=phase, finite_replay=False)
     strategy._cache_warmup_duration = None
     strategy._cache_warmup_requests_per_lane = 10 if accelerated_warmup else None
 
@@ -40,7 +40,6 @@ def _make_strategy(
     scheduler = MagicMock()
 
     strategy.conversation_source = conversation_source
-    strategy.config = MagicMock(finite_replay=False)
     strategy.credit_issuer = credit_issuer
     strategy.scheduler = scheduler
     strategy.branch_orchestrator = branch_orchestrator

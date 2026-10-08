@@ -8,6 +8,7 @@ import asyncio
 import logging
 import re
 import time
+from collections import deque
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -22,14 +23,19 @@ from aiperf.common.models import (
 )
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.config import BenchmarkRun
+from aiperf.credit.callback_handler import CreditCallbackHandler
 from aiperf.credit.dispatch import TurnAdmission
+from aiperf.credit.messages import CreditReturn
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.dataset.dataset_samplers import SequentialSampler
-from aiperf.plugin.enums import DatasetSamplingStrategy
+from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
+from aiperf.timing.config import CreditPhaseConfig
+from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from aiperf.timing.replay_dependencies import (
     ReplayBarrierCoordinator,
     ReplayResumeBoundary,
 )
+from aiperf.timing.session_tree import SessionTreeRegistry
 from aiperf.timing.strategies.agentic_replay import AgenticReplayStrategy
 from aiperf.timing.trajectory_source import (
     ConversationState,
@@ -1972,7 +1978,7 @@ async def test_profiling_globally_anchors_earliest_request_preserving_spacing():
 
     cfg = MagicMock()
     cfg.phase = CreditPhase.PROFILING
-    cfg.concurrency = 2 
+    cfg.concurrency = 2
     cfg.finite_replay = False
     strategy = AgenticReplayStrategy(
         config=cfg,
@@ -3692,3 +3698,211 @@ async def test_profiling_setup_logs_rootless_lane_count(caplog):
 
     msgs = [r.getMessage() for r in caplog.records]
     assert any("rootless" in m and "1" in m for m in msgs), msgs
+
+
+@pytest.mark.asyncio
+async def test_on_tree_drained_finite_dispatch_failure_propagates_to_replay_gate():
+    """In finite replay, when a drained tree triggers root dispatch that fails
+    (e.g. unspawnable trace), the error is caught and routed to replay_gate.fail_finite.
+    """
+    scheduler = MagicMock()
+    executed_tasks = []
+    scheduler.execute_async.side_effect = lambda coro: executed_tasks.append(coro)
+
+    strategy, issuer, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=[Trajectory(conversation_id="trace_0", start_turn_index=0)],
+        scheduler=scheduler,
+    )
+    strategy.config.finite_replay = True
+    strategy._finite_roots = deque(["unknown_trace"])
+    strategy._correlation_to_lane["tree_corr"] = 0
+    strategy._root_to_lane["tree_corr"] = 0
+    strategy._session_marker["tree_corr"] = "marker"
+    strategy._finite_active_lanes = {0}
+
+    strategy._on_tree_drained("tree_corr", CreditPhase.PROFILING)
+
+    assert len(executed_tasks) == 1
+    await executed_tasks[0]
+
+    issuer.replay_gate.fail_finite.assert_called_once()
+    err = issuer.replay_gate.fail_finite.call_args.args[0]
+    assert isinstance(err, RuntimeError)
+    assert "not spawnable" in str(err)
+
+
+@pytest.mark.asyncio
+async def test_on_tree_drained_finite_root_refused_propagates_to_replay_gate():
+    """In finite replay, when a drained tree recycles into a root whose credit
+    issuance is refused, RuntimeError is caught and routed to replay_gate.fail_finite.
+    """
+    scheduler = MagicMock()
+    executed_tasks = []
+    scheduler.execute_async.side_effect = lambda coro: executed_tasks.append(coro)
+
+    issuer = AsyncMock()
+    issuer.issue_credit.return_value = False
+    issuer.replay_gate = MagicMock()
+
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=[Trajectory(conversation_id="trace_0", start_turn_index=0)],
+        issuer=issuer,
+        scheduler=scheduler,
+    )
+    strategy.config.finite_replay = True
+    strategy._finite_roots = deque(["trace_0"])
+    strategy._correlation_to_lane["tree_corr"] = 0
+    strategy._root_to_lane["tree_corr"] = 0
+    strategy._finite_active_lanes = {0}
+
+    strategy._on_tree_drained("tree_corr", CreditPhase.PROFILING)
+
+    assert len(executed_tasks) == 1
+    await executed_tasks[0]
+
+    issuer.replay_gate.fail_finite.assert_called_once()
+    err = issuer.replay_gate.fail_finite.call_args.args[0]
+    assert isinstance(err, RuntimeError)
+    assert "was refused" in str(err)
+
+
+@pytest.mark.asyncio
+async def test_finite_replay_final_background_child_error_tree_drain_does_not_dispatch_next_root():
+    """In finite replay with concurrency 1, when an active root's background child fails,
+    its terminal return records a fatal phase error before child cleanup.
+    When the SessionTreeRegistry drain callback fires, the fatal admission
+    guard in _on_tree_drained prevents the next queued root from being popped and issued.
+    """
+    scheduler = MagicMock()
+    executed_tasks = []
+    scheduler.execute_async.side_effect = lambda coro: executed_tasks.append(coro)
+
+    issuer = AsyncMock()
+    issuer.issue_credit = AsyncMock(return_value=True)
+    issuer.replay_gate = MagicMock()
+
+    cm = MagicMock()
+    registry = SessionTreeRegistry(cm)
+
+    progress = PhaseProgressTracker(
+        CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.AGENTIC_REPLAY,
+        )
+    )
+
+    strategy, _, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=[Trajectory(conversation_id="root_1", start_turn_index=0)],
+        issuer=issuer,
+        scheduler=scheduler,
+    )
+    strategy._progress = progress
+    strategy.config.finite_replay = True
+    strategy._finite_roots = deque(["root_2"])
+    strategy._correlation_to_lane["root_1_corr"] = 0
+    strategy._root_to_lane["root_1_corr"] = 0
+    strategy._session_marker["root_1_corr"] = "marker"
+    strategy._finite_active_lanes = {0}
+    strategy._session_tree_registry = registry
+
+    # Wire drain callback to strategy
+    registry.set_drain_callback(strategy._on_tree_drained)
+
+    # Open root_1 in registry with 1 descendant
+    registry.open_tree("root_1_corr", CreditPhase.PROFILING, root_pending=True)
+    registry.register_descendants("root_1_corr", 1)
+
+    # Root turn finishes first, leaving tree held by 1 descendant
+    registry.on_root_terminal("root_1_corr")
+    assert registry.open_count() == 1
+
+    handler = CreditCallbackHandler(cm, session_tree_registry=registry)
+    handler.register_phase(
+        phase=CreditPhase.PROFILING,
+        progress=progress,
+        lifecycle=MagicMock(is_complete=False),
+        stop_checker=MagicMock(),
+        strategy=strategy,
+    )
+
+    orchestrator = MagicMock()
+
+    async def fake_on_child_errored(child_corr: str) -> None:
+        # Descendant cleanup notifies registry that child is done, draining the active tree
+        registry.on_descendant_done("root_1_corr")
+
+    orchestrator.on_child_errored = AsyncMock(side_effect=fake_on_child_errored)
+    handler.set_branch_orchestrator(orchestrator, phase=CreditPhase.PROFILING)
+
+    strategy.observe_credit_return = MagicMock(
+        side_effect=RuntimeError(
+            "Finite replay terminal request failed for 'root_1::sa:0'"
+        )
+    )
+
+    child_credit = Credit(
+        id=1,
+        phase=CreditPhase.PROFILING,
+        conversation_id="root_1::sa:0",
+        x_correlation_id="child_corr",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=0,
+        agent_depth=1,
+        parent_correlation_id="root_1_corr",
+        root_correlation_id="root_1_corr",
+        finite_replay=True,
+    )
+    child_return = CreditReturn(
+        credit=child_credit,
+        cancelled=False,
+        first_token_sent=False,
+        error="HTTP 500 Internal Server Error",
+    )
+
+    await handler.on_credit_return("worker-1", child_return)
+
+    # Fatal error recorded on progress before child cleanup
+    assert isinstance(progress.fatal_error, RuntimeError)
+    assert "Finite replay terminal request failed" in str(progress.fatal_error)
+    assert progress.all_credits_sent_event.is_set()
+
+    # Child cleanup ran and tree was drained in the registry
+    orchestrator.on_child_errored.assert_awaited_once_with("child_corr")
+    assert registry.open_count() == 0
+
+    # Next root (root_2) was not popped or dispatched
+    assert len(strategy._finite_roots) == 1
+    assert strategy._finite_roots[0] == "root_2"
+    assert len(executed_tasks) == 0
+    issuer.issue_credit.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dispatch_finite_root_on_lane_admits_no_root_when_fatal():
+    """Fatal admission guard prevents popping _finite_roots or issuing credit."""
+    strategy, issuer, _, _ = _make_strategy(
+        phase=CreditPhase.PROFILING,
+        trajectories=[Trajectory(conversation_id="root_1", start_turn_index=0)],
+    )
+    progress = PhaseProgressTracker(
+        CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.AGENTIC_REPLAY,
+        )
+    )
+    progress.record_fatal_error(RuntimeError("phase failed"))
+    strategy._progress = progress
+    strategy.config.finite_replay = True
+    strategy._finite_roots = deque(["root_2"])
+    strategy._finite_active_lanes = {0}
+
+    await strategy._dispatch_finite_root_on_lane(0)
+
+    assert len(strategy._finite_roots) == 1
+    assert strategy._finite_roots[0] == "root_2"
+    assert 0 not in strategy._finite_active_lanes
+    issuer.issue_credit.assert_not_called()

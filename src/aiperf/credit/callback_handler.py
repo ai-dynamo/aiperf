@@ -471,6 +471,18 @@ class CreditCallbackHandler:
                 if not credit.finite_replay:
                     raise
                 observe_exc = exc
+                _logger.error(
+                    f"Finite replay terminal request failed for conversation "
+                    f"'{credit.conversation_id}' (turn {credit.turn_index}, "
+                    f"x_correlation_id='{credit.x_correlation_id}'): {exc}"
+                    + (
+                        f" | error='{credit_return.error}'"
+                        if credit_return.error
+                        else ""
+                    )
+                )
+                handler.progress.record_fatal_error(exc)
+                handler.progress.all_credits_sent_event.set()
 
         # 4b. DAG child completion hook.
         # When a child session's final turn returns, notify the orchestrator so
@@ -479,14 +491,15 @@ class CreditCallbackHandler:
         # the phase can still send, because children may finish after the
         # parent has already sent its terminal turn.
         # Must run AFTER observe_credit_return so the child's outcome is validated
-        # before this hook drains the session tree and closes its replay root.
+        # and fatal phase error is recorded before this hook drains the session tree
+        # and closes its replay root.
         # NOTE: credit_return.error is a free-form string produced by the
-        # worker's transport/server error path. We treat any non-None value as
-        # an error signal; cancellation is tracked separately via
+        # worker's transport/server error path. We treat any non-None value or
+        # observe_exc as an error signal; cancellation is tracked separately via
         # credit_return.cancelled and is NOT treated as a child error.
         if credit.is_final_turn and credit.agent_depth > 0 and orchestrator is not None:
             try:
-                if credit_return.error is not None:
+                if credit_return.error is not None or observe_exc is not None:
                     await orchestrator.on_child_errored(credit.x_correlation_id)
                 else:
                     await orchestrator.on_child_leaf_reached(credit.x_correlation_id)
@@ -501,18 +514,10 @@ class CreditCallbackHandler:
         # In finite replay, trace fidelity is strict: any failed request
         # (server error, connection drop, missing EOF, or clock skew) invalidates
         # the entire replay run. When observe_credit_return raises observe_exc,
-        # we record it as a fatal phase error, trip all_credits_sent_event to
-        # unblock PhaseRunner's wait loop, and early-return immediately to halt
-        # downstream turn dispatch, child spawning, or session recycling.
+        # fatal error was already recorded above before child cleanup, so we
+        # early-return immediately here to halt downstream turn dispatch, child
+        # spawning, or session recycling.
         if observe_exc is not None:
-            _logger.error(
-                f"Finite replay terminal request failed for conversation "
-                f"'{credit.conversation_id}' (turn {credit.turn_index}, "
-                f"x_correlation_id='{credit.x_correlation_id}'): {observe_exc}"
-                + (f" | error='{credit_return.error}'" if credit_return.error else "")
-            )
-            handler.progress.record_fatal_error(observe_exc)
-            handler.progress.all_credits_sent_event.set()
             return
 
         # 5. Dispatch next turn / DAG spawn.

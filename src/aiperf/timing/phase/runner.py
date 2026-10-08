@@ -215,7 +215,6 @@ class PhaseRunner(TaskManagerMixin):
                 scheduler=self._scheduler,
                 root_idle_gap_cap_seconds=self._root_idle_gap_cap_seconds(),
                 strict_finite=self._config.finite_replay,
-                scheduler=self._scheduler,
                 fail_finite=self._record_finite_error,
             )
             if (

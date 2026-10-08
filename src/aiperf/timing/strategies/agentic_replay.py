@@ -391,6 +391,15 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 root_correlation_id, boundaries
             )
 
+    def _has_fatal_error(self) -> bool:
+        """True when the phase has encountered a fatal phase error."""
+        fatal = (
+            getattr(self._progress, "fatal_error", None)
+            if self._progress is not None
+            else None
+        )
+        return isinstance(fatal, BaseException)
+
     def _on_tree_drained(self, root_corr: str, phase: CreditPhase | int) -> None:
         """Registry drain callback: a session tree fully drained and freed its
         slot, so recycle its lane into a fresh root.
@@ -419,7 +428,11 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             return
         if self.config.finite_replay:
             self._finite_active_lanes.discard(lane)
-            self.scheduler.execute_async(self._dispatch_finite_root_on_lane(lane))
+            if self._has_fatal_error():
+                return
+            self.scheduler.execute_async(
+                self._dispatch_finite_root_on_lane_or_fail(lane)
+            )
             return
         self.scheduler.schedule_later(0.0, self._dispatch_recycled_on_lane(lane))
 
@@ -1474,6 +1487,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             raise first_error
 
     async def _dispatch_finite_root_on_lane(self, lane: int) -> None:
+        if self._has_fatal_error():
+            self._finite_active_lanes.discard(lane)
+            return
         if not self._finite_roots:
             self._finite_active_lanes.discard(lane)
             self._schedule_finite_finish_check()
@@ -1492,11 +1508,19 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         if not await self.credit_issuer.issue_credit(turn):
             raise RuntimeError(f"Finite replay root {trace_id!r} was refused")
 
+    async def _dispatch_finite_root_on_lane_or_fail(self, lane: int) -> None:
+        try:
+            await self._dispatch_finite_root_on_lane(lane)
+        except Exception as exc:
+            self.credit_issuer.replay_gate.fail_finite(exc)
+
     def _schedule_finite_finish_check(self) -> None:
         asyncio.get_running_loop().call_soon(self._maybe_finish_finite_graph)
 
     def _maybe_finish_finite_graph(self) -> None:
         if not self.config.finite_replay or self._finite_completion_signalled:
+            return
+        if self._has_fatal_error():
             return
         if self._finite_roots or self._finite_active_lanes:
             return
