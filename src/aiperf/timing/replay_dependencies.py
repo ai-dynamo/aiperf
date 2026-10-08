@@ -13,9 +13,9 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from aiperf.common.aiperf_logger import AIPerfLogger
-from aiperf.credit.dispatch import ChildDispatchResult
 from aiperf.common.enums import ConversationBranchMode, ReplayDependencyEvent
 from aiperf.common.models.dataset_models import ReplayTurnReference
+from aiperf.credit.dispatch import ChildDispatchResult
 
 if TYPE_CHECKING:
     from aiperf.common.loop_scheduler import LoopScheduler
@@ -23,12 +23,9 @@ if TYPE_CHECKING:
         ConversationBranchInfo,
         ConversationMetadata,
         DatasetMetadata,
-        TurnMetadata
+        TurnMetadata,
     )
     from aiperf.credit.structs import Credit, TurnToSend
-
-
-
 
 
 _logger = AIPerfLogger(__name__)
@@ -186,7 +183,7 @@ class ReplayBarrierCoordinator:
         *,
         scheduler: LoopScheduler | None = None,
         root_idle_gap_cap_seconds: float | None = None,
-        strict_finite: bool = False, 
+        strict_finite: bool = False,
         fail_finite: Callable[[BaseException], None] | None = None,
     ) -> None:
         self._predecessors: dict[ReplayTurnKey, tuple[ReplayTurnKey, ...]] = {}
@@ -713,7 +710,7 @@ class ReplayBarrierCoordinator:
         """Discard completed runtime state when a recycled tree drains."""
         state = self._roots.pop(root_id, None)
         if state is not None and state.idle_watchdog is not None:
-            state.idle_watchdog.cancel() 
+            state.idle_watchdog.cancel()
 
         if self._strict_finite:
             self._closed_roots.add(root_id)
@@ -1121,6 +1118,7 @@ class ReplayIssueGate:
     def observe_idle_root(self, root_correlation_id: str) -> None:
         if self._coordinator is not None:
             self._coordinator.observe_idle_root(root_correlation_id)
+
     def register_credit(self, credit: Credit) -> None:
         if self._coordinator is not None:
             self._coordinator.register_credit(credit)
@@ -1203,7 +1201,7 @@ class ReplayIssueGate:
 
     async def observe_issued(self, credit: Credit) -> None:
         if self._coordinator is not None:
-            self._coordinator.observe_issued(credit) 
-            
+            self._coordinator.observe_issued(credit)
+
         if self._credit_issued is not None and not credit.finite_replay:
             await self._credit_issued(credit)
