@@ -61,6 +61,7 @@ def _controller(
         },
         required_services=dict.fromkeys(required or (), 1),
         run_service=AsyncMock(),
+        spawned_worker_ids=lambda: frozenset(),
     )
     for sid, stype in services.items():
         ServiceRegistry.register(

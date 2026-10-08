@@ -123,6 +123,8 @@ class SystemControllerDispatchMixin:
                 if info.service_id != message.sid
             ]
         self.service_manager.service_id_map[message.sid] = service_info
+        if service_type == ServiceType.WORKER:
+            self._registered_worker_ids.add(message.sid)
         services = self.service_manager.service_map.setdefault(service_type, [])
         for index, existing in enumerate(services):
             if existing.service_id == message.sid:
