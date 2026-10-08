@@ -314,6 +314,8 @@ navigation:
     path: reference/yaml-config-roadmap.md
   - page: Mocking a ROCm Environment
     path: reference/mock-amdsmi.md
+  - page: Tagging a Guide for Docs End-to-End Tests
+    path: reference/docs-e2e-tagging.md
 
 - section: Server Metrics
   collapsed: true

@@ -119,33 +119,86 @@ The directory contains:
 - `cache_explorer.html`: KV block reuse inspection view.
 - `simulation.html`: browser-based KV cache pressure simulation.
 
+The timestamp means you cannot know the path in advance, so capture it rather
+than typing it out:
+
+```bash
+DATASET=$(ls -d .test/*/dataset.jsonl | tail -1)
+```
+
 `synthesize agentic-code` validates the generated `dataset.jsonl` before it
 prints the run summary. You can also validate a saved or edited trace directly:
 
 ```bash
-aiperf validate mooncake-trace --input .test/default_1000s_seed42_YYYYMMDD-HHMMSS/dataset.jsonl
+aiperf validate mooncake-trace --input "$DATASET"
 ```
 
 ## Replay With AIPerf
 
-Use the generated `dataset.jsonl` as a Mooncake trace:
+The generated `dataset.jsonl` is a Mooncake trace, so it replays with
+`--custom-dataset-type mooncake_trace`.
 
+Every request must fit the server's context window. The bundled `default`
+config targets a 200k-token context (`max_prompt_tokens: 200000`), so replaying
+it against a small model fails on the very first turn. The config below scales
+every layer down to fit a 40k-token model such as `Qwen/Qwen3-0.6B`, while
+keeping the multi-turn growth the generator exists to model:
+
+<!-- setup-file-vllm-default-openai-endpoint-server path=agentic-small.json -->
+```json
+{
+  "max_prompt_tokens": 24000,
+  "block_size": 512,
+  "cache": {
+    "layer1_tokens": 4096,
+    "layer1_5_tokens": 2048,
+    "layer2": {"mean": 2000, "median": 1500},
+    "layer1_5_groups": {"num_groups": 4, "zipf_alpha": 1.2}
+  },
+  "new_tokens_per_turn": {"mean": 1500, "median": 1000},
+  "generation_length": {"mean": 200, "median": 150},
+  "inter_turn_delay": {
+    "agentic_fraction": 0.7,
+    "agentic_delay": {"mean": 200, "median": 150},
+    "human_delay": {"mean": 1000, "median": 800}
+  },
+  "reset": {"base_probability": 0.02, "context_scaling": 2.0}
+}
+```
+<!-- /setup-file-vllm-default-openai-endpoint-server -->
+
+Synthesize and replay in one go. The run directory is timestamped, so the
+dataset path is captured rather than typed:
+
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=300 -->
 ```bash
+aiperf synthesize agentic-code \
+  --config agentic-small.json \
+  --num-sessions 3 \
+  --output .test/agentic-smoke/
+
+DATASET=$(ls -d .test/agentic-smoke/*/dataset.jsonl | tail -1)
+
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
   --tokenizer Qwen/Qwen3-0.6B \
   --url http://localhost:8000 \
   --endpoint-type chat \
-  --input-file .test/default_1000s_seed42_YYYYMMDD-HHMMSS/dataset.jsonl \
+  --input-file "$DATASET" \
   --custom-dataset-type mooncake_trace \
-  --concurrency 50 \
-  --workers-max 200 \
-  --streaming \
-  --ui dashboard
+  --streaming
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
-For longer runs, use the same generated trace with the usual Mooncake replay
-controls:
+Three sessions expand to roughly 30 requests, because each session is a
+multi-turn conversation. Scale the run with `--num-sessions`, not with
+`--request-count`: turn 0 of every session carries a `timestamp`, which
+auto-promotes the run to [fixed-schedule mode](../benchmark-modes/trace-replay.md#automatic-fixed-schedule-promotion),
+and fixed-schedule mode takes its request count from the trace. `--concurrency`
+and `--request-count` are overridden there, silently.
+
+To ignore the recorded arrival times and replay the same trace as a plain
+concurrency test, opt out of the promotion with `--no-fixed-schedule`:
 
 ```bash
 aiperf profile \
@@ -153,11 +206,11 @@ aiperf profile \
   --tokenizer YOUR_MODEL \
   --url http://localhost:8000 \
   --endpoint-type chat \
-  --input-file .test/default_1000s_seed42_YYYYMMDD-HHMMSS/dataset.jsonl \
+  --input-file "$DATASET" \
   --custom-dataset-type mooncake_trace \
-  --concurrency 50 \
-  --benchmark-duration 2400 \
-  --workers-max 200 \
+  --no-fixed-schedule \
+  --concurrency 8 \
+  --benchmark-duration 300 \
   --streaming
 ```
 
@@ -190,15 +243,19 @@ Currently, the only bundled runnable config is `default`.
 
 The default config models long coding-agent sessions with:
 
-- `max_prompt_tokens`: `167000`.
+- `max_prompt_tokens`: `200000`.
 - `block_size`: `512` tokens.
 - A `32000` token global L1 prefix shared by all sessions.
-- No L1.5 group-shared prefix by default (`layer1_5_tokens: 0`,
-  `num_groups: 1`).
-- Session-specific initial context sampled around a `15000` token mean.
-- New turn input sampled around a `6000` token mean, capped at `10000`.
-- Output length sampled around a `1000` token mean, capped at `1500`.
+- A `20000` token L1.5 group-shared prefix spread over `50` Zipf-weighted
+  groups.
+- Session-specific initial context sampled around a `10000` token mean.
+- New turn input sampled around a `3500` token mean, uncapped.
+- Output length sampled around a `500` token mean, uncapped.
 - A small reset probability that grows with context utilization.
+
+A `max_prompt_tokens` of `200000` means the default config only replays
+against a server with a 200k-token context. See
+[Replay With AIPerf](#replay-with-aiperf) for a scaled-down config.
 
 ```bash
 aiperf synthesize agentic-code \
@@ -208,7 +265,7 @@ aiperf synthesize agentic-code \
   --output .test/
 
 aiperf synthesize agentic-code \
-  --config .test/default_1000s_seed42_YYYYMMDD-HHMMSS/manifest.json \
+  --config "$(ls -d .test/*/manifest.json | tail -1)" \
   --num-sessions 500 \
   --output .test/
 ```
@@ -222,6 +279,11 @@ aiperf synthesize agentic-code \
   --max-osl 10000 \
   --output .test/
 ```
+
+`--max-isl` overrides `max_prompt_tokens` only; it does not scale the prefix
+layers. Setting it below `layer1_tokens + layer1_5_tokens + layer2`, roughly
+`62000` for the default config, forces every session to retire at turn 0 and
+produces a single-turn trace. Scale the layers in a config JSON instead.
 
 The config schema is generated at
 `src/aiperf/dataset/agentic_code_gen/configs/spec.json`.

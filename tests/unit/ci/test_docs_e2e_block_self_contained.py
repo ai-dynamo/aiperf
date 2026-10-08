@@ -17,9 +17,9 @@ from __future__ import annotations
 
 import re
 import sys
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[3]
+from tests.unit.ci.docs_e2e_scan import REPO, markdown_files
+
 sys.path.insert(0, str(REPO / "tests/ci/test_docs_end_to_end"))
 
 from parser import MarkdownParser  # noqa: E402
@@ -30,7 +30,7 @@ _READS = re.compile(r"--input-file\s+(\S+)")
 
 def test_no_block_reads_a_file_another_block_wrote() -> None:
     offenders: list[str] = []
-    for doc in sorted((REPO / "docs").rglob("*.md")):
+    for doc in markdown_files():
         parser = MarkdownParser()
         parser._parse_file(str(doc))
         for server in parser.servers.values():

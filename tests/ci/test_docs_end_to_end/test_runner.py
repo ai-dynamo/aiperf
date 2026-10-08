@@ -615,13 +615,18 @@ class EndToEndTestRunner:
             # that in single quotes strips them: the payload arrives as
             # {temperature: 0} and fails JSON validation. Any guide using a
             # single quote is otherwise impossible to tag.
+            # -e so a block of several commands fails on the first error.
+            # Without it bash reports only the LAST command's status, so a
+            # guide whose setup step crashes still passes as long as its final
+            # command succeeds -- the "reads as covered, never actually
+            # checked" outcome this suite exists to prevent.
             exec_argv = [
                 "docker",
                 "exec",
                 "-i",
                 self.aiperf_container_id,
                 "bash",
-                "-s",
+                "-se",
             ]
 
             logger.info(

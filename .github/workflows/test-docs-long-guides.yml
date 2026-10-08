@@ -46,6 +46,13 @@ jobs:
         shard:
           - id: vllm-longrun-openai
             server: vllm-longrun-openai
+          # Replays the documented chat corpus against a second model family.
+          # A failure here is a product bug on that family, not a docs bug --
+          # the guides are known good, only the model changed. Weekly because
+          # there is no HF cache between runs, so this pulls ~8.4 GB of weights
+          # every time on top of the vLLM image.
+          - id: sweep-nemotron
+            sweep: sweep-nemotron
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -58,6 +65,7 @@ jobs:
           CI_JOB_NAME: test_docs_end_to_end
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           SERVER_NAME: ${{ matrix.shard.server }}
+          SWEEP_NAME: ${{ matrix.shard.sweep }}
         run: bash -x tests/ci/test_docs_end_to_end/setup_test.sh
 
       - name: Cleanup Docker containers

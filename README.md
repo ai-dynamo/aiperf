@@ -24,14 +24,38 @@ This quick start guide leverages [Ollama](https://ollama.com/) via
 
 In order to set up an Ollama server, run `granite4:350m` using the following commands:
 
+<!-- setup-ollama-chat-endpoint-server -->
 ```bash
 docker run -d \
   --name ollama \
   -p 11434:11434 \
   -v ollama-data:/root/.ollama \
   ollama/ollama:latest
-docker exec -it ollama ollama pull granite4:350m
+
+# `docker run -d` returns before the server is listening, so wait for it.
+for _ in $(seq 60); do curl -sf http://localhost:11434/api/tags >/dev/null && break; sleep 1; done
+
+docker exec ollama ollama pull granite4:350m
 ```
+<!-- /setup-ollama-chat-endpoint-server -->
+
+The pull downloads about 700 MB. Confirm the model is being served before
+benchmarking:
+
+<!-- health-check-ollama-chat-endpoint-server -->
+```bash
+# Wait for the pull to land (up to 15 minutes).
+for _ in $(seq 180); do
+  curl -sf http://localhost:11434/api/tags | grep -q granite4:350m && break
+  sleep 5
+done
+
+# Ask for a completion on the OpenAI-compatible route AIPerf uses.
+curl -sf http://localhost:11434/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model": "granite4:350m", "messages": [{"role": "user", "content": "Hello"}]}'
+```
+<!-- /health-check-ollama-chat-endpoint-server -->
 
 ### Basic Usage
 
@@ -60,6 +84,7 @@ Optional integrations:
 
 To run a simple benchmark against your Ollama server:
 
+<!-- aiperf-run-ollama-chat-endpoint-server weight=200 -->
 ```bash
 aiperf profile \
   --model "granite4:350m" \
@@ -69,10 +94,12 @@ aiperf profile \
   --url http://localhost:11434 \
   --request-count 10
 ```
+<!-- /aiperf-run-ollama-chat-endpoint-server -->
 
 
 ### Example with Custom Configuration
 
+<!-- aiperf-run-ollama-chat-endpoint-server weight=200 -->
 ```bash
 aiperf profile \
   --model "granite4:350m" \
@@ -83,6 +110,7 @@ aiperf profile \
   --concurrency 5 \
   --request-count 10
 ```
+<!-- /aiperf-run-ollama-chat-endpoint-server -->
 
 Example output:
 

@@ -63,6 +63,8 @@ aiperf profile \
 
 Some requests are larger than the 128k-token context of the example server; `max_trace_length=40` and the small screenshot window keep the example's requests under it.
 
+If you swap in a smaller model, size its context against the prompt *and* the recorded completion. Every record carries the same tool block and a long system prompt, so turn 1 already costs about 14,000 tokens once its 1920x1080 screenshot is counted, and turn 40 about 25,000. What sets the budget is the recorded `output_length` tail: most turns are a few hundred tokens, but the corpus contains single turns with tens of thousands. `--extra-inputs ignore_eos:true` passes that length through as `max_tokens`, so a server whose `--max-model-len` does not cover prompt plus completion rejects those turns outright.
+
 Each session is one multi-turn conversation: a request is sent, the response awaited, the recorded wait slept, then the next recorded request is sent. There are no timestamps, so `--fixed-schedule` does not apply.
 
 The screenshot window and the session selection are `--dataset-filter` options:

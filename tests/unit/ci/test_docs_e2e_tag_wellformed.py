@@ -11,16 +11,16 @@ worse than leaving it untagged, because nothing reports it missing.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[3]
+from tests.unit.ci.docs_e2e_scan import REPO, markdown_files
+
 TAG_LIKE = re.compile(r"<!--\s*/?((?:setup|setup-file|health-check|aiperf-run)-\S+)")
 VALID_SUFFIX = "endpoint-server"
 
 
 def test_every_tag_like_comment_is_a_valid_tag() -> None:
     broken: list[str] = []
-    for doc in sorted((REPO / "docs").rglob("*.md")):
+    for doc in markdown_files():
         for lineno, line in enumerate(
             doc.read_text(encoding="utf-8").splitlines(), start=1
         ):

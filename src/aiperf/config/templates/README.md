@@ -9,23 +9,47 @@ Bundled YAML templates for common benchmarking scenarios. Each template embeds
 
 ## Quick Start
 
+Browsing the bundled templates needs no inference server.
+
+<!--
+The three `config init` blocks below need no inference server, but the
+docs-e2e harness has no serverless group: every command must belong to one.
+They are attached to `tei-rankings`, the cheapest group to boot, rather than
+inventing a mechanism for three sub-second commands.
+-->
+
+List all templates, grouped by category:
+
+<!-- aiperf-run-tei-rankings-endpoint-server weight=5 -->
 ```bash
-# List all templates grouped by category
 aiperf config init --list
+```
+<!-- /aiperf-run-tei-rankings-endpoint-server -->
 
-# Search by keyword
+Search by keyword:
+
+<!-- aiperf-run-tei-rankings-endpoint-server weight=5 -->
+```bash
 aiperf config init --search sweep
+```
+<!-- /aiperf-run-tei-rankings-endpoint-server -->
 
-# Generate a template (prints to stdout)
+Print a template to stdout:
+
+<!-- aiperf-run-tei-rankings-endpoint-server weight=5 -->
+```bash
 aiperf config init --template goodput_slo
+```
+<!-- /aiperf-run-tei-rankings-endpoint-server -->
 
-# Generate with endpoint pre-filled and save to a file
+Generate one with your endpoint pre-filled, save it, and run it:
+
+```bash
 aiperf config init --template latency_test \
     --model meta-llama/Llama-3.1-70B-Instruct \
     --url http://localhost:8000/v1/chat/completions \
     --output benchmark.yaml
 
-# Run the generated config
 aiperf profile --config benchmark.yaml
 ```
 

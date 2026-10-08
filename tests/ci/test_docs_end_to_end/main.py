@@ -47,6 +47,16 @@ def main():
     # Shard params let a single server's command list be split across runners.
     # Useful for the big chat server (40+ commands) — without sharding it
     # dominates the wall-clock of the whole GPU job.
+    target.add_argument(
+        "--sweep",
+        type=str,
+        default=None,
+        help=(
+            "Replay another group's documented commands against a different "
+            "model family (answers 'does AIPerf work on family X', not 'is "
+            "this guide correct'). See model_sweep.SWEEP_TARGETS."
+        ),
+    )
     parser.add_argument(
         "--shard-index",
         type=int,
@@ -100,6 +110,23 @@ def main():
         logger.info(
             f"  {name}: setup={setup_file}, health={health_file}, aiperf_commands={aiperf_count}"
         )
+
+    if args.sweep is not None:
+        from model_sweep import SWEEP_TARGETS, build_sweep_server
+
+        if args.sweep not in SWEEP_TARGETS:
+            logger.error(
+                f"--sweep '{args.sweep}' is not a known target: {sorted(SWEEP_TARGETS)}"
+            )
+            return 1
+        sweep_server = build_sweep_server(SWEEP_TARGETS[args.sweep], servers)
+        logger.info(
+            f"Sweep '{args.sweep}': replaying {len(sweep_server.aiperf_commands)} "
+            f"commands from '{SWEEP_TARGETS[args.sweep].replays}' against "
+            f"{SWEEP_TARGETS[args.sweep].model}"
+        )
+        servers = {sweep_server.name: sweep_server}
+        args.server = sweep_server.name
 
     if args.server is not None:
         if args.server not in servers:
