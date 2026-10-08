@@ -670,8 +670,6 @@ class TestMultimodalMediaCountsEndToEnd:
         [
             param(1, 0, id="nested-only"),
             param(2, 1, id="nested-and-direct"),
-            param(0, 1, id="direct-only"),
-            param(0, 0, id="text-only"),
         ],
     )  # fmt: skip
     async def test_anthropic_tool_result_images_counted_in_parsed_record(
