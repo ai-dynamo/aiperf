@@ -9,6 +9,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import ConversationContextMode, CreditPhase
+from aiperf.common.messages import ErrorMessage
 from aiperf.common.models import (
     Conversation,
     ErrorDetails,
@@ -670,6 +671,40 @@ class TestEmitCreditFailureRecord:
         monkeypatch.setattr(time, "time_ns", lambda: 0)
 
         await mock_worker._emit_credit_failure_record(credit_context)
+
+        record = mock_worker._send_inference_result_message.call_args.args[0]
+        assert record.timestamp_ns == process_clock().wall_ns_at(record.start_perf_ns)
+
+    async def test_conversation_retrieval_error_record_uses_process_clock(
+        self, mock_worker, monkeypatch
+    ):
+        credit_context = CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.PROFILING,
+                conversation_id="test-conv",
+                x_correlation_id="test-correlation",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+            ),
+            drop_perf_ns=0,
+        )
+        mock_worker.conversation_request_client = Mock(
+            request=AsyncMock(
+                return_value=ErrorMessage(
+                    error=ErrorDetails(message="missing", type="NotFound", code=404)
+                )
+            )
+        )
+        mock_worker._send_inference_result_message = AsyncMock()
+        process_clock()
+        monkeypatch.setattr(time, "time_ns", lambda: 0)
+
+        with pytest.raises(ValueError, match="Failed to retrieve conversation"):
+            await mock_worker._request_conversation_from_dataset_manager(
+                "test-conv", credit_context
+            )
 
         record = mock_worker._send_inference_result_message.call_args.args[0]
         assert record.timestamp_ns == process_clock().wall_ns_at(record.start_perf_ns)

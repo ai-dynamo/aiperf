@@ -68,7 +68,6 @@ from aiperf.common.models import (
     WorkerTaskStats,
 )
 from aiperf.common.models.record_models import find_last_non_empty_usage
-from aiperf.common.monotonic_clock import process_clock
 from aiperf.common.pod_lifecycle_structs import (
     GroupDatasetReady,
     GroupDatasetStateQuery,
@@ -1533,7 +1532,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     parent_correlation_id=credit.parent_correlation_id,
                 ),
                 model_name=self.model_endpoint.primary_model_name,
-                timestamp_ns=process_clock().wall_ns_at(failed_at_perf_ns),
                 start_perf_ns=failed_at_perf_ns,
                 end_perf_ns=failed_at_perf_ns,
                 error=error,
@@ -2229,7 +2227,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                         parent_correlation_id=credit_context.credit.parent_correlation_id,
                     ),
                     model_name=self.model_endpoint.primary_model_name,
-                    timestamp_ns=process_clock().wall_ns_at(failed_at_perf_ns),
                     start_perf_ns=failed_at_perf_ns,
                     end_perf_ns=failed_at_perf_ns,
                     error=error,
