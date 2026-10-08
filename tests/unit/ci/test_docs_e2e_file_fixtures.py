@@ -197,6 +197,14 @@ model: first
 <!-- /setup-file-dup-endpoint-server -->
 """
 
+DOTTED_CONFLICT = """\
+<!-- setup-file-dup-endpoint-server path=./config.yaml -->
+```yaml
+model: dotted
+```
+<!-- /setup-file-dup-endpoint-server -->
+"""
+
 CONFLICT_B = """\
 <!-- setup-file-dup-endpoint-server path=config.yaml -->
 ```yaml
@@ -239,3 +247,17 @@ def test_the_same_fixture_documented_twice_is_not_a_conflict(tmp_path) -> None:
     server = servers["dup"]
     assert server.fixture_conflicts == []
     assert [f.content for f in server.files] == ["model: first\n"]
+
+
+def test_equivalent_paths_spelled_differently_still_conflict(tmp_path) -> None:
+    """``config.yaml`` and ``./config.yaml`` are the same destination.
+
+    ``_materialize_files`` resolves both through ``PurePosixPath``, so a raw
+    string compare would miss the collision and let the second guide overwrite
+    the first while both look fine.
+    """
+    servers = _parse_docs(tmp_path, a_first=CONFLICT_A, b_dotted=DOTTED_CONFLICT)
+
+    server = servers["dup"]
+    assert len(server.fixture_conflicts) == 1
+    assert len(server.files) == 1

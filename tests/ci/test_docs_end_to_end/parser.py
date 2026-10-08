@@ -7,7 +7,7 @@ Markdown parser for extracting server setup and AIPerf run commands.
 import logging
 import re
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from constants import (
     AIPERF_RUN_TAG_PREFIX,
@@ -248,7 +248,14 @@ class MarkdownParser:
                 aiperf_commands=[],
             )
             self.servers[server_name] = server
-        existing = next((f for f in server.files if f.path == path), None)
+        # Compare destinations, not spellings: ``config.yaml`` and
+        # ``./config.yaml`` are written to the same file by
+        # ``_materialize_files``, so a raw string compare would miss the
+        # collision and let the second guide silently overwrite the first.
+        destination = PurePosixPath(path)
+        existing = next(
+            (f for f in server.files if PurePosixPath(f.path) == destination), None
+        )
         if existing is not None:
             if existing.content == content:
                 # The same file documented twice: harmless, write it once.
