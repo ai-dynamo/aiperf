@@ -16,8 +16,8 @@ This guide shows how to benchmark image generation APIs using a Docker-based ser
 ## References
 For the most up-to-date information, please refer to the following resources:
 - [OpenAI Image Generation API](https://platform.openai.com/docs/api-reference/images/create)
-- [SGLang Diffusion Installation Guide](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/installation.md)
-- [SGLang Diffusion CLI Reference](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/api/cli.md)
+- [SGLang Diffusion Installation Guide](https://github.com/sgl-project/sglang/blob/main/docs/docs/sglang-diffusion/installation.mdx)
+- [SGLang Diffusion CLI Reference](https://github.com/sgl-project/sglang/blob/main/docs/docs/sglang-diffusion/api/cli.mdx)
 
 ## Setting up the server
 
@@ -53,7 +53,7 @@ pip install yunchang remote_pdb imageio diffusers diffusion
 > [!WARNING]
 > > The following arguments will setup the server to use the FLUX.1-dev model on a single GPU, on port 30000.
 > > You can modify these arguments to use a different model, different number of GPUs, different port, etc.
-> > See the [SGLang Diffusion CLI Reference](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/api/cli.md) for more details.
+> > See the [SGLang Diffusion CLI Reference](https://github.com/sgl-project/sglang/blob/main/docs/docs/sglang-diffusion/api/cli.mdx) for more details.
 ```bash
 SERVER_ARGS=(   --model-path black-forest-labs/FLUX.1-dev   --text-encoder-cpu-offload   --pin-cpu-memory   --num-gpus 1   --port 30000 --host 0.0.0.0 )
 ```

@@ -19,20 +19,22 @@ Single-run: the callback only fires on exit 0. Multi-run / sweep: the callback f
 
 ## Quick start
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=90 -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --url http://localhost:8000 \
-    --concurrency 16 \
-    --request-count 200 \
+    --concurrency 4 \
+    --request-count 20 \
     --auto-plot
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 After the run, the artifact tree looks like:
 
 ```text
 artifacts/
-└── Llama-3.1-8B-Instruct-concurrency16/
+└── Qwen_Qwen3-0.6B-openai-chat-concurrency4/
     ├── profile_export.jsonl
     ├── profile_export_aiperf.json
     ├── profile_export_aiperf.csv
@@ -87,9 +89,18 @@ WARNING aiperf.plot.auto_plot - auto-plot failed (run artifacts intact at
 
 Pass `--plot-required` to flip this: any plotting exception is re-raised, `aiperf profile` exits non-zero, and your CI catches it.
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=90 -->
 ```bash
-aiperf profile ... --auto-plot --plot-required
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --url http://localhost:8000 \
+    --concurrency 4 \
+    --request-count 20 \
+    --artifact-dir ./artifacts/auto-plot-strict \
+    --auto-plot \
+    --plot-required
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 Recommended:
 
