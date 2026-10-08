@@ -17,49 +17,55 @@ import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
+from aiperf.common.models import CreditPhaseStats
 from aiperf.records.records_manager import RecordsManager
 
 
-class _Stats:
-    def __init__(self, completed: int, in_flight: int) -> None:
-        self.requests_completed = completed
-        self.in_flight_requests = in_flight
-
-
-class _Tracker:
-    def __init__(self) -> None:
-        self.total = 0
-        self.in_flight = 1
-
-    def create_aggregate_stats_for_phase(self, phase: CreditPhase) -> _Stats:
-        assert phase == CreditPhase.PROFILING
-        return _Stats(self.total, self.in_flight)
-
-
 class _Manager:
-    """Drives the real watchdog body against controllable record counts."""
+    """Drives the real watchdog body against real credit-phase snapshots.
+
+    The snapshot is a genuine ``CreditPhaseStats`` pushed through the real
+    ``_remember_profiling_credit_stats``. An earlier version of this file
+    defined a local fake carrying ``in_flight_requests``/``requests_completed``,
+    which let the watchdog ship reading those off ``PhaseRecordsStats`` -- a
+    type that has neither. Every tick raised ``AttributeError``, the background
+    task swallowed it, and the suite stayed green while the watchdog never ran.
+    """
 
     def __init__(self) -> None:
-        self._records_tracker = _Tracker()
-        self._complete_credit_phases: set[CreditPhase] = set()
         self._profiling_started = True
         self._progress_stall_last_total = -1
         self._progress_stall_since = 0.0
+        self._latest_profiling_credit_stats: CreditPhaseStats | None = None
         self.warnings: list[str] = []
         self.terminal_failures: list[BaseException] = []
 
-    async def _publish_terminal_failure_result(self, phase, cancelled, error):
+    async def _publish_terminal_failure_result(
+        self, phase, cancelled, error, stage=None, reason_prefix=None
+    ):
         self.terminal_failures.append(error)
 
     def warning(self, msg) -> None:
         self.warnings.append(msg() if callable(msg) else msg)
 
 
+def _observe(mgr: _Manager, completed: int, in_flight: int) -> None:
+    """Publish a real profiling snapshot the way the message handlers do."""
+    RecordsManager._remember_profiling_credit_stats(
+        mgr,
+        CreditPhaseStats(
+            phase=CreditPhase.PROFILING,
+            requests_sent=completed + in_flight,
+            requests_completed=completed,
+            requests_cancelled=0,
+        ),
+    )
+
+
 async def _tick(
     mgr: _Manager, monkeypatch, total: int, now: float, in_flight: int = 1
 ) -> None:
-    mgr._records_tracker.total = total
-    mgr._records_tracker.in_flight = in_flight
+    _observe(mgr, completed=total, in_flight=in_flight)
     monkeypatch.setattr("aiperf.records.records_manager.time.monotonic", lambda: now)
     await RecordsManager._watch_for_progress_stall(mgr)
 
@@ -114,21 +120,6 @@ async def test_watchdog_disarmed_until_profiling_starts(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_completed_phase_is_not_treated_as_a_stall(monkeypatch) -> None:
-    """A finished phase has nothing outstanding, so it cannot stall.
-
-    Asserting on the terminal failure and not only on warnings: the watchdog
-    goes straight to failing the run once the timeout passes, so a test
-    watching ``warnings`` alone would stay green while the run was killed.
-    """
-    mgr = _Manager()
-    for now in (0.0, 10.0, 100_000.0):
-        await _tick(mgr, monkeypatch, total=200, now=now, in_flight=0)
-    assert mgr.warnings == []
-    assert mgr.terminal_failures == []
-
-
-@pytest.mark.asyncio
 async def test_zero_timeout_disables_the_watchdog(monkeypatch) -> None:
     monkeypatch.setattr(Environment.RECORD, "PROGRESS_STALL_TIMEOUT", 0.0)
     mgr = _Manager()
@@ -156,7 +147,6 @@ async def test_no_requests_in_flight_is_not_a_stall(monkeypatch) -> None:
 async def test_a_quiet_stretch_does_not_accumulate_toward_a_later_stall(
     monkeypatch,
 ) -> None:
-    """The clock restarts once work is pending again."""
     mgr = _Manager()
     await _tick(mgr, monkeypatch, total=5, now=0.0, in_flight=0)
     await _tick(mgr, monkeypatch, total=5, now=5_000.0, in_flight=0)
@@ -167,3 +157,24 @@ async def test_a_quiet_stretch_does_not_accumulate_toward_a_later_stall(
     assert mgr.terminal_failures == []
     assert len(mgr.warnings) == 1
     assert "100s" in mgr.warnings[0]
+
+
+def test_the_watchdog_is_actually_scheduled() -> None:
+    """The watchdog must stay attached to ``@background_task``.
+
+    Every other test here calls ``_watch_for_progress_stall`` directly, so none
+    of them notice if the decorator stops applying to it -- which is exactly
+    what happened when a helper was inserted between the decorator and the
+    function: the helper became the background task, the watchdog was never
+    scheduled, and the suite stayed green.
+    """
+    hook_type = getattr(
+        RecordsManager._watch_for_progress_stall, "__aiperf_hook_type__", None
+    )
+    assert hook_type == "@background_task", (
+        "the progress-stall watchdog is not registered as a background task, "
+        "so it will never run"
+    )
+    assert not hasattr(
+        RecordsManager._remember_profiling_credit_stats, "__aiperf_hook_type__"
+    ), "the snapshot helper is called from message handlers, not scheduled"

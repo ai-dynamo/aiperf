@@ -57,7 +57,9 @@ from aiperf.common.messages import (
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
+    BasePhaseStats,
     BranchStats,
+    CreditPhaseStats,
     ErrorDetails,
     ErrorDetailsCount,
     MetricResult,
@@ -522,6 +524,18 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Check record completion for a phase kind."""
         return self._records_tracker.check_and_set_all_records_received_for_phase(phase)
 
+    def _remember_profiling_credit_stats(self, stats: BasePhaseStats) -> None:
+        """Keep the newest profiling credit-phase snapshot for the watchdog.
+
+        ``RecordsTracker.create_aggregate_stats_for_phase`` returns a
+        ``PhaseRecordsStats``, which counts *records* and has no
+        ``in_flight_requests``/``requests_completed``. Only the credit side
+        tracks what was sent versus what came back, so the watchdog reads this
+        snapshot instead.
+        """
+        if isinstance(stats, CreditPhaseStats) and stats.phase == CreditPhase.PROFILING:
+            self._latest_profiling_credit_stats = stats
+
     @background_task(
         interval=lambda self: Environment.RECORD.PROGRESS_STALL_CHECK_INTERVAL,
         immediate=False,
@@ -556,9 +570,12 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if not self._profiling_started:
             return
 
-        stats = self._records_tracker.create_aggregate_stats_for_phase(
-            CreditPhase.PROFILING
-        )
+        stats = self._latest_profiling_credit_stats
+        if stats is None:
+            # No profiling progress has been reported yet; there is nothing to
+            # judge, and the clock must not start before the first snapshot.
+            self._progress_stall_since = time.monotonic()
+            return
         in_flight = stats.in_flight_requests
         total = stats.requests_completed
 
@@ -592,6 +609,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         await self._publish_terminal_failure_result(
             CreditPhase.PROFILING,
             cancelled=False,
+            # A stall is not a finalization failure; say what actually happened.
+            stage="progress_stall",
+            reason_prefix="Benchmark stalled",
             error=RuntimeError(
                 f"Benchmark stalled: {in_flight:,} request(s) in flight with no "
                 f"completion for {stalled_for:.0f}s ({total:,} completed). A "
@@ -811,6 +831,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._profiling_started = False
         self._progress_stall_last_total: int = -1
         self._progress_stall_since: float = 0.0
+        # Latest profiling CreditPhaseStats. The credit side is the only source
+        # of sent/completed/cancelled counts; the records tracker's
+        # PhaseRecordsStats carries record counts and has no notion of what is
+        # still in flight.
+        self._latest_profiling_credit_stats: CreditPhaseStats | None = None
         # Set to a human-readable reason when the run is finalized without every
         # expected record. Propagated onto ProfileResults.incomplete_reason.
         self._incomplete_reason: str | None = None
@@ -1353,7 +1378,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             await self._publish_terminal_failure_result(phase, cancelled, e)
 
     async def _publish_terminal_failure_result(
-        self, phase: CreditPhase, cancelled: bool, error: BaseException
+        self,
+        phase: CreditPhase,
+        cancelled: bool,
+        error: BaseException,
+        *,
+        stage: str = "result_finalization",
+        reason_prefix: str = "Result finalization failed",
     ) -> ProcessRecordsResult:
         """Publish an explicitly-failed, empty result so the run can terminate.
 
@@ -1364,7 +1395,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """
         error_details = ErrorDetails.from_exception(
             error,
-            stage="result_finalization",
+            stage=stage,
             **{ERROR_FATAL_DETAIL_KEY: True},
         )
         now = time.time_ns()
@@ -1376,9 +1407,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 end_ns=now,
                 was_cancelled=cancelled,
                 is_complete=False,
-                incomplete_reason=(
-                    f"Result finalization failed: {error_details.message}"
-                ),
+                incomplete_reason=f"{reason_prefix}: {error_details.message}",
             ),
             errors=[error_details],
         )
@@ -1525,6 +1554,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self, message: CreditPhaseProgressMessage
     ) -> None:
         """Handle a credit phase progress message to track and stream live timing snapshots."""
+        self._remember_profiling_credit_stats(message.stats)
         self._records_tracker.update_phase_info(message.stats)
         await self._dispatch_record(message.stats, warn_if_unrouted=False)
 
@@ -1537,6 +1567,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self.info(
                 f"Sent {message.stats.final_requests_sent:,} requests. Waiting for all to complete..."
             )
+        self._remember_profiling_credit_stats(message.stats)
         self._records_tracker.update_phase_info(message.stats)
         await self._dispatch_record(message.stats, warn_if_unrouted=False)
 
@@ -1545,6 +1576,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self, message: CreditPhaseCompleteMessage
     ) -> None:
         """Handle a credit phase complete message in order to track the end time, and check if all records have been received."""
+        self._remember_profiling_credit_stats(message.stats)
         self._records_tracker.update_phase_info(message.stats)
         await self._dispatch_record(message.stats, warn_if_unrouted=False)
         self._complete_credit_phases.add(message.stats.phase)
