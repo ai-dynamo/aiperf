@@ -49,21 +49,34 @@ jobs:
           # PRs reach this workflow as pushes to pull-request/NNN mirror
           # branches, so github.event_name is never "pull_request" here and a
           # PR-only comparison would skip the hash check on every run.
-          # Compare the pushed range instead: event.before..HEAD.
           #
           # Head comes from the worktree rather than github.sha because
           # workflow_call passes source_ref, so under nightly the checked-out
           # commit and github.sha are different commits.
           HEAD=$(git rev-parse HEAD)
-          BASE="${{ github.event.before }}"
 
-          # A new branch, a force-push, or a workflow_call gives no usable
-          # base. Fall back to the merge-base with main so a PR branch still
-          # compares against what it will merge into.
-          if [[ -z "$BASE" || "$BASE" == "0000000000000000000000000000000000000000" ]] \
-            || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+          # On a PR mirror branch, compare against the merge-base with main
+          # rather than against the previous push. event.before only spans the
+          # latest push, so a push that changes a tagged command followed by a
+          # push that does not compares clean and skips -- the first push's
+          # change is already inside the "base". The merge-base covers every
+          # change the branch introduces, so no push can hide behind another.
+          # main and release/* keep event.before: their merge-base with main is
+          # the branch itself, which would compare nothing.
+          if [[ "$GITHUB_REF" == refs/heads/pull-request/* || -n "${{ inputs.source_ref }}" ]]; then
             # Not --depth=1: grafting a shallow fetch onto the fetch-depth: 0
             # clone above leaves merge-base with no reachable common ancestor.
+            git fetch --no-tags origin main 2>/dev/null || true
+            BASE=$(git merge-base origin/main "$HEAD" 2>/dev/null || true)
+          else
+            BASE="${{ github.event.before }}"
+          fi
+
+          # A new branch or a force-push can still leave no usable base.
+          # Fall back to the merge-base with main, and to running the test
+          # when even that is unavailable.
+          if [[ -z "$BASE" || "$BASE" == "0000000000000000000000000000000000000000" ]] \
+            || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
             git fetch --no-tags origin main 2>/dev/null || true
             if ! BASE=$(git merge-base origin/main "$HEAD" 2>/dev/null); then
               echo "::warning::No comparable base; running GPU test."
@@ -78,10 +91,43 @@ jobs:
             exit 0
           fi
 
-          # Safety net: any change under the test runner directory always runs
-          # the test (covers parser.py, test_runner.py, constants, etc.).
-          if git diff --name-only "$BASE" "$HEAD" -- 'tests/ci/test_docs_end_to_end/' | grep -q .; then
-            echo "Test runner code changed; running GPU test."
+          # Safety net: paths the config hash cannot see, but that decide
+          # whether a tagged command still works.
+          #
+          # dump_config_hash.py hashes the tagged markdown only, so a code
+          # change that invalidates a documented command leaves the hash
+          # identical and the matrix skips -- renaming a dataset in
+          # plugins.yaml breaks the tagged command in docs/tutorials/sharegpt.md
+          # without changing a byte of markdown. Rather than all of src/, which
+          # would run the GPU matrix on roughly two thirds of pushes, this
+          # lists the surface a documented command is written against: the
+          # plugin registry, the config and CLI layers, and the enums whose
+          # members appear verbatim in tutorial flags. A behavior change
+          # deeper in the stack is left to nightly.
+          #
+          # The harness and its image are here too because the matrix cannot
+          # validate a change to how it is built or invoked if that change is
+          # itself what decides to skip the matrix.
+          SAFETY_NET_PATHS=(
+            'tests/ci/test_docs_end_to_end/'
+            '.github/workflows/test-docs-end-to-end.yml'
+            'Dockerfile'
+            'src/aiperf/plugin/'
+            'src/aiperf/config/'
+            'src/aiperf/common/enums/'
+            'src/aiperf/cli.py'
+            'src/aiperf/cli_utils.py'
+            'src/aiperf/cli_commands/'
+            'src/aiperf/cli_runner/'
+          )
+          if ! CHANGED=$(git diff --name-only "$BASE" "$HEAD" -- "${SAFETY_NET_PATHS[@]}"); then
+            echo "::warning::Could not diff safety-net paths; running GPU test."
+            echo "run_test=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -n "$CHANGED" ]]; then
+            echo "Harness or documented-command surface changed; running GPU test:"
+            echo "$CHANGED"
             echo "run_test=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
