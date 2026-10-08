@@ -20,11 +20,12 @@ Canonical names infer their kind. A phase named `warmup` defaults to `kind: warm
 
 This workflow warms the service, records a low-cancellation baseline, runs a storm window, allows recovery, and records a final steady window:
 
+<!-- setup-file-vllm-default-openai-endpoint-server path=multi-phase.yaml -->
 ```yaml
 schemaVersion: "2.0"
 
 benchmark:
-  model: meta-llama/Llama-3.1-8B-Instruct
+  model: Qwen/Qwen3-0.6B
   endpoint:
     url: http://localhost:8000/v1/chat/completions
     type: chat
@@ -37,37 +38,40 @@ benchmark:
     - name: warmup
       type: concurrency
       concurrency: 8
-      duration: 5m
+      duration: 20s
 
     - name: baseline_traffic
       kind: profiling
       type: concurrency
       concurrency: 32
-      duration: 30m
+      duration: 30s
       cancellation: {rate: 5, delay: 0}
 
     - name: cancellation_stress
       kind: profiling
       type: concurrency
       concurrency: 64
-      duration: 5m
+      duration: 20s
       cancellation: {rate: 50, delay: 0}
 
     - name: recovery_traffic
       kind: profiling
       type: concurrency
       concurrency: 32
-      duration: 30m
+      duration: 30s
       cancellation: {rate: 0, delay: 0}
   artifacts:
     dir: ./artifacts/multi-phase
 ```
+<!-- /setup-file-vllm-default-openai-endpoint-server -->
 
 Run it with:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=180 timeout=600 -->
 ```bash
 aiperf profile --config multi-phase.yaml --ui none
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 ## Multiple Warmups
 

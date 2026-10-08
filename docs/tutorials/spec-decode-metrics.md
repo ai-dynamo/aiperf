@@ -81,9 +81,10 @@ No spec-decode-specific flag is required -- run a normal profile. Add `--export-
 records` if you want the per-request acceptance struct in the records trace (see
 [Per-request trace](#per-request-trace) below):
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
-    --model meta-llama/Llama-3.1-8B-Instruct \
+    --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -92,6 +93,7 @@ aiperf profile \
     --concurrency 16 \
     --export-level records
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 ---
 

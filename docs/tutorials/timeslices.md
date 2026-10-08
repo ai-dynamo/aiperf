@@ -53,12 +53,14 @@ timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost
 
 Run a 60-second benchmark with 10-second slices to analyze performance trends:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=90 -->
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
   --benchmark-duration 60 \
   --slice-duration 10
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```

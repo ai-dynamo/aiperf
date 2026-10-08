@@ -25,6 +25,7 @@ Every AIPerf benchmark run produces an `inputs.json` artifact in the output dire
 
 The file is a single JSON object with a top-level `data` array. Each element represents one session with an ordered list of API request payloads.
 
+<!-- setup-file-vllm-default-openai-endpoint-server path=artifacts/my-benchmark/inputs.json -->
 ```json
 {
   "data": [
@@ -50,6 +51,7 @@ The file is a single JSON object with a top-level `data` array. Each element rep
   ]
 }
 ```
+<!-- /setup-file-vllm-default-openai-endpoint-server -->
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -65,6 +67,7 @@ Each object inside `payloads` is sent directly to the server without modificatio
 
 After running any AIPerf benchmark, an `inputs.json` file is generated in the artifact directory. Replay it:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=40 -->
 ```bash
 aiperf profile \
     --input-file artifacts/my-benchmark/inputs.json \
@@ -74,6 +77,7 @@ aiperf profile \
     --url localhost:8000 \
     --concurrency 4
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 Raw payloads work with any endpoint type. The default `chat` endpoint provides structured response parsing (token counts, finish reasons). Use `--endpoint-type raw` only for non-standard APIs where no built-in endpoint matches.
 

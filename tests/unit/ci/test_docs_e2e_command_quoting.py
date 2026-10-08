@@ -27,6 +27,15 @@ pytestmark = pytest.mark.skipif(
 
 QUOTED = """aiperf profile --model m --extra-inputs '{"temperature": 0}'"""
 
+# docs/tutorials/local-tokenizer.md: a `python -c "..."` setup line whose inner
+# single quotes would close an outer `bash -c '...'` wrapper early.
+PYTHON_SETUP = (
+    'python -c "from transformers import AutoTokenizer; '
+    "AutoTokenizer.from_pretrained('Qwen/Qwen3-0.6B')"
+    ".save_pretrained('./local-tokenizer')\"\n"
+    "\naiperf profile --tokenizer ./local-tokenizer --model Qwen/Qwen3-0.6B"
+)
+
 
 @pytest.mark.parametrize(
     "command",
@@ -35,6 +44,7 @@ QUOTED = """aiperf profile --model m --extra-inputs '{"temperature": 0}'"""
         param("aiperf profile --model m --header 'X-Api-Key: abc'", id="quoted-header"),
         param('aiperf profile --model m --extra-inputs "a=b"', id="double-quoted"),
         param("aiperf profile --model m", id="plain"),
+        param(PYTHON_SETUP, id="python-c-with-inner-single-quotes"),
     ],
 )  # fmt: skip
 def test_command_reaches_the_shell_unmodified(command: str) -> None:
