@@ -1795,7 +1795,7 @@ class BranchOrchestrator:
         time cannot be honoured any more, and delaying further would only
         compound the drift.
         """
-        resolver = getattr(self, "_schedule_target_perf_sec", None)
+        resolver = self._schedule_target_perf_sec
         if resolver is None or pending.gated_turn_index is None:
             return
         meta = self._cs.get_metadata(pending.parent_conversation_id)
