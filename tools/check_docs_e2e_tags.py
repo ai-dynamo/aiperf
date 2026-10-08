@@ -17,7 +17,7 @@
 
 """Check that new tutorials carry runnable docs-e2e tags.
 
-A tutorial whose ``aiperf`` commands are untagged is never executed by
+A tutorial whose ``aiperf profile`` commands are untagged is never executed by
 ``test_docs_end_to_end``, so it can rot silently: a renamed flag or a removed
 dataset leaves a copy-pasteable command that no longer works, and nothing
 fails until a user tries it.
@@ -34,6 +34,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -90,16 +91,41 @@ def added_markdown_files(base: str) -> list[Path]:
     return [Path(entry) for entry in out.split("\0") if entry.endswith(".md")]
 
 
+# A command may be prefixed with environment assignments
+# (``AIPERF_HTTP_VIDEO_POLL_INTERVAL=0.5 aiperf profile ...``), which must be
+# stripped before the subcommand is read, or the line reads as no command at
+# all and the doc silently escapes the gate.
+_ENV_ASSIGNMENT = re.compile(r"""^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s+""")
+
+
+def invokes_aiperf_profile(line: str) -> bool:
+    """Whether ``line`` starts a benchmark the docs-e2e harness could run.
+
+    Only ``aiperf profile`` counts. The harness boots a model server and runs
+    the tagged block against it; it has no cluster for ``aiperf kube``, no tty
+    for ``aiperf chat``, and nothing for ``aiperf plot`` to read until a
+    profile run has produced an artifact directory. Treating every ``aiperf``
+    line as runnable made the gate demand tags on guides it cannot execute --
+    18 of them under ``docs/kubernetes/`` alone -- so a new Kubernetes page
+    could not be added without either a tag that does nothing or an entry in
+    the allowlist.
+    """
+    text = line.strip()
+    while match := _ENV_ASSIGNMENT.match(text):
+        text = text[match.end() :]
+    return text.startswith("aiperf profile")
+
+
 def has_runnable_command(path: Path) -> bool:
-    """Whether the file shows an ``aiperf`` command a reader could copy.
+    """Whether the file shows an ``aiperf profile`` run a reader could copy.
 
     Only fenced blocks count: prose naming a flag is not a command, and gating
     on prose would flag every reference page.
     """
-    for line in _fenced_lines(path.read_text(encoding="utf-8")):
-        if line.strip().startswith("aiperf "):
-            return True
-    return False
+    return any(
+        invokes_aiperf_profile(line)
+        for line in _fenced_lines(path.read_text(encoding="utf-8"))
+    )
 
 
 def _fenced_lines(text: str) -> Iterator[str]:
@@ -141,7 +167,7 @@ def tagged_run_count(path: Path) -> int:
     except Exception as e:  # pragma: no cover - parser has its own tests
         print(f"::warning::Could not parse {path}: {e}", file=sys.stderr)
         return 0
-    # Count only tagged blocks that actually invoke aiperf. The parser
+    # Count only tagged blocks that actually invoke aiperf profile. The parser
     # categorises a block by its tag without inspecting the body, so a doc
     # could tag an `echo ok` block and satisfy this gate while its real
     # `aiperf profile` command sits untagged beside it.
@@ -149,9 +175,7 @@ def tagged_run_count(path: Path) -> int:
         1
         for server in parser.servers.values()
         for command in server.aiperf_commands
-        if any(
-            line.strip().startswith("aiperf ") for line in command.command.splitlines()
-        )
+        if any(invokes_aiperf_profile(line) for line in command.command.splitlines())
     )
 
 
@@ -186,7 +210,9 @@ def main() -> None:
         return
 
     label = "doc(s)" if args.all else "newly added doc(s)"
-    print(f"\n{len(offenders)} {label} contain runnable `aiperf` commands but no")
+    print(
+        f"\n{len(offenders)} {label} contain runnable `aiperf profile` commands but no"
+    )
     print("docs-e2e tags, so nothing in CI ever executes them:\n")
     for rel in offenders:
         print(f"  {rel}")
@@ -199,8 +225,8 @@ def main() -> None:
         "    ```\n"
         "    <!-- /aiperf-run-vllm-default-openai-endpoint-server -->\n"
         "\n"
-        "See tests/ci/test_docs_end_to_end/README or an already-tagged tutorial\n"
-        "such as docs/tutorials/sharegpt.md for the available server names.\n"
+        "See tests/ci/test_docs_end_to_end/README.md or an already-tagged\n"
+        "tutorial such as docs/tutorials/sharegpt.md for the server names.\n"
     )
     if not args.all:
         sys.exit(1)
