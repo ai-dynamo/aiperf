@@ -222,6 +222,7 @@ HTTP client socket and connection configuration. Controls low-level socket optio
 | `AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID` | `False` | — | Also send X-Dynamo-Session-ID with the stable X-Correlation-ID value, plus X-Dynamo-Parent-Session-ID on subagent children. This transport setting is the supported affinity path for a Dynamo frontend running --router-session-affinity-ttl-secs, pinning every turn of a session to the replica holding its KV prefix. |
 | `AIPERF_HTTP_METRICS_SCRAPE_READ_TIMEOUT` | `30.0` | ≥ 1.0, ≤ 3600.0 | Socket read timeout in seconds for metrics scrape sessions (server metrics and GPU telemetry). Bounds an endpoint that sends response headers and then stalls, which a connect-only timeout cannot detect. |
 | `AIPERF_HTTP_VIDEO_POLL_INTERVAL` | `0.1` | ≥ 0.001, ≤ 10.0 | Interval in seconds between status polls for async video generation jobs. Lower values provide faster completion detection but increase server load. Applies to the aiohttp transport. |
+| `AIPERF_HTTP_VIDEO_DOWNLOAD_MAX_REDIRECTS` | `5` | ≥ 0, ≤ 100 | Maximum redirects followed when downloading generated video content. Each hop re-checks the original endpoint origin before sending credentials. Set to 0 to refuse redirects. Applies to the aiohttp transport. |
 
 ## K8S
 

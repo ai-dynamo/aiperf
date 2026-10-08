@@ -6,13 +6,16 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import math
+import re
 import time
 from collections.abc import Mapping
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import aiohttp
 import orjson
+from yarl import URL
 
 from aiperf.auth.base_signer import SignedRequest
 from aiperf.common.endpoint_auth import no_redirect_kwargs
@@ -35,7 +38,11 @@ from aiperf.common.models import (
 from aiperf.common.redact import redact_headers
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import TransportType
-from aiperf.transports.aiohttp_client import AioHttpClient, create_tcp_connector
+from aiperf.transports.aiohttp_client import (
+    VIDEO_DOWNLOAD_REDIRECT_STATUSES,
+    AioHttpClient,
+    create_tcp_connector,
+)
 from aiperf.transports.base_transports import (
     BaseTransport,
     FirstTokenCallback,
@@ -50,6 +57,70 @@ _DEFAULT_PORTS = {"http": 80, "https": 443}
 # natural content_url is a presigned S3 URL, which authenticates through its own
 # query signature and needs no inherited headers at all.
 _FOREIGN_ORIGIN_HEADER_ALLOWLIST = frozenset({"user-agent"})
+
+
+class _VideoDownloadPolicyError(ValueError):
+    """A download policy failure with a fixed, credential-free diagnostic."""
+
+
+def _validate_video_url_reference(url: str) -> None:
+    """Reject characters URL parsers can silently discard or reinterpret."""
+    if not url or any(
+        ord(char) <= 32 or ord(char) == 127 or char.isspace() for char in url
+    ):
+        raise ValueError("Empty URL or URL containing whitespace/control characters")
+    if "\\" in url or re.search(r"%(?![0-9a-fA-F]{2})", url):
+        raise ValueError("Malformed URL encoding")
+
+
+def _validated_video_url(url: str) -> str:
+    """Validate an absolute HTTP(S) download URL without decoding signed bytes."""
+    _validate_video_url_reference(url)
+    parts = urlsplit(url)
+    if (
+        parts.scheme not in _DEFAULT_PORTS
+        or not parts.hostname
+        or parts.username is not None
+    ):
+        raise ValueError("Download URL must be absolute HTTP(S) without userinfo")
+    port = parts.port
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("Invalid download port")
+    # urlsplit accepts empty ports and trailing text after an IPv6 bracket.
+    authority = parts.netloc
+    if authority.startswith("["):
+        suffix = authority[authority.index("]") + 1 :]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            raise ValueError("Malformed IPv6 authority")
+    elif "[" in authority or "]" in authority or authority.count(":") > 1:
+        raise ValueError("Malformed download authority")
+    elif ":" in authority and not authority.rsplit(":", 1)[1].isdigit():
+        raise ValueError("Invalid download port")
+    if "%" in parts.hostname:
+        raise ValueError("Encoded download hostname is unsupported")
+    return urlunsplit(parts._replace(fragment=""))
+
+
+def _resolve_video_redirect(requested_url: str, location: str) -> str:
+    """Resolve a valid reference without repairing malformed absolute authorities."""
+    _validate_video_url_reference(location)
+    parts = urlsplit(location)
+    if parts.scheme:
+        _validated_video_url(location)
+    elif location.startswith("//"):
+        _validated_video_url(f"{urlsplit(requested_url).scheme}:{location}")
+    return _validated_video_url(urljoin(requested_url, location))
+
+
+def _video_redirect_target(
+    record: RequestRecord, requested_url: str, remaining: int
+) -> str:
+    """Enforce the redirect budget and the single-Location contract before resolving."""
+    if remaining <= 0:
+        raise _VideoDownloadPolicyError("Redirect limit exceeded")
+    if len(record._redirect_locations) != 1:
+        raise _VideoDownloadPolicyError("Expected exactly one Location header")
+    return _resolve_video_redirect(requested_url, record._redirect_locations[0])
 
 
 def _strip_credentials_for_foreign_origin(headers: dict[str, str]) -> dict[str, str]:
@@ -704,6 +775,20 @@ class AioHttpTransport(BaseTransport):
             code=504,
         )
 
+    async def _prepare_video_download_request(
+        self, url: str, origin: str, headers: dict[str, str]
+    ) -> SignedRequest:
+        """Rebuild headers for each hop and constrain signer URL changes to the origin."""
+        if not _same_origin(url, origin):
+            return SignedRequest(
+                url=url, headers=_strip_credentials_for_foreign_origin(headers)
+            )
+        signed = await self._sign_if_needed("GET", url, dict(headers))
+        signed.url = _validated_video_url(signed.url)
+        if not _same_origin(signed.url, origin):
+            raise _VideoDownloadPolicyError("Signer changed the request origin")
+        return signed
+
     async def _download_video_content(
         self,
         job_id: str,
@@ -712,68 +797,87 @@ class AioHttpTransport(BaseTransport):
         *,
         signing_origin_url: str,
     ) -> bytes | ErrorDetails:
-        """Download video content via GET /v1/videos/{id}/content.
-
-        Returns video bytes on success, ErrorDetails on failure.
-        Used when --download-video-content is enabled.
-
-        ``content_url`` may come from the benchmarked server's own response
-        body, so it is signed only when it shares an origin with
-        ``signing_origin_url``. Signing it unconditionally would let that server
-        name any host and receive a fresh signature plus the raw session token;
-        it would also break the benign case, since the natural value is a
-        presigned S3 URL and S3 rejects a presigned request that also carries an
-        ``Authorization`` header.
-        """
+        """Download video bytes, checking the original credential origin at every hop."""
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
+
+        max_redirects = Environment.HTTP.VIDEO_DOWNLOAD_MAX_REDIRECTS
+        total = self.aiohttp_client.timeout.total
+        timeout = (
+            total
+            if isinstance(total, (int, float)) and total > 0 and math.isfinite(total)
+            else None
+        )
+        hops = 0
+        stage = "URL validation"
+        status = 500
+
+        def failure(reason: str, code: int = 500) -> ErrorDetails:
+            # Response errors and exception strings can contain presigned URLs.
+            return ErrorDetails(
+                type="VideoDownloadError",
+                message=f"Failed to download video {job_id} at {stage} after {hops} redirects: {reason}",
+                code=code,
+            )
+
         try:
-            sign_this = _same_origin(content_url, signing_origin_url)
-            signed = (
-                await self._sign_if_needed("GET", content_url, headers)
-                if sign_this
-                else SignedRequest(
-                    url=content_url,
-                    # Not signing a foreign URL was only half the fix: the
-                    # endpoint's already-configured headers carry the user's
-                    # --api-key Bearer token and any -H secrets, and were
-                    # forwarded to whatever host the server named.
-                    headers=_strip_credentials_for_foreign_origin(headers),
-                    body=None,
-                )
+            async with asyncio.timeout(timeout):
+                origin = _validated_video_url(signing_origin_url)
+                current_url = _validated_video_url(content_url)
+                while True:
+                    stage = "signing"
+                    signed = await self._prepare_video_download_request(
+                        current_url, origin, headers
+                    )
+                    requested_url = signed.url
+
+                    stage = "request"
+                    record = await self.aiohttp_client.get_request(
+                        URL(requested_url, encoded=True),
+                        signed.headers,
+                        allow_redirects=False,
+                        capture_redirects=True,
+                        # netrc can otherwise add BasicAuth after header filtering.
+                        trust_env=None
+                        if _same_origin(requested_url, origin)
+                        else False,
+                    )
+                    status = record.status or 500
+                    if record.error:
+                        return failure("HTTP or network request failed", status)
+                    if status in VIDEO_DOWNLOAD_REDIRECT_STATUSES:
+                        stage = "redirect validation"
+                        current_url = _video_redirect_target(
+                            record, requested_url, max_redirects - hops
+                        )
+                        hops += 1
+                        continue
+                    stage = "content"
+                    if (
+                        200 <= status < 300
+                        and record.responses
+                        and isinstance(record.responses[0], BinaryResponse)
+                    ):
+                        video_bytes = record.responses[0].raw_bytes
+                        self.info(
+                            f"Video {job_id} downloaded ({len(video_bytes)} bytes)"
+                        )
+                        return video_bytes
+                    return failure(
+                        "No binary content returned",
+                        status if not 200 <= status < 300 else 500,
+                    )
+        except ValueError as error:
+            return failure(
+                str(error)
+                if isinstance(error, _VideoDownloadPolicyError)
+                else "Invalid download URL",
+                status if stage == "redirect validation" else 500,
             )
-            record = await self.aiohttp_client.get_request(
-                signed.url,
-                signed.headers,
-                # Unconditional, not just for the signed same-origin case:
-                # content_url is server-selected, so its redirect target is the
-                # server's choice too, and following one re-delivers whatever
-                # headers survived to a second host. A 3xx now surfaces as a
-                # download error rather than silently fetching from elsewhere.
-                allow_redirects=False,
-            )
-            if record.error:
-                return ErrorDetails(
-                    type="VideoDownloadError",
-                    message=f"Failed to download video {job_id}: {record.error}",
-                    code=record.status or 500,
-                )
-            if record.responses and isinstance(record.responses[0], BinaryResponse):
-                self.info(
-                    f"Video {job_id} downloaded ({len(record.responses[0].raw_bytes)} bytes)"
-                )
-                return record.responses[0].raw_bytes
-            return ErrorDetails(
-                type="VideoDownloadError",
-                message=f"No content returned for video {job_id}",
-                code=500,
-            )
-        except Exception as e:
-            return ErrorDetails(
-                type="VideoDownloadError",
-                message=f"Failed to download video {job_id}: {e!r}",
-                code=500,
-            )
+        except TimeoutError:
+            return failure("Download timeout exceeded")
+        except Exception:
+            return failure("Download request failed")
 
     async def _send_video_request_with_polling(
         self,
