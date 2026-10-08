@@ -557,12 +557,6 @@ class ResultsDB:
         bare_job_ids: set[str],
         qualified_refs: set[tuple[str, str]],
     ) -> Iterator[tuple[str, str, str, dict[str, Any]]]:
-        """Probe only the requested job directories instead of walking the PVC.
-
-        Qualified ids resolve straight to ``<ns>/<job>``. A bare id can live in
-        any namespace, so namespaces are enumerated but only the requested job
-        names are probed in each.
-        """
         refs = set(qualified_refs)
         if bare_job_ids and self._results_dir.is_dir():
             for namespace_dir in self._results_dir.iterdir():
