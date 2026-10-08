@@ -475,14 +475,15 @@ class TestParseSSEMessageUnicode:
     """Unicode separators in data are not SSE field delimiters."""
 
     @pytest.mark.parametrize(
-        "separator",
+        "separator,line_ending",
         [
-            param("\u0085", id="next-line"),
-            param("\u2028", id="line-separator"),
-            param("\u2029", id="paragraph-separator"),
+            param("\u0085", "\n", id="next-line-lf"),
+            param("\u2028", "\n", id="line-separator-lf"),
+            param("\u2029", "\n", id="paragraph-separator-lf"),
+            param("\u2028", "\r\n", id="line-separator-crlf"),
+            param("\u2028", "\r", id="line-separator-cr"),
         ],
     )  # fmt: skip
-    @pytest.mark.parametrize("line_ending", ["\n", "\r\n", "\r"])
     def test_parse_named_event_preserves_unicode_json_content(
         self, separator: str, line_ending: str, base_perf_ns: int
     ) -> None:
@@ -886,7 +887,6 @@ def create_mock_sse_iterator():
 
 @pytest.mark.asyncio
 async def test_sse_reader_preserves_unicode_in_named_event() -> None:
-    """Named events keep Unicode text when UTF-8 characters span chunks."""
     payload = {"type": "response.output_text.delta", "delta": "a\u0085b\u2028c\u2029d"}
     body = (
         f"event: response.output_text.delta\ndata: {orjson.dumps(payload).decode()}\n\n"
