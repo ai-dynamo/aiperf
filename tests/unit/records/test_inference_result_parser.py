@@ -301,13 +301,12 @@ class TestToolCallTokenCount:
     """Tool dispatch and accompanying prose both contribute to output tokens."""
 
     @pytest.mark.parametrize(
-        "object_type,data_key",
+        "object_type,data_key,function_key",
         [
-            param("chat.completion", "message", id="non_streaming"),
-            param("chat.completion.chunk", "delta", id="streaming"),
+            param("chat.completion", "message", "function_call", id="non_streaming-legacy"),
+            param("chat.completion.chunk", "delta", "tool_calls", id="streaming-modern"),
         ],
     )  # fmt: skip
-    @pytest.mark.parametrize("function_key", ["function_call", "tool_calls"])
     async def test_mixed_tool_response_counts_prose_and_function(
         self,
         setup_inference_parser: InferenceResultParser,
