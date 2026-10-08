@@ -141,9 +141,7 @@ def _is_owned_child(
     """Return whether a child matches the exact parent and execution identity.
 
     Accepts any ``Mapping``: kopf delivers the triggering child as a
-    ``kopf.Body`` view, which is not a ``dict`` subclass. A ``dict`` check
-    here rejected every real child while the handler still reported success,
-    so ``completedRuns`` never moved off the create-time 0 during a run.
+    ``kopf.Body`` view, which is not a ``dict`` subclass.
     """
     if not isinstance(child, Mapping):
         return False
