@@ -236,6 +236,10 @@ the original benchmark endpoint, with or without request signing:
   it authenticates through its own query string.
 - **Returning to the original origin restores endpoint headers.** Requests to
   that origin receive the original headers and fresh signing when configured.
+- **Configured URL authentication stays on the original origin.** Credentials
+  in `--url` provide Basic authentication for same-origin downloads, including
+  hops that return to that origin. They are never sent to foreign origins.
+  Credentials embedded in a job's `url` field or a redirect `Location` are rejected.
 - **Foreign origins do not use environment credentials or proxies.** Downloads
   to a different origin disable `.netrc` authentication and environment proxy
   settings, including `HTTP_PROXY` and `HTTPS_PROXY`.

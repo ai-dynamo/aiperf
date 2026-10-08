@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
-from aiohttp import web
+from aiohttp import BasicAuth, web
 from pytest import param
 
 from aiperf.common.models import ErrorDetails, TextResponse
@@ -106,6 +106,138 @@ async def test_cross_origin_chain_preserves_signed_url_bytes_and_credentials(
     assert seen[3][2]["Authorization"] == "Bearer endpoint-secret"
     assert seen[3][2]["X-Private"] == "custom-secret"
     assert "Cookie" not in seen[3][2]
+
+
+@pytest.mark.parametrize("start", [param("direct"), param("origin"), param("foreign")])  # fmt: skip
+async def test_configured_basic_auth_is_restored_only_at_origin(
+    monkeypatch: pytest.MonkeyPatch, start: str
+) -> None:
+    """URL auth is decoded once and never follows a hop to another origin."""
+    monkeypatch.setattr(AioHttpDefaults, "TRUST_ENV", False)
+    seen: list[tuple[str, str, dict[str, str]]] = []
+    target = "/file%2Fname?sig=%2b%2F"
+
+    async def origin_handler(request: web.Request) -> web.StreamResponse:
+        seen.append(("origin", request.raw_path, dict(request.headers)))
+        if request.path == "/start":
+            return web.Response(status=302, headers={"Location": "/same"})
+        if request.path == "/same":
+            return web.Response(status=307, headers={"Location": foreign + target})
+        return web.Response(body=b"video", content_type="video/mp4")
+
+    async def foreign_handler(request: web.Request) -> web.StreamResponse:
+        seen.append(("foreign", request.raw_path, dict(request.headers)))
+        return web.Response(status=302, headers={"Location": origin + "/final"})
+
+    async with serve(origin_handler) as origin, serve(foreign_handler) as foreign:
+        configured = origin.replace("://", "://us%65r:p%40ss%3Aword@")
+        client = AioHttpClient(timeout=1)
+        transport = AioHttpTransport(
+            model_endpoint=create_model_endpoint_info(base_url=configured)
+        )
+        transport.aiohttp_client = client
+        content_urls = {
+            "direct": origin + "/final",
+            "origin": origin + "/start",
+            "foreign": foreign + target,
+        }
+        try:
+            result = await transport._download_video_content(
+                "job",
+                content_urls[start],
+                {"X-Private": "endpoint-secret", "User-Agent": "aiperf-test"},
+                signing_origin_url=configured + "/job",
+            )
+        finally:
+            await client.close()
+    assert result == b"video"
+    expected_origins = {
+        "direct": ["origin"],
+        "origin": ["origin", "origin", "foreign", "origin"],
+        "foreign": ["foreign", "origin"],
+    }
+    assert [entry[0] for entry in seen] == expected_origins[start]
+    for kind, path, headers in seen:
+        if kind == "origin":
+            assert BasicAuth.decode(headers["Authorization"]) == BasicAuth(
+                "user", "p@ss:word"
+            )
+            assert headers["X-Private"] == "endpoint-secret"
+        else:
+            assert path == target
+            assert "Authorization" not in headers
+            assert "X-Private" not in headers
+            assert headers["User-Agent"] == "aiperf-test"
+
+
+@pytest.mark.parametrize("source", [param("content"), param("location")])  # fmt: skip
+async def test_server_injected_url_credentials_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    """Even matching configured credentials are untrusted in server-selected URLs."""
+    monkeypatch.setattr(AioHttpDefaults, "TRUST_ENV", False)
+    seen: list[str] = []
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        seen.append(request.path)
+        return web.Response(status=302, headers={"Location": injected})
+
+    async with serve(handler) as origin:
+        configured = origin.replace("://", "://user:private-password@")
+        injected = configured + "/injected?private-query=value"
+        client = AioHttpClient(timeout=1)
+        transport = AioHttpTransport(
+            model_endpoint=create_model_endpoint_info(base_url=configured)
+        )
+        transport.aiohttp_client = client
+        try:
+            result = await transport._download_video_content(
+                "job",
+                injected if source == "content" else origin + "/start",
+                {},
+                signing_origin_url=configured + "/job",
+            )
+        finally:
+            await client.close()
+    assert isinstance(result, ErrorDetails)
+    assert result.code == (500 if source == "content" else 302)
+    assert seen == ([] if source == "content" else ["/start"])
+    assert "Invalid download URL" in result.message
+    assert "private-password" not in result.message
+    assert "private-query" not in result.message
+
+
+async def test_url_auth_does_not_override_explicit_authorization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Competing authentication sources retain aiohttp's existing failure behavior."""
+    monkeypatch.setattr(AioHttpDefaults, "TRUST_ENV", False)
+    seen: list[str] = []
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        seen.append(request.path)
+        return web.Response(body=b"video", content_type="video/mp4")
+
+    async with serve(handler) as origin:
+        configured = origin.replace("://", "://user:private-password@")
+        client = AioHttpClient(timeout=1)
+        transport = AioHttpTransport(
+            model_endpoint=create_model_endpoint_info(base_url=configured)
+        )
+        transport.aiohttp_client = client
+        try:
+            result = await transport._download_video_content(
+                "job",
+                origin + "/content",
+                {"Authorization": "Bearer private-token"},
+                signing_origin_url=configured + "/job",
+            )
+        finally:
+            await client.close()
+    assert isinstance(result, ErrorDetails)
+    assert not seen
+    assert "private-password" not in result.message
+    assert "private-token" not in result.message
 
 
 async def test_unfinished_redirect_body_does_not_block_final_download() -> None:
@@ -218,16 +350,20 @@ async def test_cancel_closes_download_session() -> None:
             await client.close()
 
 
-@pytest.mark.parametrize("download", [param(True), param(False)])  # fmt: skip
-async def test_video_workflow_timing_and_published_responses(download: bool) -> None:
+@pytest.mark.parametrize("download,url_auth", [param(True, False), param(False, False), param(True, True)])  # fmt: skip
+async def test_video_workflow_timing_and_published_responses(
+    download: bool, url_auth: bool
+) -> None:
     """The full generation workflow measures downloads but publishes only job JSON."""
     seen: list[str] = []
+    auth_headers: list[str | None] = []
     submit_ns = 0
     download_end_ns = 0
 
     async def handler(request: web.Request) -> web.StreamResponse:
         nonlocal submit_ns, download_end_ns
         seen.append(request.path)
+        auth_headers.append(request.headers.get("Authorization"))
         if request.method == "POST":
             submit_ns = time.perf_counter_ns()
             return web.json_response({"id": "job", "status": "queued"}, status=202)
@@ -241,7 +377,8 @@ async def test_video_workflow_timing_and_published_responses(download: bool) -> 
 
     async with serve(handler) as origin:
         endpoint = create_model_endpoint_info(
-            base_url=origin, custom_endpoint="/v1/videos"
+            base_url=origin.replace("://", "://user:password@") if url_auth else origin,
+            custom_endpoint="/v1/videos",
         )
         endpoint.endpoint.type = EndpointType.VIDEO_GENERATION
         endpoint.endpoint.download_video_content = download
@@ -255,6 +392,9 @@ async def test_video_workflow_timing_and_published_responses(download: bool) -> 
         finally:
             await client.close()
     assert record.error is None and record.status == 200
+    assert auth_headers == [
+        BasicAuth("user", "password").encode() if url_auth else None
+    ] * len(seen)
     assert len(record.responses) == 2
     assert all(isinstance(response, TextResponse) for response in record.responses)
     assert "binary-video-secret" not in record.model_dump_json()
