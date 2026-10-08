@@ -68,6 +68,94 @@ class TestChatEndpointParseResponse:
         assert isinstance(parsed.data, TextResponseData)
         assert parsed.data.text == "Hello"
 
+    @pytest.mark.parametrize(
+        "object_type,data_key",
+        [
+            param("chat.completion", "message", id="non_streaming"),
+            param("chat.completion.chunk", "delta", id="streaming"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.parametrize("content", [None, "Calling a function: "])
+    def test_parse_response_legacy_function_call(
+        self,
+        endpoint: ChatEndpoint,
+        object_type: str,
+        data_key: str,
+        content: str | None,
+    ) -> None:
+        """Legacy function output contributes content and client-side tokens."""
+        response = create_mock_response(
+            123456789,
+            {
+                "object": object_type,
+                "choices": [
+                    {
+                        data_key: {
+                            "content": content,
+                            "function_call": {
+                                "name": "get_weather",
+                                "arguments": '{"city":"Paris"}',
+                            },
+                        }
+                    }
+                ],
+            },
+        )
+
+        parsed = endpoint.parse_response(response)
+
+        assert parsed is not None
+        assert isinstance(parsed.data, ToolCallResponseData)
+        assert parsed.data.tool_call_text == 'get_weather{"city":"Paris"}'
+        assert parsed.data.content == content
+
+    def test_process_responses_legacy_function_call_chunks(
+        self, endpoint: ChatEndpoint
+    ) -> None:
+        """Retain each function delta for timing and reassemble it for replay."""
+        deltas = [
+            {"name": "get_weather", "arguments": ""},
+            {"arguments": '{"city":'},
+            {"arguments": '"Paris"}'},
+        ]
+        record = RequestRecord(
+            responses=[
+                TextResponse(
+                    perf_ns=index,
+                    text=orjson.dumps(
+                        {
+                            "object": "chat.completion.chunk",
+                            "choices": [{"delta": {"function_call": delta}}],
+                        }
+                    ).decode(),
+                )
+                for index, delta in enumerate(deltas, start=1)
+            ]
+        )
+
+        parsed, turn = endpoint.process_responses(record, capture_assistant_turn=True)
+
+        assert [response.perf_ns for response in parsed] == [1, 2, 3]
+        assert all(
+            isinstance(response.data, ToolCallResponseData) for response in parsed
+        )
+        assert turn is not None
+        assert turn.raw_messages == [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "get_weather",
+                            "arguments": '{"city":"Paris"}',
+                        },
+                    }
+                ],
+            }
+        ]
+
     def test_process_responses_decodes_each_chunk_once(self, endpoint):
         chunks = [
             {

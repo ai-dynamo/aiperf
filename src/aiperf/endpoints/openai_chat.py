@@ -337,6 +337,8 @@ class ChatEndpoint(BaseEndpoint):
         # for those mixed chunks since the server's ``usage.completion_tokens``
         # counts both portions.
         tool_calls = data.get("tool_calls") or []
+        if isinstance(function_call := data.get("function_call"), dict):
+            tool_calls = [*tool_calls, {"function": function_call}]
         tool_call_parts: list[str] = []
         for tc in tool_calls:
             func = tc.get("function", {})
