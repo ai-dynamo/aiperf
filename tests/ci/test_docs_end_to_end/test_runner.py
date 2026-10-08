@@ -4,6 +4,7 @@
 Test runner for executing server setup, health checks, and AIPerf tests.
 """
 
+import contextlib
 import logging
 import os
 import re
@@ -57,7 +58,13 @@ def _has_explicit_ui_flag(command: str) -> bool:
 
 
 def _first_unquoted_index(command: str, needle: str) -> int:
-    """Index of ``needle`` outside any quoted span, or -1."""
+    """Index of ``needle`` outside any quoted span or shell comment, or -1.
+
+    Guides routinely show a commented variant above the command they actually
+    run (``# aiperf profile --model other``). Matching that line would inject
+    the UI flag into the comment and leave the real invocation interactive,
+    which hangs the command until the watchdog kills it.
+    """
     quote: str | None = None
     i = 0
     while i < len(command):
@@ -68,6 +75,12 @@ def _first_unquoted_index(command: str, needle: str) -> int:
                 continue
             if char == quote:
                 quote = None
+        elif char == "#" and (i == 0 or command[i - 1].isspace()):
+            # A '#' starting a word begins a comment; skip to end of line.
+            newline = command.find("\n", i)
+            if newline == -1:
+                return -1
+            i = newline
         elif char in "\"'":
             quote = char
         elif command.startswith(needle, i):
@@ -94,6 +107,27 @@ def inject_ui_type(command: str, ui_type: str = AIPERF_UI_TYPE) -> str:
         return command
     end = index + len("aiperf profile")
     return f"{command[:end]} --ui-type {ui_type}{command[end:]}"
+
+
+def deliver_command_over_stdin(process, command: str, label: str) -> bool:
+    """Write the command to the process and close stdin. True if delivered.
+
+    The command watchdog kills ``docker exec`` on timeout, which breaks this
+    pipe mid-write. That is the command failing, not the suite crashing:
+    letting ``BrokenPipeError`` propagate leaves ``run_tests`` entirely and
+    silently skips every remaining server.
+    """
+    try:
+        process.stdin.write(command + "\n")
+        process.stdin.close()
+    except OSError as e:
+        logger.error(f"AIPerf {label}: could not deliver the command ({e!r})")
+        # Reap it, so the failure is a non-zero return code rather than a
+        # process left behind holding the container.
+        with contextlib.suppress(Exception):
+            process.kill()
+        return False
+    return True
 
 
 def resolve_command_timeout(aiperf_cmd) -> int:
@@ -629,8 +663,11 @@ class EndToEndTestRunner:
                 # Delivered inside the watchdog's scope: if docker exec stops
                 # reading, this write blocks on a full pipe, and a watchdog
                 # armed afterwards would never start to kill it.
-                aiperf_process.stdin.write(aiperf_command_with_ui + "\n")
-                aiperf_process.stdin.close()
+                deliver_command_over_stdin(
+                    aiperf_process,
+                    aiperf_command_with_ui,
+                    f"test {i + 1} for {server.name}",
+                )
 
                 # Show real-time output
                 aiperf_output_lines = []

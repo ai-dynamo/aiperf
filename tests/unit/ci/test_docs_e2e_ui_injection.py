@@ -87,3 +87,34 @@ def test_quoted_text_does_not_change_ui_injection(command: str) -> None:
     assert injected.startswith("aiperf profile --ui-type simple ")
     # Everything after the invocation is untouched.
     assert injected.endswith(command[len("aiperf profile") :])
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        param(
+            "# aiperf profile --model commented-out\naiperf profile --model m",
+            id="commented-variant-above-the-real-command",
+        ),
+        param(
+            "  # aiperf profile --model x\naiperf profile --model m",
+            id="indented-comment",
+        ),
+    ],
+)  # fmt: skip
+def test_a_commented_command_is_not_the_invocation(command: str) -> None:
+    """Guides show a commented variant above the command they actually run.
+
+    Injecting into the comment leaves the real invocation interactive, and it
+    then hangs until the watchdog kills it.
+    """
+    injected = inject_ui_type(command)
+
+    real_line = injected.splitlines()[-1]
+    assert real_line.startswith("aiperf profile --ui-type simple ")
+    assert "--ui-type" not in injected.splitlines()[0]
+
+
+def test_a_hash_inside_quotes_is_not_a_comment() -> None:
+    injected = inject_ui_type('echo "# not a comment" && aiperf profile --model m')
+    assert "aiperf profile --ui-type simple --model m" in injected
