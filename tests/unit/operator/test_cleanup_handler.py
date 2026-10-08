@@ -561,7 +561,6 @@ class TestOnDeleteIndexCleanup:
     async def test_on_delete_without_published_results_drops_every_row(
         self, tmp_path: Path
     ) -> None:
-        """A job deleted before it exported anything leaves no orphan rows."""
         base = tmp_path / "results"
         namespace = "bench"
         job_id = "cancelled-mid-run"
