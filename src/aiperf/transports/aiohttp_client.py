@@ -155,11 +155,8 @@ class AioHttpClient(AIPerfLoggerMixin):
                 trace_configs=[trace_config],
                 trust_env=AioHttpDefaults.TRUST_ENV,
             ) as session:
-                # Re-pair start_perf_ns with timestamp_ns at the same instant: the Pydantic
-                # default_factory fired at record construction (above), but session setup
-                # has now moved start_perf_ns forward. timestamp_ns is derived from the
-                # process clock rather than read fresh, so every record from this worker
-                # shares one anchor (see process_clock).
+                # Session setup moved start_perf_ns past record construction; re-derive
+                # timestamp_ns from it.
                 record.start_perf_ns = time.perf_counter_ns()
                 record.timestamp_ns = process_clock().wall_ns_at(record.start_perf_ns)
                 async with session.request(
