@@ -597,7 +597,6 @@ _ORDERING_KEYS: frozenset[str] = frozenset({"iteration_order", "same_seed"})
 
 
 def _sweep_accepts_ordering(sweep_type: str) -> bool:
-    """Every sweep type but adaptive_search carries iteration_order / same_seed."""
     return sweep_type != "adaptive_search"
 
 

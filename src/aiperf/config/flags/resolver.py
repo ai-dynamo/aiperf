@@ -959,7 +959,6 @@ def _apply_recipe_and_multirun(
 def _apply_recipe_output(
     out: dict[str, Any], recipe_output: dict[str, Any], cli: CLIConfig
 ) -> None:
-    """Apply grid/scenario sweeps, recipe_name, and SLOs from recipe output."""
     from aiperf.config.flags.converter import (
         _lookup_recipe_class,
         _reject_recipe_plus_magic_lists,
@@ -975,6 +974,10 @@ def _apply_recipe_output(
     recipe_name = recipe_output.get("recipe_name")
     if recipe_name and "sweep" in out:
         out["sweep"]["recipe_name"] = recipe_name
+    # Recipe-emitted per-request SLOs (e.g. MaxGoodputUnderSLO) land on the
+    # body's `slos` block. The envelope wrapper (`_wrap_under_envelope`) is
+    # applied in `resolve_config` after this builder, so we write the body
+    # path here -- ``benchmark.slos`` after wrapping.
     recipe_slos = recipe_output.get("slos")
     if recipe_slos:
         out["slos"] = dict(recipe_slos)

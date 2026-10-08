@@ -508,7 +508,10 @@ def test_variant_repeating_outer_parameter_sweep_value_is_allowed(
     sweep = _sweep(
         _resolve(
             tmp_path,
-            sweep_variants=_VARIANTS,
+            sweep_variants=[
+                "low: concurrency=2, parameter-sweep-cooldown-seconds=3.0",
+                "high: concurrency=8",
+            ],
             parameter_sweep_cooldown_seconds=3.0,
         )
     )
@@ -615,3 +618,39 @@ def test_config_path_matches_cli_only_path(
     cli_only = convert_cli_to_aiperf(CLIConfig(**_CLI_BASE, **flags))
     with_config = _resolve(tmp_path, **_CLI_BASE, **flags)
     assert _sweep_sections(with_config) == _sweep_sections(cli_only)
+
+
+def test_cli_only_skips_ordering_flags_on_adaptive_sweep() -> None:
+    """Writing iteration_order onto an adaptive sweep would fail validation."""
+    sweep = _sweep(
+        convert_cli_to_aiperf(
+            CLIConfig(
+                **_CLI_BASE,
+                search_recipe="max-throughput-ttft-sla",
+                ttft_sla_ms=100.0,
+                parameter_sweep_mode="independent",
+                parameter_sweep_cooldown_seconds=3.0,
+            )
+        )
+    )
+    assert sweep["type"] == "adaptive_search"
+    assert sweep["cooldown_seconds"] == 3.0
+
+
+@pytest.mark.parametrize("with_config", [False, True], ids=["cli-only", "config"])
+def test_variant_matching_the_base_carries_no_overlay(
+    tmp_path: Path, with_config: bool
+) -> None:
+    flags = {
+        **_CLI_BASE,
+        "concurrency": 1,
+        "sweep_variants": ["same: concurrency=1", "more: concurrency=4"],
+    }
+    config = (
+        _resolve(tmp_path, **flags)
+        if with_config
+        else convert_cli_to_aiperf(CLIConfig(**flags))
+    )
+    same, more = _sweep(config)["runs"]
+    assert same == {"name": "same"}
+    assert more["benchmark"]
