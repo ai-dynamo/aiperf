@@ -868,6 +868,51 @@ def _build_with_flags(tmp_path: Path, yaml_extra: str, **flags) -> dict:
     )
 
 
+@pytest.mark.parametrize(
+    ("names", "dataset", "phase"),
+    [
+        pytest.param("", "workload", "measured", id="custom-names"),
+        pytest.param(
+            "variables: {ds: workload, ph: measured}\n",
+            "{{ ds }}",
+            "{{ ph }}",
+            id="jinja-names",
+        ),
+    ],
+)
+def test_scenario_recipe_binds_to_the_file_identities(
+    tmp_path: Path, names: str, dataset: str, phase: str
+) -> None:
+    """pareto-sweep addresses dataset `main` / phase `profiling`; the CR's run
+    overlays must name the file's own entries (raw names, for in-cluster
+    expansion against the templated spec)."""
+    from aiperf.config.flags import CLIConfig
+
+    ds, ph = ("{{ ds }}", "{{ ph }}") if names else ("workload", "measured")
+    config_file = tmp_path / "pareto.yaml"
+    config_file.write_text(
+        names
+        + "models: [m]\n"
+        + "endpoint: {urls: [http://x], type: chat, streaming: true}\n"
+        + f"datasets: [{{name: '{ds}', type: synthetic, prompts: {{isl: 64, osl: 32}}}}]\n"
+        + "phases:\n"
+        + f"  - {{name: '{ph}', kind: profiling, type: concurrency, requests: 10, concurrency: 1}}\n"
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        cli_config=CLIConfig(
+            search_recipe="pareto-sweep", isl_osl_pairs="128/128", concurrency=[1, 4]
+        ),
+        kube_options=_kube_options(),
+        **_kwargs(),
+    )
+    runs = cr["spec"]["sweep"]["runs"]
+    assert len(runs) == 2
+    for run in runs:
+        assert [d["name"] for d in run["benchmark"]["datasets"]] == [dataset]
+        assert [p["name"] for p in run["benchmark"]["phases"]] == [phase]
+
+
 def test_search_recipe_against_yaml_sweep_is_rejected(tmp_path: Path) -> None:
     from aiperf.config.loader.errors import ConfigurationError
 

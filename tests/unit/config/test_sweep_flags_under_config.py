@@ -424,6 +424,150 @@ def test_cli_only_ordering_flags_apply_to_zip_sweep() -> None:
 
 _VARIANTS = ["low: concurrency=2", "high: concurrency=8"]
 
+# Dataset and phase names rendered from variables. Run overlays are computed on
+# the rendered envelope, but the sweep expands against the raw one.
+_JINJA_NAMED_YAML = textwrap.dedent("""\
+    schemaVersion: "2.0"
+    variables:
+      ds: workload
+      ph: measured
+    benchmark:
+      model: test-model
+      endpoint:
+        url: http://localhost:8000
+        streaming: true
+      datasets:
+        - name: "{{ ds }}"
+          type: synthetic
+          entries: 16
+      phases:
+        - name: "{{ ph }}"
+          kind: profiling
+          type: concurrency
+          concurrency: 1
+          requests: 5
+""")
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        param({"sweep_variants": ["a: isl=128", "b: isl=256"]}, id="variant-dataset"),
+        param(
+            {"sweep_variants": ["a: concurrency=2", "b: concurrency=4"]},
+            id="variant-phase",
+        ),
+    ],
+)
+def test_variant_runs_expand_against_jinja_named_entries(
+    tmp_path: Path, flags: dict[str, Any]
+) -> None:
+    config = _resolve(tmp_path, yaml_text=_JINJA_NAMED_YAML, **flags)
+    plan = build_benchmark_plan(config)
+    assert all([d.name for d in b.datasets] == ["workload"] for b in plan.configs)
+    assert all([p.name for p in b.phases] == ["measured"] for b in plan.configs)
+    for run in config._raw_envelope["sweep"]["runs"]:
+        overlay = run.get("benchmark", {})
+        assert {d["name"] for d in overlay.get("datasets", [])} <= {"{{ ds }}"}
+        assert {p["name"] for p in overlay.get("phases", [])} <= {"{{ ph }}"}
+
+
+# Recipes address the CLI-built names: dataset `main`, phase `profiling`.
+_SINGULAR_DATASET_YAML = textwrap.dedent("""\
+    schemaVersion: "2.0"
+    benchmark:
+      model: test-model
+      endpoint:
+        url: http://localhost:8000
+        streaming: true
+      dataset:
+        type: synthetic
+        entries: 16
+      phases:
+        type: concurrency
+        concurrency: 1
+        requests: 5
+""")
+
+_CUSTOM_NAMED_YAML = textwrap.dedent("""\
+    schemaVersion: "2.0"
+    benchmark:
+      model: test-model
+      endpoint:
+        url: http://localhost:8000
+        streaming: true
+      datasets:
+        - name: workload
+          type: synthetic
+          entries: 16
+      phases:
+        - name: measured
+          kind: profiling
+          type: concurrency
+          concurrency: 1
+          requests: 5
+""")
+
+_PARETO_FLAGS: dict[str, Any] = {
+    "search_recipe": "pareto-sweep",
+    "isl_osl_pairs": "128/128,256/256",
+    "concurrency": [1, 4],
+}
+_PREFILL_FLAGS: dict[str, Any] = {
+    "search_recipe": "prefill-ttft-curve",
+    "isl_min": 64,
+    "isl_max": 256,
+    "isl_steps": 2,
+}
+
+
+@pytest.mark.parametrize(
+    ("yaml_text", "dataset", "phase"),
+    [
+        param(_SINGULAR_DATASET_YAML, "default", "profiling", id="singular-dataset"),
+        param(_CUSTOM_NAMED_YAML, "workload", "measured", id="custom-names"),
+        param(_JINJA_NAMED_YAML, "workload", "measured", id="jinja-names"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("flags", "cells"),
+    [
+        param(_PARETO_FLAGS, 4, id="pareto-sweep"),
+        param(_PREFILL_FLAGS, 2, id="prefill-ttft-curve"),
+    ],
+)
+def test_recipe_selectors_bind_to_the_file_identities(
+    tmp_path: Path,
+    yaml_text: str,
+    dataset: str,
+    phase: str,
+    flags: dict[str, Any],
+    cells: int,
+) -> None:
+    plan = build_benchmark_plan(_resolve(tmp_path, yaml_text=yaml_text, **flags))
+    assert len(plan.configs) == cells
+    assert all([d.name for d in b.datasets] == [dataset] for b in plan.configs)
+    assert all([p.name for p in b.phases] == [phase] for b in plan.configs)
+    assert len({b.datasets[0].prompts.isl.mean for b in plan.configs}) > 1
+
+
+@pytest.mark.parametrize(
+    "yaml_text",
+    [
+        param(_CUSTOM_NAMED_YAML, id="custom-names"),
+        param(_JINJA_NAMED_YAML, id="jinja-names"),
+    ],
+)
+def test_recipe_post_process_names_a_swept_value(
+    tmp_path: Path, yaml_text: str
+) -> None:
+    """The fit handler looks `swept_param` up among each variation's values."""
+    plan = build_benchmark_plan(
+        _resolve(tmp_path, yaml_text=yaml_text, **_PREFILL_FLAGS)
+    )
+    swept = plan.sweep.post_process.params["swept_param"]
+    assert all(swept in variation.values for variation in plan.variations)
+
 
 def test_variants_build_a_scenarios_sweep_over_the_yaml(tmp_path: Path) -> None:
     config = _resolve(tmp_path, sweep_variants=_VARIANTS)

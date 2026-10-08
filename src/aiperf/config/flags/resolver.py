@@ -255,6 +255,9 @@ def _resolve_config_envelopes(
             }
         _apply_parameter_sweep_overrides(envelope, cli_config)
         _apply_convergence_overrides(envelope, cli_config)
+        _bind_recipe_selectors(envelope)
+    _retarget_run_names(raw_merged.envelope, merged.envelope)
+    _use_raw_recipe_post_process(merged.envelope, raw_merged.envelope)
 
     config = AIPerfConfig.model_validate(merged.envelope)
     config._raw_envelope = raw_merged.envelope
@@ -341,14 +344,59 @@ def _apply_parameter_sweep_overrides(
         _write_cli_value(sweep, key, cli, cli_field, wire=wire)
 
 
+def _retarget_run_names(
+    raw_envelope: dict[str, Any], rendered_envelope: dict[str, Any]
+) -> None:
+    """Key scenario-run overlays by the raw envelope's dataset and phase names.
+
+    Runs are built on the rendered envelope, but sweep expansion merges each
+    overlay into the raw one by ``name``. A name rendered from a variable
+    (``{{ ds }}`` -> ``workload``) would append a second entry instead of
+    merging. Names map by position, as ``restore_sweep_parameter_dataset_names``
+    does for sweep parameter paths.
+    """
+    sweep = raw_envelope.get("sweep")
+    runs = sweep.get("runs") if isinstance(sweep, dict) else None
+    if not isinstance(runs, list):
+        return
+    rendered = rendered_envelope.get("benchmark") or {}
+    raw = raw_envelope.get("benchmark") or {}
+    for list_key in ("datasets", "phases"):
+        renames = _positional_renames(rendered.get(list_key), raw.get(list_key))
+        if not renames:
+            continue
+        for run in runs:
+            overlay = run.get("benchmark") if isinstance(run, dict) else None
+            entries = overlay.get(list_key) if isinstance(overlay, dict) else None
+            for entry in entries or []:
+                if isinstance(entry, dict) and entry.get("name") in renames:
+                    entry["name"] = renames[entry["name"]]
+
+
+def _positional_renames(rendered: Any, raw: Any) -> dict[str, str]:
+    if not (isinstance(rendered, list) and isinstance(raw, list)):
+        return {}
+    if len(rendered) != len(raw):
+        return {}
+    return {
+        r["name"]: w["name"]
+        for r, w in zip(rendered, raw, strict=True)
+        if isinstance(r, dict)
+        and isinstance(w, dict)
+        and isinstance(r.get("name"), str)
+        and isinstance(w.get("name"), str)
+        and r["name"] != w["name"]
+    }
+
+
 def _write_cli_value(
     target: dict[str, Any], key: str, cli: CLIConfig, cli_field: str, *, wire: bool
 ) -> None:
-    """Set ``target[key]`` to the value of ``cli_field``.
+    """With ``wire``, write the camelCase alias and the JSON form of the value.
 
-    With ``wire``, the key is written as its camelCase alias and the value as
-    its JSON form (an enum becomes its string), matching a block already
-    rendered by ``model_dump(mode="json", by_alias=True)``.
+    An enum becomes its string, matching a block already rendered by
+    ``model_dump(mode="json", by_alias=True)``. Without it, ``target[key]`` gets
+    the raw ``cli_field`` value.
     """
     if wire:
         target[to_camel(key)] = cli.model_dump(mode="json", include={cli_field})[
@@ -1022,19 +1070,91 @@ def _apply_artifacts_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
 
 def _retarget_dataset_magic_lists(benchmark: dict[str, Any]) -> None:
     sweep = benchmark.get("sweep")
-    if not isinstance(sweep, dict):
-        return
+    dataset_name = _single_dataset_name(benchmark)
+    if isinstance(sweep, dict) and dataset_name not in (None, "main"):
+        _rekey_main_dataset_paths(sweep, dataset_name)
+
+
+def _rekey_main_dataset_paths(sweep: dict[str, Any], dataset_name: str) -> None:
+    """Point ``datasets.main.*`` sweep paths, and post-process params naming
+    them, at ``dataset_name``."""
+    prefix = "datasets.main."
+    target = f"datasets.{dataset_name}."
     parameters = sweep.get("parameters")
-    if not isinstance(parameters, dict):
+    if isinstance(parameters, dict):
+        for path in list(parameters):
+            if path.startswith(prefix):
+                parameters[target + path.removeprefix(prefix)] = parameters.pop(path)
+    post_process = sweep.get("post_process")
+    params = post_process.get("params") if isinstance(post_process, dict) else None
+    if isinstance(params, dict):
+        for key, value in params.items():
+            if isinstance(value, str) and value.startswith(prefix):
+                params[key] = target + value.removeprefix(prefix)
+
+
+def _bind_recipe_selectors(envelope: dict[str, Any]) -> None:
+    """Point a recipe's sweep at the config file's dataset and profiling phase.
+
+    Recipes address the CLI-built names, dataset ``main`` and phase
+    ``profiling``. A config file names its own (``default`` for a singular
+    ``dataset:``, any name it likes, or a Jinja template), so an unbound overlay
+    would append a second entry at expansion. Applied to each envelope with
+    that envelope's own names, so the raw one binds to the raw/Jinja names.
+    """
+    from aiperf.config.sweep.expand import _find_phase_or_recipe_alias
+
+    sweep = envelope.get("sweep")
+    benchmark = envelope.get("benchmark")
+    if not (
+        isinstance(sweep, dict)
+        and sweep.get("recipe_name")
+        and isinstance(benchmark, dict)
+    ):
         return
     dataset_name = _single_dataset_name(benchmark)
-    if dataset_name is None or dataset_name == "main":
+    if dataset_name not in (None, "main"):
+        _rekey_main_dataset_paths(sweep, dataset_name)
+        _rename_run_entries(sweep, "datasets", "main", dataset_name)
+    phases = benchmark.get("phases")
+    profiling = (
+        _find_phase_or_recipe_alias(phases, "profiling", parent_key="phases")
+        if isinstance(phases, list)
+        else None
+    )
+    phase_name = profiling.get("name") if isinstance(profiling, dict) else None
+    if isinstance(phase_name, str) and phase_name != "profiling":
+        _rename_run_entries(sweep, "phases", "profiling", phase_name)
+
+
+def _use_raw_recipe_post_process(
+    rendered_envelope: dict[str, Any], raw_envelope: dict[str, Any]
+) -> None:
+    """Give the rendered recipe sweep the raw envelope's post-process spec.
+
+    Variations are expanded from the raw envelope, so their value keys use the
+    raw dataset name (``datasets.{{ ds }}.prompts.isl``). A handler such as
+    ``ttft_curve_fit`` looks ``swept_param`` up among those keys; the rendered
+    name would match nothing. Recipe specs carry no templates, so the raw one
+    is safe to validate.
+    """
+    rendered = rendered_envelope.get("sweep")
+    raw = raw_envelope.get("sweep")
+    if not (isinstance(rendered, dict) and isinstance(raw, dict)):
         return
-    for path in list(parameters):
-        if path.startswith("datasets.main."):
-            parameters[
-                f"datasets.{dataset_name}.{path.removeprefix('datasets.main.')}"
-            ] = parameters.pop(path)
+    if rendered.get("recipe_name") and raw.get("post_process") is not None:
+        rendered["post_process"] = copy.deepcopy(raw["post_process"])
+
+
+def _rename_run_entries(
+    sweep: dict[str, Any], list_key: str, old: str, new: str
+) -> None:
+    for run in sweep.get("runs") or []:
+        overlay = run.get("benchmark") if isinstance(run, dict) else None
+        entries = overlay.get(list_key) if isinstance(overlay, dict) else None
+        for entry in entries or []:
+            if isinstance(entry, dict) and entry.get("name") == old:
+                entry["name"] = new
 
 
 def _single_dataset_name(benchmark: dict[str, Any]) -> str | None:
