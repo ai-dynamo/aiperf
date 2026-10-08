@@ -123,6 +123,15 @@ more: there a relevant tool exists, so refusing is the failure.)
 Only an *empty* answer channel is counted as unparsed on those categories —
 silence is not an abstention — so a truncated generation cannot inflate them.
 
+Responses are decoded the way bfcl-eval's Prompt-mode handler decodes them:
+surrounding backticks, newlines and spaces are stripped and the text is wrapped
+in `[...]` if it is not already, so an unlabelled code fence or an unbracketed
+call still counts as a call. A fence with a language label (```` ```python ````)
+is not stripped, matching upstream. Python argument values are resolved without
+ever executing model output; arithmetic in an argument is evaluated only when it
+stays within 256-bit integers and finite floats, and anything larger is treated
+as no extractable call.
+
 ### Triage the failures
 
 Every graded record in `accuracy_export.jsonl` carries a normalized failure

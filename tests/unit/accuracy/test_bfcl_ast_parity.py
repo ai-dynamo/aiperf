@@ -47,6 +47,7 @@ from bfcl_eval.constants.enums import Language, ReturnFormat  # noqa: E402
 from bfcl_eval.eval_checker.ast_eval.ast_checker import ast_checker  # noqa: E402
 from bfcl_eval.model_handler.utils import (  # noqa: E402
     ast_parse,
+    default_decode_ast_prompting,
     resolve_ast_by_type,
 )
 
@@ -443,29 +444,11 @@ class TestDecoderDoesNotExecuteModelOutput:
     access.
 
     ``_bfcl_compat`` therefore reimplements the value-resolution step without
-    ``eval``. These tests pin that boundary from both sides: the first
-    documents that the upstream function really does execute (so the local
-    decoder is load-bearing, not redundant), and the rest assert that the
-    decoder refuses every executing shape while still decoding the benign
-    arithmetic upstream supports.
+    ``eval``. This oracle documents that the upstream function really does
+    execute, so the local decoder is load-bearing, not redundant. The local
+    decoder's refusals and bounds are stdlib-only and are pinned without
+    ``bfcl-eval`` in ``test_bfcl_safe_decoder.py``.
     """
-
-    #: Shapes whose resolution upstream routes through ``eval``. Each embeds a
-    #: distinct execution vector; all must be refused without running.
-    EXECUTING_PAYLOADS = [
-        param(
-            "[calculate_triangle_area(base=(__import__('builtins').print('PROBE') or 10)+0, height=5)]",
-            id="binop_over_boolop_call",
-        ),
-        param(
-            "[calculate_triangle_area(base=(lambda: __import__('builtins').print('PROBE'))()+0, height=5)]",
-            id="binop_over_called_lambda",
-        ),
-        param(
-            "[calculate_triangle_area(base=lambda: __import__('builtins').print('PROBE'), height=5)]",
-            id="lambda_argument",
-        ),
-    ]
 
     @staticmethod
     def _tripwire(monkeypatch: pytest.MonkeyPatch) -> list[str]:
@@ -501,42 +484,136 @@ class TestDecoderDoesNotExecuteModelOutput:
             "re-check whether the non-executing decoder is still required"
         )
 
-    @pytest.mark.parametrize("payload", EXECUTING_PAYLOADS)
-    def test_decode_refuses_executing_shapes(
-        self, payload: str, monkeypatch: pytest.MonkeyPatch
+
+_NORMALIZATION_CASES = [
+    param("[get_weather(city='SF')]", "python", id="python_bracketed"),
+    param("get_weather(city='SF')", "python", id="python_unbracketed"),
+    param("```\n[get_weather(city='SF')]\n```", "python", id="python_fenced"),
+    param(
+        "```python\n[get_weather(city='SF')]\n```", "python", id="python_labelled_fence"
+    ),
+    param("```", "python", id="python_bare_fence"),
+    param("I cannot help with that.", "python", id="python_prose"),
+    param(
+        "GeometryPresentation.createPresentation(controller=mapController, parent=mapArea)",
+        "java",
+        id="java_unbracketed",
+    ),
+    param(
+        "```\n[GeometryPresentation.createPresentation(controller=mapController, parent=mapArea)]\n```",
+        "java",
+        id="java_fenced",
+    ),
+    param(
+        "validateUserInput(inputField=userInputField, isComplete=true)",
+        "javascript",
+        id="javascript_unbracketed",
+    ),
+    param(
+        "```\nvalidateUserInput(inputField=userInputField, isComplete=true)\n```",
+        "javascript",
+        id="javascript_fenced",
+    ),
+]
+
+_RETURN_FORMATS = {
+    "python": ReturnFormat.PYTHON,
+    "java": ReturnFormat.JAVA,
+    "javascript": ReturnFormat.JAVASCRIPT,
+}
+_LANGUAGES = {
+    "python": Language.PYTHON,
+    "java": Language.JAVA,
+    "javascript": Language.JAVASCRIPT,
+}
+
+
+def _bundled_entry(category: str, index: int = 0) -> tuple[list, list]:
+    """``(function docs, possible answer)`` for one entry of the bundled data."""
+    prefix = _bfcl_compat.version_prefix()
+    entry = orjson.loads(
+        (_bfcl_compat.data_dir() / f"{prefix}_{category}.json")
+        .read_text()
+        .splitlines()[index]
+    )
+    answer = orjson.loads(
+        (_bfcl_compat.possible_answer_dir() / f"{prefix}_{category}.json")
+        .read_text()
+        .splitlines()[index]
+    )
+    return entry["function"], answer["ground_truth"]
+
+
+class TestPromptModeNormalizationParity:
+    """Decoding must match upstream's Prompt-mode handler, not bare ``ast_parse``.
+
+    Upstream's handler runs ``default_decode_ast_prompting``: strip backticks,
+    newlines and spaces, then bracket, then ``ast_parse``. Its Java and
+    JavaScript branches drop the first and last character on the assumption
+    that the bracketing already happened.
+    """
+
+    @pytest.mark.parametrize("response,language", _NORMALIZATION_CASES)
+    def test_decode_calls_matches_upstream_prompting_decoder(
+        self, response: str, language: str
     ) -> None:
-        fired = self._tripwire(monkeypatch)
-        with pytest.raises(_bfcl_compat.BFCLDecodeError):
-            _bfcl_compat.decode_calls(payload, "python")
-        assert not fired, f"decoding executed model output: {fired}"
+        try:
+            expected = default_decode_ast_prompting(response, _RETURN_FORMATS[language])
+        except Exception:
+            with pytest.raises(_bfcl_compat.BFCLDecodeError):
+                _bfcl_compat.decode_calls(response, language)
+            return
+        assert _bfcl_compat.decode_calls(response, language) == expected
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("payload", EXECUTING_PAYLOADS)
-    async def test_grade_reports_unparsed_without_executing(
-        self, payload: str, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """End-to-end: the full grader path, not just the decoder.
-
-        A refusal has to surface as an ordinary ``unparsed`` verdict - the
-        response genuinely did not decode - rather than raising out of
-        ``grade`` into the record processor.
-        """
-        fired = self._tripwire(monkeypatch)
+    async def test_grade_fenced_call_on_irrelevance_matches_upstream(self) -> None:
+        """Upstream decodes the fenced call, so it is a hallucinated call."""
+        response = "```\n[get_weather(city='SF')]\n```"
+        assert default_decode_ast_prompting(response, ReturnFormat.PYTHON)
         result = await _grader().grade(
-            payload,
-            _ground_truth("simple_python", _WEATHER_FUNCTION, _WEATHER_GOLD),
+            response, _ground_truth("irrelevance", _WEATHER_FUNCTION, None)
         )
-        assert not fired, f"grading executed model output: {fired}"
         assert result.correct is False
-        assert result.unparsed is True
 
-    def test_decode_still_resolves_benign_arithmetic(
-        self, monkeypatch: pytest.MonkeyPatch
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "category,language,response",
+        [
+            param(
+                "simple_java",
+                "java",
+                "GeometryPresentation.createPresentation(controller=mapController, parent=mapArea)",
+                id="java",
+            ),
+            param(
+                "simple_javascript",
+                "javascript",
+                "validateUserInput(inputField=userInputField, isComplete=true)",
+                id="javascript",
+            ),
+        ],
+    )  # fmt: skip
+    async def test_grade_unbracketed_call_matches_upstream_verdict(
+        self, category: str, language: str, response: str
     ) -> None:
-        """Refusing ``eval`` must not cost the arithmetic upstream accepts."""
-        fired = self._tripwire(monkeypatch)
-        decoded = _bfcl_compat.decode_calls(
-            "[calculate_triangle_area(base=5+5, height=2*3)]", "python"
+        function, gold = _bundled_entry(category)
+        upstream = ast_checker(
+            function,
+            default_decode_ast_prompting(response, _RETURN_FORMATS[language]),
+            gold,
+            _LANGUAGES[language],
+            category,
+            CHECKER_MODEL_NAME,
         )
-        assert decoded == [{"calculate_triangle_area": {"base": 10, "height": 6}}]
-        assert not fired
+        payload = orjson.dumps(
+            {
+                "id": f"{category}_0",
+                "test_category": category,
+                "language": language,
+                "function": function,
+                "possible_answer": gold,
+            }
+        ).decode("utf-8")
+        result = await _grader().grade(response, payload)
+        assert upstream["valid"] is True
+        assert result.correct is upstream["valid"]

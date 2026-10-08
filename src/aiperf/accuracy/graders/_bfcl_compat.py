@@ -57,6 +57,7 @@ import importlib.metadata
 import importlib.util
 import inspect
 import logging
+import math
 import operator
 from copy import deepcopy
 from pathlib import Path
@@ -399,23 +400,12 @@ def preprocess_function_docs(
     """Apply BFCL's language-specific preprocessing to a *copy* of the tool schemas.
 
     Upstream only ever builds a Prompt-mode prompt from preprocessed schemas:
-    ``load_dataset_entry`` runs every entry through this exact step before
-    generation (``include_language_specific_hint=True`` by default; see
-    ``_llm_response_generation.py`` calling it, and
-    ``add_language_specific_hint_to_function_doc`` applying it per entry in
-    ``bfcl_eval/utils.py``). Before this function existed, this integration
-    sent the raw schema straight to the prompt builder, which (flagged on
-    review) produced a prompt upstream never actually generates against a
-    model: Java/JavaScript lost the required "this is a Java/JavaScript x
-    type parameter in string representation" instructions and `type`/
-    `properties` rewrites entirely, since those are added by this exact
-    preprocessing step and nowhere else. **Verified 2026-10-02** against the
-    installed ``bfcl-eval==2026.3.23`` wheel: comparing this function's output
-    (via :func:`build_chat_messages`) against upstream's own
-    ``load_dataset_entry`` + ``system_prompt_pre_processing_chat_model``
-    pipeline across 150 real entries (simple_python/java/javascript,
-    multiple, irrelevance; 30 entries each) produced byte-identical prompts
-    in all 150 cases.
+    ``load_dataset_entry`` runs every entry through this step before
+    generation (``add_language_specific_hint_to_function_doc``, which calls
+    the ``_func_doc_language_specific_pre_processing`` resolved here, both in
+    ``bfcl_eval/utils.py``). It appends the language hint to each description
+    and, for Java/JavaScript, rewrites ``type``/``properties`` into the
+    "string representation" form the prompt instructs the model to use.
 
     This must run on a **copy**: the function mutates its input in place
     (appending to ``description`` and, for Java/JavaScript, rewriting
@@ -579,6 +569,14 @@ _SAFE_BINOPS: dict[type, Any] = {
 #: legitimate BFCL tool-call argument needs an exponent this large.
 _MAX_POW_EXPONENT = 1024
 
+#: Upper bound on the bit length of any integer operand or result inside an
+#: argument expression. Decoding runs synchronously on the record-processor
+#: event loop, so ``**``, ``<<`` and ``*`` are size-checked *before* they run:
+#: a bounded exponent alone still admits ``((3**1024)**1024)**64`` and
+#: ``1<<100000000``. 256 bits is far beyond any real tool-call argument and
+#: keeps every result printable and serializable.
+_MAX_INT_BITS = 256
+
 
 def _safe_numeric(node: ast.AST) -> int | float:
     """Resolve a numeric literal/unary/binary expression without executing it.
@@ -611,17 +609,56 @@ def _safe_binop(node: ast.BinOp) -> int | float:
         raise BFCLDecodeError(
             f"unsupported operator in numeric expression: {type(node.op).__name__}"
         )
-    left = _safe_numeric(node.left)
-    right = _safe_numeric(node.right)
+    left = _check_magnitude(_safe_numeric(node.left))
+    right = _check_magnitude(_safe_numeric(node.right))
     if isinstance(node.op, ast.Pow) and abs(right) > _MAX_POW_EXPONENT:
         raise BFCLDecodeError(
             f"exponent {right} exceeds the {_MAX_POW_EXPONENT} bound for a "
             f"tool-call argument expression"
         )
+    if _estimated_result_bits(node.op, left, right) > _MAX_INT_BITS:
+        raise BFCLDecodeError(
+            f"{type(node.op).__name__} result would exceed {_MAX_INT_BITS} bits "
+            f"for a tool-call argument expression"
+        )
     try:
-        return op_fn(left, right)
+        result = op_fn(left, right)
     except (ZeroDivisionError, OverflowError, ValueError) as e:
         raise BFCLDecodeError(f"could not evaluate numeric expression: {e}") from e
+    return _check_magnitude(result)
+
+
+def _estimated_result_bits(op: ast.operator, left: float, right: float) -> int:
+    """Lower bound on the result's bit length for the integer ops that can grow.
+
+    Computed from the operands alone, so an oversized ``**``/``<<``/``*`` is
+    refused without ever being evaluated. Every other operator yields at most
+    one bit more than its bounded operands, which :func:`_check_magnitude`
+    catches afterwards.
+    """
+    if not (isinstance(left, int) and isinstance(right, int)):
+        return 0
+    if isinstance(op, ast.Pow) and right > 0:
+        return (abs(left).bit_length() - 1) * right
+    if isinstance(op, ast.LShift) and right > 0:
+        return abs(left).bit_length() + right
+    if isinstance(op, ast.Mult):
+        return abs(left).bit_length() + abs(right).bit_length() - 1
+    return 0
+
+
+def _check_magnitude(value: int | float) -> int | float:
+    """Refuse integers wider than :data:`_MAX_INT_BITS` and non-finite floats."""
+    if isinstance(value, int) and value.bit_length() > _MAX_INT_BITS:
+        raise BFCLDecodeError(
+            f"integer of {value.bit_length()} bits exceeds the {_MAX_INT_BITS}-bit "
+            f"bound for a tool-call argument expression"
+        )
+    if isinstance(value, float) and not math.isfinite(value):
+        raise BFCLDecodeError(
+            f"numeric expression evaluated to non-finite {value} in a tool-call argument"
+        )
+    return value
 
 
 def _resolve_constant(value: ast.Constant) -> Any:
@@ -753,12 +790,31 @@ def _decode_python_calls(input_str: str) -> list[dict[str, Any]]:
     return calls
 
 
+def _normalize_prompt_response(response_text: str) -> str:
+    """Upstream's Prompt-mode strip-and-wrap, applied before any language branch.
+
+    Mirrors ``default_decode_ast_prompting`` (``bfcl_eval/model_handler/
+    utils.py``): strip backticks, newlines and spaces, then bracket the text if
+    it is not already. Skipping it changes verdicts - a fenced call list is
+    undecodable without it (so ``irrelevance`` would score it a correct
+    abstention), and upstream's Java/JavaScript parsers drop the first and
+    last character on the assumption that this wrapping already happened.
+    """
+    result = response_text.strip("`\n ")
+    if not result.startswith("["):
+        result = "[" + result
+    if not result.endswith("]"):
+        result = result + "]"
+    return result
+
+
 def decode_calls(response_text: str, language: str) -> list[dict[str, Any]]:
     """Decode a Prompt-mode response into BFCL's canonical call list.
 
     In Prompt mode the model answers in plain text with a Python-style call list
     (``[get_weather(city='SF')]``), decoded into ``[{"get_weather": {"city":
-    "SF"}}]``.
+    "SF"}}]``. The text first goes through upstream's strip-and-wrap
+    normalization (:func:`_normalize_prompt_response`) for every language.
 
     Security: the Python-language path never calls into ``bfcl_eval``'s own
     decoder. That decoder calls ``eval()`` on re-serialized source text for
@@ -786,9 +842,10 @@ def decode_calls(response_text: str, language: str) -> list[dict[str, Any]]:
             "answer channel. Usually the generation was cut off (max_tokens "
             "too low), or the model emitted only a reasoning channel."
         )
+    normalized = _normalize_prompt_response(response_text)
     if language == "python":
         try:
-            decoded = _decode_python_calls(response_text.strip())
+            decoded = _decode_python_calls(normalized)
         except BFCLDecodeError:
             raise
         except Exception as e:
@@ -805,7 +862,7 @@ def decode_calls(response_text: str, language: str) -> list[dict[str, Any]]:
         # integration.
         return_format = _return_format_enum(language)
         try:
-            decoded = parse(response_text.strip(), return_format)
+            decoded = parse(normalized, return_format)
         except Exception as e:
             raise BFCLDecodeError(f"{type(e).__name__}: {e}") from e
     if not isinstance(decoded, list):  # pragma: no cover - upstream drift
