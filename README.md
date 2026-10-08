@@ -148,6 +148,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Hugging Face TGI](docs/tutorials/huggingface-tgi.md) - Profile Hugging Face TGI models
 - [OpenAI Text Endpoints](docs/tutorials/openai-text-endpoints.md) - Profile OpenAI-compatible text APIs
 - [AWS SigV4 Authentication](docs/tutorials/aws-sigv4-auth.md) - Benchmark AWS endpoints (API Gateway, SageMaker, Bedrock) protected by IAM auth
+- [AWS SageMaker](docs/tutorials/aws-sagemaker.md) - Benchmark a model hosted behind a SageMaker Runtime endpoint, with no translation shim
 
 ### Load Control and Timing
 - [Request Rate with Max Concurrency](docs/tutorials/request-rate-concurrency.md) - Dual request control
@@ -187,6 +188,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Agentic Code Generator](docs/tutorials/agentic-code-generator.md) - Generate multi-turn coding-agent traces for KV cache benchmarking
 - [Weka Traces](docs/tutorials/weka-trace.md) - Replay real agentic coding sessions with KV-cache-aware Weka traces
 - [TraceLab Traces](docs/tutorials/tracelab-trace.md) - Replay the public TraceLab corpus of real agentic coding sessions
+- [H CUA Perf Traces](docs/tutorials/h-cua-perf.md) - Replay H Company's computer-use agent traces (tool calling, screenshots, recorded think time) from HuggingFace
 - [InferenceX AgentX MVP](docs/tutorials/agentx-mvp.md) - SemiAnalysis AgentX-MVP submission benchmark (`--scenario inferencex-agentx-mvp`)
 - [Fixed Schedule](docs/tutorials/fixed-schedule.md) - Precise timestamp-based execution
 - [Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md) - Duration-based testing
