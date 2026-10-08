@@ -1196,6 +1196,28 @@ def binary_record() -> RequestRecord:
 class TestVideoDownloadRedirects:
     """Redirect policies apply independently at every GET."""
 
+    async def test_configured_auth_is_separate_from_signed_url(
+        self, transport: AioHttpTransport
+    ) -> None:
+        transport.request_signer = AsyncMock()
+        transport.request_signer.sign.return_value = SignedRequest(
+            url="https://origin.test/file%2Fname?sig=%2b%2F", headers={}
+        )
+        transport.aiohttp_client.get_request.return_value = binary_record()
+        result = await transport._download_video_content(
+            "job",
+            None,
+            {},
+            signing_origin_url="https://us%65r:p%40ss%3Aword@origin.test/job",
+        )
+        assert result == b"video"
+        transport.request_signer.sign.assert_awaited_once_with(
+            "GET", "https://origin.test/job/content", {}, None
+        )
+        args, kwargs = transport.aiohttp_client.get_request.call_args
+        assert str(args[0]) == "https://origin.test/file%2Fname?sig=%2b%2F"
+        assert kwargs["auth"] == aiohttp.BasicAuth("user", "p@ss:word")
+
     async def test_setting_is_read_once_per_download(
         self, transport: AioHttpTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:

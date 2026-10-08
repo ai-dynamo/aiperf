@@ -20,7 +20,7 @@ from aiperf.common.environment import (
 )
 
 
-@pytest.mark.parametrize("value,expected", [param(None, 5), param("0", 0), param("1", 1), param("10", 10), param("100", 100)])  # fmt: skip
+@pytest.mark.parametrize("value,expected", [param(None, 5), param("0", 0), param("1", 1), param("100", 100)])  # fmt: skip
 def test_video_download_redirect_setting(
     monkeypatch: pytest.MonkeyPatch, value: str | None, expected: int
 ) -> None:

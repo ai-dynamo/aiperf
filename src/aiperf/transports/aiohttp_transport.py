@@ -101,6 +101,16 @@ def _validated_video_url(url: str) -> str:
     return urlunsplit(parts._replace(fragment=""))
 
 
+def _video_download_origin(url: str) -> tuple[str, aiohttp.BasicAuth | None]:
+    """Separate configured authentication from URLs selected by the server."""
+    _validate_video_url_reference(url)
+    parts = urlsplit(url)
+    origin = _validated_video_url(
+        urlunsplit(parts._replace(netloc=parts.netloc.rsplit("@", 1)[-1]))
+    )
+    return origin, aiohttp.BasicAuth.from_url(URL(url, encoded=True))
+
+
 def _resolve_video_redirect(requested_url: str, location: str) -> str:
     """Resolve a valid reference without repairing malformed absolute authorities."""
     _validate_video_url_reference(location)
@@ -792,7 +802,7 @@ class AioHttpTransport(BaseTransport):
     async def _download_video_content(
         self,
         job_id: str,
-        content_url: str,
+        content_url: str | None,
         headers: dict[str, str],
         *,
         signing_origin_url: str,
@@ -822,14 +832,17 @@ class AioHttpTransport(BaseTransport):
 
         try:
             async with asyncio.timeout(timeout):
-                origin = _validated_video_url(signing_origin_url)
-                current_url = _validated_video_url(content_url)
+                origin, auth = _video_download_origin(signing_origin_url)
+                current_url = _validated_video_url(
+                    content_url if content_url is not None else f"{origin}/content"
+                )
                 while True:
                     stage = "signing"
                     signed = await self._prepare_video_download_request(
                         current_url, origin, headers
                     )
                     requested_url = signed.url
+                    same_origin = _same_origin(requested_url, origin)
 
                     stage = "request"
                     record = await self.aiohttp_client.get_request(
@@ -837,24 +850,22 @@ class AioHttpTransport(BaseTransport):
                         signed.headers,
                         allow_redirects=False,
                         capture_redirects=True,
+                        auth=auth if same_origin else None,
                         # netrc can otherwise add BasicAuth after header filtering.
-                        trust_env=None
-                        if _same_origin(requested_url, origin)
-                        else False,
+                        trust_env=None if same_origin else False,
                     )
                     status = record.status or 500
-                    if record.error:
-                        return failure("HTTP or network request failed", status)
-                    if status in VIDEO_DOWNLOAD_REDIRECT_STATUSES:
+                    if status in VIDEO_DOWNLOAD_REDIRECT_STATUSES and not record.error:
                         stage = "redirect validation"
                         current_url = _video_redirect_target(
                             record, requested_url, max_redirects - hops
                         )
                         hops += 1
                         continue
-                    stage = "content"
+                    stage = "request" if record.error else "content"
                     if (
-                        200 <= status < 300
+                        not record.error
+                        and 200 <= status < 300
                         and record.responses
                         and isinstance(record.responses[0], BinaryResponse)
                     ):
@@ -864,14 +875,19 @@ class AioHttpTransport(BaseTransport):
                         )
                         return video_bytes
                     return failure(
-                        "No binary content returned",
-                        status if not 200 <= status < 300 else 500,
+                        "HTTP or network request failed"
+                        if record.error
+                        else "No binary content returned",
+                        status if record.error or not 200 <= status < 300 else 500,
                     )
-        except ValueError as error:
+        except _VideoDownloadPolicyError as error:
             return failure(
-                str(error)
-                if isinstance(error, _VideoDownloadPolicyError)
-                else "Invalid download URL",
+                str(error),
+                status if stage == "redirect validation" else 500,
+            )
+        except ValueError:
+            return failure(
+                "Invalid download URL",
                 status if stage == "redirect validation" else 500,
             )
         except TimeoutError:
@@ -948,7 +964,7 @@ class AioHttpTransport(BaseTransport):
 
             # Optional: download video content if requested
             if download_content:
-                content_url = data.get("url") or f"{poll_url}/content"
+                content_url = data.get("url") or None
                 download_result = await self._download_video_content(
                     job_id, content_url, headers, signing_origin_url=poll_url
                 )
