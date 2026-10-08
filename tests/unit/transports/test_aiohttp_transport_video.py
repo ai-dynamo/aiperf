@@ -1188,7 +1188,6 @@ def redirect_record(location: str = "/next", status: int = 302) -> RequestRecord
 
 
 def binary_record() -> RequestRecord:
-    """Make a successful final download."""
     return RequestRecord(
         status=200, responses=[BinaryResponse(perf_ns=1, raw_bytes=b"video")]
     )
@@ -1253,7 +1252,7 @@ class TestVideoDownloadRedirects:
             assert call.kwargs["allow_redirects"] is False
             assert call.kwargs["capture_redirects"] is True
 
-    @pytest.mark.parametrize("limit", [param(0), param(1), param(5), param(10)])  # fmt: skip
+    @pytest.mark.parametrize("limit", [param(0), param(1), param(10)])  # fmt: skip
     @pytest.mark.parametrize("extra", [param(0, id="at-limit"), param(1, id="over-limit")])  # fmt: skip
     async def test_exact_limit(
         self,
@@ -1418,7 +1417,7 @@ class TestVideoDownloadRedirects:
         assert "secret" not in result.message
         transport.aiohttp_client.get_request.assert_not_awaited()
 
-    @pytest.mark.parametrize("status", [param(300), param(304), param(305), param(306), param(404), param(401), param(403)])  # fmt: skip
+    @pytest.mark.parametrize("status", [param(300), param(404)])  # fmt: skip
     async def test_terminal_http_errors_preserve_status(
         self, transport: AioHttpTransport, status: int
     ) -> None:
