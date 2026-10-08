@@ -35,6 +35,12 @@ class TestRequestRecordTimestampAnchor:
         record = RequestRecord(timestamp_ns=123, start_perf_ns=456)
         assert record.timestamp_ns == 123
 
+    def test_omitted_timestamp_stays_out_of_fields_set(self) -> None:
+        # A fifth fields-set entry resizes the set: +512 B on every in-flight
+        # record, which the memory estimator's constants do not budget for.
+        record = RequestRecord(start_perf_ns=456)
+        assert "timestamp_ns" not in record.model_fields_set
+
     def test_fully_defaulted_record_is_in_the_wall_clock_domain(self) -> None:
         record = RequestRecord()
         assert abs(record.timestamp_ns - time.time_ns()) < 1_000_000_000
