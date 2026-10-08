@@ -2,11 +2,15 @@
 # SPDX-License-Identifier: Apache-2.0
 """Per-trace block_size resolution in WekaTraceLoader."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import CustomDatasetType
 from tests.unit.dataset.loader._shared_helpers import _write_trace
 
 
@@ -17,8 +21,8 @@ def _mk_user_config():
 
 
 def _make_loader(filename, uc, monkeypatch, *, block_size=None):
-    # v2 FileDataset has no block_size field, so the user block-size override is
-    # injected via the loader's ``default_block_size`` ctor kwarg, not config.
+    # ``block_size`` is passed as ``default_block_size``, as CustomDatasetComposer
+    # does with the plugin metadata value; it must not override the trace's own.
     loader = WekaTraceLoader(
         filename=str(filename), run=uc, default_block_size=block_size
     )
@@ -84,35 +88,96 @@ def test_trace_block_size_honored_when_user_unset(tmp_path, monkeypatch):
     assert any(c.session_id == "t_bs128" for c in convs)
 
 
-def test_user_block_size_overrides_trace_block_size(tmp_path, monkeypatch):
-    """User-config block_size overrides trace.block_size: trace declares 64, user wants 32, loader must use 32."""
-    # in_tokens=128, bs=32 -> 4 hash_ids needed. The trace declares bs=64 but
-    # provides only 4 hash_ids; bs=64 would need 2. Either resolution works at
-    # turn-0 (since 4 >= 2 and 4 >= 4). What we're really checking is which
-    # one the loader picks. We'll check via a side-channel: the ConversationReconstructor
-    # constructor's recorded block_size.
-    trace = _trace_with_bs("t_bs_override", bs=64, in_tokens=128, hash_ids=[1, 2, 3, 4])
-    path = _write_trace(tmp_path, trace)
-    loader = _make_loader(path, _mk_user_config(), monkeypatch, block_size=32)
-    # Capture every ConversationReconstructor block_size argument the loader uses
-    # during this convert call.
+def _capture_reconstructor_block_sizes(monkeypatch) -> list[int]:
+    """Record the block_size of every ConversationReconstructor the loader builds."""
     from aiperf.dataset.loader import weka_synth_buf as wsb
 
-    captured_block_sizes: list[int] = []
+    captured: list[int] = []
     orig = wsb.ConversationReconstructor.__init__
 
     def spy(self, *args, **kw):
-        captured_block_sizes.append(kw.get("block_size", args[0] if args else None))
+        captured.append(kw.get("block_size", args[0] if args else None))
         return orig(self, *args, **kw)
 
     monkeypatch.setattr(wsb.ConversationReconstructor, "__init__", spy)
-    loader.convert_to_conversations(loader.load_dataset())
-    assert captured_block_sizes, (
-        "no ConversationReconstructor built - test setup broken"
+    return captured
+
+
+@pytest.mark.parametrize(
+    "trace_bs",
+    [
+        param(16, id="smaller-than-plugin-default"),
+        param(128, id="larger-than-plugin-default"),
+    ],
+)  # fmt: skip
+def test_trace_block_size_wins_over_plugin_default_block_size(
+    tmp_path, monkeypatch, trace_bs
+):
+    """A trace's declared block_size is replayed as-is although the composer always passes the plugin's default_block_size (64).
+
+    Regression: the plugin default was treated as a user override, so a 128-token
+    trace was rebuilt from 64-token blocks -- its hash_ids covered only half of each
+    prompt and the rest was synthesized fresh every turn, halving prefix-cache reuse.
+    """
+    plugin_default = plugins.get_dataset_loader_metadata(
+        CustomDatasetType.WEKA_TRACE
+    ).default_block_size
+    assert plugin_default == 64, "precondition: plugin default differs from the trace"
+    trace = _trace_with_bs(
+        f"t_bs{trace_bs}_plugin_default",
+        bs=trace_bs,
+        in_tokens=4 * trace_bs,
+        hash_ids=[100, 200, 300, 400],
     )
-    assert all(bs == 32 for bs in captured_block_sizes), (
-        f"user-config block_size=32 should win over trace.block_size=64. "
-        f"Got: {captured_block_sizes}"
+    path = _write_trace(tmp_path, trace)
+    # Build the loader the way CustomDatasetComposer does for weka_trace.
+    loader = _make_loader(
+        path, _mk_user_config(), monkeypatch, block_size=plugin_default
+    )
+    captured = _capture_reconstructor_block_sizes(monkeypatch)
+    loader.convert_to_conversations(loader.load_dataset())
+    assert captured, "no ConversationReconstructor built - test setup broken"
+    assert all(bs == trace_bs for bs in captured), (
+        f"trace-declared block_size={trace_bs} must win over the plugin default "
+        f"{plugin_default}. Got: {captured}"
+    )
+
+
+class _DatasetWithPromptsBlockSize:
+    """The run's real default dataset plus ``prompts.block_size`` -- the loader's user override."""
+
+    def __init__(self, dataset, block_size):
+        self._dataset = dataset
+        self.prompts = SimpleNamespace(block_size=block_size)
+
+    def __getattr__(self, name):
+        return getattr(self._dataset, name)
+
+
+def test_user_block_size_overrides_trace_block_size(tmp_path, monkeypatch):
+    """A configured prompts.block_size overrides trace.block_size: trace declares 64, user sets 32, loader must use 32."""
+    # in_tokens=128, bs=32 -> 4 hash_ids needed. The trace declares bs=64 but
+    # provides only 4 hash_ids; bs=64 would need 2. Either resolution works at
+    # turn-0 (since 4 >= 2 and 4 >= 4). What we're really checking is which
+    # one the loader picks, via the ConversationReconstructor's block_size.
+    trace = _trace_with_bs("t_bs_override", bs=64, in_tokens=128, hash_ids=[1, 2, 3, 4])
+    path = _write_trace(tmp_path, trace)
+    uc = _mk_user_config()
+    dataset = uc.cfg.get_default_dataset()
+    monkeypatch.setattr(
+        type(uc.cfg),
+        "get_default_dataset",
+        lambda self: _DatasetWithPromptsBlockSize(dataset, 32),
+    )
+    plugin_default = plugins.get_dataset_loader_metadata(
+        CustomDatasetType.WEKA_TRACE
+    ).default_block_size
+    loader = _make_loader(path, uc, monkeypatch, block_size=plugin_default)
+    captured = _capture_reconstructor_block_sizes(monkeypatch)
+    loader.convert_to_conversations(loader.load_dataset())
+    assert captured, "no ConversationReconstructor built - test setup broken"
+    assert all(bs == 32 for bs in captured), (
+        f"user-config block_size=32 should win over trace.block_size=64. Got: {captured}"
     )
 
 

@@ -941,7 +941,7 @@ class TestSeamlessMode:
         pending_wait.done.return_value = False
         r._return_wait_task = pending_wait
 
-        r._detach_orchestrator_and_cleanup()
+        r._detach_orchestrator_and_cleanup(MagicMock())
 
         router.end_phase.assert_not_called()
 
