@@ -65,11 +65,11 @@ class MonotonicClock:
         return self.wall_anchor_ns + (perf_ns - self.perf_anchor_ns)
 
     def elapsed_ns(self) -> int:
-        """Nanoseconds elapsed since this clock was created."""
+        """Nanoseconds elapsed since the performance-counter anchor."""
         return time.perf_counter_ns() - self.perf_anchor_ns
 
     def elapsed_sec(self) -> float:
-        """Seconds elapsed since this clock was created."""
+        """Seconds elapsed since the performance-counter anchor."""
         return self.elapsed_ns() / NANOS_PER_SECOND
 
     @classmethod
