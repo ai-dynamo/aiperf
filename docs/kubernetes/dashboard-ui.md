@@ -74,7 +74,9 @@ uv run python tools/operator_ui_proxy.py --dev-reload --port 8123 --upstream htt
 ```
 
 Open `http://127.0.0.1:8123/live/`. The proxy serves
-`src/aiperf/operator/ui/`, forwards `/api/v1/*` to the configured upstream, and
+`src/aiperf/operator/ui/`, forwards `/api/v1/*` (including the
+`/live/api/v1/*` paths the UI calls when served under `/live/`) to the
+configured upstream, and
 reloads the browser when `.html`, `.js`, or `.css` files change.
 
 ### Authentication
