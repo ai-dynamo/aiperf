@@ -15,7 +15,7 @@ import asyncio
 
 import pytest
 
-from aiperf.common.enums import CreditPhase
+from aiperf.common.enums import CreditPhase, ProfileCancelReason
 from aiperf.common.environment import Environment
 from aiperf.common.models import CreditPhaseStats
 from aiperf.records.records_manager import RecordsManager
@@ -37,13 +37,13 @@ class _Manager:
         self._progress_stall_last_total = -1
         self._progress_stall_since = 0.0
         self._latest_profiling_credit_stats: CreditPhaseStats | None = None
+        self._progress_stall_triggered = False
         self.warnings: list[str] = []
-        self.terminal_failures: list[BaseException] = []
+        self.cancels: list[tuple[str, str]] = []
 
-    async def _publish_terminal_failure_result(
-        self, phase, cancelled, error, stage=None, reason_prefix=None
-    ):
-        self.terminal_failures.append(error)
+    async def _request_profile_cancel(self, reason, reason_detail) -> bool:
+        self.cancels.append((reason, reason_detail))
+        return True
 
     def warning(self, msg) -> None:
         self.warnings.append(msg() if callable(msg) else msg)
@@ -87,12 +87,19 @@ async def test_stall_warns_then_fails(monkeypatch) -> None:
     assert "198" in mgr.warnings[0]
 
     await _tick(mgr, monkeypatch, total=198, now=1000.0)
-    assert len(mgr.terminal_failures) == 1, (
-        "a stall must publish a fatal result; raising is only logged because "
-        "@background_task defaults to stop_on_error=False, so the run would "
-        "hang on regardless"
+    assert len(mgr.cancels) == 1, (
+        "a stall must end the run through the cancel path: publishing a "
+        "terminal result fills only the profile domain, leaving the "
+        "controller waiting on server_metrics, which cannot arrive until the "
+        "profiling phase completes"
     )
-    assert "stalled" in str(mgr.terminal_failures[0])
+    reason, detail = mgr.cancels[0]
+    assert reason == ProfileCancelReason.PROGRESS_STALL
+    assert "stalled" in detail
+
+    # Latched: a stalled run asks once, not on every subsequent tick.
+    await _tick(mgr, monkeypatch, total=198, now=2000.0)
+    assert len(mgr.cancels) == 1
 
 
 @pytest.mark.asyncio
@@ -116,7 +123,7 @@ async def test_watchdog_disarmed_until_profiling_starts(monkeypatch) -> None:
     mgr._profiling_started = False
     await _tick(mgr, monkeypatch, total=0, now=100_000.0)
     assert mgr.warnings == []
-    assert mgr.terminal_failures == []
+    assert mgr.cancels == []
 
 
 @pytest.mark.asyncio
@@ -140,7 +147,7 @@ async def test_no_requests_in_flight_is_not_a_stall(monkeypatch) -> None:
     for now in (0.0, 10.0, 100_000.0):
         await _tick(mgr, monkeypatch, total=5, now=now, in_flight=0)
     assert mgr.warnings == []
-    assert mgr.terminal_failures == []
+    assert mgr.cancels == []
 
 
 @pytest.mark.asyncio
@@ -154,7 +161,7 @@ async def test_a_quiet_stretch_does_not_accumulate_toward_a_later_stall(
     await _tick(mgr, monkeypatch, total=5, now=5_000.0, in_flight=2)
     await _tick(mgr, monkeypatch, total=5, now=5_100.0, in_flight=2)
 
-    assert mgr.terminal_failures == []
+    assert mgr.cancels == []
     assert len(mgr.warnings) == 1
     assert "100s" in mgr.warnings[0]
 
