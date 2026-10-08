@@ -1165,6 +1165,9 @@ class RequestInfo(RecordContext):
 class RequestRecord(AIPerfBaseModel):
     """Record of a request with its associated responses."""
 
+    _redirect_locations: tuple[str, ...] = PrivateAttr(default=())
+    """Download redirect metadata, local to the transport and never serialized."""
+
     _parsed_responses_cache: list[ParsedResponse] | None = PrivateAttr(default=None)
     """Memoized endpoint-final parsed responses, local to this process and never
     serialized. Populated by endpoint response processing and treated as read-only.

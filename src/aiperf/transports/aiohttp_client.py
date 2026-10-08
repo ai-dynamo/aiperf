@@ -7,6 +7,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
+from yarl import URL
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.environment import Environment
@@ -52,6 +53,9 @@ def _expected_request_body_size(data: Any) -> int | None:
     return None
 
 
+VIDEO_DOWNLOAD_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+
 class AioHttpClient(AIPerfLoggerMixin):
     """A high-performance HTTP client for communicating with HTTP based REST APIs using aiohttp.
 
@@ -81,7 +85,7 @@ class AioHttpClient(AIPerfLoggerMixin):
     async def _request(
         self,
         method: str,
-        url: str,
+        url: str | URL,
         headers: dict[str, str],
         *,
         data: bytes | aiohttp.FormData | None = None,
@@ -90,6 +94,8 @@ class AioHttpClient(AIPerfLoggerMixin):
         trace_data: AioHttpTraceData | None = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
+        capture_redirects: bool = False,
+        trust_env: bool | None = None,
         **kwargs: Any,
     ) -> RequestRecord:
         """Generic request method that handles common logic for all HTTP methods.
@@ -106,11 +112,18 @@ class AioHttpClient(AIPerfLoggerMixin):
                 If None, uses self.tcp_connector (shared pool).
             connector_owner: If True, the session will close the connector when done.
                 Use True for per-request connections that should be closed after use.
+            capture_redirects: Capture download redirect headers without reading the body.
+                Requires GET and explicit allow_redirects=False.
+            trust_env: Override environment proxy and netrc use for this session.
             **kwargs: Additional arguments to pass to the request
 
         Returns:
             RequestRecord with the response data
         """
+        if capture_redirects and (
+            method != "GET" or kwargs.get("allow_redirects") is not False
+        ):
+            raise ValueError("Redirect capture requires GET with allow_redirects=False")
         self.debug(lambda: f"Sending {method} request to {url}")
 
         # Use provided trace_data or create new one
@@ -152,7 +165,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                 ],
                 connector_owner=connector_owner,
                 trace_configs=[trace_config],
-                trust_env=AioHttpDefaults.TRUST_ENV,
+                trust_env=AioHttpDefaults.TRUST_ENV if trust_env is None else trust_env,
             ) as session:
                 # Re-pair start_perf_ns with timestamp_ns at the same instant: the Pydantic
                 # default_factory fired at record construction (above), but session setup
@@ -164,6 +177,18 @@ class AioHttpClient(AIPerfLoggerMixin):
                     method, url, data=data, headers=headers, **kwargs
                 ) as response:
                     record.status = response.status
+
+                    if (
+                        capture_redirects
+                        and response.status in VIDEO_DOWNLOAD_REDIRECT_STATUSES
+                    ):
+                        record._redirect_locations = tuple(
+                            response.headers.getall("Location", ())
+                        )
+                        record.end_perf_ns = time.perf_counter_ns()
+                        # An unfinished redirect body must not delay the next hop.
+                        response.close()
+                        return record
 
                     # Treat the full 2xx range as success so async job APIs can
                     # return accepted/created responses without being rejected.
@@ -473,7 +498,7 @@ class AioHttpClient(AIPerfLoggerMixin):
             )
 
     async def get_request(
-        self, url: str, headers: dict[str, str], **kwargs: Any
+        self, url: str | URL, headers: dict[str, str], **kwargs: Any
     ) -> RequestRecord:
         """Send a GET request to the specified URL with the given headers.
 
