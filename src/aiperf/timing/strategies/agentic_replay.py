@@ -464,45 +464,45 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         ):
             self.credit_issuer.set_turn_admission(self._admit_cache_warmup_turn)
         if self.config.phase == CreditPhase.PROFILING:
-            self.credit_issuer.replay_gate.activate()
-            if not self.config.finite_replay:
-                for trajectory in self.conversation_source.trajectories:
-                    self._seed_trajectory_replay_prefix(trajectory)
-            if (
-                not self.conversation_source.trajectories
-                and not self.config.finite_replay
-            ):
-                raise RuntimeError(
-                    "AgenticReplayStrategy PROFILING setup: trajectories empty. "
-                    "WARMUP must complete with at least one trajectory before "
-                    "PROFILING can start. Check loader output and warmup failures."
+            self._setup_profiling_phase()
+
+    def _setup_profiling_phase(self) -> None:
+        """Initialize credit issuer and trajectory structures for PROFILING."""
+        self.credit_issuer.replay_gate.activate()
+        if self.config.finite_replay:
+            self.scheduler.set_drain_observer(self._schedule_finite_finish_check)
+            if self.branch_orchestrator is not None:
+                self.branch_orchestrator.set_drain_observer(
+                    self._schedule_finite_finish_check
                 )
-            if self.config.finite_replay:
-                self.scheduler.set_drain_observer(self._schedule_finite_finish_check)
-                if self.branch_orchestrator is not None:
-                    self.branch_orchestrator.set_drain_observer(
-                        self._schedule_finite_finish_check
-                    )
-            if self.config.finite_replay:
-                self.info(
-                    f"PROFILING setup: finite replay will admit "
-                    f"{len(self._finite_roots)} root traces across "
-                    f"{min(self.config.concurrency or 0, len(self._finite_roots))} lanes"
-                )
-            else:
-                self.info(
-                    f"PROFILING setup: {len(self.conversation_source.trajectories)} "
-                    "trajectory lanes; recycle draws roots from the dataset sampler"
-                )
-                rootless, gated = self._lane_credit_lane_counts()
-                if rootless or gated:
-                    self.info(
-                        f"PROFILING: {rootless} rootless + {gated} gated-parent lanes "
-                        f"of {len(self.conversation_source.trajectories)} dispatch no "
-                        f"root credit at start and hold a lane credit instead (so they "
-                        f"still count toward concurrency); rootless lanes recycle into a "
-                        f"fresh root once their background subagents drain"
-                    )
+            self.info(
+                f"PROFILING setup: finite replay will admit "
+                f"{len(self._finite_roots)} root traces across "
+                f"{min(self.config.concurrency or 0, len(self._finite_roots))} lanes"
+            )
+            return
+
+        for trajectory in self.conversation_source.trajectories:
+            self._seed_trajectory_replay_prefix(trajectory)
+        if not self.conversation_source.trajectories:
+            raise RuntimeError(
+                "AgenticReplayStrategy PROFILING setup: trajectories empty. "
+                "WARMUP must complete with at least one trajectory before "
+                "PROFILING can start. Check loader output and warmup failures."
+            )
+        self.info(
+            f"PROFILING setup: {len(self.conversation_source.trajectories)} "
+            "trajectory lanes; recycle draws roots from the dataset sampler"
+        )
+        rootless, gated = self._lane_credit_lane_counts()
+        if rootless or gated:
+            self.info(
+                f"PROFILING: {rootless} rootless + {gated} gated-parent lanes "
+                f"of {len(self.conversation_source.trajectories)} dispatch no "
+                f"root credit at start and hold a lane credit instead (so they "
+                f"still count toward concurrency); rootless lanes recycle into a "
+                f"fresh root once their background subagents drain"
+            )
 
     def _cache_warmup_lane(self, turn_or_credit: TurnToSend | Credit) -> int:
         """Resolve a warmup turn or credit to its stable trajectory lane."""
