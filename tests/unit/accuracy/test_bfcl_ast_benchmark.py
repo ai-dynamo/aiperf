@@ -246,6 +246,20 @@ class TestGroundTruthSerialization:
         assert payload["function"][0]["name"] == "get_weather"
 
     @pytest.mark.asyncio
+    async def test_ground_truth_schema_is_unpreprocessed_original(
+        self, bfcl_data: Path
+    ) -> None:
+        """Prompt-only preprocessing must not leak into the grader's schema."""
+        benchmark = BFCLASTBenchmark(run=_make_run())
+        problems = await benchmark.load_problems(
+            tasks=["simple_python"], n_shots=0, enable_cot=False
+        )
+        payload = orjson.loads(problems[0].ground_truth)
+        assert (
+            payload["function"] == fake_bfcl.DATA_ROWS["simple_python"][0]["function"]
+        )
+
+    @pytest.mark.asyncio
     async def test_irrelevance_ground_truth_has_no_possible_answer(
         self, bfcl_data: Path
     ) -> None:

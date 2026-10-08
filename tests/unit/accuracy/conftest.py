@@ -159,6 +159,9 @@ def _patch_bfcl_compat_names(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda: tuple(fake_bfcl.NON_LIVE_CATEGORY) + tuple(fake_bfcl.LIVE_CATEGORY),
     )
     monkeypatch.setattr(
+        _bfcl_compat, "preprocess_function_docs", fake_bfcl.preprocess_function_docs
+    )
+    monkeypatch.setattr(
         _bfcl_compat, "build_chat_messages", fake_bfcl.build_chat_messages
     )
 

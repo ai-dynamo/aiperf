@@ -21,6 +21,9 @@ This module re-creates just enough behavior for the ``bfcl_ast`` loader and
   classification is exercised faithfully. It is emphatically **not** a
   reimplementation of upstream's semantics; parity against the real checker is
   asserted in ``test_bfcl_ast_parity.py``.
+- :func:`preprocess_function_docs` returns a deep copy with a synthetic
+  language hint appended to each description, so the "prompt schema is a
+  copy, grader schema is the original" contract stays observable.
 - :func:`build_chat_messages` returns a synthetic system prompt. It is
   deliberately *not* byte-equal to upstream's; the byte-equality contract is
   pinned in ``test_bfcl_prompt_template.py`` against the real install.
@@ -37,6 +40,7 @@ is injected into ``sys.modules``.
 from __future__ import annotations
 
 import ast
+from copy import deepcopy
 from typing import Any
 
 import orjson
@@ -357,6 +361,29 @@ def _checker_name(test_category: str) -> str:
     if "multiple" in test_category:
         return "multiple_function_checker"
     return "simple_function_checker"
+
+
+#: Appended to every description by :func:`preprocess_function_docs`.
+LANGUAGE_HINT_SUFFIX = " [fake {language} hint]"
+
+
+def preprocess_function_docs(
+    function_docs: list[dict[str, Any]], test_category: str
+) -> list[dict[str, Any]]:
+    """Stand-in for ``_bfcl_compat.preprocess_function_docs``.
+
+    Never mutates ``function_docs``: a test that sees the hint on the grader's
+    schema has caught the prompt copy leaking into ground truth.
+    """
+    language = test_category.rsplit("_", 1)[-1]
+    if language not in ("java", "javascript"):
+        language = "python"
+    copied = deepcopy(function_docs)
+    for doc in copied:
+        doc["description"] = doc.get("description", "") + LANGUAGE_HINT_SUFFIX.format(
+            language=language
+        )
+    return copied
 
 
 def build_chat_messages(
