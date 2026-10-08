@@ -227,6 +227,24 @@ def _write_background_trace(target_dir: Path) -> Path:
     return target_dir
 
 
+def _write_delayed_past_cutoff_trace(target_dir: Path) -> Path:
+    """One trace whose background branch holds an immediate worker plus a worker recorded 4000s after the branch start (past ``seam_max_gap_seconds``, so it stays its own chain), whose delayed turn-0 can never fire inside a short duration-bounded run."""
+    _write_trace(
+        target_dir,
+        "trace_late",
+        [
+            _req(0.00, [1, 2, 3], api_time=0.05),  # main t0
+            _req(0.60, [1, 2, 3, 4], api_time=0.05),  # main t1
+            _req(1.20, [1, 2, 3, 4, 5], api_time=0.50),  # main t2 (last)
+            _req(1.30, [1, 2, 50, 51], api_time=0.20),  # worker A t0
+            _req(1.60, [1, 2, 50, 51, 52], api_time=0.10),  # worker A t1
+            _req(4000.0, [1, 2, 60, 61, 62, 63], api_time=0.20),  # worker B t0
+            _req(4000.5, [1, 2, 60, 61, 62, 63, 64], api_time=0.20),  # worker B t1
+        ],
+    )
+    return target_dir
+
+
 def _write_poisoned_corpus(target_dir: Path) -> Path:
     """Two traces of 10 mutually disjoint single-block-hash requests each, which LCP detection treats as independent zero-depth founder chains."""
     for tid, base in (("trace_poison_a", 1000), ("trace_poison_b", 2000)):
@@ -267,9 +285,7 @@ async def _run_weka_profile(
         "--benchmark-duration",
         str(duration),
         # Bounded grace: normal drains finish in ~1-2s; the bound also caps
-        # the cost of a worst-case DAG drain stall (a delay-scheduled child
-        # turn cancelled by the deadline's cancel_all_pending leaves
-        # has_pending_branch_work stuck until the grace timeout fires).
+        # the cost of any worst-case DAG drain stall.
         "--benchmark-grace-period",
         "20",
         "--random-seed",
@@ -896,6 +912,37 @@ async def test_background_worker_chain_runs_after_root_and_drains_cleanly(
     assert branch_stats.parents_suspended == 0, (
         f"background-only trace must never suspend the parent: {branch_stats}"
     )
+
+
+async def test_child_delayed_past_duration_cutoff_does_not_hold_phase_for_grace(
+    tmp_path: Path, aiperf_mock_server: AIPerfMockServer
+) -> None:
+    """A SPAWN child whose recorded turn-0 lies past the duration cutoff is rolled back when its timer is cancelled, so the phase completes at the cutoff instead of idling out the grace period."""
+    corpus = _write_delayed_past_cutoff_trace(tmp_path / "traces")
+    result = await _run_weka_profile(
+        input_dir=corpus,
+        artifact_dir=tmp_path / "artifacts",
+        url=aiperf_mock_server.url,
+        duration=5.0,
+        concurrency=1,
+        timeout=200.0,
+    )
+    _assert_success(result, "child delayed past cutoff")
+
+    branch_stats = result.json.branch_stats
+    assert branch_stats is not None
+    assert branch_stats.children_delayed >= 1, branch_stats
+    assert branch_stats.children_truncated >= 1, branch_stats
+    assert not any(
+        record.metadata.conversation_id == "trace_late::fa:001"
+        for record in result.jsonl
+    ), "the late worker must never issue a request inside the 5s window"
+
+    log = _combined_log_text(result)
+    assert "grace_period_timeout=True" not in log, (
+        "profiling waited out the grace period although no request was in flight"
+    )
+    assert "leaked state at cleanup" not in log
 
 
 async def test_split_disabled_env_restores_legacy_single_stream(

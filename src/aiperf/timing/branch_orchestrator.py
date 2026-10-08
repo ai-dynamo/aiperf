@@ -323,6 +323,12 @@ class BranchOrchestrator:
         # timers uniformly with every other replay timer. The task set is a
         # compatibility fallback for isolated callers that provide no scheduler.
         self._delayed_dispatch_tasks: set[asyncio.Task] = set()
+        # Delayed children whose turn-0 has not dispatched yet:
+        # child x_correlation_id -> (child session, parent x_correlation_id).
+        # Their bookkeeping is registered at spawn time, so when the phase
+        # stops sending (and cancels their timers) they must be rolled back
+        # explicitly; see _abandon_delayed_children.
+        self._pending_delayed_children: dict[str, tuple[Any, str]] = {}
         # Drain observer: sync callback fired after state mutations that may
         # drain has_pending_branch_work() to False. Wired by
         # CreditCallbackHandler.set_branch_orchestrator to re-evaluate the
@@ -1334,6 +1340,7 @@ class BranchOrchestrator:
         same uniform system-idle advancement as turn and join timers. Isolated
         callers without a scheduler retain the legacy task/sleep fallback.
         """
+        self._pending_delayed_children[child.x_correlation_id] = (child, parent_corr)
         if self._scheduler is not None:
             self._scheduler.schedule_later(
                 offset_ms / 1000.0,
@@ -1365,6 +1372,8 @@ class BranchOrchestrator:
         await self._sleep_offset_ms(offset_ms)
         if self._cleaning_up:
             return
+        if self._pending_delayed_children.pop(child.x_correlation_id, None) is None:
+            return  # abandoned at the phase's sending cutoff
         async with self._parent_locks[parent_corr]:
             try:
                 result = await self._dispatch_first_turn(child)
@@ -1591,6 +1600,34 @@ class BranchOrchestrator:
         await self._release_blocked_join(pending)
         self._notify_drain()
 
+    async def _abandon_delayed_children(self) -> None:
+        """Roll back delayed SPAWN children that will never dispatch.
+
+        Called once the phase stops sending. ``PhaseRunner`` cancels the
+        shared scheduler at that boundary, which closes each pending delayed
+        dispatch without running it, so the rollback inside
+        ``_dispatch_first_turn_after_offset`` never executes and the child's
+        spawn-time bookkeeping would keep ``has_pending_branch_work()`` True
+        until the grace period expires. Apply the same rollback a post-cutoff
+        dispatch refusal would have produced.
+        """
+        if not self._pending_delayed_children:
+            return
+        by_parent: dict[str, list[Any]] = defaultdict(list)
+        for child, parent_corr in self._pending_delayed_children.values():
+            by_parent[parent_corr].append(child)
+        self._pending_delayed_children.clear()
+        for task in self._delayed_dispatch_tasks:
+            task.cancel()
+        self._delayed_dispatch_tasks.clear()
+        for parent_corr, children in by_parent.items():
+            async with self._parent_locks[parent_corr]:
+                for child in children:
+                    self._rollback_failed_first_turn(
+                        child, ChildDispatchResult.REJECTED, parent_corr
+                    )
+                await self._finalize_failed_dispatches(parent_corr)
+
     async def expire_replay_deadlines(self) -> None:
         """Drain active joins after phase scheduling has stopped.
 
@@ -1600,7 +1637,10 @@ class BranchOrchestrator:
         and let the issuer's normal stop condition suppress it once its child
         condition is also complete. This preserves the two-condition join
         state machine without leaving cancelled timers as phantom DAG work.
+        Delayed child dispatches cancelled at the same boundary are rolled
+        back first so the joins they gated can drain.
         """
+        await self._abandon_delayed_children()
         releasable: list[PendingBranchJoin] = []
         for parent_corr, pending in list(self._active_joins.items()):
             pending.replay_deadline_elapsed = True
@@ -1986,6 +2026,7 @@ class BranchOrchestrator:
         for task in self._delayed_dispatch_tasks:
             task.cancel()
         self._delayed_dispatch_tasks.clear()
+        self._pending_delayed_children.clear()
         s = self.stats
         logger.info(
             "BranchOrchestrator stats: spawned=%d completed=%d errored=%d "
