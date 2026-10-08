@@ -173,23 +173,29 @@ def test_named_dataset_prompt_shorthand_rerenders_its_source_reference() -> None
 @pytest.mark.parametrize("prompt", ["isl", "osl"])
 @pytest.mark.parametrize("named", [False, True], ids=["singular", "named"])
 @pytest.mark.parametrize(
-    "distribution_fields",
+    "sweep_type,distribution_fields",
     [
-        param(("mean",), id="grid-mean"),
-        param(("mean", "stddev"), id="qmc-mean-first"),
-        param(("stddev", "mean"), id="qmc-stddev-first"),
-        param(("max", "mean"), id="qmc-max-first"),
+        param("grid", ("mean",), id="grid-mean"),
+        param("sobol", ("mean", "stddev"), id="qmc-mean-first"),
+        param("sobol", ("stddev", "mean"), id="qmc-stddev-first"),
+        param("sobol", ("max", "mean"), id="qmc-max-first"),
+        param("grid", ("max", "mean"), id="grid-max-first"),
+        param("zip", ("max", "mean"), id="zip-max-first"),
     ],
 )  # fmt: skip
 def test_scalar_prompt_shorthand_can_be_overridden_by_distribution_path(
-    prompt: str, named: bool, distribution_fields: tuple[str, ...]
+    prompt: str, named: bool, sweep_type: str, distribution_fields: tuple[str, ...]
 ) -> None:
     reference = f"{'datasets.default' if named else 'dataset'}.{prompt}"
     dataset = {
         prompt: 64,
         "entries": f"{{{{ {reference}.mean | default({reference}) }}}}",
     }
-    values = {"mean": [128, 512], "stddev": [8, 16], "max": [1024, 2048]}
+    values = {
+        "mean": [128, 512],
+        "stddev": [8, 16],
+        "max": [1024, 2048],
+    }
     parameters = {
         f"datasets.default.prompts.{prompt}.{field}": values[field]
         for field in distribution_fields
@@ -206,8 +212,8 @@ def test_scalar_prompt_shorthand_can_be_overridden_by_distribution_path(
             "phases": {"type": "concurrency", "requests": 10},
         },
         "sweep": (
-            {"type": "grid", "parameters": parameters}
-            if len(distribution_fields) == 1
+            {"type": sweep_type, "parameters": parameters}
+            if sweep_type in {"grid", "zip"}
             else {
                 "type": "sobol",
                 "samples": 4,

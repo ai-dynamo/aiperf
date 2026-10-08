@@ -10,6 +10,7 @@ from __future__ import annotations
 import copy
 import itertools
 import warnings
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -256,6 +257,7 @@ def _expand_grid_sweep(
     for idx, combo in enumerate(combinations):
         variant = copy.deepcopy(base_data)
         body = variant.setdefault("benchmark", {})
+        _promote_prompt_shorthand_means(body, body_paths)
         values: dict[str, Any] = {}
         for field_path, value in zip(field_names, combo, strict=False):
             if field_path in envelope_paths:
@@ -311,6 +313,7 @@ def _expand_zip_sweep(
     for idx, combo in enumerate(combinations):
         variant = copy.deepcopy(base_data)
         body = variant.setdefault("benchmark", {})
+        _promote_prompt_shorthand_means(body, body_paths)
         values: dict[str, Any] = {}
         for field_path, value in zip(field_names, combo, strict=False):
             if field_path in envelope_paths:
@@ -481,6 +484,13 @@ def _expand_magic_lists(
         label = ", ".join(f"{k}={v}" for k, v in values.items())
         results.append((variant, SweepVariation(index=idx, label=label, values=values)))
     return results
+
+
+def _promote_prompt_shorthand_means(body: dict[str, Any], paths: Iterable[str]) -> None:
+    """Promote scalar means before sibling fields can create explicit prompts."""
+    for path in paths:
+        if path.startswith("datasets.") and path.endswith(".mean"):
+            _resolve_shorthand_path(body, path)
 
 
 def _resolve_prompt_shorthand_path(
