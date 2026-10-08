@@ -108,6 +108,21 @@ FIELD_PROBE_VALUES: dict[str, list[Any]] = {
         ["http://localhost:9401/metrics"],
     ],
     "isl_osl_pairs": ["128/16", "256/32"],
+    # Parseable SLA filters / tiers; the generic list[str] probe fails to parse.
+    "search_sla": [
+        ["time_to_first_token:p99:lt:500"],
+        ["time_to_first_token:p95:lt:300"],
+    ],
+    "search_sla_tier": [
+        [
+            "gold:time_to_first_token:p99:lt:200",
+            "silver:time_to_first_token:p99:lt:500",
+        ],
+        [
+            "gold:time_to_first_token:p95:lt:150",
+            "silver:time_to_first_token:p95:lt:400",
+        ],
+    ],
     # Recipe inputs and convergence details whose annotation-derived probes
     # (2.0 / 3.0, or a free-form string) fail validation; a raise would count
     # as loud and the test would pass without checking anything.
@@ -458,12 +473,25 @@ SWEEP_FLAG_COMPANIONS: dict[str, dict[str, Any]] = {
     "convergence_stat": _CONVERGENCE_ON,
     "convergence_threshold": _CONVERGENCE_ON,
     "sweep_type": {"concurrency": [1, 2]},
+    # SLA filters and tiers shape a search's results; tiers need it adaptive.
+    "search_sla": {
+        "search_recipe": "max-throughput-ttft-sla",
+        "ttft_sla_ms": 100.0,
+        **_STREAMING,
+    },
+    "search_sla_tier": {
+        "search_recipe": "max-throughput-ttft-sla",
+        "ttft_sla_ms": 100.0,
+        **_STREAMING,
+    },
 }
 
 _COMPANION_REQUIRED_FIELDS: frozenset[str] = (
     RECIPE_INPUT_FIELDS
     | CONVERGENCE_DETAIL_FIELDS
     | {
+        "search_sla",
+        "search_sla_tier",
         "sweep_type",
         "parameter_sweep_mode",
         "parameter_sweep_same_seed",

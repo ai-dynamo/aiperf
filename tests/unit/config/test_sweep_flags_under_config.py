@@ -813,3 +813,84 @@ def test_variant_matching_the_base_carries_no_overlay(
     same, more = _sweep(config)["runs"]
     assert same == {"name": "same"}
     assert more["benchmark"]
+
+
+# --- search SLA filters and tiers -------------------------------------------
+
+_SEARCH_SLA = ["time_to_first_token:p99:lt:500"]
+_SEARCH_SLA_TIERS = [
+    "gold:time_to_first_token:p99:lt:200",
+    "silver:time_to_first_token:p99:lt:500",
+]
+_BO_RECIPE_FLAGS: dict[str, Any] = {
+    "search_recipe": "max-throughput-ttft-sla",
+    "ttft_sla_ms": 100.0,
+}
+
+
+@pytest.mark.parametrize(
+    ("flags", "needs"),
+    [
+        param({"search_sla": _SEARCH_SLA}, "--search-space", id="sla-alone"),
+        param({"search_sla_tier": _SEARCH_SLA_TIERS}, "adaptive", id="tier-alone"),
+        param(
+            {"search_sla_tier": _SEARCH_SLA_TIERS, "search_recipe": "concurrency-ramp"},
+            "adaptive",
+            id="tier-with-grid-recipe",
+        ),
+        param(
+            {"search_sla_tier": _SEARCH_SLA_TIERS, **_PARETO_FLAGS},
+            "adaptive",
+            id="tier-with-scenario-recipe",
+        ),
+        param(
+            {"search_sla": _SEARCH_SLA, **_PARETO_FLAGS},
+            "scenario",
+            id="sla-with-scenario-recipe",
+        ),
+    ],
+)
+def test_search_sla_flag_without_a_search_to_filter_is_rejected(
+    tmp_path: Path, flags: dict[str, Any], needs: str
+) -> None:
+    with pytest.raises(ConfigurationError) as excinfo:
+        _resolve(tmp_path, **flags)
+    message = str(excinfo.value)
+    flag = "--search-sla-tier" if "search_sla_tier" in flags else "--search-sla"
+    assert flag in message
+    assert needs in message
+
+
+@pytest.mark.parametrize(
+    "companion",
+    [
+        param({"search_recipe": "concurrency-ramp"}, id="grid-recipe"),
+        param(_BO_RECIPE_FLAGS, id="adaptive-recipe"),
+        param(_SEARCH_SPACE_FLAGS, id="search-space"),
+    ],
+)
+def test_search_sla_filters_the_search(
+    tmp_path: Path, companion: dict[str, Any]
+) -> None:
+    sla_filters = _sweep(_resolve(tmp_path, search_sla=_SEARCH_SLA, **companion))[
+        "sla_filters"
+    ]
+    assert {"metric_tag": "time_to_first_token", "stat": "p99"}.items() <= next(
+        f for f in sla_filters if f["threshold"] == 500.0
+    ).items()
+
+
+@pytest.mark.parametrize(
+    "companion",
+    [
+        param(_BO_RECIPE_FLAGS, id="adaptive-recipe"),
+        param(_SEARCH_SPACE_FLAGS, id="search-space"),
+    ],
+)
+def test_search_sla_tiers_apply_to_an_adaptive_search(
+    tmp_path: Path, companion: dict[str, Any]
+) -> None:
+    tiers = _sweep(_resolve(tmp_path, search_sla_tier=_SEARCH_SLA_TIERS, **companion))[
+        "sla_tiers"
+    ]
+    assert [tier["label"] for tier in tiers] == ["gold", "silver"]

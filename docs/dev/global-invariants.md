@@ -308,6 +308,9 @@ a missing companion raises instead of resolving to a silent no-op:
 - `--convergence-mode/stat/threshold` need `--convergence-metric` or a
   `multi_run.convergence` block in the config file.
 - `--sweep-type` needs list-valued CLI flags and no `sweep:` in the file.
+- `--search-sla` needs `--search-recipe` or `--search-space`, and is not
+  applied to a scenario recipe. `--search-sla-tier` needs an adaptive search:
+  `--search-space`, or a recipe that expands to one.
 - `--search-recipe` and `--search-space` each build their own sweep, so
   either one beside a `sweep:` in the file raises.
 - `--parameter-sweep-*` need a final sweep to write to, and
@@ -323,11 +326,18 @@ a missing companion raises instead of resolving to a silent no-op:
   file's `sweep:` / `multiRun.convergence` blocks as they do under `--config`.
 
 The pre-merge rules live in `reject_missing_sweep_companions`
-(`_config_flag_routing.py`); the final-sweep rules in the resolver's
-`_apply_parameter_sweep_overrides`. The CLI-only path does not enforce them
-yet. `SWEEP_FLAG_COMPANIONS` in the invariant test maps each of these flags
-to a companion that reads it, so `test_routed_field_never_silently_no_ops`
-checks them for real.
+(`_config_flag_routing.py`), the recipe-kind rule for the search filters in
+`reject_search_filters_for_recipe`, and the final-sweep rules in the
+resolver's `_apply_parameter_sweep_overrides`. The CLI-only path does not
+enforce them yet. `SWEEP_FLAG_COMPANIONS` in the invariant test maps each of
+these flags to a companion that reads it, so
+`test_routed_field_never_silently_no_ops` checks them for real.
+
+This list is what is enforced, not every sweep flag. The rest of the
+`--search-*` / `--optuna-*` family and the multi-run trial flags
+(`--confidence-level`, `--profile-run-*`, ...) are routed, but their
+invariant probes still fail to parse on their own, so the no-op test passes
+them without exercising routing.
 
 ## Extending the suite
 

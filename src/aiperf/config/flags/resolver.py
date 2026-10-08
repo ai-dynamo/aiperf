@@ -1006,12 +1006,16 @@ def _apply_recipe_and_multirun(
 def _apply_recipe_output(
     out: dict[str, Any], recipe_output: dict[str, Any], cli: CLIConfig
 ) -> None:
+    from aiperf.config.flags._config_flag_routing import (
+        reject_search_filters_for_recipe,
+    )
     from aiperf.config.flags.converter import (
         _lookup_recipe_class,
         _recipe_scenarios_sweep,
         _reject_recipe_plus_magic_lists,
     )
 
+    reject_search_filters_for_recipe(cli, recipe_output)
     sweep_params = recipe_output.get("sweep_parameters")
     if sweep_params:
         _reject_recipe_plus_magic_lists(cli, recipe_cls=_lookup_recipe_class(cli))

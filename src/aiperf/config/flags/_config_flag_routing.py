@@ -320,9 +320,10 @@ def _build_routed_under_config() -> frozenset[str]:
     # + resolve_auto_plot, build_tokenizer, build_accuracy.
     whole_sections = OUTPUT_FIELDS | TOKENIZER_FIELDS | ACCURACY_FIELDS
 
-    # Every SWEEPING member is routed. Recipe inputs and convergence details
-    # take effect only beside their companion; reject_missing_sweep_companions
-    # turns a missing companion into an error instead of a silent no-op.
+    # Every SWEEPING member reaches the resolver, but some act only beside a
+    # companion. reject_missing_sweep_companions raises for the ones it knows
+    # (recipe inputs, convergence details, --sweep-type, --search-sla and
+    # --search-sla-tier); routed does not by itself mean a flag acts alone.
     sweeping = set(SWEEPING_FIELDS)
 
     return frozenset(
@@ -468,7 +469,7 @@ def _yaml_declares_convergence(yaml_dict: dict[str, Any]) -> bool:
 
 def _missing_companion_problems(cli: CLIConfig, yaml_dict: dict[str, Any]) -> list[str]:
     set_fields = cli.model_fields_set
-    yaml_sweep = isinstance(yaml_dict.get("sweep"), dict)
+    has_yaml_sweep = isinstance(yaml_dict.get("sweep"), dict)
     has_recipe = "search_recipe" in set_fields and cli.search_recipe is not None
     has_metric = (
         "convergence_metric" in set_fields and cli.convergence_metric is not None
@@ -486,8 +487,9 @@ def _missing_companion_problems(cli: CLIConfig, yaml_dict: dict[str, Any]) -> li
             f"multi_run.convergence block in the config file"
             for field in sorted(set_fields & CONVERGENCE_DETAIL_FIELDS)
         )
+    problems.extend(_search_filter_problems(cli, has_recipe=has_recipe))
     if "sweep_type" in set_fields:
-        if yaml_sweep:
+        if has_yaml_sweep:
             problems.append(
                 "--sweep-type cannot change the sweep the config file "
                 "declares; set sweep.type in the file instead"
@@ -497,17 +499,79 @@ def _missing_companion_problems(cli: CLIConfig, yaml_dict: dict[str, Any]) -> li
                 "--sweep-type requires list-valued flags to sweep over "
                 "(e.g. --concurrency 1,2,4)"
             )
-    if has_recipe and yaml_sweep:
+    if has_recipe and has_yaml_sweep:
         problems.append(
             "--search-recipe defines its own sweep and cannot be combined "
             "with the sweep the config file declares; remove one"
         )
-    if "search_space" in set_fields and cli.search_space and yaml_sweep:
+    if "search_space" in set_fields and cli.search_space and has_yaml_sweep:
         problems.append(
             f"{_describe('search_space')} defines its own sweep and cannot be "
             f"combined with the sweep the config file declares; remove one"
         )
     return problems
+
+
+def _search_filter_problems(cli: CLIConfig, *, has_recipe: bool) -> list[str]:
+    """``--search-sla`` / ``--search-sla-tier`` only shape a search's results;
+    with neither a recipe nor ``--search-space`` there is no search to shape.
+
+    Whether a recipe expands to the adaptive search tiers need is known only
+    after expansion; ``reject_search_filters_for_recipe`` checks that.
+    """
+    set_fields = cli.model_fields_set
+    has_search_space = "search_space" in set_fields and bool(cli.search_space)
+    if has_recipe or has_search_space:
+        return []
+    problems: list[str] = []
+    if "search_sla" in set_fields and cli.search_sla:
+        problems.append(
+            f"{_describe('search_sla')} requires --search-recipe or "
+            f"--search-space; it filters a search's results. To filter the "
+            f"config file's sweep, set sweep.sla_filters there"
+        )
+    if "search_sla_tier" in set_fields and cli.search_sla_tier:
+        problems.append(
+            f"{_describe('search_sla_tier')} requires an adaptive search: "
+            f"--search-space, or a --search-recipe that expands to one"
+        )
+    return problems
+
+
+def reject_search_filters_for_recipe(
+    cli: CLIConfig, recipe_output: dict[str, Any]
+) -> None:
+    """Raise when ``--search-sla`` / ``--search-sla-tier`` cannot reach the
+    sweep a recipe expanded to.
+
+    Tiers rank adaptive-search trials, so a grid or scenarios recipe would drop
+    them; scenario sweeps carry only the recipe's own SLA filters.
+
+    Raises:
+        ConfigurationError: naming each flag and the recipe's sweep kind.
+    """
+    from aiperf.config.loader.errors import ConfigurationError
+
+    if recipe_output.get("adaptive_search") is not None:
+        return
+    kind = "scenario" if recipe_output.get("scenarios") else "grid"
+    set_fields = cli.model_fields_set
+    problems: list[str] = []
+    if "search_sla_tier" in set_fields and cli.search_sla_tier:
+        problems.append(
+            f"{_describe('search_sla_tier')} requires an adaptive search, but "
+            f"--search-recipe {cli.search_recipe} expands to a {kind} sweep"
+        )
+    if kind == "scenario" and "search_sla" in set_fields and cli.search_sla:
+        problems.append(
+            f"{_describe('search_sla')} is not applied to a scenario recipe "
+            f"such as {cli.search_recipe}"
+        )
+    if problems:
+        details = "\n  - ".join(problems)
+        raise ConfigurationError(
+            f"Search filters passed with --config cannot take effect:\n  - {details}"
+        )
 
 
 def reject_missing_sweep_companions(cli: CLIConfig, yaml_dict: dict[str, Any]) -> None:
