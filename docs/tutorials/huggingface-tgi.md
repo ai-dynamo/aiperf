@@ -21,19 +21,27 @@ TGI exposes two standard HTTP endpoints for text generation:
 
 To launch a Hugging Face TGI server, use the official `ghcr.io` image:
 
+<!-- setup-tgi-generate-endpoint-server -->
 ```bash
-docker run --gpus all --rm -it \
+docker run --gpus all --rm -d \
   -p 8080:80 \
   -e MODEL_ID=TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
   ghcr.io/huggingface/text-generation-inference:latest
 ```
+<!-- /setup-tgi-generate-endpoint-server -->
 
+<!-- health-check-tgi-generate-endpoint-server -->
 ```bash
+# Wait for the server: TGI downloads and loads the model on first start.
+timeout 900 bash -c 'until curl -sf http://localhost:8080/health >/dev/null; do sleep 2; done' \
+  || { echo "TGI not ready after 15min"; exit 1; }
+
 # Verify the server is running
 curl -s http://localhost:8080/generate \
   -H "Content-Type: application/json" \
   -d '{"inputs":"Hello world"}' | jq
 ```
+<!-- /health-check-tgi-generate-endpoint-server -->
 
 ## Profile with AIPerf
 
@@ -44,6 +52,7 @@ and with either synthetic inputs or a custom input file.
 
 #### Profile with synthetic inputs
 
+<!-- aiperf-run-tgi-generate-endpoint-server weight=60 -->
 ```bash
 aiperf profile \
     -m TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
@@ -51,6 +60,7 @@ aiperf profile \
     --url localhost:8080 \
     --request-count 10
 ```
+<!-- /aiperf-run-tgi-generate-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```
@@ -81,15 +91,13 @@ You can also provide your own text prompts using the
 --input-file option.
 The file should be in JSONL format and contain text entries.
 
+<!-- aiperf-run-tgi-generate-endpoint-server weight=60 -->
 ```bash
 cat > inputs.jsonl <<'EOF'
 {"text": "Hello TinyLlama!"}
 {"text": "Tell me a joke."}
 EOF
-```
-Then run:
 
-```bash
 aiperf profile \
     -m TinyLlama/TinyLlama-1.1B-Chat-v1.0 \
     --endpoint-type huggingface_generate \
@@ -98,6 +106,7 @@ aiperf profile \
     --custom-dataset-type single_turn \
     --request-count 10
 ```
+<!-- /aiperf-run-tgi-generate-endpoint-server -->
 
 ### Streaming (`/generate_stream`)
 
