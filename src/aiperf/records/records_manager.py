@@ -604,21 +604,20 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # Raising here would only be logged: @background_task defaults to
         # stop_on_error=False, so the task would retry forever and the run
         # would still hang -- the exact outcome this watchdog exists to end.
-        # Publish a fatal, explicitly-incomplete result instead, which is the
-        # path the rest of this service uses to terminate a run.
-        await self._publish_terminal_failure_result(
-            CreditPhase.PROFILING,
-            cancelled=False,
-            # A stall is not a finalization failure; say what actually happened.
-            stage="progress_stall",
-            reason_prefix="Benchmark stalled",
-            error=RuntimeError(
-                f"Benchmark stalled: {in_flight:,} request(s) in flight with no "
-                f"completion for {stalled_for:.0f}s ({total:,} completed). A "
-                f"request was dispatched but never returned, so the phase can "
-                f"never report complete. Set "
-                f"AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to disable this check."
-            ),
+        # Cancel rather than publish a terminal result directly: a terminal
+        # result fills only the profile domain, and the controller would still
+        # wait on server_metrics, which cannot arrive until the profiling phase
+        # completes -- which the stuck request is what prevents.
+        if self._progress_stall_triggered:
+            return
+        self._progress_stall_triggered = True
+        await self._request_profile_cancel(
+            ProfileCancelReason.PROGRESS_STALL,
+            f"Benchmark stalled: {in_flight:,} request(s) in flight with no "
+            f"completion for {stalled_for:.0f}s ({total:,} completed). A "
+            f"request was dispatched but never returned, so the phase can "
+            f"never report complete. Set "
+            f"AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to disable this check.",
         )
 
     @background_task(
@@ -836,6 +835,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # PhaseRecordsStats carries record counts and has no notion of what is
         # still in flight.
         self._latest_profiling_credit_stats: CreditPhaseStats | None = None
+        # Latch so a stalled run requests cancellation once, not every tick.
+        self._progress_stall_triggered: bool = False
         # Set to a human-readable reason when the run is finalized without every
         # expected record. Propagated onto ProfileResults.incomplete_reason.
         self._incomplete_reason: str | None = None
@@ -1078,15 +1079,37 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             f"(grace floor {grace_floor}, phase_index {phase_index}). "
             "Requesting PROFILE_CANCEL to terminate the run."
         )
+        if not await self._request_profile_cancel(
+            ProfileCancelReason.FAILED_REQUEST_THRESHOLD,
+            f"{error_records}/{total} profiling requests failed "
+            f"({rate:.1%}), exceeding the --failed-request-threshold "
+            f"limit of {threshold:.1%}. Check inference server logs.",
+        ):
+            self._failed_request_abort_triggered = False
+            return
+
+    async def _request_profile_cancel(
+        self, reason: ProfileCancelReason, reason_detail: str
+    ) -> bool:
+        """End the run through the cancel path. True if the request went out.
+
+        Publishing a terminal result alone is not enough to stop a benchmark:
+        it fills only the ``profile`` result domain, and the controller keeps
+        waiting on the others (``server_metrics`` is on by default whenever the
+        endpoint exposes ``/metrics``, and its result only arrives once the
+        profiling phase completes). Cancelling finalizes every domain.
+
+        Both halves are required. The command tells the controller, and the
+        local handler must be run directly because the controller's relay
+        excludes the originator -- without it the phase is never marked
+        cancelled and the run waits on the profile domain forever. Ctrl+C does
+        not hit this, because that command originates elsewhere.
+        """
         payload = orjson.dumps(
             {
                 "origin_service_id": self.service_id,
-                "reason": ProfileCancelReason.FAILED_REQUEST_THRESHOLD,
-                "reason_detail": (
-                    f"{error_records}/{total} profiling requests failed "
-                    f"({rate:.1%}), exceeding the --failed-request-threshold "
-                    f"limit of {threshold:.1%}. Check inference server logs."
-                ),
+                "reason": reason,
+                "reason_detail": reason_detail,
             }
         )
         try:
@@ -1094,17 +1117,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 CommandType.PROFILE_CANCEL, payload=payload
             )
         except Exception as exc:
-            self.warning(
-                f"Failed to request PROFILE_CANCEL for threshold abort: {exc!r}"
-            )
-            self._failed_request_abort_triggered = False
-            return
+            self.warning(f"Failed to request PROFILE_CANCEL for {reason}: {exc!r}")
+            return False
 
-        # The controller's relay excludes the originator, so the local
-        # PROFILE_CANCEL handler -- which marks the phase cancelled and
-        # aggregates partial results -- would never run for a self-originated
-        # abort, and the run would wait on the profile result domain forever.
-        # Ctrl+C does not hit this because the command originates elsewhere.
         self._cancel_finalize_task = self.execute_async(
             self._self_cancel_and_finalize(
                 Command(
@@ -1114,6 +1129,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 )
             )
         )
+        return True
 
     async def _self_cancel_and_finalize(self, command: Command) -> None:
         """Run the local cancel handler with failure-safe result publishing.
