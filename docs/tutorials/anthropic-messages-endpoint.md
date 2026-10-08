@@ -47,6 +47,8 @@ aiperf profile \
 
 ### Streaming
 
+Streaming preserves Unicode text, including U+0085, U+2028, and U+2029, in event data. Only CR and LF delimit SSE fields.
+
 Enable streaming to measure time-to-first-token (TTFT) and inter-token latency (ITL):
 
 ```bash

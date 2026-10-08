@@ -764,7 +764,8 @@ class SSEMessage:
             )
 
         message = cls(perf_ns=perf_ns)
-        for line in raw_message.splitlines():
+        # SSE fields end at CR/LF; Unicode line separators belong to the data.
+        for line in raw_message.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
             if not (line := line.strip()):
                 continue
 
