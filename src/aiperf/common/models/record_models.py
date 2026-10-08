@@ -1270,9 +1270,12 @@ class RequestRecord(AIPerfBaseModel):
         "Kubernetes mode, where both clocks are the same clock and no "
         "correction is meaningful. Signed, so no bounds apply. Measured in the "
         "tracker's anchored clock domain (a wall-clock anchor advanced by "
-        "perf_counter deltas) while ``timestamp_ns`` is raw ``time.time_ns``, "
-        "so an NTP step mid-run leaves the correction carrying that step as "
-        "residual error - bounded by the step size, typically sub-millisecond.",
+        "perf_counter deltas). ``timestamp_ns`` is anchored the same way but "
+        "through ``process_clock``, a separate anchor, so a wall-clock step "
+        "after both anchors exist moves neither; a step between their two "
+        "initializations leaves the anchors differing by that step, which the "
+        "correction carries as residual error - bounded by the step size, "
+        "typically sub-millisecond.",
     )
 
     @property
