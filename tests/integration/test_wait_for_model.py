@@ -13,9 +13,12 @@ Models mode (`--wait-for-model-mode models`):
 Inference mode (`--wait-for-model-mode inference`, the default):
 - success immediately (inference endpoint ready from t=0)
 - success after N retries (inference endpoint returns 503 until delay elapses)
+- success after N retries (inference endpoint returns 404 until delay elapses,
+  like a Dynamo frontend before a worker registers the model)
 """
 
 import pytest
+from pytest import param
 
 from tests.harness.utils import AIPerfCLI
 
@@ -166,8 +169,8 @@ class TestWaitForModelModeInference:
     """Tests for `aiperf profile --wait-for-model-timeout N --wait-for-model-mode inference`.
 
     Exercises the POST {path} probe that submits a canned 1-token request
-    and accepts any `status < 500` as ready. `inference` is the default mode,
-    but these tests set it explicitly for clarity.
+    and accepts any `status < 500` other than 404 as ready. `inference` is the
+    default mode, but these tests set it explicitly for clarity.
     """
 
     async def test_inference_probe_success_immediate(
@@ -197,12 +200,21 @@ class TestWaitForModelModeInference:
             combined = f"{result.stdout}\n{result.stderr}\n{result.log}"
             assert "Inference probe ready" in combined
 
+    @pytest.mark.parametrize(
+        "not_ready_status",
+        [
+            param(503, id="workers-loading"),
+            param(404, id="model-not-registered"),
+        ],
+    )  # fmt: skip
     async def test_inference_probe_success_after_retries(
-        self, cli: AIPerfCLI, mock_server_factory
+        self, cli: AIPerfCLI, mock_server_factory, not_ready_status: int
     ):
         """With inference_ready_delay_seconds>0, the inference endpoint
-        returns 503 on early attempts and the probe must retry until the
-        stack starts responding 2xx.
+        returns ``not_ready_status`` on early attempts and the probe must
+        retry until the stack starts responding 2xx. 503 is workers still
+        loading weights; 404 is a frontend that registers the model only
+        once a worker comes up, as Dynamo does.
 
         20s server-side delay (vs. 0.5s probe interval) — see
         test_models_probe_success_after_retries for the Windows-VDI rationale
@@ -212,6 +224,7 @@ class TestWaitForModelModeInference:
             fast=True,
             workers=1,
             inference_ready_delay_seconds=20.0,
+            inference_ready_status=not_ready_status,
         ) as server:
             result = await cli.run(
                 f"""
@@ -232,6 +245,6 @@ class TestWaitForModelModeInference:
             )
             assert result.exit_code == 0
             combined = f"{result.stdout}\n{result.stderr}\n{result.log}"
-            # 503 retry log line should have fired before the server unblocked.
-            assert "returned 503" in combined
+            # The retry log line should have fired before the server unblocked.
+            assert f"returned {not_ready_status}" in combined
             assert "Inference probe ready" in combined

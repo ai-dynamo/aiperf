@@ -8,12 +8,14 @@ probe strategies, selected via ``endpoint.wait_for_model_mode``:
 - ``inference`` (default) — POST a canned 1-token inference request to the
   configured endpoint. Strongest signal: proves the full serving stack
   (frontend, scheduler, worker, forward pass) is live. Any HTTP status
-  below 500 counts as ready — 4xx surfaces the same way on the first real
-  benchmark request and doesn't warrant hanging the probe. Exception: a
-  401/403 from a *signed* request (a request signer is configured) fails
-  fast instead, since that almost always means the signature itself is
-  misconfigured rather than something the benchmark run would surface on
-  its own.
+  below 500 other than 404 counts as ready — those 4xx surface the same
+  way on the first real benchmark request and don't warrant hanging the
+  probe. A 404 is retried like a 5xx: frontends that register models
+  dynamically (including Dynamo) answer 404 until a worker serves the
+  model. Exception: a 401/403 from a *signed* request (a request signer is
+  configured) fails fast instead, since that almost always means the
+  signature itself is misconfigured rather than something the benchmark
+  run would surface on its own.
 - ``models`` — GET ``{url}/v1/models`` and verify the model id appears in
   ``data[]``. Cheap, no tokens consumed. Falls back to a plain GET on the
   base URL if ``/v1/models`` returns 404 so servers without a model list
@@ -389,10 +391,14 @@ async def _wait_inference(
 ) -> None:
     """POST a canned 1-token request to the inference endpoint until it works.
 
-    Any response with ``status < 500`` counts as ready — 4xx means the
-    server is live but our payload was rejected (bad auth / bad model /
-    bad path), which surfaces the same way on the first real benchmark
-    request. Only 5xx and connection errors trigger retries.
+    Any response with ``status < 500`` other than 404 counts as ready — such
+    a 4xx means the server is live but our payload was rejected (bad auth /
+    bad parameters), which surfaces the same way on the first real benchmark
+    request. 404, 5xx and connection errors trigger retries. A 404 does not
+    prove the model is served: frontends that register models dynamically
+    (e.g. Dynamo) answer 404 "Model not found" until a worker comes up. A
+    model name or path that is simply wrong therefore times out instead of
+    passing.
 
     Exception: when a ``signer`` is configured (e.g. SigV4) and the response
     is 401/403, this raises immediately instead of counting it as ready or
@@ -450,7 +456,7 @@ async def _wait_inference(
             request_url=request_url,
             detail=_response_status_and_error(record)[1],
         )
-        if status is not None and status < 500:
+        if status is not None and status < 500 and status != 404:
             _logger.info(
                 f"Inference probe ready at {request_url} "
                 f"(status={status}, attempt {attempt})"

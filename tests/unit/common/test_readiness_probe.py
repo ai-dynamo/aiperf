@@ -186,6 +186,87 @@ def test_wait_inference_unsigned_403_still_counts_as_ready() -> None:
     assert client.posted_urls == ["http://server/v1/chat/completions"]
 
 
+class _StatusSequenceClient:
+    """Answers each probe with the next status in ``statuses``, then repeats the last."""
+
+    def __init__(self, statuses: list[int]) -> None:
+        self._statuses = statuses
+        self.attempts = 0
+
+    async def post_request(
+        self, request_url: str, payload: bytes, headers: dict[str, str], **kwargs: Any
+    ) -> _FakeRecord:
+        del request_url, payload, headers, kwargs
+        record = _FakeRecord()
+        record.status = self._statuses[min(self.attempts, len(self._statuses) - 1)]
+        self.attempts += 1
+        return record
+
+
+def test_wait_inference_404_retries_until_model_is_served() -> None:
+    """A 404 is not readiness: Dynamo answers 404 "Model not found" until a
+    worker registers the model, so the probe must keep polling."""
+    client = _StatusSequenceClient([404, 404, 200])
+
+    asyncio.run(
+        readiness_probe._wait_inference(
+            client=cast(Any, client),
+            url="http://server",
+            model_name="model-a",
+            endpoint_type="chat",
+            custom_endpoint=None,
+            timeout_s=10.0,
+            interval_s=0.1,
+            headers={},
+            signer=None,
+        )
+    )
+
+    assert client.attempts == 3
+
+
+def test_wait_inference_persistent_404_times_out() -> None:
+    client = _StatusSequenceClient([404])
+
+    with pytest.raises(TimeoutError, match="model-a"):
+        asyncio.run(
+            readiness_probe._wait_inference(
+                client=cast(Any, client),
+                url="http://server",
+                model_name="model-a",
+                endpoint_type="chat",
+                custom_endpoint=None,
+                timeout_s=0.05,
+                interval_s=0.01,
+                headers={},
+                signer=None,
+            )
+        )
+
+    assert client.attempts > 1
+
+
+@pytest.mark.parametrize("status", [200, 400, 401, 403, 422])
+def test_wait_inference_other_status_below_500_counts_as_ready(status: int) -> None:
+    client = _StatusSequenceClient([status, 503])
+
+    asyncio.run(
+        readiness_probe._wait_inference(
+            client=cast(Any, client),
+            url="http://server",
+            model_name="model-a",
+            endpoint_type="chat",
+            custom_endpoint=None,
+            timeout_s=1.0,
+            interval_s=0.1,
+            headers={},
+            signer=None,
+        )
+    )
+
+    assert client.attempts == 1
+
+
 class _FakeReadyRecord:
     """A get_request response that the probe treats as 'server live'."""
 

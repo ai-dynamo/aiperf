@@ -117,7 +117,8 @@ Configuration via CLI arguments or environment variables (`MOCK_SERVER_` prefix)
 | `--access-logs` | | `false` | HTTP access logs |
 | `--models-ready-delay-seconds` | | `0.0` | Delay before `/v1/models` reports loaded models |
 | `--disable-models-endpoint` | | `false` | Return 404 from `/v1/models` to exercise fallback readiness probes |
-| `--inference-ready-delay-seconds` | | `0.0` | Delay before inference endpoints stop returning HTTP 503 |
+| `--inference-ready-delay-seconds` | | `0.0` | Delay before inference endpoints stop returning `--inference-ready-status` |
+| `--inference-ready-status` | | `503` | HTTP status returned during `--inference-ready-delay-seconds`; `404` mimics a frontend that registers the model only once a worker comes up (Dynamo) |
 | `--anthropic-split-usage` | | `false` | Emit docs-canonical split streaming usage on `/v1/messages` (message_delta carries `output_tokens` only) instead of the modern cumulative shape |
 | `--api-key` | | `None` | API key required for inference endpoints; auth is disabled when unset |
 | `--auth-header-name` | | `Authorization` | Header name checked when `--api-key` is set |

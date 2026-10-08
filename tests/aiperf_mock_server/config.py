@@ -554,13 +554,27 @@ class MockServerConfig(BaseSettings):
         Field(
             description="Seconds after server start during which the inference "
             "endpoints (/v1/chat/completions, /v1/completions, /v1/embeddings) "
-            "return HTTP 503. Simulates a stack that's up on the frontend but "
-            "whose workers haven't loaded weights yet. Used to exercise the "
-            "inference-mode readiness probe's retry loop.",
+            "return --inference-ready-status (HTTP 503 by default). Simulates "
+            "a stack that's up on the frontend but whose workers haven't "
+            "loaded weights yet. Used to exercise the inference-mode readiness "
+            "probe's retry loop.",
             ge=0.0,
         ),
         Parameter(name="--inference-ready-delay-seconds"),
     ] = 0.0
+
+    inference_ready_status: Annotated[
+        int,
+        Field(
+            description="HTTP status the inference endpoints return during "
+            "--inference-ready-delay-seconds. 503 simulates workers still "
+            "loading weights; 404 simulates a frontend that registers the "
+            "model only once a worker comes up, as Dynamo does.",
+            ge=400,
+            le=599,
+        ),
+        Parameter(name="--inference-ready-status"),
+    ] = 503
 
 
 server_config: MockServerConfig = MockServerConfig()

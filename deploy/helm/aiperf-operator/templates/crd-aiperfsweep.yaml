@@ -515,10 +515,11 @@ spec:
                         type: string
                         description: 'Strategy for the readiness probe. ''inference'' (default): POST a 1-token inference
                           request to the configured endpoint; this is the strongest signal — it proves the full stack (frontend,
-                          scheduler, worker, forward pass) is live. Any HTTP status < 500 counts as ready. ''models'': GET
-                          `/v1/models` and verify the model id appears in `data[]` (cheaper, no tokens consumed; falls back
-                          to a plain GET on the base URL on 404). ''both'': run ''models'' first, then ''inference''. Only
-                          consulted when `--wait-for-model-timeout` is positive.'
+                          scheduler, worker, forward pass) is live. Any HTTP status < 500 other than 404 counts as ready;
+                          a 404 is retried, since frontends such as Dynamo answer 404 until a worker registers the model.
+                          ''models'': GET `/v1/models` and verify the model id appears in `data[]` (cheaper, no tokens consumed;
+                          falls back to a plain GET on the base URL on 404). ''both'': run ''models'' first, then ''inference''.
+                          Only consulted when `--wait-for-model-timeout` is positive.'
                         enum:
                         - models
                         - inference

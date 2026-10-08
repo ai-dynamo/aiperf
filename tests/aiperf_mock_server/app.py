@@ -294,9 +294,10 @@ class InferenceAuthMiddleware:
 
 
 class InferenceReadinessMiddleware:
-    """Returns HTTP 503 on inference paths while within the configured
-    startup delay. Used by readiness-probe tests to simulate a server
-    whose frontend is up but whose workers haven't loaded weights yet."""
+    """Returns ``inference_ready_status`` (HTTP 503 by default) on inference
+    paths while within the configured startup delay. Used by readiness-probe
+    tests to simulate a server whose frontend is up but whose workers haven't
+    loaded weights yet."""
 
     def __init__(self, inner_app: ASGIApp) -> None:
         self.app = inner_app
@@ -316,7 +317,7 @@ class InferenceReadinessMiddleware:
             await send(
                 {
                     "type": "http.response.start",
-                    "status": 503,
+                    "status": server_config.inference_ready_status,
                     "headers": [
                         (b"content-type", b"application/json"),
                         (b"content-length", str(len(body)).encode()),
