@@ -93,10 +93,16 @@ def test_an_unusable_base_ref_fails_the_gate() -> None:
 def test_a_usable_base_ref_reaches_a_verdict() -> None:
     """Exit 1 alone proves nothing: a failed diff exits 1 too.
 
-    Assert the run actually reached a verdict about the docs, so this test
-    cannot pass on the very failure the test above is about.
+    Assert the run reached a verdict about the docs, so this test cannot pass
+    on the very failure the test above is about.
+
+    ``HEAD`` rather than ``origin/main``: the unit-test job checks the branch
+    out without a remote-tracking ref, so ``origin/main`` is a bad revision
+    there and this would assert on an unavailable base instead of on the gate.
+    The earlier version accepted exit 1, which is also what that failure
+    returns, so it passed in CI without the tool having inspected one file.
     """
-    result = _run("--base", "origin/main")
+    result = _run("--base", "HEAD")
     output = result.stdout + result.stderr
     assert result.returncode in (0, 1), f"unexpected crash: {result.stderr}"
     assert "Refusing to report success" not in output, (
