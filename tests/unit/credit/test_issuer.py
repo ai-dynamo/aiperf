@@ -78,6 +78,9 @@ def mock_lifecycle():
     mock.phase_start_ns = 0
     # CreditIssuer uses these to calculate issued_at_ns timestamps
     mock.started_at_ns = time.time_ns()
+    mock._clock = (
+        None  # Prevent PhaseLifecycle.now_ns from calling mock._clock.now_ns()
+    )
     mock.started_at_perf_ns = time.perf_counter_ns()
     # Real clock-frame math, so issued_at_ns stays a comparable int.
     mock.now_ns = MagicMock(side_effect=lambda: PhaseLifecycle.now_ns(mock))

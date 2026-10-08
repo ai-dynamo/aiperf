@@ -91,6 +91,7 @@ def _root_final_turn_credit() -> MagicMock:
     credit.phase = PROFILING
     credit.root_correlation_id = None
     credit.effective_root_correlation_id = "root-corr"
+    credit.finite_replay = False
     return credit
 
 

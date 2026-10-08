@@ -442,6 +442,11 @@ def test_routed_field_never_silently_no_ops(
         changed = silent_noop = False
         for value in candidates:
             try:
+                if (
+                    field == "agentic_replay_lifecycle"
+                    and value == CLIConfig.model_fields[field].default
+                ):
+                    continue
                 resolved = resolve_config(
                     cli(**{field: value}, **companions), config_yaml
                 ).model_dump(mode="json")

@@ -12,6 +12,7 @@ from aiperf.common.enums import (
     ConversationContextMode,
     MediaType,
     MemoryMapFormat,
+    ReplayDependencyEvent,
     TurnInputKind,
 )
 from aiperf.common.enums.enums import SubagentType
@@ -156,6 +157,16 @@ class ReplayTurnReference(AIPerfBaseModel):
 
     conversation_id: str = Field(description="Referenced conversation ID.")
     turn_index: int = Field(ge=0, description="Referenced turn index.")
+    event: ReplayDependencyEvent = Field(
+        default=ReplayDependencyEvent.COMPLETION,
+        description="Required predecessor transport boundary.",
+    )
+    delay_ns: int = Field(
+        default=0,
+        ge=0,
+        le=2**63 - 1,
+        description="Delay after the predecessor event in nanoseconds.",
+    )
 
 
 class TurnMetadata(AIPerfBaseModel):

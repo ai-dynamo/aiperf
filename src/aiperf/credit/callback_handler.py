@@ -24,7 +24,7 @@ from aiperf.common.scenario.context_overflow import is_context_overflow_response
 from aiperf.timing.concurrency import PhaseRuntimeKey
 
 if TYPE_CHECKING:
-    from aiperf.credit.messages import CreditReturn, FirstToken
+    from aiperf.credit.messages import CreditReturn, FirstToken, TransportDispatched
     from aiperf.credit.structs import Credit
     from aiperf.timing.branch_orchestrator import BranchOrchestrator
     from aiperf.timing.concurrency import ConcurrencyManager
@@ -440,19 +440,66 @@ class CreditCallbackHandler:
         if handler.handle_credit_result is not None:
             await handler.handle_credit_result(credit_return)
 
+        observe_credit_return = getattr(handler.strategy, "observe_credit_return", None)
+        observe_exc: Exception | None = None
+        if observe_credit_return is not None:
+            try:
+                eof_perf_ns = None
+                eof_clock_spread_ns = None
+                if (
+                    credit.finite_replay
+                    and credit_return.transport_eof_wall_ns is not None
+                ):
+                    if credit_return.clock_offset_ns is None:
+                        raise RuntimeError("Finite replay EOF has no clock correction")
+                    if credit_return.clock_offset_spread_ns is None:
+                        raise RuntimeError("Finite replay EOF has no clock spread")
+                    eof_perf_ns = self._controller_perf_ns(
+                        handler,
+                        credit_return.transport_eof_wall_ns,
+                        credit_return.clock_offset_ns,
+                    )
+                    eof_clock_spread_ns = credit_return.clock_offset_spread_ns
+                observe_credit_return(
+                    credit,
+                    transport_eof_perf_ns=eof_perf_ns,
+                    transport_eof_clock_spread_ns=eof_clock_spread_ns,
+                    error=credit_return.error,
+                    cancelled=credit_return.cancelled,
+                )
+            except Exception as exc:
+                if not credit.finite_replay:
+                    raise
+                observe_exc = exc
+                _logger.error(
+                    f"Finite replay terminal request failed for conversation "
+                    f"'{credit.conversation_id}' (turn {credit.turn_index}, "
+                    f"x_correlation_id='{credit.x_correlation_id}'): {exc}"
+                    + (
+                        f" | error='{credit_return.error}'"
+                        if credit_return.error
+                        else ""
+                    )
+                )
+                handler.progress.record_fatal_error(exc)
+                handler.progress.all_credits_sent_event.set()
+
         # 4b. DAG child completion hook.
         # When a child session's final turn returns, notify the orchestrator so
         # it can decrement join refcounts, release sticky-routing entries, and
         # dispatch the parent's join turn (if any). Runs regardless of whether
         # the phase can still send, because children may finish after the
         # parent has already sent its terminal turn.
+        # Must run AFTER observe_credit_return so the child's outcome is validated
+        # and fatal phase error is recorded before this hook drains the session tree
+        # and closes its replay root.
         # NOTE: credit_return.error is a free-form string produced by the
-        # worker's transport/server error path. We treat any non-None value as
-        # an error signal; cancellation is tracked separately via
+        # worker's transport/server error path. We treat any non-None value or
+        # observe_exc as an error signal; cancellation is tracked separately via
         # credit_return.cancelled and is NOT treated as a child error.
         if credit.is_final_turn and credit.agent_depth > 0 and orchestrator is not None:
             try:
-                if credit_return.error is not None:
+                if credit_return.error is not None or observe_exc is not None:
                     await orchestrator.on_child_errored(credit.x_correlation_id)
                 else:
                     await orchestrator.on_child_leaf_reached(credit.x_correlation_id)
@@ -463,9 +510,15 @@ class CreditCallbackHandler:
                     f"{credit.x_correlation_id}: {exc}"
                 )
 
-        observe_credit_return = getattr(handler.strategy, "observe_credit_return", None)
-        if observe_credit_return is not None:
-            observe_credit_return(credit)
+        # 4c. Finite replay terminal failure abort (fail-fast).
+        # In finite replay, trace fidelity is strict: any failed request
+        # (server error, connection drop, missing EOF, or clock skew) invalidates
+        # the entire replay run. When observe_credit_return raises observe_exc,
+        # fatal error was already recorded above before child cleanup, so we
+        # early-return immediately here to halt downstream turn dispatch, child
+        # spawning, or session recycling.
+        if observe_exc is not None:
+            return
 
         # 5. Dispatch next turn / DAG spawn.
         #
@@ -578,6 +631,34 @@ class CreditCallbackHandler:
         # ``has_pending_branch_work``, at which point this check on the
         # child's own return path fires the event.
         self._finish_return_processing(key, handler, phase)
+
+    @staticmethod
+    def _controller_perf_ns(
+        handler: PhaseCallbackContext, worker_wall_ns: int, correction_ns: int
+    ) -> int:
+        lifecycle = handler.lifecycle
+        if lifecycle.started_at_ns is None or lifecycle.started_at_perf_ns is None:
+            raise RuntimeError("Finite replay phase has no paired clock anchor")
+        controller_wall_ns = worker_wall_ns - correction_ns
+        return lifecycle.started_at_perf_ns + (
+            controller_wall_ns - lifecycle.started_at_ns
+        )
+
+    async def on_transport_dispatched(self, event: TransportDispatched) -> None:
+        key = self._phase_key(event.phase, event.phase_index)
+        handler = self._phase_handlers.get(key)
+        if handler is None or handler.lifecycle.is_complete:
+            return
+        try:
+            perf_ns = self._controller_perf_ns(
+                handler, event.transport_start_wall_ns, event.clock_offset_ns
+            )
+            handler.strategy.observe_transport_dispatched(
+                event.credit_id, perf_ns, event.clock_offset_spread_ns
+            )
+        except Exception as exc:
+            handler.progress.record_fatal_error(exc)
+            handler.progress.all_credits_sent_event.set()
 
     def _finish_return_processing(
         self,
