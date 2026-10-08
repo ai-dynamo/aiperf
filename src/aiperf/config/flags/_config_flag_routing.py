@@ -450,7 +450,6 @@ def reject_unrouted_cli_flags(cli: CLIConfig) -> None:
 
 
 def _cli_magic_list_fields(cli: CLIConfig) -> list[str]:
-    """Return the user-set fields whose value is a list (a magic-list sweep)."""
     from aiperf.config.sweep import MAGIC_LIST_FIELDS
 
     return sorted(

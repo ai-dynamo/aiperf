@@ -93,6 +93,28 @@ def test_scenario_recipe_emits_its_scenarios(tmp_path: Path) -> None:
     assert config._raw_envelope["sweep"]["type"] == "scenarios"
 
 
+@pytest.mark.parametrize("with_config", [False, True], ids=["cli-only", "config"])
+def test_scenario_recipe_keeps_its_post_process(
+    tmp_path: Path, with_config: bool
+) -> None:
+    """pareto-sweep's export runs from sweep.post_process after the sweep."""
+    flags = {
+        "model_names": ["test-model"],
+        "urls": ["http://localhost:8000"],
+        "streaming": True,
+        "request_count": 5,
+        "search_recipe": "pareto-sweep",
+        "isl_osl_pairs": "128/128,256/256",
+        "concurrency": [1, 4],
+    }
+    config = (
+        _resolve(tmp_path, **flags)
+        if with_config
+        else convert_cli_to_aiperf(CLIConfig(**flags))
+    )
+    assert _sweep(config)["post_process"]["handler"] == "pareto_sweep_export"
+
+
 def test_grid_recipe_plus_magic_list_is_rejected(tmp_path: Path) -> None:
     with pytest.raises(TypeError, match="mutually exclusive with magic-list flags"):
         _resolve(tmp_path, search_recipe="concurrency-ramp", concurrency=[1, 2])
@@ -269,14 +291,6 @@ _SEARCH_SPACE_FLAGS: dict[str, Any] = {
 }
 
 
-_SCENARIOS_SWEEP_BLOCK = textwrap.dedent("""\
-    sweep:
-      type: scenarios
-      runs:
-        - name: a
-        - name: b
-""")
-
 _ADAPTIVE_SWEEP_BLOCK = textwrap.dedent("""\
     sweep:
       type: adaptive_search
@@ -294,11 +308,12 @@ _ADAPTIVE_SWEEP_BLOCK = textwrap.dedent("""\
 """)
 
 
+# adaptive_search is the case that used to resolve silently into a hybrid of
+# the two sweeps; grid used to fail with an unrelated validation error.
 @pytest.mark.parametrize(
     "sweep_block",
     [
         param(_SWEEP_BLOCK, id="grid"),
-        param(_SCENARIOS_SWEEP_BLOCK, id="scenarios"),
         param(_ADAPTIVE_SWEEP_BLOCK, id="adaptive_search"),
     ],
 )

@@ -166,7 +166,6 @@ def _cli_with_fields_set(cli: CLIConfig, fields_set: set[str]) -> CLIConfig:
 
 
 def _cli_without(cli: CLIConfig, fields: frozenset[str]) -> CLIConfig:
-    """Treat ``fields`` as unset on a copy of ``cli``; ``cli`` itself if none are set."""
     if not fields & cli.model_fields_set:
         return cli
     return _cli_with_fields_set(cli, cli.model_fields_set - fields)
@@ -961,6 +960,7 @@ def _apply_recipe_output(
 ) -> None:
     from aiperf.config.flags.converter import (
         _lookup_recipe_class,
+        _recipe_scenarios_sweep,
         _reject_recipe_plus_magic_lists,
     )
 
@@ -968,9 +968,8 @@ def _apply_recipe_output(
     if sweep_params:
         _reject_recipe_plus_magic_lists(cli, recipe_cls=_lookup_recipe_class(cli))
         out["sweep"] = {"type": "grid", "parameters": dict(sweep_params)}
-    scenarios = recipe_output.get("scenarios")
-    if scenarios:
-        out["sweep"] = {"type": "scenarios", "runs": list(scenarios)}
+    if recipe_output.get("scenarios"):
+        out["sweep"] = _recipe_scenarios_sweep(recipe_output)
     recipe_name = recipe_output.get("recipe_name")
     if recipe_name and "sweep" in out:
         out["sweep"]["recipe_name"] = recipe_name

@@ -187,9 +187,26 @@ def _apply_recipe_scenarios(
             "--search-recipe (scenarios path) is mutually exclusive with a "
             "YAML-declared sweep block. Drop one."
         )
-    nested["sweep"] = {"type": "scenarios", "runs": list(scenarios)}
+    nested["sweep"] = _recipe_scenarios_sweep(recipe_output)
     if recipe_output.get("recipe_name"):
         nested["sweep"]["recipe_name"] = recipe_output["recipe_name"]
+
+
+def _recipe_scenarios_sweep(recipe_output: dict[str, Any]) -> dict[str, Any]:
+    """Build a ScenarioSweep block from a scenario recipe's output.
+
+    ``build_sweep`` carries ``sla_filters`` / ``post_process`` only for grid
+    recipes, so they are copied here; dropping ``post_process`` silently skips
+    the recipe's export (e.g. pareto-sweep's ``pareto_sweep.json``).
+    """
+    sweep: dict[str, Any] = {
+        "type": "scenarios",
+        "runs": list(recipe_output["scenarios"]),
+    }
+    for key in ("sla_filters", "post_process"):
+        if recipe_output.get(key):
+            sweep[key] = recipe_output[key]
+    return sweep
 
 
 def _reject_recipe_plus_magic_lists(
@@ -671,7 +688,6 @@ def _apply_variants_scenario_sweep(
 
 
 def _validate_variant_flags(cli: CLIConfig) -> None:
-    """Reject `--variant` combinations that are invalid on every path."""
     if len(cli.sweep_variants) == 1:
         raise TypeError(
             "--variant: single occurrence is rejected. Use the individual "
