@@ -16,6 +16,7 @@ from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
+    PrivateAttr,
     model_validator,
 )
 
@@ -393,11 +394,11 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         ),
     ]
 
-    _failed_request_threshold_explicitly_set: bool = False
-    _trajectory_start_min_ratio_explicitly_set: bool = False
-    _trajectory_start_max_ratio_explicitly_set: bool = False
-    _burst_phase_starts_explicitly_set: bool = False
-    _system_idle_gap_cap_seconds_explicitly_set: bool = False
+    _failed_request_threshold_explicitly_set: bool = PrivateAttr(default=False)
+    _trajectory_start_min_ratio_explicitly_set: bool = PrivateAttr(default=False)
+    _trajectory_start_max_ratio_explicitly_set: bool = PrivateAttr(default=False)
+    _burst_phase_starts_explicitly_set: bool = PrivateAttr(default=False)
+    _system_idle_gap_cap_seconds_explicitly_set: bool = PrivateAttr(default=False)
 
     # Subclasses set False to opt out (e.g. FixedSchedulePhase, where the
     # stop condition is inferred from the dataset). Otherwise CLI users
