@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from tests.harness import fake_bfcl
 from tests.harness.console import (
     TEST_CONSOLE_WIDTH,
     fixed_console,
@@ -21,6 +22,7 @@ __all__ = [
     "FakeServiceManager",
     "FakeTokenizer",
     "FakeTransport",
+    "fake_bfcl",
     "fixed_console",
     "fixed_width",
     "mock_plugin",
