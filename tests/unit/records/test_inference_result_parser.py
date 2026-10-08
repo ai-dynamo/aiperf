@@ -350,6 +350,51 @@ class TestToolCallTokenCount:
             'Calling a function: get_weather{"city":"Paris"}'
         )
 
+    async def test_streaming_legacy_function_call_chunks_count_all_text(
+        self,
+        setup_inference_parser: InferenceResultParser,
+        sample_turn: Turn,
+    ) -> None:
+        """Tokenize mixed prose and a legacy function split across responses."""
+        deltas = [
+            {
+                "content": "Calling a function: ",
+                "function_call": {"name": "get_weather", "arguments": ""},
+            },
+            {"function_call": {"arguments": '{"city":'}},
+            {"function_call": {"arguments": '"Paris"}'}},
+        ]
+        tokenizer = MagicMock()
+        tokenizer.encode.side_effect = list
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=tokenizer)
+        record = RequestRecord(
+            model_name="test-model",
+            request_info=create_test_request_info(turns=[sample_turn]),
+            start_perf_ns=1000,
+            end_perf_ns=2000,
+            timestamp_ns=1000,
+            responses=[
+                TextResponse(
+                    perf_ns=1500 + index,
+                    text=orjson.dumps(
+                        {
+                            "object": "chat.completion.chunk",
+                            "choices": [{"delta": delta}],
+                        }
+                    ).decode(),
+                )
+                for index, delta in enumerate(deltas)
+            ],
+        )
+
+        result = await setup_inference_parser.parse_request_record(record)
+
+        assert not result.has_error
+        assert result.token_counts.output == 47
+        tokenizer.encode.assert_any_call(
+            'Calling a function: get_weather{"city":"Paris"}'
+        )
+
 
 @pytest.mark.asyncio
 class TestServerTokenCount:
