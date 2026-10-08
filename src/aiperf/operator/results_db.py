@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sqlite3
-from collections.abc import Callable, Iterator
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -507,16 +507,11 @@ class ResultsDB:
             return []
 
         bare_job_ids, qualified_refs = runs_index._split_compare_job_ids(job_ids)
-        qualified = set(qualified_refs)
-        requested = set(bare_job_ids)
-
-        def _requested(namespace: str, job_id: str) -> bool:
-            return job_id in requested or (namespace, job_id) in qualified
-
+        requested = self._iter_requested_disk_summaries(
+            epoch, set(bare_job_ids), set(qualified_refs)
+        )
         rows: list[dict[str, Any]] = []
-        for namespace, job_id, run_epoch, summary in self._iter_disk_summaries(
-            epoch, job_filter=_requested
-        ):
+        for namespace, job_id, run_epoch, summary in requested:
             row_model, row_endpoint = runs_index._extract_model_endpoint(
                 {"benchmark": summary.get("input_config", {}) or {}}
             )
@@ -542,16 +537,8 @@ class ResultsDB:
         return rows
 
     def _iter_disk_summaries(
-        self,
-        epoch: str | None,
-        *,
-        job_filter: Callable[[str, str], bool] | None = None,
+        self, epoch: str | None
     ) -> Iterator[tuple[str, str, str, dict[str, Any]]]:
-        """Yield ``(namespace, job_id, epoch, summary)`` for ready runs on disk.
-
-        ``job_filter`` is consulted before any summary is read so callers that
-        already know which jobs they need do not pay for the whole PVC walk.
-        """
         if not self._results_dir.is_dir():
             return
         for namespace_dir in self._results_dir.iterdir():
@@ -560,18 +547,39 @@ class ResultsDB:
             for job_dir in namespace_dir.iterdir():
                 if not job_dir.is_dir() or job_dir.name == "sweeps":
                     continue
-                if job_filter is not None and not job_filter(
-                    namespace_dir.name, job_dir.name
-                ):
-                    continue
-                run_path = resolve_run_dir(
-                    self._results_dir, namespace_dir.name, job_dir.name, epoch
+                yield from self._disk_summary_for(
+                    namespace_dir.name, job_dir.name, epoch
                 )
-                if run_path is None:
-                    continue
-                summary = self._read_summary_file(run_path)
-                if summary is not None:
-                    yield namespace_dir.name, job_dir.name, run_path.name, summary
+
+    def _iter_requested_disk_summaries(
+        self,
+        epoch: str | None,
+        bare_job_ids: set[str],
+        qualified_refs: set[tuple[str, str]],
+    ) -> Iterator[tuple[str, str, str, dict[str, Any]]]:
+        """Probe only the requested job directories instead of walking the PVC.
+
+        Qualified ids resolve straight to ``<ns>/<job>``. A bare id can live in
+        any namespace, so namespaces are enumerated but only the requested job
+        names are probed in each.
+        """
+        refs = set(qualified_refs)
+        if bare_job_ids and self._results_dir.is_dir():
+            for namespace_dir in self._results_dir.iterdir():
+                if namespace_dir.is_dir():
+                    refs.update((namespace_dir.name, job) for job in bare_job_ids)
+        for namespace, job_id in sorted(refs):
+            yield from self._disk_summary_for(namespace, job_id, epoch)
+
+    def _disk_summary_for(
+        self, namespace: str, job_id: str, epoch: str | None
+    ) -> Iterator[tuple[str, str, str, dict[str, Any]]]:
+        run_path = resolve_run_dir(self._results_dir, namespace, job_id, epoch)
+        if run_path is None:
+            return
+        summary = self._read_summary_file(run_path)
+        if summary is not None:
+            yield namespace, job_id, run_path.name, summary
 
     def _read_summary_file(self, run_dir: Path) -> dict[str, Any] | None:
         if not is_run_ready(run_dir):

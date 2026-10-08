@@ -18,7 +18,7 @@ Out of scope (covered elsewhere):
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 from pathlib import Path
 from typing import NoReturn
 
@@ -369,7 +369,11 @@ class TestResultsDBReadonlyAndCorruptIndex:
         def fail_disk_walk(self: ResultsDB, epoch: str | None) -> NoReturn:
             raise AssertionError(f"unexpected disk summary walk for epoch={epoch}")
 
+        def fail_disk_probe(self: ResultsDB, *args: object) -> NoReturn:
+            raise AssertionError(f"unexpected disk summary probe for {args}")
+
         monkeypatch.setattr(ResultsDB, "_iter_disk_summaries", fail_disk_walk)
+        monkeypatch.setattr(ResultsDB, "_disk_summary_for", fail_disk_probe)
 
         rows = await getattr(ResultsDB(base), method_name)(**kwargs)
 
@@ -898,21 +902,30 @@ class TestResultsDBCompareAndFilters:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         base = tmp_path / "results"
-        for job_id in ("wanted-bench-1a2b", "unrelated-bench-3c4d"):
-            _write_run_artifact(base, "bench-prod", job_id, _EPOCH_NEW)
-        opened: list[Path] = []
-        real_read = ResultsDB._read_summary_file
+        for namespace, job_id in (
+            ("bench-prod", "wanted-bench-1a2b"),
+            ("bench-prod", "unrelated-bench-3c4d"),
+            ("bench-stage", "unrelated-bench-5e6f"),
+        ):
+            _write_run_artifact(base, namespace, job_id, _EPOCH_NEW)
+        probed: list[tuple[str, str]] = []
+        real_probe = ResultsDB._disk_summary_for
 
-        def tracking_read(self: ResultsDB, run_dir: Path) -> dict[str, object] | None:
-            opened.append(run_dir)
-            return real_read(self, run_dir)
+        def tracking_probe(
+            self: ResultsDB, namespace: str, job_id: str, epoch: str | None
+        ) -> Iterator[tuple[str, str, str, dict[str, object]]]:
+            probed.append((namespace, job_id))
+            return real_probe(self, namespace, job_id, epoch)
 
-        monkeypatch.setattr(ResultsDB, "_read_summary_file", tracking_read)
+        monkeypatch.setattr(ResultsDB, "_disk_summary_for", tracking_probe)
 
         rows = await ResultsDB(base).compare(job_ids=["wanted-bench-1a2b"])
 
         assert [row["job_id"] for row in rows] == ["wanted-bench-1a2b"]
-        assert [path.parent.name for path in opened] == ["wanted-bench-1a2b"]
+        assert sorted(probed) == [
+            ("bench-prod", "wanted-bench-1a2b"),
+            ("bench-stage", "wanted-bench-1a2b"),
+        ]
 
     @pytest.mark.asyncio
     async def test_compare_bare_job_id_reads_disk_for_namespace_missing_from_index(
