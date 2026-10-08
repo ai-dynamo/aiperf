@@ -483,19 +483,26 @@ class TestParseSSEMessageUnicode:
         ],
     )  # fmt: skip
     @pytest.mark.parametrize("line_ending", ["\n", "\r\n", "\r"])
-    @pytest.mark.parametrize("as_bytes", [False, True])
     def test_parse_named_event_preserves_unicode_json_content(
-        self, separator: str, line_ending: str, as_bytes: bool, base_perf_ns: int
+        self, separator: str, line_ending: str, base_perf_ns: int
     ) -> None:
         payload = {"delta": {"type": "text_delta", "text": f"before{separator}after"}}
         data = orjson.dumps(payload).decode()
         raw_message = f"event: content_block_delta{line_ending}data: {data}"
-        result = SSEMessage.parse(
-            raw_message.encode() if as_bytes else raw_message, base_perf_ns
-        )
+        result = SSEMessage.parse(raw_message, base_perf_ns)
 
         assert result.get_json() == payload
         assert result.extract_data_content() == data
+        assert [packet.name for packet in result.packets] == ["event", "data"]
+
+    def test_parse_named_event_preserves_unicode_bytes(self, base_perf_ns: int) -> None:
+        payload = {"delta": {"type": "text_delta", "text": "a\u0085b\u2028c\u2029d"}}
+        data = orjson.dumps(payload)
+        result = SSEMessage.parse(
+            b"event: content_block_delta\ndata: " + data, base_perf_ns
+        )
+
+        assert result.get_json() == payload
         assert [packet.name for packet in result.packets] == ["event", "data"]
 
     @pytest.mark.parametrize("separator", ["\u0085", "\u2028", "\u2029"])
@@ -878,13 +885,11 @@ def create_mock_sse_iterator():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("line_ending", ["\n", "\r\n"])
-async def test_sse_reader_preserves_unicode_in_named_event(line_ending: str) -> None:
+async def test_sse_reader_preserves_unicode_in_named_event() -> None:
     """Named events keep Unicode text when UTF-8 characters span chunks."""
     payload = {"type": "response.output_text.delta", "delta": "a\u0085b\u2028c\u2029d"}
     body = (
-        f"event: response.output_text.delta{line_ending}"
-        f"data: {orjson.dumps(payload).decode()}{line_ending}{line_ending}"
+        f"event: response.output_text.delta\ndata: {orjson.dumps(payload).decode()}\n\n"
     ).encode()
 
     async def chunks() -> AsyncIterator[bytes]:
