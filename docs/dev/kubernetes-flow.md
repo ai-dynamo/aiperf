@@ -540,12 +540,18 @@ sequenceDiagram
     O->>FS: download results, write ready marker
     O->>DB: upsert_run_completed + set_latest
 
-    K->>O: on_delete or retention
-    O->>FS: rm -rf run dir
+    K->>O: retention (results TTL)
+    O->>FS: rm -rf expired run dir
     O->>DB: delete_run
+
+    K->>O: on_delete(AIPerfJob)
+    Note over O,FS: results stay on the PVC
+    O->>DB: delete_run (epochs without a ready marker only)
 ```
 
 Read sites (`results_layout.list_runs_async`, `results_db.ResultsDB`, `routers/results_files.py`) consult the index first and fall back to disk only when a row is missing, firing a lazy backfill in the background.
+
+CR deletion does not remove results, so `handlers/cleanup.on_aiperfjob_delete_index_cleanup` keeps the index row of every epoch whose run directory carries `.aiperf_results_ready.json` and drops only rows with no published results (a job deleted mid-run, a Pending stub). Dropping published rows would desynchronize the index from the PVC: `/results` lists the run from disk while the index-only analytics fast path returns nothing for it until the next bootstrap. With the default `ttlSecondsAfterFinished` of 300s, every sweep child used to hit that state five minutes after its sweep finished, and the dashboard Compare tab reported "No comparable metrics" for them. As a second guard, `ResultsDB.compare` only trusts a complete catalog when every requested job identity has an index row; otherwise it merges the requested jobs' on-disk summaries, reading only those directories.
 
 CR deletion wins every race with completion. The delete handler first records a
 sticky cancellation event. The result harvester waits on that event alongside

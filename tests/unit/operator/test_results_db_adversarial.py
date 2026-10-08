@@ -479,11 +479,6 @@ class TestResultsDBReadonlyAndCorruptIndex:
         [
             param("leaderboard", {}, id="leaderboard"),
             param("history", {"model": "no-such-model"}, id="history"),
-            param(
-                "compare",
-                {"job_ids": ["no-such-job"]},
-                id="compare",
-            ),
             param("index_entries", {}, id="index-entries"),
         ],
     )  # fmt: skip
@@ -494,7 +489,13 @@ class TestResultsDBReadonlyAndCorruptIndex:
         method_name: str,
         kwargs: dict[str, object],
     ) -> None:
-        """A successful empty query is authoritative for a proven catalog."""
+        """A successful empty query is authoritative for a proven catalog.
+
+        ``compare`` is deliberately absent: it names the runs it needs, so a
+        requested identity without an index row falls back to that job's
+        on-disk summary (see
+        ``test_compare_complete_catalog_missing_requested_job_reads_disk``).
+        """
         base = tmp_path / "results"
         base.mkdir()
         await _open_writable_index(base / ".aiperf_index.sqlite")
@@ -852,6 +853,67 @@ class TestResultsDBCompareAndFilters:
         assert [(row["namespace"], row["request_throughput_avg"]) for row in rows] == [
             ("bench-prod", 210.0)
         ]
+
+    @pytest.mark.asyncio
+    async def test_compare_complete_catalog_missing_requested_job_reads_disk(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        """A run on disk without an index row must still appear in compare.
+
+        The completeness marker proves coverage at publication time only; a
+        sweep child whose CR was reaped must not drop out of Compare while
+        ``/results`` keeps listing it from disk.
+        """
+        base = tmp_path / "results"
+        db_path = base / ".aiperf_index.sqlite"
+        indexed_job = "sweep-child-indexed-v00"
+        archived_job = "sweep-child-archived-v01"
+        for job_id, throughput in ((indexed_job, 150.0), (archived_job, 275.0)):
+            _write_run_artifact(
+                base,
+                "bench-prod",
+                job_id,
+                _EPOCH_NEW,
+                summary=_summary(throughput=throughput),
+            )
+        await _open_writable_index(db_path)
+        await _write_index_run(
+            "bench-prod", indexed_job, _EPOCH_NEW, summary=_summary(throughput=150.0)
+        )
+        runs_index.mark_catalog_complete(base)
+
+        rows = await ResultsDB(base).compare(
+            job_ids=[f"bench-prod/{indexed_job}", f"bench-prod/{archived_job}"]
+        )
+
+        assert sorted(
+            (row["job_id"], row["request_throughput_avg"]) for row in rows
+        ) == [(archived_job, 275.0), (indexed_job, 150.0)]
+
+    @pytest.mark.asyncio
+    async def test_compare_from_disk_reads_only_requested_job_summaries(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The disk fallback must not open summaries of unrelated jobs."""
+        base = tmp_path / "results"
+        for job_id in ("wanted-bench-1a2b", "unrelated-bench-3c4d"):
+            _write_run_artifact(base, "bench-prod", job_id, _EPOCH_NEW)
+        opened: list[Path] = []
+        real_read = ResultsDB._read_summary_file
+
+        def tracking_read(self: ResultsDB, run_dir: Path) -> dict[str, object] | None:
+            opened.append(run_dir)
+            return real_read(self, run_dir)
+
+        monkeypatch.setattr(ResultsDB, "_read_summary_file", tracking_read)
+
+        rows = await ResultsDB(base).compare(job_ids=["wanted-bench-1a2b"])
+
+        assert [row["job_id"] for row in rows] == ["wanted-bench-1a2b"]
+        assert [path.parent.name for path in opened] == ["wanted-bench-1a2b"]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

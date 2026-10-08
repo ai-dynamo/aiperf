@@ -519,3 +519,64 @@ class TestSweepArchiveCleanup:
             await cleanup_handler.reconcile_sweep_results(base_dir=tmp_path)
 
         assert resolve_sweep_latest(tmp_path, namespace, sweep_name) == retained_epoch
+
+
+class TestOnDeleteIndexCleanup:
+    """CR deletion must not hide published results from the runs index."""
+
+    @pytest.mark.asyncio
+    async def test_on_delete_keeps_published_epoch_row_and_drops_unpublished_rows(
+        self, tmp_path: Path
+    ) -> None:
+        """A sweep child reaped by TTL stays comparable from its indexed row."""
+        base = tmp_path / "results"
+        namespace = "bench"
+        job_id = "sweep-child-v00"
+        published = "1730000000"
+        unpublished = "1740000000"
+        index_only = "1750000000"
+        published_dir = run_dir(base, namespace, job_id, published)
+        published_dir.mkdir(parents=True)
+        (published_dir / runs_index.READY_MARKER).write_bytes(b"{}")
+        run_dir(base, namespace, job_id, unpublished).mkdir(parents=True)
+        write_latest(base, namespace, job_id, published)
+
+        await runs_index.open(base / ".aiperf_index.sqlite")
+        try:
+            for epoch in (published, unpublished, index_only):
+                await runs_index.upsert_run_created(namespace, job_id, epoch, spec={})
+            await runs_index.set_latest(namespace, job_id, published)
+
+            with mock_patch.object(OperatorEnvironment.RESULTS, "DIR", base):
+                await cleanup_handler.on_aiperfjob_delete_index_cleanup(
+                    namespace, "sweep-child-cr", {"jobId": job_id}
+                )
+
+            rows = await runs_index.list_runs_for_job(namespace, job_id)
+            assert [(row.epoch, row.is_latest) for row in rows] == [(published, True)]
+        finally:
+            await runs_index.close()
+
+    @pytest.mark.asyncio
+    async def test_on_delete_without_published_results_drops_every_row(
+        self, tmp_path: Path
+    ) -> None:
+        """A job deleted before it exported anything leaves no orphan rows."""
+        base = tmp_path / "results"
+        namespace = "bench"
+        job_id = "cancelled-mid-run"
+        epoch = "1730000000"
+        run_dir(base, namespace, job_id, epoch).mkdir(parents=True)
+
+        await runs_index.open(base / ".aiperf_index.sqlite")
+        try:
+            await runs_index.upsert_run_created(namespace, job_id, epoch, spec={})
+
+            with mock_patch.object(OperatorEnvironment.RESULTS, "DIR", base):
+                await cleanup_handler.on_aiperfjob_delete_index_cleanup(
+                    namespace, job_id, {}
+                )
+
+            assert await runs_index.list_runs_for_job(namespace, job_id) == []
+        finally:
+            await runs_index.close()
