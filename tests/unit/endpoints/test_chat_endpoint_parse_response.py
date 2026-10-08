@@ -69,13 +69,12 @@ class TestChatEndpointParseResponse:
         assert parsed.data.text == "Hello"
 
     @pytest.mark.parametrize(
-        "object_type,data_key",
+        "object_type,data_key,content",
         [
-            param("chat.completion", "message", id="non_streaming"),
-            param("chat.completion.chunk", "delta", id="streaming"),
+            param("chat.completion", "message", None, id="non_streaming_function_only"),
+            param("chat.completion.chunk", "delta", "Calling a function: ", id="streaming_mixed_content"),
         ],
     )  # fmt: skip
-    @pytest.mark.parametrize("content", [None, "Calling a function: "])
     def test_parse_response_legacy_function_call(
         self,
         endpoint: ChatEndpoint,

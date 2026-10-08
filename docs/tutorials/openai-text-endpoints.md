@@ -29,7 +29,7 @@ The Chat Completions API uses the `/v1/chat/completions` endpoint.
 Function-call names and arguments contribute to client-side output token counts
 and content timing for both `tool_calls` and legacy `function_call` responses,
 including streaming deltas. A function-only response does not need text in
-`content` to be counted.
+`content` to be counted. Any accompanying prose in `content` is counted as well.
 
 ### Profile with synthetic inputs
 

@@ -23,7 +23,6 @@ from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.models.record_models import (
     ReasoningResponseData,
     TokenCounts,
-    ToolCallResponseData,
     find_last_non_empty_usage,
     first_content_chunk_completion_tokens,
 )
@@ -621,8 +620,6 @@ class InferenceResultParser(CommunicationMixin):
                     reasoning_texts.append(response.data.reasoning)
                 if response.data.content:
                     output_texts.append(response.data.content)
-            elif isinstance(response.data, ToolCallResponseData):
-                output_texts.append(response.data.tool_call_text)
             else:
                 output_texts.append(response.data.get_text())
 

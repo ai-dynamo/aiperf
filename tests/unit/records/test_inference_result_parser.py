@@ -13,9 +13,11 @@ from aiperf.common.models import (
     RequestRecord,
     TextResponse,
     TextResponseData,
+    Turn,
     Usage,
 )
 from aiperf.endpoints.openai_chat import ChatEndpoint
+from aiperf.records.inference_result_parser import InferenceResultParser
 from tests.unit.records.conftest import (
     create_invalid_record,
     create_test_request_info,
@@ -292,6 +294,62 @@ class TestAsyncTokenizerEncode:
 
         assert result.output == 3
         assert spy_tokenizer.encode.called
+
+
+@pytest.mark.asyncio
+class TestToolCallTokenCount:
+    """Tool dispatch and accompanying prose both contribute to output tokens."""
+
+    @pytest.mark.parametrize(
+        "object_type,data_key",
+        [
+            param("chat.completion", "message", id="non_streaming"),
+            param("chat.completion.chunk", "delta", id="streaming"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.parametrize("function_key", ["function_call", "tool_calls"])
+    async def test_mixed_tool_response_counts_prose_and_function(
+        self,
+        setup_inference_parser: InferenceResultParser,
+        sample_turn: Turn,
+        object_type: str,
+        data_key: str,
+        function_key: str,
+    ) -> None:
+        """Count complete mixed output through the real endpoint and record parser."""
+        function = {"name": "get_weather", "arguments": '{"city":"Paris"}'}
+        data = {
+            "content": "Calling a function: ",
+            function_key: function
+            if function_key == "function_call"
+            else [{"type": "function", "function": function}],
+        }
+        tokenizer = MagicMock()
+        tokenizer.encode.side_effect = list
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=tokenizer)
+        record = RequestRecord(
+            model_name="test-model",
+            request_info=create_test_request_info(turns=[sample_turn]),
+            start_perf_ns=1000,
+            end_perf_ns=2000,
+            timestamp_ns=1000,
+            responses=[
+                TextResponse(
+                    perf_ns=1500,
+                    text=orjson.dumps(
+                        {"object": object_type, "choices": [{data_key: data}]}
+                    ).decode(),
+                )
+            ],
+        )
+
+        result = await setup_inference_parser.parse_request_record(record)
+
+        assert not result.has_error
+        assert result.token_counts.output == 47
+        tokenizer.encode.assert_any_call(
+            'Calling a function: get_weather{"city":"Paris"}'
+        )
 
 
 @pytest.mark.asyncio
