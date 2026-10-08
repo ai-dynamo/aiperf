@@ -406,7 +406,7 @@ Every DAG-shaped run publishes a `BranchStats` snapshot per credit phase, export
 }
 ```
 
-Counters are mode-agnostic (the same shape applies to FORK-only, SPAWN-only, and mixed runs). Use `children_truncated` and `joins_suppressed` to detect when a `--request-count` cap interrupted the DAG mid-tree; they tally separately from `children_completed` so observability stays accurate. `children_delayed` counts SPAWN children whose turn-0 dispatch waited on a delay gate. Linear (non-DAG) runs leave `branch_stats` unset on `ProfileResults`.
+Counters are mode-agnostic (the same shape applies to FORK-only, SPAWN-only, and mixed runs). Use `children_truncated` and `joins_suppressed` to detect when a `--request-count` cap interrupted the DAG mid-tree; they tally separately from `children_completed` so observability stays accurate. `children_delayed` counts SPAWN children whose turn-0 dispatch waited on a delay gate. A delayed child whose dispatch time falls after the phase stops sending (for example, recorded past the `--benchmark-duration` cutoff) never issues a request: it is rolled back at the cutoff and counted in `children_truncated`, so the phase completes once in-flight requests drain instead of waiting out `--benchmark-grace-period`. Linear (non-DAG) runs leave `branch_stats` unset on `ProfileResults`.
 
 ## Reference: environment variables
 

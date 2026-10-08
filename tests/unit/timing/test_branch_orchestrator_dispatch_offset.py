@@ -352,3 +352,123 @@ async def test_delayed_spawn_rollback_after_parent_suspended_dispatches_active_g
     assert orch.stats.parents_resumed == 1
     assert "P" not in orch._active_joins
     assert orch.stats.children_truncated == 1
+
+
+async def _stop_sending(orch: BranchOrchestrator, scheduler: LoopScheduler) -> None:
+    """Replay PhaseRunner's sending-complete boundary: cancel timers, then expire."""
+    scheduler.cancel_all_pending()
+    await orch.expire_replay_deadlines()
+
+
+@pytest.mark.asyncio
+async def test_cutoff_rolls_back_background_child_delayed_past_cutoff() -> None:
+    """A background child whose timer is cancelled at the cutoff stops counting as pending branch work."""
+    parent = _parent_conv([_spawn_branch("b0", ["kid"], start_timestamp_ms=0.0)])
+    scheduler = LoopScheduler()
+    orch, _, issuer = _mk_harness(
+        [parent, _child_conv("kid", 4_000_000.0)], scheduler=scheduler
+    )
+
+    await orch.intercept(_mk_credit("parent", "P", 0))
+    assert scheduler.pending_count == 1
+    assert orch.has_pending_branch_work()
+
+    await _stop_sending(orch, scheduler)
+
+    assert not orch.has_pending_branch_work()
+    assert "corr-kid" not in orch._child_to_join
+    assert "P" not in orch._descendant_counts
+    assert orch.stats.children_truncated == 1
+    assert orch.stats.children_spawned == 0
+    issuer.dispatch_first_turn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cutoff_releases_join_gated_on_child_delayed_past_cutoff() -> None:
+    """A parent suspended on a gate whose only child never dispatched is released at the cutoff."""
+    parent = _parent_conv(
+        [_spawn_branch("b0", ["kid"], start_timestamp_ms=0.0, is_background=False)],
+        gated_turn=1,
+    )
+    scheduler = LoopScheduler()
+    orch, _, issuer = _mk_harness(
+        [parent, _child_conv("kid", 4_000_000.0)], scheduler=scheduler
+    )
+
+    assert await orch.intercept(_mk_credit("parent", "P", 0)) is True
+    assert "P" in orch._active_joins
+
+    await _stop_sending(orch, scheduler)
+
+    issuer.dispatch_join_turn.assert_awaited_once()
+    assert "P" not in orch._active_joins
+    assert not orch.has_pending_branch_work()
+    issuer.dispatch_first_turn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cutoff_keeps_in_flight_sibling_of_abandoned_child_tracked() -> None:
+    """Only never-dispatched children are rolled back; an issued sibling still drains normally."""
+    parent = _parent_conv(
+        [_spawn_branch("b0", ["now", "later"], start_timestamp_ms=0.0)]
+    )
+    scheduler = LoopScheduler()
+    orch, _, issuer = _mk_harness(
+        [parent, _child_conv("now", 0.0), _child_conv("later", 4_000_000.0)],
+        scheduler=scheduler,
+    )
+
+    await orch.intercept(_mk_credit("parent", "P", 0))
+    assert issuer.dispatch_first_turn.await_count == 1
+
+    await _stop_sending(orch, scheduler)
+
+    assert orch.has_pending_branch_work()
+    assert set(orch._child_to_join) == {"corr-now"}
+    assert orch._descendant_counts["P"] == 1
+
+    await orch.on_child_leaf_reached("corr-now")
+
+    assert not orch.has_pending_branch_work()
+
+
+@pytest.mark.asyncio
+async def test_cutoff_cancels_fallback_sleep_dispatch() -> None:
+    """Without a shared scheduler the sleeping task is cancelled and rolled back at the cutoff."""
+    parent = _parent_conv([_spawn_branch("b0", ["kid"], start_timestamp_ms=0.0)])
+    orch, _, issuer = _mk_harness([parent, _child_conv("kid", 60_000.0)])
+    gate = _SleepGate()
+    orch._sleep_offset_ms = gate
+
+    await orch.intercept(_mk_credit("parent", "P", 0))
+    await _tick()
+    assert len(orch._delayed_dispatch_tasks) == 1
+
+    await orch.expire_replay_deadlines()
+    gate.release()
+    await _tick()
+
+    issuer.dispatch_first_turn.assert_not_awaited()
+    assert orch._delayed_dispatch_tasks == set()
+    assert not orch.has_pending_branch_work()
+    assert orch.stats.children_truncated == 1
+
+
+@pytest.mark.asyncio
+async def test_delayed_child_dispatching_before_cutoff_is_not_rolled_back() -> None:
+    """A timer that fires before the cutoff dispatches normally and is not abandoned afterwards."""
+    parent = _parent_conv([_spawn_branch("b0", ["kid"], start_timestamp_ms=0.0)])
+    orch, _, issuer = _mk_harness([parent, _child_conv("kid", 5_000.0)])
+    gate = _SleepGate()
+    orch._sleep_offset_ms = gate
+
+    await orch.intercept(_mk_credit("parent", "P", 0))
+    gate.release()
+    await _tick()
+    issuer.dispatch_first_turn.assert_awaited_once()
+
+    await orch.expire_replay_deadlines()
+
+    assert orch.stats.children_truncated == 0
+    assert "corr-kid" in orch._child_to_join
+    assert orch.has_pending_branch_work()
