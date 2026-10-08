@@ -598,18 +598,12 @@ class TestContextPromptISL:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "endpoint_class,endpoint_type",
+    "endpoint_class,endpoint_type,passages,expected_tokens",
     [
-        param(NIMRankingsEndpoint, EndpointType.NIM_RANKINGS, id="nim"),
-        param(CohereRankingsEndpoint, EndpointType.COHERE_RANKINGS, id="cohere"),
-        param(HFTeiRankingsEndpoint, EndpointType.HF_TEI_RANKINGS, id="hf-tei"),
-    ],
-)  # fmt: skip
-@pytest.mark.parametrize(
-    "passages,expected_tokens",
-    [
-        param(["first passage", "second passage"], 6, id="multiple-passages"),
-        param([], 2, id="query-only"),
+        param(NIMRankingsEndpoint, EndpointType.NIM_RANKINGS, ["first passage", "second passage"], 6, id="nim-multiple-passages"),
+        param(CohereRankingsEndpoint, EndpointType.COHERE_RANKINGS, ["first passage", "second passage"], 6, id="cohere-multiple-passages"),
+        param(HFTeiRankingsEndpoint, EndpointType.HF_TEI_RANKINGS, ["first passage", "second passage"], 6, id="hf-tei-multiple-passages"),
+        param(NIMRankingsEndpoint, EndpointType.NIM_RANKINGS, [], 2, id="query-only"),
     ],
 )  # fmt: skip
 async def test_rankings_wire_payload_counts_query_and_passage_tokens(

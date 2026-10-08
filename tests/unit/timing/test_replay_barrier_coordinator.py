@@ -2,18 +2,22 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+from unittest.mock import MagicMock
 
 import pytest
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.models import (
     ConversationMetadata,
     DatasetMetadata,
     ReplayTurnReference,
     TurnMetadata,
 )
+from aiperf.credit.dispatch import ChildDispatchResult
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import DatasetSamplingStrategy
+from aiperf.timing import replay_dependencies
 from aiperf.timing.replay_dependencies import (
     ReplayBarrierCoordinator,
     ReplayResumeBoundary,
@@ -134,6 +138,156 @@ async def test_runtime_roots_are_independent() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cap_seconds", [0.0, 0.01])
+async def test_idle_watchdog_advances_only_the_completed_runtime_root(
+    cap_seconds: float,
+) -> None:
+    """A fully idle tree advances its own timers without touching another tree."""
+    scheduler = MagicMock()
+    advanced = asyncio.Event()
+
+    def advance(*_args) -> float:
+        advanced.set()
+        return 4.5
+
+    scheduler.cap_pending_delay_for_group.side_effect = advance
+    coordinator = ReplayBarrierCoordinator(
+        _metadata(),
+        scheduler=scheduler,
+        root_idle_gap_cap_seconds=cap_seconds,
+    )
+    coordinator.activate()
+
+    coordinator.observe_issued(_credit("a", "one"))
+    coordinator.observe_issued(_credit("a", "two"))
+    coordinator.complete(_credit("a", "one"))
+    await asyncio.wait_for(advanced.wait(), timeout=0.2)
+
+    scheduler.cap_pending_delay_for_group.assert_called_once_with("one", 0.0)
+
+
+@pytest.mark.asyncio
+async def test_idle_watchdog_covers_initial_profiling_idle() -> None:
+    """A root with only future timers is idle before its first request."""
+    scheduler = MagicMock()
+    advanced = asyncio.Event()
+
+    def advance(*_args) -> float:
+        advanced.set()
+        return 4.5
+
+    scheduler.cap_pending_delay_for_group.side_effect = advance
+    coordinator = ReplayBarrierCoordinator(
+        _metadata(),
+        scheduler=scheduler,
+        root_idle_gap_cap_seconds=0.01,
+    )
+    coordinator.activate()
+
+    coordinator.observe_idle_root("one")
+    await asyncio.wait_for(advanced.wait(), timeout=0.2)
+
+    scheduler.cap_pending_delay_for_group.assert_called_once_with("one", 0.0)
+
+
+@pytest.mark.asyncio
+async def test_initial_idle_watchdog_advances_real_group_timer() -> None:
+    scheduler = LoopScheduler()
+    coordinator = ReplayBarrierCoordinator(
+        _metadata(),
+        scheduler=scheduler,
+        root_idle_gap_cap_seconds=0.02,
+    )
+    coordinator.activate()
+    fired = asyncio.Event()
+
+    async def mark_fired() -> None:
+        fired.set()
+
+    scheduler.schedule_later(0.2, mark_fired(), group_id="one")
+    started = asyncio.get_running_loop().time()
+    coordinator.observe_idle_root("one")
+    await asyncio.wait_for(fired.wait(), timeout=0.1)
+
+    assert asyncio.get_running_loop().time() - started < 0.08
+
+
+@pytest.mark.asyncio
+async def test_new_request_cancels_runtime_root_idle_watchdog() -> None:
+    """Overlapping work prevents an idle cap from advancing replay timers."""
+    scheduler = MagicMock()
+    coordinator = ReplayBarrierCoordinator(
+        _metadata(),
+        scheduler=scheduler,
+        root_idle_gap_cap_seconds=0.05,
+    )
+    coordinator.activate()
+
+    coordinator.observe_issued(_credit("a"))
+    coordinator.complete(_credit("a"))
+    handle = coordinator._roots["root"].idle_watchdog
+    assert handle is not None
+    coordinator.observe_issued(_credit("b"))
+
+    assert handle.cancelled()
+    await asyncio.sleep(0.06)
+
+    scheduler.cap_pending_delay_for_group.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_late_completion_does_not_recreate_closed_root() -> None:
+    coordinator = ReplayBarrierCoordinator(_metadata())
+    coordinator.activate()
+    coordinator.observe_issued(_credit("a"))
+    coordinator.close_root("root")
+
+    coordinator.complete(_credit("a"))
+
+    assert "root" not in coordinator._roots
+
+
+@pytest.mark.asyncio
+async def test_idle_watchdog_retries_when_advanced_turn_is_barrier_blocked() -> None:
+    """A blocked candidate cannot consume the cap and strand later timers."""
+    scheduler = LoopScheduler()
+    coordinator = ReplayBarrierCoordinator(
+        _metadata(),
+        scheduler=scheduler,
+        root_idle_gap_cap_seconds=0.02,
+    )
+    coordinator.activate()
+    issued = asyncio.Event()
+
+    async def submit_blocked() -> None:
+        await coordinator.submit(_turn("d"), lambda: _record_issue([], "d"))
+
+    async def submit_ready() -> None:
+        async def mark_issued() -> bool:
+            issued.set()
+            return True
+
+        await coordinator.submit(
+            _turn("a"),
+            mark_issued,
+        )
+
+    # The first cap advance lands on d, which is retained behind a/b/c.  The
+    # watchdog must immediately retry and advance ready turn a as part of the
+    # same already-expired idle interval.
+    scheduler.schedule_later(1.0, submit_blocked(), group_id="root")
+    scheduler.schedule_later(2.0, submit_ready(), group_id="root")
+    started = asyncio.get_running_loop().time()
+    coordinator.observe_idle_root("root")
+
+    await asyncio.wait_for(issued.wait(), timeout=0.15)
+
+    assert asyncio.get_running_loop().time() - started < 0.10
+    await coordinator.cancel_pending(notify_refused=False)
+    scheduler.cancel_all()
+
+
+@pytest.mark.asyncio
 async def test_scalar_peak_would_slip_d_after_only_one_completion() -> None:
     coordinator = ReplayBarrierCoordinator(_metadata())
     coordinator.activate()
@@ -172,6 +326,60 @@ async def test_pending_turns_exposes_deferred_dispatch_for_phase_handoff() -> No
     assert issued == ["d"]
     assert coordinator.pending_turns("root") == ()
     assert coordinator.pending_turns_by_root() == {}
+
+
+@pytest.mark.asyncio
+async def test_retained_child_dispatch_reports_deferred_not_rejected() -> None:
+    coordinator = ReplayBarrierCoordinator(_metadata())
+    coordinator.activate()
+
+    result = await coordinator.submit(
+        _turn("d"),
+        lambda: _record_issue([], "d"),
+        retained_result=ChildDispatchResult.DEFERRED,
+    )
+
+    assert result is ChildDispatchResult.DEFERRED
+    assert coordinator.pending_turns("root") == (_turn("d"),)
+
+
+@pytest.mark.asyncio
+async def test_release_time_deferral_is_expected_not_refused_or_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    logger = MagicMock()
+    monkeypatch.setattr(replay_dependencies, "_logger", logger)
+    coordinator = ReplayBarrierCoordinator(_metadata())
+    coordinator.activate()
+    issue_calls: list[str] = []
+    refused: list[str] = []
+
+    async def issue() -> ChildDispatchResult:
+        issue_calls.append("d")
+        return ChildDispatchResult.DEFERRED
+
+    async def on_refused() -> None:
+        refused.append("d")
+
+    result = await coordinator.submit(
+        _turn("d"),
+        issue,
+        on_refused=on_refused,
+        retained_result=ChildDispatchResult.DEFERRED,
+    )
+    assert result is ChildDispatchResult.DEFERRED
+    assert issue_calls == []
+
+    for name in "abc":
+        coordinator.complete(_credit(name))
+    await asyncio.sleep(0)
+
+    assert issue_calls == ["d"]
+    assert refused == []
+    assert coordinator.pending_turns_by_root() == {}
+    logger.error.assert_not_called()
+    logger.exception.assert_not_called()
+    logger.debug.assert_called_once()
 
 
 @pytest.mark.asyncio
