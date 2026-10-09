@@ -95,6 +95,17 @@ def test_cancelled_run_appends_reason_to_existing_reasons() -> None:
     assert reasons == ["unsafe_override", CONTEXT_OVERFLOW_REASON, RUN_CANCELLED_REASON]
 
 
+def test_runtime_validation_failure_invalidates_submission() -> None:
+    valid, reasons = compute_submission_outcome(
+        scenario_name="inferencex-agentx-mvp",
+        validator_submission_valid=True,
+        runtime_invalid_reasons=["insufficient_profile_metric_coverage"],
+    )
+
+    assert valid is False
+    assert reasons == ["insufficient_profile_metric_coverage"]
+
+
 def test_overflow_rate_boundary_without_double_count() -> None:
     """101 overflows / 10_000 responses must flip submission_valid (regression against double-counting overflows into the denominator)."""
     valid, reasons = compute_submission_outcome(
