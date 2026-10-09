@@ -39,8 +39,11 @@ def _collected_files() -> set[str]:
 
     parser = MarkdownParser()
     parser.parse_directory(str(REPO_ROOT))
+    # as_posix, not str: on Windows the separator is a backslash, so a
+    # ``docs/``-prefixed comparison matches nothing and every tutorial reads
+    # as a stray file.
     return {
-        str(Path(command.file_path).relative_to(REPO_ROOT))
+        Path(command.file_path).relative_to(REPO_ROOT).as_posix()
         for server in parser.servers.values()
         for command in server.aiperf_commands
     }
