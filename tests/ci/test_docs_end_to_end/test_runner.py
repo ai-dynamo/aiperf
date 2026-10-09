@@ -4,26 +4,156 @@
 Test runner for executing server setup, health checks, and AIPerf tests.
 """
 
+import contextlib
 import logging
 import os
+import re
+import shlex
 import signal
 import subprocess
 import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
+from pathlib import PurePosixPath
 from types import SimpleNamespace
 from typing import Any
 
 from constants import (
     AIPERF_COMMAND_TIMEOUT,
     AIPERF_UI_TYPE,
+    CONTAINER_DISCOVERY_TIMEOUT,
     SETUP_MONITOR_TIMEOUT,
 )
 from data_types import Server
 from utils import get_repo_root
 
 logger = logging.getLogger(__name__)
+
+
+# Matches an explicit --ui / --ui-type the doc already chose. The lookbehind
+# keeps it from firing inside a longer token (``--no-ui-type-x``), and the
+# trailing ``=|\s`` keeps ``--ui-types`` from counting as ``--ui-type``.
+_UI_FLAG_RE = re.compile(r"(?<!\S)--ui(-type)?(=|\s)")
+
+
+def _has_explicit_ui_flag(command: str) -> bool:
+    """Whether the command really passes ``--ui``/``--ui-type`` as an option.
+
+    Tokenizes so quoted text is not mistaken for an option: guides pass JSON
+    payloads (``--extra-inputs '{"note": "--ui-type none"}'``) whose contents
+    are data, not flags. Treating that as an explicit choice would leave the
+    interactive UI on and hang the command in CI.
+    """
+    try:
+        tokens = shlex.split(command, comments=False)
+    except ValueError:
+        # Unbalanced quotes: bash will fail on this anyway, so fall back to the
+        # textual check rather than guessing at the author's intent.
+        return bool(_UI_FLAG_RE.search(command))
+    return any(
+        token in ("--ui", "--ui-type") or token.startswith(("--ui=", "--ui-type="))
+        for token in tokens
+    )
+
+
+def _first_unquoted_index(command: str, needle: str) -> int:
+    """Index of ``needle`` outside any quoted span or shell comment, or -1.
+
+    Guides routinely show a commented variant above the command they actually
+    run (``# aiperf profile --model other``). Matching that line would inject
+    the UI flag into the comment and leave the real invocation interactive,
+    which hangs the command until the watchdog kills it.
+    """
+    quote: str | None = None
+    i = 0
+    while i < len(command):
+        char = command[i]
+        if quote is not None:
+            if char == "\\" and quote == '"':
+                i += 2
+                continue
+            if char == quote:
+                quote = None
+        elif char == "#" and (i == 0 or command[i - 1].isspace()):
+            # A '#' starting a word begins a comment; skip to end of line.
+            newline = command.find("\n", i)
+            if newline == -1:
+                return -1
+            i = newline
+        elif char in "\"'":
+            quote = char
+        elif command.startswith(needle, i):
+            return i
+        i += 1
+    return -1
+
+
+def inject_ui_type(command: str, ui_type: str = AIPERF_UI_TYPE) -> str:
+    """Force the non-interactive UI unless the doc already selected one.
+
+    cyclopts rejects a repeated parameter with "Parameter --ui-type specified
+    multiple times" and exits 1, so injecting unconditionally would make every
+    guide that teaches ``--ui-type``/``--ui`` impossible to tag for docs-e2e.
+
+    Injects at the first real invocation only. A plain ``str.replace`` also
+    rewrites the text inside a quoted argument, corrupting a payload that
+    merely mentions the command.
+    """
+    if _has_explicit_ui_flag(command):
+        return command
+    index = _first_unquoted_index(command, "aiperf profile")
+    if index < 0:
+        return command
+    end = index + len("aiperf profile")
+    return f"{command[:end]} --ui-type {ui_type}{command[end:]}"
+
+
+def deliver_command_over_stdin(process, command: str, label: str) -> bool:
+    """Write the command to the process and close stdin. True if delivered.
+
+    The command watchdog kills ``docker exec`` on timeout, which breaks this
+    pipe mid-write. That is the command failing, not the suite crashing:
+    letting ``BrokenPipeError`` propagate leaves ``run_tests`` entirely and
+    silently skips every remaining server.
+    """
+    try:
+        process.stdin.write(command + "\n")
+        process.stdin.close()
+    except OSError as e:
+        logger.error(f"AIPerf {label}: could not deliver the command ({e!r})")
+        # Reap it, so the failure is a non-zero return code rather than a
+        # process left behind holding the container.
+        with contextlib.suppress(Exception):
+            process.kill()
+        return False
+    return True
+
+
+def resolve_command_timeout(aiperf_cmd) -> int:
+    """Pick the per-command ``timeout=`` if the guide set one, else the global.
+
+    Shared with the unit tests so the per-command value is pinned where it is
+    consumed: asserting only that the parser produced it leaves the runner free
+    to ignore it, which is exactly the regression this guards.
+    """
+    return aiperf_cmd.timeout or AIPERF_COMMAND_TIMEOUT
+
+
+def build_fixture_write_command(target: PurePosixPath) -> str:
+    """Build the shell command that writes one fixture, with the path quoted.
+
+    `path=` is an attribute of a markdown comment, so it is ordinary
+    documentation text that reaches a shell. The absolute/`..` guard stops the
+    file being written outside the working directory but does nothing about
+    metacharacters, and an unquoted `cat > {target}` turns `path=x;touch PWNED`
+    into a second command running inside the CI container. Shared with the unit
+    tests so the quoting is pinned where it is actually used.
+    """
+    quoted = shlex.quote(str(target))
+    parent = target.parent
+    mkdir = f"mkdir -p {shlex.quote(str(parent))} && " if str(parent) != "." else ""
+    return f"{mkdir}cat > {quoted}"
 
 
 class _ProcessGroupKillGuard:
@@ -49,13 +179,14 @@ def _make_process_group_timeout_killer(
     test_num: int,
     server_name: str,
     guard: _ProcessGroupKillGuard,
+    timeout: int = AIPERF_COMMAND_TIMEOUT,
 ) -> Callable[[], None]:
     def _kill_on_timeout() -> None:
         if not guard.mark_killing_if_running(proc):
             return
         logger.error(
             f"AIPerf test {test_num} exceeded "
-            f"{AIPERF_COMMAND_TIMEOUT}s timeout for {server_name}; "
+            f"{timeout}s timeout for {server_name}; "
             f"sending SIGKILL to process group"
         )
         with suppress(ProcessLookupError):
@@ -90,6 +221,7 @@ class EndToEndTestRunner:
         self.setup_process = None
         self.log_monitoring_thread = None
         self.stop_log_monitoring = threading.Event()
+        self.detached_log_processes = []
 
     def _cleanup_all_containers(self):
         """Stop all containers and prune (nuclear cleanup)"""
@@ -125,12 +257,16 @@ class EndToEndTestRunner:
                 return False
 
             # Step 2: Validate servers (no duplicates, complete definitions)
-            if not self._validate_servers(servers):
-                logger.error("Server validation failed - stopping all tests")
+            invalid = self._validate_servers(servers)
+            servers = {n: s for n, s in servers.items() if n not in invalid}
+            if not servers:
+                logger.error("No runnable servers - stopping all tests")
                 return False
 
-            # Step 3: Run tests for each server
-            all_passed = True
+            # Step 3: Run tests for each server. An invalid server already
+            # failed the run; the rest still execute so one broken guide does
+            # not hide every other guide's result.
+            all_passed = not invalid
             for server_name, server in servers.items():
                 logger.info(f"Testing server: {server_name}")
 
@@ -232,32 +368,46 @@ class EndToEndTestRunner:
         logger.info(f"AIPerf version: {verify_result.stdout.strip()}")
         return True
 
-    def _validate_servers(self, servers: dict[str, Server]) -> bool:
-        """Validate that all servers have required commands and no duplicates"""
+    def _validate_servers(self, servers: dict[str, Server]) -> list[str]:
+        """Return the names of servers that cannot run, logging why.
+
+        Incomplete servers are isolated rather than fatal. A single malformed
+        tag attribute drops its own command (see ``MarkdownParser``), which can
+        leave one server with no runnable commands -- and aborting there would
+        take every other documented server down with it, turning one typo in
+        one guide into a suite-wide outage. The caller still fails the run.
+        """
         logger.info(f"Validating {len(servers)} servers...")
 
+        invalid: list[str] = []
         for server_name, server in servers.items():
-            # Check that server has setup command
+            missing = []
             if server.setup_command is None:
-                logger.error(f"Server '{server_name}' missing setup command")
-                return False
-
-            # Check that server has health check command
+                missing.append("setup")
             if server.health_check_command is None:
-                logger.error(f"Server '{server_name}' missing health-check command")
-                return False
-
-            # Check that server has at least one aiperf command
+                missing.append("health-check")
             if not server.aiperf_commands:
-                logger.error(f"Server '{server_name}' missing aiperf-run commands")
-                return False
+                missing.append("aiperf-run")
+            if server.fixture_conflicts:
+                missing.append(
+                    f"non-conflicting fixtures for {sorted(set(server.fixture_conflicts))}"
+                )
+
+            if missing:
+                logger.error(
+                    f"Server '{server_name}' is missing {', '.join(missing)} "
+                    f"command(s); skipping it and failing the run"
+                )
+                invalid.append(server_name)
+                continue
 
             logger.info(
                 f"Server '{server_name}': 1 setup, 1 health-check, {len(server.aiperf_commands)} aiperf commands"
             )
 
-        logger.info("Server validation passed")
-        return True
+        if not invalid:
+            logger.info("Server validation passed")
+        return invalid
 
     def _monitor_server_logs(self, process: subprocess.Popen, server_name: str):
         """Continuously monitor and display server logs in background thread"""
@@ -277,6 +427,81 @@ class EndToEndTestRunner:
         except Exception as e:
             logger.debug(f"Log monitoring thread exception: {e}")
 
+    def _known_container_ids(self) -> set[str]:
+        """Every container id docker knows about, running or not.
+
+        ``-a`` matters: a server that boots and dies during setup is gone from
+        ``docker ps`` by the time the snapshot is taken, and that is precisely
+        the container whose logs are worth having. Omitting it loses the boot
+        traceback for the one case this capture exists for.
+        """
+        try:
+            result = subprocess.run(
+                ["docker", "ps", "-aq"],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=CONTAINER_DISCOVERY_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "docker ps timed out; detached container logs will not be followed"
+            )
+            return set()
+        return set(result.stdout.split())
+
+    def _stream_container_logs(self, container_id: str, server_name: str) -> None:
+        """Mirror one detached container's output into the job log."""
+        try:
+            process = subprocess.Popen(
+                ["docker", "logs", "-f", container_id],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as e:
+            logger.debug(f"Could not follow logs for {container_id}: {e}")
+            return
+        self.detached_log_processes.append(process)
+        try:
+            for line in process.stdout:
+                if self.stop_log_monitoring.is_set():
+                    break
+                print(f"SERVER[{server_name}]: {line.rstrip()}", flush=True)
+        except Exception as e:
+            logger.debug(f"Detached log thread exception: {e}")
+
+    def _follow_detached_containers(
+        self, before: set[str], server_name: str
+    ) -> list[threading.Thread]:
+        """Attach a log follower to every container the setup block left running.
+
+        ``docker run -d`` returns as soon as the container is created, so the
+        setup process -- the only handle ``_monitor_server_logs`` can read --
+        exits having printed a container id and nothing else. Without this the
+        engine's own output (CUDA OOM, a rejected flag, a missing weight file)
+        never reaches the job log, and a server that fails to boot reads only
+        as "health check failed, return code 1".
+
+        Diffing ``docker ps`` rather than parsing the setup block keeps this
+        independent of how a guide spells its run command, and covers groups
+        that start several containers (otel-mlflow starts three).
+        """
+        started: list[threading.Thread] = []
+        for container_id in sorted(self._known_container_ids() - before):
+            logger.info(f"Following logs for detached container {container_id[:12]}")
+            thread = threading.Thread(
+                target=self._stream_container_logs,
+                args=(container_id, server_name),
+                daemon=True,
+            )
+            thread.start()
+            started.append(thread)
+        # Returned so a caller can synchronise on the followers; the run path
+        # deliberately does not, since each one lives as long as its container.
+        return started
+
     def _test_server(self, server: Server) -> bool:
         """Test a single server: setup + health check + aiperf runs"""
         logger.info(f"Setting up server: {server.name}")
@@ -285,6 +510,8 @@ class EndToEndTestRunner:
         logger.info(f"Starting server setup for {server.name}:")
         logger.info(f"Command: {server.setup_command.command}")
         logger.info("=" * 60)
+
+        containers_before_setup = self._known_container_ids()
 
         setup_process = subprocess.Popen(
             server.setup_command.command,
@@ -332,6 +559,8 @@ class EndToEndTestRunner:
         logger.info("=" * 60)
         logger.info(f"Server {server.name} setup started successfully")
 
+        self._follow_detached_containers(containers_before_setup, server.name)
+
         # Start health check immediately in parallel (it has built-in timeout)
         logger.info(f"Starting health check in parallel for server: {server.name}")
         logger.info(f"Health check command: {server.health_check_command.command}")
@@ -368,6 +597,9 @@ class EndToEndTestRunner:
         logger.info("=" * 60)
         logger.info(f"Server {server.name} health check passed - ready for testing")
 
+        if not self._materialize_files(server):
+            return False
+
         # Run all aiperf commands for this server
         all_aiperf_passed = True
         for i, aiperf_cmd in enumerate(server.aiperf_commands):
@@ -376,11 +608,21 @@ class EndToEndTestRunner:
             )
 
             # Execute aiperf command in the container with verbose output
-            # Add --ui-type simple to all aiperf commands
-            aiperf_command_with_ui = aiperf_cmd.command.replace(
-                "aiperf profile", f"aiperf profile --ui-type {AIPERF_UI_TYPE}"
-            )
-            exec_command = f"docker exec {self.aiperf_container_id} bash -c '{aiperf_command_with_ui}'"
+            aiperf_command_with_ui = inject_ui_type(aiperf_cmd.command)
+            # The command goes in over stdin, not interpolated into a
+            # single-quoted `bash -c '...'`. Guides routinely pass JSON in
+            # single quotes (--extra-inputs '{"temperature": 0}'), and wrapping
+            # that in single quotes strips them: the payload arrives as
+            # {temperature: 0} and fails JSON validation. Any guide using a
+            # single quote is otherwise impossible to tag.
+            exec_argv = [
+                "docker",
+                "exec",
+                "-i",
+                self.aiperf_container_id,
+                "bash",
+                "-s",
+            ]
 
             logger.info(
                 f"Executing AIPerf command {i + 1}/{len(server.aiperf_commands)} against {server.name}:"
@@ -391,8 +633,8 @@ class EndToEndTestRunner:
             logger.info("=" * 60)
 
             aiperf_process = subprocess.Popen(
-                exec_command,
-                shell=True,
+                exec_argv,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -400,21 +642,33 @@ class EndToEndTestRunner:
                 universal_newlines=True,
                 start_new_session=True,
             )
+            assert aiperf_process.stdin is not None
 
             kill_guard = _ProcessGroupKillGuard()
+            command_timeout = resolve_command_timeout(aiperf_cmd)
             watchdog = threading.Timer(
-                AIPERF_COMMAND_TIMEOUT,
+                command_timeout,
                 _make_process_group_timeout_killer(
                     proc=aiperf_process,
                     test_num=i + 1,
                     server_name=server.name,
                     guard=kill_guard,
+                    timeout=command_timeout,
                 ),
             )
             watchdog.daemon = True
             watchdog.start()
 
             try:
+                # Delivered inside the watchdog's scope: if docker exec stops
+                # reading, this write blocks on a full pipe, and a watchdog
+                # armed afterwards would never start to kill it.
+                deliver_command_over_stdin(
+                    aiperf_process,
+                    aiperf_command_with_ui,
+                    f"test {i + 1} for {server.name}",
+                )
+
                 # Show real-time output
                 aiperf_output_lines = []
                 while True:
@@ -459,6 +713,47 @@ class EndToEndTestRunner:
         )
 
         return all_aiperf_passed
+
+    def _materialize_files(self, server) -> bool:
+        """Write a server's declared file fixtures into the AIPerf container.
+
+        Content is piped in over stdin rather than interpolated into the shell
+        command: YAML and JSON routinely contain quotes, ``$`` and newlines,
+        which would otherwise be re-interpreted by the shell wrapping the
+        docker exec.
+        """
+        for fixture in server.files:
+            target = PurePosixPath(fixture.path)
+            if target.is_absolute() or ".." in target.parts:
+                logger.error(
+                    f"Refusing to write fixture outside the working directory: "
+                    f"{fixture.path} ({fixture.file_path}:{fixture.start_line})"
+                )
+                return False
+
+            logger.info(f"Writing fixture {fixture.path} for {server.name}")
+            write_command = build_fixture_write_command(target)
+            result = subprocess.run(
+                [
+                    "docker",
+                    "exec",
+                    "-i",
+                    self.aiperf_container_id,
+                    "bash",
+                    "-c",
+                    write_command,
+                ],
+                input=fixture.content,
+                text=True,
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                logger.error(
+                    f"Failed to write fixture {fixture.path}: {result.stderr.strip()}"
+                )
+                return False
+        return True
 
     def _cleanup(self):
         """Cleanup all containers (nuclear approach)"""

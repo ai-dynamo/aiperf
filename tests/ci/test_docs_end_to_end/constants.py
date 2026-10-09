@@ -6,12 +6,14 @@ Constants for the end-to-end testing framework.
 
 # Tag patterns
 SETUP_TAG_PREFIX = "setup-"
+SETUP_FILE_TAG_PREFIX = "setup-file-"
 HEALTH_CHECK_TAG_PREFIX = "health-check-"
 AIPERF_RUN_TAG_PREFIX = "aiperf-run-"
 TAG_SUFFIX = "endpoint-server"
 
 # Tag lengths for parsing
 SETUP_TAG_PREFIX_LEN = len(SETUP_TAG_PREFIX)
+SETUP_FILE_TAG_PREFIX_LEN = len(SETUP_FILE_TAG_PREFIX)
 HEALTH_CHECK_TAG_PREFIX_LEN = len(HEALTH_CHECK_TAG_PREFIX)
 AIPERF_RUN_TAG_PREFIX_LEN = len(AIPERF_RUN_TAG_PREFIX)
 TAG_SUFFIX_LEN = len(TAG_SUFFIX)
@@ -23,4 +25,5 @@ AIPERF_UI_TYPE = "simple"
 SETUP_MONITOR_TIMEOUT = 30  # seconds to monitor setup output
 CONTAINER_BUILD_TIMEOUT = 600  # seconds for Docker build
 CONTAINER_START_TIMEOUT = 60  # seconds for container startup
+CONTAINER_DISCOVERY_TIMEOUT = 30  # seconds for a `docker ps` snapshot
 AIPERF_COMMAND_TIMEOUT = 1200  # seconds for AIPerf commands
