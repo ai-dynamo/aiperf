@@ -76,6 +76,18 @@ The screenshot window, the session selection and the request shaping are `--data
 | `uuid_cache` | Send each screenshot in full only in the first request that carries it; later requests of the session reference it by `uuid` with `image_url` set to null. Needs a server that caches multimodal inputs by uuid, as vLLM does, and every request of a session routed to the same replica. |
 | `disable_structured_output` | Drop the recorded response format from the extra body, so the server applies no guided decoding; `tool_choice` is kept. The published records carry no response format, so this only changes builds whose agent used structured outputs. |
 
+### Replay a local build
+
+A build derived with the dataset's `trace_processor.py` is replayed from disk. Point `--input-file` at the trace and name the format:
+
+```bash
+aiperf profile ... \
+    --input-file ./build/h_cua.jsonl.zst \
+    --custom-dataset-type h_cua_perf
+```
+
+`trace_processor.py` writes the trace, zstd-compressed when the output path ends in `.zst`, and its `h_cua.meta.json` manifest beside it with the trace's sha256; any other file is refused. A manifest without a sha256 comes from an older copy of the script: download it again and derive the build again. Every session of the build is loaded. `--dataset-filter` applies to `--public-dataset` only: a derived build already carries its screenshot window and session selection, so shape it when deriving it.
+
 ## Related Tutorials
 
 - [Trace Replay with Mooncake Traces](../benchmark-modes/trace-replay.md)
