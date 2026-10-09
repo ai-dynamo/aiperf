@@ -17,7 +17,6 @@ from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import AssistantResponseMode
-from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import AIPerfBaseModel
 
 if TYPE_CHECKING:
