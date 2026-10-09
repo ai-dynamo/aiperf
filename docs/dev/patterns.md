@@ -7,6 +7,38 @@ sidebar-title: Code Patterns
 
 Code examples for common development tasks. Referenced from CLAUDE.md.
 
+## Scenario Defaults
+
+Registered `ScenarioSpec` instances can declare optional `cli_defaults` and
+`environment_defaults` dictionaries. Both are empty by default, preserving
+existing scenarios.
+
+```python
+cli_defaults = {"stats_interval": 10, "use_server_token_count": True}
+environment_defaults = {"HTTP": {"TCP_USER_TIMEOUT": 60000}}
+```
+
+For flag-based `aiperf profile` commands, the converter fills omitted CLI fields
+before building the benchmark config. Explicit flags win, including `False` and
+zero. Preset keys must name declared CLI fields, and their values use normal CLI
+type parsing. Presets also use the existing duration and trajectory default fields.
+Explicit GPU telemetry and server-metrics enable/disable flags suppress the
+opposite preset default. Scenario invariants still apply.
+The CLI preset does not supply benchmark values for `--config`; YAML continues
+to own those values.
+
+`aiperf profile` applies runtime defaults with
+`Environment.defaults(spec.environment_defaults)`. Keys refer to existing
+settings subsystems and scalar fields, using their exact declared names (for
+example, `HTTP.TCP_KEEPIDLE`). Unknown or incorrectly cased field names are rejected.
+The context uses each subsystem's
+environment prefix and Pydantic validation, preserves explicitly configured
+values, and sets missing environment variables for newly spawned children.
+Previous parent settings and inserted variables are restored on exit, including
+exceptions. This process-wide context is intended for sequential local profiling;
+it does not configure independently launched services or Kubernetes pods.
+Settings already captured during imports or plan construction are unaffected.
+
 ## CLI Command Pattern
 
 Commands live in `src/aiperf/cli_commands/`, one file per command. They are
