@@ -7,7 +7,10 @@ from unittest.mock import AsyncMock, patch
 import aiohttp
 import orjson
 import pytest
+from multidict import CIMultiDict
+from pytest import param
 
+from aiperf.transports.aiohttp_client import AioHttpClient
 from tests.unit.transports.conftest import create_mock_response, setup_mock_session
 
 
@@ -166,3 +169,71 @@ class TestAioHttpClientVideo:
             assert hasattr(binary_response, "raw_bytes")
             assert len(binary_response.raw_bytes) == len(large_video_data)
             assert binary_response.raw_bytes == large_video_data
+
+
+@pytest.mark.parametrize("status", [param(301), param(302), param(303), param(307), param(308)])  # fmt: skip
+async def test_capture_redirect_without_reading_body(
+    aiohttp_client: AioHttpClient, status: int
+) -> None:
+    """Redirect bodies may be binary or unfinished; only headers are needed."""
+    response = create_mock_response(status=status)
+    response.headers = CIMultiDict(
+        [("Location", "/one?secret=1"), ("Location", "/two")]
+    )
+    response.read = AsyncMock(side_effect=AssertionError("Must not read"))
+    response.text.side_effect = AssertionError("Must not decode")
+    with patch("aiohttp.ClientSession") as session_class:
+        session = setup_mock_session(session_class, response, ["request"])
+        record = await aiohttp_client.get_request(
+            "https://origin.test/content",
+            {},
+            allow_redirects=False,
+            capture_redirects=True,
+            trust_env=False,
+        )
+    assert record.status == status and record.error is None
+    assert record._redirect_locations == ("/one?secret=1", "/two")
+    assert record.end_perf_ns is not None
+    assert not record.responses
+    assert "secret" not in record.model_dump_json()
+    response.read.assert_not_awaited()
+    response.text.assert_not_awaited()
+    response.close.assert_called_once()
+    assert session_class.call_args.kwargs["trust_env"] is False
+    assert "capture_redirects" not in session.request.call_args.kwargs
+    assert "trust_env" not in session.request.call_args.kwargs
+
+
+@pytest.mark.parametrize("method,kwargs", [
+    param("POST", {"allow_redirects": False}), param("GET", {}),
+    param("GET", {"allow_redirects": True}),
+])  # fmt: skip
+async def test_redirect_capture_requires_manual_get(
+    aiohttp_client: AioHttpClient, method: str, kwargs: dict[str, bool]
+) -> None:
+    with (
+        patch("aiohttp.ClientSession") as session_class,
+        pytest.raises(ValueError, match="Redirect capture requires GET"),
+    ):
+        await aiohttp_client._request(
+            method,
+            "https://origin.test/content",
+            {},
+            capture_redirects=True,
+            **kwargs,
+        )
+    session_class.assert_not_called()
+
+
+async def test_generic_redirect_still_returns_http_error(
+    aiohttp_client: AioHttpClient,
+) -> None:
+    response = create_mock_response(status=302, text_content="redirect body")
+    with patch("aiohttp.ClientSession") as session_class:
+        setup_mock_session(session_class, response, ["request"])
+        record = await aiohttp_client.get_request(
+            "https://origin.test/content", {}, allow_redirects=False
+        )
+    assert record.error is not None and record.error.message == "redirect body"
+    response.text.assert_awaited_once()
+    assert not record._redirect_locations

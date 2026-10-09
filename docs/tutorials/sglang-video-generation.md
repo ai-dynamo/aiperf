@@ -226,20 +226,38 @@ aiperf profile \
 ```
 
 The download comes from the `url` field of the completed job, or from
-`<poll URL>/content` when the job has none. Two rules keep your credentials
-with the server you are benchmarking, with or without request signing:
+`<poll URL>/content` when the job has none. Downloads follow HTTP 301, 302, 303,
+307 and 308 redirects using GET. Credentials are checked at every hop against
+the original benchmark endpoint, with or without request signing:
 
 - **A download from a different host gets no credentials.** When `url` names a
   different scheme, host or port than `--url`, only `User-Agent` is sent: no
   `--api-key` and no `-H` headers. A presigned S3 URL needs nothing more, since
   it authenticates through its own query string.
-- **Redirects are not followed.** A `3xx` response fails the download with a
-  `VideoDownloadError` instead of fetching from wherever it points, because
-  following it would forward your headers to a host the server chose.
+- **Returning to the original origin restores endpoint headers.** Requests to
+  that origin receive the original headers and fresh signing when configured.
+- **Configured URL authentication stays on the original origin.** Credentials
+  in `--url` provide Basic authentication for same-origin downloads, including
+  hops that return to that origin. They are never sent to foreign origins.
+  Credentials embedded in a job's `url` field or a redirect `Location` are rejected.
+- **Foreign origins do not use environment credentials or proxies.** Downloads
+  to a different origin disable `.netrc` authentication and environment proxy
+  settings, including `HTTP_PROXY` and `HTTPS_PROXY`.
 
-If your server redirects `/content` to a CDN, or serves videos from another
-host that needs your auth headers, have it return the final, presigned
-location in the job's `url` field instead.
+The default limit is five redirects. Set `AIPERF_HTTP_VIDEO_DOWNLOAD_MAX_REDIRECTS`
+to an integer from 0 to 100 to change it; 0 refuses redirects while allowing a
+direct download. For example:
+
+```bash
+export AIPERF_HTTP_VIDEO_DOWNLOAD_MAX_REDIRECTS=10
+```
+
+Relative `Location` headers are supported. Missing, duplicate or invalid
+locations, unsupported redirect statuses and exhausted limits fail with a
+`VideoDownloadError`. The request timeout covers the entire download chain.
+Downloaded video bytes contribute to timing but are not stored in benchmark
+response records. A CDN that requires authentication should use a presigned URL
+in the redirect or the job's `url` field.
 
 **Example with advanced parameters:**
 ```bash
@@ -472,11 +490,13 @@ If requests time out during generation:
 
 ### Video Download Fails with a 3xx or 401/403
 
-With `--download-video-content`, a download that is redirected, or that goes to
-a host other than `--url` and needs your auth headers there, fails with a
-`VideoDownloadError`. See [Video Download Option](#generation-parameters) for
-why, and have the server return a final, presigned location in the job's `url`
-field.
+With `--download-video-content`, a `3xx` error indicates an exhausted redirect
+limit, an unsupported status, or a missing/invalid `Location`. Check the chain
+and `AIPERF_HTTP_VIDEO_DOWNLOAD_MAX_REDIRECTS` (default 5; 0 disables redirects).
+A foreign origin that requires endpoint auth headers can return 401/403 because
+those credentials are withheld. Have the server return a presigned URL instead.
+Foreign downloads also bypass environment proxies and `.netrc` authentication.
+See [Video Download Option](#generation-parameters) for details.
 
 ### Out of Memory
 

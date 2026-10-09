@@ -1004,6 +1004,14 @@ class _HTTPSettings(BaseSettings):
         "Lower values provide faster completion detection but increase server load. "
         "Applies to the aiohttp transport.",
     )
+    VIDEO_DOWNLOAD_MAX_REDIRECTS: int = Field(
+        default=5,
+        ge=0,
+        le=100,
+        description="Maximum redirects followed when downloading generated video content. "
+        "Each hop re-checks the original endpoint origin before sending credentials. "
+        "Set to 0 to refuse redirects. Applies to the aiohttp transport.",
+    )
 
 
 class _LoggingSettings(BaseSettings):

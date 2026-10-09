@@ -2,14 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for AioHttpTransport video generation functionality."""
 
+import asyncio
 import time
 from unittest.mock import AsyncMock, Mock, patch
 
 import aiohttp
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.auth.base_signer import SignedRequest
+from aiperf.common.environment import Environment
 from aiperf.common.models import (
     BinaryResponse,
     ErrorDetails,
@@ -104,6 +107,7 @@ def transport(video_model_endpoint):
     """Create an AioHttpTransport instance."""
     transport = AioHttpTransport(model_endpoint=video_model_endpoint)
     transport.aiohttp_client = AsyncMock()
+    transport.aiohttp_client.timeout = aiohttp.ClientTimeout(total=600)
     return transport
 
 
@@ -848,12 +852,11 @@ def _stub_signer() -> AsyncMock:
     return signer
 
 
-class TestSignedVideoRequestsDoNotFollowRedirects:
-    """The inference path already refuses redirects on signed requests. The
-    video job paths sign too, so a redirect there replays
-    ``X-Amz-Security-Token`` -- a bearer credential -- at whatever origin the
-    redirect names. The poll path is the worst of the three: it re-delivers the
-    token on every iteration for the full timeout window.
+class TestSignedVideoRequestsDisableAutomaticRedirects:
+    """Signed video calls cannot delegate credential forwarding to aiohttp.
+
+    Submission and polling refuse redirects; downloads use the transport's
+    manual loop to rebuild headers and check the original origin at every hop.
     """
 
     @pytest.mark.asyncio
@@ -891,7 +894,7 @@ class TestSignedVideoRequestsDoNotFollowRedirects:
         assert kwargs.get("allow_redirects") is False
 
     @pytest.mark.asyncio
-    async def test_download_refuses_redirects_when_signed(self, transport):
+    async def test_download_disables_automatic_redirects_when_signed(self, transport):
         transport.aiohttp_client.get_request.return_value = create_request_record(
             status=200, body=b"video-bytes"
         )
@@ -1121,10 +1124,8 @@ class TestForeignDownloadDropsInheritedCredentials:
         assert not [k for k in headers if k.lower() != "user-agent"]
 
     @pytest.mark.asyncio
-    async def test_a_foreign_download_never_follows_redirects(self, transport):
-        """Redirects were disabled only on the signed same-origin branch, which
-        is the case that needs it least. A server-selected URL is exactly the
-        one whose redirect target must not be followed."""
+    async def test_a_foreign_download_disables_automatic_redirects(self, transport):
+        """Foreign hops must use the transport's credential-aware redirect loop."""
         transport.aiohttp_client.get_request.return_value = create_request_record(
             status=200, body=b"video-bytes"
         )
@@ -1159,12 +1160,10 @@ class TestForeignDownloadDropsInheritedCredentials:
         assert headers["X-Acme-Token"] == "custom-secret"
 
     @pytest.mark.asyncio
-    async def test_an_unsigned_same_origin_download_never_follows_redirects(
+    async def test_an_unsigned_same_origin_download_disables_automatic_redirects(
         self, transport
     ):
-        """A server whose /content 302s to a CDN fails the download even with
-        no signer, because following it would re-deliver the user's -H headers
-        to the redirect target."""
+        """Unsigned endpoint headers also need per-hop credential checks."""
         transport.aiohttp_client.get_request.return_value = create_request_record(
             status=200, body=b"video-bytes"
         )
@@ -1179,3 +1178,327 @@ class TestForeignDownloadDropsInheritedCredentials:
 
         kwargs = transport.aiohttp_client.get_request.call_args.kwargs
         assert kwargs.get("allow_redirects") is False
+
+
+def redirect_record(location: str = "/next", status: int = 302) -> RequestRecord:
+    """Make transport-local redirect metadata without response body parsing."""
+    record = RequestRecord(status=status)
+    record._redirect_locations = (location,)
+    return record
+
+
+def binary_record() -> RequestRecord:
+    return RequestRecord(
+        status=200, responses=[BinaryResponse(perf_ns=1, raw_bytes=b"video")]
+    )
+
+
+class TestVideoDownloadRedirects:
+    """Redirect policies apply independently at every GET."""
+
+    async def test_configured_auth_is_separate_from_signed_url(
+        self, transport: AioHttpTransport
+    ) -> None:
+        transport.request_signer = AsyncMock()
+        transport.request_signer.sign.return_value = SignedRequest(
+            url="https://origin.test/file%2Fname?sig=%2b%2F", headers={}
+        )
+        transport.aiohttp_client.get_request.return_value = binary_record()
+        result = await transport._download_video_content(
+            "job",
+            None,
+            {},
+            signing_origin_url="https://us%65r:p%40ss%3Aword@origin.test/job",
+        )
+        assert result == b"video"
+        transport.request_signer.sign.assert_awaited_once_with(
+            "GET", "https://origin.test/job/content", {}, None
+        )
+        args, kwargs = transport.aiohttp_client.get_request.call_args
+        assert str(args[0]) == "https://origin.test/file%2Fname?sig=%2b%2F"
+        assert kwargs["auth"] == aiohttp.BasicAuth("user", "p@ss:word")
+
+    async def test_setting_is_read_once_per_download(
+        self, transport: AioHttpTransport, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Environment.HTTP, "VIDEO_DOWNLOAD_MAX_REDIRECTS", 1)
+        records = iter([redirect_record(), binary_record()])
+
+        async def get(*args: object, **kwargs: object) -> RequestRecord:
+            monkeypatch.setattr(Environment.HTTP, "VIDEO_DOWNLOAD_MAX_REDIRECTS", 0)
+            return next(records)
+
+        transport.aiohttp_client.get_request.side_effect = get
+        assert (
+            await transport._download_video_content(
+                "job",
+                "https://origin.test/content",
+                {},
+                signing_origin_url="https://origin.test/job",
+            )
+            == b"video"
+        )
+
+    async def test_successful_status_without_binary_content_fails(
+        self, transport: AioHttpTransport
+    ) -> None:
+        transport.aiohttp_client.get_request.return_value = create_request_record(
+            status=200, body="text instead of video"
+        )
+        result = await transport._download_video_content(
+            "job",
+            "https://origin.test/content",
+            {},
+            signing_origin_url="https://origin.test/job",
+        )
+        assert isinstance(result, ErrorDetails) and result.code == 500
+        assert "No binary content" in result.message
+
+    @pytest.mark.parametrize("status", [param(code, id=str(code)) for code in (301, 302, 303, 307, 308)])  # fmt: skip
+    async def test_supported_status(
+        self, transport: AioHttpTransport, status: int
+    ) -> None:
+        transport.aiohttp_client.get_request.side_effect = [
+            redirect_record(status=status),
+            binary_record(),
+        ]
+        result = await transport._download_video_content(
+            "job",
+            "https://origin.test/content",
+            {},
+            signing_origin_url="https://origin.test/job",
+        )
+        assert result == b"video"
+        assert transport.aiohttp_client.get_request.await_count == 2
+        for call in transport.aiohttp_client.get_request.call_args_list:
+            assert call.kwargs["allow_redirects"] is False
+            assert call.kwargs["capture_redirects"] is True
+
+    @pytest.mark.parametrize("limit", [param(0), param(1), param(10)])  # fmt: skip
+    @pytest.mark.parametrize("extra", [param(0, id="at-limit"), param(1, id="over-limit")])  # fmt: skip
+    async def test_exact_limit(
+        self,
+        transport: AioHttpTransport,
+        monkeypatch: pytest.MonkeyPatch,
+        limit: int,
+        extra: int,
+    ) -> None:
+        monkeypatch.setattr(Environment.HTTP, "VIDEO_DOWNLOAD_MAX_REDIRECTS", limit)
+        transport.aiohttp_client.get_request.side_effect = [
+            redirect_record() for _ in range(limit + extra)
+        ] + [binary_record()]
+        result = await transport._download_video_content(
+            "job",
+            "https://origin.test/content",
+            {},
+            signing_origin_url="https://origin.test/job",
+        )
+        assert transport.aiohttp_client.get_request.await_count == limit + 1
+        if extra:
+            assert isinstance(result, ErrorDetails)
+            assert result.code == 302
+            assert f"after {limit} redirects" in result.message
+        else:
+            assert result == b"video"
+
+    async def test_rebuilds_credentials_and_resigns_return_to_origin(
+        self, transport: AioHttpTransport
+    ) -> None:
+        headers = {
+            "authorization": "Bearer secret",
+            "x-custom": "secret",
+            "Cookie": "secret",
+            "uSeR-aGeNt": "aiperf",
+        }
+        signed_calls: list[str] = []
+
+        async def sign(
+            method: str, url: str, headers: dict[str, str], body: bytes | None = None
+        ) -> SignedRequest:
+            assert method == "GET" and body is None
+            assert "X-Signature" not in headers
+            assert headers["authorization"] == "Bearer secret"
+            signed_calls.append(url)
+            headers["X-Signature"] = str(len(signed_calls))
+            return SignedRequest(url=url, headers=headers)
+
+        transport.request_signer = AsyncMock()
+        transport.request_signer.sign.side_effect = sign
+        transport.aiohttp_client.get_request.side_effect = [
+            redirect_record("https://cdn.test/a"),
+            redirect_record("https://other.test/b"),
+            redirect_record("https://origin.test/final"),
+            binary_record(),
+        ]
+        result = await transport._download_video_content(
+            "job",
+            "https://origin.test/content",
+            headers,
+            signing_origin_url="https://origin.test/job",
+        )
+        assert result == b"video"
+        assert signed_calls == [
+            "https://origin.test/content",
+            "https://origin.test/final",
+        ]
+        calls = transport.aiohttp_client.get_request.call_args_list
+        assert calls[0].args[1]["X-Signature"] == "1"
+        assert calls[3].args[1]["X-Signature"] == "2"
+        for call in calls[1:3]:
+            assert call.args[1] == {"uSeR-aGeNt": "aiperf"}
+            assert call.kwargs["trust_env"] is False
+        assert "X-Signature" not in headers
+
+    @pytest.mark.parametrize("location,expected", [
+        param("next", "https://origin.test/signed/next"),
+        param("/next", "https://origin.test/next"),
+        param("?key=a%2Fb&key=c%2Bd#fragment", "https://origin.test/signed/content?key=a%2Fb&key=c%2Bd"),
+        param("//cdn.test/path%2Ffile?sig=%2B", "https://cdn.test/path%2Ffile?sig=%2B"),
+    ])  # fmt: skip
+    async def test_resolves_against_actual_signed_url(
+        self, transport: AioHttpTransport, location: str, expected: str
+    ) -> None:
+        async def sign(
+            method: str, url: str, headers: dict[str, str], body: bytes | None = None
+        ) -> SignedRequest:
+            return SignedRequest(
+                url=url.replace("/original/", "/signed/"), headers=headers
+            )
+
+        transport.request_signer = AsyncMock()
+        transport.request_signer.sign.side_effect = sign
+        transport.aiohttp_client.get_request.side_effect = [
+            redirect_record(location),
+            binary_record(),
+        ]
+        assert (
+            await transport._download_video_content(
+                "job",
+                "https://origin.test/original/content?old=1",
+                {},
+                signing_origin_url="https://origin.test/job",
+            )
+            == b"video"
+        )
+        assert str(transport.aiohttp_client.get_request.call_args.args[0]) == expected
+
+    @pytest.mark.parametrize("url", [
+        param("ftp://origin.test/file"), param("/relative"), param("https:///missing"),
+        param("https://user:password@origin.test/a"), param("https://origin.test:0/a"),
+        param("https://origin.test:65536/a"), param("https://origin.test:bad/a"),
+        param("https://origin.test:/a"), param("https://[::1]junk/a"),
+        param("https://[invalid]/a"), param("https://origin.test/a\n"),
+        param(" https://origin.test/a"), param("https://origin.test/a%xx"),
+        param("https://origin.test/a b"), param("https://origin.test\\@cdn.test/a"),
+    ])  # fmt: skip
+    async def test_invalid_initial_url_is_not_sent(
+        self, transport: AioHttpTransport, url: str
+    ) -> None:
+        result = await transport._download_video_content(
+            "job", url, {}, signing_origin_url="https://origin.test/job"
+        )
+        assert isinstance(result, ErrorDetails) and result.code == 500
+        transport.aiohttp_client.get_request.assert_not_awaited()
+
+    @pytest.mark.parametrize("locations", [
+        param(()), param(("",)), param(("   ",)), param(("/one", "/two")),
+        param(("ftp://cdn.test/file",)), param(("https://user:pass@cdn.test/a",)),
+        param(("/bad%encoding",)), param(("/bad\tpath",)), param(("https://cdn.test:0/a",)),
+        param(("https:/missing-authority",)), param(("//",)),
+    ])  # fmt: skip
+    async def test_invalid_location_stops_before_next_request(
+        self, transport: AioHttpTransport, locations: tuple[str, ...]
+    ) -> None:
+        record = redirect_record()
+        record._redirect_locations = locations
+        transport.aiohttp_client.get_request.return_value = record
+        result = await transport._download_video_content(
+            "job",
+            "https://origin.test/content",
+            {},
+            signing_origin_url="https://origin.test/job",
+        )
+        assert isinstance(result, ErrorDetails) and result.code == 302
+        assert result.type == "VideoDownloadError"
+        transport.aiohttp_client.get_request.assert_awaited_once()
+
+    async def test_signer_cannot_change_origin(
+        self, transport: AioHttpTransport
+    ) -> None:
+        transport.request_signer = AsyncMock()
+        transport.request_signer.sign.return_value = SignedRequest(
+            url="https://cdn.test/a?secret=value", headers={"Authorization": "secret"}
+        )
+        result = await transport._download_video_content(
+            "job",
+            "https://origin.test/content",
+            {},
+            signing_origin_url="https://origin.test/job",
+        )
+        assert isinstance(result, ErrorDetails)
+        assert "secret" not in result.message
+        transport.aiohttp_client.get_request.assert_not_awaited()
+
+    @pytest.mark.parametrize("status", [param(300), param(404)])  # fmt: skip
+    async def test_terminal_http_errors_preserve_status(
+        self, transport: AioHttpTransport, status: int
+    ) -> None:
+        transport.aiohttp_client.get_request.return_value = RequestRecord(
+            status=status,
+            error=ErrorDetails(
+                type="HTTP", code=status, message="https://cdn.test/?secret=value"
+            ),
+        )
+        result = await transport._download_video_content(
+            "job",
+            "https://origin.test/content",
+            {},
+            signing_origin_url="https://origin.test/job",
+        )
+        assert isinstance(result, ErrorDetails) and result.code == status
+        assert "secret" not in result.message
+        transport.aiohttp_client.get_request.assert_awaited_once()
+
+    @pytest.mark.parametrize("exception", [param(OSError("secret URL")), param(TimeoutError("secret URL"))])  # fmt: skip
+    async def test_local_errors_do_not_expose_exception(
+        self, transport: AioHttpTransport, exception: Exception
+    ) -> None:
+        transport.aiohttp_client.get_request.side_effect = exception
+        result = await transport._download_video_content(
+            "job",
+            "https://origin.test/content",
+            {},
+            signing_origin_url="https://origin.test/job",
+        )
+        assert isinstance(result, ErrorDetails) and result.code == 500
+        assert "secret" not in result.message
+
+    async def test_cancel_propagates(self, transport: AioHttpTransport) -> None:
+        transport.aiohttp_client.get_request.side_effect = asyncio.CancelledError()
+        with pytest.raises(asyncio.CancelledError):
+            await transport._download_video_content(
+                "job",
+                "https://origin.test/content",
+                {},
+                signing_origin_url="https://origin.test/job",
+            )
+
+    async def test_download_timeout_includes_signing(
+        self, transport: AioHttpTransport
+    ) -> None:
+        transport.aiohttp_client.timeout = aiohttp.ClientTimeout(total=0.01)
+        transport.request_signer = AsyncMock()
+
+        async def stalled_sign(*args: object, **kwargs: object) -> SignedRequest:
+            await asyncio.Event().wait()
+            raise AssertionError("Unreachable")
+
+        transport.request_signer.sign.side_effect = stalled_sign
+        result = await transport._download_video_content(
+            "job",
+            "https://origin.test/content",
+            {},
+            signing_origin_url="https://origin.test/job",
+        )
+        assert isinstance(result, ErrorDetails) and "timeout" in result.message
+        transport.aiohttp_client.get_request.assert_not_awaited()
