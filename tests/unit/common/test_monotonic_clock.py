@@ -122,14 +122,16 @@ class TestProcessClock:
     def test_process_clock_returns_one_instance_per_process(self) -> None:
         assert process_clock() is process_clock()
 
-    def test_process_clock_ignores_wall_clock_steps(self, monkeypatch) -> None:
+    def test_process_clock_ignores_wall_clock_steps(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         clock = process_clock()
         perf_ns = time.perf_counter_ns()
         before = clock.wall_ns_at(perf_ns)
         monkeypatch.setattr(time, "time_ns", lambda: 0)
         assert process_clock().wall_ns_at(perf_ns) == before
 
-    def test_process_clock_is_calibrated(self, monkeypatch) -> None:
+    def test_process_clock_is_calibrated(self, monkeypatch: pytest.MonkeyPatch) -> None:
         sentinel = MonotonicClock()
         monkeypatch.setattr(monotonic_clock, "_process_clock", None)
         monkeypatch.setattr(

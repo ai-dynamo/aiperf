@@ -12,8 +12,9 @@ timestamps that are:
 
 Used by the worker-side ClockOffsetTracker to ensure consistent, monotonic
 timestamps for cross-machine offset measurement, and (via ``process_clock``,
-anchored with ``MonotonicClock.calibrated``) for every worker-side request
-timestamp. The controller (CreditIssuer) anchors its own perf_counter baseline
+anchored with ``MonotonicClock.calibrated``) for worker-side
+``RequestRecord.timestamp_ns``. The controller (CreditIssuer) anchors its own
+perf_counter baseline
 inline rather than through this class.
 """
 
