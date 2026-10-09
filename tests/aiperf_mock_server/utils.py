@@ -622,11 +622,12 @@ async def stream_chat_completion(
 ) -> AsyncGenerator[bytes, None]:
     """Stream chat completion tokens as SSE chunks."""
     has_reasoning = bool(ctx.reasoning_content_tokens)
+    num_reasoning = len(ctx.reasoning_content_tokens)
 
     try:
         # Stream reasoning tokens first (if any)
         completion_so_far = 0
-        for token in ctx.reasoning_content_tokens:
+        for ri, token in enumerate(ctx.reasoning_content_tokens):
             await ctx.latency_sim.wait_for_next_token()
             record_streamed_token(endpoint, ctx.model)
             completion_so_far += 1
@@ -644,6 +645,15 @@ async def stream_chat_completion(
             }
             if ctx.continuous_usage:
                 chunk["usage"] = _partial_usage(ctx, completion_so_far)
+            if (
+                not ctx.tokens
+                and ri == num_reasoning - 1
+                and server_config.spec_decode_flavor == "trtllm"
+            ):
+                # Reasoning used the whole budget, so no content chunk follows:
+                # this is the last chunk with a choice, and the payload must
+                # ride it or it is never sent.
+                attach_spec_decode(chunk, build_spec_decode_payload(ctx))
             yield _sse(chunk)
 
         # Stream output tokens, bundling the first chunk when requested.

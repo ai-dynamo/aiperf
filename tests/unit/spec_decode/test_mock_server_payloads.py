@@ -275,3 +275,57 @@ class TestStreamingEndToEnd:
         streamed_usage = [c["usage"] for c in chunks if c.get("usage")]
         assert record.completion_tokens == streamed_usage[-1]["completion_tokens"]
         _assert_identities(record)
+
+    @pytest.mark.parametrize(
+        "flavor, engine", [("vllm", "vllm"), ("trtllm", "tensorrt_llm")]
+    )
+    def test_reasoning_only_stream_still_carries_the_payload(
+        self, spec_decode_config, monkeypatch, flavor, engine
+    ) -> None:
+        """A reasoning model can spend every token on reasoning.
+
+        The content loop then never runs, so a payload attached only to the
+        last content chunk is never sent. It must ride the last chunk sent.
+        """
+        from aiperf_mock_server import utils as mock_utils
+
+        from aiperf.endpoints.openai_chat import ChatEndpoint
+        from aiperf.plugin.enums import EndpointType
+        from aiperf.records.inference_result_parser import InferenceResultParser
+        from tests.unit.endpoints.test_spec_decode_capture import (
+            _make_endpoint,
+            _mock_response,
+        )
+
+        monkeypatch.setattr(mock_utils.server_config, "ttft", 0.0)
+        monkeypatch.setattr(mock_utils.server_config, "itl", 0.0)
+        spec_decode_config(flavor=flavor)
+        chunks = self._stream(
+            "/v1/chat/completions",
+            {
+                # "qwen" marks a reasoning model; 24 tokens is below the
+                # default reasoning budget, so no content token is produced.
+                "model": "Qwen/Qwen3-0.6B",
+                "messages": [{"role": "user", "content": "Write a few sentences."}],
+                "max_tokens": 24,
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            },
+        )
+        assert not any(
+            c["choices"] and c["choices"][0].get("delta", {}).get("content")
+            for c in chunks
+        ), "precondition: the stream must contain reasoning only"
+        endpoint = _make_endpoint(EndpointType.CHAT, ChatEndpoint)
+        parsed = [
+            p
+            for p in (endpoint.parse_response(_mock_response(c)) for c in chunks)
+            if p is not None
+        ]
+
+        record = InferenceResultParser._extract_spec_decode_acceptance(parsed)
+
+        assert record is not None
+        assert record.engine == engine
+        streamed_usage = [c["usage"] for c in chunks if c.get("usage")]
+        assert record.completion_tokens == streamed_usage[-1]["completion_tokens"]
