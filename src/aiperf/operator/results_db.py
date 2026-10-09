@@ -22,6 +22,12 @@ import orjson
 import zstandard
 
 from aiperf.common.finite import is_finite_value
+from aiperf.kubernetes.constants import (
+    DNS_LABEL_MAX,
+    DNS_LABEL_RE,
+    DNS_SUBDOMAIN_MAX,
+    DNS_SUBDOMAIN_RE,
+)
 from aiperf.operator import runs_index
 from aiperf.operator.artifact_names import summary_candidates
 from aiperf.operator.results_layout import (
@@ -38,6 +44,21 @@ _INDEX_STATS = frozenset({"avg", "p50", "p99"})
 
 _TERMINAL_PHASES: frozenset[str] = frozenset({"Failed", "Cancelled"})
 """Phases a disk-derived row must not overwrite with "Succeeded"."""
+
+
+def _is_results_ref(namespace: str, job_id: str) -> bool:
+    """Mirror the routers' allowlist so request-supplied names cannot traverse.
+
+    Compare job ids come straight from the query string and are joined under
+    the results root, so they get the same Kubernetes-name gate as the path
+    parameters in ``routers/_path_params.py``.
+    """
+    return bool(
+        len(namespace) <= DNS_LABEL_MAX
+        and DNS_LABEL_RE.match(namespace)
+        and len(job_id) <= DNS_SUBDOMAIN_MAX
+        and DNS_SUBDOMAIN_RE.match(job_id)
+    )
 
 
 class ResultsDB:
@@ -563,13 +584,16 @@ class ResultsDB:
                 if namespace_dir.is_dir():
                     refs.update((namespace_dir.name, job) for job in bare_job_ids)
         for namespace, job_id in sorted(refs):
-            yield from self._disk_summary_for(namespace, job_id, epoch)
+            if _is_results_ref(namespace, job_id):
+                yield from self._disk_summary_for(namespace, job_id, epoch)
 
     def _disk_summary_for(
         self, namespace: str, job_id: str, epoch: str | None
     ) -> Iterator[tuple[str, str, str, dict[str, Any]]]:
         run_path = resolve_run_dir(self._results_dir, namespace, job_id, epoch)
-        if run_path is None:
+        if run_path is None or not run_path.resolve().is_relative_to(
+            self._results_dir.resolve()
+        ):
             return
         summary = self._read_summary_file(run_path)
         if summary is not None:

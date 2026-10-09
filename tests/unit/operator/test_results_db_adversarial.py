@@ -963,6 +963,46 @@ class TestResultsDBCompareAndFilters:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
+        "job_id",
+        [
+            param("../outside-ns/outside-job", id="parent-namespace"),
+            param("bench-prod/../../outside-ns/outside-job", id="parent-job"),
+            param("results/../../outside-ns/outside-job", id="sibling-root"),
+            param("..", id="bare-dotdot"),
+        ],
+    )  # fmt: skip
+    async def test_compare_traversal_job_id_never_reads_outside_results_root(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        job_id: str,
+    ) -> None:
+        """Compare ids are joined under the results root, so traversal must be inert.
+
+        A ready-marked summary planted one level above the root would be
+        reachable through ``resolve_run_dir`` if request-supplied segments were
+        trusted; the old walk never had this exposure because it only used
+        names read from the filesystem.
+        """
+        base = tmp_path / "results"
+        _write_run_artifact(base, "bench-prod", "inside-bench-1a2b", _EPOCH_NEW)
+        _write_run_artifact(tmp_path, "outside-ns", "outside-job", _EPOCH_NEW)
+        opened: list[Path] = []
+        real_read = ResultsDB._read_summary_file
+
+        def tracking_read(self: ResultsDB, run_dir: Path) -> dict[str, object] | None:
+            opened.append(run_dir)
+            return real_read(self, run_dir)
+
+        monkeypatch.setattr(ResultsDB, "_read_summary_file", tracking_read)
+
+        rows = await ResultsDB(base).compare(job_ids=[job_id], epoch=_EPOCH_NEW)
+
+        assert rows == []
+        assert opened == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
         "method_name,kwargs",
         [
             param(
