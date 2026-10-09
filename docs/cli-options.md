@@ -1678,7 +1678,7 @@ Execution order for sweep + multi-trial composition. 'repeated' (default) iterat
 
 #### `--sweep-type` `<str>`
 
-Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set or when the sweep is declared in YAML.
+Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set. With --config, rejected when the config file declares its own sweep or no magic-list flag is passed.
 <br/>_Default: `grid`_
 
 #### `--no-sweep-table`
@@ -3313,7 +3313,7 @@ Execution order for sweep + multi-trial composition. 'repeated' (default) iterat
 
 #### `--sweep-type` `<str>`
 
-Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set or when the sweep is declared in YAML.
+Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set. With --config, rejected when the config file declares its own sweep or no magic-list flag is passed.
 <br/>_Default: `grid`_
 
 #### `--no-sweep-table`
@@ -4943,7 +4943,7 @@ Execution order for sweep + multi-trial composition. 'repeated' (default) iterat
 
 #### `--sweep-type` `<str>`
 
-Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set or when the sweep is declared in YAML.
+Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set. With --config, rejected when the config file declares its own sweep or no magic-list flag is passed.
 <br/>_Default: `grid`_
 
 #### `--no-sweep-table`
@@ -7080,7 +7080,7 @@ Execution order for sweep + multi-trial composition. 'repeated' (default) iterat
 
 #### `--sweep-type` `<str>`
 
-Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set or when the sweep is declared in YAML.
+Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set. With --config, rejected when the config file declares its own sweep or no magic-list flag is passed.
 <br/>_Default: `grid`_
 
 #### `--no-sweep-table`
