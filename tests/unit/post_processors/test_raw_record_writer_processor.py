@@ -223,6 +223,7 @@ class TestRawRecordWriterProcessorFileFormat:
         sample_parsed_record: ParsedResponseRecord,
         payload_bytes: bytes | None,
     ) -> None:
+        """Both raw writer paths preserve binary bodies through JSONL readers."""
         body = bytes(range(256))
         sample_parsed_record.request.responses = [
             BinaryResponse(123, body, "application/octet-stream")

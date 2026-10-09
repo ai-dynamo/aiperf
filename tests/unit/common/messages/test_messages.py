@@ -67,10 +67,11 @@ def test_heartbeat_message():
 
 
 class TestBinaryInferenceResultsMessage:
+    """Binary response bodies survive the worker results-message boundary."""
+
     @pytest.mark.parametrize(
         "body",
         [
-            param(b"\xff\xfe", id="non-utf8"),
             param(bytes(range(256)), id="all-bytes"),
             param(b"a\x00b", id="embedded-nul"),
             param(b"", id="empty"),
@@ -81,6 +82,7 @@ class TestBinaryInferenceResultsMessage:
     def test_binary_response_message_roundtrip_preserves_bytes(
         self, body: bytes
     ) -> None:
+        """Each message-reader route restores the exact base64-encoded body."""
         original = InferenceResultsMessage(
             service_id="worker-1",
             record=RequestRecord(
@@ -110,6 +112,7 @@ class TestBinaryInferenceResultsMessage:
     def test_mixed_response_message_roundtrip_preserves_types_and_contents(
         self,
     ) -> None:
+        """Binary encoding preserves sibling response types and their contents."""
         responses = [
             BinaryResponse(1, b"\xff\xfe", "image/png"),
             TextResponse(2, "café", "text/plain"),

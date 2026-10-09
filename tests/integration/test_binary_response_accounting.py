@@ -19,9 +19,11 @@ REQUEST_COUNT = 6
 
 @pytest.fixture
 async def binary_response_server() -> AsyncIterator[tuple[str, list[str]]]:
+    """Serve one valid chat response followed by arbitrary binary bodies."""
     request_ids: list[str] = []
 
     async def handle(request: web.Request) -> web.Response:
+        """Track request identities and select the control or binary response."""
         await request.read()
         request_ids.append(request.headers["X-Request-ID"])
         # All-error runs skip aggregate export; retain a successful control response.
@@ -66,6 +68,7 @@ async def test_binary_http_response_counted_and_run_completes(
     binary_response_server: tuple[str, list[str]],
     export_level: str,
 ) -> None:
+    """Binary results cross the bus, reach accounting, and survive RAW export."""
     url, request_ids = binary_response_server
     result = await cli.run(
         f"""

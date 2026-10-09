@@ -22,7 +22,10 @@ from aiperf.common.models.export_models import JsonMetricResult
 
 
 class TestBinaryResponse:
+    """Binary response construction and record validation preserve the contract."""
+
     def test_python_construction_and_dump_preserve_raw_bytes(self) -> None:
+        """Python construction and dumps retain bytes and the slots layout."""
         body = bytes(range(256))
         positional = BinaryResponse(123, body, "application/octet-stream")
         keyword = BinaryResponse(
@@ -46,6 +49,7 @@ class TestBinaryResponse:
     def test_malformed_base64_response_rejected(
         self, encoded: str, json_mode: bool
     ) -> None:
+        """Both record validation routes reject malformed base64 bodies."""
         data = {"responses": [{"perf_ns": 123, "raw_bytes": encoded}]}
         with pytest.raises(ValidationError):
             if json_mode:
@@ -54,6 +58,7 @@ class TestBinaryResponse:
                 RequestRecord.model_validate(data)
 
     def test_valid_base64_response_decoded_without_legacy_text_detection(self) -> None:
+        """An ambiguous legacy text value is always interpreted as base64."""
         record = RequestRecord.model_validate(
             {"responses": [{"perf_ns": 123, "raw_bytes": "abcd"}]}
         )

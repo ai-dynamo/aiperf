@@ -683,6 +683,8 @@ class TextResponse:
             return None
 
 
+# Nested stdlib dataclasses ignore byte encoding settings; use Pydantic here.
+# Reject extra fields so response unions cannot select the wrong dataclass.
 @pydantic_dataclass(
     slots=True,
     config=ConfigDict(extra="forbid", ser_json_bytes="base64", val_json_bytes="base64"),
