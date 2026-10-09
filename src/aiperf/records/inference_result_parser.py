@@ -401,6 +401,16 @@ class InferenceResultParser(CommunicationMixin):
         priority order and uses the first whose ``can_adapt`` recognizes the
         payload -- mirroring custom-dataset-loader auto-detection.
 
+        A record exists only for a request that speculated: an adapted record
+        with ``num_spec_steps == 0`` is dropped here, engine-neutrally, so every
+        adapter shares the contract. vLLM always serializes a payload, even for
+        a request that never ran a verify step (``max_tokens: 1``, EOS first,
+        an NGram drafter that never matched), while TensorRT-LLM omits it; left
+        in, that record would count toward the per-request means as AL 1.0 and
+        rate 0%. This is an expected clean absence, so it logs at debug only. A
+        fully-rejected request (steps > 0, all in bucket 0) is real speculation
+        and is kept.
+
         Suppresses the record for any ``n > 1`` request: the per-request record
         can't attribute request-level ``completion_tokens`` to a single
         sequence, so a mixed record is worse than none. ``num_choices`` is the
@@ -467,7 +477,14 @@ class InferenceResultParser(CommunicationMixin):
                 f"{with_stats[0].spec_decode_stats!r}"
             )
             return None
-        return matches[0].adapt(responses)
+        record = matches[0].adapt(responses)
+        if record is not None and record.num_spec_steps == 0:
+            _logger.debug(
+                lambda: f"Dropping zero-step {record.engine} spec-decode record: "
+                "the request never ran a verify step"
+            )
+            return None
+        return record
 
     async def compute_input_token_count(
         self,

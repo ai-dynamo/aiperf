@@ -235,7 +235,10 @@ export preserves, so no additional field is needed there.
 If the Spec Decode section, histogram, and `spec_decode_*` fields are all absent, that is
 the expected clean-degradation behavior -- not an error. Common causes:
 
-- speculative decoding is off, or the requests had no verify steps;
+- speculative decoding is off, or the requests had no verify steps -- on
+  every engine. A vLLM `max_tokens: 1` probe still shows a
+  `speculative_decoding` payload with `num_spec_steps: 0` on the wire, but
+  AIPerf does not count it;
 - the server was not started with per-request reporting enabled -- vLLM's
   `--per-request-spec-decode-metrics`, or TensorRT-LLM's
   `per_request_spec_decode_stats: true`;

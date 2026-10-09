@@ -131,15 +131,25 @@ The wire object maps to the record one-to-one, except:
 - The `detailed` level adds `per_step_accepted` / `per_step_drafted`; `summary`
   omits them (they stay `None`).
 - `mean_acceptance_length` / `draft_acceptance_rate` are taken verbatim
-  (the server already computes them safely, including the zero-step case).
+  (the server already computes them safely).
 
 ### Missing-field and edge cases
 
-- **Field absent** (spec decode off, or the request had no verify steps): the
+- **Field absent** (spec decode off, or per-request reporting not enabled): the
   record is `None` and dependent metrics simply do not show. This is the common
   case and is not an error.
-- **Zero-step / fully-rejected**: reported verbatim (empty or `{0: N}`
-  histogram, `mean_acceptance_length == 1.0`).
+- **Zero-step** (`num_spec_steps == 0`): the record is `None` on every engine.
+  vLLM always sends a payload, even for a request that never ran a verify step
+  (`max_tokens: 1`, EOS as the first token, an NGram drafter that never
+  matched), while TensorRT-LLM sends none. AIPerf normalizes both to absent, so
+  the per-request metrics average only over requests that speculated instead
+  of counting these as acceptance length 1.0 and rate 0%. The drop is logged at
+  debug only. The raw payload with `num_spec_steps: 0` is still visible on the
+  wire and in `--export-level raw` output.
+- **Fully-rejected** (`num_spec_steps > 0`, every step in bucket `j=0`):
+  reported verbatim (`{0: N}` histogram, `mean_acceptance_length == 1.0`,
+  `draft_acceptance_rate == 0.0`). This is real speculation that failed, so it
+  counts.
 - **Malformed payload**: the adapter degrades to `None` rather than raising, so
   one bad response cannot abort a run. Records whose aggregate counts contradict
   each other (histogram not summing to `num_spec_steps`, etc.) are rejected the
