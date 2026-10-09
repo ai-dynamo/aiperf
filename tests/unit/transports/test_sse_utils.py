@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
+from collections.abc import AsyncIterator
 
 import orjson
 import pytest
@@ -470,6 +471,51 @@ retry: 5000"""
         assert result.get_json() is None
 
 
+class TestParseSSEMessageUnicode:
+    """Unicode separators in data are not SSE field delimiters."""
+
+    @pytest.mark.parametrize(
+        "separator,line_ending",
+        [
+            param("\u0085", "\n", id="next-line-lf"),
+            param("\u2028", "\n", id="line-separator-lf"),
+            param("\u2029", "\n", id="paragraph-separator-lf"),
+            param("\u2028", "\r\n", id="line-separator-crlf"),
+            param("\u2028", "\r", id="line-separator-cr"),
+        ],
+    )  # fmt: skip
+    def test_parse_named_event_preserves_unicode_json_content(
+        self, separator: str, line_ending: str, base_perf_ns: int
+    ) -> None:
+        payload = {"delta": {"type": "text_delta", "text": f"before{separator}after"}}
+        data = orjson.dumps(payload).decode()
+        raw_message = f"event: content_block_delta{line_ending}data: {data}"
+        result = SSEMessage.parse(raw_message, base_perf_ns)
+
+        assert result.get_json() == payload
+        assert result.extract_data_content() == data
+        assert [packet.name for packet in result.packets] == ["event", "data"]
+
+    def test_parse_named_event_preserves_unicode_bytes(self, base_perf_ns: int) -> None:
+        payload = {"delta": {"type": "text_delta", "text": "a\u0085b\u2028c\u2029d"}}
+        data = orjson.dumps(payload)
+        result = SSEMessage.parse(
+            b"event: content_block_delta\ndata: " + data, base_perf_ns
+        )
+
+        assert result.get_json() == payload
+        assert [packet.name for packet in result.packets] == ["event", "data"]
+
+    def test_parse_named_event_preserves_unicode_plain_text(
+        self, base_perf_ns: int
+    ) -> None:
+        text = "before\u2028after"
+        result = SSEMessage.parse(f"event: message\ndata: {text}", base_perf_ns)
+
+        assert result.get_text() == text
+        assert [packet.name for packet in result.packets] == ["event", "data"]
+
+
 class TestParseSSEMessageIncompleteJSON:
     """Tests for SSE messages where a literal newline in a JSON value splits a data field."""
 
@@ -836,6 +882,23 @@ def create_mock_sse_iterator():
         return mock_async_iter()
 
     return _factory
+
+
+@pytest.mark.asyncio
+async def test_sse_reader_preserves_unicode_in_named_event() -> None:
+    payload = {"type": "response.output_text.delta", "delta": "a\u0085b\u2028c\u2029d"}
+    body = (
+        f"event: response.output_text.delta\ndata: {orjson.dumps(payload).decode()}\n\n"
+    ).encode()
+
+    async def chunks() -> AsyncIterator[bytes]:
+        for byte in body:
+            yield bytes([byte])
+
+    messages = await AsyncSSEStreamReader(chunks()).read_complete_stream()
+
+    assert len(messages) == 1
+    assert messages[0].get_json() == payload
 
 
 @pytest.mark.asyncio
