@@ -138,14 +138,17 @@ The wire object maps to the record one-to-one, except:
 - **Field absent** (spec decode off, or per-request reporting not enabled): the
   record is `None` and dependent metrics simply do not show. This is the common
   case and is not an error.
-- **Zero-step** (`num_spec_steps == 0`): the record is `None` on every engine.
-  vLLM always sends a payload, even for a request that never ran a verify step
+- **Zero-step** (`num_spec_steps == 0`): the record is `None`. vLLM always
+  sends a payload, even for a request that never ran a verify step
   (`max_tokens: 1`, EOS as the first token, an NGram drafter that never
-  matched), while TensorRT-LLM sends none. AIPerf normalizes both to absent, so
-  the per-request metrics average only over requests that speculated instead
-  of counting these as acceptance length 1.0 and rate 0%. The drop is logged at
-  debug only. The raw payload with `num_spec_steps: 0` is still visible on the
-  wire and in `--export-level raw` output.
+  matched), while TensorRT-LLM sends none. AIPerf drops the vLLM record, so the
+  per-request metrics average only over requests that speculated instead of
+  counting these as acceptance length 1.0 and rate 0%. The drop is logged at
+  debug only and counted in
+  [`spec_decode_zero_step_requests`](../metrics-reference.md#zero-step-requests).
+  The raw payload is still visible on the wire and in `--export-level raw`
+  output. A zero-step payload must also report zero drafts; one with
+  `num_draft_tokens > 0` is malformed (see below).
 - **Fully-rejected** (`num_spec_steps > 0`, every step in bucket `j=0`):
   reported verbatim (`{0: N}` histogram, `mean_acceptance_length == 1.0`,
   `draft_acceptance_rate == 0.0`). This is real speculation that failed, so it
@@ -247,6 +250,8 @@ Prometheus endpoint.
   `updateNumTokensPerIteration` and has no per-position vectors, so the field is
   simply absent there.
 - **Absent when the request never drafted**, rather than reported as zeros.
+  Because TensorRT-LLM never sends a zero-step payload, the adapter treats one
+  as malformed and logs a warning, unlike the quiet drop on vLLM.
 - **`n > 1`**: because the payload is per-choice, a response carrying more than
   one choice is suppressed client-side — a single per-request record cannot
   attribute request-level `completion_tokens` to one sequence.

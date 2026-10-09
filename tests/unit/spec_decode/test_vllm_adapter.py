@@ -56,6 +56,18 @@ DETAILED_PAYLOAD: dict[str, Any] = {
 }
 
 
+# What vLLM sends for a request that never ran a verify step, e.g. max_tokens: 1.
+ZERO_STEP_PAYLOAD: dict[str, Any] = {
+    "mean_acceptance_length": 1.0,
+    "draft_acceptance_rate": 0.0,
+    "acceptance_histogram": [0, 0, 0, 0],
+    "num_spec_steps": 0,
+    "num_accepted_draft_tokens": 0,
+    "num_draft_tokens": 0,
+    "num_spec_tokens": 3,
+}
+
+
 def _response(
     *,
     spec_decode_stats: dict[str, Any] | None = None,
@@ -159,16 +171,7 @@ class TestVLLMSpecDecodeAdapter:
         Adapter-level only: ``InferenceResultParser`` drops a zero-step record,
         so it never reaches the metrics.
         """
-        payload = {
-            "mean_acceptance_length": 1.0,
-            "draft_acceptance_rate": 0.0,
-            "acceptance_histogram": [0, 0, 0, 0],
-            "num_spec_steps": 0,
-            "num_accepted_draft_tokens": 0,
-            "num_draft_tokens": 0,
-            "num_spec_tokens": 3,
-        }
-        record = VLLMSpecDecodeAdapter.adapt(_non_streaming(payload))
+        record = VLLMSpecDecodeAdapter.adapt(_non_streaming(ZERO_STEP_PAYLOAD))
 
         assert record is not None
         assert record.mean_acceptance_length == 1.0
@@ -363,6 +366,7 @@ class TestVLLMSpecDecodeAdapter:
             param({**SUMMARY_PAYLOAD, "num_spec_steps": 99}, id="histogram_sum_mismatch"),
             param({**SUMMARY_PAYLOAD, "num_accepted_draft_tokens": 11}, id="weighted_sum_mismatch"),
             param({**SUMMARY_PAYLOAD, "num_draft_tokens": 5}, id="accepted_exceeds_drafted"),
+            param({**ZERO_STEP_PAYLOAD, "num_draft_tokens": 3}, id="drafts_without_steps"),
         ],
     )  # fmt: skip
     def test_adapt_inconsistent_aggregate_payload_degrades_to_none(
@@ -421,6 +425,10 @@ class TestRecordConstraints:
                     "num_draft_tokens": 1,
                 },
                 id="accepted_exceeds_drafted",
+            ),
+            param(
+                {"acceptance_histogram": {}, "num_spec_steps": 0},  # 1 draft, 0 steps
+                id="drafts_without_steps",
             ),
         ],
     )  # fmt: skip
