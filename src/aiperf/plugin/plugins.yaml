@@ -2749,7 +2749,8 @@ public_dataset_loader:
       on CUA-Gym desktop tasks: full text history, 10 tool definitions and one
       screenshot per request. Delegates to the mooncake_trace loader, replaying
       the recorded inter-request delays. --dataset-filter reshapes the corpus in
-      place: n_screenshots, min_trace_length, max_trace_length, avg_trace_length.
+      place: n_screenshots, min_trace_length, max_trace_length, avg_trace_length,
+      uuid_cache, disable_structured_output.
       Usage: --public-dataset h_cua_perf --dataset-filter n_screenshots=3
     metadata:
       hf_dataset_name: Hcompany/h_cua_perf
