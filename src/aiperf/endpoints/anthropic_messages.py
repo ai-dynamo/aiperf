@@ -163,12 +163,11 @@ def _collect_tool_use(part: dict[str, Any], result: ExtractedPayload) -> None:
 
 
 def _collect_tool_result(part: dict[str, Any], result: ExtractedPayload) -> None:
-    """Collect text from one tool_result block.
+    """Collect text and image counts from one tool_result block.
 
     ``content`` is either a string (legacy shorthand) or a list of
-    ``{"type":"text","text":...}`` blocks. Other block types (image,
-    etc.) are skipped here - image content already counts via the base
-    walk's image branch when it encounters the part's ``type``.
+    ``{"type":"text","text":...}`` and image blocks. The base walk
+    handles only top-level content parts, so nested images count here.
     """
     content = part.get("content")
     if isinstance(content, str):
@@ -184,6 +183,8 @@ def _collect_tool_result(part: dict[str, Any], result: ExtractedPayload) -> None
             text = sub.get("text")
             if isinstance(text, str) and text:
                 result.texts.append(text)
+        elif sub.get("type") == "image":
+            result.image_count += 1
 
 
 # --- Assistant-replay accumulators (streaming + non-streaming responses) -----

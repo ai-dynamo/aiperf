@@ -10,12 +10,17 @@ from pytest import param
 from aiperf.common.models import (
     ErrorDetails,
     ParsedResponse,
+    RequestInfo,
     RequestRecord,
     TextResponse,
     TextResponseData,
     Usage,
 )
+from aiperf.endpoints.anthropic_messages import MessagesEndpoint
 from aiperf.endpoints.openai_chat import ChatEndpoint
+from aiperf.plugin.enums import EndpointType
+from aiperf.records.inference_result_parser import InferenceResultParser
+from tests.unit.endpoints.conftest import create_model_endpoint
 from tests.unit.records.conftest import (
     create_invalid_record,
     create_test_request_info,
@@ -659,6 +664,70 @@ class TestMultimodalMediaCountsEndToEnd:
         assert parsed_record.media_counts.images == images_in_payload
         assert parsed_record.media_counts.audios == audios_in_payload
         assert parsed_record.media_counts.videos == videos_in_payload
+
+    @pytest.mark.parametrize(
+        "nested_images,direct_images",
+        [
+            param(1, 0, id="nested-only"),
+            param(2, 1, id="nested-and-direct"),
+        ],
+    )  # fmt: skip
+    async def test_anthropic_tool_result_images_counted_in_parsed_record(
+        self,
+        *,
+        setup_inference_parser: InferenceResultParser,
+        sample_request_info: RequestInfo,
+        nested_images: int,
+        direct_images: int,
+    ) -> None:
+        image = {
+            "type": "image",
+            "source": {"type": "url", "url": "https://example.com/image.png"},
+        }
+        sample_request_info.payload_bytes = orjson.dumps(
+            {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "tool_1",
+                                "content": [
+                                    {"type": "text", "text": "screenshot"},
+                                    *[image] * nested_images,
+                                ],
+                            },
+                            *[image] * direct_images,
+                        ],
+                    }
+                ]
+            }
+        )
+        setup_inference_parser.endpoint = MessagesEndpoint(
+            model_endpoint=create_model_endpoint(EndpointType.MESSAGES)
+        )
+        record = RequestRecord(
+            model_name="test-model",
+            request_info=sample_request_info,
+            start_perf_ns=1000,
+            end_perf_ns=2000,
+            responses=[
+                TextResponse(
+                    perf_ns=1500,
+                    text=orjson.dumps(
+                        {"type": "message", "content": [{"type": "text", "text": "ok"}]}
+                    ).decode(),
+                )
+            ],
+        )
+
+        parsed_record = await setup_inference_parser.parse_request_record(record)
+
+        assert not record.has_error
+        assert parsed_record.media_counts.images == nested_images + direct_images
+        assert parsed_record.media_counts.audios == 0
+        assert parsed_record.media_counts.videos == 0
 
     async def test_media_counts_zero_when_payload_bytes_missing(
         self,

@@ -683,6 +683,7 @@ num_images = count_image_content_parts(wire_payload)
 **Notes:**
 - Requires at least one image in at least one turn.
 - Counts UUID cache-only references as logical images even when their URL is empty.
+- Anthropic Messages requests include images nested inside `tool_result` content blocks.
 - Does not measure uploaded image bytes or cache misses.
 - Not displayed in console output (`console_group = MetricConsoleGroup.NONE`).
 
