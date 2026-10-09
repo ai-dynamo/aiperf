@@ -120,3 +120,63 @@ class TestWekaSubagentFixedSchedule:
         assert offsets[(1, 0)] <= offsets[(1, 1)] + TOLERANCE_S, (
             "subagent inner requests replayed out of order"
         )
+
+
+# One second, so a join deadline armed relative to the previous turn's response
+# lands a full second late -- well outside JOIN_TOLERANCE_S below. The shared
+# mock server answers almost instantly, which makes that error too small to
+# see: the defect below lived under a passing suite for exactly that reason.
+SLOW_TTFT_MS = 1000
+JOIN_TOLERANCE_S = 0.6
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_a_joined_turn_fires_on_recorded_time_not_after_server_latency(
+    cli: AIPerfCLI, mock_server_factory
+) -> None:
+    """The gated turn's deadline is an instant, not a stopwatch.
+
+    ``_arm_join_replay_deadline`` scheduled the parent's release ``delay_ms``
+    after arming, and arming happens when the previous turn's response lands.
+    So the recorded gap was added on top of server latency instead of
+    containing it, and the replay stretched in proportion to how slow the
+    endpoint was: measured +1.11s at 1s TTFT and +2.10s at 2s TTFT against
+    this fixture's parent turn recorded at t+5s.
+    """
+    async with mock_server_factory(ttft=SLOW_TTFT_MS, itl=5) as server:
+        result = await cli.run(
+            f"""
+            aiperf profile \
+                --model test-model \
+                --tokenizer builtin \
+                --url {server.url} \
+                --endpoint-type chat \
+                --custom-dataset-type weka_trace \
+                --input-file {FIXTURE} \
+                --fixed-schedule \
+                --workers-max 2 \
+                --ui simple
+            """,
+            timeout=300.0,
+        )
+
+    assert result.exit_code == 0, f"run failed: {result.exit_code}"
+    seen = [
+        (
+            r.metadata.request_start_ns,
+            r.metadata.source_outer_idx,
+            r.metadata.source_inner_idx,
+        )
+        for r in result.jsonl
+    ]
+    base = min(ts for ts, _, _ in seen)
+    offsets = {(o, i): (ts - base) / 1e9 for ts, o, i in seen}
+
+    gated = offsets[(2, None)]
+    assert abs(gated - RECORDED[(2, None)]) <= JOIN_TOLERANCE_S, (
+        f"the joined parent fired at t+{gated:.2f}s but was recorded at "
+        f"t+{RECORDED[(2, None)]}s. A lateness close to the {SLOW_TTFT_MS}ms "
+        "TTFT means the join deadline is being armed from the previous "
+        "response rather than from the recorded phase epoch."
+    )
