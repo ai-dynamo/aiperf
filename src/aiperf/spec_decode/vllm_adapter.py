@@ -30,12 +30,14 @@ ENGINE = "vllm"
 #
 # ``mean_acceptance_length`` is the discriminating key and must stay here.
 # TensorRT-LLM emits ``acceptance_histogram`` and ``num_spec_steps`` too, so a
-# signature without a vLLM-unique key matches a TRT-LLM payload -- and since the
-# shared field names parse, this adapter would build a record and stamp
-# ``engine="vllm"`` on another engine's numbers, with no error to notice.
-# TRT-LLM omits mean acceptance length by design, reporting it per choice as
-# ``avg_decoded_tokens_per_iter``. Requiring it costs nothing: ``adapt`` already
-# reads it unguarded, so a payload lacking it could never produce a record.
+# signature without a vLLM-unique key matches a TRT-LLM payload. That happened:
+# this adapter claimed every TRT-LLM payload, ``adapt`` raised ``KeyError`` on
+# the missing key, and the records were lost -- under first-match detection the
+# TRT-LLM adapter was never even tried. TRT-LLM does not report mean acceptance
+# length at all; its per-choice ``avg_decoded_tokens_per_iter`` averages over
+# every decoding iteration, not just drafting steps. Requiring the key costs
+# nothing: ``adapt`` already reads it unguarded, so a payload lacking it could
+# never produce a record.
 _VLLM_SIGNATURE_KEYS = (
     "acceptance_histogram",
     "num_spec_steps",

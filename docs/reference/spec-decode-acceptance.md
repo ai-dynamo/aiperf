@@ -66,9 +66,9 @@ The two current signatures are:
 | TensorRT-LLM | `total_accepted_draft_tokens`, `total_draft_tokens` |
 
 `mean_acceptance_length` is load-bearing: the other two vLLM keys are also
-emitted by TensorRT-LLM, and because the shared field names parse, a signature
-without it would let the vLLM adapter build a record from a TRT-LLM payload and
-label it `engine: "vllm"` — with no error to notice.
+emitted by TensorRT-LLM, so a signature without it lets the vLLM adapter claim
+a TRT-LLM payload. Its `adapt()` then raises `KeyError` on the missing key, so
+every TRT-LLM record is dropped with only a warning in the log.
 
 Plugin **priority does not order detection**: `priority` resolves conflicts only
 between plugins registering the same *name*, so `iter_all` yields declaration
@@ -169,7 +169,7 @@ chunk.
   "index": 0,
   "message": {"role": "assistant", "content": "..."},
   "finish_reason": "stop",
-  "avg_decoded_tokens_per_iter": 2.5,
+  "avg_decoded_tokens_per_iter": 2.1,
   "speculative_decoding": {
     "acceptance_rate": 0.5,
     "total_accepted_draft_tokens": 30,
@@ -191,10 +191,11 @@ The mapping to the record differs from vLLM's in three ways:
   `total_accepted_draft_tokens` → `num_accepted_draft_tokens`,
   `total_draft_tokens` → `num_draft_tokens`. These are TensorRT-LLM's own names
   for the quantities, already used internally for the same counters.
-- **`mean_acceptance_length` is derived, not read.** TRT-LLM does not send it,
-  because it already reports acceptance length per choice as
-  `avg_decoded_tokens_per_iter`; carrying it twice would let the two drift. The
-  adapter computes `1 + num_accepted_draft_tokens / num_spec_steps` — the
+- **`mean_acceptance_length` is derived, not read.** TRT-LLM does not report
+  it. Its per-choice `avg_decoded_tokens_per_iter` is a different quantity: it
+  averages decoded tokens over every decoding iteration, including iterations
+  that drafted nothing, so it reads lower whenever some iterations did not
+  draft. The adapter computes `1 + num_accepted_draft_tokens / num_spec_steps` — the
   record's own definition — so the reported length can never contradict the
   histogram it sits beside.
 - **`per_step_accepted` / `per_step_drafted` are never populated.** TRT-LLM keeps

@@ -50,10 +50,11 @@ class TRTLLMSpecDecodeAdapter:
 
     Two differences from vLLM's payload, both deliberate upstream:
 
-    - **No mean acceptance length.** TRT-LLM already reports it per choice as
-      ``avg_decoded_tokens_per_iter``; duplicating it inside the block would let
-      the two drift. This adapter derives it from the counts instead, so the
-      value can never disagree with the histogram it is reported beside.
+    - **No mean acceptance length.** TRT-LLM does not report it. Its per-choice
+      ``avg_decoded_tokens_per_iter`` is a different quantity: it averages over
+      every decoding iteration, including ones that drafted nothing. This
+      adapter derives acceptance length from the counts instead, so the value
+      can never disagree with the histogram it is reported beside.
     - **Its own field names** -- ``acceptance_rate`` and ``total_*`` rather than
       ``draft_acceptance_rate`` and ``num_*`` -- matching the vocabulary TRT-LLM
       already uses internally for these counters.

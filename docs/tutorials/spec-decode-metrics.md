@@ -108,7 +108,7 @@ sits on the **choice**, not at the response root:
 ```bash
 curl -s localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"meta-llama/Llama-3.1-8B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
+  -d '{"model":"meta-llama/Llama-3.1-8B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":32}'
 ```
 
 Look for `choices[0].speculative_decoding`. A few things differ from vLLM and are expected:
@@ -243,7 +243,11 @@ the expected clean-degradation behavior -- not an error. Common causes:
   [server-scrape path](speed-bench.md#portable-path-server-scrape) instead);
 - the vLLM build predates [PR #48915](https://github.com/vllm-project/vllm/pull/48915);
 - on TensorRT-LLM, the run used the C++/TRT backend, which has no per-position
-  vectors -- per-request reporting is PyTorch-backend only.
+  vectors -- per-request reporting is PyTorch-backend only;
+- on TensorRT-LLM, drafting was switched off at the batch sizes the run reached:
+  speculation stops above `max_concurrency`, or above the largest batch size in
+  `draft_len_schedule`, so a run held above that concurrency drafts nothing and
+  reports no per-request stats.
 
 ---
 

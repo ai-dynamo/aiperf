@@ -8,8 +8,9 @@ per-choice ``speculative_decoding`` payload: present, absent, fully-rejected,
 fully-accepted, streaming and non-streaming, and malformed degradation.
 
 Two differences from vLLM drive most of what is tested here. TRT-LLM does not
-send a mean acceptance length -- it reports that per choice as
-``avg_decoded_tokens_per_iter`` -- so the adapter derives it from the counts.
+send a mean acceptance length (its per-choice ``avg_decoded_tokens_per_iter``
+averages over every decoding iteration, so it is a different quantity), so the
+adapter derives it from the counts.
 And it sends ``num_spec_tokens: null`` under ``draft_len_schedule``, where the
 per-step draft bound varies by batch size; that must relax the histogram-length
 cross-check without relaxing any of the record's identity validators.
