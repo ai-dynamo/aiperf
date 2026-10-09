@@ -622,6 +622,19 @@ custom_dataset_loader:
       is_trace: true
       default_block_size: 512
 
+  h_cua_perf:
+    class: aiperf.dataset.loader.h_cua_perf_file:HCuaPerfFileLoader
+    description: |
+      H CUA Perf computer-use agent traces read from a local build: <name>.jsonl.zst
+      beside its <name>.meta.json manifest, e.g. a variant derived from
+      Hcompany/h_cua_perf with the dataset's trace_processor.py. Same records
+      and replay as the h_cua_perf public dataset, minus its --dataset-filter
+      knobs: a derived build already carries its shape. Never auto-detected;
+      select it by name.
+      Usage: --input-file ./build/h_cua.jsonl.zst --custom-dataset-type h_cua_perf
+    metadata:
+      is_trace: true
+
   raw_payload:
     class: aiperf.dataset.loader.raw_payload:RawPayloadDatasetLoader
     description: |
@@ -2749,7 +2762,8 @@ public_dataset_loader:
       on CUA-Gym desktop tasks: full text history, 10 tool definitions and one
       screenshot per request. Delegates to the mooncake_trace loader, replaying
       the recorded inter-request delays. --dataset-filter reshapes the corpus in
-      place: n_screenshots, min_trace_length, max_trace_length, avg_trace_length.
+      place: n_screenshots, min_trace_length, max_trace_length, avg_trace_length,
+      uuid_cache, disable_structured_output.
       Usage: --public-dataset h_cua_perf --dataset-filter n_screenshots=3
     metadata:
       hf_dataset_name: Hcompany/h_cua_perf
