@@ -60,28 +60,37 @@ class SampleRecord(BaseModel):
 
 
 class JSONValuesRecord(BaseModel):
+    """Model for checking JSON values, omitted fields and exclusions."""
+
     value: Any = Field(description="Value under test.")
     missing: str | None = Field(default=None, description="Omitted optional field.")
     hidden: Any = Field(default=None, description="Excluded field.")
 
 
+def _serialize_scrubbed_reference(record: JSONValuesRecord) -> bytes:
+    """Serialize with the original scrub and the test writer's exclusions."""
+    return (
+        orjson.dumps(
+            scrub_non_finite(
+                record.model_dump(mode="json", exclude_none=True, exclude={"hidden"})
+            )
+        )
+        + b"\n"
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "value,fails",
+    "value",
     [
-        param({"nested": [1.25, float("nan"), float("inf"), -float("inf"), -0.0, 7, True, "null", None]}, False, id="nested-native"),
-        param({"numpy": [np.float64(1.25), np.float64("nan"), np.float64("inf"), np.float64(-0.0)]}, False, id="numpy-float64"),
-        param(np.float32(0.1), True, id="unsupported-float32"),
-        param(np.int64(7), True, id="unsupported-int64"),
-        param(np.bool_(True), True, id="unsupported-bool"),
-        param(np.array([1.0]), True, id="unsupported-array"),
-        param(object(), True, id="unsupported-object"),
+        param({"nested": [1.25, float("nan"), float("inf"), -float("inf"), -0.0, 7, True, "null", None]}, id="nested-native"),
+        param({"numpy": [np.float64(1.25), np.float64("nan"), np.float64("inf"), np.float64(-0.0)]}, id="numpy-float64"),
     ],
 )  # fmt: skip
-async def test_json_serialization_matches_scrubbed_reference(
-    tmp_path: Path, value: Any, fails: bool
+async def test_buffered_write_supported_values_match_scrubbed_bytes(
+    tmp_path: Path, value: Any
 ) -> None:
-    """Preserve bytes, exclusions and explicit finalization errors."""
+    """Preserve bytes, exclusions and explicit nulls for supported values."""
     writer = BufferedJSONLWriterMixin[JSONValuesRecord](
         output_file=tmp_path / "records.jsonl", batch_size=100
     )
@@ -89,46 +98,55 @@ async def test_json_serialization_matches_scrubbed_reference(
     # An unsupported excluded value must not reach serialization.
     record = JSONValuesRecord(value=value, missing=None, hidden=object())
 
-    def reference(record: JSONValuesRecord) -> bytes:
-        return (
-            orjson.dumps(
-                scrub_non_finite(
-                    record.model_dump(
-                        mode="json",
-                        exclude_none=True,
-                        exclude=writer._jsonl_exclude_fields,
-                    )
-                )
-            )
-            + b"\n"
-        )
+    await writer.initialize()
+    await writer.start()
+    try:
+        await writer.buffered_write(record)
+        await writer.flush_buffer()
+        assert writer._write_error is None
+        assert writer.lines_written == 1
+        assert writer.output_file.read_bytes() == _serialize_scrubbed_reference(record)
+    finally:
+        await writer.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "value",
+    [
+        param(np.float32(0.1), id="unsupported-float32"),
+        param(np.int64(7), id="unsupported-int64"),
+        param(np.bool_(True), id="unsupported-bool"),
+        param(np.array([1.0]), id="unsupported-array"),
+        param(object(), id="unsupported-object"),
+    ],
+)  # fmt: skip
+async def test_buffered_write_invalid_record_without_pending_batch_preserves_error(
+    tmp_path: Path, value: Any
+) -> None:
+    """Preserve serialization errors when no valid batch can clear them."""
+    writer = BufferedJSONLWriterMixin[JSONValuesRecord](
+        output_file=tmp_path / "records.jsonl", batch_size=100
+    )
+    writer._jsonl_exclude_fields = {"hidden"}
+    record = JSONValuesRecord(value=value, missing=None, hidden=object())
+    with pytest.raises(Exception) as original:
+        _serialize_scrubbed_reference(record)
 
     await writer.initialize()
     await writer.start()
     try:
-        if fails:
-            with pytest.raises(Exception) as original:
-                reference(record)
-            # Flush a valid row first, then check the serialization barrier.
-            good = JSONValuesRecord(value={"explicit_null": None})
-            await writer.buffered_write(good)
+        await writer.buffered_write(record)
+        assert type(writer._write_error) is type(original.value)
+        assert str(writer._write_error) == str(original.value)
+        assert writer.lines_written == 0
+        assert writer._buffer == []
+        with pytest.raises(
+            RuntimeError, match="failed before artifact finalization"
+        ) as final:
             await writer.flush_buffer()
-            await writer.buffered_write(record)
-            assert type(writer._write_error) is type(original.value)
-            assert str(writer._write_error) == str(original.value)
-            with pytest.raises(
-                RuntimeError, match="failed before artifact finalization"
-            ) as final:
-                await writer.flush_buffer()
-            assert final.value.__cause__ is writer._write_error
-            assert writer.lines_written == 1
-            assert writer.output_file.read_bytes() == reference(good)
-        else:
-            await writer.buffered_write(record)
-            await writer.flush_buffer()
-            assert writer._write_error is None
-            assert writer.lines_written == 1
-            assert writer.output_file.read_bytes() == reference(record)
+        assert final.value.__cause__ is writer._write_error
+        assert writer.output_file.read_bytes() == b""
     finally:
         await writer.stop()
 

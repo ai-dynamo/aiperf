@@ -445,16 +445,19 @@ mid-token.
 
 ## NaN/Inf Discipline Pattern
 
-NaN/+inf/-inf in metric data corrupts downstream artifacts in three ways:
-`orjson.dumps` (and Pydantic `model_dump_json`) silently coerce them to JSON
-`null`, which is indistinguishable from "metric was missing"; CSV writers
+Where non-finite metric values are invalid, `orjson.dumps` (and Pydantic
+`model_dump_json`) can hide them by coercing them to JSON `null`, which is
+indistinguishable from "metric was missing". Serializer coercion does not
+replace input validation. CSV writers
 emit literal `"nan"`/`"inf"` strings that pandas/duckdb parse
 inconsistently; and `np.mean`/`np.std`/`polyfit` poison downstream decision
 logic (Pareto fronts, BO acquisition maxima, plateau detectors) without
 raising.
 
 The `aiperf.common.finite` module centralizes the discipline as four
-primitives. Use them at every numeric boundary.
+primitives. Use them for input validation, numerical calculations, and
+export normalization. Only the shared JSONL and raw-record writers have
+the serialization exception described below.
 
 ### `FiniteFloat` for Pydantic metric fields
 
@@ -497,21 +500,26 @@ alone and normalizes numpy scalars to the native Python type they actually
 mean — `numpy.int64(7)` becomes `7`, not `7.0`, and `numpy.bool_(True)`
 becomes `True`, not `1.0`.
 
-That normalization is load-bearing, not incidental: `orjson.dumps` **raises**
-`TypeError: Type is not JSON serializable: numpy.float64` rather than
-degrading, so a numpy scalar anywhere in a payload aborts the export and
-takes the run down with it. Any code that hands values to an exporter
+`orjson.dumps` **raises** `TypeError: Type is not JSON serializable: numpy.float64`
+for unsupported numpy scalars. This is a serialization failure; whether it
+is reported at finalization depends on the writer's error handling.
+Any code that hands values to an exporter
 (planners, scorers, analysis helpers) should still return native floats —
 `scrub_non_finite` is the backstop, not the excuse.
 
-The shared JSONL writer and raw-record writer serialize the result of
+Only the shared JSONL writer (`BufferedJSONLWriterMixin`) and raw-record
+writer (`RawRecordWriterProcessor`) may omit the scrub when serializing
 `model.model_dump(mode="json")` directly with `orjson.dumps`. That dump
 converts supported model values to JSON-compatible types; unsupported
 values still fail serialization. `orjson` writes remaining NaN/+inf/-inf
 floats as JSON `null`, which preserves the output of a separate scrub
-without another recursive copy. Existing `exclude_none` and field-exclusion
-rules still apply. The raw writer also preserves the request payload bytes
-through `orjson.Fragment`.
+without another recursive copy. The shared writer retains `exclude_none`
+and its field exclusions. The raw writer retains `exclude_none` and preserves
+request payload bytes through `orjson.Fragment`.
+
+This is not a general exemption for exporters that use JSON-mode dumps.
+Other exporters must still follow the
+[exporter invariant](./global-invariants.md#test_every_json_exporter_calls_scrub_non_finite).
 
 Payloads assembled as plain dicts from dataclasses (`search_history.json`
 is the live example) can still contain numpy scalars and need
