@@ -20,6 +20,55 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
+def shard_commands(
+    commands: list, shard_index: int, shard_total: int
+) -> tuple[list, list[int]]:
+    """Split ``commands`` across ``shard_total`` runners, returning this
+    shard's commands in docs order plus every shard's estimated weight.
+
+    LPT (Longest Processing Time) bin-packing: sort units by their
+    author-annotated ``weight=`` hint (seconds), then greedily place each into
+    the currently-lightest shard. Pure greedy LPT has a 4/3 - 1/(3m) makespan
+    approximation -- close enough to optimal at the ~50-command scale here,
+    and immune to docs reordering (unlike contiguous-chunk slicing).
+
+    The unit is a FILE, not a command. Guides build their own fixtures in one
+    tagged block and consume them in the next -- ``trace-replay.md`` writes
+    ``custom_trace.jsonl`` with a heredoc, then profiles against it -- so
+    splitting a file across shards hands one shard a command whose input no
+    other shard created. That failed shard 3/4 on 2026-10-09, once container
+    cleanup started working: until then a leftover container from an earlier
+    job still held the file, and the split was invisible. Grouping costs
+    almost nothing here, moving the shard weights from
+    ``[1660, 1660, 1610, 1590]`` to ``[1580, 1650, 1650, 1640]``.
+
+    Files are ordered heaviest-first, then by path for a stable,
+    OS-independent tie-break: ``Path.rglob`` returns files in
+    filesystem-dependent order (macOS and Linux differ), so without it the
+    same code would assign tests to different shards locally than in CI -- a
+    real bug we hit on the 2026-05-19 rebalance pass.
+    """
+    shard_bins: list[list] = [[] for _ in range(shard_total)]
+    shard_load: list[int] = [0] * shard_total
+
+    by_file: dict[str, list] = {}
+    for cmd in commands:
+        by_file.setdefault(cmd.file_path, []).append(cmd)
+    sorted_files = sorted(
+        by_file.items(), key=lambda kv: (-sum(c.weight for c in kv[1]), kv[0])
+    )
+    for _, cmds in sorted_files:
+        target = min(range(shard_total), key=lambda i: shard_load[i])
+        shard_bins[target].extend(cmds)
+        shard_load[target] += sum(c.weight for c in cmds)
+
+    my_bin = shard_bins[shard_index]
+    # Restore docs order so the runner's per-test logs read top-to-bottom,
+    # and so a fixture block precedes the command that consumes it.
+    my_bin.sort(key=lambda c: (c.file_path, c.start_line))
+    return my_bin, shard_load
+
+
 def main():
     """Main function"""
     import argparse
@@ -113,35 +162,12 @@ def main():
     if args.shard_total > 1:
         server = servers[args.server]
         n = len(server.aiperf_commands)
-        # LPT (Longest Processing Time) bin-packing: sort commands by their
-        # author-annotated ``weight=`` hint (seconds), then greedily place
-        # each into the currently-lightest shard. Within a shard, restore
-        # docs order so the runner's per-test logs read top-to-bottom.
-        # Pure greedy LPT has a 4/3 - 1/(3m) makespan approximation —
-        # close enough to optimal for the ~50-command scale here, and
-        # immune to docs reordering (unlike contiguous-chunk slicing).
-        shard_bins: list[list] = [[] for _ in range(args.shard_total)]
-        shard_load: list[int] = [0] * args.shard_total
-        # Tuple key: heaviest first, then (file_path, start_line) for a
-        # stable, OS-independent secondary sort. ``Path.rglob`` returns
-        # files in filesystem-dependent order (macOS vs Linux differ), so
-        # without the tuple tie-break the same code would assign tests to
-        # different shards locally vs in CI — a real bug we hit on the
-        # 2026-05-19 rebalance pass.
-        sorted_cmds = sorted(
-            server.aiperf_commands,
-            key=lambda c: (-c.weight, c.file_path, c.start_line),
+        server.aiperf_commands, shard_load = shard_commands(
+            server.aiperf_commands, args.shard_index, args.shard_total
         )
-        for cmd in sorted_cmds:
-            target = min(range(args.shard_total), key=lambda i: shard_load[i])
-            shard_bins[target].append(cmd)
-            shard_load[target] += cmd.weight
-        my_bin = shard_bins[args.shard_index]
-        my_bin.sort(key=lambda c: (c.file_path, c.start_line))
-        server.aiperf_commands = my_bin
         logger.info(
             f"Shard {args.shard_index + 1}/{args.shard_total} of "
-            f"'{args.server}': {len(my_bin)} of {n} commands, "
+            f"'{args.server}': {len(server.aiperf_commands)} of {n} commands, "
             f"estimated weight {shard_load[args.shard_index]}s "
             f"(shard weights: {shard_load})"
         )
