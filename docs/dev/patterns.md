@@ -480,7 +480,7 @@ The `AfterValidator` rejects NaN/+inf/-inf at config-load and
 finite-or-explicitly-missing semantics, use `FiniteFloat | None` — the
 validator only fires when a non-None value is provided.
 
-### `scrub_non_finite` before every JSON exporter
+### `scrub_non_finite` for export values that need normalization
 
 ```python
 import orjson
@@ -504,11 +504,21 @@ takes the run down with it. Any code that hands values to an exporter
 (planners, scorers, analysis helpers) should still return native floats —
 `scrub_non_finite` is the backstop, not the excuse.
 
-Most exporters are shielded by accident: they call
-`scrub_non_finite(model.model_dump(mode="json"))`, and Pydantic's JSON-mode
-dump already coerces numpy. Payloads assembled as plain dicts from
-dataclasses (`search_history.json` is the live example) have no such step,
-so `scrub_non_finite` is their only guard.
+The shared JSONL writer and raw-record writer serialize the result of
+`model.model_dump(mode="json")` directly with `orjson.dumps`. That dump
+converts supported model values to JSON-compatible types; unsupported
+values still fail serialization. `orjson` writes remaining NaN/+inf/-inf
+floats as JSON `null`, which preserves the output of a separate scrub
+without another recursive copy. Existing `exclude_none` and field-exclusion
+rules still apply. The raw writer also preserves the request payload bytes
+through `orjson.Fragment`.
+
+Payloads assembled as plain dicts from dataclasses (`search_history.json`
+is the live example) can still contain numpy scalars and need
+`scrub_non_finite`. Do not enable native numpy serialization as a general
+replacement: its float32 output can round differently from conversion to a
+Python float. Keep explicit normalization for non-JSON consumers and keep
+`FiniteFloat` validation where non-finite inputs must be rejected.
 
 ### `is_finite_value` for the canonical finiteness check
 

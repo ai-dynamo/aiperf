@@ -29,8 +29,9 @@ This module centralizes the discipline as four primitives:
   Python ``int``/``float`` AND numpy scalar types (``numpy.float32``,
   ``numpy.float64``, ``numpy.int64``); rejects ``bool`` by design.
 - :func:`scrub_non_finite` -- recursively rewrites non-finite numeric
-  values to ``None`` in dict/list/tuple structures. Apply before every
-  ``orjson.dumps`` call that may carry metric data.
+  values to ``None`` in dict/list/tuple structures and normalizes numpy
+  scalars. JSONL writers can omit this pass on JSON-mode model dumps:
+  ``orjson.dumps`` already writes remaining non-finite floats as ``null``.
 - :func:`nan_safe_mean` / :func:`nan_safe_std` -- aggregations that
   ignore non-finite inputs and return ``None`` when no finite values
   remain (rather than silently returning NaN).

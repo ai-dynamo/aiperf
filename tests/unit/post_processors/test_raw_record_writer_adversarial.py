@@ -10,10 +10,13 @@ and ``TestWave2FixCounter`` validates that implemented behaviour.
 
 from typing import Any
 
+import numpy as np
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
+from aiperf.common.finite import scrub_non_finite
 from aiperf.common.models import (
     ParsedResponse,
     ParsedResponseRecord,
@@ -121,6 +124,65 @@ def _make_raw_record(
         responses=[TextResponse(text="ok", perf_ns=2_000_000_000)],
         error=None,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload_bytes,payload,error,fails",
+    [
+        param(b'{ "nested": [1.25, -0.0, 7, true, "null", null] }', None, None, False, id="fragment-verbatim"),
+        param(None, {"nested": [1.25, float("nan"), float("inf"), -float("inf"), -0.0, 7, True, "null", None]}, None, False, id="fallback-native"),
+        param(None, {"numpy": [np.float64(1.25), np.float64("nan"), np.float64("inf"), np.float64(-0.0)]}, None, False, id="fallback-numpy"),
+        param(b'{"ok":null}', None, ErrorDetails(message="failed", details={"nested": [float("nan"), float("inf"), -float("inf"), -0.0, np.float64(1.25), None]}), False, id="fragment-error"),
+        param(None, None, ErrorDetails(message="before transport"), False, id="fallback-error"),
+        param(None, {"bad": np.float32(0.1)}, None, True, id="fallback-unsupported"),
+        param(b'{}', None, ErrorDetails(message="failed", details=np.int64(7)), True, id="fragment-unsupported"),
+        param(123, None, None, True, id="invalid-fragment"),
+    ],
+)  # fmt: skip
+async def test_raw_json_serialization_matches_scrubbed_reference(
+    run_raw,
+    payload_bytes: Any,
+    payload: dict[str, Any] | None,
+    error: ErrorDetails | None,
+    fails: bool,
+) -> None:
+    """Preserve Fragment bytes, fallback output and failure accounting."""
+    record = _make_raw_record(payload_bytes=None, payload=payload).model_copy(
+        update={"payload_bytes": payload_bytes, "error": error}
+    )
+
+    def reference(record: RawRecordInfo) -> bytes:
+        dumped = scrub_non_finite(record.model_dump(exclude_none=True, mode="json"))
+        if record.payload_bytes is not None:
+            dumped["payload"] = orjson.Fragment(record.payload_bytes)
+        return orjson.dumps(dumped) + b"\n"
+
+    async with raw_record_processor("processor-numeric", run_raw) as processor:
+        if fails:
+            with pytest.raises(Exception) as original:
+                reference(record)
+            good = _make_raw_record(payload_bytes=b'{"ok":null}')
+            await processor.buffered_write(good)
+            await processor.flush_buffer()
+            await processor.buffered_write(record)
+            assert type(processor._write_error) is type(original.value)
+            assert str(processor._write_error) == str(original.value)
+            assert processor.dropped_record_count == int(payload_bytes is not None)
+            with pytest.raises(
+                RuntimeError, match="failed before artifact finalization"
+            ) as final:
+                await processor.finalize_artifact()
+            assert final.value.__cause__ is processor._write_error
+            assert processor.lines_written == 1
+            assert processor.output_file.read_bytes() == reference(good)
+        else:
+            await processor.buffered_write(record)
+            await processor.finalize_artifact()
+            assert processor._write_error is None
+            assert processor.dropped_record_count == 0
+            assert processor.lines_written == 1
+            assert processor.output_file.read_bytes() == reference(record)
 
 
 class TestBufferedWritePayloadBytesFastPath:
