@@ -1,8 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import orjson
 import pytest
-from pydantic import BaseModel, Field, SerializeAsAny
+from pydantic import BaseModel, Field, SerializeAsAny, ValidationError
+from pytest import param
 
 from aiperf.common.messages import InferenceResultsMessage
 from aiperf.common.models import (
@@ -17,6 +19,47 @@ from aiperf.common.models import (
     TimesliceResult,
 )
 from aiperf.common.models.export_models import JsonMetricResult
+
+
+class TestBinaryResponse:
+    def test_python_construction_and_dump_preserve_raw_bytes(self) -> None:
+        body = bytes(range(256))
+        positional = BinaryResponse(123, body, "application/octet-stream")
+        keyword = BinaryResponse(
+            perf_ns=123, raw_bytes=body, content_type="application/octet-stream"
+        )
+        record = RequestRecord(responses=[positional])
+
+        assert positional == keyword
+        assert not hasattr(positional, "__dict__")
+        assert positional.get_raw() == body
+        assert positional.get_text() is None
+        assert positional.get_json() is None
+        assert record.model_dump()["responses"][0]["raw_bytes"] == body
+        assert positional.raw_bytes == body
+
+    @pytest.mark.parametrize(
+        "encoded",
+        [param("!", id="invalid-character"), param("a", id="invalid-length")],
+    )  # fmt: skip
+    @pytest.mark.parametrize("json_mode", [False, True])
+    def test_malformed_base64_response_rejected(
+        self, encoded: str, json_mode: bool
+    ) -> None:
+        data = {"responses": [{"perf_ns": 123, "raw_bytes": encoded}]}
+        with pytest.raises(ValidationError):
+            if json_mode:
+                RequestRecord.model_validate_json(orjson.dumps(data))
+            else:
+                RequestRecord.model_validate(data)
+
+    def test_valid_base64_response_decoded_without_legacy_text_detection(self) -> None:
+        record = RequestRecord.model_validate(
+            {"responses": [{"perf_ns": 123, "raw_bytes": "abcd"}]}
+        )
+
+        assert isinstance(record.responses[0], BinaryResponse)
+        assert record.responses[0].raw_bytes == b"i\xb7\x1d"
 
 
 class TestProfileResults:
