@@ -215,21 +215,21 @@ A PR must also be up to date with `main` before it merges, and every branch upda
 A tutorial's `aiperf profile` command is executed in CI against a real
 inference server only if the block carrying it is tagged, so an untagged guide
 rots silently -- a renamed flag leaves a copy-pasteable command that no longer
-works, and nothing fails until a user tries it. Tag at least one command in a
-new guide:
+works, and nothing fails until a user tries it.
 
-~~~markdown
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
-```bash
-aiperf profile --model Qwen/Qwen3-0.6B --url http://localhost:8000 --endpoint-type chat
-```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
-~~~
+Tag at least one command in a new guide by wrapping its fenced block in a pair
+of HTML comments named `aiperf-run-{server}-endpoint-server`, the closing one
+prefixed with a slash. `docs/tutorial.md` shows the exact syntax, and
+[`tests/ci/test_docs_end_to_end/README.md`](tests/ci/test_docs_end_to_end/README.md)
+documents the available server groups, the `weight=` attribute, and how to run
+the suite locally.
 
 `tools/check_docs_e2e_tags.py` fails a PR that adds a doc with an untagged
-`aiperf profile` command. For the available server groups, the `weight=`
-attribute, and how to run the suite locally, see
-[`tests/ci/test_docs_end_to_end/README.md`](tests/ci/test_docs_end_to_end/README.md).
+`aiperf profile` command.
+
+> Spelling a tag out in full here would be a mistake: the harness parses every
+> markdown file in the repo and does not skip code fences, so the example would
+> be collected and run as a real benchmark.
 
 ## Running GitHub Actions Locally
 
