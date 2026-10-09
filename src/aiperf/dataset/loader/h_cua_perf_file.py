@@ -14,6 +14,7 @@ from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader.base_loader import LoaderProbeData
 from aiperf.dataset.loader.h_cua_perf_processing import (
+    HCuaPerfFilters,
     iter_selected_records,
     manifest_path,
     memory_shortfall,
@@ -104,6 +105,6 @@ class HCuaPerfFileLoader(MooncakeTraceDatasetLoader):
         try:
             with open_dataset(self.filename) as lines:
                 records = (orjson.loads(line) for line in lines if line.strip())
-                yield from iter_selected_records(records, self._plan, None)
+                yield from iter_selected_records(records, self._plan, HCuaPerfFilters())
         except (KeyError, ValueError, zstandard.ZstdError) as e:
             raise DatasetLoaderError(f"{self.tag}: {e}") from e

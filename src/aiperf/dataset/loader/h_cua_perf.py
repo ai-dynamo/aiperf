@@ -111,9 +111,7 @@ class HCuaPerfDatasetLoader(BaseHFDatasetLoader):
     def _read_records(self, trace: Path, plan: dict[str, int]) -> list[dict[str, Any]]:
         with open_dataset(trace) as lines:
             records = (orjson.loads(line) for line in lines if line.strip())
-            return list(
-                iter_selected_records(records, plan, self.filters.n_screenshots)
-            )
+            return list(iter_selected_records(records, plan, self.filters))
 
     async def load_dataset(self) -> dict[str, list[MooncakeTrace]]:
         """Download, plan the trajectory selection, read that far, delegate the rest."""

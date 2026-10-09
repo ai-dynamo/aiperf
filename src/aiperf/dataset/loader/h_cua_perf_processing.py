@@ -16,6 +16,7 @@ import zstandard
 from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.enums import AssistantResponseMode
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import AIPerfBaseModel
 
@@ -36,6 +37,9 @@ SCREENSHOT_ROLES = frozenset({"user", "tool"})
 
 LIVE_OBJECT_FACTOR = 2.0
 """Live bytes per on-disk byte once a record is parsed; measured at 1.4 to 1.7, rounded up for text-heavy sessions."""
+
+STRUCTURED_OUTPUT_KEYS = frozenset({"response_format", "structured_outputs"})
+"""Extra-body keys that request guided decoding: the OpenAI API's and vLLM's."""
 
 _BISECTION_STEPS = 32
 
@@ -73,6 +77,16 @@ class HCuaPerfFilters(AIPerfBaseModel):
         gt=0,
         description="Target mean requests per trajectory, reached by truncating "
         "every trajectory by the same factor.",
+    )
+    uuid_cache: bool = Field(
+        default=False,
+        description="Send each screenshot in full once per trajectory; later requests "
+        "reference it by uuid only, for servers that cache media by uuid.",
+    )
+    disable_structured_output: bool = Field(
+        default=False,
+        description="Drop the recorded response format from the extra body; "
+        "tool_choice is kept.",
     )
 
     @model_validator(mode="after")
@@ -209,9 +223,9 @@ def memory_shortfall(meta: dict[str, Any], plan: dict[str, int]) -> str | None:
 def iter_selected_records(
     records: Iterator[dict[str, Any]],
     plan: dict[str, int],
-    n_screenshots: int | None,
+    filters: HCuaPerfFilters,
 ) -> Iterator[dict[str, Any]]:
-    """Yield the planned prefix of every selected trajectory, re-windowed, in file order.
+    """Yield the planned prefix of every selected trajectory, reshaped, in file order.
 
     The plan comes from the manifest and the file is verified against the
     manifest's sha256 before this runs, so the plan is trusted. Trajectories
@@ -224,11 +238,53 @@ def iter_selected_records(
         if kept_n is None:
             continue
         kept = list(islice(session, kept_n))
-        if n_screenshots is not None:
-            apply_screenshot_window(kept, n_screenshots)
+        reshape_trajectory(kept, filters)
+        for record in kept:
+            # Mooncake takes a row without it for a possibly incremental one and warns.
+            record.setdefault("assistant_responses", AssistantResponseMode.RECORDED)
         yield from kept
         if not remaining:
             return
+
+
+def reshape_trajectory(records: list[dict[str, Any]], filters: HCuaPerfFilters) -> None:
+    """Apply the request-shaping filters to one trajectory's records, in place."""
+    if filters.n_screenshots is not None:
+        apply_screenshot_window(records, filters.n_screenshots)
+    if filters.uuid_cache:
+        reference_repeated_screenshots(records)
+    if filters.disable_structured_output:
+        for record in records:
+            drop_structured_output(record)
+
+
+def reference_repeated_screenshots(records: list[dict[str, Any]]) -> None:
+    """Keep a screenshot's data in the first request carrying it; later ones send its uuid only."""
+    seen: set[str] = set()
+    for record in records:
+        for message in record["messages"]:
+            content = message.get("content")
+            if not isinstance(content, list):
+                continue
+            for idx, part in enumerate(content):
+                image_uuid = part.get("uuid") if _is_image(part) else None
+                if image_uuid is None:
+                    continue
+                if image_uuid in seen:
+                    # Replaced, not edited: the window shares one part object across records.
+                    content[idx] = {**part, "image_url": None}
+                seen.add(image_uuid)
+
+
+def drop_structured_output(record: dict[str, Any]) -> None:
+    """Remove the guided-decoding keys from a record's extra body, and the body once empty."""
+    extra = record.get("extra")
+    if not isinstance(extra, dict):
+        return
+    for key in STRUCTURED_OUTPUT_KEYS:
+        extra.pop(key, None)
+    if not extra:
+        del record["extra"]
 
 
 def apply_screenshot_window(records: list[dict[str, Any]], n_screenshots: int) -> None:
