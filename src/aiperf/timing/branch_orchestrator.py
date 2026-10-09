@@ -322,9 +322,11 @@ class BranchOrchestrator:
         # SPAWN children whose recorded first request starts after the branch
         # spawn dispatch through the shared replay scheduler (see
         # _start_delayed_first_turn), so the system-idle cap can advance those
-        # timers uniformly with every other replay timer. The task set is a
-        # compatibility fallback for isolated callers that provide no scheduler.
-        self._delayed_dispatch_tasks: set[asyncio.Task] = set()
+        # timers uniformly with every other replay timer. The task map is a
+        # compatibility fallback for isolated callers that provide no scheduler,
+        # keyed by child x_correlation_id so the sending cutoff cancels only
+        # tasks still waiting out their offset, never one already dispatching.
+        self._delayed_dispatch_tasks: dict[str, asyncio.Task] = {}
         # Delayed children whose turn-0 has not dispatched yet:
         # child x_correlation_id -> (child session, parent x_correlation_id).
         # Their bookkeeping is registered at spawn time, so when the phase
@@ -1355,12 +1357,21 @@ class BranchOrchestrator:
             )
             self.stats.children_delayed += 1
             return
+        child_corr = child.x_correlation_id
         task = asyncio.create_task(
             self._dispatch_first_turn_after_offset(child, offset_ms, parent_corr)
         )
-        self._delayed_dispatch_tasks.add(task)
-        task.add_done_callback(self._delayed_dispatch_tasks.discard)
+        self._delayed_dispatch_tasks[child_corr] = task
+        task.add_done_callback(
+            lambda done: self._forget_delayed_dispatch_task(child_corr, done)
+        )
         self.stats.children_delayed += 1
+
+    def _forget_delayed_dispatch_task(
+        self, child_corr: str, task: asyncio.Task
+    ) -> None:
+        if self._delayed_dispatch_tasks.get(child_corr) is task:
+            del self._delayed_dispatch_tasks[child_corr]
 
     async def _sleep_offset_ms(self, offset_ms: float) -> None:
         """Sleep out a dispatch offset. Separate method so tests can gate it."""
@@ -1649,12 +1660,12 @@ class BranchOrchestrator:
         if not self._pending_delayed_children:
             return
         by_parent: dict[str, list[Any]] = defaultdict(list)
-        for child, parent_corr in self._pending_delayed_children.values():
+        for child_corr, (child, parent_corr) in self._pending_delayed_children.items():
             by_parent[parent_corr].append(child)
+            task = self._delayed_dispatch_tasks.pop(child_corr, None)
+            if task is not None:
+                task.cancel()
         self._pending_delayed_children.clear()
-        for task in self._delayed_dispatch_tasks:
-            task.cancel()
-        self._delayed_dispatch_tasks.clear()
         for parent_corr, children in by_parent.items():
             async with self._parent_locks[parent_corr]:
                 for child in children:
@@ -2062,7 +2073,7 @@ class BranchOrchestrator:
         self._cleaning_up = True
         self._think_time_interrupt.set()  # interrupt any in-flight think-time sleep
         self._drain_observer = None
-        for task in self._delayed_dispatch_tasks:
+        for task in self._delayed_dispatch_tasks.values():
             task.cancel()
         self._delayed_dispatch_tasks.clear()
         self._pending_delayed_children.clear()

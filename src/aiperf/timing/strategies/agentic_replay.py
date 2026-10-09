@@ -1633,7 +1633,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         turn: TurnToSend,
         dispatch: Callable[[TurnToSend], Awaitable[object]],
     ) -> None:
-        """Timer body for ``_schedule_child_turn``: dispatch unless already stopped."""
         if (
             self.branch_orchestrator is None
             or self.branch_orchestrator.unpark_child_turn(turn.x_correlation_id)
