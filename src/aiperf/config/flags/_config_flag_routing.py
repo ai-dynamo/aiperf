@@ -114,6 +114,7 @@ _ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
         # agentic phase fields, via _apply_agentic_replay_fields
         "agentic_cache_warmup_duration",
         "agentic_warmup_grace_period",
+        "warmup_requests_per_lane",
         # publishing targets, via build_mlflow / build_otel /
         # build_network_latency -- the builders the CLI-only converter has
         # always used, now called by build_cli_overrides too
@@ -291,11 +292,11 @@ def _build_routed_under_config() -> frozenset[str]:
             "model_selection_strategy",
         }
         | {
-            # probe sub-blocks, via _maybe_build_reset_kv_cache /
-            # _maybe_build_server_profiler
+            # nested endpoint sub-blocks, via _maybe_build_reset_kv_cache /
+            # _maybe_build_server_profiler / _maybe_build_sagemaker
             field
             for field in ENDPOINT_FIELDS
-            if field.startswith(("reset_kv_cache", "server_profiler"))
+            if field.startswith(("reset_kv_cache", "server_profiler", "sagemaker"))
         }
     )
 

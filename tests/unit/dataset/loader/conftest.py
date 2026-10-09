@@ -89,9 +89,9 @@ def make_weka_run(
     required -- a MagicMock no longer satisfies the loader's reads.
 
     ``block_size`` has no FileDataset home in v2 (only synthetic prompts carry
-    it), so it is forwarded to the loader via ``default_block_size`` by callers,
-    not through config. It is accepted here for signature compatibility but
-    ignored at the config layer.
+    it); weka traces declare their own ``block_size``, which the loader honors
+    over the plugin ``default_block_size``. It is accepted here for signature
+    compatibility but ignored at the config layer.
     """
     from aiperf.config import BenchmarkConfig, BenchmarkRun
 

@@ -36,6 +36,7 @@ from typing import Annotated, Any, Literal, TypeAlias
 from cyclopts import Parameter
 from pydantic import AfterValidator, BeforeValidator, Field
 
+from aiperf.common.constants import DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS
 from aiperf.common.enums import (
     AIPerfLogLevel,
     AudioFormat,
@@ -342,8 +343,9 @@ class CLIConfig(BaseConfig):
         TransportType | None,
         Field(
             description="Transport protocol to use for API requests. If not specified, auto-detected from the URL scheme "
-            "(`http`/`https` -> `TransportType.HTTP`). Currently supports `http` transport using aiohttp with connection pooling, "
-            "TCP optimization, and Server-Sent Events (SSE) for streaming. Explicit override rarely needed.",
+            "(`http`/`https` -> `TransportType.HTTP`). `http` uses aiohttp with connection pooling, TCP optimization, and "
+            "Server-Sent Events (SSE) for streaming. `sagemaker` invokes AWS SageMaker Runtime and is normally derived from "
+            "`--sagemaker-endpoint-name` rather than set here. Explicit override rarely needed.",
         ),
         CLIParameter(
             name=("--transport", "--transport-type"),
@@ -400,6 +402,60 @@ class CLIConfig(BaseConfig):
         ),
         CLIParameter(
             name=("--aws-service",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    sagemaker_endpoint_name: Annotated[
+        str | None,
+        Field(
+            description="Name of the SageMaker endpoint to invoke. Usually the only AWS flag "
+            "needed besides `--aws-region`: it selects the SageMaker transport, turns on SigV4 "
+            "signing, and derives the runtime URL. Note that the endpoint type's usual path "
+            "(e.g. `/v1/chat/completions`) is NOT used -- SageMaker routes on the request body, "
+            "so every endpoint type is invoked through `/endpoints/{name}/invocations`.",
+        ),
+        CLIParameter(
+            name=("--sagemaker-endpoint-name",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    sagemaker_target_model: Annotated[
+        str | None,
+        Field(
+            description="SageMaker `TargetModel` value, for multi-model endpoints only: SageMaker "
+            "rejects requests that carry it on a single-model endpoint. Sent only when set, never "
+            "derived from `-m`, since it is a relative model-artifact path. Not sent on streaming "
+            "requests -- the streaming operation does not accept it.",
+        ),
+        CLIParameter(
+            name=("--sagemaker-target-model",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    sagemaker_inference_component_name: Annotated[
+        str | None,
+        Field(
+            description="SageMaker `InferenceComponentName` to target, for endpoints hosting "
+            "multiple inference components.",
+        ),
+        CLIParameter(
+            name=("--sagemaker-inference-component-name",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    sagemaker_target_variant: Annotated[
+        str | None,
+        Field(
+            description="SageMaker production variant to pin every request to, bypassing the "
+            "endpoint's traffic split. Use to benchmark one variant of an A/B deployment in "
+            "isolation.",
+        ),
+        CLIParameter(
+            name=("--sagemaker-target-variant",),
             group=Groups.ENDPOINT,
         ),
     ] = None
@@ -2198,7 +2254,7 @@ class CLIConfig(BaseConfig):
             name=("--benchmark-grace-period",),
             group=Groups.LOAD_GENERATOR,
         ),
-    ] = 30.0
+    ] = DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS
 
     concurrency: Annotated[
         Any,
@@ -2409,17 +2465,14 @@ class CLIConfig(BaseConfig):
         Field(
             description="AGENTIC_REPLAY only: collapse the WARMUP-start and "
             "PROFILING-start dispatches into synchronized bursts instead of "
-            "spreading them by each request's recorded offset from t*. By "
-            "default (False) the phase starts are SPREAD: WARMUP requests are "
-            "aligned globally so every trajectory reaches its t* at the same "
-            "instant (the warmup end), and each lane's first PROFILING request "
-            "waits out its recorded gap after t* -- reproducing the recorded "
-            "arrival pattern at both phase boundaries. The rest of the replay "
-            "(inter-turn delays) is timing-faithful regardless of this flag; "
-            "it governs ONLY the burst-vs-spread of the two phase starts. Pass "
-            "--burst-phase-starts to fire each phase's first requests together "
-            "(faster concurrency ramp, synchronized start), e.g. for a "
-            "throughput-oriented run rather than a faithful arrival replay.",
+            "preserving recorded spacing. By default (False), WARMUP requests "
+            "are aligned globally so every trajectory reaches t* together. "
+            "PROFILING subtracts one phase-wide minimum from every first "
+            "request offset: the earliest request starts immediately and all "
+            "other trajectories retain their recorded spacing. Pass "
+            "--burst-phase-starts to subtract a separate minimum per lane, "
+            "making every lane start immediately. Subsequent inter-turn "
+            "delays are timing-faithful in either mode.",
         ),
         CLIParameter(
             name=("--burst-phase-starts",),
@@ -2432,15 +2485,14 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             ge=0.0,
-            description="Hard ceiling (seconds) for idle gaps within each individual trace. "
-            "For Weka trace replay, AIPerf looks at all parent and subagent request "
-            "submission timestamps within one root trace, compresses long gaps between "
-            "consecutive request submissions, and derives turn delays from the "
-            "compressed per-trace timeline. Original request api_time values are not "
-            "used to decide these idle gaps. When set for Weka, this takes precedence over "
-            "`--inter-turn-delay-cap-seconds` so individual parent/subagent-line "
-            "delays are not separately capped. Defaults to None (no per-trace "
-            "idle-gap compression).",
+            description="Hard ceiling (seconds) for observed runtime idle time within "
+            "each AgentX trajectory tree. The idle clock covers initial future work and "
+            "restarts when the final in-flight request across the root and all descendant "
+            "streams completes. If no request from that tree reaches the wire before the "
+            "cap, AIPerf uniformly advances "
+            "only that tree's pending replay timers. Dataset timestamps are unchanged, "
+            "and request order, spawn/join dependencies, and replay barriers remain "
+            "authoritative. Defaults to None (no per-trace runtime idle cap).",
         ),
         CLIParameter(
             name=("--trace-idle-gap-cap-seconds",),
@@ -2533,10 +2585,27 @@ class CLIConfig(BaseConfig):
             "After the normal snapshot warmup drains, AIPerf continues the live "
             "trajectories without recorded idle delays and with one-token outputs, "
             "then drains and resumes profiling from the resulting trajectory state "
-            "using each live stream's residual next-turn delay.",
+            "using each live stream's full next-turn delay. Mutually exclusive "
+            "with --warmup-requests-per-lane.",
         ),
         CLIParameter(
             name=("--agentic-cache-warmup-duration",),
+            group=Groups.WARMUP,
+        ),
+    ] = None
+
+    warmup_requests_per_lane: Annotated[
+        int | None,
+        Field(
+            gt=0,
+            description="Deterministic agentic cache-pressure warmup request "
+            "budget per concurrency lane, additional to mandatory snapshot "
+            "primers. For example, 10 with concurrency 16 sends 160 additional "
+            "cache-pressure requests after the primers. Mutually exclusive with "
+            "--agentic-cache-warmup-duration.",
+        ),
+        CLIParameter(
+            name=("--warmup-requests-per-lane",),
             group=Groups.WARMUP,
         ),
     ] = None

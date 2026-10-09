@@ -206,6 +206,19 @@ def _stamp_scenario_submission_metadata(
     aggregate.metadata["_was_cancelled"] = any(
         getattr(r, "was_cancelled", False) for r in results
     )
+    aggregate.metadata["_runtime_submission_invalid_reasons"] = (
+        _merge_runtime_invalid_reasons(results)
+    )
+
+
+def _merge_runtime_invalid_reasons(results: list) -> list[str]:
+    """Union per-run runtime-invalid reason tags, preserving first-seen order."""
+    merged: list[str] = []
+    for r in results:
+        for reason in getattr(r, "runtime_submission_invalid_reasons", []) or []:
+            if reason not in merged:
+                merged.append(reason)
+    return merged
 
 
 def _maybe_compute_detailed(

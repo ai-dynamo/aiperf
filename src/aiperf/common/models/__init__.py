@@ -70,6 +70,7 @@ from aiperf.common.models.progress_models import (
     WorkerStats,
 )
 from aiperf.common.models.record_models import (
+    AwsEventStreamMessage,
     BaseResponseData,
     BinaryResponse,
     EmbeddingResponseData,
@@ -86,6 +87,7 @@ from aiperf.common.models.record_models import (
     ParsedResponseRecord,
     PhaseProfileResults,
     ProcessRecordsResult,
+    ProfileMetricDurationCoverage,
     ProfileResults,
     RAGSources,
     RankingsResponseData,
@@ -241,6 +243,7 @@ __all__ = [
     "ProcessServerMetricsResult",
     "ProcessTelemetryResult",
     "ProcessingStats",
+    "ProfileMetricDurationCoverage",
     "ProfileResults",
     "RAGSources",
     "RankingsResponseData",
@@ -252,6 +255,7 @@ __all__ = [
     "RequestRecord",
     "SSEField",
     "SSEMessage",
+    "AwsEventStreamMessage",
     "SequenceLengthDistribution",
     "SequenceLengthPair",
     "ServerMetricsEndpointInfo",

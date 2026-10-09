@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
 from aiperf.common.messages import (
     ProcessAllResultsMessage,
@@ -36,11 +37,15 @@ from aiperf.common.models import (
     MetricResult,
     PhaseRecordsStats,
     ProcessRecordsResult,
+    ProfileMetricDurationCoverage,
     TimesliceResult,
 )
+from aiperf.metrics.accumulator import MetricsAccumulator
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
 from aiperf.plugin.enums import AccumulatorType, StreamExporterType
 from aiperf.records.records_manager import RecordsManager
+from tests.unit.conftest import make_benchmark_run
+from tests.unit.post_processors.conftest import create_metric_records_data
 
 # ---------------------------------------------------------------------------
 # Stub fixtures
@@ -147,6 +152,8 @@ def _make_manager_mock(
     mgr.run = MagicMock()
     mgr.run.cfg.gpu_telemetry_disabled = user_config_telemetry_disabled
     mgr.run.cfg.server_metrics_disabled = user_config_server_metrics_disabled
+    mgr.run.cfg.scenario = None
+    mgr.run.cfg.get_profiling_phases.return_value = []
 
     # Logging
     mgr.debug = MagicMock()
@@ -174,6 +181,12 @@ def _make_manager_mock(
     mgr._has_records_for_phase = RecordsManager._has_records_for_phase.__get__(mgr)
     mgr._summarize_warmup_metric_records = (
         RecordsManager._summarize_warmup_metric_records.__get__(mgr)
+    )
+    mgr._validate_profile_metric_duration_coverage = (
+        RecordsManager._validate_profile_metric_duration_coverage.__get__(mgr)
+    )
+    mgr._iter_concrete_phase_stats = RecordsManager._iter_concrete_phase_stats.__get__(
+        mgr
     )
     mgr._summarize_one_accumulator = RecordsManager._summarize_one_accumulator.__get__(
         mgr
@@ -317,6 +330,176 @@ class TestProcessResultsAccumulatorPath:
         # Errors logged + included in result.errors
         mgr.error.assert_called()
         assert any("summarize boom" in str(err.message or err) for err in result.errors)
+
+    @pytest.mark.asyncio
+    async def test_agentx_metric_coverage_failure_is_fatal(self) -> None:
+        """A duration-based AgentX phase below 95% remains exportable but fatal."""
+        acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
+        acc.profile_metric_duration_coverage.return_value = (
+            ProfileMetricDurationCoverage(
+                phase_name="profiling",
+                expected_duration_seconds=3600.0,
+                required_ratio=0.98,
+                ttft_ratio=0.861194,
+                inter_token_latency_ratio=0.861569,
+            )
+        )
+        mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr.run.cfg.scenario = "inferencex-agentx-mvp"
+        phase_config = MagicMock()
+        phase_config.name = "profiling"
+        phase_config.duration = 3600.0
+        mgr.run.cfg.get_profiling_phases.return_value = [phase_config]
+
+        result = await mgr._process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert len(result.fatal_errors) == 1
+        assert result.fatal_errors[0].type == "ProfileMetricCoverageError"
+        assert "required 95.0%" in result.fatal_errors[0].message
+        assert "check inference server logs" in result.fatal_errors[0].message
+        assert result.results.runtime_submission_invalid_reasons == [
+            "insufficient_profile_metric_coverage"
+        ]
+        assert result.results.metric_duration_coverage[0].ttft_ratio == pytest.approx(
+            0.861194
+        )
+
+    @pytest.mark.asyncio
+    async def test_agentx_metric_coverage_validation_failure_has_distinct_reason(
+        self,
+    ) -> None:
+        acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
+        acc.profile_metric_duration_coverage = None
+        mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr.run.cfg.scenario = "inferencex-agentx-mvp"
+        phase_config = MagicMock()
+        phase_config.name = "profiling"
+        phase_config.duration = 3600.0
+        mgr.run.cfg.get_profiling_phases.return_value = [phase_config]
+
+        result = await mgr._process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert result.fatal_errors[0].type == "ProfileMetricCoverageValidationError"
+        assert result.results.runtime_submission_invalid_reasons == [
+            "profile_metric_coverage_validation_failed"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_agentx_metric_coverage_uses_real_accumulator_ratio(self) -> None:
+        phase_start_ns = 1_000 * NANOS_PER_SECOND
+        accumulator = MetricsAccumulator(make_benchmark_run(streaming=True))
+        await accumulator.process_record(
+            create_metric_records_data(
+                session_num=0,
+                request_start_ns=1_900 * NANOS_PER_SECOND,
+                request_end_ns=1_902 * NANOS_PER_SECOND,
+                results=[
+                    {"time_to_first_token": NANOS_PER_SECOND},
+                    {"inter_token_latency": 100_000_000},
+                ],
+            )
+        )
+        accumulator.summarize = AsyncMock(
+            return_value=AccumulatorMetricsSummary(
+                results={_STUB_METRIC_RESULT.tag: _STUB_METRIC_RESULT},
+                timeslices=None,
+            )
+        )
+        mgr = _make_manager_mock(
+            accumulators={AccumulatorType.METRIC_RESULTS: accumulator},
+            start_ns=phase_start_ns,
+        )
+        mgr._has_multiple_phase_instances.return_value = False
+        mgr.run.cfg.scenario = "inferencex-agentx-mvp"
+        phase_config = MagicMock()
+        phase_config.name = "profiling"
+        phase_config.duration = 1_000.0
+        mgr.run.cfg.get_profiling_phases.return_value = [phase_config]
+
+        result = await mgr._process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        coverage = result.results.metric_duration_coverage[0]
+        assert coverage.ttft_ratio == pytest.approx(0.901)
+        assert coverage.inter_token_latency_ratio == pytest.approx(0.902)
+        assert coverage.passed is False
+        assert result.results.runtime_submission_invalid_reasons == [
+            "insufficient_profile_metric_coverage"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_agentx_metric_coverage_passes_at_threshold(self) -> None:
+        acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
+        acc.profile_metric_duration_coverage.return_value = (
+            ProfileMetricDurationCoverage(
+                phase_name="profiling",
+                expected_duration_seconds=3600.0,
+                required_ratio=0.98,
+                ttft_ratio=0.98,
+                inter_token_latency_ratio=0.999,
+            )
+        )
+        mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr.run.cfg.scenario = "inferencex-agentx-mvp"
+        phase_config = MagicMock()
+        phase_config.name = "profiling"
+        phase_config.duration = 3600.0
+        mgr.run.cfg.get_profiling_phases.return_value = [phase_config]
+
+        result = await mgr._process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert result.fatal_errors == []
+        assert result.results.runtime_submission_invalid_reasons == []
+
+    @pytest.mark.asyncio
+    async def test_agentx_metric_coverage_accepts_late_streaming_activity(self) -> None:
+        acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
+        acc.profile_metric_duration_coverage.return_value = (
+            ProfileMetricDurationCoverage(
+                phase_name="profiling",
+                expected_duration_seconds=3600.0,
+                required_ratio=0.98,
+                ttft_ratio=0.979504,
+                inter_token_latency_ratio=1.0,
+            )
+        )
+        mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr.run.cfg.scenario = "inferencex-agentx-mvp"
+        phase_config = MagicMock()
+        phase_config.name = "profiling"
+        phase_config.duration = 3600.0
+        mgr.run.cfg.get_profiling_phases.return_value = [phase_config]
+
+        result = await mgr._process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        assert result.fatal_errors == []
+        assert result.results.runtime_submission_invalid_reasons == []
+
+    @pytest.mark.asyncio
+    async def test_agentx_short_unsafe_smoke_skips_metric_coverage(self) -> None:
+        acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
+        mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr.run.cfg.scenario = "inferencex-agentx-mvp"
+        phase_config = MagicMock()
+        phase_config.name = "profiling"
+        phase_config.duration = 30.0
+        mgr.run.cfg.get_profiling_phases.return_value = [phase_config]
+
+        result = await mgr._process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        acc.profile_metric_duration_coverage.assert_not_called()
+        assert result.fatal_errors == []
 
     @pytest.mark.asyncio
     async def test_empty_accumulators_produces_empty_records(self) -> None:
