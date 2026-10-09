@@ -306,11 +306,12 @@ class RealtimeTelemetryDashboard(Container, MaximizableWidget):
 
     def on_realtime_telemetry_metrics(self, metrics: list[MetricResult]) -> None:
         """Handle GPU telemetry metrics updates."""
-
-        if not self.metrics:
-            with suppress(Exception):
-                self.query_one("#telemetry-status").add_class("hidden")
-                self.all_nodes_view.remove_class("hidden")
+        # Every batch, not only the first: under --ui dashboard data is already
+        # flowing when the pane is toggled, and the toggle's status message hides
+        # the view again.
+        with suppress(Exception):
+            self.query_one("#telemetry-status").add_class("hidden")
+            self.all_nodes_view.remove_class("hidden")
 
         self.metrics = metrics
         self.all_nodes_view.update(metrics)
