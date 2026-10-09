@@ -1869,7 +1869,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             ) / MILLIS_PER_SECOND
             if delay_s > 0 and state.agent_depth > 0:
                 self._schedule_child_turn(
-                    delay_s, turn, self.credit_issuer.issue_credit
+                    delay_s, turn, self._issue_child_continuation_or_drain
                 )
             elif delay_s > 0:
                 self.scheduler.schedule_later(
@@ -1877,6 +1877,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                     self.credit_issuer.issue_credit(turn),
                     group_id=turn.effective_root_correlation_id,
                 )
+            elif state.agent_depth > 0:
+                await self._issue_child_continuation_or_drain(turn)
             else:
                 await self.credit_issuer.issue_credit(turn)
 

@@ -8,6 +8,7 @@ import asyncio
 import logging
 import re
 import time
+from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -22,7 +23,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.scenario.base import TrajectoryWarmupFailedError
 from aiperf.config import BenchmarkRun
-from aiperf.credit.dispatch import TurnAdmission
+from aiperf.credit.dispatch import ChildDispatchResult, TurnAdmission
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import DatasetSamplingStrategy
@@ -65,6 +66,18 @@ def _build_real_trajectory_source(
     src._pool_size = len(root_ids)
     src.trajectories = list(trajectories)
     return src
+
+
+def _issued_child(
+    capture: Callable[[TurnToSend], Awaitable[object]],
+) -> Callable[[TurnToSend], Awaitable[ChildDispatchResult]]:
+    """Adapt an ``issue_credit`` capture to ``dispatch_child_turn``'s result contract."""
+
+    async def dispatch(turn: TurnToSend) -> ChildDispatchResult:
+        await capture(turn)
+        return ChildDispatchResult.ISSUED
+
+    return dispatch
 
 
 def _make_strategy(
@@ -1585,6 +1598,7 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
 
     issuer = AsyncMock()
     issuer.issue_credit.side_effect = capture
+    issuer.dispatch_child_turn.side_effect = _issued_child(capture)
     scheduler = MagicMock()
     scheduler.schedule_later.side_effect = (
         lambda _delay, coro, **_kwargs: asyncio.create_task(coro)
@@ -1634,9 +1648,8 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
     ] == {"parent": pytest.approx(181_430.0)}
 
 
-@pytest.mark.asyncio
-async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
-    """With --burst-phase-starts, profiling anchors the earliest post-t* request at time 0 and preserves relative offsets: children at 20s/95s fire immediately and 75s later, while the gated parent is not dispatched."""
+def _burst_two_child_snapshot_source() -> TrajectorySource:
+    """Gated parent whose two SPAWN children are 20s and 95s past t*."""
     ds = DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -1708,6 +1721,13 @@ async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
     src._dataset_sampler = MagicMock()
     src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
     src.trajectories = [trajectory]
+    return src
+
+
+@pytest.mark.asyncio
+async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
+    """With --burst-phase-starts, profiling anchors the earliest post-t* request at time 0 and preserves relative offsets: children at 20s/95s fire immediately and 75s later, while the gated parent is not dispatched."""
+    src = _burst_two_child_snapshot_source()
 
     issued: list[tuple[str, int]] = []
 
@@ -1717,6 +1737,7 @@ async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
 
     issuer = AsyncMock()
     issuer.issue_credit.side_effect = capture
+    issuer.dispatch_child_turn.side_effect = _issued_child(capture)
     scheduled: list[tuple[float, object]] = []
 
     def fake_schedule_later(delay, coro, **_kwargs):
@@ -1755,6 +1776,51 @@ async def test_profiling_burst_normalizes_offsets_first_request_fires_at_zero():
     seeded_states = branch_orchestrator.seed_snapshot.call_args.args[0]
     assert [s.x_correlation_id for s in seeded_states] == ["parent", "kid-a", "kid-b"]
     assert seeded_states[0].waiting_on_children is True
+
+
+@pytest.mark.asyncio
+async def test_profiling_snapshot_child_refusal_drains_join():
+    """A refused snapshot-seeded child, immediate or delayed, is reported stopped so the gated parent's join drains instead of waiting out the grace period."""
+    issuer = AsyncMock()
+    issuer.dispatch_child_turn.return_value = ChildDispatchResult.REJECTED
+    scheduled: list[object] = []
+    scheduler = MagicMock()
+    scheduler.schedule_later.side_effect = (
+        lambda _delay, coro, **_kwargs: scheduled.append(coro)
+    )
+    branch_orchestrator = MagicMock()
+    branch_orchestrator.on_child_stopped = AsyncMock()
+    branch_orchestrator.unpark_child_turn.return_value = True
+    cfg = MagicMock()
+    cfg.phase = CreditPhase.PROFILING
+    cfg.concurrency = 1
+    strategy = AgenticReplayStrategy(
+        config=cfg,
+        conversation_source=_burst_two_child_snapshot_source(),
+        scheduler=scheduler,
+        stop_checker=MagicMock(),
+        credit_issuer=issuer,
+        lifecycle=MagicMock(),
+        branch_orchestrator=branch_orchestrator,
+    )
+    strategy._burst_phase_starts = True
+
+    await strategy.setup_phase()
+    await strategy.execute_phase()
+    assert [
+        c.args[0] for c in branch_orchestrator.on_child_stopped.await_args_list
+    ] == ["kid-a"]
+
+    for coro in scheduled:
+        await coro
+
+    issuer.issue_credit.assert_not_awaited()
+    assert [
+        c.args[0] for c in branch_orchestrator.on_child_stopped.await_args_list
+    ] == [
+        "kid-a",
+        "kid-b",
+    ]
 
 
 @pytest.mark.asyncio
@@ -1835,6 +1901,7 @@ async def test_profiling_global_anchor_preserves_subagent_spacing():
 
     issuer = AsyncMock()
     issuer.issue_credit.side_effect = capture
+    issuer.dispatch_child_turn.side_effect = _issued_child(capture)
     scheduled: list[tuple[float, object]] = []
     scheduler = MagicMock()
     scheduler.schedule_later.side_effect = (
@@ -2050,6 +2117,7 @@ async def test_profiling_gated_parent_not_dispatched_child_profiles():
 
     issuer = AsyncMock()
     issuer.issue_credit.side_effect = capture
+    issuer.dispatch_child_turn.side_effect = _issued_child(capture)
     branch_orchestrator = MagicMock()
 
     cfg = MagicMock()
@@ -3463,6 +3531,7 @@ async def test_rootless_snapshot_acquires_exactly_one_lane_credit():
 
     issuer = AsyncMock()
     issuer.issue_credit.side_effect = capture
+    issuer.dispatch_child_turn.side_effect = _issued_child(capture)
     issuer.acquire_lane_credit = AsyncMock(return_value=True)
 
     strategy, _, _, _ = _make_strategy(
