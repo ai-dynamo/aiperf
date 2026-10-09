@@ -551,13 +551,14 @@ def build_spec_decode_payload(ctx: "RequestCtx") -> dict[str, Any] | None:
     if completion_tokens <= 0:
         return None
 
-    # Each verify step emits one always-accepted bonus token plus whatever drafts
-    # it accepted, so ``num_spec_steps + num_accepted == completion_tokens`` is a
-    # physical identity rather than a modelling choice. Derive the accepted count
-    # from the token count instead of rounding it independently: independent
-    # rounding disagreed with the usage reported beside it for
-    # ``completion_tokens <= 2``, emitting acceptance that implied more tokens
-    # than the response contained.
+    # The mock attributes every completion token to a verify step: one
+    # always-accepted bonus token per step plus whatever drafts it accepted, so
+    # ``num_spec_steps + num_accepted == completion_tokens``. That is a modelling
+    # choice, not a physical identity -- on a real engine prefill and iterations
+    # that drafted nothing also emit tokens. Derive the accepted count from the
+    # token count instead of rounding it independently: independent rounding
+    # disagreed with the usage reported beside it for ``completion_tokens <= 2``,
+    # emitting acceptance that implied more tokens than the response contained.
     #
     # The floor on steps is what keeps accepted <= drafted. A step contributes at
     # most k + 1 tokens, so fewer than ceil(completion_tokens / (k + 1)) steps

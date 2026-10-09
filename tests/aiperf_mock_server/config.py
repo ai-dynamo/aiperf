@@ -345,14 +345,13 @@ class MockServerConfig(BaseSettings):
         Parameter(name="--spec-decode-flavor"),
     ] = "vllm"
 
+    # None (num_spec_tokens: null, as under TensorRT-LLM's draft_len_schedule)
+    # is reachable only by setting the config directly, as the unit tests do;
+    # the CLI and environment parse an int.
     spec_decode_num_spec_tokens: Annotated[
         int | None,
         Field(
-            description=(
-                "Draft budget k. None emits num_spec_tokens: null, simulating "
-                "TensorRT-LLM's draft_len_schedule where the per-step bound "
-                "varies by batch size."
-            ),
+            description="Draft budget k per step, emitted as num_spec_tokens.",
             ge=1,
         ),
         Parameter(name="--spec-decode-num-spec-tokens"),
