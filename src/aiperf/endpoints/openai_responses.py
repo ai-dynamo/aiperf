@@ -464,8 +464,14 @@ class ResponsesEndpoint(BaseEndpoint):
         if event_type == "response.completed":
             resp = json_obj.get("response") or {}
             usage = resp.get("usage") or None
-            if usage:
-                return ParsedResponse(perf_ns=perf_ns, data=None, usage=usage)
+            spec_decode_stats = self.extract_spec_decode_stats(resp)
+            if usage or spec_decode_stats:
+                return ParsedResponse(
+                    perf_ns=perf_ns,
+                    data=None,
+                    usage=usage,
+                    spec_decode_stats=spec_decode_stats,
+                )
             return None
 
         # All other events (response.created, response.in_progress,
@@ -522,11 +528,17 @@ class ResponsesEndpoint(BaseEndpoint):
         """
         data = self._extract_response_content(json_obj)
         usage = json_obj.get("usage") or None
+        spec_decode_stats = self.extract_spec_decode_stats(json_obj)
 
-        if data is None and not usage:
+        if data is None and not usage and not spec_decode_stats:
             return None
 
-        return ParsedResponse(perf_ns=perf_ns, data=data, usage=usage)
+        return ParsedResponse(
+            perf_ns=perf_ns,
+            data=data,
+            usage=usage,
+            spec_decode_stats=spec_decode_stats,
+        )
 
     def _extract_response_content(
         self, json_obj: JsonObject

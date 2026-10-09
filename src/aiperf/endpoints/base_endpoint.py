@@ -115,11 +115,18 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
 
     @staticmethod
     def extract_spec_decode_stats(json_obj: dict[str, Any]) -> dict[str, Any] | None:
-        """Capture the raw speculative-decoding payload from the response root.
+        """Capture the raw speculative-decoding payload from ``metrics``.
 
-        vLLM nests it at ``metrics.speculative_decoding`` -- on the response body
-        non-streaming, or on the trailing usage chunk (empty ``choices``)
-        streaming -- when the server runs with ``--per-request-spec-decode-metrics``.
+        vLLM nests it at ``metrics.speculative_decoding`` when the server runs
+        with ``--per-request-spec-decode-metrics``. Read off whatever object the
+        caller hands in, so it works across endpoints:
+
+        - chat/completions: the response body non-streaming, or the trailing
+          usage chunk (empty ``choices``) streaming.
+        - responses (``/v1/responses``): the response object non-streaming, or
+          the response nested under the ``response.completed`` event streaming
+          (the caller passes that nested ``response`` object).
+
         Captured verbatim and uninterpreted so a ``SpecDecodeAdapterProtocol``
         owns the engine-specific interpretation downstream; None when absent.
 
