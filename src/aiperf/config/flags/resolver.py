@@ -15,8 +15,9 @@ Not every flag can be applied this way. Anything this path cannot route is
 rejected up front by ``reject_unrouted_cli_flags`` with an error naming the
 flag, rather than being silently discarded -- see ``_config_flag_routing``
 and ``docs/dev/global-invariants.md`` for the classification and the tests
-that keep it honest. ``--ttft-sla-ms`` is one such flag today: it does not
-take effect under ``--config`` even alongside a recipe, so it errors.
+that keep it honest. Flags that only mean something beside a companion
+(``--ttft-sla-ms`` needs ``--search-recipe``) raise when the companion is
+missing; see ``reject_missing_sweep_companions``.
 """
 
 from __future__ import annotations
@@ -95,6 +96,8 @@ def resolve_config(
 def apply_cli_overrides(
     config: AIPerfConfig,
     cli_config: CLIConfig,
+    *,
+    deferred_fields: frozenset[str] = frozenset(),
 ) -> AIPerfConfig:
     """Overlay explicitly-authored CLI values on an already-loaded config.
 
@@ -106,6 +109,9 @@ def apply_cli_overrides(
     Args:
         config: Loaded Config-v2 envelope that supplies the YAML baseline.
         cli_config: Parsed CLI values; only ``model_fields_set`` entries apply.
+        deferred_fields: Set fields to treat as unset here, so they are
+            neither applied nor companion-checked. For a caller that applies
+            them itself later with :func:`apply_deferred_sweep_overrides`.
 
     Returns:
         A new config with CLI precedence and a matching raw sweep envelope.
@@ -118,25 +124,81 @@ def apply_cli_overrides(
         context={"include_secrets": True},
     )
     raw = copy.deepcopy(config._raw_envelope or rendered)
-    return _resolve_config_envelopes(cli_config, rendered, raw)
+    return _resolve_config_envelopes(
+        cli_config, rendered, raw, deferred_fields=deferred_fields
+    )
+
+
+def apply_deferred_sweep_overrides(
+    envelope: dict[str, Any],
+    cli_config: CLIConfig,
+    deferred_fields: frozenset[str],
+) -> None:
+    """Apply sweep-adjusting flags held back from :func:`apply_cli_overrides`.
+
+    Same rules and errors as the resolver's own post-merge step, written in
+    wire form (camelCase keys, JSON values) because ``aiperf kube sweep``
+    applies them to blocks it has already rendered that way.
+
+    Args:
+        envelope: Mapping holding the merged ``sweep`` and ``multiRun``
+            blocks; mutated in place.
+        cli_config: Parsed CLI values.
+        deferred_fields: The fields passed as ``deferred_fields`` to
+            :func:`apply_cli_overrides`.
+    """
+    cli = _cli_with_fields_set(
+        cli_config, cli_config.model_fields_set & deferred_fields
+    )
+    _apply_parameter_sweep_overrides(envelope, cli, wire=True)
+    _apply_convergence_overrides(envelope, cli, wire=True)
+
+
+def _cli_with_fields_set(cli: CLIConfig, fields_set: set[str]) -> CLIConfig:
+    """Copy ``cli`` with ``model_fields_set`` narrowed to ``fields_set``.
+
+    Every resolver decision is gated on ``model_fields_set``, so a field
+    outside it is indistinguishable from one the user never passed.
+    """
+    narrowed = cli.model_copy()
+    narrowed.__pydantic_fields_set__.intersection_update(fields_set)
+    return narrowed
+
+
+def _cli_without(cli: CLIConfig, fields: frozenset[str]) -> CLIConfig:
+    if not fields & cli.model_fields_set:
+        return cli
+    return _cli_with_fields_set(cli, cli.model_fields_set - fields)
 
 
 def _resolve_config_envelopes(
     cli_config: CLIConfig,
     yaml_dict: dict[str, Any],
     raw_yaml_dict: dict[str, Any],
+    *,
+    deferred_fields: frozenset[str] = frozenset(),
 ) -> AIPerfConfig:
-    """Resolve rendered and pre-Jinja envelopes through one override pipeline."""
+    """Resolve rendered and pre-Jinja envelopes through one override pipeline.
+
+    ``deferred_fields`` are treated as unset throughout, except that
+    ``--variant`` keys are still compared against the full command line.
+    """
     from aiperf.config import AIPerfConfig
-    from aiperf.config.flags._config_flag_routing import reject_unrouted_cli_flags
+    from aiperf.config.flags._config_flag_routing import (
+        reject_missing_sweep_companions,
+        reject_unrouted_cli_flags,
+    )
     from aiperf.config.flags.converter import _wrap_under_envelope
 
+    full_cli = cli_config
+    cli_config = _cli_without(cli_config, deferred_fields)
     # Fail before any merging: a flag this path cannot route would otherwise
     # be dropped without a word, handing the user a benchmark that silently
     # ignored what they asked for.
     reject_unrouted_cli_flags(cli_config)
     _normalize_loaded_benchmark_shorthands(yaml_dict)
     _normalize_loaded_benchmark_shorthands(raw_yaml_dict)
+    reject_missing_sweep_companions(cli_config, yaml_dict)
     # Build the recipe's view of BenchmarkConfig from YAML + the
     # endpoint/input CLI overrides ONLY: the recipe inspects fields like
     # ``endpoint.streaming`` (via ``require_streaming``) before emitting
@@ -176,10 +238,304 @@ def _resolve_config_envelopes(
         phase_identity=merged.phase_identity,
     )
 
+    variant_runs = _build_variant_runs(
+        full_cli,
+        yaml_dict,
+        merged.envelope,
+        benchmark_config=base_config.benchmark,
+        dataset_type=base_dataset.type,
+        dataset_format=getattr(base_dataset, "format", None),
+        deferred_fields=deferred_fields,
+    )
+    for envelope in (merged.envelope, raw_merged.envelope):
+        if variant_runs is not None:
+            envelope["sweep"] = {
+                "type": "scenarios",
+                "runs": copy.deepcopy(variant_runs),
+            }
+        _apply_parameter_sweep_overrides(envelope, cli_config)
+        _apply_convergence_overrides(envelope, cli_config)
+        _bind_recipe_selectors(envelope)
+    _retarget_run_names(raw_merged.envelope, merged.envelope)
+    _use_raw_recipe_post_process(merged.envelope, raw_merged.envelope)
+
     config = AIPerfConfig.model_validate(merged.envelope)
     config._raw_envelope = raw_merged.envelope
     _validate_search_space_phase_targets(config, merged.envelope)
     return config
+
+
+def _apply_convergence_overrides(
+    envelope: dict[str, Any], cli: CLIConfig, *, wire: bool = False
+) -> None:
+    """Overlay ``--convergence-*`` details onto a YAML convergence block.
+
+    With ``--convergence-metric`` set, ``build_multi_run`` already emits the
+    whole block and the merge handles precedence. Without it, the details can
+    only refine a block the config file declares. ``wire`` is as for
+    :func:`_write_cli_value`.
+    """
+    from aiperf.config.flags._config_flag_routing import CONVERGENCE_DETAIL_FIELDS
+
+    set_fields = cli.model_fields_set
+    details = set_fields & CONVERGENCE_DETAIL_FIELDS
+    if not details or (
+        "convergence_metric" in set_fields and cli.convergence_metric is not None
+    ):
+        return
+    multi_run = _get_config_value(envelope, "multi_run")
+    convergence = multi_run.get("convergence") if isinstance(multi_run, dict) else None
+    if not isinstance(convergence, dict):
+        return
+    for name in details:
+        _write_cli_value(
+            convergence, name.removeprefix("convergence_"), cli, name, wire=wire
+        )
+
+
+def _apply_parameter_sweep_overrides(
+    envelope: dict[str, Any], cli: CLIConfig, *, wire: bool = False
+) -> None:
+    """Write ``--parameter-sweep-*`` onto the final sweep block.
+
+    Runs after the merge, so it sees the sweep whichever source produced it:
+    the config file, promoted magic lists, a recipe, or ``--variant``. Where
+    the CLI-only helper skips silently (no sweep; ordering knobs on an
+    adaptive sweep) this raises, because under ``--config`` a flag must take
+    effect or say why it cannot. ``wire`` is as for :func:`_write_cli_value`.
+    """
+    from aiperf.config.flags._config_flag_routing import flag_names_for
+    from aiperf.config.flags.converter import (
+        _ORDERING_KEYS,
+        _PARAMETER_SWEEP_KEYS,
+        _sweep_accepts_ordering,
+    )
+    from aiperf.config.loader.errors import ConfigurationError
+
+    requested = [
+        (cli_field, key)
+        for cli_field, key in _PARAMETER_SWEEP_KEYS
+        if cli_field in cli.model_fields_set
+    ]
+    if not requested:
+        return
+    sweep = envelope.get("sweep")
+    if not isinstance(sweep, dict):
+        flags = ", ".join(flag_names_for(cli_field)[0] for cli_field, _ in requested)
+        verb = "configures" if len(requested) == 1 else "configure"
+        raise ConfigurationError(
+            f"{flags} {verb} a sweep, but neither the config file nor the "
+            f"command line declares one. Add a sweep: block to the config "
+            f"file, or pass list-valued flags (e.g. --concurrency 1,2,4), "
+            f"--variant, or --search-recipe."
+        )
+    sweep_type = sweep.get("type", "grid")
+    ordering = [cli_field for cli_field, key in requested if key in _ORDERING_KEYS]
+    if ordering and not _sweep_accepts_ordering(sweep_type):
+        flags = ", ".join(flag_names_for(cli_field)[0] for cli_field in ordering)
+        verb, pronoun = ("does", "it") if len(ordering) == 1 else ("do", "them")
+        raise ConfigurationError(
+            f"{flags} {verb} not apply to a sweep of type {sweep_type}, which "
+            f"chooses its own trial order. Drop {pronoun}; "
+            f"--parameter-sweep-cooldown-seconds still applies."
+        )
+    for cli_field, key in requested:
+        _pop_config_value(sweep, key)
+        _write_cli_value(sweep, key, cli, cli_field, wire=wire)
+
+
+def _retarget_run_names(
+    raw_envelope: dict[str, Any], rendered_envelope: dict[str, Any]
+) -> None:
+    """Key scenario-run overlays by the raw envelope's dataset and phase names.
+
+    Runs are built on the rendered envelope, but sweep expansion merges each
+    overlay into the raw one by ``name``. A name rendered from a variable
+    (``{{ ds }}`` -> ``workload``) would append a second entry instead of
+    merging. Names map by position, as ``restore_sweep_parameter_dataset_names``
+    does for sweep parameter paths.
+    """
+    sweep = raw_envelope.get("sweep")
+    runs = sweep.get("runs") if isinstance(sweep, dict) else None
+    if not isinstance(runs, list):
+        return
+    rendered = rendered_envelope.get("benchmark") or {}
+    raw = raw_envelope.get("benchmark") or {}
+    for list_key in ("datasets", "phases"):
+        renames = _positional_renames(rendered.get(list_key), raw.get(list_key))
+        if not renames:
+            continue
+        for run in runs:
+            overlay = run.get("benchmark") if isinstance(run, dict) else None
+            entries = overlay.get(list_key) if isinstance(overlay, dict) else None
+            for entry in entries or []:
+                if isinstance(entry, dict) and entry.get("name") in renames:
+                    entry["name"] = renames[entry["name"]]
+
+
+def _positional_renames(rendered: Any, raw: Any) -> dict[str, str]:
+    if not (isinstance(rendered, list) and isinstance(raw, list)):
+        return {}
+    if len(rendered) != len(raw):
+        return {}
+    return {
+        r["name"]: w["name"]
+        for r, w in zip(rendered, raw, strict=True)
+        if isinstance(r, dict)
+        and isinstance(w, dict)
+        and isinstance(r.get("name"), str)
+        and isinstance(w.get("name"), str)
+        and r["name"] != w["name"]
+    }
+
+
+def _write_cli_value(
+    target: dict[str, Any], key: str, cli: CLIConfig, cli_field: str, *, wire: bool
+) -> None:
+    """With ``wire``, write the camelCase alias and the JSON form of the value.
+
+    An enum becomes its string, matching a block already rendered by
+    ``model_dump(mode="json", by_alias=True)``. Without it, ``target[key]`` gets
+    the raw ``cli_field`` value.
+    """
+    if wire:
+        target[to_camel(key)] = cli.model_dump(mode="json", include={cli_field})[
+            cli_field
+        ]
+    else:
+        target[key] = getattr(cli, cli_field)
+
+
+def _build_variant_runs(
+    cli_config: CLIConfig,
+    yaml_dict: dict[str, Any],
+    base_envelope: dict[str, Any],
+    *,
+    benchmark_config: BenchmarkConfig,
+    dataset_type: Any,
+    dataset_format: Any,
+    deferred_fields: frozenset[str] = frozenset(),
+) -> list[dict[str, Any]] | None:
+    """Build ``ScenarioSweep`` runs from `--variant` against the config file.
+
+    Each variant CLI goes through the same override pipeline as the command
+    line, against the rendered config file, and its ``benchmark`` subtree is
+    diffed against the base. Computed once from the rendered envelope:
+    diffing the raw one would compare Jinja template strings.
+
+    ``cli_config`` is the full command line, so a variant that repeats a
+    sweep-wide flag is accepted even when the caller deferred that flag; the
+    variant then drops ``deferred_fields`` exactly as the command line did.
+    """
+    from aiperf.config.flags._config_flag_routing import _describe
+    from aiperf.config.flags.converter import (
+        _build_variant_clis,
+        _diff_envelope_benchmark,
+        _validate_variant_flags,
+        _wrap_under_envelope,
+    )
+    from aiperf.config.loader.errors import ConfigurationError
+
+    if not cli_config.sweep_variants:
+        return None
+    _validate_variant_flags(cli_config)
+    variant_flag = _describe("sweep_variants")
+    if base_envelope.get("sweep") is not None:
+        raise ConfigurationError(
+            f"{variant_flag} declares its own scenarios sweep and cannot be "
+            "combined with the sweep the config file declares or that "
+            "--search-* flags build. Remove one."
+        )
+
+    runs: list[dict[str, Any]] = []
+    for name, variant_cli in _build_variant_clis(cli_config):
+        run_level_flags = _variant_run_level_flags(variant_cli, cli_config)
+        if run_level_flags:
+            verb, pronoun = (
+                ("applies", "it") if len(run_level_flags) == 1 else ("apply", "them")
+            )
+            raise ConfigurationError(
+                f"{variant_flag} {name!r} sets {', '.join(run_level_flags)}, "
+                f"which {verb} to the whole sweep rather than one variant. "
+                f"Pass {pronoun} outside {variant_flag}."
+            )
+        variant_cli = _cli_without(variant_cli, deferred_fields)
+        _reject_variant_cli_flags(name, variant_cli, yaml_dict)
+        overrides = build_cli_overrides(variant_cli, benchmark_config=benchmark_config)
+        variant = _merge_overrides_into_envelope(
+            copy.deepcopy(yaml_dict),
+            _wrap_under_envelope(overrides) if overrides else overrides,
+            variant_cli,
+            dataset_type=dataset_type,
+            dataset_format=dataset_format,
+        ).envelope
+        for key in sorted((base_envelope.keys() | variant.keys()) - {"benchmark"}):
+            if variant.get(key) != base_envelope.get(key):
+                raise ConfigurationError(
+                    f"{variant_flag} {name!r} changes {key!r}, which applies to "
+                    f"the whole run rather than one variant. Pass that flag "
+                    f"outside {variant_flag}."
+                )
+        run: dict[str, Any] = {"name": name}
+        run_benchmark = _diff_envelope_benchmark(
+            base=base_envelope.get("benchmark", {}),
+            override=variant.get("benchmark", {}),
+        )
+        if run_benchmark:
+            run["benchmark"] = run_benchmark
+        runs.append(run)
+    return runs
+
+
+def _reject_variant_cli_flags(
+    name: str, variant_cli: CLIConfig, yaml_dict: dict[str, Any]
+) -> None:
+    """Apply the command line's flag checks to one variant, naming the variant.
+
+    A variant key can be any CLI flag, so it gets the same checks; the prefix
+    tells the user the offending flag came from ``--variant``, not their
+    top-level flags.
+    """
+    from aiperf.config.flags._config_flag_routing import (
+        _describe,
+        reject_missing_sweep_companions,
+        reject_unrouted_cli_flags,
+    )
+    from aiperf.config.loader.errors import ConfigurationError
+
+    try:
+        reject_unrouted_cli_flags(variant_cli)
+        reject_missing_sweep_companions(variant_cli, yaml_dict)
+    except ConfigurationError as exc:
+        raise ConfigurationError(
+            f"{_describe('sweep_variants')} {name!r}: {exc.message}"
+        ) from exc
+
+
+def _variant_run_level_flags(
+    variant_cli: CLIConfig, cli_config: CLIConfig
+) -> list[str]:
+    """Name the sweep-wide flags a variant sets to a value the outer CLI did not.
+
+    ``--parameter-sweep-*``, ``--convergence-*`` and ``--sweep-type`` are
+    applied after the merge, from the outer CLI only, so a variant-level value
+    would be silently dropped. Values copied in from the outer CLI are fine.
+    """
+    from aiperf.config.flags._config_flag_routing import (
+        CONVERGENCE_DETAIL_FIELDS,
+        flag_names_for,
+    )
+    from aiperf.config.flags.converter import _PARAMETER_SWEEP_KEYS
+
+    run_level = {cli_field for cli_field, _ in _PARAMETER_SWEEP_KEYS}
+    run_level |= CONVERGENCE_DETAIL_FIELDS | {"sweep_type"}
+    outer_set = cli_config.model_fields_set
+    return [
+        flag_names_for(name)[0]
+        for name in sorted(run_level & variant_cli.model_fields_set)
+        if name not in outer_set
+        or getattr(variant_cli, name) != getattr(cli_config, name)
+    ]
 
 
 def _validate_search_space_phase_targets(
@@ -378,6 +734,7 @@ def _merge_overrides_into_envelope(
         phase_identity=identity,
     )
     _apply_warmup_overrides(merged, cli_config, phase_identity=identity)
+    _strip_recipe_consumed_magic_lists(merged, cli_config)
     promote_benchmark_magic_lists(
         merged,
         cli_config,
@@ -389,6 +746,27 @@ def _merge_overrides_into_envelope(
     return _MergedEnvelope(
         envelope=merged, phase_shape_decision=decision, phase_identity=identity
     )
+
+
+def _strip_recipe_consumed_magic_lists(
+    envelope: dict[str, Any], cli: CLIConfig
+) -> None:
+    """Keep list values a recipe consumes off the phases, as CLI-only does.
+
+    ``pareto-sweep`` reads ``--concurrency 1,4`` itself and emits one scenario
+    per value. Promoting the same list would add ``parameters`` to its
+    scenarios sweep, which that sweep type forbids.
+    """
+    from aiperf.config.flags.converter import (
+        _lookup_recipe_class,
+        _strip_consumed_magic_lists_from_phases,
+    )
+
+    recipe_cls = _lookup_recipe_class(cli)
+    consumed = getattr(recipe_cls, "consumed_magic_lists", frozenset())
+    benchmark = envelope.get("benchmark")
+    if consumed and isinstance(benchmark, dict):
+        _strip_consumed_magic_lists_from_phases(benchmark, consumed)
 
 
 def _normalize_loaded_benchmark_shorthands(yaml_dict: dict[str, Any]) -> None:
@@ -605,16 +983,7 @@ def _apply_recipe_and_multirun(
     else:
         recipe_output = expand_search_recipe(cli, benchmark_config=benchmark_config)
     if recipe_output is not None:
-        sweep_params = recipe_output.get("sweep_parameters")
-        if sweep_params:
-            out["sweep"] = {"type": "grid", "parameters": dict(sweep_params)}
-        # Recipe-emitted per-request SLOs (e.g. MaxGoodputUnderSLO) land on the
-        # body's `slos` block. The envelope wrapper (`_wrap_under_envelope`) is
-        # applied in `resolve_config` after this builder, so we write the body
-        # path here -- ``benchmark.slos`` after wrapping.
-        recipe_slos = recipe_output.get("slos")
-        if recipe_slos:
-            out["slos"] = dict(recipe_slos)
+        _apply_recipe_output(out, recipe_output, cli)
     sweep = build_sweep(cli, recipe_output=recipe_output)
     if sweep:
         # ``build_sweep`` returns a sweep envelope without ``parameters`` for
@@ -632,6 +1001,37 @@ def _apply_recipe_and_multirun(
     multi_run = build_multi_run(cli, recipe_output=recipe_output)
     if multi_run:
         out["multi_run"] = multi_run
+
+
+def _apply_recipe_output(
+    out: dict[str, Any], recipe_output: dict[str, Any], cli: CLIConfig
+) -> None:
+    from aiperf.config.flags._config_flag_routing import (
+        reject_search_filters_for_recipe,
+    )
+    from aiperf.config.flags.converter import (
+        _lookup_recipe_class,
+        _recipe_scenarios_sweep,
+        _reject_recipe_plus_magic_lists,
+    )
+
+    reject_search_filters_for_recipe(cli, recipe_output)
+    sweep_params = recipe_output.get("sweep_parameters")
+    if sweep_params:
+        _reject_recipe_plus_magic_lists(cli, recipe_cls=_lookup_recipe_class(cli))
+        out["sweep"] = {"type": "grid", "parameters": dict(sweep_params)}
+    if recipe_output.get("scenarios"):
+        out["sweep"] = _recipe_scenarios_sweep(recipe_output)
+    recipe_name = recipe_output.get("recipe_name")
+    if recipe_name and "sweep" in out:
+        out["sweep"]["recipe_name"] = recipe_name
+    # Recipe-emitted per-request SLOs (e.g. MaxGoodputUnderSLO) land on the
+    # body's `slos` block. The envelope wrapper (`_wrap_under_envelope`) is
+    # applied in `resolve_config` after this builder, so we write the body
+    # path here -- ``benchmark.slos`` after wrapping.
+    recipe_slos = recipe_output.get("slos")
+    if recipe_slos:
+        out["slos"] = dict(recipe_slos)
 
 
 def _apply_artifacts_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
@@ -674,19 +1074,91 @@ def _apply_artifacts_overrides(out: dict[str, Any], cli: CLIConfig) -> None:
 
 def _retarget_dataset_magic_lists(benchmark: dict[str, Any]) -> None:
     sweep = benchmark.get("sweep")
-    if not isinstance(sweep, dict):
-        return
+    dataset_name = _single_dataset_name(benchmark)
+    if isinstance(sweep, dict) and dataset_name not in (None, "main"):
+        _rekey_main_dataset_paths(sweep, dataset_name)
+
+
+def _rekey_main_dataset_paths(sweep: dict[str, Any], dataset_name: str) -> None:
+    """Point ``datasets.main.*`` sweep paths, and post-process params naming
+    them, at ``dataset_name``."""
+    prefix = "datasets.main."
+    target = f"datasets.{dataset_name}."
     parameters = sweep.get("parameters")
-    if not isinstance(parameters, dict):
+    if isinstance(parameters, dict):
+        for path in list(parameters):
+            if path.startswith(prefix):
+                parameters[target + path.removeprefix(prefix)] = parameters.pop(path)
+    post_process = sweep.get("post_process")
+    params = post_process.get("params") if isinstance(post_process, dict) else None
+    if isinstance(params, dict):
+        for key, value in params.items():
+            if isinstance(value, str) and value.startswith(prefix):
+                params[key] = target + value.removeprefix(prefix)
+
+
+def _bind_recipe_selectors(envelope: dict[str, Any]) -> None:
+    """Point a recipe's sweep at the config file's dataset and profiling phase.
+
+    Recipes address the CLI-built names, dataset ``main`` and phase
+    ``profiling``. A config file names its own (``default`` for a singular
+    ``dataset:``, any name it likes, or a Jinja template), so an unbound overlay
+    would append a second entry at expansion. Applied to each envelope with
+    that envelope's own names, so the raw one binds to the raw/Jinja names.
+    """
+    from aiperf.config.sweep.expand import _find_phase_or_recipe_alias
+
+    sweep = envelope.get("sweep")
+    benchmark = envelope.get("benchmark")
+    if not (
+        isinstance(sweep, dict)
+        and sweep.get("recipe_name")
+        and isinstance(benchmark, dict)
+    ):
         return
     dataset_name = _single_dataset_name(benchmark)
-    if dataset_name is None or dataset_name == "main":
+    if dataset_name not in (None, "main"):
+        _rekey_main_dataset_paths(sweep, dataset_name)
+        _rename_run_entries(sweep, "datasets", "main", dataset_name)
+    phases = benchmark.get("phases")
+    profiling = (
+        _find_phase_or_recipe_alias(phases, "profiling", parent_key="phases")
+        if isinstance(phases, list)
+        else None
+    )
+    phase_name = profiling.get("name") if isinstance(profiling, dict) else None
+    if isinstance(phase_name, str) and phase_name != "profiling":
+        _rename_run_entries(sweep, "phases", "profiling", phase_name)
+
+
+def _use_raw_recipe_post_process(
+    rendered_envelope: dict[str, Any], raw_envelope: dict[str, Any]
+) -> None:
+    """Give the rendered recipe sweep the raw envelope's post-process spec.
+
+    Variations are expanded from the raw envelope, so their value keys use the
+    raw dataset name (``datasets.{{ ds }}.prompts.isl``). A handler such as
+    ``ttft_curve_fit`` looks ``swept_param`` up among those keys; the rendered
+    name would match nothing. Recipe specs carry no templates, so the raw one
+    is safe to validate.
+    """
+    rendered = rendered_envelope.get("sweep")
+    raw = raw_envelope.get("sweep")
+    if not (isinstance(rendered, dict) and isinstance(raw, dict)):
         return
-    for path in list(parameters):
-        if path.startswith("datasets.main."):
-            parameters[
-                f"datasets.{dataset_name}.{path.removeprefix('datasets.main.')}"
-            ] = parameters.pop(path)
+    if rendered.get("recipe_name") and raw.get("post_process") is not None:
+        rendered["post_process"] = copy.deepcopy(raw["post_process"])
+
+
+def _rename_run_entries(
+    sweep: dict[str, Any], list_key: str, old: str, new: str
+) -> None:
+    for run in sweep.get("runs") or []:
+        overlay = run.get("benchmark") if isinstance(run, dict) else None
+        entries = overlay.get(list_key) if isinstance(overlay, dict) else None
+        for entry in entries or []:
+            if isinstance(entry, dict) and entry.get("name") == old:
+                entry["name"] = new
 
 
 def _single_dataset_name(benchmark: dict[str, Any]) -> str | None:

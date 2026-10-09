@@ -9,6 +9,7 @@ in that module is a thin wrapper around the helper.
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -831,3 +832,226 @@ async def test_sweep_dry_run_propagates_convergence_metric_from_cli_config(
         "it may still be coming from a now-removed local parameter shadow"
     )
     assert call_kwargs["convergence_threshold"] == pytest.approx(0.03)
+
+
+# ---------------------------------------------------------------------------
+# The shared resolver must see the file's sweep / multiRun blocks, or its
+# companion rules answer from an envelope that never contains them.
+# ---------------------------------------------------------------------------
+
+_YAML_SWEEP = """\
+sweep:
+  type: grid
+  parameters:
+    phases.profiling.concurrency: [1, 2]
+"""
+
+_YAML_CONVERGENCE = """\
+multiRun:
+  numRuns: 5
+  convergence:
+    metric: time_to_first_token
+    stat: avg
+"""
+
+
+def _build_with_flags(tmp_path: Path, yaml_extra: str, **flags) -> dict:
+    from aiperf.config.flags import CLIConfig
+
+    config_file = tmp_path / "sweep-flags.yaml"
+    config_file.write_text(_yaml_with(yaml_extra))
+    return sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        cli_config=CLIConfig(**flags),
+        kube_options=_kube_options(),
+        **_kwargs(),
+    )
+
+
+@pytest.mark.parametrize(
+    ("names", "dataset", "phase"),
+    [
+        pytest.param("", "workload", "measured", id="custom-names"),
+        pytest.param(
+            "variables: {ds: workload, ph: measured}\n",
+            "{{ ds }}",
+            "{{ ph }}",
+            id="jinja-names",
+        ),
+    ],
+)
+def test_scenario_recipe_binds_to_the_file_identities(
+    tmp_path: Path, names: str, dataset: str, phase: str
+) -> None:
+    """pareto-sweep addresses dataset `main` / phase `profiling`; the CR's run
+    overlays must name the file's own entries (raw names, for in-cluster
+    expansion against the templated spec)."""
+    from aiperf.config.flags import CLIConfig
+
+    ds, ph = ("{{ ds }}", "{{ ph }}") if names else ("workload", "measured")
+    config_file = tmp_path / "pareto.yaml"
+    config_file.write_text(
+        names
+        + "models: [m]\n"
+        + "endpoint: {urls: [http://x], type: chat, streaming: true}\n"
+        + f"datasets: [{{name: '{ds}', type: synthetic, prompts: {{isl: 64, osl: 32}}}}]\n"
+        + "phases:\n"
+        + f"  - {{name: '{ph}', kind: profiling, type: concurrency, requests: 10, concurrency: 1}}\n"
+    )
+    cr = sweep_cmd._build_sweep_cr_dict(
+        config_file=config_file,
+        cli_config=CLIConfig(
+            search_recipe="pareto-sweep", isl_osl_pairs="128/128", concurrency=[1, 4]
+        ),
+        kube_options=_kube_options(),
+        **_kwargs(),
+    )
+    runs = cr["spec"]["sweep"]["runs"]
+    assert len(runs) == 2
+    for run in runs:
+        assert [d["name"] for d in run["benchmark"]["datasets"]] == [dataset]
+        assert [p["name"] for p in run["benchmark"]["phases"]] == [phase]
+
+
+def test_search_recipe_against_yaml_sweep_is_rejected(tmp_path: Path) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="--search-recipe"):
+        _build_with_flags(tmp_path, _YAML_SWEEP, search_recipe="concurrency-ramp")
+
+
+def test_search_space_against_yaml_sweep_is_rejected(tmp_path: Path) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="--search-space"):
+        _build_with_flags(
+            tmp_path,
+            _YAML_SWEEP,
+            search_space=["phases.profiling.concurrency:1,1000:int"],
+            search_metric="output_token_throughput",
+            search_direction="maximize",
+            search_max_iterations=10,
+        )
+
+
+_YAML_ADAPTIVE_SWEEP = """\
+sweep:
+  type: adaptive_search
+  search_space:
+    - {path: phases.profiling.concurrency, lo: 1, hi: 100, kind: int}
+  objectives:
+    - {metric: output_token_throughput, stat: avg, direction: maximize}
+  max_iterations: 10
+"""
+
+
+def test_parameter_sweep_flags_apply_to_yaml_sweep(tmp_path: Path) -> None:
+    spec = _build_with_flags(
+        tmp_path,
+        _YAML_SWEEP,
+        parameter_sweep_mode="independent",
+        parameter_sweep_cooldown_seconds=3.0,
+    )["spec"]
+    sweep = spec["sweep"]
+    assert sweep["iterationOrder"] == "independent"
+    assert sweep["cooldownSeconds"] == 3
+    assert "iteration_order" not in sweep
+    assert "cooldown_seconds" not in sweep
+    json.dumps(spec)
+
+
+def test_parameter_sweep_mode_overrides_yaml_iteration_order(tmp_path: Path) -> None:
+    yaml_sweep = _YAML_SWEEP + "  iterationOrder: repeated\n"
+    sweep = _build_with_flags(tmp_path, yaml_sweep, parameter_sweep_mode="independent")[
+        "spec"
+    ]["sweep"]
+    assert sweep["iterationOrder"] == "independent"
+
+
+def test_parameter_sweep_mode_against_yaml_adaptive_sweep_is_rejected(
+    tmp_path: Path,
+) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    with pytest.raises(ConfigurationError) as excinfo:
+        _build_with_flags(
+            tmp_path, _YAML_ADAPTIVE_SWEEP, parameter_sweep_mode="independent"
+        )
+    message = str(excinfo.value)
+    assert "--parameter-sweep-mode" in message
+    assert "adaptive_search" in message
+
+
+def test_parameter_sweep_cooldown_applies_to_yaml_adaptive_sweep(
+    tmp_path: Path,
+) -> None:
+    sweep = _build_with_flags(
+        tmp_path, _YAML_ADAPTIVE_SWEEP, parameter_sweep_cooldown_seconds=3.0
+    )["spec"]["sweep"]
+    assert sweep["cooldownSeconds"] == 3
+
+
+def test_parameter_sweep_flag_without_any_sweep_is_rejected(tmp_path: Path) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="declares one"):
+        _build_with_flags(tmp_path, "", parameter_sweep_mode="independent")
+
+
+def test_convergence_detail_applies_to_yaml_convergence_block(tmp_path: Path) -> None:
+    spec = _build_with_flags(tmp_path, _YAML_CONVERGENCE, convergence_stat="p90")[
+        "spec"
+    ]
+    convergence = spec["multiRun"]["convergence"]
+    assert convergence["stat"] == "p90"
+    assert convergence["metric"] == "time_to_first_token"
+    json.dumps(spec)
+
+
+def test_variant_repeating_deferred_convergence_flag_is_accepted(
+    tmp_path: Path,
+) -> None:
+    """A variant may repeat an outer sweep-wide flag kube sweep defers, as under --config."""
+    spec = _build_with_flags(
+        tmp_path,
+        _YAML_CONVERGENCE,
+        convergence_stat="p90",
+        sweep_variants=["a: isl=64, convergence-stat=p90", "b: isl=128"],
+    )["spec"]
+    assert spec["multiRun"]["convergence"]["stat"] == "p90"
+    assert [run["name"] for run in spec["sweep"]["runs"]] == ["a", "b"]
+
+
+def test_adjusting_flags_write_wire_form_into_hoisted_blocks(tmp_path: Path) -> None:
+    """The merged blocks are camelCase JSON; written values must match that form."""
+    import yaml
+
+    from aiperf.config.flags import CLIConfig
+
+    config_file = tmp_path / "wire.yaml"
+    config_file.write_text(_yaml_with(_YAML_SWEEP + _YAML_CONVERGENCE))
+    parts = sweep_cmd._split_bare_yaml(yaml.safe_load(config_file.read_text()))
+    _, _, sweep, multirun = sweep_cmd._normalized_config_parts(
+        parts.bench_dict,
+        parts.envelope_extras,
+        sweep_cfg=parts.sweep_cfg,
+        multirun_cfg=parts.multirun_cfg,
+        cli_config=CLIConfig(
+            parameter_sweep_mode="independent",
+            parameter_sweep_same_seed=True,
+            convergence_mode="cv",
+        ),
+        file_path=config_file,
+    )
+    assert type(sweep["iterationOrder"]) is str
+    assert sweep["sameSeed"] is True
+    assert not {"iteration_order", "same_seed"} & sweep.keys()
+    assert type(multirun["convergence"]["mode"]) is str
+    json.dumps([sweep, multirun])
+
+
+def test_sweep_type_against_yaml_sweep_is_rejected(tmp_path: Path) -> None:
+    from aiperf.config.loader.errors import ConfigurationError
+
+    with pytest.raises(ConfigurationError, match="--sweep-type"):
+        _build_with_flags(tmp_path, _YAML_SWEEP, sweep_type="zip", concurrency=[1, 2])
