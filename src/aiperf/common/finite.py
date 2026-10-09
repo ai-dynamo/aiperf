@@ -3,16 +3,21 @@
 
 """Centralized NaN/inf discipline for AIPerf.
 
-Every numeric metric value that crosses a serialization boundary (orjson,
-Pydantic ``model_dump_json``, CSV writer) or feeds a numerical algorithm
-(``np.mean``, ``polyfit``, BO acquisitions) must be either **finite** or
-**explicitly None**. NaN/inf values look benign in memory but corrupt
-downstream artifacts and analyses in three distinct ways:
+Numeric metric values must be **finite** or **explicitly None** before
+numerical algorithms and, by default, before serialization. The shared
+JSONL writer (``BufferedJSONLWriterMixin``) and raw-record writer
+(``RawRecordWriterProcessor``) are the only exception to normalization
+before serialization: they pass JSON-mode model dumps to ``orjson``, which
+writes remaining non-finite floats as JSON ``null``. Input validation and
+checks before numerical calculations still apply.
+
+Outside that export contract, NaN/inf can corrupt artifacts and analyses:
 
 1. ``orjson.dumps`` and Pydantic's ``model_dump_json`` silently coerce
    NaN/+inf/-inf to JSON ``null``. Once on disk, ``null`` is
-   indistinguishable from "metric was missing" — the contract used by
-   sentinels like ``SLABreachKnee.breaches[].observed`` collapses.
+   indistinguishable from "metric was missing". This hides invalid input
+   where the model requires rejection rather than missing-value semantics;
+   serializer coercion is not a substitute for ``FiniteFloat`` validation.
 2. Naive CSV ``f"{value:.2f}"`` formatting writes the literal strings
    ``"nan"``/``"inf"``, which downstream pandas/duckdb readers parse
    inconsistently (string column on mixed input, float NaN on uniform).
@@ -29,8 +34,9 @@ This module centralizes the discipline as four primitives:
   Python ``int``/``float`` AND numpy scalar types (``numpy.float32``,
   ``numpy.float64``, ``numpy.int64``); rejects ``bool`` by design.
 - :func:`scrub_non_finite` -- recursively rewrites non-finite numeric
-  values to ``None`` in dict/list/tuple structures. Apply before every
-  ``orjson.dumps`` call that may carry metric data.
+  values to ``None`` in dict/list/tuple structures and normalizes numpy
+  scalars. Only the two JSONL writers named above omit this pass on
+  JSON-mode model dumps; other exporters retain explicit normalization.
 - :func:`nan_safe_mean` / :func:`nan_safe_std` -- aggregations that
   ignore non-finite inputs and return ``None`` when no finite values
   remain (rather than silently returning NaN).
@@ -169,11 +175,13 @@ def scrub_non_finite(obj: Any) -> Any:
     yields ``True`` (not ``1.0``). ``numpy.float64`` needs an explicit cast
     because it subclasses ``float``; the rest go through ``.item()``.
 
-    Use before ``orjson.dumps`` on any payload that may contain metric
-    values. This is the guard for two distinct orjson behaviors: it
-    silently coerces NaN/inf to JSON ``null`` (indistinguishable from
-    explicit-None semantics downstream), and it raises outright on numpy
-    scalars ("Type is not JSON serializable: numpy.float64").
+    Use before ``orjson.dumps`` on metric payloads to make non-finite values
+    explicitly missing and normalize numpy scalars that orjson rejects.
+    Only ``BufferedJSONLWriterMixin`` and ``RawRecordWriterProcessor`` omit
+    this pass: their JSON-mode model dumps contain supported JSON-ready
+    values, and orjson writes remaining non-finite floats as ``null``.
+    Unsupported model values still fail serialization. This exception does
+    not change input validation, numerical checks, or other exporters.
 
     The returned structure preserves the input container types (dict stays
     dict, tuple stays tuple). Booleans are passed through unchanged because

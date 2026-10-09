@@ -10,10 +10,13 @@ and ``TestWave2FixCounter`` validates that implemented behaviour.
 
 from typing import Any
 
+import numpy as np
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
+from aiperf.common.finite import scrub_non_finite
 from aiperf.common.models import (
     ParsedResponse,
     ParsedResponseRecord,
@@ -32,6 +35,7 @@ from aiperf.common.models.record_models import (
     RawRecordInfo,
     TokenCounts,
 )
+from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.raw_record_writer_processor import (
     RawRecordAggregator,
@@ -121,6 +125,83 @@ def _make_raw_record(
         responses=[TextResponse(text="ok", perf_ns=2_000_000_000)],
         error=None,
     )
+
+
+def _serialize_scrubbed_reference(record: RawRecordInfo) -> bytes:
+    """Serialize with the original scrub and payload-fragment insertion."""
+    dumped = scrub_non_finite(record.model_dump(exclude_none=True, mode="json"))
+    if record.payload_bytes is not None:
+        dumped["payload"] = orjson.Fragment(record.payload_bytes)
+    return orjson.dumps(dumped) + b"\n"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload_bytes,payload,error",
+    [
+        param(b'{ "nested": [1.25, -0.0, 7, true, "null", null] }', None, None, id="fragment-verbatim"),
+        param(None, {"nested": [1.25, float("nan"), float("inf"), -float("inf"), -0.0, 7, True, "null", None]}, None, id="fallback-native"),
+        param(None, {"numpy": [np.float64(1.25), np.float64("nan"), np.float64("inf"), np.float64(-0.0)]}, None, id="fallback-numpy"),
+        param(b'{"ok":null}', None, ErrorDetails(message="failed", details={"nested": [float("nan"), float("inf"), -float("inf"), -0.0, np.float64(1.25), None]}), id="fragment-error"),
+        param(None, None, ErrorDetails(message="before transport"), id="fallback-error"),
+    ],
+)  # fmt: skip
+async def test_buffered_write_supported_raw_records_match_scrubbed_bytes(
+    run_raw: BenchmarkRun,
+    payload_bytes: Any,
+    payload: dict[str, Any] | None,
+    error: ErrorDetails | None,
+) -> None:
+    """Preserve Fragment bytes, fallback output and serialized errors."""
+    record = _make_raw_record(payload_bytes=None, payload=payload).model_copy(
+        update={"payload_bytes": payload_bytes, "error": error}
+    )
+
+    async with raw_record_processor("processor-numeric", run_raw) as processor:
+        await processor.buffered_write(record)
+        await processor.finalize_artifact()
+        assert processor._write_error is None
+        assert processor.dropped_record_count == 0
+        assert processor.lines_written == 1
+        assert processor.output_file.read_bytes() == _serialize_scrubbed_reference(
+            record
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload_bytes,payload,error",
+    [
+        param(None, {"bad": np.float32(0.1)}, None, id="fallback-unsupported"),
+        param(b'{}', None, ErrorDetails(message="failed", details=np.int64(7)), id="fragment-unsupported"),
+        param(123, None, None, id="invalid-fragment"),
+    ],
+)  # fmt: skip
+async def test_buffered_write_invalid_raw_record_without_pending_batch_preserves_error(
+    run_raw: BenchmarkRun,
+    payload_bytes: Any,
+    payload: dict[str, Any] | None,
+    error: ErrorDetails | None,
+) -> None:
+    """Preserve serialization errors when no valid batch can clear them."""
+    record = _make_raw_record(payload_bytes=None, payload=payload).model_copy(
+        update={"payload_bytes": payload_bytes, "error": error}
+    )
+    with pytest.raises(Exception) as original:
+        _serialize_scrubbed_reference(record)
+
+    async with raw_record_processor("processor-numeric", run_raw) as processor:
+        await processor.buffered_write(record)
+        assert type(processor._write_error) is type(original.value)
+        assert str(processor._write_error) == str(original.value)
+        assert processor.lines_written == 0
+        assert processor._buffer == []
+        with pytest.raises(
+            RuntimeError, match="failed before artifact finalization"
+        ) as final:
+            await processor.finalize_artifact()
+        assert final.value.__cause__ is processor._write_error
+        assert not processor.output_file.exists()
 
 
 class TestBufferedWritePayloadBytesFastPath:
