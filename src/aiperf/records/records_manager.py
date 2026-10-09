@@ -57,7 +57,9 @@ from aiperf.common.messages import (
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
+    BasePhaseStats,
     BranchStats,
+    CreditPhaseStats,
     ErrorDetails,
     ErrorDetailsCount,
     MetricResult,
@@ -522,6 +524,102 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Check record completion for a phase kind."""
         return self._records_tracker.check_and_set_all_records_received_for_phase(phase)
 
+    def _remember_profiling_credit_stats(self, stats: BasePhaseStats) -> None:
+        """Keep the newest profiling credit-phase snapshot for the watchdog.
+
+        ``RecordsTracker.create_aggregate_stats_for_phase`` returns a
+        ``PhaseRecordsStats``, which counts *records* and has no
+        ``in_flight_requests``/``requests_completed``. Only the credit side
+        tracks what was sent versus what came back, so the watchdog reads this
+        snapshot instead.
+        """
+        if isinstance(stats, CreditPhaseStats) and stats.phase == CreditPhase.PROFILING:
+            self._latest_profiling_credit_stats = stats
+
+    @background_task(
+        interval=lambda self: Environment.RECORD.PROGRESS_STALL_CHECK_INTERVAL,
+        immediate=False,
+    )
+    async def _watch_for_progress_stall(self) -> None:
+        """Fail a run whose in-flight requests stop completing.
+
+        Distinct from :meth:`_watch_for_record_stall`, which handles aggregation
+        falling behind *after* every credit has come back and finalizes with
+        partial results. Here no credit ever comes back: a request that is
+        dispatched and never completes leaves ``final_requests_completed``
+        unset, so the completion barrier is not merely unmet but unevaluable,
+        and nothing downstream can re-trigger it.
+        ``--request-timeout-seconds`` is not a backstop -- it defaults to six
+        hours and never applies to a request that was never dispatched.
+
+        The condition is "requests are in flight and none are completing", not
+        "no records arrived". Zero records is normal and expected whenever
+        nothing is pending: a low request rate, a fixed-schedule replay sitting
+        in a recorded idle gap, a slow dataset build. Only an outstanding
+        request that never lands is a stall, and that is what makes the run
+        unable to finish on its own.
+
+        That also removes the need to gate on phase completion. A completed
+        phase has nothing in flight, and ``_complete_credit_phases`` holds the
+        phase *kind*, so gating on it would have disarmed the watchdog for
+        every profiling phase after the first in a multi-phase run.
+        """
+        timeout = Environment.RECORD.PROGRESS_STALL_TIMEOUT
+        if timeout <= 0:
+            raise asyncio.CancelledError("progress stall watchdog disabled")
+        if not self._profiling_started:
+            return
+
+        stats = self._latest_profiling_credit_stats
+        if stats is None:
+            # No profiling progress has been reported yet; there is nothing to
+            # judge, and the clock must not start before the first snapshot.
+            self._progress_stall_since = time.monotonic()
+            return
+        in_flight = stats.in_flight_requests
+        total = stats.requests_completed
+
+        # Nothing outstanding means nothing to wait for. Reset the clock so a
+        # quiet stretch does not accumulate toward a later, unrelated stall.
+        if in_flight <= 0 or total != self._progress_stall_last_total:
+            self._progress_stall_last_total = total
+            self._progress_stall_since = time.monotonic()
+            return
+
+        stalled_for = time.monotonic() - self._progress_stall_since
+        if stalled_for < timeout:
+            # Stay quiet until a full check interval has genuinely elapsed:
+            # the tick right after the clock resets would otherwise report
+            # "0s with no completion", which reads as alarming and is not.
+            if stalled_for >= Environment.RECORD.PROGRESS_STALL_CHECK_INTERVAL:
+                self.warning(
+                    f"{in_flight:,} request(s) in flight with no completion "
+                    f"for {stalled_for:.0f}s ({total:,} completed so far). "
+                    f"Failing at {timeout:.0f}s "
+                    "(AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to wait "
+                    "indefinitely)."
+                )
+            return
+
+        # Raising here would only be logged: @background_task defaults to
+        # stop_on_error=False, so the task would retry forever and the run
+        # would still hang -- the exact outcome this watchdog exists to end.
+        # Cancel rather than publish a terminal result directly: a terminal
+        # result fills only the profile domain, and the controller would still
+        # wait on server_metrics, which cannot arrive until the profiling phase
+        # completes -- which the stuck request is what prevents.
+        if self._progress_stall_triggered:
+            return
+        self._progress_stall_triggered = True
+        await self._request_profile_cancel(
+            ProfileCancelReason.PROGRESS_STALL,
+            f"Benchmark stalled: {in_flight:,} request(s) in flight with no "
+            f"completion for {stalled_for:.0f}s ({total:,} completed). A "
+            f"request was dispatched but never returned, so the phase can "
+            f"never report complete. Set "
+            f"AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to disable this check.",
+        )
+
     @background_task(
         interval=lambda self: Environment.RECORD.CHECKPOINT_INTERVAL,
         immediate=False,
@@ -729,6 +827,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # last advanced. Only consulted once credits are complete.
         self._stall_last_total_records: int = -1
         self._stall_last_progress_ns: int = 0
+        self._profiling_started = False
+        self._progress_stall_last_total: int = -1
+        self._progress_stall_since: float = 0.0
+        # Latest profiling CreditPhaseStats. The credit side is the only source
+        # of sent/completed/cancelled counts; the records tracker's
+        # PhaseRecordsStats carries record counts and has no notion of what is
+        # still in flight.
+        self._latest_profiling_credit_stats: CreditPhaseStats | None = None
+        # Latch so a stalled run requests cancellation once, not every tick.
+        self._progress_stall_triggered: bool = False
         # Set to a human-readable reason when the run is finalized without every
         # expected record. Propagated onto ProfileResults.incomplete_reason.
         self._incomplete_reason: str | None = None
@@ -971,15 +1079,37 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             f"(grace floor {grace_floor}, phase_index {phase_index}). "
             "Requesting PROFILE_CANCEL to terminate the run."
         )
+        if not await self._request_profile_cancel(
+            ProfileCancelReason.FAILED_REQUEST_THRESHOLD,
+            f"{error_records}/{total} profiling requests failed "
+            f"({rate:.1%}), exceeding the --failed-request-threshold "
+            f"limit of {threshold:.1%}. Check inference server logs.",
+        ):
+            self._failed_request_abort_triggered = False
+            return
+
+    async def _request_profile_cancel(
+        self, reason: ProfileCancelReason, reason_detail: str
+    ) -> bool:
+        """End the run through the cancel path. True if the request went out.
+
+        Publishing a terminal result alone is not enough to stop a benchmark:
+        it fills only the ``profile`` result domain, and the controller keeps
+        waiting on the others (``server_metrics`` is on by default whenever the
+        endpoint exposes ``/metrics``, and its result only arrives once the
+        profiling phase completes). Cancelling finalizes every domain.
+
+        Both halves are required. The command tells the controller, and the
+        local handler must be run directly because the controller's relay
+        excludes the originator -- without it the phase is never marked
+        cancelled and the run waits on the profile domain forever. Ctrl+C does
+        not hit this, because that command originates elsewhere.
+        """
         payload = orjson.dumps(
             {
                 "origin_service_id": self.service_id,
-                "reason": ProfileCancelReason.FAILED_REQUEST_THRESHOLD,
-                "reason_detail": (
-                    f"{error_records}/{total} profiling requests failed "
-                    f"({rate:.1%}), exceeding the --failed-request-threshold "
-                    f"limit of {threshold:.1%}. Check inference server logs."
-                ),
+                "reason": reason,
+                "reason_detail": reason_detail,
             }
         )
         try:
@@ -987,17 +1117,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 CommandType.PROFILE_CANCEL, payload=payload
             )
         except Exception as exc:
-            self.warning(
-                f"Failed to request PROFILE_CANCEL for threshold abort: {exc!r}"
-            )
-            self._failed_request_abort_triggered = False
-            return
+            self.warning(f"Failed to request PROFILE_CANCEL for {reason}: {exc!r}")
+            return False
 
-        # The controller's relay excludes the originator, so the local
-        # PROFILE_CANCEL handler -- which marks the phase cancelled and
-        # aggregates partial results -- would never run for a self-originated
-        # abort, and the run would wait on the profile result domain forever.
-        # Ctrl+C does not hit this because the command originates elsewhere.
         self._cancel_finalize_task = self.execute_async(
             self._self_cancel_and_finalize(
                 Command(
@@ -1007,6 +1129,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 )
             )
         )
+        return True
 
     async def _self_cancel_and_finalize(self, command: Command) -> None:
         """Run the local cancel handler with failure-safe result publishing.
@@ -1271,7 +1394,13 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             await self._publish_terminal_failure_result(phase, cancelled, e)
 
     async def _publish_terminal_failure_result(
-        self, phase: CreditPhase, cancelled: bool, error: BaseException
+        self,
+        phase: CreditPhase,
+        cancelled: bool,
+        error: BaseException,
+        *,
+        stage: str = "result_finalization",
+        reason_prefix: str = "Result finalization failed",
     ) -> ProcessRecordsResult:
         """Publish an explicitly-failed, empty result so the run can terminate.
 
@@ -1282,7 +1411,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """
         error_details = ErrorDetails.from_exception(
             error,
-            stage="result_finalization",
+            stage=stage,
             **{ERROR_FATAL_DETAIL_KEY: True},
         )
         now = time.time_ns()
@@ -1294,9 +1423,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 end_ns=now,
                 was_cancelled=cancelled,
                 is_complete=False,
-                incomplete_reason=(
-                    f"Result finalization failed: {error_details.message}"
-                ),
+                incomplete_reason=f"{reason_prefix}: {error_details.message}",
             ),
             errors=[error_details],
         )
@@ -1434,6 +1561,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Handle a credit phase start message in order to track the total number of expected requests."""
         self._records_tracker.update_phase_info(phase_start_msg.stats)
         await self._dispatch_record(phase_start_msg.stats, warn_if_unrouted=False)
+        if phase_start_msg.config.phase == CreditPhase.PROFILING:
+            self._profiling_started = True
         self.info(f"Credit phase start: {phase_start_msg.config.phase}")
 
     @on_message(MessageType.CREDIT_PHASE_PROGRESS)
@@ -1441,6 +1570,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self, message: CreditPhaseProgressMessage
     ) -> None:
         """Handle a credit phase progress message to track and stream live timing snapshots."""
+        self._remember_profiling_credit_stats(message.stats)
         self._records_tracker.update_phase_info(message.stats)
         await self._dispatch_record(message.stats, warn_if_unrouted=False)
 
@@ -1453,6 +1583,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self.info(
                 f"Sent {message.stats.final_requests_sent:,} requests. Waiting for all to complete..."
             )
+        self._remember_profiling_credit_stats(message.stats)
         self._records_tracker.update_phase_info(message.stats)
         await self._dispatch_record(message.stats, warn_if_unrouted=False)
 
@@ -1461,6 +1592,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self, message: CreditPhaseCompleteMessage
     ) -> None:
         """Handle a credit phase complete message in order to track the end time, and check if all records have been received."""
+        self._remember_profiling_credit_stats(message.stats)
         self._records_tracker.update_phase_info(message.stats)
         await self._dispatch_record(message.stats, warn_if_unrouted=False)
         self._complete_credit_phases.add(message.stats.phase)

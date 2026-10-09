@@ -1172,6 +1172,29 @@ class _RecordSettings(BaseSettings):
         env_prefix="AIPERF_RECORD_",
     )
 
+    PROGRESS_STALL_TIMEOUT: float = Field(
+        ge=0.0,
+        le=86400.0,
+        default=600.0,
+        description="Seconds of zero record progress, while a profiling phase "
+        "is still waiting on in-flight requests, after which the run fails "
+        "instead of waiting indefinitely. A phase completes only once the "
+        "credit phase reports its final count, so a credit that is never "
+        "returned leaves that condition unevaluable and the run waits forever "
+        "with no output. Per-request timeouts do not cover this: they default "
+        "to 6 hours and never apply to a request that was not dispatched. Set "
+        "to 0 to disable and restore the previous unbounded wait.",
+    )
+
+    PROGRESS_STALL_CHECK_INTERVAL: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=30.0,
+        description="Seconds between stall checks. Each check with no progress "
+        "also logs how many records are still outstanding, so a stalled run is "
+        "diagnosable from the log rather than silent.",
+    )
+
     CHECKPOINT_INTERVAL: float = Field(
         ge=0.0,
         le=3600.0,
