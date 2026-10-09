@@ -72,6 +72,7 @@ def _run_single_benchmark(
 
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.common.bootstrap import bootstrap_and_run_service
+    from aiperf.common.exit_hooks import register_pre_exit_hook, run_pre_exit_hooks
     from aiperf.config.resolution.resolvers import build_default_resolver_chain
 
     logger = AIPerfLogger(__name__)
@@ -102,6 +103,22 @@ def _run_single_benchmark(
             title="Control Hook Error",
         )
 
+    if on_complete:
+        # The controller hard-exits from inside its own shutdown, so the
+        # callback block below this try/finally is unreachable in production.
+        # Registering it as a pre-exit hook is what actually runs it; the block
+        # stays for callers that do regain control, and the drain is run-once.
+        register_pre_exit_hook(
+            lambda code: _invoke_callbacks(
+                on_complete,
+                CompletedRun(artifact_dir=run.artifact_dir),
+                code,
+                logger,
+            )
+            if code == 0
+            else code
+        )
+
     exit_code = 0
     try:
         bootstrap_and_run_service(
@@ -117,9 +134,9 @@ def _run_single_benchmark(
     finally:
         logger.debug("AIPerf System exited")
 
-    if exit_code == 0 and on_complete:
-        completed = CompletedRun(artifact_dir=run.artifact_dir)
-        exit_code = _invoke_callbacks(on_complete, completed, exit_code, logger)
+    # No-op when the controller already drained the hooks, which is the
+    # production path; this covers callers that regain control instead.
+    exit_code = run_pre_exit_hooks(exit_code)
 
     # Bypass Python's normal teardown: multiprocessing atexit handlers,
     # leftover ZMQ contexts, and daemon threads can otherwise block the
