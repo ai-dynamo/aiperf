@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import re
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -185,6 +186,29 @@ class HelmClient:
             kubecontext: Kubernetes context to use.
         """
         self.kubecontext = kubecontext
+        self._major_version: int | None = None
+
+    async def major_version(self) -> int:
+        """Return the helm CLI major version (cached), 0 if it cannot be parsed."""
+        if self._major_version is None:
+            result = await self._run(
+                "version", "--template", "{{.Version}}", check=False
+            )
+            match = re.match(r"v?(\d+)", result.stdout.strip())
+            self._major_version = int(match.group(1)) if match else 0
+        return self._major_version
+
+    async def _apply_conflict_args(self) -> list[str]:
+        """Flags that let helm 4 overwrite fields owned by another field manager.
+
+        Helm 4 applies server-side and refuses to touch fields owned by
+        another manager. The test fixtures pre-install the CRDs with
+        ``kubectl apply`` (manager ``kubectl-client-side-apply``), so an
+        install/upgrade of the same chart fails with field conflicts on the
+        CRD objects. Helm 3 uses client-side apply, overwrites silently, and
+        rejects the flag.
+        """
+        return ["--force-conflicts"] if await self.major_version() >= 4 else []
 
     async def _run(
         self,
@@ -274,6 +298,8 @@ class HelmClient:
             for set_arg in values.to_set_args():
                 args.extend(["--set", set_arg])
 
+        args.extend(await self._apply_conflict_args())
+
         logger.info(f"Installing Helm release: {release_name} in {namespace}")
         cmd = ["helm"]
         if self.kubecontext:
@@ -314,6 +340,8 @@ class HelmClient:
         if values:
             for set_arg in values.to_set_args():
                 args.extend(["--set", set_arg])
+
+        args.extend(await self._apply_conflict_args())
 
         logger.info(f"Upgrading Helm release: {release_name}")
         cmd = ["helm"]

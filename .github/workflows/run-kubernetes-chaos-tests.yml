@@ -50,6 +50,9 @@ jobs:
       AIPERF_K8S_SHARE_PROCESS_NAMESPACE: "true"
       K8S_TEST_CLUSTER: aiperf-chaos-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
       KUBECONFIG: /tmp/aiperf-chaos-kubeconfig-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+      # The pytest session fixture must not delete the Kind cluster: the
+      # diagnostics step below reads it, and the always() teardown deletes it.
+      K8S_TEST_KEEP_CLUSTER: "true"
 
     steps:
       - name: Free disk space
