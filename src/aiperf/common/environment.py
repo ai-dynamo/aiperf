@@ -435,6 +435,22 @@ class _DatasetSettings(BaseSettings):
         "worker count. Costs a one-time startup pass proportional to dataset size; set to "
         "False to trade predictable tail latency for faster startup on very large datasets.",
     )
+    SUSPEND_GC_DURING_BUILD: bool = Field(
+        default=True,
+        description="If True, the DatasetManager suspends cyclic garbage collection "
+        "while it builds a dataset, and freezes the pre-existing heap into the "
+        "permanent generation first. Dataset construction allocates one GC-tracked "
+        "container per trace, conversation, turn, and message, so every "
+        "threshold-triggered collection re-traverses the whole live heap and build "
+        "cost grows superlinearly -- on the 393-trace AgentX Weka corpus this is "
+        "the single largest startup cost, and suspending it cuts conversation "
+        "assembly by roughly 5x. Nothing built here is cyclic garbage that "
+        "reference counting cannot reclaim, and the explicit collections that free "
+        "the dataset afterwards still run, so this trades a higher peak heap during "
+        "the build for a much faster one. Set to False to keep the collector "
+        "running throughout (slower startup, lower peak memory) on a host where "
+        "the build would otherwise exhaust RAM.",
+    )
     PREFORMAT_PAYLOADS: bool = Field(
         default=False,
         description="If True, pre-encode single-turn / self-contained synthetic "
