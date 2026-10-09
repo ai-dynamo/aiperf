@@ -15,7 +15,14 @@ from aiperf.common.models import (
     TextResponseData,
     Usage,
 )
+from aiperf.endpoints.base_rankings_endpoint import BaseRankingsEndpoint
+from aiperf.endpoints.cohere_rankings import CohereRankingsEndpoint
+from aiperf.endpoints.hf_tei_rankings import HFTeiRankingsEndpoint
+from aiperf.endpoints.nim_rankings import NIMRankingsEndpoint
 from aiperf.endpoints.openai_chat import ChatEndpoint
+from aiperf.plugin.enums import EndpointType
+from aiperf.records.inference_result_parser import InferenceResultParser
+from tests.unit.endpoints.conftest import create_model_endpoint
 from tests.unit.records.conftest import (
     create_invalid_record,
     create_test_request_info,
@@ -587,6 +594,39 @@ class TestContextPromptISL:
 
         assert parsed_record.token_counts.input == 19
         assert parsed_record.responses == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "endpoint_class,endpoint_type,passages,expected_tokens",
+    [
+        param(NIMRankingsEndpoint, EndpointType.NIM_RANKINGS, ["first passage", "second passage"], 6, id="nim-multiple-passages"),
+        param(CohereRankingsEndpoint, EndpointType.COHERE_RANKINGS, ["first passage", "second passage"], 6, id="cohere-multiple-passages"),
+        param(HFTeiRankingsEndpoint, EndpointType.HF_TEI_RANKINGS, ["first passage", "second passage"], 6, id="hf-tei-multiple-passages"),
+        param(NIMRankingsEndpoint, EndpointType.NIM_RANKINGS, [], 2, id="query-only"),
+    ],
+)  # fmt: skip
+async def test_rankings_wire_payload_counts_query_and_passage_tokens(
+    *,
+    setup_inference_parser: InferenceResultParser,
+    spy_tokenizer: MagicMock,
+    request_record: RequestRecord,
+    endpoint_class: type[BaseRankingsEndpoint],
+    endpoint_type: EndpointType,
+    passages: list[str],
+    expected_tokens: int,
+) -> None:
+    endpoint = endpoint_class(model_endpoint=create_model_endpoint(endpoint_type))
+    request_record.request_info.payload_bytes = orjson.dumps(
+        endpoint.build_payload("my question", passages, "test-model")
+    )
+    setup_inference_parser.endpoint = endpoint
+    setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+    count = await setup_inference_parser.compute_input_token_count(request_record)
+
+    assert count == expected_tokens
+    spy_tokenizer.encode.assert_called_once_with(" ".join(["my question", *passages]))
 
 
 @pytest.mark.asyncio
