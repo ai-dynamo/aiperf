@@ -1565,13 +1565,29 @@ class BranchOrchestrator:
         # mandatory, so this cannot release a parent ahead of its subagents.
         if self._accelerated_warmup_started:
             delay_ms = 0.0
-        if delay_ms <= 0.0 or self._scheduler is None:
+
+        # Under fixed schedule the deadline is an instant on the recorded
+        # timeline, not a stopwatch started here. ``delay_ms`` is an
+        # end-to-start delta, so arming relative to now inherits however late
+        # the previous turn's response landed: with a 1s TTFT the parent
+        # recorded at t+5s fired at t+6.1s, and at 2s TTFT at t+7.1s -- the
+        # error tracks server latency, so the replay stretches the very trace
+        # it exists to reproduce. The lower-bound wait in
+        # ``_await_recorded_join_target`` cannot pull that back; it only ever
+        # delays further. Child completion remains the other prerequisite, so
+        # this still cannot release a parent ahead of its subagents.
+        delay_sec = delay_ms / 1000.0
+        target = self._recorded_join_target_perf_sec(pending)
+        if target is not None and not self._accelerated_warmup_started:
+            delay_sec = max(0.0, target - time.perf_counter())
+
+        if delay_sec <= 0.0 or self._scheduler is None:
             pending.replay_deadline_elapsed = True
             return
         pending.replay_deadline_armed = True
         pending.replay_deadline_elapsed = False
         self._scheduler.schedule_later(
-            delay_ms / 1000.0,
+            delay_sec,
             self._on_join_replay_deadline(
                 pending.parent_x_correlation_id,
                 pending.gated_turn_index,
@@ -1795,23 +1811,37 @@ class BranchOrchestrator:
         time cannot be honoured any more, and delaying further would only
         compound the drift.
         """
-        resolver = self._schedule_target_perf_sec
-        if resolver is None or pending.gated_turn_index is None:
-            return
-        meta = self._cs.get_metadata(pending.parent_conversation_id)
-        turns = getattr(meta, "turns", None) or []
-        if pending.gated_turn_index >= len(turns):
-            return
-        timestamp_ms = getattr(turns[pending.gated_turn_index], "timestamp_ms", None)
-        if timestamp_ms is None:
+        target = self._recorded_join_target_perf_sec(pending)
+        if target is None or self._schedule_stopped.is_set():
             return
 
-        if self._schedule_stopped.is_set():
-            return
-
-        remaining = resolver(timestamp_ms) - time.perf_counter()
+        remaining = target - time.perf_counter()
         if remaining > 0:
             await self._sleep_until_schedule_target(remaining)
+
+    def _recorded_join_target_perf_sec(
+        self, pending: PendingBranchJoin
+    ) -> float | None:
+        """When the gated turn was recorded to fire, as a perf-counter instant.
+
+        ``None`` outside fixed schedule, or when the turn carries no recorded
+        timestamp -- those joins stay purely reactive, which is their
+        documented behaviour.
+        """
+        resolver = self._schedule_target_perf_sec
+        if resolver is None or pending.gated_turn_index is None:
+            return None
+        try:
+            meta = self._cs.get_metadata(pending.parent_conversation_id)
+        except (AttributeError, KeyError):
+            return None
+        turns = getattr(meta, "turns", None) or []
+        if pending.gated_turn_index >= len(turns):
+            return None
+        timestamp_ms = getattr(turns[pending.gated_turn_index], "timestamp_ms", None)
+        if timestamp_ms is None:
+            return None
+        return resolver(timestamp_ms)
 
     async def _sleep_until_schedule_target(self, seconds: float) -> None:
         """Hold for ``seconds``, or until the run stops wanting the hold.
