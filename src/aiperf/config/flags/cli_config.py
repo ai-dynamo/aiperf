@@ -52,6 +52,7 @@ from aiperf.common.enums import (
     PromptCorpus,
     RandomCorpusStyle,
     RequestContentType,
+    ServerMetricsDiscoveryMode,
     ServerMetricsFormat,
     SweepMode,
     VideoAudioCodec,
@@ -3150,6 +3151,22 @@ class CLIConfig(BaseConfig):
             group=Groups.SERVER_METRICS,
         ),
     ] = False
+
+    server_metrics_discovery_mode: Annotated[
+        ServerMetricsDiscoveryMode,
+        Field(
+            description=(
+                "Kubernetes server metrics discovery mode. "
+                "Use 'auto' to discover only when running in Kubernetes, "
+                "'kubernetes' to require Kubernetes discovery, or 'disabled' "
+                "to use only URL-derived and explicit endpoints."
+            ),
+        ),
+        CLIParameter(
+            name=("--server-metrics-discovery-mode",),
+            group=Groups.SERVER_METRICS,
+        ),
+    ] = ServerMetricsDiscoveryMode.AUTO
 
     server_metrics_formats: Annotated[
         list[ServerMetricsFormat],

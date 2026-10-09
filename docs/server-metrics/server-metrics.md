@@ -218,6 +218,12 @@ outside a cluster. `mode: disabled` uses only URL-derived and explicit endpoints
 Discovery is best-effort: a timeout or API error does not prevent the benchmark
 from using its other endpoints.
 
+Set the same mode without a configuration file:
+
+```bash
+aiperf profile --model MODEL ... --server-metrics-discovery-mode disabled
+```
+
 If `namespace` is omitted, discovery searches only the benchmark pod's own
 namespace, resolved from `AIPERF_NAMESPACE` or its mounted ServiceAccount namespace.
 It never silently expands to cluster scope. `namespace: "*"` is the explicit
@@ -237,6 +243,11 @@ standard `prometheus.io/{port,path,scheme}` annotations; the AIPerf paths annota
 accepts a comma-separated path list. Discovered paths are used as declared after
 adding a leading slash when needed; AIPerf does not append `/metrics` to a custom
 annotation path.
+
+Set `AIPERF_SERVER_METRICS_DISCOVERY_LABEL_SELECTOR` to provide a default selector
+without a configuration file. An explicit `server_metrics.discovery.label_selector`
+value takes precedence. Set it to an empty string to ignore the environment default
+and use only the built-in eligibility rules.
 
 #### RBAC prerequisites
 
