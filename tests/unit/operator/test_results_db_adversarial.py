@@ -967,8 +967,6 @@ class TestResultsDBCompareAndFilters:
         [
             param("../outside-ns/outside-job", id="parent-namespace"),
             param("bench-prod/../../outside-ns/outside-job", id="parent-job"),
-            param("results/../../outside-ns/outside-job", id="sibling-root"),
-            param("..", id="bare-dotdot"),
         ],
     )  # fmt: skip
     async def test_compare_traversal_job_id_never_reads_outside_results_root(

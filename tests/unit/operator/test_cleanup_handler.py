@@ -522,8 +522,6 @@ class TestSweepArchiveCleanup:
 
 
 class TestOnDeleteIndexCleanup:
-    """CR deletion must not hide published results from the runs index."""
-
     @pytest.mark.asyncio
     async def test_on_delete_keeps_published_epoch_row_and_drops_unpublished_rows(
         self, tmp_path: Path
