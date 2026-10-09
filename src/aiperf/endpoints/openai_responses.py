@@ -186,24 +186,60 @@ class ResponsesEndpoint(BaseEndpoint):
         turns = request_info.turns
         model_endpoint = request_info.model_endpoint
 
-        # Responses API doesn't nest the system prompt into ``input``; it
-        # lives in top-level ``instructions``. The per-conversation
-        # ``user_context_message`` is prepended as a leading user item.
-        input_items: list[dict[str, Any]] = []
+        # Responses API carries the system prompt in top-level ``instructions``
+        # rather than in ``input``. The per-conversation ``user_context_message``
+        # is a leading user item.
         if request_info.previous_response_id:
             # Stateful chaining: previous_response_id points to server-side history.
             self._warn_chaining_isl_once()
-            input_items.extend(self.build_messages([turns[-1]]))
+            rendered = self.build_messages([turns[-1]])
+            context_items: list[dict[str, Any]] = []
         else:
-            if request_info.user_context_message:
-                input_items.append(
+            rendered = self.build_messages(turns)
+            context_items = (
+                [
                     {
                         "type": "message",
                         "role": self.DEFAULT_TURN_ROLE,
                         "content": request_info.user_context_message,
                     }
-                )
-            input_items.extend(self.build_messages(turns))
+                ]
+                if request_info.user_context_message
+                else []
+            )
+        instructions, merge_prefix = self._system_prompt_carrier(request_info, rendered)
+
+        # A dataset that authored its own leading ``role: system`` input item
+        # collides with ``instructions``: both ship, and the server sees two
+        # system prompts. Merge into the authored item and drop
+        # ``instructions``, matching ``ChatEndpoint._format_messages`` -- the
+        # de-dup invariant is endpoint-wide, and repeated system roles are
+        # mishandled by many OpenAI-compatible servers.
+        #
+        # The merged item is placed AHEAD of ``user_context_message`` so the
+        # system prompt stays the leading wire bytes, as it does for chat and
+        # as ``SYSTEM_PREFIX`` cache-bust assumes. The alternative -- folding
+        # the authored item's text into ``instructions`` and dropping it from
+        # ``input`` -- would keep the "system lives in instructions" contract
+        # unconditional, but flattens list-part content to text and discards
+        # any extra fields on the authored item; the dataset's explicit wire
+        # shape wins here.
+        leading_system: list[dict[str, Any]] = []
+        if merge_prefix is not None:
+            # Copy rather than mutate: ``rendered`` aliases the turn's
+            # raw_messages, reused across credits in a session.
+            merged = dict(rendered[0])
+            merged["content"] = self._prepend_system_text(
+                merge_prefix, merged.get("content")
+            )
+            leading_system = [merged]
+            rendered = rendered[1:]
+
+        input_items: list[dict[str, Any]] = [
+            *leading_system,
+            *context_items,
+            *rendered,
+        ]
 
         # Conversation-level fields walk turns from the end so FORK-mode
         # children whose final turn lacks model/tools still inherit the parent's
@@ -221,7 +257,7 @@ class ResponsesEndpoint(BaseEndpoint):
             payload["previous_response_id"] = request_info.previous_response_id
 
         for key, value in (
-            ("instructions", request_info.system_message or None),
+            ("instructions", instructions),
             ("max_output_tokens", max_tokens),
             ("tools", self._latest_turn_attr(turns, "raw_tools")),
         ):
@@ -237,6 +273,55 @@ class ResponsesEndpoint(BaseEndpoint):
 
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
+
+    @staticmethod
+    def _system_prompt_already_stored(request_info: RequestInfo) -> bool:
+        return bool(
+            request_info.previous_response_id
+            and request_info.system_prompt_in_stored_history
+        )
+
+    def _system_prompt_carrier(
+        self, request_info: RequestInfo, rendered: list[dict[str, Any]]
+    ) -> tuple[str | None, str | None]:
+        """Decide how this request carries ``system_message``.
+
+        Returns ``(instructions, merge_prefix)``: at most one is set, and
+        ``merge_prefix`` means "prepend to the authored leading system item".
+        When the chained response's stored history already holds the prompt
+        as an input item, neither is set: top-level ``instructions`` is not
+        carried across ``previous_response_id``, but stored input items are,
+        so sending it again would double the prompt.
+        """
+        system_message = request_info.system_message or None
+        if system_message is None or self._system_prompt_already_stored(request_info):
+            return None, None
+        if (
+            rendered
+            and isinstance(rendered[0], dict)
+            and rendered[0].get("role") == "system"
+        ):
+            return None, system_message
+        return system_message, None
+
+    def stored_history_has_system_prompt(self, request_info: RequestInfo) -> bool:
+        """Whether the stored history of the response to ``request_info``
+        contains the system prompt.
+
+        The worker records this next to the response ID on success only, so
+        the flag always describes the response being chained onto. It holds
+        when the chain already carried the prompt, or when this request merged
+        it into an input item; prompts sent as ``instructions`` are not stored.
+        """
+        if not request_info.system_message:
+            return False
+        if self._system_prompt_already_stored(request_info):
+            return True
+        turns = request_info.turns
+        rendered = self.build_messages(
+            [turns[-1]] if request_info.previous_response_id else turns
+        )
+        return self._system_prompt_carrier(request_info, rendered)[1] is not None
 
     _warned_chaining_isl: bool = False
 

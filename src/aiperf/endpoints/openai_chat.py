@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiperf.common.constants import SYSTEM_PROMPT_JOIN_SEP
 from aiperf.common.models import (
     BaseResponseData,
     Image,
@@ -19,21 +18,6 @@ from aiperf.common.models import (
 )
 from aiperf.common.types import JsonObject
 from aiperf.endpoints.base_endpoint import BaseEndpoint
-
-
-def _prepend_system_text(prefix: str, content: Any) -> Any:
-    """Return ``content`` with ``prefix`` prepended, preserving its shape.
-
-    System-message content is normally a plain string, but the OpenAI schema
-    also permits a list of content parts; a raw-payload dataset may author
-    either. Returns a new object in both cases -- callers pass content that
-    aliases reusable turn state.
-    """
-    if isinstance(content, list):
-        return [{"type": "text", "text": prefix}, *content]
-    if isinstance(content, str) and content:
-        return f"{prefix}{SYSTEM_PROMPT_JOIN_SEP}{content}"
-    return prefix
 
 
 class ChatEndpoint(BaseEndpoint):
@@ -106,9 +90,8 @@ class ChatEndpoint(BaseEndpoint):
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
 
-    @staticmethod
     def _format_messages(
-        request_info: RequestInfo, rendered: list[dict[str, Any]]
+        self, request_info: RequestInfo, rendered: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Build chat messages with RequestInfo-level prompts applied.
 
@@ -130,7 +113,7 @@ class ChatEndpoint(BaseEndpoint):
                 # raw_messages, which are reused across credits in a session, so
                 # an in-place edit would restack the prefix on every replay.
                 merged = dict(rendered[0])
-                merged["content"] = _prepend_system_text(
+                merged["content"] = self._prepend_system_text(
                     request_info.system_message, merged.get("content")
                 )
                 messages.append(merged)
