@@ -77,7 +77,7 @@ in the response):
 ```bash
 curl -s localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"meta-llama/Llama-3.1-8B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
+  -d '{"model":"meta-llama/Llama-3.1-8B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":32}'
 ```
 
 ---
@@ -178,6 +178,9 @@ Quick reading (full definitions in the
 - **Accepted per Verified** -- `(j + 1) / (l + 1)`, a `[~0, 1]` utilization: how close each
   step got to accepting everything it proposed.
 - **Spec Decode Steps** -- verify steps per request.
+- **Zero-Step Requests** -- requests that reported stats but never ran a verify step (e.g.
+  `max_tokens: 1`, or an NGram drafter that never matched). They are excluded from the
+  per-request metrics above; the row appears only when the count is nonzero.
 - **Accepted-draft histogram** -- share of verify steps that accepted exactly `j` draft
   tokens, pooled across the run. Capped to buckets `0..7` on the console (any `j >= 8` folds
   into a trailing `>=8` bucket); the full histogram is in the JSON export.
@@ -235,10 +238,9 @@ export preserves, so no additional field is needed there.
 If the Spec Decode section, histogram, and `spec_decode_*` fields are all absent, that is
 the expected clean-degradation behavior -- not an error. Common causes:
 
-- speculative decoding is off, or the requests had no verify steps -- on
-  every engine. A vLLM `max_tokens: 1` probe still shows a
-  `speculative_decoding` payload with `num_spec_steps: 0` on the wire, but
-  AIPerf does not count it;
+- speculative decoding is off, or, on TensorRT-LLM, the requests had no verify steps. On
+  vLLM such requests still send a payload with `num_spec_steps: 0`, so instead of no
+  section you see a lone **Zero-Step Requests** row: speculation never fired;
 - the server was not started with per-request reporting enabled -- vLLM's
   `--per-request-spec-decode-metrics`, or TensorRT-LLM's
   `per_request_spec_decode_stats: true`;

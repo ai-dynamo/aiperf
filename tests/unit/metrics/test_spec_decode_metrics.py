@@ -48,6 +48,7 @@ from aiperf.metrics.types.spec_decode_metrics import (
     SpecDecodeOverallDraftAcceptanceRateMetric,
     SpecDecodeStepsMetric,
     SpecDecodeTokenWeightedAcceptanceLengthMetric,
+    SpecDecodeZeroStepRequestsMetric,
     TotalAcceptedDraftTokensMetric,
     TotalDraftTokensMetric,
     TotalSpecDecodeStepsMetric,
@@ -366,6 +367,60 @@ class TestPooledHistogram:
 
         summary = asyncio.run(run())
         assert summary.pooled_spec_decode_acceptance_histogram is None
+
+
+class TestZeroStepRequests:
+    """Requests that reported stats but never ran a verify step are counted,
+    not averaged: they carry no acceptance record, only the parser's flag."""
+
+    def test_parse_record_flagged_request_counts_one(self):
+        record = spec_record(None)
+        record.spec_decode_zero_step = True
+        metric = SpecDecodeZeroStepRequestsMetric()
+        assert metric.parse_record(record, MetricRecordDict()) == 1
+
+    @pytest.mark.parametrize(
+        "spec",
+        [
+            param(None, id="spec_decode_off"),
+            param(make_spec([1, 2]), id="speculated"),
+        ],
+    )  # fmt: skip
+    def test_parse_record_unflagged_request_raises_no_metric_value(self, spec):
+        with pytest.raises(NoMetricValue):
+            SpecDecodeZeroStepRequestsMetric().parse_record(
+                spec_record(spec), MetricRecordDict()
+            )
+
+    def test_metadata_is_aggregate_only_in_spec_decode_section(self):
+        metric_cls = SpecDecodeZeroStepRequestsMetric
+        assert metric_cls.unit == GenericMetricUnit.REQUESTS
+        assert metric_cls.console_group == MetricConsoleGroup.SPEC_DECODE
+        assert metric_cls.has_flags(MetricFlags.NO_INDIVIDUAL_RECORDS)
+
+    def test_summary_counts_zero_step_requests_beside_speculated_ones(self):
+        records = [
+            _spec_metric_records_data(0, make_spec(WORKED_EXAMPLE)),
+            _spec_metric_records_data(1, None),
+            _spec_metric_records_data(2, None),
+        ]
+        for zero_step in records[1:]:
+            zero_step.metrics[SpecDecodeZeroStepRequestsMetric.tag] = 1
+
+        async def summarize():
+            acc = MetricsAccumulator(make_benchmark_run())
+            for record in records:
+                await acc.process_record(record)
+            return await acc.summarize()
+
+        results = asyncio.run(summarize()).results
+        assert results[SpecDecodeZeroStepRequestsMetric.tag].avg == 2
+        # The per-request mean covers only the request that speculated.
+        assert results[TotalSpecDecodeStepsMetric.tag].avg == len(WORKED_EXAMPLE)
+
+    def test_summary_omits_count_when_no_request_was_zero_step(self):
+        summary = asyncio.run(_summarize_specs(make_spec(WORKED_EXAMPLE), None))
+        assert SpecDecodeZeroStepRequestsMetric.tag not in summary.results
 
 
 class TestRecordsManagerHistogramSelection:
