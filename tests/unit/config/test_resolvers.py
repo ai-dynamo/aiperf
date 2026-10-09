@@ -350,6 +350,50 @@ class TestArtifactDirResolver:
 
         assert not stale.exists()
 
+    def test_resolve_archives_stale_raw_record_shards_outside_artifacts(
+        self, minimal_config, tmp_path
+    ):
+        target = tmp_path / "artifacts"
+        raw_records_dir = target / "raw_records"
+        raw_records_dir.mkdir(parents=True)
+        stale = raw_records_dir / "raw_records_old_service_id.jsonl"
+        stale_contents = '{"metadata": {"benchmark_phase": "profiling"}}\n'
+        stale.write_text(stale_contents, encoding="utf-8")
+
+        minimal_config.artifacts.export_outputs_json = False
+        minimal_config.artifacts.dir = target
+        run = _make_run(minimal_config, artifact_dir=target)
+
+        ArtifactDirResolver().resolve(run)
+
+        archives = list(
+            (tmp_path / ".aiperf-stale-raw-records" / target.name).glob(
+                "*/raw_records_old_service_id.jsonl"
+            )
+        )
+        assert not stale.exists()
+        assert not list(raw_records_dir.glob("raw_records_*.jsonl"))
+        assert len(archives) == 1
+        assert archives[0].read_text(encoding="utf-8") == stale_contents
+        assert not archives[0].is_relative_to(target)
+
+    def test_probe_resolve_does_not_archive_stale_raw_record_shards(
+        self, minimal_config, tmp_path
+    ):
+        target = tmp_path / "artifacts"
+        raw_records_dir = target / "raw_records"
+        raw_records_dir.mkdir(parents=True)
+        stale = raw_records_dir / "raw_records_old_service_id.jsonl"
+        stale.write_text('{"metadata": {"benchmark_phase": "profiling"}}\n')
+
+        minimal_config.artifacts.dir = target
+        run = _make_run(minimal_config, artifact_dir=target)
+
+        ArtifactDirResolver().resolve(run, for_probe=True)
+
+        assert stale.exists()
+        assert not (tmp_path / ".aiperf-stale-raw-records").exists()
+
     def test_resolve_skips_fragment_purge_when_export_disabled(
         self, minimal_config, tmp_path
     ):

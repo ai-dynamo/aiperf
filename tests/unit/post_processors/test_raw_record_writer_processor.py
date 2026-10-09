@@ -10,6 +10,7 @@ from aiperf.common.models.record_models import RawRecordInfo
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.resolution.plan import BenchmarkRun
+from aiperf.config.resolution.resolvers import ArtifactDirResolver
 from aiperf.post_processors.raw_record_writer_processor import (
     RawRecordAggregator,
     RawRecordWriterProcessor,
@@ -201,7 +202,9 @@ class TestRawRecordWriterProcessorProcessRecord:
             await processor.finalize_artifact()
 
             assert processor._file_handle is None
-            await RawRecordAggregator(create_exporter_config(cfg_raw)).export()
+            exporter_config = create_exporter_config(cfg_raw)
+            exporter_config.results.completed = 1
+            await RawRecordAggregator(exporter_config).export()
 
         assert run_raw.cfg.artifacts.profile_export_raw_jsonl_file.exists()
 
@@ -277,6 +280,7 @@ class TestRawRecordAggregator:
 
         # Run aggregator
         exporter_config = create_exporter_config(cfg_raw)
+        exporter_config.results.completed = 6
         aggregator = RawRecordAggregator(exporter_config=exporter_config)
 
         await aggregator.export()
@@ -316,13 +320,20 @@ class TestRawRecordAggregator:
 
         test_file = raw_records_dir / "raw_records_test.jsonl"
         with open(test_file, "w") as f:
-            f.write('{"metadata": {"session_num": 0}}\n')
+            f.write(
+                '{"metadata": {"session_num": 0, "benchmark_phase": "profiling"}}\n'
+            )
             f.write("\n")
-            f.write('{"metadata": {"session_num": 1}}\n')
+            f.write(
+                '{"metadata": {"session_num": 1, "benchmark_phase": "profiling"}}\n'
+            )
             f.write("   \n")
-            f.write('{"metadata": {"session_num": 2}}\n')
+            f.write(
+                '{"metadata": {"session_num": 2, "benchmark_phase": "profiling"}}\n'
+            )
 
         exporter_config = create_exporter_config(cfg_raw)
+        exporter_config.results.completed = 3
         aggregator = RawRecordAggregator(exporter_config=exporter_config)
 
         await aggregator.export()
@@ -357,6 +368,7 @@ class TestRawRecordAggregator:
 
         # Run aggregator
         exporter_config = create_exporter_config(cfg_raw)
+        exporter_config.results.completed = 1
         aggregator = RawRecordAggregator(exporter_config=exporter_config)
         await aggregator.export()
 
@@ -364,3 +376,134 @@ class TestRawRecordAggregator:
         content = output_file.read_text()
         assert "old content" not in content
         assert content.strip()  # Has new content
+
+    @pytest.mark.asyncio
+    async def test_aggregator_rejects_missing_records_and_keeps_staging_files(
+        self,
+        cfg_raw: CLIConfig,
+    ):
+        raw_records_dir = cfg_raw.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
+        raw_records_dir.mkdir(parents=True, exist_ok=True)
+        input_file = raw_records_dir / "raw_records_test.jsonl"
+        input_file.write_text(
+            '{"metadata": {"benchmark_phase": "profiling"}}\n', encoding="utf-8"
+        )
+
+        exporter_config = create_exporter_config(cfg_raw)
+        exporter_config.results.completed = 2
+        aggregator = RawRecordAggregator(exporter_config=exporter_config)
+
+        with pytest.raises(ValueError, match="expected 2 profiling records.*found 1"):
+            await aggregator.export()
+
+        assert not aggregator.output_file.exists()
+        assert input_file.exists()
+        assert not list(aggregator.output_file.parent.glob(".*.tmp"))
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "line",
+        [
+            '{"metadata": {"benchmark_phase": "profiling"}}',
+            '{"metadata": {"benchmark_phase": "profiling"}\n',
+            '{"metadata": {}}\n',
+            '{"metadata": {"benchmark_phase": "setup"}}\n',
+        ],
+        ids=["missing-newline", "invalid-json", "missing-phase", "unknown-phase"],
+    )
+    async def test_aggregator_rejects_incomplete_lines_without_publishing(
+        self,
+        cfg_raw: CLIConfig,
+        line: str,
+    ):
+        raw_records_dir = cfg_raw.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
+        raw_records_dir.mkdir(parents=True, exist_ok=True)
+        input_file = raw_records_dir / "raw_records_test.jsonl"
+        input_file.write_text(line, encoding="utf-8")
+
+        exporter_config = create_exporter_config(cfg_raw)
+        exporter_config.results.completed = 1
+        aggregator = RawRecordAggregator(exporter_config=exporter_config)
+
+        with pytest.raises(
+            ValueError, match="Incomplete raw record line|Invalid raw record"
+        ):
+            await aggregator.export()
+
+        assert not aggregator.output_file.exists()
+        assert input_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_aggregator_compares_profiling_count_and_retains_warmup_records(
+        self,
+        cfg_raw: CLIConfig,
+    ):
+        raw_records_dir = cfg_raw.artifact_directory / OutputDefaults.RAW_RECORDS_FOLDER
+        raw_records_dir.mkdir(parents=True, exist_ok=True)
+        input_file = raw_records_dir / "raw_records_test.jsonl"
+        input_file.write_text(
+            "".join(
+                f'{{"metadata": {{"benchmark_phase": "{phase}"}}}}\n'
+                for phase in ("warmup", "profiling", "profiling")
+            ),
+            encoding="utf-8",
+        )
+
+        exporter_config = create_exporter_config(cfg_raw)
+        exporter_config.results.completed = 2
+        aggregator = RawRecordAggregator(exporter_config=exporter_config)
+        await aggregator.export()
+
+        assert len(aggregator.output_file.read_text(encoding="utf-8").splitlines()) == 3
+
+    @pytest.mark.asyncio
+    async def test_aggregator_rejects_missing_files_when_summary_has_records(
+        self,
+        cfg_raw: CLIConfig,
+    ):
+        exporter_config = create_exporter_config(cfg_raw)
+        exporter_config.results.completed = 1
+        aggregator = RawRecordAggregator(exporter_config=exporter_config)
+
+        with pytest.raises(ValueError, match="expected 1 profiling records.*found 0"):
+            await aggregator.export()
+
+        assert not aggregator.output_file.exists()
+
+    @pytest.mark.asyncio
+    async def test_aggregator_does_not_count_previous_run_shards(
+        self,
+        cfg_raw: CLIConfig,
+        run_raw: BenchmarkRun,
+    ):
+        raw_records_dir = run_raw.cfg.artifacts.dir / OutputDefaults.RAW_RECORDS_FOLDER
+        raw_records_dir.mkdir(parents=True, exist_ok=True)
+        stale_file = raw_records_dir / "raw_records_previous_run.jsonl"
+        stale_file.write_text(
+            '{"metadata": {"benchmark_phase": "profiling"}}\n', encoding="utf-8"
+        )
+
+        ArtifactDirResolver().resolve(run_raw)
+
+        current_raw_records_dir = (
+            run_raw.cfg.artifacts.dir / OutputDefaults.RAW_RECORDS_FOLDER
+        )
+        current_file = current_raw_records_dir / "raw_records_current_run.jsonl"
+        current_file.write_text(
+            '{"metadata": {"benchmark_phase": "profiling"}}\n', encoding="utf-8"
+        )
+        exporter_config = create_exporter_config(cfg_raw)
+        exporter_config.results.completed = 2
+        aggregator = RawRecordAggregator(exporter_config=exporter_config)
+
+        with pytest.raises(ValueError, match="expected 2 profiling records.*found 1"):
+            await aggregator.export()
+
+        archive_root = (
+            run_raw.cfg.artifacts.dir.parent
+            / ".aiperf-stale-raw-records"
+            / run_raw.cfg.artifacts.dir.name
+        )
+        assert len(list(archive_root.rglob(stale_file.name))) == 1
+        assert current_file.exists()
+        assert not aggregator.output_file.exists()
