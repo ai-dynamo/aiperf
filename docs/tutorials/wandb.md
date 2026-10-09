@@ -35,10 +35,14 @@ wandb login   # or export WANDB_API_KEY=...
 
 ## Run a Profile with wandb Export Enabled
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=90 -->
 ```bash
+# WANDB_MODE=offline writes the run to disk instead of uploading it, so this
+# works without an account; drop it once you have run `wandb login`.
+WANDB_MODE=offline \
 aiperf profile \
     --url http://localhost:8000 \
-    --model my-model \
+    --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
     --endpoint /v1/chat/completions \
     --streaming \
@@ -51,6 +55,7 @@ aiperf profile \
     --wandb-run-name baseline-c4 \
     --wandb-tag experiment:baseline
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 ### Flag breakdown
 

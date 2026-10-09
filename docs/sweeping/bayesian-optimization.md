@@ -45,12 +45,36 @@ Use a grid sweep when:
 
 BO runs in-process via `aiperf profile --search-*`. The orchestrator owns the planner state and drives one benchmark per iteration.
 
+## Running these examples
+
+A search drives many back-to-back benchmarks, so point it at a server you are
+happy to keep busy for a while. Any OpenAI-compatible endpoint works; a small
+local model is enough to exercise the search machinery:
+
+<!-- setup-vllm-longrun-openai-endpoint-server -->
+```bash
+docker pull vllm/vllm-openai:latest
+docker run --gpus all -p 8000:8000 -e HF_TOKEN vllm/vllm-openai:latest \
+  --model Qwen/Qwen3-0.6B \
+  --enforce-eager \
+  --reasoning-parser qwen3 \
+  --host 0.0.0.0 --port 8000
+```
+<!-- /setup-vllm-longrun-openai-endpoint-server -->
+
+<!-- health-check-vllm-longrun-openai-endpoint-server -->
+```bash
+timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d "{\"model\":\"Qwen/Qwen3-0.6B\",\"messages\":[{\"role\":\"user\",\"content\":\"test\"}],\"max_tokens\":1}")" != "200" ]; do sleep 2; done' || { echo "vLLM not ready after 15min"; exit 1; }
+```
+<!-- /health-check-vllm-longrun-openai-endpoint-server -->
+
 ## Quick start
 
+<!-- aiperf-run-vllm-longrun-openai-endpoint-server weight=6000 timeout=9000 -->
 ```bash
 aiperf profile \
-    --model my-model \
-    --url http://infer.example.com \
+    --model Qwen/Qwen3-0.6B \
+    --url http://localhost:8000 \
     --search-space "concurrency:1,1000:int" \
     --search-metric output_token_throughput \
     --search-direction maximize \
@@ -58,6 +82,7 @@ aiperf profile \
     --search-random-seed 42 \
     --num-profile-runs 3
 ```
+<!-- /aiperf-run-vllm-longrun-openai-endpoint-server -->
 
 This runs 30 search iterations × 3 trials each = 90 benchmarks. `--search-planner=bayesian` is the implicit default. Output:
 - `<artifact_dir>/search_iter_NNNN/profile_runs/run_NNNN/` — per-trial artifacts.

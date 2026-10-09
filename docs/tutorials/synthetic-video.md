@@ -50,6 +50,7 @@ The synthetic video feature provides:
 
 Generate videos at 640x480 with default temporal settings (4 fps, 5 seconds):
 
+<!-- aiperf-run-vllm-video-openai-endpoint-server -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen2-VL-2B-Instruct \
@@ -62,6 +63,7 @@ aiperf profile \
     --video-duration 5.0 \
     --request-count 20
 ```
+<!-- /aiperf-run-vllm-video-openai-endpoint-server -->
 
 **Note:** Video generation is disabled by default (width and height are unset). You must specify both width and height to enable video generation.
 

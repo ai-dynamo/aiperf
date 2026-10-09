@@ -127,6 +127,23 @@ jobs:
             server: vllm-video-openai
           - id: vllm-embeddings-openai
             server: vllm-embeddings-openai
+          # First non-vLLM backend. TinyLlama-1.1B on TGI, so the boot cost is
+          # comparable to the modality servers.
+          - id: tgi-generate
+            server: tgi-generate
+          # TEI in re-ranker mode; bge-reranker-base is small enough that the
+          # boot cost is dominated by the image pull.
+          - id: tei-rankings
+            server: tei-rankings
+          # vLLM plus an OTel collector and an MLflow server, so the
+          # --otel-url / --mlflow-tracking-uri export paths are exercised
+          # rather than only parsed.
+          - id: otel-mlflow-openai
+            server: otel-mlflow-openai
+          # Same small model, started with tool calling on, so agent corpora
+          # that send `tools` are replayable.
+          - id: vllm-tools-openai
+            server: vllm-tools-openai
     steps:
       - name: Checkout
         uses: actions/checkout@v6
