@@ -237,7 +237,7 @@ Every field on `CLIConfig` must be classified in
 | `ROUTED_UNDER_CONFIG` | Reaches `AIPerfConfig`. Derived from the resolver's own routing tables where possible, so it cannot drift from them. |
 | `UNROUTED_UNDER_CONFIG` | Known not to route. Raises `ConfigurationError` naming the flag. |
 | `EXEMPT_FROM_CONFIG_ROUTING` | Not benchmark config at all (`--config` itself). Each entry needs a stated reason. |
-| `COMPANION_ROUTED` | Routes only alongside another flag (`--model-selection-strategy` needs `--model-names`). Rejected when the companion is absent. |
+| `COMPANION_ROUTED` | Reserved hook for the invariant suite's companion test inputs; currently empty. It does not reject anything. Sweep flags that act only beside a companion are rejected by the guards in [Companion-required flags](#companion-required-flags). |
 | `MAGIC_LIST_ONLY_UNDER_CONFIG` | Routes in list form only (`--isl 128 256` becomes a sweep parameter; scalar `--isl 128` goes to the dataset). Decided per value. |
 
 ### Why the guarantee holds
