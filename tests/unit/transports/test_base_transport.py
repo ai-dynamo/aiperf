@@ -2,7 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+from urllib.parse import urlparse
+
 import pytest
+from pytest import param
 
 from aiperf import __version__ as aiperf_version
 from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
@@ -412,6 +415,36 @@ class TestBaseTransport:
         url = transport.build_url(request_info)
         assert "key=overridden" in url
         assert "key=original" not in url
+
+    @pytest.mark.parametrize(
+        "endpoint_params, expected",
+        [
+            param({}, "tag=first&mode=strict&tag=&tag=last", id="retain-order"),
+            param(
+                {"tag": "replacement"}, "mode=strict&tag=replacement", id="override"
+            ),
+            param(
+                {"other": "value"},
+                "tag=first&mode=strict&tag=&tag=last&other=value",
+                id="merge",
+            ),
+            param({"tag": ["a", "b"]}, "mode=strict&tag=a&tag=b", id="list"),
+            param({"tag": ("a", "b")}, "mode=strict&tag=a&tag=b", id="tuple"),
+            param({"tag": []}, "mode=strict", id="remove"),
+        ],
+    )  # fmt: skip
+    def test_build_url_preserves_repeated_query_values(
+        self, request_info: RequestInfo, endpoint_params: dict, expected: str
+    ) -> None:
+        """Preserve query pair order and replace all values of overridden keys."""
+        request_info.model_endpoint.endpoint.base_urls = [
+            "http://localhost:8000/v1/chat/completions?tag=first&mode=strict&tag=&tag=last"
+        ]
+        request_info.model_endpoint.endpoint.custom_endpoint = None
+        request_info.endpoint_params = endpoint_params
+        transport = FakeTransport(model_endpoint=request_info.model_endpoint)
+
+        assert urlparse(transport.build_url(request_info)).query == expected
 
     def test_build_url_empty_param_value(self, transport, request_info):
         """Test build_url handles empty parameter values."""

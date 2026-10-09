@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.auth.base_signer import SignedRequest
 from aiperf.common import readiness_probe
@@ -281,6 +282,87 @@ def test_wait_for_endpoint_receives_normalized_urls_from_endpoint_config(
             f"EndpointConfig normalization is broken"
         )
     assert fake.urls[0] == "http://localhost:8000/v1/models"
+
+
+@pytest.mark.parametrize(
+    "mode, base_path, custom_endpoint, expected_paths",
+    [
+        param(
+            "both", "", None, ["/v1/models", "/v1/chat/completions"], id="default"
+        ),
+        param(
+            "inference",
+            "/v1/chat/completions/",
+            None,
+            ["/v1/chat/completions"],
+            id="existing-path",
+        ),
+        param(
+            "both",
+            "/proxy/",
+            "/generate",
+            ["/proxy/v1/models", "/proxy/generate"],
+            id="custom-path",
+        ),
+    ],
+)  # fmt: skip
+def test_readiness_preserves_query_while_appending_endpoint(
+    mode: str, base_path: str, custom_endpoint: str | None, expected_paths: list[str]
+) -> None:
+    """Probe paths must precede repeated queries, including trailing slashes in values."""
+    client = _FakeMultiClient()
+    query = "?tag=first&mode=strict&tag=&tag=last&prefix=%2Fraw/"
+    common = dict(
+        client=cast(Any, client),
+        url="http://server" + base_path + query,
+        model_name="served-model",
+        timeout_s=1.0,
+        interval_s=0.1,
+        headers={},
+        signer=None,
+    )
+    if mode == "both":
+        asyncio.run(readiness_probe._wait_models(**common))
+    asyncio.run(
+        readiness_probe._wait_inference(
+            **common,
+            endpoint_type="chat",
+            custom_endpoint=custom_endpoint,
+        )
+    )
+    assert client.urls == ["http://server" + path + query for path in expected_paths]
+
+
+@pytest.mark.parametrize("suffix", ["", "?tag=first&tag=&tag=last#fragment"])
+@pytest.mark.parametrize("trailing_slash", ["", "/"])
+def test_readiness_preserves_semicolon_path_parameters(
+    monkeypatch: pytest.MonkeyPatch, suffix: str, trailing_slash: str
+) -> None:
+    client = _FakeMultiClient()
+    monkeypatch.setattr(
+        "aiperf.transports.aiohttp_client.AioHttpClient",
+        lambda *args, **kwargs: client,
+    )
+    base_url = "http://server/proxy;tenant=blue"
+
+    asyncio.run(
+        readiness_probe.wait_for_endpoint(
+            urls=[base_url + trailing_slash + suffix],
+            model_names=["served-model"],
+            mode="both",
+            endpoint_type="chat",
+            custom_endpoint="/generate",
+            timeout_s=1.0,
+            interval_s=0.1,
+            headers={},
+            signer=None,
+        )
+    )
+
+    assert client.urls == [
+        base_url + "/v1/models" + suffix,
+        base_url + "/generate" + suffix,
+    ]
 
 
 class _KwargCapturingClient:
