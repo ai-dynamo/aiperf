@@ -108,6 +108,35 @@ def test_process_accuracy_result_message_type() -> None:
     )
 
 
+def test_process_accuracy_result_message_wire_roundtrip_with_zero_total_task() -> None:
+    """``accuracy_rate``/``unparsed_rate`` are None for a zero-total task, and
+    ``Message.to_json_bytes()`` drops None fields (``exclude_none=True``), so
+    the field needs its own default for ``from_json`` to reconstruct it
+    without raising ``ValidationError: Field required``."""
+    summary = AccuracySummary(
+        total_evaluated=0,
+        total_passed=0,
+        accuracy_rate=None,
+        overall_unparsed=0,
+        per_task={
+            "physics": TaskAccuracyStats(
+                total=0, passed=0, unparsed=0, accuracy_rate=None, unparsed_rate=None
+            ),
+        },
+    )
+    message = ProcessAccuracyResultMessage(
+        service_id="records-manager",
+        accuracy_result=ProcessAccuracyResult(results=summary),
+    )
+
+    rebuilt = Message.from_json(message.to_json_bytes())
+
+    assert isinstance(rebuilt, ProcessAccuracyResultMessage)
+    assert rebuilt.accuracy_result.results.per_task["physics"].accuracy_rate is None
+    assert rebuilt.accuracy_result.results.per_task["physics"].unparsed_rate is None
+    assert rebuilt.accuracy_result.results.accuracy_rate is None
+
+
 def test_records_message_serializes_accuracy_records() -> None:
     """Accuracy records ride the generic RecordsMessage envelope and serialize
     with their own record_type-carrying fields intact."""
