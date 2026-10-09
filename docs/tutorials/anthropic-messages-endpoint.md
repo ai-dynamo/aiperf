@@ -47,8 +47,6 @@ aiperf profile \
 
 ### Streaming
 
-Streaming preserves U+0085, U+2028, and U+2029 inside event-data values. The parser strips whitespace at field boundaries and splits fields only at CR and LF.
-
 Enable streaming to measure time-to-first-token (TTFT) and inter-token latency (ITL):
 
 ```bash

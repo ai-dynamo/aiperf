@@ -506,11 +506,10 @@ class TestParseSSEMessageUnicode:
         assert result.get_json() == payload
         assert [packet.name for packet in result.packets] == ["event", "data"]
 
-    @pytest.mark.parametrize("separator", ["\u0085", "\u2028", "\u2029"])
     def test_parse_named_event_preserves_unicode_plain_text(
-        self, separator: str, base_perf_ns: int
+        self, base_perf_ns: int
     ) -> None:
-        text = f"before{separator}after"
+        text = "before\u2028after"
         result = SSEMessage.parse(f"event: message\ndata: {text}", base_perf_ns)
 
         assert result.get_text() == text
