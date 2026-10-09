@@ -208,7 +208,7 @@ aiperf --concurrency 10,20,30 --num-profile-runs 5 ...
 
 Some flag combinations that *look* incorrect do not currently raise. Listing them here so users searching for an error message don't waste time looking:
 
-- **Sweep-only flags used without a sweep.** `--parameter-sweep-mode`, `--parameter-sweep-cooldown-seconds`, and `--parameter-sweep-same-seed` are silently no-ops when no sweep is configured. The sweep-override pathway in `src/aiperf/config/flags/converter.py` only consults these fields when a sweep block is present. No validator exists today.
+- **Sweep-only flags used without a sweep.** `--parameter-sweep-mode`, `--parameter-sweep-cooldown-seconds`, and `--parameter-sweep-same-seed` are still silently ignored on the CLI-only path when no sweep is configured. With `--config` they raise a `ConfigurationError` instead: either there is no sweep to write to, or `--parameter-sweep-mode` / `--parameter-sweep-same-seed` was passed against an `adaptive_search` sweep, which chooses its own trial order.
 - **Multi-run-only flags used in single-run mode.** `--confidence-level`, `--profile-run-cooldown-seconds`, and `--profile-run-disable-warmup-after-first` are silently ignored when `--num-profile-runs` is 1. The CLI help text for `--confidence-level` says "Only applies when --num-profile-runs > 1" but this is informational, not enforced (`src/aiperf/config/flags/cli_config.py`). `--set-consistent-seed` also applies in sweep-without-multi-run mode (`src/aiperf/config/config.py`), so it is not strictly multi-run-only.
 
 If you hit one of these and were expecting an error, please file an issue — these are good UX targets for future validators.
