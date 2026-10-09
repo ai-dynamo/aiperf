@@ -164,7 +164,8 @@ def _api_script(body: str) -> str:
     return f"""
         import fs from 'node:fs';
         let source = fs.readFileSync({json.dumps(str(API_PATH))}, 'utf8')
-          .replace(/import \{{[\s\S]*?\}} from '\.\/state\.js';/, "const setError = () => {{}};");
+          .replace(/import \{{[\s\S]*?\}} from '\.\/state\.js';/, "const setError = () => {{}};")
+          .replace("import {{ API_BASE }} from './base-path.js';", "const API_BASE = '/api/v1';");
         const module = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
         const api = module.api;
         {body}

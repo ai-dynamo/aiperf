@@ -68,6 +68,12 @@ def create_app(
         app.on_startup.append(_start_dev_reload_watcher)
         app.on_cleanup.append(_cleanup_dev_reload_watcher)
     app.router.add_route("*", "/api/{path:.*}", _proxy_api)
+    # The UI resolves its API base against the page URL, so a page served at
+    # /live/ or /<snapshot>/ calls /live/api/... or /<snapshot>/api/...
+    # /live/api needs its own route: aiohttp matches literal-prefix routes
+    # like /live/{path} before the {snapshot} pattern routes.
+    app.router.add_route("*", "/live/api/{path:.*}", _proxy_api)
+    app.router.add_route("*", "/{snapshot}/api/{path:.*}", _proxy_api)
     app.router.add_get("/", _index)
     app.router.add_get("/live/{path:.*}", _serve_live)
     app.router.add_get(
