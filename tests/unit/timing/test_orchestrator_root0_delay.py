@@ -101,6 +101,7 @@ async def test_sleep_think_ms_interrupted_by_cleanup():
     shutdown doesn't wait out a full (possibly large) interval."""
     orch = BranchOrchestrator.__new__(BranchOrchestrator)
     orch._cleanup_event = asyncio.Event()
+    orch._schedule_stopped = asyncio.Event()
     orch._cleanup_event.set()  # cleanup already triggered
     # A 1000s think-time must return promptly; wrap in wait_for so a hang fails.
     await asyncio.wait_for(orch._sleep_think_ms(1000.0), timeout=1.0)
@@ -111,5 +112,22 @@ async def test_sleep_think_ms_elapses_when_not_cleaned_up():
     """Without cleanup, the sleep runs its full (here tiny) interval normally."""
     orch = BranchOrchestrator.__new__(BranchOrchestrator)
     orch._cleanup_event = asyncio.Event()
+    orch._schedule_stopped = asyncio.Event()
     await orch._sleep_think_ms(0.001)  # timeout elapses -> returns
     assert not orch._cleanup_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_sleep_think_ms_interrupted_by_the_duration_cutoff():
+    """The docstring's other promise: a duration cancel must interrupt too.
+
+    ``cleanup()`` runs at phase teardown, which is *after* the cutoff, so a
+    think-time that waits only on it holds the run open past the window its
+    requests are measured over -- inflating the observation span throughput is
+    divided by.
+    """
+    orch = BranchOrchestrator.__new__(BranchOrchestrator)
+    orch._cleanup_event = asyncio.Event()
+    orch._schedule_stopped = asyncio.Event()
+    orch._schedule_stopped.set()  # duration cutoff fired, cleanup has not
+    await asyncio.wait_for(orch._sleep_think_ms(1000.0), timeout=1.0)

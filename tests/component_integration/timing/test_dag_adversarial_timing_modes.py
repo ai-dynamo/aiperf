@@ -585,7 +585,7 @@ async def test_fixed_schedule_child_timestamp_before_parent_spawn() -> None:
     after, regardless of authored timestamp.
 
     Documented behaviour: post-dispatch wins over the authored timestamp.
-    The strategy's ``_timestamp_to_perf_sec`` would re-anchor against the
+    The strategy's ``schedule_target_perf_sec`` would re-anchor against the
     schedule zero, but ``BranchOrchestrator.dispatch_first_turn`` enters
     ``credit_issuer.try_issue_credit`` directly and ignores timestamp_ms.
     """

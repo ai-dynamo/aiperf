@@ -61,6 +61,7 @@ from aiperf.dataset.mmap_cache_lock import acquire_cache_lock as _acquire_cache_
 from aiperf.plugin import plugins
 
 if TYPE_CHECKING:
+    from aiperf.config.config import AIPerfConfig
     from aiperf.config.resolution.plan import BenchmarkRun
 
 _logger = AIPerfLogger(__name__)
@@ -732,6 +733,69 @@ def _public_dataset_source_from_run(run: BenchmarkRun) -> dict[str, object] | No
     return source
 
 
+# Loaders that reconstruct through ``WekaTraceLoader`` and therefore honour
+# "fixed schedule wins over --ignore-trace-delays". Other loaders that read the
+# flag (h_cua_perf) apply it unconditionally, so keying them on the effective
+# value would introduce the same mismatch in the opposite direction.
+_WEKA_RECONSTRUCTED_FORMATS = frozenset({"weka_trace", "tracelab"})
+
+
+def _is_weka_reconstructed(dataset: object) -> bool:
+    """Whether this dataset's turns are rebuilt by ``WekaTraceLoader``.
+
+    Covers all three routes into that loader: the ``weka_trace`` and
+    ``tracelab`` custom types, and the HuggingFace corpora, which reach it by
+    delegation rather than inheritance. ``PublicDataset`` carries no ``format``
+    field at all, so a format comparison alone silently misses every one of
+    them -- which is exactly the path the public-dataset timing metadata opens.
+    """
+    fmt = getattr(dataset, "format", None)
+    if fmt is not None:
+        return str(fmt) in _WEKA_RECONSTRUCTED_FORMATS
+
+    name = getattr(dataset, "dataset", None)
+    if name is None:
+        return False
+
+    from aiperf.dataset.loader.semianalysis_cc_traces_weka import (
+        SemiAnalysisCCTracesWekaLoader,
+    )
+    from aiperf.plugin import plugins
+
+    try:
+        loader = plugins.get_class("public_dataset_loader", str(name))
+    except (KeyError, ValueError):
+        # An unregistered public dataset cannot be weka-reconstructed. Anything
+        # else (a broken plugin import) must surface rather than silently
+        # degrade the cache key.
+        return False
+    return issubclass(loader, SemiAnalysisCCTracesWekaLoader)
+
+
+def _effective_ignore_trace_delays(cfg: AIPerfConfig, dataset: object) -> bool:
+    """What the loader actually did with ``--ignore-trace-delays``.
+
+    ``WekaTraceLoader`` lets fixed-schedule replay win over the flag, so the raw
+    flag is not what bakes into the cached Turn timestamps. Keying on the raw flag lets a plain
+    ``--fixed-schedule`` run (which sets no start/end offsets, so every other
+    timing key matches) share an entry with a non-fixed run whose timestamps
+    were stripped, serving the wrong mode in either direction.
+
+    Reads the same phase set the loader does (``get_profiling_phases``) so the
+    two cannot disagree; a fixed-schedule *warmup* phase must not be mistaken
+    for a fixed-schedule run here.
+    """
+    from aiperf.plugin.enums import PhaseType
+
+    if not getattr(dataset, "ignore_trace_delays", False):
+        return False
+    if not _is_weka_reconstructed(dataset):
+        return True
+    return not any(
+        phase.type == PhaseType.FIXED_SCHEDULE for phase in cfg.get_profiling_phases()
+    )
+
+
 def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
     """Stable dict of input/prompt settings that affect mmap layout.
 
@@ -849,7 +913,7 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         # Load-time timing knobs bake into the cached Turn timestamps/delays
         # (applied during reconstruction, not at request time), so they must
         # key the cache or a warm entry silently serves the other mode.
-        "ignore_trace_delays": getattr(dataset, "ignore_trace_delays", False),
+        "ignore_trace_delays": _effective_ignore_trace_delays(cfg, dataset),
         "use_think_time_only": getattr(dataset, "use_think_time_only", False),
         "inter_turn_delay_cap_seconds": getattr(
             dataset, "inter_turn_delay_cap_seconds", None

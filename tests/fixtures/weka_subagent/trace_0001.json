@@ -1,0 +1,101 @@
+{
+  "id": "demo_0001",
+  "models": [
+    "test-model"
+  ],
+  "block_size": 64,
+  "hash_id_scope": "local",
+  "tool_tokens": 0,
+  "system_tokens": 0,
+  "requests": [
+    {
+      "t": 0.0,
+      "type": "n",
+      "model": "test-model",
+      "in": 256,
+      "out": 16,
+      "hash_ids": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "stop": "end_turn"
+    },
+    {
+      "t": 1.0,
+      "type": "subagent",
+      "agent_id": "agent_001",
+      "subagent_type": "Explore",
+      "status": "completed",
+      "duration_ms": 2000,
+      "total_tokens": 100,
+      "tool_use_count": 0,
+      "models": [
+        "test-model"
+      ],
+      "tool_tokens": 0,
+      "system_tokens": 0,
+      "requests": [
+        {
+          "t": 1.5,
+          "type": "n",
+          "model": "test-model",
+          "in": 128,
+          "out": 16,
+          "hash_ids": [
+            101,
+            102
+          ],
+          "stop": "end_turn"
+        },
+        {
+          "t": 2.5,
+          "type": "n",
+          "model": "test-model",
+          "in": 192,
+          "out": 16,
+          "hash_ids": [
+            101,
+            102,
+            103
+          ],
+          "stop": "end_turn"
+        }
+      ]
+    },
+    {
+      "t": 5.0,
+      "type": "n",
+      "model": "test-model",
+      "in": 384,
+      "out": 16,
+      "hash_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "stop": "end_turn"
+    },
+    {
+      "t": 8.0,
+      "type": "n",
+      "model": "test-model",
+      "in": 448,
+      "out": 16,
+      "hash_ids": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "stop": "end_turn"
+    }
+  ]
+}
