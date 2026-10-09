@@ -12,11 +12,15 @@ from aiperf.common.models import (
     ErrorDetails,
     ParsedResponse,
     RequestRecord,
+    SpecDecodeAcceptanceRecord,
     TextResponse,
     TextResponseData,
     Usage,
 )
 from aiperf.endpoints.openai_chat import ChatEndpoint
+from aiperf.plugin.enums import PluginType
+from aiperf.records.inference_result_parser import InferenceResultParser
+from tests.harness import mock_plugin
 from tests.unit.records.conftest import (
     create_invalid_record,
     create_test_request_info,
@@ -1133,3 +1137,118 @@ class TestSpecDecodeRequestCardinality:
             server_token_parser, self._with_n(request_record, 2), spy_tokenizer
         )
         assert result.spec_decode_acceptance is None
+
+
+class TestSpecDecodeZeroStepRecords:
+    """A record exists only for a request that speculated, on every engine.
+
+    vLLM always serializes its per-request accumulator, so a request that never
+    ran a verify step (``max_tokens: 1``, EOS first, an NGram drafter that never
+    matched) arrives with a zero-step payload; TensorRT-LLM omits the payload in
+    the same situation. The parser normalizes both to an absent record so the
+    per-request means cover only requests that speculated.
+    """
+
+    LOGGER = "aiperf.records.inference_result_parser"
+
+    ZERO_STEP_VLLM_PAYLOAD = {
+        "mean_acceptance_length": 1.0,
+        "draft_acceptance_rate": 0.0,
+        "acceptance_histogram": [0, 0, 0, 0],
+        "num_spec_steps": 0,
+        "num_accepted_draft_tokens": 0,
+        "num_draft_tokens": 0,
+        "num_spec_tokens": 3,
+        "per_step_accepted": None,
+        "per_step_drafted": None,
+    }
+
+    FULLY_REJECTED_VLLM_PAYLOAD = {
+        "mean_acceptance_length": 1.0,
+        "draft_acceptance_rate": 0.0,
+        "acceptance_histogram": [5, 0, 0, 0],
+        "num_spec_steps": 5,
+        "num_accepted_draft_tokens": 0,
+        "num_draft_tokens": 15,
+        "num_spec_tokens": 3,
+    }
+
+    class _ZeroStepAdapter:
+        """A non-vLLM engine that, like vLLM, reports requests that never drafted."""
+
+        @classmethod
+        def can_adapt(cls, responses: list[ParsedResponse]) -> bool:
+            return any(
+                (r.spec_decode_stats or {}).get("zero_step_engine") for r in responses
+            )
+
+        @classmethod
+        def adapt(cls, responses: list[ParsedResponse]) -> SpecDecodeAcceptanceRecord:
+            return SpecDecodeAcceptanceRecord(
+                engine="zero_step_engine",
+                mean_acceptance_length=1.0,
+                draft_acceptance_rate=0.0,
+                acceptance_histogram={},
+                num_spec_steps=0,
+                num_accepted_draft_tokens=0,
+                num_draft_tokens=0,
+                num_spec_tokens=3,
+            )
+
+    @staticmethod
+    def _responses(payload: dict) -> list[ParsedResponse]:
+        return [
+            ParsedResponse(perf_ns=1, spec_decode_stats=payload),
+            make_parsed_response(prompt_tokens=10, completion_tokens=1),
+        ]
+
+    def test_extract_spec_decode_acceptance_zero_step_payload_returns_none(self):
+        responses = self._responses(self.ZERO_STEP_VLLM_PAYLOAD)
+        assert InferenceResultParser._extract_spec_decode_acceptance(responses) is None
+
+    def test_extract_spec_decode_acceptance_zero_step_from_any_adapter_returns_none(
+        self,
+    ):
+        """The drop lives in the parser, so an adapter need not repeat the rule."""
+        responses = self._responses({"zero_step_engine": True})
+        with mock_plugin(
+            PluginType.SPEC_DECODE_ADAPTER, "zero_step_engine", self._ZeroStepAdapter
+        ):
+            assert (
+                InferenceResultParser._extract_spec_decode_acceptance(responses) is None
+            )
+
+    @pytest.mark.asyncio
+    async def test_process_valid_record_zero_step_payload_has_no_acceptance(
+        self, server_token_parser, request_record
+    ):
+        setup_parser_responses(
+            server_token_parser, self._responses(self.ZERO_STEP_VLLM_PAYLOAD)
+        )
+        result = await server_token_parser.process_valid_record(request_record)
+
+        assert result.spec_decode_acceptance is None
+
+    def test_extract_spec_decode_acceptance_fully_rejected_payload_returns_record(
+        self,
+    ):
+        responses = self._responses(self.FULLY_REJECTED_VLLM_PAYLOAD)
+        record = InferenceResultParser._extract_spec_decode_acceptance(responses)
+
+        assert record is not None
+        assert record.num_spec_steps == 5
+        assert record.acceptance_histogram == {0: 5}
+        assert record.mean_acceptance_length == 1.0
+        assert record.draft_acceptance_rate == 0.0
+
+    def test_extract_spec_decode_acceptance_zero_step_drop_logs_below_warning(
+        self, caplog
+    ):
+        responses = self._responses(self.ZERO_STEP_VLLM_PAYLOAD)
+        with caplog.at_level(logging.DEBUG):
+            InferenceResultParser._extract_spec_decode_acceptance(responses, set())
+
+        assert all(r.levelno < logging.WARNING for r in caplog.records)
+        assert any(
+            r.name == self.LOGGER and r.levelno == logging.DEBUG for r in caplog.records
+        )

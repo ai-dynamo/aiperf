@@ -7,7 +7,8 @@ Covers the engine-neutral ``SpecDecodeAcceptanceRecord`` filled from vLLM's
 root ``metrics.speculative_decoding`` payload across the shapes the ticket calls
 out: present, absent, zero-step, and fully-rejected, in both streaming and
 non-streaming layouts, plus the detailed per-step arrays and malformed
-degradation.
+degradation. The adapter adapts a zero-step payload faithfully; it is
+``InferenceResultParser``, not the adapter, that drops the resulting record.
 
 The sample payloads mirror the wire format from vLLM PR
 https://github.com/vllm-project/vllm/pull/48915: ``acceptance_histogram`` is a
@@ -153,7 +154,11 @@ class TestVLLMSpecDecodeAdapter:
         assert VLLMSpecDecodeAdapter.adapt(responses) is None
 
     def test_adapt_zero_step_payload_fills_record(self) -> None:
-        """No verify steps: empty histogram, mean 1.0, rate 0.0 (server-computed)."""
+        """No verify steps: empty histogram, mean 1.0, rate 0.0 (server-computed).
+
+        Adapter-level only: ``InferenceResultParser`` drops a zero-step record,
+        so it never reaches the metrics.
+        """
         payload = {
             "mean_acceptance_length": 1.0,
             "draft_acceptance_rate": 0.0,
