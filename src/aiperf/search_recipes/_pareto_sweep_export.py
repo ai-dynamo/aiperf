@@ -21,10 +21,10 @@ from aiperf.search_recipes._post_process_shared import _stat_or_raise
 def _row_to_cell(
     row: dict[str, Any],
     *,
-    x_flat: str,
     x_metric: str,
-    y_flat: str,
+    x_stat: str,
     y_metric: str,
+    y_stat: str,
     isl_key: str,
     osl_key: str,
     conc_key: str,
@@ -36,13 +36,16 @@ def _row_to_cell(
     per-row projection out of :meth:`ParetoSweepExport.process` keeps the
     method's branch count below the C901=10 complexity ceiling.
     """
+    # Deferred: see ``_sla_filter_module`` in ``_sla_breach_knee``.
+    from aiperf.orchestrator.aggregation.sweep_sla_filter import read_metric_value
+
     row_params = row.get("parameters") or {}
     metrics = row.get("metrics") or {}
-    x_block = metrics.get(x_flat) or metrics.get(x_metric)
-    y_block = metrics.get(y_flat) or metrics.get(y_metric)
-    if x_block is None or y_block is None:
-        return None
-    if "mean" not in x_block or "mean" not in y_block:
+    # A single-trial row keeps each metric's stats inside one block, so the
+    # requested stat has to be read from that block, not its mean (the avg).
+    x = read_metric_value(metrics, x_metric, x_stat)
+    y = read_metric_value(metrics, y_metric, y_stat)
+    if x is None or y is None:
         return None
     if (
         isl_key not in row_params
@@ -54,8 +57,8 @@ def _row_to_cell(
         "isl": int(row_params[isl_key]),
         "osl": int(row_params[osl_key]),
         "concurrency": int(row_params[conc_key]),
-        "x": float(x_block["mean"]),
-        "y": float(y_block["mean"]),
+        "x": x,
+        "y": y,
         "pareto_optimal": False,  # filled in by the dominance pass
     }
 
@@ -117,10 +120,10 @@ class ParetoSweepExport:
         for row in rows:
             cell = _row_to_cell(
                 row,
-                x_flat=x_flat,
                 x_metric=x_metric,
-                y_flat=y_flat,
+                x_stat=x_stat,
                 y_metric=y_metric,
+                y_stat=y_stat,
                 isl_key=isl_key,
                 osl_key=osl_key,
                 conc_key=conc_key,

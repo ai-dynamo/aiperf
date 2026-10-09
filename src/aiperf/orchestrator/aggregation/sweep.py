@@ -46,8 +46,9 @@ class ParetoObjective(NamedTuple):
 
     Args:
         metric_key: Flattened metric tag, e.g. ``"request_throughput_avg"``
-            or ``"time_to_first_token_p99"`` (metric tag + stat key, the same
-            shape produced by both confidence and sweep-only aggregation).
+            or ``"time_to_first_token_p99"`` (metric tag + stat key). Read
+            through :func:`_stat_value`, so it also resolves against a
+            single-trial stats block.
         direction: Whether higher or lower values are preferred.
     """
 
@@ -95,8 +96,7 @@ class ParameterCombination(NamedTuple):
 
 
 # Default objectives for the common throughput-vs-latency Pareto frontier.
-# `time_to_first_token_p99` is the canonical flattened key produced by both
-# confidence aggregation and sweep-only aggregation (metric tag + stat key).
+# Flattened ``<metric tag>_<stat>`` keys, as confidence aggregation writes them.
 DEFAULT_PARETO_OBJECTIVES: list[ParetoObjective] = [
     ParetoObjective("request_throughput_avg", OptimizationDirection.MAXIMIZE),
     ParetoObjective("time_to_first_token_p99", OptimizationDirection.MINIMIZE),
@@ -155,6 +155,38 @@ def _dominates(
     return better_or_equal == len(objectives) and strictly_better > 0
 
 
+def _stat_value(stats: dict[str, Any], flat_key: str) -> float | None:
+    """Read a flattened ``<metric tag>_<stat>`` key from either stats layout.
+
+    Repeated trials store the flattened key with a ``mean``; a single trial,
+    the default, stores the metric tag with the stat inside its block.
+    """
+    from aiperf.orchestrator.aggregation.sweep_sla_filter import read_metric_value
+
+    block = stats.get(flat_key)
+    if isinstance(block, dict) and "mean" in block:
+        return block["mean"]
+    metric_tag, _, stat = flat_key.rpartition("_")
+    if not metric_tag:
+        return None
+    return read_metric_value(stats, metric_tag, stat)
+
+
+def _objective_values(
+    stats: dict[str, Any], objectives: list[ParetoObjective]
+) -> list[float]:
+    values = [_stat_value(stats, obj.metric_key) for obj in objectives]
+    for obj, value in zip(objectives, values, strict=True):
+        if value is None:
+            raise KeyError(obj.metric_key)
+    return values
+
+
+def _stat_unit(stats: dict[str, Any], flat_key: str, default: str) -> str:
+    block = stats.get(flat_key) or stats.get(flat_key.rpartition("_")[0]) or {}
+    return block.get("unit") or default
+
+
 def identify_pareto_optimal(
     per_combination_stats: dict[ParameterCombination, dict],
     objectives: list[ParetoObjective] | None = None,
@@ -195,12 +227,12 @@ def identify_pareto_optimal(
 
     pareto_optimal: list[ParameterCombination] = []
     for combo1, stats1 in per_combination_stats.items():
-        values1 = [stats1[obj.metric_key]["mean"] for obj in objectives]
+        values1 = _objective_values(stats1, objectives)
         is_dominated = False
         for combo2, stats2 in per_combination_stats.items():
             if combo1 == combo2:
                 continue
-            values2 = [stats2[obj.metric_key]["mean"] for obj in objectives]
+            values2 = _objective_values(stats2, objectives)
             if _dominates(values2, values1, objectives):
                 is_dominated = True
                 break
@@ -234,7 +266,10 @@ class SweepAnalyzer:
             'request_latency_p99'
         """
         for key in _LATENCY_CANDIDATES:
-            if all(key in stats for stats in per_combination_stats.values()):
+            if all(
+                _stat_value(stats, key) is not None
+                for stats in per_combination_stats.values()
+            ):
                 return key
         return None
 
@@ -299,30 +334,31 @@ class SweepAnalyzer:
         if not per_combination_stats:
             return best
 
+        throughput = "request_throughput_avg"
         if all(
-            "request_throughput_avg" in stats
+            _stat_value(stats, throughput) is not None
             for stats in per_combination_stats.values()
         ):
             combo, stats = max(
                 per_combination_stats.items(),
-                key=lambda item: item[1]["request_throughput_avg"]["mean"],
+                key=lambda item: _stat_value(item[1], throughput),
             )
             best["best_throughput"] = {
                 "parameters": combo.to_dict(),
-                "metric": stats["request_throughput_avg"]["mean"],
-                "unit": stats["request_throughput_avg"].get("unit", "requests/sec"),
+                "metric": _stat_value(stats, throughput),
+                "unit": _stat_unit(stats, throughput, "requests/sec"),
             }
 
         latency_metric = SweepAnalyzer._resolve_latency_key(per_combination_stats)
         if latency_metric:
             combo, stats = min(
                 per_combination_stats.items(),
-                key=lambda item: item[1][latency_metric]["mean"],
+                key=lambda item: _stat_value(item[1], latency_metric),
             )
             best["best_latency_p99"] = {
                 "parameters": combo.to_dict(),
-                "metric": stats[latency_metric]["mean"],
-                "unit": stats[latency_metric].get("unit", "ms"),
+                "metric": _stat_value(stats, latency_metric),
+                "unit": _stat_unit(stats, latency_metric, "ms"),
             }
         return best
 
@@ -350,7 +386,7 @@ class SweepAnalyzer:
 
         latency_key = SweepAnalyzer._resolve_latency_key(per_combination_stats)
         has_throughput = all(
-            "request_throughput_avg" in stats
+            _stat_value(stats, "request_throughput_avg") is not None
             for stats in per_combination_stats.values()
         )
         if not (has_throughput and latency_key):
