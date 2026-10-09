@@ -418,6 +418,79 @@ async def test_breeze_through_applies_between_round_think_time():
     assert slept == [0.4]  # 400 ms authored think-time honored on the breeze path
 
 
+def _spine_gate_harness(
+    think_ms: float, *, with_scheduler: bool = True
+) -> tuple[BranchOrchestrator, MagicMock, LoopScheduler | None]:
+    """K=5 parent whose turn-5 gate is a request-free spine gate with ``think_ms`` of think-time.
+
+    Without a scheduler no replay-deadline timer is armed, so the join releases
+    as soon as its children finish and goes straight into the think-time sleep.
+    """
+    metadata = _k5_metadata()
+    gate_turn = metadata[0].turns[5]
+    gate_turn.no_request = True
+    gate_turn.delay_ms = think_ms
+    cs = _mk_source(metadata)
+
+    def _start(
+        parent_correlation_id, child_conversation_id, agent_depth, branch_mode, **kwargs
+    ):
+        s = MagicMock()
+        s.x_correlation_id = f"corr-{child_conversation_id}"
+        return s
+
+    cs.start_branch_child = MagicMock(side_effect=_start)
+    issuer = MagicMock()
+    issuer.dispatch_first_turn = AsyncMock(return_value=True)
+    issuer.dispatch_join_turn = AsyncMock(return_value=ChildDispatchResult.REJECTED)
+    scheduler = LoopScheduler() if with_scheduler else None
+    orch = BranchOrchestrator(
+        conversation_source=cs, credit_issuer=issuer, scheduler=scheduler
+    )
+    return orch, issuer, scheduler
+
+
+async def _suspend_parent_at_gate(orch: BranchOrchestrator) -> None:
+    await orch.intercept(_mk_credit("root", "corr-root", 0))
+    for t in range(1, 4):
+        await orch.intercept(_mk_credit("root", "corr-root", t))
+    assert await orch.intercept(_mk_credit("root", "corr-root", 4)) is True
+
+
+@pytest.mark.asyncio
+async def test_join_released_at_sending_cutoff_skips_think_time():
+    """A spine join released by the sending cutoff must not sleep its think-time first: the gated turn is refused once sending stops, so the sleep would only hold PhaseRunner's sending-complete step."""
+    orch, issuer, scheduler = _spine_gate_harness(think_ms=1e9)
+    assert scheduler is not None
+    await _suspend_parent_at_gate(orch)
+    orch.park_child_turn("corr-c0")
+    orch.park_child_turn("corr-c1")
+
+    scheduler.cancel_all_pending()
+    await asyncio.wait_for(orch.expire_replay_deadlines(), timeout=1.0)
+
+    issuer.dispatch_join_turn.assert_awaited_once()
+    assert orch.stats.joins_suppressed == 1
+
+
+@pytest.mark.asyncio
+async def test_think_time_sleep_running_at_sending_cutoff_wakes():
+    """A think-time sleep that began before the cutoff wakes when the phase stops sending instead of running out its full interval."""
+    orch, issuer, _ = _spine_gate_harness(think_ms=1e9, with_scheduler=False)
+    await _suspend_parent_at_gate(orch)
+    await orch.on_child_leaf_reached("corr-c0")
+    release = asyncio.create_task(orch.on_child_leaf_reached("corr-c1"))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert not release.done(), "the join release should be sleeping its think-time"
+    issuer.dispatch_join_turn.assert_not_awaited()
+
+    await orch.expire_replay_deadlines()
+    await asyncio.wait_for(release, timeout=1.0)
+
+    issuer.dispatch_join_turn.assert_awaited_once()
+
+
 @pytest.mark.asyncio
 async def test_delayed_join_children_finish_before_parent_arrives():
     """Children complete before the parent returns from turn 4. This is a

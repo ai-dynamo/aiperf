@@ -100,8 +100,8 @@ async def test_sleep_think_ms_interrupted_by_cleanup():
     """A pending think-time sleep must return early once cleanup fires, so
     shutdown doesn't wait out a full (possibly large) interval."""
     orch = BranchOrchestrator.__new__(BranchOrchestrator)
-    orch._cleanup_event = asyncio.Event()
-    orch._cleanup_event.set()  # cleanup already triggered
+    orch._think_time_interrupt = asyncio.Event()
+    orch._think_time_interrupt.set()  # cleanup already triggered
     # A 1000s think-time must return promptly; wrap in wait_for so a hang fails.
     await asyncio.wait_for(orch._sleep_think_ms(1000.0), timeout=1.0)
 
@@ -110,6 +110,6 @@ async def test_sleep_think_ms_interrupted_by_cleanup():
 async def test_sleep_think_ms_elapses_when_not_cleaned_up():
     """Without cleanup, the sleep runs its full (here tiny) interval normally."""
     orch = BranchOrchestrator.__new__(BranchOrchestrator)
-    orch._cleanup_event = asyncio.Event()
+    orch._think_time_interrupt = asyncio.Event()
     await orch._sleep_think_ms(0.001)  # timeout elapses -> returns
-    assert not orch._cleanup_event.is_set()
+    assert not orch._think_time_interrupt.is_set()
