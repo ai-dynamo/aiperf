@@ -13,6 +13,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import ConversationBranchMode, CreditPhase
 from aiperf.common.models.dataset_models import TurnMetadata
@@ -194,6 +195,35 @@ async def test_on_child_stopped_exception_logged_not_raised() -> None:
     # Must not propagate
     await strategy._issue_child_continuation_or_release(turn, credit)
     orch.on_child_stopped.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("unparked", "expect_dispatch"),
+    [
+        param(True, True, id="timer-fired-before-cutoff"),
+        param(False, False, id="stopped-at-cutoff"),
+    ],
+)  # fmt: skip
+async def test_delayed_child_continuation_parks_until_timer_fires(
+    unparked: bool, expect_dispatch: bool
+) -> None:
+    """A delayed child continuation is parked with the orchestrator and dispatched only if still parked when its timer fires."""
+    orch = MagicMock()
+    orch.on_child_stopped = AsyncMock()
+    orch.unpark_child_turn.return_value = unparked
+    strategy, credit_issuer = _make_strategy(branch_orchestrator=orch)
+    strategy._conversation_source.get_next_turn_metadata.return_value = TurnMetadata(
+        delay_ms=250.0, has_forks=False
+    )
+
+    await strategy.handle_credit_return(_child_credit())
+
+    orch.park_child_turn.assert_called_once_with("child-xcid")
+    _, coro = strategy._scheduler.schedule_later.call_args.args
+    await coro
+    orch.unpark_child_turn.assert_called_once_with("child-xcid")
+    assert credit_issuer.dispatch_child_turn.await_count == int(expect_dispatch)
 
 
 # =============================================================================

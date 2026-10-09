@@ -472,3 +472,65 @@ async def test_delayed_child_dispatching_before_cutoff_is_not_rolled_back() -> N
     assert orch.stats.children_truncated == 0
     assert "corr-kid" in orch._child_to_join
     assert orch.has_pending_branch_work()
+
+
+@pytest.mark.asyncio
+async def test_cutoff_stops_child_parked_between_turns() -> None:
+    """A dispatched child whose next-turn timer is cancelled at the cutoff is stopped instead of holding the phase."""
+    parent = _parent_conv([_spawn_branch("b0", ["kid"], start_timestamp_ms=0.0)])
+    scheduler = LoopScheduler()
+    orch, _, issuer = _mk_harness(
+        [parent, _child_conv("kid", 0.0)], scheduler=scheduler
+    )
+
+    await orch.intercept(_mk_credit("parent", "P", 0))
+    issuer.dispatch_first_turn.assert_awaited_once()
+    orch.park_child_turn("corr-kid")
+
+    await _stop_sending(orch, scheduler)
+
+    assert not orch.has_pending_branch_work()
+    assert "corr-kid" not in orch._child_to_join
+    assert orch.stats.children_truncated == 1
+    assert orch.unpark_child_turn("corr-kid") is False
+
+
+@pytest.mark.asyncio
+async def test_cutoff_releases_join_gated_on_child_parked_between_turns() -> None:
+    """A parent suspended on a child whose continuation timer is cancelled at the cutoff is released."""
+    parent = _parent_conv(
+        [_spawn_branch("b0", ["kid"], start_timestamp_ms=0.0, is_background=False)],
+        gated_turn=1,
+    )
+    scheduler = LoopScheduler()
+    orch, _, issuer = _mk_harness(
+        [parent, _child_conv("kid", 0.0)], scheduler=scheduler
+    )
+
+    assert await orch.intercept(_mk_credit("parent", "P", 0)) is True
+    orch.park_child_turn("corr-kid")
+    assert "P" in orch._active_joins
+
+    await _stop_sending(orch, scheduler)
+
+    issuer.dispatch_join_turn.assert_awaited_once()
+    assert "P" not in orch._active_joins
+    assert not orch.has_pending_branch_work()
+
+
+@pytest.mark.asyncio
+async def test_unparked_child_turn_is_not_stopped_at_cutoff() -> None:
+    """A parked turn whose timer fired before the cutoff keeps the child tracked until it finishes normally."""
+    parent = _parent_conv([_spawn_branch("b0", ["kid"], start_timestamp_ms=0.0)])
+    scheduler = LoopScheduler()
+    orch, _, _ = _mk_harness([parent, _child_conv("kid", 0.0)], scheduler=scheduler)
+
+    await orch.intercept(_mk_credit("parent", "P", 0))
+    orch.park_child_turn("corr-kid")
+    assert orch.unpark_child_turn("corr-kid") is True
+
+    await _stop_sending(orch, scheduler)
+
+    assert orch.stats.children_truncated == 0
+    assert "corr-kid" in orch._child_to_join
+    assert orch.has_pending_branch_work()

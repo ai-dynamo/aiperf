@@ -245,6 +245,38 @@ def _write_delayed_past_cutoff_trace(target_dir: Path) -> Path:
     return target_dir
 
 
+def _write_continuation_past_cutoff_trace(target_dir: Path) -> Path:
+    """One trace whose background worker sends turn-0 inside the run but whose turn-1 is recorded ~4000s later, so its continuation timer is still pending when a short duration-bounded run cuts off."""
+    _write_trace(
+        target_dir,
+        "trace_cont",
+        [
+            _req(0.00, [1, 2, 3], api_time=0.05),  # main t0
+            _req(0.60, [1, 2, 3, 4], api_time=0.05),  # main t1
+            _req(1.20, [1, 2, 3, 4, 5], api_time=0.50),  # main t2 (last)
+            _req(1.30, [1, 2, 60, 61], api_time=0.20),  # worker t0, ends 1.50
+            _req(4000.0, [1, 2, 60, 61, 62], api_time=0.20),  # worker t1
+        ],
+    )
+    return target_dir
+
+
+def _write_snapshot_child_past_cutoff_trace(target_dir: Path) -> Path:
+    """One trace that, sampled at t* = 0.75s, snapshots a live root (next turn due 0.25s later) beside a live background worker whose next turn is ~4000s away, so profiling seeds the worker on a delayed timer."""
+    _write_trace(
+        target_dir,
+        "trace_seed",
+        [
+            _req(0.00, [1, 2, 3], api_time=0.05),  # main t0
+            _req(0.30, [1, 2, 60, 61], api_time=0.20),  # worker t0, ends 0.50
+            _req(1.00, [1, 2, 3, 4], api_time=0.05),  # main t1
+            _req(2.00, [1, 2, 3, 4, 5], api_time=0.05),  # main t2 (last)
+            _req(4000.0, [1, 2, 60, 61, 62], api_time=0.20),  # worker t1
+        ],
+    )
+    return target_dir
+
+
 def _write_poisoned_corpus(target_dir: Path) -> Path:
     """Two traces of 10 mutually disjoint single-block-hash requests each, which LCP detection treats as independent zero-depth founder chains."""
     for tid, base in (("trace_poison_a", 1000), ("trace_poison_b", 2000)):
@@ -937,6 +969,79 @@ async def test_child_delayed_past_duration_cutoff_does_not_hold_phase_for_grace(
         record.metadata.conversation_id == "trace_late::fa:001"
         for record in result.jsonl
     ), "the late worker must never issue a request inside the 5s window"
+
+    log = _combined_log_text(result)
+    assert "grace_period_timeout=True" not in log, (
+        "profiling waited out the grace period although no request was in flight"
+    )
+    assert "leaked state at cleanup" not in log
+
+
+async def test_child_continuation_past_duration_cutoff_does_not_hold_phase_for_grace(
+    tmp_path: Path, aiperf_mock_server: AIPerfMockServer
+) -> None:
+    """A SPAWN child that already sent turn-0 but whose next turn's think-time timer is cancelled at the duration cutoff is stopped, so the phase completes at the cutoff instead of idling out the grace period."""
+    corpus = _write_continuation_past_cutoff_trace(tmp_path / "traces")
+    result = await _run_weka_profile(
+        input_dir=corpus,
+        artifact_dir=tmp_path / "artifacts",
+        url=aiperf_mock_server.url,
+        duration=5.0,
+        concurrency=1,
+        timeout=200.0,
+    )
+    _assert_success(result, "child continuation past cutoff")
+
+    child_turns = {
+        record.metadata.turn_index
+        for record in result.jsonl
+        if record.metadata.conversation_id == "trace_cont::fa:000"
+    }
+    assert 0 in child_turns, (
+        "the worker's turn-0 must be sent inside the run for this shape"
+    )
+    assert 1 not in child_turns, "the worker's turn-1 lies far past the cutoff"
+
+    branch_stats = result.json.branch_stats
+    assert branch_stats is not None
+    assert branch_stats.children_truncated >= 1, branch_stats
+
+    log = _combined_log_text(result)
+    assert "grace_period_timeout=True" not in log, (
+        "profiling waited out the grace period although no request was in flight"
+    )
+    assert "leaked state at cleanup" not in log
+
+
+async def test_snapshot_seeded_child_turn_past_duration_cutoff_does_not_hold_phase_for_grace(
+    tmp_path: Path, aiperf_mock_server: AIPerfMockServer
+) -> None:
+    """An AgentX trajectory sampled mid-trace seeds a live child whose next turn is past the cutoff; its cancelled seed timer stops the child instead of holding the phase."""
+    corpus = _write_snapshot_child_past_cutoff_trace(tmp_path / "traces")
+    result = await _run_weka_profile(
+        input_dir=corpus,
+        artifact_dir=tmp_path / "artifacts",
+        url=aiperf_mock_server.url,
+        duration=5.0,
+        concurrency=1,
+        timeout=200.0,
+        # t* = 0.0001875 * 4000.2s ~= 0.75s: the root resumes at main t1
+        # (0.25s later) and the worker's turn-1 is seeded ~4000s out.
+        extra_args=[
+            "--scenario",
+            "inferencex-agentx-mvp",
+            "--unsafe-override",
+            "--trajectory-start-min-ratio",
+            "0.0001875",
+            "--trajectory-start-max-ratio",
+            "0.0001875",
+        ],
+    )
+    _assert_success(result, "snapshot-seeded child past cutoff")
+
+    branch_stats = result.json.branch_stats
+    assert branch_stats is not None
+    assert branch_stats.children_truncated >= 1, branch_stats
 
     log = _combined_log_text(result)
     assert "grace_period_timeout=True" not in log, (
