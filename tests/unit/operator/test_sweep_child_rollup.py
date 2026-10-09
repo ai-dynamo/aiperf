@@ -247,6 +247,29 @@ class TestFindSweepOwner:
 
 
 # ============================================================
+# _is_owned_child
+# ============================================================
+
+
+class TestIsOwnedChild:
+    """The identity fence must accept the Mapping view kopf actually passes."""
+
+    def test_kopf_body_passes_identity_fence(self) -> None:
+        assert child_rollup._is_owned_child(
+            kopf.Body(_child_body()),
+            sweep_uid="u",
+            sweep_name="s",
+            run_epoch="epoch-1",
+            expected_child_uid="child-uid",
+        )
+
+    def test_non_mapping_is_rejected(self) -> None:
+        assert not child_rollup._is_owned_child(
+            None, sweep_uid="u", sweep_name="s", run_epoch="epoch-1"
+        )
+
+
+# ============================================================
 # on_child_phase_transition
 # ============================================================
 
@@ -290,6 +313,58 @@ class TestOnChildPhaseTransition:
         assert opened["count"] == 0
         count_mock.assert_not_awaited()
         patch_mock.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_kopf_body_child_reaches_parent_patch(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ``kopf.Body`` (Mapping view, not a ``dict``) must reach the parent patch."""
+        captured: dict[str, Any] = {}
+
+        async def fake_count(
+            namespace: str,
+            sweep_uid: str,
+            sweep_name: str,
+            *,
+            run_epoch: str | None = None,
+            api: Any = None,
+        ) -> dict[str, Any]:
+            return {
+                "pending": 0,
+                "running": 1,
+                "completed": 5,
+                "failed": 0,
+                "cancelled": 0,
+                "in_flight": 1,
+                "total_terminal_phase": None,
+            }
+
+        async def fake_patch(
+            *, group, version, plural, name, namespace, body, api=None
+        ):
+            captured["patch_body"] = body
+
+        monkeypatch.setattr(child_rollup, "_count_owned_children", fake_count)
+        monkeypatch.setattr(child_rollup, "_patch_parent_status", fake_patch)
+        monkeypatch.setattr(child_rollup, "_conditional_phase_set", AsyncMock())
+        monkeypatch.setattr(
+            child_rollup,
+            "_read_parent_status",
+            AsyncMock(return_value={"phase": "Running", "maxTotalRuns": 7}),
+        )
+        _install_fake_k8s(monkeypatch)
+
+        raw = _child_body(child_name="child-A", phase="Completed")
+        _stub_current_child(monkeypatch, raw)
+        await child_rollup.on_child_phase_transition(
+            body=kopf.Body(raw),
+            status={"phase": "Completed"},
+            name="child-A",
+            namespace="ns",
+        )
+
+        assert captured["patch_body"]["status"]["completedRuns"] == 5
+        assert captured["patch_body"]["status"]["runStates"]["running"] == 1
 
     @pytest.mark.asyncio
     async def test_owned_child_patches_parent_with_counts_and_event(

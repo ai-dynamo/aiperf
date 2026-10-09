@@ -11,6 +11,7 @@ phase-bucketing and "currently running child" selection logic, plus the
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -137,8 +138,12 @@ def _is_owned_child(
     run_epoch: str,
     expected_child_uid: str | None = None,
 ) -> bool:
-    """Return whether a child matches the exact parent and execution identity."""
-    if not isinstance(child, dict):
+    """Return whether a child matches the exact parent and execution identity.
+
+    Accepts any ``Mapping``: kopf delivers the triggering child as a
+    ``kopf.Body`` view, which is not a ``dict`` subclass.
+    """
+    if not isinstance(child, Mapping):
         return False
     metadata = child.get("metadata") or {}
     child_uid = metadata.get("uid")
