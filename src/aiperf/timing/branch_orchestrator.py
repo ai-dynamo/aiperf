@@ -329,6 +329,10 @@ class BranchOrchestrator:
         # stops sending (and cancels their timers) they must be rolled back
         # explicitly; see _abandon_delayed_children.
         self._pending_delayed_children: dict[str, tuple[Any, str]] = {}
+        # Children whose next turn waits on a strategy-owned scheduler timer
+        # (think-time continuations, snapshot-seeded turns). Stopped
+        # explicitly when the phase stops sending; see park_child_turn.
+        self._parked_child_turns: set[str] = set()
         # Drain observer: sync callback fired after state mutations that may
         # drain has_pending_branch_work() to False. Wired by
         # CreditCallbackHandler.set_branch_orchestrator to re-evaluate the
@@ -1600,17 +1604,46 @@ class BranchOrchestrator:
         await self._release_blocked_join(pending)
         self._notify_drain()
 
+    def park_child_turn(self, child_x_correlation_id: str) -> None:
+        """Record that a child's next turn is waiting on a scheduler timer.
+
+        ``PhaseRunner`` cancels the shared scheduler when the phase stops
+        sending, which closes such a timer without running it. The child then
+        never returns another credit or reaches ``on_child_stopped``, and its
+        bookkeeping keeps ``has_pending_branch_work()`` True until the grace
+        period expires. ``expire_replay_deadlines`` stops every child still
+        parked at that boundary.
+        """
+        self._parked_child_turns.add(child_x_correlation_id)
+
+    def unpark_child_turn(self, child_x_correlation_id: str) -> bool:
+        """Claim a parked child turn as its timer fires.
+
+        Returns False when the child was already stopped at the sending
+        cutoff, in which case the turn must not be dispatched.
+        """
+        if child_x_correlation_id not in self._parked_child_turns:
+            return False
+        self._parked_child_turns.discard(child_x_correlation_id)
+        return True
+
     async def _abandon_delayed_children(self) -> None:
-        """Roll back delayed SPAWN children that will never dispatch.
+        """Release children whose next dispatch was cancelled with the scheduler.
 
         Called once the phase stops sending. ``PhaseRunner`` cancels the
-        shared scheduler at that boundary, which closes each pending delayed
-        dispatch without running it, so the rollback inside
-        ``_dispatch_first_turn_after_offset`` never executes and the child's
-        spawn-time bookkeeping would keep ``has_pending_branch_work()`` True
-        until the grace period expires. Apply the same rollback a post-cutoff
-        dispatch refusal would have produced.
+        shared scheduler at that boundary, which closes each pending timer
+        without running it, so neither the rollback inside
+        ``_dispatch_first_turn_after_offset`` nor a strategy's refusal path
+        executes, and the child's bookkeeping would keep
+        ``has_pending_branch_work()`` True until the grace period expires.
+        Delayed turn-0 children get the rollback a post-cutoff dispatch
+        refusal would have produced; children parked between turns are
+        stopped as if their continuation had been refused.
         """
+        parked = list(self._parked_child_turns)
+        self._parked_child_turns.clear()
+        for child_corr in parked:
+            await self.on_child_stopped(child_corr)
         if not self._pending_delayed_children:
             return
         by_parent: dict[str, list[Any]] = defaultdict(list)
@@ -2027,6 +2060,7 @@ class BranchOrchestrator:
             task.cancel()
         self._delayed_dispatch_tasks.clear()
         self._pending_delayed_children.clear()
+        self._parked_child_turns.clear()
         s = self.stats
         logger.info(
             "BranchOrchestrator stats: spawned=%d completed=%d errored=%d "

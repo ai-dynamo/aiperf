@@ -167,6 +167,40 @@ async def test_child_delayed_schedules_chokepoint_coro_not_issue_credit() -> Non
     orch.on_child_stopped.assert_awaited_once_with("child-xcid")
 
 
+@pytest.mark.asyncio
+async def test_child_delayed_parks_turn_until_timer_fires() -> None:
+    """A delayed child continuation is parked with the orchestrator and claimed when its timer fires."""
+    orch = MagicMock()
+    orch.unpark_child_turn.return_value = True
+    strategy, issuer, scheduler = _make_strategy(
+        branch_orchestrator=orch, delay_ms=250.0
+    )
+
+    await strategy._dispatch_next_turn(_child_credit())
+
+    orch.park_child_turn.assert_called_once_with("child-xcid")
+    _, coro = scheduler.schedule_later.call_args.args
+    await coro
+    orch.unpark_child_turn.assert_called_once_with("child-xcid")
+    issuer.dispatch_child_turn.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_child_delayed_stopped_at_cutoff_is_not_dispatched() -> None:
+    """A parked child already stopped at the sending cutoff does not dispatch when a stale timer body runs."""
+    orch = MagicMock()
+    orch.unpark_child_turn.return_value = False
+    strategy, issuer, scheduler = _make_strategy(
+        branch_orchestrator=orch, delay_ms=250.0
+    )
+
+    await strategy._dispatch_next_turn(_child_credit())
+    _, coro = scheduler.schedule_later.call_args.args
+    await coro
+
+    issuer.dispatch_child_turn.assert_not_called()
+
+
 # Root continuation keeps issue_credit
 
 
