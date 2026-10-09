@@ -261,10 +261,17 @@ class MetricsAccumulator(BaseMetricsProcessor):
         Skips records with no spec-decode stats and error records -- the latter
         never contribute the ``spec_decode_steps`` metric either, so excluding
         them here keeps the pooled counts reconciled with the masked scalar
-        ``total_spec_decode_steps``.
+        ``total_spec_decode_steps``. Also skips records whose engine reports
+        only aggregate counters (``acceptance_histogram`` is None, e.g.
+        llama.cpp) -- pooling a fabricated per-step breakdown into the same
+        histogram as engines with genuine per-step data would corrupt it.
         """
         spec = record.spec_decode_acceptance
-        if spec is None or record.error is not None:
+        if (
+            spec is None
+            or spec.acceptance_histogram is None
+            or record.error is not None
+        ):
             return
         key = (str(record.metadata.benchmark_phase), record.metadata.phase_index)
         pool = self._acceptance_pool_by_phase.setdefault(key, {})

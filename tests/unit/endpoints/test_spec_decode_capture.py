@@ -172,3 +172,69 @@ class TestCompletionsSpecDecodeCapture:
         parsed = completions_endpoint.parse_response(_mock_response(json_obj))
         assert parsed is not None
         assert parsed.spec_decode_stats is None
+
+
+LLAMACPP_TIMINGS = {
+    "predicted_n": 20,
+    "draft_n": 15,
+    "draft_n_accepted": 14,
+    "predicted_ms": 76.2,
+    "prompt_n": 11,
+}
+
+
+class TestLlamaCppTimingsCapture:
+    """llama.cpp timings path: top-level ``timings`` carries spec-decode counters."""
+
+    def test_parse_response_llamacpp_timings_captured(
+        self, chat_endpoint: ChatEndpoint
+    ) -> None:
+        """Top-level timings with draft_n/draft_n_accepted are captured as spec_decode_stats."""
+        json_obj = {
+            "object": "chat.completion",
+            "choices": [{"message": {"role": "assistant", "content": "hi"}}],
+            "timings": LLAMACPP_TIMINGS,
+        }
+        parsed = chat_endpoint.parse_response(_mock_response(json_obj))
+        assert parsed is not None
+        assert parsed.spec_decode_stats == LLAMACPP_TIMINGS
+
+    def test_parse_response_llamacpp_timings_streaming_finish_chunk(
+        self, chat_endpoint: ChatEndpoint
+    ) -> None:
+        """Timings on the finish-reason streaming chunk are captured."""
+        json_obj = {
+            "object": "chat.completion.chunk",
+            "choices": [{"delta": {}, "finish_reason": "length"}],
+            "timings": LLAMACPP_TIMINGS,
+        }
+        parsed = chat_endpoint.parse_response(_mock_response(json_obj))
+        assert parsed is not None
+        assert parsed.spec_decode_stats == LLAMACPP_TIMINGS
+
+    def test_parse_response_vllm_stats_take_priority_over_timings(
+        self, chat_endpoint: ChatEndpoint
+    ) -> None:
+        """When both metrics.speculative_decoding and timings are present, vLLM wins."""
+        json_obj = {
+            "object": "chat.completion",
+            "choices": [{"message": {"role": "assistant", "content": "hi"}}],
+            "metrics": {"speculative_decoding": STATS},
+            "timings": LLAMACPP_TIMINGS,
+        }
+        parsed = chat_endpoint.parse_response(_mock_response(json_obj))
+        assert parsed is not None
+        assert parsed.spec_decode_stats == STATS
+
+    def test_parse_response_timings_without_draft_fields_not_captured(
+        self, chat_endpoint: ChatEndpoint
+    ) -> None:
+        """Timings that carry no draft_n/draft_n_accepted (non-spec run) are not captured."""
+        json_obj = {
+            "object": "chat.completion",
+            "choices": [{"message": {"role": "assistant", "content": "hi"}}],
+            "timings": {"predicted_n": 20, "predicted_ms": 76.2},
+        }
+        parsed = chat_endpoint.parse_response(_mock_response(json_obj))
+        assert parsed is not None
+        assert parsed.spec_decode_stats is None

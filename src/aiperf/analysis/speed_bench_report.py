@@ -227,25 +227,26 @@ def extract_accept_length(server_metrics: dict) -> float | None:
 
     Handles multiple engine types:
     - SGLang: directly exposes ``spec_accept_length`` gauge
-    - vLLM: exposes counters for accepted tokens and drafts, compute ratio
+    - vLLM / llama.cpp: exposes counters for accepted tokens and drafts, compute ratio
     """
     metrics = server_metrics.get("metrics", {})
 
-    # SGLang: direct gauge
+    # SGLang / TRT-LLM: direct gauge
     for name in ACCEPT_LENGTH_METRICS:
         val = _get_metric_stat(metrics, name, "avg")
         if val is not None:
             return val
 
-    # vLLM: compute from counters (accepted_tokens / num_drafts)
+    # vLLM / llama.cpp: compute from counters (accepted_tokens / num_drafts)
     # Each draft step produces 1 verification token + accepted draft tokens,
     # so acceptance length = (accepted / drafts) + 1
-    accepted = _get_metric_stat(
-        metrics, "vllm:spec_decode_num_accepted_tokens", "total"
-    )
-    drafts = _get_metric_stat(metrics, "vllm:spec_decode_num_drafts", "total")
-    if accepted is not None and drafts and drafts > 0:
-        return (accepted / drafts) + 1.0
+    for prefix in ("vllm:", "llamacpp:"):
+        accepted = _get_metric_stat(
+            metrics, f"{prefix}spec_decode_num_accepted_tokens", "total"
+        )
+        drafts = _get_metric_stat(metrics, f"{prefix}spec_decode_num_drafts", "total")
+        if accepted is not None and drafts and drafts > 0:
+            return (accepted / drafts) + 1.0
 
     # Fuzzy fallback for engines we don't know by name yet. Require all three
     # of "spec", "accept", "length" in the metric name so we don't pick up
@@ -266,21 +267,22 @@ def extract_accept_rate(server_metrics: dict) -> float | None:
     """Extract acceptance rate from server metrics."""
     metrics = server_metrics.get("metrics", {})
 
-    # SGLang: direct gauge
+    # SGLang / TRT-LLM: direct gauge
     for name in ACCEPT_RATE_METRICS:
         val = _get_metric_stat(metrics, name, "avg")
         if val is not None:
             return val
 
-    # vLLM: compute from counters (accepted_tokens / draft_tokens)
-    accepted = _get_metric_stat(
-        metrics, "vllm:spec_decode_num_accepted_tokens", "total"
-    )
-    draft_tokens = _get_metric_stat(
-        metrics, "vllm:spec_decode_num_draft_tokens", "total"
-    )
-    if accepted is not None and draft_tokens and draft_tokens > 0:
-        return accepted / draft_tokens
+    # vLLM / llama.cpp: compute from counters (accepted_tokens / draft_tokens)
+    for prefix in ("vllm:", "llamacpp:"):
+        accepted = _get_metric_stat(
+            metrics, f"{prefix}spec_decode_num_accepted_tokens", "total"
+        )
+        draft_tokens = _get_metric_stat(
+            metrics, f"{prefix}spec_decode_num_draft_tokens", "total"
+        )
+        if accepted is not None and draft_tokens and draft_tokens > 0:
+            return accepted / draft_tokens
 
     return None
 
