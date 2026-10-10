@@ -530,15 +530,17 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             await asyncio.to_thread(file_path.parent.mkdir, parents=True, exist_ok=True)
 
             model_endpoint = ModelEndpointInfo.from_run(self.run)
-            inputs = self._generate_input_payloads(model_endpoint)
 
-            async with aiofiles.open(temp_file_path, "wb") as f:
-                await f.write(
-                    orjson.dumps(
-                        inputs.model_dump(exclude_none=True, mode="json"),
-                        option=orjson.OPT_INDENT_2,
-                    )
+            def serialize_inputs() -> bytes:
+                inputs = self._generate_input_payloads(model_endpoint)
+                return orjson.dumps(
+                    inputs.model_dump(exclude_none=True, mode="json"),
+                    option=orjson.OPT_INDENT_2,
                 )
+
+            inputs_bytes = await asyncio.to_thread(serialize_inputs)
+            async with aiofiles.open(temp_file_path, "wb") as f:
+                await f.write(inputs_bytes)
             temp_file_path.replace(file_path)
 
             duration = time.perf_counter() - start_time
