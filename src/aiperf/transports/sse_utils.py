@@ -15,6 +15,7 @@ _logger = AIPerfLogger(__name__)
 _SSE_COMMENT_FIELD_NAME = "comment"
 _SSE_DATA_FIELD_NAME = "data"
 _SSE_ERROR_EVENT_VALUE = "error"
+_RESPONSES_FAILED_EVENT_VALUE = "response.failed"
 _SSE_EVENT_FIELD_NAME = "event"
 
 
@@ -29,6 +30,10 @@ def _raise_for_data_error(data_content: str) -> None:
         return
 
     error = payload.get("error")
+    if payload.get("type") == _RESPONSES_FAILED_EVENT_VALUE:
+        response = payload.get("response")
+        nested_error = response.get("error") if isinstance(response, dict) else None
+        error = error or nested_error or "Response failed"
     if not error:
         return
 
@@ -56,13 +61,16 @@ def _classify_message_fields(message: SSEMessage) -> tuple[bool, bool]:
     has_data_error_candidate = False
     for packet in message.packets:
         if packet.name == _SSE_DATA_FIELD_NAME:
-            if packet.value is not None and '"error"' in packet.value:
+            if packet.value is not None and (
+                '"error"' in packet.value or '"response.failed"' in packet.value
+            ):
                 has_data_error_candidate = True
             continue
         if (
             packet.name.casefold() == _SSE_EVENT_FIELD_NAME
             and packet.value is not None
-            and packet.value.casefold() == _SSE_ERROR_EVENT_VALUE
+            and packet.value.casefold()
+            in {_SSE_ERROR_EVENT_VALUE, _RESPONSES_FAILED_EVENT_VALUE}
         ):
             has_error_event = True
     return has_error_event, has_data_error_candidate
@@ -138,15 +146,18 @@ class AsyncSSEStreamReader:
 
         A named error uses its first comment when present. Without a comment,
         structured data supplies the message and code before the unknown-error
-        fallback. Data is checked for the exact marker before JSON decoding to
-        keep normal streaming messages on the fast path.
+        fallback. Responses API failures carry the error inside ``response``.
+        Data is checked for exact markers before JSON decoding to keep normal
+        streaming messages on the fast path.
         """
         if (
             len(message.packets) == 1
             and message.packets[0].name == _SSE_DATA_FIELD_NAME
         ):
             data_content = message.packets[0].value
-            if data_content is not None and '"error"' in data_content:
+            if data_content is not None and (
+                '"error"' in data_content or '"response.failed"' in data_content
+            ):
                 _raise_for_data_error(data_content)
             return
 
