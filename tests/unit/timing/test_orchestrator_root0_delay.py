@@ -31,6 +31,7 @@ def _orch(delay_ms: float) -> BranchOrchestrator:
     )
     cs.sample_ordinal.return_value = 0
     orch._cs = cs
+    orch._issuer = MagicMock()
     return orch
 
 
@@ -46,7 +47,7 @@ def _capture_think(orch: BranchOrchestrator) -> list[float]:
     """Capture the seconds passed to the (interruptible) think-time sleep."""
     slept: list[float] = []
 
-    async def _fake(seconds: float) -> None:
+    async def _fake(seconds: float, _still_sendable: object) -> None:
         slept.append(seconds)
 
     orch._sleep_think_ms = _fake
@@ -95,21 +96,62 @@ async def test_root0_delay_skipped_for_later_turns_and_real_roots():
     assert slept == []
 
 
+def _bare_sleeper() -> BranchOrchestrator:
+    orch = BranchOrchestrator.__new__(BranchOrchestrator)
+    orch._cleaning_up = False
+    orch._think_time_wake = asyncio.Event()
+    return orch
+
+
 @pytest.mark.asyncio
 async def test_sleep_think_ms_interrupted_by_cleanup():
     """A pending think-time sleep must return early once cleanup fires, so
     shutdown doesn't wait out a full (possibly large) interval."""
-    orch = BranchOrchestrator.__new__(BranchOrchestrator)
-    orch._cleanup_event = asyncio.Event()
-    orch._cleanup_event.set()  # cleanup already triggered
+    orch = _bare_sleeper()
+    task = asyncio.create_task(orch._sleep_think_ms(1000.0, lambda: True))
+    await asyncio.sleep(0)
+    orch._cleaning_up = True
+    orch._wake_think_time_sleepers()
     # A 1000s think-time must return promptly; wrap in wait_for so a hang fails.
-    await asyncio.wait_for(orch._sleep_think_ms(1000.0), timeout=1.0)
+    await asyncio.wait_for(task, timeout=1.0)
 
 
 @pytest.mark.asyncio
 async def test_sleep_think_ms_elapses_when_not_cleaned_up():
     """Without cleanup, the sleep runs its full (here tiny) interval normally."""
-    orch = BranchOrchestrator.__new__(BranchOrchestrator)
-    orch._cleanup_event = asyncio.Event()
-    await orch._sleep_think_ms(0.001)  # timeout elapses -> returns
-    assert not orch._cleanup_event.is_set()
+    orch = _bare_sleeper()
+    await orch._sleep_think_ms(0.001, lambda: True)  # timeout elapses -> returns
+
+
+@pytest.mark.asyncio
+async def test_sleep_think_ms_skipped_when_turn_would_be_refused():
+    orch = _bare_sleeper()
+    await asyncio.wait_for(orch._sleep_think_ms(1000.0, lambda: False), timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_sleep_think_ms_woken_but_still_sendable_keeps_think_time():
+    """A wake at the sending cutoff must not shorten the think-time of a turn
+    that will still be sent (nested spine after --num-conversations)."""
+    orch = _bare_sleeper()
+    loop = asyncio.get_running_loop()
+    start = loop.time()
+    task = asyncio.create_task(orch._sleep_think_ms(0.2, lambda: True))
+    await asyncio.sleep(0)
+    orch._wake_think_time_sleepers()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert not task.done()
+    await asyncio.wait_for(task, timeout=1.0)
+    assert loop.time() - start >= 0.19
+
+
+@pytest.mark.asyncio
+async def test_sleep_think_ms_woken_and_refused_returns_at_once():
+    orch = _bare_sleeper()
+    sendable = True
+    task = asyncio.create_task(orch._sleep_think_ms(1000.0, lambda: sendable))
+    await asyncio.sleep(0)
+    sendable = False
+    orch._wake_think_time_sleepers()
+    await asyncio.wait_for(task, timeout=1.0)

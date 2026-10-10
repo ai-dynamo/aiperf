@@ -61,6 +61,7 @@ import asyncio
 import time
 import uuid
 from collections import Counter, deque
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -1588,19 +1589,55 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         next_meta = self.conversation_source.get_next_turn_metadata(credit)
         turn = TurnToSend.from_previous_credit(credit, next_meta)
 
-        coro = (
-            self._issue_child_continuation_or_drain(turn)
-            if turn.agent_depth > 0
-            else self.credit_issuer.issue_credit(turn)
-        )
-        if next_meta.delay_ms is not None and next_meta.delay_ms > 0:
-            self.scheduler.schedule_later(
-                next_meta.delay_ms / MILLIS_PER_SECOND,
-                coro,
-                group_id=credit.effective_root_correlation_id,
+        if next_meta.delay_ms is None or next_meta.delay_ms <= 0:
+            if turn.agent_depth > 0:
+                await self._issue_child_continuation_or_drain(turn)
+            else:
+                await self.credit_issuer.issue_credit(turn)
+            return
+        delay_s = next_meta.delay_ms / MILLIS_PER_SECOND
+        if turn.agent_depth > 0:
+            self._schedule_child_turn(
+                delay_s, turn, self._issue_child_continuation_or_drain
             )
         else:
-            await coro
+            self.scheduler.schedule_later(
+                delay_s,
+                self.credit_issuer.issue_credit(turn),
+                group_id=credit.effective_root_correlation_id,
+            )
+
+    def _schedule_child_turn(
+        self,
+        delay_s: float,
+        turn: TurnToSend,
+        dispatch: Callable[[TurnToSend], Awaitable[object]],
+    ) -> None:
+        """Schedule a DAG child turn so a cutoff-cancelled timer still stops the child.
+
+        The child is parked with the branch orchestrator until the timer
+        fires; if ``PhaseRunner`` cancels the timer at the sending cutoff
+        instead, ``expire_replay_deadlines`` stops the child so its parent and
+        tree can drain.
+        """
+        if self.branch_orchestrator is not None:
+            self.branch_orchestrator.park_child_turn(turn.x_correlation_id)
+        self.scheduler.schedule_later(
+            delay_s,
+            self._dispatch_parked_child_turn(turn, dispatch),
+            group_id=turn.effective_root_correlation_id,
+        )
+
+    async def _dispatch_parked_child_turn(
+        self,
+        turn: TurnToSend,
+        dispatch: Callable[[TurnToSend], Awaitable[object]],
+    ) -> None:
+        if (
+            self.branch_orchestrator is None
+            or self.branch_orchestrator.unpark_child_turn(turn.x_correlation_id)
+        ):
+            await dispatch(turn)
 
     async def _spawn_from_recycle_or_id(
         self,
@@ -1830,12 +1867,18 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             delay_s = (
                 offset_by_corr[state.x_correlation_id] - t0_offset_ms
             ) / MILLIS_PER_SECOND
-            if delay_s > 0:
+            if delay_s > 0 and state.agent_depth > 0:
+                self._schedule_child_turn(
+                    delay_s, turn, self._issue_child_continuation_or_drain
+                )
+            elif delay_s > 0:
                 self.scheduler.schedule_later(
                     delay_s,
                     self.credit_issuer.issue_credit(turn),
                     group_id=turn.effective_root_correlation_id,
                 )
+            elif state.agent_depth > 0:
+                await self._issue_child_continuation_or_drain(turn)
             else:
                 await self.credit_issuer.issue_credit(turn)
 
