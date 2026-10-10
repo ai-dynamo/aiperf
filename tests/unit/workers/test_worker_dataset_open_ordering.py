@@ -9,8 +9,9 @@ its WorkerGroupManager, which starts on that same notification. Every worker
 died with "Data file not found" and the run failed at 'Configure Profiling'.
 """
 
+import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -20,8 +21,9 @@ from aiperf.common.messages import (
     DatasetDownloadedNotification,
 )
 from aiperf.common.models.dataset_models import DatasetMetadata, MemoryMapClientMetadata
-from aiperf.plugin.enums import DatasetSamplingStrategy
+from aiperf.plugin.enums import DatasetSamplingStrategy, PluginType
 from aiperf.workers.worker import Worker
+from tests.harness import mock_plugin
 
 
 def _metadata(tag: str) -> MemoryMapClientMetadata:
@@ -145,3 +147,48 @@ async def test_download_before_config_warning_names_the_real_recovery_path() -> 
     message = warnings[0]
     assert "_retry_group_dataset_state_until_ready" in message
     assert "the configuration will open the client" not in message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("group_managed", [False, True])  # fmt: skip
+@pytest.mark.parametrize("fail", [False, True])  # fmt: skip
+async def test_worker_dispatchability_waits_for_dataset_initialization(
+    group_managed: bool, fail: bool
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowStore:
+        def __init__(self, client_metadata: MemoryMapClientMetadata) -> None:
+            pass
+
+        async def initialize(self) -> None:
+            entered.set()
+            await release.wait()
+            if fail:
+                raise RuntimeError("dataset open failed")
+
+    worker = MagicMock(spec=Worker)
+    worker._is_group_managed_mode.return_value = group_managed
+    worker._dataset_configured_event = asyncio.Event()
+    worker._mark_worker_ready = AsyncMock()
+    metadata = _metadata("local")
+    with mock_plugin(PluginType.DATASET_CLIENT_STORE, metadata.client_type, SlowStore):
+        opening = asyncio.create_task(Worker._open_dataset_client(worker, metadata))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            assert not worker._dataset_configured_event.is_set()
+            worker._mark_worker_ready.assert_not_awaited()
+            release.set()
+            if fail:
+                with pytest.raises(RuntimeError, match="dataset open failed"):
+                    await opening
+                assert not worker._dataset_configured_event.is_set()
+                worker._mark_worker_ready.assert_not_awaited()
+            else:
+                await opening
+                assert worker._dataset_configured_event.is_set()
+                worker._mark_worker_ready.assert_awaited_once()
+        finally:
+            release.set()
+            await asyncio.gather(opening, return_exceptions=True)

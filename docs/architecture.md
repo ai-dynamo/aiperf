@@ -118,6 +118,13 @@ Workers are the processes that send HTTP requests to the inference server and me
 - No coordination between workers
 - Adding more workers increases load capacity and request rates
 
+Workers announce connectivity before dataset initialization. They enter the
+credit routing pool only after their dataset opens, in both local and Kubernetes
+modes. Until then, the router excludes them from stale-worker eviction. Dataset
+opening and page preloading run in a background thread so that initialization
+does not occupy the worker event loop. Existing startup timeouts still bound
+initialization, and heartbeat eviction still applies to dispatchable workers.
+
 ### Record Processor
 
 The Record Processor processes and interprets the responses received from the inference server during benchmarking.

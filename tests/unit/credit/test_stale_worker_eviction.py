@@ -25,7 +25,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.enums import CreditPhase
-from aiperf.credit.messages import CreditReturn, WorkerDispatchable, WorkerShutdown
+from aiperf.credit.messages import (
+    CreditReturn,
+    WorkerConnected,
+    WorkerDispatchable,
+    WorkerShutdown,
+)
 from aiperf.credit.sticky_router import StickyCreditRouter, WorkerLoad, _StickyEntry
 from aiperf.credit.structs import Credit
 
@@ -538,3 +543,19 @@ class TestDelayedSweepIsNotEvidenceOfWorkerDeath:
         await router._evict_stale_workers_task()
 
         assert router._last_stale_sweep_ns is None
+
+
+@pytest.mark.asyncio
+async def test_initializing_worker_is_not_subject_to_stale_eviction() -> None:
+    router = _router(workers={})
+    await router._handle_router_message("w-1", WorkerConnected(worker_id="w-1"))
+    with patch("aiperf.credit.sticky_router.time.monotonic_ns", return_value=10**18):
+        assert router.evict_stale_workers(stale_after_s=30.0) == []
+        assert "w-1" in router._connected_workers
+        assert "w-1" not in router._workers
+        await router._handle_router_message("w-1", WorkerDispatchable(worker_id="w-1"))
+        assert router.evict_stale_workers(stale_after_s=30.0) == []
+    with patch(
+        "aiperf.credit.sticky_router.time.monotonic_ns", return_value=10**18 + 31 * NS
+    ):
+        assert router.evict_stale_workers(stale_after_s=30.0) == ["w-1"]
