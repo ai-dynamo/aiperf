@@ -252,7 +252,11 @@ class TestVLLMSpecDecodeAdapter:
             # Signature keys present (so can_adapt matches) but the rest of the
             # required body is missing.
             param(
-                {"acceptance_histogram": [0, 1], "num_spec_steps": 1},
+                {
+                    "acceptance_histogram": [0, 1],
+                    "num_spec_steps": 1,
+                    "mean_acceptance_length": 2.0,
+                },
                 id="signature_only_missing_rest",
             ),
             param(

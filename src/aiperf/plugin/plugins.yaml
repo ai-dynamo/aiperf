@@ -622,6 +622,19 @@ custom_dataset_loader:
       is_trace: true
       default_block_size: 512
 
+  h_cua_perf:
+    class: aiperf.dataset.loader.h_cua_perf_file:HCuaPerfFileLoader
+    description: |
+      H CUA Perf computer-use agent traces read from a local build: <name>.jsonl.zst
+      beside its <name>.meta.json manifest, e.g. a variant derived from
+      Hcompany/h_cua_perf with the dataset's trace_processor.py. Same records
+      and replay as the h_cua_perf public dataset, minus its --dataset-filter
+      knobs: a derived build already carries its shape. Never auto-detected;
+      select it by name.
+      Usage: --input-file ./build/h_cua.jsonl.zst --custom-dataset-type h_cua_perf
+    metadata:
+      is_trace: true
+
   raw_payload:
     class: aiperf.dataset.loader.raw_payload:RawPayloadDatasetLoader
     description: |
@@ -1443,6 +1456,21 @@ spec_decode_adapter:
       engine-neutral SpecDecodeAcceptanceRecord. Handles chat and completions,
       streaming and non-streaming; inflates the dense ``acceptance_histogram``
       list into the record's sparse map.
+    metadata: {}
+
+  tensorrt_llm:
+    class: aiperf.spec_decode.trtllm_adapter:TRTLLMSpecDecodeAdapter
+    description: |
+      Reads TensorRT-LLM's per-choice ``speculative_decoding`` object (emitted
+      when the server sets ``per_request_spec_decode_stats``) and fills the
+      engine-neutral
+      SpecDecodeAcceptanceRecord. Handles chat and completions, streaming and
+      non-streaming. Derives mean acceptance length from the counts, since
+      TRT-LLM does not report it (its ``avg_decoded_tokens_per_iter`` averages
+      over all decoding iterations, not just drafting steps).
+      Declaration order here is not a detection mechanism: adapters are
+      distinguished by disjoint payload signatures, and the parser rejects a
+      payload that more than one adapter claims.
     metadata: {}
 
 accuracy_grader:

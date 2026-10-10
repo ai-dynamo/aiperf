@@ -22,6 +22,7 @@ from pydantic import (
     field_validator,
     model_serializer,
 )
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic.functional_validators import AfterValidator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -683,19 +684,20 @@ class TextResponse:
             return None
 
 
-@dataclass(slots=True)
+# Nested stdlib dataclasses ignore byte encoding settings; use Pydantic here.
+# Reject extra fields so response unions cannot select the wrong dataclass.
+@pydantic_dataclass(
+    slots=True,
+    config=ConfigDict(extra="forbid", ser_json_bytes="base64", val_json_bytes="base64"),
+)
 class BinaryResponse:
     """Raw binary response from an inference client for non-text content types."""
-
-    # Reject extra fields so Pydantic's union discrimination (e.g. in
-    # RequestRecord.responses) doesn't match the wrong dataclass type.
-    __pydantic_config__ = ConfigDict(extra="forbid")
 
     perf_ns: int
     """The performance timestamp of the response in nanoseconds (perf_counter_ns)."""
 
     raw_bytes: bytes
-    """The raw binary body of the response."""
+    """The original response bytes; JSON encodes them as URL-safe base64."""
 
     content_type: str | None = None
     """The content type of the response. e.g. 'video/mp4', 'application/octet-stream'."""
