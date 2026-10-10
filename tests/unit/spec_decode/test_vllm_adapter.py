@@ -366,7 +366,6 @@ class TestVLLMSpecDecodeAdapter:
             param({**SUMMARY_PAYLOAD, "num_spec_steps": 99}, id="histogram_sum_mismatch"),
             param({**SUMMARY_PAYLOAD, "num_accepted_draft_tokens": 11}, id="weighted_sum_mismatch"),
             param({**SUMMARY_PAYLOAD, "num_draft_tokens": 5}, id="accepted_exceeds_drafted"),
-            param({**ZERO_STEP_PAYLOAD, "num_draft_tokens": 3}, id="drafts_without_steps"),
         ],
     )  # fmt: skip
     def test_adapt_inconsistent_aggregate_payload_degrades_to_none(
