@@ -753,19 +753,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
 
-        # Dispatchability gate. The worker announces WorkerConnected as soon as
-        # its return path is up. In group-managed (Kubernetes) mode it defers
-        # WorkerDispatchable until a pod-local dataset is actually open: the
-        # dataset arrives via two one-shot broadcasts (DATASET_CONFIGURED then
-        # DATASET_DOWNLOADED), and a pod whose containers subscribe after those
-        # fire would otherwise sit in the routing pool failing every credit.
-        # _dataset_state_retry_task polls the pod's WorkerGroupManager so a
-        # missed broadcast self-heals instead of wedging the run.
-        #
-        # Locally there is no such deferral -- both announcements go out at
-        # @on_start, because credits cannot arrive before PROFILE_CONFIGURE,
-        # which itself blocks on _dataset_configured_event. The event below
-        # exists so the transition is sent exactly once on either path.
+        # Keep initializing workers out of routing and stale-worker eviction.
+        # Group-managed workers also poll for missed dataset broadcasts.
         self._worker_ready_event = asyncio.Event()
         self._worker_ready_lock = asyncio.Lock()
         self._dataset_state_retry_task: asyncio.Task[None] | None = None
@@ -802,14 +791,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         to distinguish "worker pod still coming up" from "worker pod wedged";
         in single-node mode they are two extra bus publishes at startup.
 
-        WorkerConnected and WorkerDispatchable are separate messages so the
-        router can distinguish "identity registered" from "in the routing
-        pool". In group-managed (Kubernetes) mode the pod-local dataset does
-        not exist yet at this point, and a worker without a dataset fails
-        every credit routed to it, so dispatchability is deferred until the
-        dataset opens. Locally both are sent here, because credits cannot
-        reach a worker before PROFILE_CONFIGURE, which itself blocks on
-        ``_dataset_configured_event``.
+        WorkerConnected announces connectivity. WorkerDispatchable is deferred
+        until the dataset opens in every mode, so dataset initialization cannot
+        make an idle worker look stale to the credit router.
         """
         await self._publish_startup_state(WorkerStartupState.STARTING)
         await self.credit_dealer_client.send(WorkerConnected(worker_id=self.service_id))
@@ -847,7 +831,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
             return
 
-        await self._mark_worker_ready()
+        if self._dataset_configured_event.is_set():
+            await self._mark_worker_ready()
+        else:
+            await self._publish_startup_state(WorkerStartupState.WAITING_FOR_DATASET)
 
     def _is_group_managed_mode(self) -> bool:
         """Check if a WorkerGroupManager owns this worker's startup lifecycle."""
@@ -1249,12 +1236,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.debug(
             lambda: f"Dataset client initialized: type={client_metadata.client_type}"
         )
-        # A worker in group-managed mode is held out of the routing pool until
-        # a dataset is open. This is the broadcast path reaching that point;
-        # the poll in _retry_group_dataset_state_until_ready is the fallback
-        # for when the broadcast was missed. Both converge on the same latch,
-        # which is idempotent.
-        if self._is_group_managed_mode() and mark_ready:
+        if mark_ready:
             await self._mark_worker_ready()
 
     @on_stop
