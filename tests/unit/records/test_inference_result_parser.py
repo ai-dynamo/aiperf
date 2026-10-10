@@ -12,11 +12,14 @@ from aiperf.common.models import (
     ErrorDetails,
     ParsedResponse,
     RequestRecord,
+    SpecDecodeAcceptanceRecord,
     TextResponse,
     TextResponseData,
     Usage,
 )
 from aiperf.endpoints.openai_chat import ChatEndpoint
+from aiperf.plugin.enums import PluginType
+from tests.harness import mock_plugin
 from tests.unit.records.conftest import (
     create_invalid_record,
     create_test_request_info,
@@ -1133,3 +1136,155 @@ class TestSpecDecodeRequestCardinality:
             server_token_parser, self._with_n(request_record, 2), spy_tokenizer
         )
         assert result.spec_decode_acceptance is None
+
+
+@pytest.mark.asyncio
+class TestSpecDecodeZeroStepRecords:
+    """A record exists only for a request that speculated, on every engine.
+
+    vLLM always serializes its per-request accumulator, so a request that never
+    ran a verify step (``max_tokens: 1``, EOS first, an NGram drafter that never
+    matched) arrives with a zero-step payload; TensorRT-LLM omits the payload in
+    the same situation. The parser normalizes both to an absent record so the
+    per-request means cover only requests that speculated, and flags the
+    request so the run can still count it.
+    """
+
+    ZERO_STEP_VLLM_PAYLOAD = {
+        "mean_acceptance_length": 1.0,
+        "draft_acceptance_rate": 0.0,
+        "acceptance_histogram": [0, 0, 0, 0],
+        "num_spec_steps": 0,
+        "num_accepted_draft_tokens": 0,
+        "num_draft_tokens": 0,
+        "num_spec_tokens": 3,
+        "per_step_accepted": None,
+        "per_step_drafted": None,
+    }
+
+    FULLY_REJECTED_VLLM_PAYLOAD = {
+        "mean_acceptance_length": 1.0,
+        "draft_acceptance_rate": 0.0,
+        "acceptance_histogram": [5, 0, 0, 0],
+        "num_spec_steps": 5,
+        "num_accepted_draft_tokens": 0,
+        "num_draft_tokens": 15,
+        "num_spec_tokens": 3,
+    }
+
+    class _ZeroStepAdapter:
+        """A non-vLLM engine that, like vLLM, reports requests that never drafted."""
+
+        @classmethod
+        def can_adapt(cls, responses: list[ParsedResponse]) -> bool:
+            return any(
+                (r.spec_decode_stats or {}).get("zero_step_engine") for r in responses
+            )
+
+        @classmethod
+        def adapt(cls, responses: list[ParsedResponse]) -> SpecDecodeAcceptanceRecord:
+            return SpecDecodeAcceptanceRecord(
+                engine="zero_step_engine",
+                mean_acceptance_length=1.0,
+                draft_acceptance_rate=0.0,
+                acceptance_histogram={},
+                num_spec_steps=0,
+                num_accepted_draft_tokens=0,
+                num_draft_tokens=0,
+                num_spec_tokens=3,
+            )
+
+    @staticmethod
+    async def _parse(parser, request_record, payload: dict | None):
+        setup_parser_responses(
+            parser,
+            [
+                ParsedResponse(perf_ns=1, spec_decode_stats=payload),
+                make_parsed_response(prompt_tokens=10, completion_tokens=1),
+            ],
+        )
+        return await parser.process_valid_record(request_record)
+
+    async def test_process_valid_record_zero_step_payload_drops_record_and_flags(
+        self, server_token_parser, request_record
+    ):
+        result = await self._parse(
+            server_token_parser, request_record, self.ZERO_STEP_VLLM_PAYLOAD
+        )
+
+        assert result.spec_decode_acceptance is None
+        assert result.spec_decode_zero_step is True
+
+    async def test_process_valid_record_zero_step_from_any_adapter_drops_record(
+        self, server_token_parser, request_record
+    ):
+        """The drop lives in the parser, so an adapter need not repeat the rule."""
+        with mock_plugin(
+            PluginType.SPEC_DECODE_ADAPTER, "zero_step_engine", self._ZeroStepAdapter
+        ):
+            result = await self._parse(
+                server_token_parser, request_record, {"zero_step_engine": True}
+            )
+
+        assert result.spec_decode_acceptance is None
+        assert result.spec_decode_zero_step is True
+
+    async def test_process_valid_record_fully_rejected_payload_keeps_record(
+        self, server_token_parser, request_record
+    ):
+        result = await self._parse(
+            server_token_parser, request_record, self.FULLY_REJECTED_VLLM_PAYLOAD
+        )
+
+        record = result.spec_decode_acceptance
+        assert record is not None
+        assert record.num_spec_steps == 5
+        assert record.acceptance_histogram == {0: 5}
+        assert record.mean_acceptance_length == 1.0
+        assert record.draft_acceptance_rate == 0.0
+        assert result.spec_decode_zero_step is False
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            param(None, id="spec_decode_off"),
+            param({**ZERO_STEP_VLLM_PAYLOAD, "num_draft_tokens": 3}, id="drafts_without_steps"),
+        ],
+    )  # fmt: skip
+    async def test_process_valid_record_without_clean_zero_step_is_not_flagged(
+        self, server_token_parser, request_record, payload
+    ):
+        """Only a clean zero-step payload counts as "never speculated": spec
+        decode off has no payload, and drafts without steps is malformed."""
+        result = await self._parse(server_token_parser, request_record, payload)
+
+        assert result.spec_decode_acceptance is None
+        assert result.spec_decode_zero_step is False
+
+    async def test_process_valid_record_drafts_without_steps_warns(
+        self, server_token_parser, request_record, caplog
+    ):
+        payload = {**self.ZERO_STEP_VLLM_PAYLOAD, "num_draft_tokens": 3}
+        with caplog.at_level(logging.WARNING):
+            await self._parse(server_token_parser, request_record, payload)
+
+        assert any(
+            r.levelno == logging.WARNING and "malformed" in r.getMessage()
+            for r in caplog.records
+        )
+
+    async def test_process_valid_record_zero_step_drop_logs_below_warning(
+        self, server_token_parser, request_record, caplog
+    ):
+        # The fixture mocks the parser's own log methods; adapters and the
+        # detection path log through module loggers, which caplog sees.
+        with caplog.at_level(logging.WARNING):
+            await self._parse(
+                server_token_parser, request_record, self.ZERO_STEP_VLLM_PAYLOAD
+            )
+
+        assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+        server_token_parser.warning.assert_not_called()
+        server_token_parser.error.assert_not_called()
+        messages = [c.args[0]() for c in server_token_parser.debug.call_args_list]
+        assert any("zero-step" in m for m in messages)

@@ -374,16 +374,36 @@ class InferenceResultParser(CommunicationMixin):
         else:
             token_counts = TokenCounts()
 
+        spec_decode_acceptance = self._extract_spec_decode_acceptance(
+            resp,
+            self._spec_decode_warned,
+            num_choices=inputs.num_choices if inputs is not None else 1,
+        )
+        # A record exists only for a request that speculated. vLLM sends a
+        # payload even when no verify step ran (max_tokens: 1, EOS first, an
+        # NGram drafter that never matched) while TensorRT-LLM sends none;
+        # counting it would add AL 1.0 / rate 0% to the per-request means. The
+        # flag keeps the request countable, so "never speculated" stays
+        # distinguishable from "spec decode off".
+        spec_decode_zero_step = (
+            spec_decode_acceptance is not None
+            and spec_decode_acceptance.num_spec_steps == 0
+        )
+        if spec_decode_zero_step:
+            engine = spec_decode_acceptance.engine
+            self.debug(
+                lambda: f"Dropping zero-step {engine} spec-decode record: "
+                "the request never ran a verify step"
+            )
+            spec_decode_acceptance = None
+
         return ParsedResponseRecord(
             request=request_record,
             responses=resp,
             token_counts=token_counts,
             media_counts=media_counts or MediaCounts(),
-            spec_decode_acceptance=self._extract_spec_decode_acceptance(
-                resp,
-                self._spec_decode_warned,
-                num_choices=inputs.num_choices if inputs is not None else 1,
-            ),
+            spec_decode_acceptance=spec_decode_acceptance,
+            spec_decode_zero_step=spec_decode_zero_step,
         )
 
     @staticmethod
@@ -400,6 +420,9 @@ class InferenceResultParser(CommunicationMixin):
         that actually have stats. Otherwise walks registered adapters in
         priority order and uses the first whose ``can_adapt`` recognizes the
         payload -- mirroring custom-dataset-loader auto-detection.
+
+        Returns zero-step records as adapted; ``process_valid_record`` drops
+        them engine-neutrally, so no adapter has to repeat that rule.
 
         Suppresses the record for any ``n > 1`` request: the per-request record
         can't attribute request-level ``completion_tokens`` to a single
