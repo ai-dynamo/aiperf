@@ -89,11 +89,11 @@ DAG that failed to drain (worker crash, protocol mismatch, bug).
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import math
 import time
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -314,11 +314,12 @@ class BranchOrchestrator:
         self._overlap_dispatched_branches: set[tuple[str, str]] = set()
         self._fail_fast = Environment.DAG.FAIL_FAST
         self._cleaning_up: bool = False
-        # Set by cleanup() and at the sending cutoff (expire_replay_deadlines) so
-        # a think-time sleep returns early: once sending stops, the gated turn it
-        # precedes is refused anyway, so waiting out a (possibly large, sampled)
-        # interval would only delay sending-complete and shutdown.
-        self._think_time_interrupt: asyncio.Event = asyncio.Event()
+        # Pulsed (set, then replaced) by cleanup() and at the sending cutoff
+        # (expire_replay_deadlines) to wake think-time sleepers. A woken sleeper
+        # returns early only if its gated turn would now be refused; otherwise it
+        # keeps its authored pacing (e.g. a nested spine still running its rounds
+        # after --num-conversations stops root sending).
+        self._think_time_wake: asyncio.Event = asyncio.Event()
         # SPAWN children whose recorded first request starts after the branch
         # spawn dispatch through the shared replay scheduler (see
         # _start_delayed_first_turn), so the system-idle cap can advance those
@@ -1684,11 +1685,11 @@ class BranchOrchestrator:
         condition is also complete. This preserves the two-condition join
         state machine without leaving cancelled timers as phantom DAG work.
         Delayed child dispatches cancelled at the same boundary are rolled
-        back first so the joins they gated can drain. Think-time sleeps are
-        interrupted before any join is released here: the gated turns they
-        precede can no longer be sent.
+        back first so the joins they gated can drain. Think-time sleepers are
+        woken before any join is released here; each returns at once if its
+        gated turn would now be refused and otherwise keeps its think-time.
         """
-        self._think_time_interrupt.set()
+        self._wake_think_time_sleepers()
         await self._abandon_delayed_children()
         releasable: list[PendingBranchJoin] = []
         for parent_corr, pending in list(self._active_joins.items()):
@@ -1837,17 +1838,41 @@ class BranchOrchestrator:
             credit.conversation_id, credit.x_correlation_id, 0, median_ms
         )
         if think_ms > 0.0 and math.isfinite(think_ms):
-            await self._sleep_think_ms(think_ms / 1000.0)
+            # Round 0's branches are child dispatches, so they share the child gate.
+            await self._sleep_think_ms(
+                think_ms / 1000.0, self._issuer.can_dispatch_child_turn
+            )
 
-    async def _sleep_think_ms(self, seconds: float) -> None:
-        """Sleep for ``seconds``, but return early once the phase stops sending
-        or ``cleanup()`` fires -- so a duration cutoff or shutdown interrupts a
-        pending think-time instead of waiting out the full (possibly large
-        sampled) interval."""
-        # TimeoutError == the full think-time elapsed without an interrupt: the
-        # normal path, so suppress it and return.
-        with contextlib.suppress(TimeoutError):
-            await asyncio.wait_for(self._think_time_interrupt.wait(), timeout=seconds)
+    def _wake_think_time_sleepers(self) -> None:
+        """Wake every in-flight think-time sleep so it re-checks its turn.
+
+        Replaces the event so a sleeper that keeps waiting can be woken again.
+        """
+        wake, self._think_time_wake = self._think_time_wake, asyncio.Event()
+        wake.set()
+
+    async def _sleep_think_ms(
+        self, seconds: float, still_sendable: Callable[[], bool]
+    ) -> None:
+        """Sleep for ``seconds`` unless the turn it precedes would be refused.
+
+        Returns at once when ``still_sendable()`` is False (before sleeping, or
+        when woken by the sending cutoff) or ``cleanup()`` has run, so a
+        duration / request-count / cancel cutoff does not wait out a refused
+        turn's (possibly large, sampled) think-time. A turn that is still
+        sendable when woken -- a nested spine's join after --num-conversations
+        stops root sending -- keeps the rest of its think-time.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + seconds
+        while not self._cleaning_up and still_sendable():
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                return
+            try:
+                await asyncio.wait_for(self._think_time_wake.wait(), timeout=remaining)
+            except TimeoutError:
+                return
 
     async def _release_blocked_join(self, pending: PendingBranchJoin) -> None:
         """Dispatch the parent's gated turn and update stats."""
@@ -1858,7 +1883,10 @@ class BranchOrchestrator:
         # and before the gated turn fires (which releases the next round).
         think_ms = self._resolve_think_ms(pending)
         if think_ms > 0.0 and math.isfinite(think_ms):
-            await self._sleep_think_ms(think_ms / 1000.0)
+            await self._sleep_think_ms(
+                think_ms / 1000.0,
+                lambda: self._issuer.can_dispatch_join(pending.parent_agent_depth),
+            )
         result = ChildDispatchResult.normalize(
             await self._issuer.dispatch_join_turn(pending)
         )
@@ -2071,7 +2099,7 @@ class BranchOrchestrator:
         if self._cleaning_up:
             return
         self._cleaning_up = True
-        self._think_time_interrupt.set()  # interrupt any in-flight think-time sleep
+        self._wake_think_time_sleepers()
         self._drain_observer = None
         for task in self._delayed_dispatch_tasks.values():
             task.cancel()

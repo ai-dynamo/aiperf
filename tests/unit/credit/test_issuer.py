@@ -10,6 +10,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.dispatch import ChildDispatchResult, TurnAdmission
@@ -526,6 +527,35 @@ class TestStopConditionChecking:
         call_args = mock_concurrency.acquire_prefill_slot.call_args
         check_fn = call_args[0][1]  # Second positional arg is the check function
         assert check_fn == mock_stop_checker.can_send_any_turn
+
+    @pytest.mark.parametrize(
+        "depth,any_turn,child_turn,expected",
+        [
+            param(0, True, False, True, id="top_level_open"),
+            param(0, False, True, False, id="top_level_sending_complete"),
+            param(1, False, True, True, id="nested_after_conversation_cap"),
+            param(1, True, False, False, id="nested_duration_or_request_cap"),
+        ],
+    )  # fmt: skip
+    def test_can_dispatch_join_uses_depth_appropriate_check(
+        self, credit_issuer, mock_stop_checker, depth, any_turn, child_turn, expected
+    ):
+        mock_stop_checker.can_send_any_turn.return_value = any_turn
+        mock_stop_checker.can_send_child_turn.return_value = child_turn
+
+        assert credit_issuer.can_dispatch_join(depth) is expected
+
+    def test_can_dispatch_join_and_child_turn_false_after_stop_issuing(
+        self, credit_issuer, mock_stop_checker
+    ):
+        mock_stop_checker.can_send_any_turn.return_value = True
+        mock_stop_checker.can_send_child_turn.return_value = True
+
+        credit_issuer.stop_issuing()
+
+        assert credit_issuer.can_dispatch_join(0) is False
+        assert credit_issuer.can_dispatch_join(1) is False
+        assert credit_issuer.can_dispatch_child_turn() is False
 
 
 # =============================================================================
