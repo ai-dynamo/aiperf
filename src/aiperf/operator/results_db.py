@@ -22,6 +22,7 @@ import orjson
 import zstandard
 
 from aiperf.common.finite import is_finite_value
+from aiperf.common.results_markers import EPOCH_RE
 from aiperf.kubernetes.constants import (
     DNS_LABEL_MAX,
     DNS_LABEL_RE,
@@ -590,6 +591,10 @@ class ResultsDB:
     def _disk_summary_for(
         self, namespace: str, job_id: str, epoch: str | None
     ) -> Iterator[tuple[str, str, str, dict[str, Any]]]:
+        # resolve_run_dir also honors the "latest" alias, but the index filters
+        # on the literal epoch, so the alias must not select a run here either.
+        if epoch is not None and not EPOCH_RE.match(epoch):
+            return
         run_path = resolve_run_dir(self._results_dir, namespace, job_id, epoch)
         if run_path is None or not run_path.resolve().is_relative_to(
             self._results_dir.resolve()

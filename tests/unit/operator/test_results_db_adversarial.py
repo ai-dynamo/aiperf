@@ -979,8 +979,7 @@ class TestResultsDBCompareAndFilters:
 
         A ready-marked summary planted one level above the root would be
         reachable through ``resolve_run_dir`` if request-supplied segments were
-        trusted; the old walk never had this exposure because it only used
-        names read from the filesystem.
+        trusted.
         """
         base = tmp_path / "results"
         _write_run_artifact(base, "bench-prod", "inside-bench-1a2b", _EPOCH_NEW)
@@ -998,6 +997,47 @@ class TestResultsDBCompareAndFilters:
 
         assert rows == []
         assert opened == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "method_name,kwargs",
+        [
+            param(
+                "leaderboard",
+                {"metric": "request_throughput", "stat": "avg"},
+                id="leaderboard",
+            ),
+            param(
+                "history",
+                {"metric": "request_throughput", "stat": "avg"},
+                id="history",
+            ),
+            param(
+                "compare",
+                {"job_ids": ["bench-prod/llama-latest-alias-bench-7f2a"]},
+                id="compare",
+            ),
+        ],
+    )  # fmt: skip
+    async def test_latest_epoch_alias_selects_nothing_on_disk_like_the_index(
+        self,
+        tmp_path: Path,
+        method_name: str,
+        kwargs: dict[str, object],
+    ) -> None:
+        """``epoch="latest"`` must not depend on whether the catalog is complete.
+
+        The index filters on the literal epoch and matches nothing; the disk
+        path must agree instead of honoring ``resolve_run_dir``'s alias.
+        """
+        base = tmp_path / "results"
+        _write_run_artifact(
+            base, "bench-prod", "llama-latest-alias-bench-7f2a", _EPOCH_NEW
+        )
+
+        rows = await getattr(ResultsDB(base), method_name)(**kwargs, epoch="latest")
+
+        assert rows == []
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
