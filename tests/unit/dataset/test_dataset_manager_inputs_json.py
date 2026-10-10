@@ -4,8 +4,10 @@
 Unit tests for DatasetManager._generate_inputs_json_file method.
 """
 
+import asyncio
 import json
 import logging
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -330,3 +332,32 @@ class TestDatasetManagerInputsJsonGeneration:
         client.endpoint.format_payload.assert_not_called()
         call_args = client.transport.send_request.call_args
         assert call_args.kwargs["payload"] == exported_payload
+
+
+@pytest.mark.asyncio
+async def test_inputs_serialization_runs_off_event_loop(
+    populated_dataset_manager, capture_file_writes, monkeypatch
+) -> None:
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    started = asyncio.Event()
+    release = threading.Event()
+    original = InputsFile.model_dump
+
+    def slow_dump(self: InputsFile, **kwargs) -> dict:
+        assert threading.get_ident() != loop_thread
+        loop.call_soon_threadsafe(started.set)
+        assert release.wait(timeout=5)
+        return original(self, **kwargs)
+
+    monkeypatch.setattr(InputsFile, "model_dump", slow_dump)
+    task = asyncio.create_task(populated_dataset_manager._generate_inputs_json_file())
+    try:
+        await asyncio.wait_for(started.wait(), timeout=2)
+        assert not task.done()
+        release.set()
+        await task
+        _validate_inputs_file_structure(json.loads(capture_file_writes.written_content))
+    finally:
+        release.set()
+        await asyncio.gather(task, return_exceptions=True)
