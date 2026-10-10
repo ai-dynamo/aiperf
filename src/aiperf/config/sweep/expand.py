@@ -496,7 +496,7 @@ def _promote_prompt_shorthand_means(body: dict[str, Any], paths: Iterable[str]) 
 def _resolve_prompt_shorthand_path(
     dataset: dict[str, Any], keys: list[str]
 ) -> list[str]:
-    """Keep prompt sweeps on their raw source, honoring normalization precedence."""
+    """Route prompt sweeps to their raw source, promoting scalar means in place."""
     prompts = dataset.get("prompts", {})
     if (
         len(keys) < 2
@@ -518,6 +518,7 @@ def _resolve_prompt_shorthand_path(
         # A mean override replaces the fixed scalar with a normal distribution.
         dataset[field] = {"mean": shorthand}
         return keys[1:]
+    # Keep precedence aligned with loader.normalizers._hoist_synthetic_prompt_fields.
     # Explicit prompts win; omitted distribution fields inherit shorthand.
     if (
         field not in prompts
@@ -575,6 +576,8 @@ def _resolve_shorthand_path(data: dict, path: str) -> list[str]:
             return keys
         match = _find_phase_or_recipe_alias(entries, keys[1], parent_key="phases")
         if match is None:
+            if isinstance(phases, dict) and not keys[1].isdigit():
+                return keys
             _raise_named_list_resolution_error(
                 path, keys[1], entries, parent_key="phases"
             )

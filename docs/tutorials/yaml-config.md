@@ -407,9 +407,12 @@ The `parameters:` keys are dot-paths into the `benchmark:` body. For phase lists
 - `phases.profiling.rate` → the phase named `profiling`, or the unique profiling-kind phase when unambiguous
 - `datasets.default.prompts.isl` → the dataset named `default` (the singular `dataset:` shorthand auto-names it `default`)
 
-The same named paths work with the singular `dataset:` and single mapping-shaped
-`phases:` forms. Jinja expressions can keep referencing the shorthand fields;
-for example, `{{ dataset.entries }}` still refers to the sole dataset.
+The same named paths work with the singular `dataset:`, single mapping-shaped
+`phases:`, and top-level `warmup:`/`profiling:` forms. For example,
+`phases.warmup.concurrency` targets the top-level `warmup:` block. Flat `phases:`
+mappings also retain direct nested paths such as `phases.concurrency_ramp.duration`.
+Jinja expressions can keep referencing the shorthand fields; for example,
+`{{ dataset.entries }}` still refers to the sole dataset.
 For synthetic `dataset:` inputs that use top-level `isl` or `osl`, canonical
 `datasets.default.prompts.*` sweep paths update that shorthand so references such
 as `{{ dataset.isl }}` see each swept value. Explicit `prompts` fields take

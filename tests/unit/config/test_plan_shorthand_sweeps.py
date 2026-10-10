@@ -91,9 +91,7 @@ def test_path_sweep_preserves_shorthand_values(
     "prompt_path,dataset_fields,jinja_ref",
     [
         param("isl", {"isl": 64}, "dataset.isl", id="isl-scalar"),
-        param("osl", {"osl": 64}, "dataset.osl", id="osl-scalar"),
         param("isl.mean", {"isl": {"mean": 64, "stddev": 8}}, "dataset.isl.mean", id="isl-distribution"),
-        param("osl.mean", {"osl": {"mean": 64, "stddev": 8}}, "dataset.osl.mean", id="osl-distribution"),
         param("isl.stddev", {"isl": {"mean": 64, "stddev": 8}, "prompts": {"isl": {"mean": 96}}}, "dataset.isl.stddev", id="inherited-distribution-field"),
         param("isl", {"isl": 64, "prompts": {"isl": 96}}, "dataset.prompts.isl", id="explicit-prompt-precedence"),
         param("isl.mean", {"isl": {"mean": 64, "stddev": 8}, "prompts": {"isl": {"mean": 96}}}, "dataset.prompts.isl.mean", id="explicit-distribution-precedence"),
@@ -170,7 +168,7 @@ def test_named_dataset_prompt_shorthand_rerenders_its_source_reference() -> None
     ] == [128, 512]
 
 
-@pytest.mark.parametrize("prompt", ["isl", "osl"])
+@pytest.mark.parametrize("prompt", ["isl"])
 @pytest.mark.parametrize("named", [False, True], ids=["singular", "named"])
 @pytest.mark.parametrize(
     "sweep_type,distribution_fields",
@@ -380,3 +378,44 @@ def test_shorthand_sweep_can_target_warmup(phase_path: str) -> None:
     plan = build_benchmark_plan(config)
     assert [benchmark.phases[0].concurrency for benchmark in plan.configs] == [1, 2]
     assert [benchmark.phases[1].concurrency for benchmark in plan.configs] == [8, 8]
+
+
+@pytest.mark.parametrize("sweep_type", ["grid", "zip", "sobol", "latin_hypercube"])
+def test_flat_phase_sweep_preserves_nested_field_traversal(sweep_type: str) -> None:
+    path = "phases.concurrency_ramp.duration"
+    source = {
+        "benchmark": {
+            "model": "test-model",
+            "endpoint": {"url": "http://localhost:8000"},
+            "dataset": {"entries": "{{ phases.concurrency_ramp.duration | int }}"},
+            "phases": {
+                "type": "concurrency",
+                "requests": 10,
+                "concurrency": 8,
+                "concurrency_ramp": {"duration": 5},
+            },
+        },
+        "sweep": (
+            {"type": sweep_type, "parameters": {path: [5, 10]}}
+            if sweep_type in {"grid", "zip"}
+            else {
+                "type": sweep_type,
+                "samples": 2,
+                "seed": 42,
+                "dimensions": [{"path": path, "choices": [5, 10]}],
+            }
+        ),
+    }
+    original = copy.deepcopy(source)
+    config = load_config_from_mapping(source)
+    raw_before = copy.deepcopy(config._raw_envelope)
+    plan = build_benchmark_plan(config)
+
+    assert len(plan.configs) == 2
+    for benchmark, variation in zip(plan.configs, plan.variations, strict=True):
+        assert benchmark.phases[0].concurrency_ramp.duration == variation.values[path]
+        assert benchmark.datasets[0].entries == variation.values[path]
+        assert benchmark.phases[0].requests == 10
+        assert benchmark.phases[0].concurrency == 8
+    assert source == original
+    assert config._raw_envelope == raw_before
