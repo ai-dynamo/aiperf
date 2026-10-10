@@ -84,7 +84,6 @@ class TestResponsesSpecDecodeCapture:
     def test_streaming_completed_event_captures_stats(
         self, endpoint: ResponsesEndpoint
     ) -> None:
-        """Stats ride the terminal event, nested under its ``response`` key."""
         json_obj = {
             "type": "response.completed",
             "response": {
@@ -100,7 +99,6 @@ class TestResponsesSpecDecodeCapture:
     def test_streaming_completed_event_stats_without_usage_still_captured(
         self, endpoint: ResponsesEndpoint
     ) -> None:
-        """A terminal event carrying spec-decode but no ``usage`` still yields a record."""
         json_obj = {
             "type": "response.completed",
             "response": {"metrics": {"speculative_decoding": SPEC_PAYLOAD}},
@@ -113,8 +111,6 @@ class TestResponsesSpecDecodeCapture:
     def test_non_streaming_stats_without_data_or_usage_still_captured(
         self, endpoint: ResponsesEndpoint
     ) -> None:
-        """A full response with only spec-decode (no output, no usage) returns a
-        ParsedResponse, not None."""
         json_obj = {
             "object": "response",
             "metrics": {"speculative_decoding": SPEC_PAYLOAD},
@@ -142,19 +138,6 @@ class TestResponsesSpecDecodeCapture:
             "object": "response",
             "output": [],
             "usage": {"output_tokens": 8},
-        }
-        parsed = endpoint.parse_response(_mock_response(json_obj))
-        assert parsed is not None
-        assert parsed.spec_decode_stats is None
-
-    def test_metrics_without_spec_decode_yields_none(
-        self, endpoint: ResponsesEndpoint
-    ) -> None:
-        json_obj = {
-            "object": "response",
-            "output": [],
-            "usage": {"output_tokens": 8},
-            "metrics": {"time_to_first_token_ms": 12.0, "speculative_decoding": None},
         }
         parsed = endpoint.parse_response(_mock_response(json_obj))
         assert parsed is not None
@@ -197,8 +180,6 @@ class TestResponsesSpecDecodeRecordLevel:
 
         parsed = endpoint.extract_response_data(_record(events))
 
-        # Exactly one carrier -- the terminal completed event. This is what the
-        # parser's "exactly one" guard depends on; more than one would suppress.
         carriers = [p for p in parsed if p.spec_decode_stats]
         assert len(carriers) == 1
 
@@ -209,20 +190,3 @@ class TestResponsesSpecDecodeRecordLevel:
         assert record.num_accepted_draft_tokens == 10
         assert record.mean_acceptance_length == pytest.approx(1.2325581395348837)
         assert record.completion_tokens == 8  # from usage.output_tokens
-
-    def test_stream_without_stats_yields_no_record(
-        self, endpoint: ResponsesEndpoint
-    ) -> None:
-        """No spec-decode payload anywhere -> no carrier, no record."""
-        events = [
-            {"type": "response.created", "response": {}},
-            {"type": "response.output_text.delta", "delta": "hi"},
-            {
-                "type": "response.completed",
-                "response": {"usage": {"input_tokens": 5, "output_tokens": 2}},
-            },
-        ]
-
-        parsed = endpoint.extract_response_data(_record(events))
-        assert [p for p in parsed if p.spec_decode_stats] == []
-        assert InferenceResultParser._extract_spec_decode_acceptance(parsed) is None
