@@ -74,8 +74,8 @@ def test_request_record_carries_clock_offset() -> None:
         param(True, ["WorkerConnected"], id="kubernetes-defers-dispatchable"),
         param(
             False,
-            ["WorkerConnected", "WorkerDispatchable"],
-            id="local-dispatchable-immediately",
+            ["WorkerConnected"],
+            id="local-defers-dispatchable",
         ),
     ],
 )  # fmt: skip
@@ -114,6 +114,8 @@ async def test_worker_announces_connectivity_without_awaiting_the_rtt_probe(
     worker.pod_lifecycle_dealer_client = None
     worker._ensure_group_dataset_state_retry = MagicMock()
     worker._complete_group_startup_flow = AsyncMock()
+    worker._dataset_configured_event = MagicMock()
+    worker._dataset_configured_event.is_set.return_value = False
     worker._mark_worker_ready = AsyncMock(
         side_effect=lambda: sent.append("WorkerDispatchable")
     )
