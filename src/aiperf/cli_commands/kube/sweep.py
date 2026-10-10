@@ -237,7 +237,14 @@ def _normalized_config_parts(
     in-cluster.
     """
     from aiperf.config import AIPerfConfig, load_config_from_mapping
-    from aiperf.config.flags.resolver import apply_cli_overrides
+    from aiperf.config.flags._config_flag_routing import (
+        hoisted_block_adjusting_fields,
+        reject_cli_flags_against_hoisted_blocks,
+    )
+    from aiperf.config.flags.resolver import (
+        apply_cli_overrides,
+        apply_deferred_sweep_overrides,
+    )
     from aiperf.kubernetes.spec_converter import (
         dataset_names,
         restore_jinja_templates,
@@ -249,8 +256,15 @@ def _normalized_config_parts(
         **copy.deepcopy(envelope_extras),
     }
     config = load_config_from_mapping(envelope, file_path=file_path)
+    deferred: frozenset[str] = frozenset()
     if cli_config is not None:
-        config = apply_cli_overrides(config, cli_config)
+        reject_cli_flags_against_hoisted_blocks(cli_config, sweep_cfg=sweep_cfg)
+        # The resolver cannot see the hoisted blocks, so flags that adjust
+        # them are held back and applied once the blocks are merged below.
+        deferred = hoisted_block_adjusting_fields(
+            cli_config, sweep_cfg=sweep_cfg, multirun_cfg=multirun_cfg
+        )
+        config = apply_cli_overrides(config, cli_config, deferred_fields=deferred)
     rendered = config.model_dump(
         mode="json",
         by_alias=True,
@@ -279,6 +293,12 @@ def _normalized_config_parts(
         normalized_multirun = deep_merge(normalized_multirun, cli_multirun)
     elif cli_multirun is not None:
         normalized_multirun = cli_multirun
+    if deferred:
+        apply_deferred_sweep_overrides(
+            {"sweep": normalized_sweep, "multiRun": normalized_multirun},
+            cli_config,
+            deferred,
+        )
     normalized_extras: dict[str, Any] = {}
     for name, model_field in AIPerfConfig.model_fields.items():
         if name in {"benchmark", "sweep", "multi_run"}:
