@@ -156,14 +156,11 @@ class InferenceClient(AIPerfLifecycleMixin):
         Cancellation is now handled at the transport layer, which ensures the
         request is always sent before being cancelled.
         """
-        pre_send_perf_ns, pre_send_timestamp_ns = None, None
+        pre_send_perf_ns = None
         try:
             # Save the current perf_ns before sending the request so it can be used to calculate
             # the start_perf_ns of the request in case of an exception.
-            pre_send_perf_ns, pre_send_timestamp_ns = (
-                time.perf_counter_ns(),
-                time.time_ns(),
-            )
+            pre_send_perf_ns = time.perf_counter_ns()
 
             # Transport handles cancellation internally (cancel_after_ns is in request_info)
             result = await self._send_request_to_transport(
@@ -181,7 +178,6 @@ class InferenceClient(AIPerfLifecycleMixin):
             )
             return RequestRecord(
                 request_info=request_info,
-                timestamp_ns=pre_send_timestamp_ns or time.time_ns(),
                 # Try and use the pre_send_perf_ns if it is available, otherwise use the current time.
                 start_perf_ns=pre_send_perf_ns or time.perf_counter_ns(),
                 end_perf_ns=time.perf_counter_ns(),

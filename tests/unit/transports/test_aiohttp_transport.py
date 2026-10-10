@@ -9,6 +9,7 @@ import pytest
 
 from aiperf.common.enums import ConnectionReuseStrategy, CreditPhase
 from aiperf.common.models.record_models import RequestInfo, RequestRecord
+from aiperf.common.monotonic_clock import process_clock
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import TransportType
 from aiperf.transports.aiohttp_transport import (
@@ -317,6 +318,23 @@ class TestAioHttpTransport:
         assert "Test error" in record.error.message
         assert record.start_perf_ns is not None
         assert record.end_perf_ns is not None
+
+    @pytest.mark.asyncio
+    async def test_send_request_exception_record_wall_start_matches_perf_start(
+        self, transport, model_endpoint_non_streaming
+    ):
+        """The exception record's wall start must be the wall time of its
+        ``start_perf_ns``, not of when the record was built."""
+        await transport.initialize()
+        transport.aiohttp_client.post_request = AsyncMock(
+            side_effect=ValueError("Test error")
+        )
+
+        record = await transport.send_request(
+            create_request_info(model_endpoint_non_streaming), {"test": "data"}
+        )
+
+        assert record.timestamp_ns == process_clock().wall_ns_at(record.start_perf_ns)
 
     @pytest.mark.asyncio
     async def test_send_request_timing_on_error(
