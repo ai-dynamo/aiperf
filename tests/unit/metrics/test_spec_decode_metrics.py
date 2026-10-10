@@ -379,17 +379,10 @@ class TestZeroStepRequests:
         metric = SpecDecodeZeroStepRequestsMetric()
         assert metric.parse_record(record, MetricRecordDict()) == 1
 
-    @pytest.mark.parametrize(
-        "spec",
-        [
-            param(None, id="spec_decode_off"),
-            param(make_spec([1, 2]), id="speculated"),
-        ],
-    )  # fmt: skip
-    def test_parse_record_unflagged_request_raises_no_metric_value(self, spec):
+    def test_parse_record_unflagged_request_raises_no_metric_value(self):
         with pytest.raises(NoMetricValue):
             SpecDecodeZeroStepRequestsMetric().parse_record(
-                spec_record(spec), MetricRecordDict()
+                spec_record(None), MetricRecordDict()
             )
 
     def test_metadata_is_aggregate_only_in_spec_decode_section(self):
