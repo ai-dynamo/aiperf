@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import orjson
@@ -1003,3 +1004,132 @@ class TestChatTemplateOptOutDefault:
         assert result == 8
         tokenizer._tokenizer.apply_chat_template.assert_not_called()
         tokenizer.encode.assert_called_once()
+
+
+@pytest.mark.asyncio
+class TestSpecDecodeDetectionWarnings:
+    """A detection problem is reported once per run, not once per record.
+
+    Ambiguity and a raising adapter are properties of the installed adapters,
+    not of any one response, so they recur on every record of a run. One
+    warning carries the signal; repeats are kept at debug for diagnosis.
+    """
+
+    LOGGER = "aiperf.records.inference_result_parser"
+
+    class _GreedyAdapter:
+        """Claims any payload, so it collides with the vLLM adapter."""
+
+        @classmethod
+        def can_adapt(cls, responses: list[ParsedResponse]) -> bool:
+            return any(r.spec_decode_stats for r in responses)
+
+        @classmethod
+        def adapt(cls, responses: list[ParsedResponse]) -> None:
+            raise AssertionError("an ambiguous payload must never be adapted")
+
+    class _ExplodingAdapter:
+        @classmethod
+        def can_adapt(cls, responses: list[ParsedResponse]) -> bool:
+            raise RuntimeError("third-party adapter blew up")
+
+        @classmethod
+        def adapt(cls, responses: list[ParsedResponse]) -> None:
+            raise AssertionError("must never be reached")
+
+    @staticmethod
+    def _responses() -> list[ParsedResponse]:
+        from tests.unit.spec_decode.test_vllm_adapter import SUMMARY_PAYLOAD
+
+        return [
+            ParsedResponse(perf_ns=1, spec_decode_stats=SUMMARY_PAYLOAD),
+            make_parsed_response(prompt_tokens=10, completion_tokens=7),
+        ]
+
+    async def _parse_twice(self, parser, request_record, caplog, adapter, name):
+        from aiperf.plugin.enums import PluginType
+        from tests.harness import mock_plugin
+
+        setup_parser_responses(parser, self._responses())
+        with (
+            mock_plugin(PluginType.SPEC_DECODE_ADAPTER, name, adapter),
+            caplog.at_level(logging.DEBUG, logger=self.LOGGER),
+        ):
+            await parser.process_valid_record(request_record)
+            await parser.process_valid_record(request_record)
+        return [r for r in caplog.records if r.name == self.LOGGER]
+
+    async def test_ambiguity_warns_once_per_run(
+        self, server_token_parser, request_record, caplog
+    ):
+        records = await self._parse_twice(
+            server_token_parser, request_record, caplog, self._GreedyAdapter, "greedy"
+        )
+        ambiguous = [r for r in records if "Ambiguous" in r.getMessage()]
+        assert [r.levelno for r in ambiguous] == [logging.WARNING, logging.DEBUG]
+
+    async def test_raising_adapter_warns_once_per_run(
+        self, server_token_parser, request_record, caplog
+    ):
+        records = await self._parse_twice(
+            server_token_parser,
+            request_record,
+            caplog,
+            self._ExplodingAdapter,
+            "exploding",
+        )
+        raised = [r for r in records if "raised during detection" in r.getMessage()]
+        assert [r.levelno for r in raised] == [logging.WARNING, logging.DEBUG]
+
+
+@pytest.mark.asyncio
+class TestSpecDecodeRequestCardinality:
+    """An ``n > 1`` request never yields a single-sequence acceptance record.
+
+    Counting payloads alone is not enough: a sibling sequence that never
+    drafted carries no payload, so an ``n = 2`` stream can arrive with exactly
+    one, beside request-level usage covering both sequences. The request's own
+    ``n`` is the ground truth for how many sequences the usage spans.
+    """
+
+    @staticmethod
+    def _with_n(request_record, n: int | None):
+        payload = orjson.loads(request_record.request_info.payload_bytes)
+        if n is None:
+            payload.pop("n", None)
+        else:
+            payload["n"] = n
+        request_record.request_info.payload_bytes = orjson.dumps(payload)
+        return request_record
+
+    async def _parse(self, parser, request_record, spy_tokenizer):
+        from tests.unit.spec_decode.test_vllm_adapter import SUMMARY_PAYLOAD
+
+        parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        setup_parser_responses(
+            parser,
+            [
+                ParsedResponse(perf_ns=1, spec_decode_stats=SUMMARY_PAYLOAD),
+                make_parsed_response(prompt_tokens=10, completion_tokens=7),
+            ],
+        )
+        # The same single decode parse_request_record hands to
+        # process_valid_record.
+        inputs = parser._extract_payload_inputs_for_record(request_record)
+        return await parser.process_valid_record(request_record, inputs=inputs)
+
+    async def test_single_sequence_request_yields_a_record(
+        self, server_token_parser, request_record, spy_tokenizer
+    ):
+        result = await self._parse(
+            server_token_parser, self._with_n(request_record, None), spy_tokenizer
+        )
+        assert result.spec_decode_acceptance is not None
+
+    async def test_multi_sequence_request_with_one_payload_yields_none(
+        self, server_token_parser, request_record, spy_tokenizer
+    ):
+        result = await self._parse(
+            server_token_parser, self._with_n(request_record, 2), spy_tokenizer
+        )
+        assert result.spec_decode_acceptance is None
