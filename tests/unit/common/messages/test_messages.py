@@ -1,18 +1,29 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import base64
 import json
 import time
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.enums import LifecycleState, MessageType
 from aiperf.common.messages import (
     ConnectionProbeMessage,
     ErrorMessage,
     HeartbeatMessage,
+    InferenceResultsMessage,
+    Message,
 )
-from aiperf.common.models import ErrorDetails
+from aiperf.common.models import (
+    AwsEventStreamMessage,
+    BinaryResponse,
+    ErrorDetails,
+    RequestRecord,
+    SSEMessage,
+    TextResponse,
+)
 from aiperf.plugin.enums import ServiceType
 
 
@@ -53,6 +64,71 @@ def test_heartbeat_message():
     assert json.loads(message.model_dump_json(exclude_none=True)) == json.loads(
         '{"message_type":"heartbeat","state":"initialized","service_id":"test","service_type":"worker","request_ns":1234567890}'
     )
+
+
+class TestBinaryInferenceResultsMessage:
+    """Binary response bodies survive the worker results-message boundary."""
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            param(bytes(range(256)), id="all-bytes"),
+            param(b"a\x00b", id="embedded-nul"),
+            param(b"", id="empty"),
+            param(b"hello", id="ascii"),
+            param("café".encode(), id="utf8"),
+        ],
+    )  # fmt: skip
+    def test_binary_response_message_roundtrip_preserves_bytes(
+        self, body: bytes
+    ) -> None:
+        """Each message-reader route restores the exact base64-encoded body."""
+        original = InferenceResultsMessage(
+            service_id="worker-1",
+            record=RequestRecord(
+                responses=[BinaryResponse(123, body, "image/png")],
+            ),
+        )
+
+        wire = original.to_json_bytes()
+        dumped = orjson.loads(wire)
+        assert dumped["record"]["responses"][0]["raw_bytes"] == (
+            base64.urlsafe_b64encode(body).decode("ascii")
+        )
+        for restored in (
+            Message.from_json(wire),
+            Message.from_json(dumped),
+            InferenceResultsMessage.model_validate_json(wire),
+        ):
+            assert isinstance(restored, InferenceResultsMessage)
+            response = restored.record.responses[0]
+            assert isinstance(response, BinaryResponse)
+            assert response.raw_bytes == body
+            assert response.perf_ns == 123
+            assert response.content_type == "image/png"
+        assert original.to_json_bytes() == wire
+        assert original.record.responses[0].raw_bytes == body
+
+    def test_mixed_response_message_roundtrip_preserves_types_and_contents(
+        self,
+    ) -> None:
+        """Binary encoding preserves sibling response types and their contents."""
+        responses = [
+            BinaryResponse(1, b"\xff\xfe", "image/png"),
+            TextResponse(2, "café", "text/plain"),
+            SSEMessage.parse('data: {"delta":"token"}\n\n', perf_ns=3),
+            AwsEventStreamMessage(4, '{"delta":"token"}', b'data: {"delta":"token"}'),
+        ]
+        original = InferenceResultsMessage(
+            service_id="worker-1", record=RequestRecord(responses=responses)
+        )
+
+        restored = Message.from_json(original.to_json_bytes())
+
+        assert [type(response) for response in restored.record.responses] == [
+            type(response) for response in responses
+        ]
+        assert restored.record.responses == responses
 
 
 class TestBaseStatusMessageTimestamp:

@@ -14,6 +14,7 @@ AIPerf generates multiple output formats after each benchmark run, each optimize
 
 - [**`inputs.json`**](#input-dataset-json) - Complete input dataset with formatted payloads for each request
 - [**`profile_export.jsonl`**](#per-request-records-jsonl) - Per-request metric records in JSON Lines format with one record per line
+- [**`profile_export_raw.jsonl`**](#raw-request-and-response-records) - Full retained request/response records, written with `--export-level raw`
 - [**`profile_export_aiperf.json`**](#aggregated-statistics-json) - Aggregated statistics and user configuration as a single JSON object
 - [**`profile_export_aiperf.csv`**](#aggregated-statistics-csv) - Aggregated statistics in CSV format
 - **`outputs.json`** - Generated response text per request, with a small set of per-request metrics. Written when `--export-outputs-json` is set, which `--export-level raw` implies. See [`outputs.json` schema](../reference/json-export-schema.md#outputsjson-schema).
@@ -213,6 +214,55 @@ async def process_streaming_records_async(file_path: Path) -> None:
                 record = MetricRecordInfo.model_validate_json(line)
                 # ... Process the streaming records here ...
 ```
+
+### Raw Request and Response Records
+
+Use `--export-level raw` to write `profile_export_raw.jsonl`. Binary responses store
+`raw_bytes` as a padded URL-safe base64 string in JSON. For example, a response
+containing the bytes `b"\xff\xfe"` appears as:
+
+```json
+{"perf_ns":123,"raw_bytes":"__4=","content_type":"image/png"}
+```
+
+All binary bodies use this encoding, including bodies that happen to be valid
+UTF-8. Empty bytes serialize as `""`. The in-memory `BinaryResponse.raw_bytes`
+and `get_raw()` values remain bytes. Updated `RawRecordInfo` readers decode the
+base64 string automatically:
+
+```python
+from pathlib import Path
+from aiperf.common.models import BinaryResponse
+from aiperf.common.models.record_models import RawRecordInfo
+
+with Path("artifacts/my-run/profile_export_raw.jsonl").open(encoding="utf-8") as f:
+    for line in f:
+        if not line.strip():
+            continue
+        record = RawRecordInfo.model_validate_json(line)
+        for response in record.responses:
+            if isinstance(response, BinaryResponse):
+                body = response.raw_bytes
+```
+
+If you read JSON dictionaries directly, decode binary response fields explicitly:
+
+```python
+import base64
+import orjson
+
+record = orjson.loads(line)
+for response in record["responses"]:
+    if "raw_bytes" in response:
+        body = base64.urlsafe_b64decode(response["raw_bytes"])
+```
+
+Legacy binary-response exports produced before this encoding change used UTF-8
+text for serializable `raw_bytes` values. Choose a legacy migration using the
+producer's version; do not infer the encoding from the string. For example,
+`"abcd"` can be either legacy text or base64 for different bytes. Updated model
+readers interpret strings as base64 and cannot automatically recover untagged
+legacy text. Use matching application versions for workers and record processors.
 
 ### Working with Input Datasets
 

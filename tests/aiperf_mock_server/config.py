@@ -317,6 +317,60 @@ class MockServerConfig(BaseSettings):
         Parameter(name="--itl-jitter-cv"),
     ] = 0.0
 
+    # Speculative decoding: synthesises a self-consistent per-request
+    # acceptance payload so the spec-decode path can be exercised end to end
+    # without a GPU. Off by default so every other test's responses are
+    # unchanged.
+    spec_decode_enabled: Annotated[
+        bool,
+        Field(
+            description=(
+                "Emit a per-request speculative-decoding acceptance payload on "
+                "chat and completions responses."
+            )
+        ),
+        Parameter(name="--spec-decode-enabled"),
+    ] = False
+
+    spec_decode_flavor: Annotated[
+        Literal["vllm", "trtllm"],
+        Field(
+            description=(
+                "Which engine's wire format to emit. 'vllm' nests the payload "
+                "at the response root under metrics.speculative_decoding; "
+                "'trtllm' attaches it per choice as speculative_decoding with "
+                "TensorRT-LLM's field names."
+            )
+        ),
+        Parameter(name="--spec-decode-flavor"),
+    ] = "vllm"
+
+    # None (num_spec_tokens: null, as under TensorRT-LLM's draft_len_schedule)
+    # is reachable only by setting the config directly, as the unit tests do;
+    # the CLI and environment parse an int.
+    spec_decode_num_spec_tokens: Annotated[
+        int | None,
+        Field(
+            description="Draft budget k per step, emitted as num_spec_tokens.",
+            ge=1,
+        ),
+        Parameter(name="--spec-decode-num-spec-tokens"),
+    ] = 3
+
+    spec_decode_acceptance_rate: Annotated[
+        float,
+        Field(
+            description=(
+                "Target fraction of proposed draft tokens accepted. The emitted "
+                "counts are derived from this and the response's own token "
+                "count, so acceptance and usage stay mutually consistent."
+            ),
+            ge=0.0,
+            le=1.0,
+        ),
+        Parameter(name="--spec-decode-acceptance-rate"),
+    ] = 0.5
+
     # Embedding latency: base + per_input * num_inputs
     embedding_base_latency: Annotated[
         float,
