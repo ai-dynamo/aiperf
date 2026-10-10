@@ -412,7 +412,9 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
         self.debug(
             lambda: f"Opening memory-mapped files: data={self._data_path}, index={self._index_path}"
         )
-        self._client = MemoryMapDatasetClient(self._data_path, self._index_path)
+        self._client = await asyncio.to_thread(
+            MemoryMapDatasetClient, self._data_path, self._index_path
+        )
         self.debug(
             lambda: f"Memory-mapped client store initialized with "
             f"{len(self._client.index.conversation_ids)} conversations"
