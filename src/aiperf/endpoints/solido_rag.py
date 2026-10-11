@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 from aiperf.common.models import (
+    ExtractedPayload,
     InferenceServerResponse,
     ParsedResponse,
     RAGSources,
@@ -23,6 +24,17 @@ class SolidoEndpoint(BaseEndpoint):
     queries with filters and inference model specifications. Supports streaming
     responses.
     """
+
+    def extract_payload_inputs(self, payload: dict[str, Any]) -> ExtractedPayload:
+        """Extract query text without counting routing filters or model names."""
+        query = payload.get("query")
+        if isinstance(query, str):
+            return ExtractedPayload(texts=[query])
+        if isinstance(query, list):
+            return ExtractedPayload(
+                texts=[text for text in query if isinstance(text, str)]
+            )
+        return ExtractedPayload()
 
     def format_payload(self, request_info: RequestInfo) -> RequestOutputT:
         """Format SOLIDO RAG request payload from RequestInfo.
