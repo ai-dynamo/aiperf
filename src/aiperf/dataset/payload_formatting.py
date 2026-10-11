@@ -81,7 +81,7 @@ _PAYLOAD_INDENT = b"\n        "
 
 
 def _iter_session_pieces(session: SessionPayloads) -> Iterator[bytes]:
-    """Yield one session exactly as OPT_INDENT_2 would print it, one payload per piece."""
+    """Yield one session as OPT_INDENT_2 prints it, each payload as its own piece."""
     dumped = session.model_dump(exclude_none=True, mode="json")
     if any(key not in ("session_id", "payloads") for key in dumped):
         # The hand-built frame emits only session_id and payloads, so a session
@@ -100,13 +100,10 @@ def _iter_session_pieces(session: SessionPayloads) -> Iterator[bytes]:
         return
     yield head + b'\n      "payloads": ['
     for index, payload in enumerate(payloads):
-        piece = b"," if index else b""
-        yield (
-            piece
-            + _PAYLOAD_INDENT
-            + orjson.dumps(payload, option=orjson.OPT_INDENT_2).replace(
-                b"\n", _PAYLOAD_INDENT
-            )
+        sep = b"," if index else b""
+        yield sep + _PAYLOAD_INDENT
+        yield orjson.dumps(payload, option=orjson.OPT_INDENT_2).replace(
+            b"\n", _PAYLOAD_INDENT
         )
     yield b"\n      ]\n    }"
 

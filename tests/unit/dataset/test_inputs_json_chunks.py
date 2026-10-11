@@ -5,6 +5,7 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import aiofiles
 import orjson
 import pytest
 from pytest import param
@@ -160,6 +161,59 @@ class TestIterInputsJsonChunks:
         assert 0 < len(chunks[-1]) <= chunk_bytes
         assert b"".join(chunks) == _single_dump(InputsFile())
 
+    @pytest.mark.parametrize(
+        "inputs",
+        [
+            param(InputsFile(), id="empty"),
+            param(
+                InputsFile(
+                    data=[
+                        _session(
+                            "s1", 2, 'unicode é 中 \U0001f600 line\nline\ttab "q" \\'
+                        )
+                    ]
+                ),
+                id="unicode-and-escapes",
+            ),
+            param(
+                InputsFile(
+                    data=[
+                        SessionPayloads.model_validate(
+                            {
+                                "session_id": "s1",
+                                "payloads": [_payload("p")],
+                                "trace_meta": {"origin": "unit", "ids": [1, 2]},
+                            }
+                        )
+                    ]
+                ),
+                id="session-extension-fields",
+            ),
+            param(
+                InputsFile.model_validate(
+                    {
+                        "data": [{"session_id": "s1", "payloads": [_payload("p")]}],
+                        "note": "extension field",
+                    }
+                ),
+                id="top-level-extension-fields",
+            ),
+            param(
+                InputsFile(data=[_session("big", 1, "y" * 4096)]),
+                id="oversized-payload",
+            ),
+        ],
+    )  # fmt: skip
+    @pytest.mark.parametrize("chunk_bytes", [1, 2, 3])
+    def test_iter_inputs_json_chunks_tiny_chunks_match_single_dump(
+        self, inputs: InputsFile, chunk_bytes: int
+    ) -> None:
+        chunks = list(iter_inputs_json_chunks(inputs, chunk_bytes=chunk_bytes))
+
+        assert all(len(chunk) == chunk_bytes for chunk in chunks[:-1])
+        assert 0 < len(chunks[-1]) <= chunk_bytes
+        assert b"".join(chunks) == _single_dump(inputs)
+
     @pytest.mark.parametrize("chunk_bytes", [0, -1])
     def test_iter_inputs_json_chunks_rejects_non_positive_chunk_bytes(
         self, chunk_bytes: int
@@ -225,22 +279,25 @@ class TestGenerateInputsJsonFileStreaming:
         )
         assert len(expected) > 2 * BYTES_PER_MIB
         write_sizes: list[int] = []
+        real_aiofiles_open = aiofiles.open
 
         class _RecordingFile:
-            def __init__(self, path: Path) -> None:
-                self._file = path.open("wb")
+            def __init__(self, path: Path, mode: str) -> None:
+                self._path = path
+                self._mode = mode
+
+            async def __aenter__(self) -> "_RecordingFile":
+                self._file = await real_aiofiles_open(self._path, self._mode)
+                return self
 
             async def write(self, data: bytes) -> None:
                 write_sizes.append(len(data))
-                self._file.write(data)
-
-            async def __aenter__(self) -> "_RecordingFile":
-                return self
+                await self._file.write(data)
 
             async def __aexit__(self, *exc: object) -> None:
-                self._file.close()
+                await self._file.close()
 
-        with patch("aiofiles.open", lambda path, mode: _RecordingFile(Path(path))):
+        with patch("aiofiles.open", _RecordingFile):
             await manager._generate_inputs_json_file()
 
         assert len(write_sizes) > 1
