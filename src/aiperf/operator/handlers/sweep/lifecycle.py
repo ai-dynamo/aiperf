@@ -15,6 +15,7 @@ from typing import Any
 
 import kopf
 
+from aiperf.kubernetes.constants import JSON_PATCH_CONTENT_TYPE
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers.sweep._child_phase_buckets import _is_owned_child
 
@@ -174,7 +175,7 @@ async def on_delete(
                             },
                             {"op": "add", "path": "/spec/cancel", "value": True},
                         ],
-                        _content_type="application/json-patch+json",
+                        _content_type=JSON_PATCH_CONTENT_TYPE,
                     )
                 except ApiException as e:
                     if e.status in (404, 409, 422):

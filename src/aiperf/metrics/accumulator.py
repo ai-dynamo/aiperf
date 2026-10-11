@@ -21,8 +21,13 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import NoMetricValue
+from aiperf.common.finite import is_finite_value
 from aiperf.common.messages import MetricRecordsData
-from aiperf.common.models import MetricResult, TimesliceResult
+from aiperf.common.models import (
+    MetricResult,
+    ProfileMetricDurationCoverage,
+    TimesliceResult,
+)
 from aiperf.common.types import MetricTagT
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
 from aiperf.metrics.accumulator_sweeps import compute_sweep_curves
@@ -37,6 +42,9 @@ from aiperf.metrics.derived_latency import (
     inject_derived_latency_metrics,
 )
 from aiperf.metrics.display_units import to_display_unit
+from aiperf.metrics.e2e_normalized_interactivity_analyzer import (
+    inject_e2e_normalized_interactivity_metrics,
+)
 from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.network_adjusted_analyzer import (
@@ -191,6 +199,8 @@ class MetricsAccumulator(BaseMetricsProcessor):
         gen_start = (
             float(meta.request_start_ns + int(ttft_ns)) if ttft_ns is not None else None
         )
+        inter_token_latency = record.metrics.get("inter_token_latency")
+        has_inter_token_latency = is_finite_value(inter_token_latency)
 
         self._column_store.ingest(
             idx=idx,
@@ -217,6 +227,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
             metadata_bool={
                 "was_cancelled": meta.was_cancelled,
                 "has_error": record.error is not None,
+                "has_inter_token_latency": has_inter_token_latency,
             },
             metadata_categorical={
                 "worker_id": meta.worker_id,
@@ -342,6 +353,52 @@ class MetricsAccumulator(BaseMetricsProcessor):
         if ctx.end_ns is not None:
             mask &= self._column_store.start_ns[:n] < ctx.end_ns
         return mask
+
+    def profile_metric_duration_coverage(
+        self,
+        ctx: ExportContext,
+        *,
+        phase_name: str,
+        expected_duration_seconds: float,
+        required_ratio: float,
+    ) -> ProfileMetricDurationCoverage:
+        """Measure how far required latency signals extend into a profile phase.
+
+        TTFT is observed when the first token arrives. ITL is observed only on a
+        successful response carrying at least one inter-token interval, so its
+        last observation is the response end timestamp. The phase mask excludes
+        warmup even when warmup and profiling records share the same accumulator.
+        """
+        if ctx.start_ns is None:
+            raise ValueError("profiling phase start time is unavailable")
+
+        duration_ns = expected_duration_seconds * NANOS_PER_SECOND
+        if duration_ns <= 0:
+            raise ValueError("profiling phase duration must be positive")
+
+        mask = self._mask_for_export_context(ctx)
+        if mask is None:
+            mask = np.ones(self._column_store.count, dtype=bool)
+
+        def _coverage_ratio(timestamps: FloatArray, signal_mask: BoolArray) -> float:
+            selected = timestamps[signal_mask & np.isfinite(timestamps)]
+            if selected.size == 0:
+                return 0.0
+            elapsed_ns = float(np.max(selected)) - ctx.start_ns
+            return min(max(elapsed_ns / duration_ns, 0.0), 1.0)
+
+        n = self._column_store.count
+        generation_start_ns = self._column_store.generation_start_ns[:n]
+        end_ns = self._column_store.end_ns[:n]
+        has_itl = self._column_store.metadata_bool("has_inter_token_latency") == 1
+
+        return ProfileMetricDurationCoverage(
+            phase_name=phase_name,
+            expected_duration_seconds=expected_duration_seconds,
+            required_ratio=required_ratio,
+            ttft_ratio=_coverage_ratio(generation_start_ns, mask),
+            inter_token_latency_ratio=_coverage_ratio(end_ns, mask & has_itl),
+        )
 
     def _aggregate_values(self, tag: MetricTagT, values: np.ndarray) -> float:
         """Apply the tag's aggregation function to an array of values."""
@@ -697,6 +754,17 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 overall_results,
                 mask=mask,
                 warn_degraded=self._warn_replay_degraded,
+            )
+            # E2E Normalized Interactivity (AgentX/InferenceX Pareto x-axis):
+            # 1 / p(request_latency_s / OSL), request-weighted over the masked
+            # columns. Reported run-scoped (not per timeslice) to match InferenceX,
+            # which defines this x-axis at run level only -- unlike the send-lag
+            # family above, the value is well-defined per slice, so per-slice
+            # support is a possible follow-up, not a correctness constraint.
+            inject_e2e_normalized_interactivity_metrics(
+                self._column_store,
+                overall_results,
+                mask=mask,
             )
 
         overall_results = self._filter_hidden_metrics(overall_results)

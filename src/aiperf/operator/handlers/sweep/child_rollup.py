@@ -11,6 +11,10 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from aiperf.kubernetes.constants import (
+    JSON_PATCH_CONTENT_TYPE,
+    MERGE_PATCH_CONTENT_TYPE,
+)
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.handlers.sweep import _child_runs
 from aiperf.operator.handlers.sweep._child_phase_buckets import (
@@ -495,7 +499,7 @@ async def _patch_parent_status(
                 name=name,
                 body=patch_body,
                 field_manager=ROLLUP_FIELD_MANAGER,
-                _content_type="application/merge-patch+json",
+                _content_type=MERGE_PATCH_CONTENT_TYPE,
             )
     except ApiException as e:
         if e.status == 404:
@@ -638,7 +642,7 @@ async def _conditional_phase_set(
                 name=name,
                 body=patch_ops,
                 field_manager=ROLLUP_FIELD_MANAGER,
-                _content_type="application/json-patch+json",
+                _content_type=JSON_PATCH_CONTENT_TYPE,
             )
     except ApiException as e:
         # 422 = test op failed; the parent moved to a different phase

@@ -24,12 +24,13 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.control_structs import CommandAck
 from aiperf.common.enums import CommandType, CreditPhase
 from aiperf.common.environment import Environment
-from aiperf.common.messages import ProcessRecordsResultMessage
+from aiperf.common.messages import Message, ProcessRecordsResultMessage
 from aiperf.common.mixins.task_manager_mixin import TaskManagerMixin
 from aiperf.common.models import PhaseRecordsStats
 from aiperf.records.records_manager import (
@@ -103,18 +104,28 @@ class TestFinalizationFailureTerminatesTheRun:
         assert len(published) == 1, "the run must terminate, not hang"
 
     @pytest.mark.asyncio
-    async def test_published_failure_is_not_mistakable_for_success(self) -> None:
-        """Fail-closed: no records, marked incomplete, error marked fatal."""
+    @pytest.mark.parametrize(
+        "cancelled",
+        [param(False, id="profiling"), param(True, id="cancelled")],
+    )  # fmt: skip
+    async def test_published_failure_is_not_mistakable_for_success(
+        self, cancelled: bool
+    ) -> None:
+        """The failure must remain explicit after crossing the message bus."""
         mgr = _finalize_manager(RuntimeError("artifact barrier failed"))
 
         await mgr._finalize_and_process_results(
-            phase=CreditPhase.PROFILING, cancelled=False
+            phase=CreditPhase.PROFILING, cancelled=cancelled
         )
 
-        result = _published_results(mgr)[0].results
+        published = _published_results(mgr)[0]
+        received = Message.from_json(published.to_json_bytes())
+        assert isinstance(received, ProcessRecordsResultMessage)
+        result = received.results
         assert result.results.records is None
         assert result.results.completed == 0
         assert result.results.is_complete is False
+        assert result.results.was_cancelled is cancelled
         assert "artifact barrier failed" in result.results.incomplete_reason
         assert len(result.errors) == 1
         assert result.errors[0].details[ERROR_FATAL_DETAIL_KEY] is True

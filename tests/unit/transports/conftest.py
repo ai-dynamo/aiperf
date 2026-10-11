@@ -42,6 +42,14 @@ def create_model_endpoint_info(
     api_key: str | None = None,
     headers: list[tuple[str, str]] | None = None,
     connection_reuse_strategy: ConnectionReuseStrategy = ConnectionReuseStrategy.POOLED,
+    auth_type: str | None = None,
+    aws_region: str | None = None,
+    aws_service: str | None = None,
+    aws_profile: str | None = None,
+    sagemaker_endpoint_name: str | None = None,
+    sagemaker_target_model: str | None = None,
+    sagemaker_inference_component_name: str | None = None,
+    sagemaker_target_variant: str | None = None,
 ) -> ModelEndpointInfo:
     """Factory function to create ModelEndpointInfo instances."""
     return ModelEndpointInfo(
@@ -57,6 +65,14 @@ def create_model_endpoint_info(
             api_key=api_key,
             headers=headers or [],
             connection_reuse_strategy=connection_reuse_strategy,
+            auth_type=auth_type,
+            aws_region=aws_region,
+            aws_service=aws_service,
+            aws_profile=aws_profile,
+            sagemaker_endpoint_name=sagemaker_endpoint_name,
+            sagemaker_target_model=sagemaker_target_model,
+            sagemaker_inference_component_name=sagemaker_inference_component_name,
+            sagemaker_target_variant=sagemaker_target_variant,
         ),
     )
 
@@ -214,6 +230,8 @@ def assert_error_request_record(
     assert isinstance(record, RequestRecord)
     assert record.error is not None
     assert len(record.responses) == 0
+    assert record.end_perf_ns is not None
+    assert record.end_perf_ns >= record.start_perf_ns
 
     if expected_error_code is not None:
         assert record.error.code == expected_error_code

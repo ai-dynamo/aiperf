@@ -29,6 +29,7 @@ from aiperf.common.endpoint_credentials import (
     redact_sweep_display_label,
     redact_sweep_public_data,
 )
+from aiperf.kubernetes.constants import JSON_PATCH_CONTENT_TYPE
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.orchestrator.executor import RunExecutor
 from aiperf.orchestrator.models import RunResult
@@ -1167,7 +1168,7 @@ class K8sChildJobExecutor(RunExecutor):
                     },
                     {"op": "add", "path": "/spec/cancel", "value": True},
                 ],
-                _content_type="application/json-patch+json",
+                _content_type=JSON_PATCH_CONTENT_TYPE,
             )
         except ApiException as exc:
             if exc.status in {404, 409, 422}:

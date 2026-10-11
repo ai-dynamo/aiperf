@@ -107,6 +107,17 @@ def service(
         if service_type == ServiceType.SYSTEM_CONTROLLER:
             materialize_serialized_run_user_files(run)
 
+        # DatasetManager composes the dataset inside its configure step, which
+        # is bounded by AIPERF_DATASET_CONFIGURATION_TIMEOUT. A gated-repo
+        # rejection or a multi-GB resolution download has to happen before the
+        # handshake, exactly as run_benchmark does it for the CLI path.
+        if service_type == ServiceType.DATASET_MANAGER:
+            from aiperf.cli_runner._preflight import (
+                preflight_public_datasets_for_run,
+            )
+
+            preflight_public_datasets_for_run(run)
+
         if health_host is not None:
             # CLI argument takes precedence over environment variable
             Environment.SERVICE.HEALTH_ENABLED = True

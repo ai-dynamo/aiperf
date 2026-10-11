@@ -49,6 +49,7 @@ from aiperf.common.messages.dataset_messages import (
 )
 from aiperf.common.mixins import ProcessHealthMixin
 from aiperf.common.models import (
+    AwsEventStreamMessage,
     Conversation,
     DatasetClientMetadata,
     DatasetMetadata,
@@ -622,6 +623,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     - Final turn: Process and evict from cache
     - StickyCreditRouter ensures all turns route to same worker for cache hits
     """
+
+    reports_startup_failure = True
 
     def __init__(
         self,
@@ -1511,6 +1514,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 type="CreditProcessingError",
                 code=500,
             )
+        failed_at_perf_ns = time.perf_counter_ns()
         await self._send_inference_result_message(
             RequestRecord(
                 request_info=RecordContext(
@@ -1528,9 +1532,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     parent_correlation_id=credit.parent_correlation_id,
                 ),
                 model_name=self.model_endpoint.primary_model_name,
-                timestamp_ns=time.time_ns(),
-                start_perf_ns=time.perf_counter_ns(),
-                end_perf_ns=time.perf_counter_ns(),
+                start_perf_ns=failed_at_perf_ns,
+                end_perf_ns=failed_at_perf_ns,
                 error=error,
             )
         )
@@ -1596,7 +1599,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         credit = credit_context.credit
 
-        async def on_first_token(ttft_ns: int, message: SSEMessage) -> bool:
+        async def on_first_token(
+            ttft_ns: int, message: SSEMessage | AwsEventStreamMessage
+        ) -> bool:
             parsed = self.inference_client.endpoint.parse_response(message)
             if parsed is None or parsed.data is None:
                 return False
@@ -1718,12 +1723,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             payload_bytes=payload_turn.payload_bytes,
             # Scalars only — payload_bytes carries the wire body; enrichment
             # reads max_tokens / timestamp off this turn for OSL-mismatch and
-            # schedule-lag metrics.
+            # schedule-lag metrics, and source_kind for per-row attribution.
             turns=[
                 Turn(
                     role="user",
                     max_tokens=payload_turn.max_tokens,
                     timestamp=payload_turn.timestamp,
+                    source_kind=payload_turn.source_kind,
                 )
             ],
         )
@@ -2203,6 +2209,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Check for error in conversation response
         if isinstance(conversation_response, ErrorMessage):
             error = conversation_response.error
+            failed_at_perf_ns = time.perf_counter_ns()
             await self._send_inference_result_message(
                 RequestRecord(
                     request_info=RecordContext(
@@ -2220,9 +2227,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                         parent_correlation_id=credit_context.credit.parent_correlation_id,
                     ),
                     model_name=self.model_endpoint.primary_model_name,
-                    timestamp_ns=time.time_ns(),
-                    start_perf_ns=time.perf_counter_ns(),
-                    end_perf_ns=time.perf_counter_ns(),
+                    start_perf_ns=failed_at_perf_ns,
+                    end_perf_ns=failed_at_perf_ns,
                     error=error,
                 )
             )

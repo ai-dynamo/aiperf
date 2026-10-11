@@ -60,13 +60,13 @@ def _scope_trace(trace_id: str) -> dict:
         "status": "completed",
         "requests": [
             _req(
-                t=0.0,
+                t=2.0,
                 hash_ids=[50, 51],
                 input_types=["text"],
                 stop="tool_use",
                 model=_HAIKU,
             ),
-            _req(t=1.0, hash_ids=[50, 51, 52, 53], model=_HAIKU),
+            _req(t=3.0, hash_ids=[50, 51, 52, 53], model=_HAIKU),
         ],
         "models": [_HAIKU],
         "tool_tokens": 0,
@@ -323,7 +323,6 @@ def test_parallel_tool_shaping_matches_serial(tool_shaped_env, tmp_path):
         cap_seconds=None,
         t_start=0.0,
         model_map_per_trace=model_maps,
-        trace_idle_timing_by_trace={},
         metric_values_by_trace=loader._build_shared_metric_values(
             parent_plans, child_plans, plans.flat_plans
         ),

@@ -9,10 +9,16 @@ ambient HTTP(S)_PROXY settings used by benchmark requests.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import aiohttp
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.endpoint_auth import no_redirect_kwargs, sign_request
 from aiperf.common.redact import redact_url
+
+if TYPE_CHECKING:
+    from aiperf.auth.base_signer import RequestSignerProtocol
 
 _logger = AIPerfLogger(__name__)
 
@@ -46,23 +52,50 @@ async def control_plane_post(
     url: str,
     headers: dict[str, str],
     timeout_s: float,
+    signer: RequestSignerProtocol | None = None,
 ) -> None:
     """POST an empty body to a control URL. Success = any 2xx. No retries.
 
     Transport failures (timeouts, connection errors, ``ClientError``) are
     raised as ``ControlPlaneHttpError`` so callers share one error type.
+    Signer failures (e.g. credential refresh errors) are wrapped the same
+    way and treated as retryable, since credential refresh is itself a
+    network operation.
 
     ``asyncio.CancelledError`` is intentionally not wrapped, preserving task
     cancellation semantics; callers needing cleanup on cancellation must
     handle it explicitly.
+
+    Signing happens here rather than in the caller so each retry attempt
+    carries a fresh signature: a SigV4 signature expires within a five-minute
+    skew window that control-hook backoff can outlive.
     """
+    body = b""
     safe_url = redact_url(url)
     timeout = aiohttp.ClientTimeout(total=timeout_s)
     # trust_env=False keeps loopback / cluster traffic off ambient HTTP(S)_PROXY.
+    # Scoped to the signing call alone: a catch-all spanning the request would
+    # label any failure below "signing failed" and force it retryable, which is
+    # both untrue (with no signer, sign_request returns immediately) and a
+    # behavior change, since _post_with_retry branches on error.retryable.
+    try:
+        url, headers, signed_body = await sign_request(
+            signer, method="POST", url=url, headers=headers, body=body
+        )
+        body = signed_body if signed_body is not None else body
+        safe_url = redact_url(url)
+    except Exception as exc:
+        raise ControlPlaneHttpError(
+            f"control_plane POST {safe_url} signing failed: {type(exc).__name__}: {exc}",
+            retryable=True,
+        ) from exc
+
     try:
         async with (
             aiohttp.ClientSession(timeout=timeout, trust_env=False) as session,
-            session.post(url, headers=headers, data=b"") as resp,
+            session.post(
+                url, headers=headers, data=body, **no_redirect_kwargs(signer)
+            ) as resp,
         ):
             if 200 <= resp.status < 300:
                 _logger.debug(lambda: f"control_plane POST {safe_url} -> {resp.status}")
@@ -79,4 +112,11 @@ async def control_plane_post(
         raise ControlPlaneHttpError(
             f"control_plane POST {safe_url} failed: {type(exc).__name__}: {exc}",
             retryable=True,
+        ) from exc
+    except Exception as exc:
+        # Genuinely unexpected: not a transport hiccup, so retrying it would
+        # burn the caller's whole backoff budget on something already fatal.
+        raise ControlPlaneHttpError(
+            f"control_plane POST {safe_url} failed: {type(exc).__name__}: {exc}",
+            retryable=False,
         ) from exc

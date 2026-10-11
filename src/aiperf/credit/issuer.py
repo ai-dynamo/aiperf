@@ -14,6 +14,7 @@ Key responsibilities:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -21,6 +22,7 @@ from msgspec.structs import replace as _struct_replace
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CacheBustTarget, CreditPhase
 from aiperf.common.phase import phase_runtime_key
+from aiperf.credit.dispatch import ChildDispatchResult, TurnAdmission
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.timing.replay_dependencies import ReplayIssueGate
 from aiperf.timing.strategies.cache_bust import (
@@ -130,7 +132,21 @@ class CreditIssuer:
         self._cache_bust_target = cache_bust_target
         self._issuing_stopped = False
         self._max_tokens_override: int | None = None
+        self._turn_admission: Callable[[TurnToSend], TurnAdmission | bool] | None = None
         self.replay_gate = ReplayIssueGate(replay_barrier)
+
+    def set_turn_admission(
+        self, callback: Callable[[TurnToSend], TurnAdmission | bool]
+    ) -> None:
+        """Install a synchronous final admission check for every turn."""
+        self._turn_admission = callback
+
+    def _turn_admission_result(self, turn: TurnToSend) -> TurnAdmission:
+        """Run the optional final admission check."""
+        callback = self._turn_admission
+        if callback is None:
+            return TurnAdmission.ADMIT
+        return TurnAdmission.normalize(callback(turn))
 
     def set_max_tokens_override(self, max_tokens: int | None) -> None:
         """Override generation length for every subsequently issued credit."""
@@ -347,6 +363,22 @@ class CreditIssuer:
                 self._concurrency_manager.release_session_slot(self._phase_key)
             return False
 
+        # DEFER and REJECT both release slots and return False here - this path
+        # gives the caller no way to distinguish "retry me later" from
+        # "terminal refusal". That's safe only because the sole admission
+        # callback wired today (AgenticReplayStrategy._admit_cache_warmup_turn)
+        # records its own retry state (_quota_handoff_turns) before returning
+        # DEFER, and replays it later via _pending_handoff_turns_by_root. A
+        # future admission callback that relies on this method to signal
+        # DEFER for it would have its deferred turns silently dropped with no
+        # requeue and no cleanup - contrast with dispatch_child_turn(), which
+        # does surface ChildDispatchResult.DEFERRED distinctly.
+        if self._turn_admission_result(turn) is not TurnAdmission.ADMIT:
+            self._concurrency_manager.release_prefill_slot(self._phase_key)
+            if needs_session_slot:
+                self._concurrency_manager.release_session_slot(self._phase_key)
+            return False
+
         # Both slots held: register the tree before issuing so drain/teardown
         # own the slot release. Must not run before prefill succeeds.
         if needs_session_slot:
@@ -354,6 +386,19 @@ class CreditIssuer:
 
         # Slots acquired - proceed with credit issuance
         return await self._issue_credit_internal(turn)
+
+    def _release_slots_on_reject(
+        self, needs_session_slot: bool, release_prefill: bool
+    ) -> None:
+        """Release slots acquired so far after a non-blocking issuance is rejected.
+
+        Tree is not registered yet (deferred until both slots succeed), so
+        phase teardown release_all cannot double-release these slots.
+        """
+        if release_prefill:
+            self._concurrency_manager.release_prefill_slot(self._phase_key)
+        if needs_session_slot:
+            self._concurrency_manager.release_session_slot(self._phase_key)
 
     async def try_issue_credit(self, turn: TurnToSend) -> bool | None:
         """Try to issue credit without blocking on concurrency slots.
@@ -398,12 +443,14 @@ class CreditIssuer:
             self._phase_key, can_proceed_fn
         )
         if not acquired:
-            # CRITICAL: Release session slot if we acquired it to maintain symmetry.
-            # Tree is not registered yet (deferred until both slots succeed), so
-            # phase teardown release_all cannot double-release this slot.
-            if needs_session_slot:
-                self._concurrency_manager.release_session_slot(self._phase_key)
+            self._release_slots_on_reject(needs_session_slot, release_prefill=False)
             return None  # No slot - credit not issued
+
+        admission = self._turn_admission_result(turn)
+        if admission is not TurnAdmission.ADMIT:
+            self._release_slots_on_reject(needs_session_slot, release_prefill=True)
+            # DEFER means not ready yet - retry later, not a stop condition.
+            return None if admission is TurnAdmission.DEFER else False
 
         if needs_session_slot:
             self._open_session_tree(turn)
@@ -480,25 +527,22 @@ class CreditIssuer:
 
         return not is_final_credit
 
-    async def dispatch_first_turn(self, sampled_session: SampledSession) -> bool:
+    async def dispatch_first_turn(
+        self, sampled_session: SampledSession
+    ) -> ChildDispatchResult:
         """Dispatch the first turn of a mid-run DAG child session.
 
         Thin wrapper around ``dispatch_child_turn`` that builds the
         first ``TurnToSend`` from the sampled session.
-
-        Returns True if the credit was sent on the wire (orchestrator
-        should expect a return), False otherwise (orchestrator should
-        roll back its tracking via ``BranchOrchestrator.on_child_stopped``
-        / per-child rollback).
         """
         return await self.dispatch_child_turn(sampled_session.build_first_turn())
 
-    async def dispatch_child_turn(self, turn: TurnToSend) -> bool:
+    async def dispatch_child_turn(self, turn: TurnToSend) -> ChildDispatchResult:
         """Dispatch a DAG child turn (first or continuation).
 
-        Returns True if the credit was sent on the wire (caller should
-        expect a return), False otherwise (caller should roll back its
-        tracking via ``BranchOrchestrator.on_child_stopped``).
+        ``DEFERRED`` means the turn is retained by a replay barrier or phase
+        handoff, so callers must preserve its orchestrator bookkeeping.
+        ``REJECTED`` is terminal and permits callers to drain that bookkeeping.
 
         We avoid the overloaded ``issue_credit`` / ``try_issue_credit``
         False (which conflates "gate refused, not issued" with "issued,
@@ -517,27 +561,36 @@ class CreditIssuer:
             turn,
             lambda: self._dispatch_child_turn_ready(turn),
             child_refusal_cleanup=True,
+            retained_result=ChildDispatchResult.DEFERRED,
         )
 
-    async def _dispatch_child_turn_ready(self, turn: TurnToSend) -> bool:
+    async def _dispatch_child_turn_ready(self, turn: TurnToSend) -> ChildDispatchResult:
         """Dispatch a child after its recorded predecessor frontier completes."""
         if self._issuing_stopped:
-            return False
+            return ChildDispatchResult.REJECTED
         can_proceed_fn = self._stop_checker.can_send_child_turn
         if not can_proceed_fn():
-            return False
+            return ChildDispatchResult.REJECTED
         # Children inherit the parent's session slot; wait for prefill
         # capacity so temporary saturation does not delete sibling branches.
         if not await self._concurrency_manager.acquire_prefill_slot(
             self._phase_key, can_proceed_fn
         ):
-            return False
+            return ChildDispatchResult.REJECTED
+        admission = self._turn_admission_result(turn)
+        if admission is not TurnAdmission.ADMIT:
+            self._concurrency_manager.release_prefill_slot(self._phase_key)
+            if admission is TurnAdmission.DEFER:
+                return ChildDispatchResult.DEFERRED
+            return ChildDispatchResult.REJECTED
         if turn.counts_toward_phase_target:
             turn = _struct_replace(turn, counts_toward_phase_target=False)
         await self._issue_credit_internal(turn)
-        return True
+        return ChildDispatchResult.ISSUED
 
-    async def dispatch_join_turn(self, pending: PendingBranchJoin) -> bool:
+    async def dispatch_join_turn(
+        self, pending: PendingBranchJoin
+    ) -> ChildDispatchResult:
         """Dispatch a parent's gated turn after all its children complete.
 
         The parent already holds a session slot (acquired at turn_index=0);
@@ -561,11 +614,10 @@ class CreditIssuer:
         NOT issued and the orchestrator increments ``BranchStats.joins_suppressed``.
 
         Returns:
-            True IFF the credit was actually issued. Unlike ``issue_credit``
-            (whose False conflates "refused, not issued" with "issued, was the
-            phase's final credit"), this inlines the issuance so an issued-but-
-            final join is reported as resumed, not suppressed -- mirroring
-            ``dispatch_child_turn``.
+            The join's explicit dispatch disposition. Replay-barrier retention
+            transfers ownership to the replay gate and normalizes to
+            ``ISSUED``; admission deferral remains ``DEFERRED`` so the branch
+            orchestrator can preserve the pending join for phase handoff.
         """
         assert pending.gated_turn_index is not None, (
             "dispatch_join_turn called without a gated_turn_index"
@@ -590,20 +642,22 @@ class CreditIssuer:
             cache_bust_target=pending.parent_cache_bust_target,
         )
         gate = getattr(self, "replay_gate", ReplayIssueGate(None))
-        return await gate.submit(turn, lambda: self._dispatch_join_turn_ready(turn))
+        # Unlike children, a barrier-retained join must not report DEFERRED: the
+        # orchestrator would re-store it in _active_joins, pinning the parent's
+        # slot and handing it off as both blocked and barrier-pending.
+        result = await gate.submit(turn, lambda: self._dispatch_join_turn_ready(turn))
+        return ChildDispatchResult.normalize(result)
 
-    async def _dispatch_join_turn_ready(self, turn: TurnToSend) -> bool:
+    async def _dispatch_join_turn_ready(self, turn: TurnToSend) -> ChildDispatchResult:
         """Issue a parent's gated (join) turn once its frontier is complete.
 
-        Returns True IFF the credit was actually issued. A join turn is a parent
-        continuation (``turn_index > 0``): it inherits the root's session slot
-        (no session-slot acquisition) and only needs a prefill slot. The
-        final-credit bookkeeping (freeze counts + done event) still runs inside
-        ``_issue_credit_internal``; we simply do not let its "can-send-more"
-        False leak out as a spurious suppression.
+        A join turn is a parent continuation (``turn_index > 0``): it inherits
+        the root's session slot (no session-slot acquisition) and only needs a
+        prefill slot. The final-credit bookkeeping (freeze counts + done event)
+        still runs inside ``_issue_credit_internal``.
         """
         if self._issuing_stopped:
-            return False
+            return ChildDispatchResult.REJECTED
         # Nested (agent_depth > 0) join is reactive DAG work that must progress
         # past the root-sampler-done signal; a top-level join is a normal
         # continuation. Mirrors _issue_credit_ready's check selection.
@@ -613,13 +667,19 @@ class CreditIssuer:
             else self._stop_checker.can_send_any_turn
         )
         if not can_proceed_fn():
-            return False
+            return ChildDispatchResult.REJECTED
         if not await self._concurrency_manager.acquire_prefill_slot(
             self._phase_key, can_proceed_fn
         ):
-            return False
+            return ChildDispatchResult.REJECTED
+        admission = self._turn_admission_result(turn)
+        if admission is not TurnAdmission.ADMIT:
+            self._concurrency_manager.release_prefill_slot(self._phase_key)
+            if admission is TurnAdmission.DEFER:
+                return ChildDispatchResult.DEFERRED
+            return ChildDispatchResult.REJECTED
         await self._issue_credit_internal(turn)
-        return True
+        return ChildDispatchResult.ISSUED
 
     async def abort_session(self, x_correlation_id: str) -> None:
         """Abort an in-flight session (FORK/SPAWN parent or orphan).

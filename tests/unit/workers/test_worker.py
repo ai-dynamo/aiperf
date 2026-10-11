@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -8,6 +9,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import ConversationContextMode, CreditPhase
+from aiperf.common.messages import ErrorMessage
 from aiperf.common.models import (
     Conversation,
     ErrorDetails,
@@ -17,6 +19,7 @@ from aiperf.common.models import (
     TextResponseData,
     Turn,
 )
+from aiperf.common.monotonic_clock import process_clock
 from aiperf.config.phases import ConcurrencyPhase
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.dataset.memory_map_utils import PayloadTurnData
@@ -646,6 +649,66 @@ class TestEmitCreditFailureRecord:
         assert record.request_info.phase_name == "second-profiling"
         assert record.request_info.phase_kind == "profiling"
 
+    async def test_emit_credit_failure_record_uses_process_clock(
+        self, mock_worker, monkeypatch
+    ):
+        credit_context = CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.PROFILING,
+                conversation_id="test-conv",
+                x_correlation_id="test-correlation",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+            ),
+            drop_perf_ns=0,
+            error=ErrorDetails(message="boom", type="CreditProcessingError", code=500),
+        )
+        mock_worker._send_inference_result_message = AsyncMock()
+        process_clock()
+        # A wall-clock step must not move the record's exported start.
+        monkeypatch.setattr(time, "time_ns", lambda: 0)
+
+        await mock_worker._emit_credit_failure_record(credit_context)
+
+        record = mock_worker._send_inference_result_message.call_args.args[0]
+        assert record.timestamp_ns == process_clock().wall_ns_at(record.start_perf_ns)
+
+    async def test_conversation_retrieval_error_record_uses_process_clock(
+        self, mock_worker, monkeypatch
+    ):
+        credit_context = CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.PROFILING,
+                conversation_id="test-conv",
+                x_correlation_id="test-correlation",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+            ),
+            drop_perf_ns=0,
+        )
+        mock_worker.conversation_request_client = Mock(
+            request=AsyncMock(
+                return_value=ErrorMessage(
+                    error=ErrorDetails(message="missing", type="NotFound", code=404)
+                )
+            )
+        )
+        mock_worker._send_inference_result_message = AsyncMock()
+        process_clock()
+        monkeypatch.setattr(time, "time_ns", lambda: 0)
+
+        with pytest.raises(ValueError, match="Failed to retrieve conversation"):
+            await mock_worker._request_conversation_from_dataset_manager(
+                "test-conv", credit_context
+            )
+
+        record = mock_worker._send_inference_result_message.call_args.args[0]
+        assert record.timestamp_ns == process_clock().wall_ns_at(record.start_perf_ns)
+
 
 # --- Fixture for CreditContext ---
 
@@ -965,7 +1028,7 @@ class TestPayloadBytesFastPath:
     async def test_fast_path_turn_carries_max_tokens_and_timestamp(
         self, mock_worker, sample_credit_context
     ):
-        """PAYLOAD_BYTES fast path must hoist turn scalars (max_tokens, timestamp) for metric enrichment, else OSL-mismatch and schedule-lag metrics go silent."""
+        """PAYLOAD_BYTES fast path must hoist turn scalars (max_tokens, timestamp, source_kind) for metric enrichment, else OSL-mismatch and schedule-lag metrics go silent and every record is attributed to the run-level label."""
         mock_worker._is_payload_bytes = True
         mock_worker._dataset_client = AsyncMock()
         payload = b'{"messages":[{"role":"user","content":"hi"}],"max_tokens":64}'
@@ -973,6 +1036,7 @@ class TestPayloadBytesFastPath:
             payload_bytes=payload,
             max_tokens=64,
             timestamp=1234.5,
+            source_kind="coding",
         )
 
         success_record = RequestRecord(
@@ -995,17 +1059,20 @@ class TestPayloadBytesFastPath:
         assert len(sent_request_info.turns) == 1
         assert sent_request_info.turns[0].max_tokens == 64
         assert sent_request_info.turns[0].timestamp == 1234.5
+        assert sent_request_info.turns[0].source_kind == "coding"
+        assert sent_request_info.source_kind == "coding"
 
     async def test_retrieve_conversation_for_session_restores_scalars(
         self, mock_worker, sample_credit_context
     ):
-        """Session-path reconstruction must restore max_tokens and timestamp."""
+        """Session-path reconstruction must restore max_tokens, timestamp, and source_kind."""
         mock_worker._is_payload_bytes = True
         mock_worker._dataset_client = AsyncMock()
         mock_worker._dataset_client.get_payload_turn.return_value = PayloadTurnData(
             payload_bytes=b'{"max_completion_tokens":32,"messages":[]}',
             max_tokens=32,
             timestamp=99,
+            source_kind="math",
         )
         mock_worker.session_manager = MagicMock()
         mock_worker.session_manager.default_context_mode = None
@@ -1017,6 +1084,7 @@ class TestPayloadBytesFastPath:
         assert len(conversation.turns) == 1
         assert conversation.turns[0].max_tokens == 32
         assert conversation.turns[0].timestamp == 99
+        assert conversation.turns[0].source_kind == "math"
         assert conversation.turns[0].raw_payload == {
             "max_completion_tokens": 32,
             "messages": [],

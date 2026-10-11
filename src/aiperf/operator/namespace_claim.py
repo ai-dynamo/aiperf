@@ -38,7 +38,7 @@ from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.common.environment import Environment
 from aiperf.kubernetes.client import k8s_client
-from aiperf.kubernetes.constants import LEASE_NAME
+from aiperf.kubernetes.constants import LEASE_NAME, MERGE_PATCH_CONTENT_TYPE
 from aiperf.kubernetes.lease import lease_holder_if_live
 
 __all__ = [
@@ -332,6 +332,7 @@ class NamespaceClaim:
                         "renewTime": _rfc3339_now(),
                     },
                 },
+                _content_type=MERGE_PATCH_CONTENT_TYPE,
             )
         except ApiException as exc:
             if exc.status == 404:

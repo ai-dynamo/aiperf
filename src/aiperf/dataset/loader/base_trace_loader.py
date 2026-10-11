@@ -237,6 +237,29 @@ class BaseTraceDatasetLoader(
 
         return data
 
+    def _everything_filtered_message(self) -> str:
+        """Why the offset window left no trace entry, naming each filter that fired.
+
+        Raised rather than passed on: an empty dataset fails later with an
+        unrelated error (the empty mmap, then the sampler), and a benchmark of
+        zero requests measures nothing.
+        """
+        reasons = []
+        if self._skipped_traces:
+            reasons.append(
+                f"{self._skipped_traces:,} outside the fixed-schedule offset window "
+                f"(start {self._start_offset} ms, end {self._end_offset} ms); check "
+                "--fixed-schedule-start-offset and --fixed-schedule-end-offset "
+                "against the trace's timestamps"
+            )
+        if self._skipped_max_isl:
+            reasons.append(f"{self._skipped_max_isl:,} over max_isl of {self._max_isl}")
+        source = self.filename or "<inline records>"
+        return (
+            f"No trace entries remain in {source} after filtering: "
+            f"{'; '.join(reasons)}."
+        )
+
     def _log_filtering_summary(self) -> None:
         """Emit info-level messages for any skipped or capped traces."""
         if self._skipped_traces > 0:
@@ -300,6 +323,9 @@ class BaseTraceDatasetLoader(
             if not self._filter_and_cap_trace(trace):
                 continue
             items.append(trace)
+
+        if not items and self._skipped_traces:
+            raise ValueError(self._everything_filtered_message())
 
         data = self._group_traces(items)
         self.debug(

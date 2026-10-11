@@ -10,15 +10,16 @@ mean the artifact set itself is incomplete and must withhold the export
 announcement.
 """
 
+import logging
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pytest import param
 
-from aiperf.common.messages import ProcessRecordsResultMessage
+from aiperf.common.messages import Message, ProcessRecordsResultMessage
 from aiperf.common.models import ErrorDetails
-from aiperf.common.models.record_models import ProcessRecordsResult
+from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
 from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import ServiceRunType
@@ -149,6 +150,51 @@ async def test_fatal_result_errors_withhold_the_export_announcement(
 
     assert controller._export_failed is True
     assert [e.operation for e in controller._exit_errors] == ["process_records"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_failure_without_records_completes_join_at_debug_level(
+    benchmark_run: BenchmarkRun,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A transported failure must reach shutdown even with debug logging enabled."""
+    controller = _build_controller(benchmark_run, ServiceRunType.MULTIPROCESSING)
+    controller._check_and_trigger_shutdown = AsyncMock()
+    error = ErrorDetails(
+        type="OSError",
+        message="stream exporter failed to finalize",
+        details={ERROR_FATAL_DETAIL_KEY: True},
+    )
+    message = ProcessRecordsResultMessage(
+        service_id="records_manager",
+        results=ProcessRecordsResult(
+            results=ProfileResults(
+                records=None,
+                completed=0,
+                start_ns=1,
+                end_ns=1,
+                is_complete=False,
+                incomplete_reason=error.message,
+            ),
+            errors=[error],
+        ),
+    )
+    received = Message.from_json(message.to_json_bytes())
+    assert isinstance(received, ProcessRecordsResultMessage)
+    controller._result_join_coordinator.register("profile", received.service_id)
+    assert controller._result_join_coordinator.ready is False
+
+    with caplog.at_level(logging.DEBUG, logger=controller.logger.logger_name):
+        await controller._on_process_records_result_message(received)
+
+    assert "Received profile results message: 0 records" in caplog.text
+    assert controller._profile_results is received.results
+    assert controller._profile_results.results.records is None
+    assert controller._export_failed is True
+    assert [e.operation for e in controller._exit_errors] == ["process_records"]
+    assert controller._exit_errors[0].error_details == error
+    assert controller._result_join_coordinator.ready is True
+    controller._check_and_trigger_shutdown.assert_awaited_once()
 
 
 def _explicitly_non_fatal_message() -> ProcessRecordsResultMessage:

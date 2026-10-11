@@ -28,6 +28,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.results_markers import READY_MARKER_NAME, write_ready_marker
 from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.constants import (
+    JSON_PATCH_CONTENT_TYPE,
     Annotations,
     Containers,
     JobSetLabels,
@@ -1975,7 +1976,6 @@ def _startup_failure_claim_ops(
     """Build the atomic parent preconditions for stable-blocker cleanup."""
     metadata = body.get("metadata") or {}
     status = body.get("status") or {}
-    annotations = metadata.get("annotations")
     operations: list[dict[str, Any]] = [
         {"op": "test", "path": "/metadata/uid", "value": metadata.get("uid")},
         {
@@ -1983,24 +1983,10 @@ def _startup_failure_claim_ops(
             "path": "/metadata/resourceVersion",
             "value": metadata.get("resourceVersion"),
         },
-        {"op": "test", "path": "/spec", "value": deepcopy(body.get("spec") or {})},
         {"op": "test", "path": "/status/phase", "value": status.get("phase")},
-        {
-            "op": "test",
-            "path": f"/status/{STARTUP_ISSUE_STATUS_KEY}",
-            "value": deepcopy(status.get(STARTUP_ISSUE_STATUS_KEY)),
-        },
     ]
-    if annotations is None:
+    if metadata.get("annotations") is None:
         operations.append({"op": "add", "path": "/metadata/annotations", "value": {}})
-    else:
-        operations.append(
-            {
-                "op": "test",
-                "path": "/metadata/annotations",
-                "value": deepcopy(annotations),
-            }
-        )
     operations.append(
         {
             "op": "add",
@@ -2036,7 +2022,7 @@ async def _claim_startup_failure(
                 namespace=namespace,
                 name=context.parent_name,
                 body=_startup_failure_claim_ops(live_body, context.fingerprint),
-                _content_type="application/json-patch+json",
+                _content_type=JSON_PATCH_CONTENT_TYPE,
             )
     except ApiException as exc:
         if exc.status == 404:
@@ -2545,7 +2531,7 @@ async def _patch_event_status(
                 namespace=namespace,
                 name=parent_name,
                 body=operations,
-                _content_type="application/json-patch+json",
+                _content_type=JSON_PATCH_CONTENT_TYPE,
             )
         return True
     except ApiException as exc:

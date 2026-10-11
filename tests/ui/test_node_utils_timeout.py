@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 
-from tests.ui.node_utils import requires_node, run_node
+from tests.ui.node_utils import NODE_TEST_TIMEOUT_S, requires_node, run_node
 
 # A repeating timer keeps node's event loop alive forever (unlike a dangling
 # top-level `await`, which node's own unsettled-await detector kills quickly),
@@ -15,7 +15,7 @@ _HANGING_SCRIPT = "setInterval(() => {}, 1_000_000);"
 
 
 @requires_node
-@pytest.mark.timeout(15)
+@pytest.mark.timeout(NODE_TEST_TIMEOUT_S)
 def test_run_node_hanging_script_raises_timeout_error() -> None:
     with pytest.raises(subprocess.TimeoutExpired):
         run_node(_HANGING_SCRIPT, timeout=1)

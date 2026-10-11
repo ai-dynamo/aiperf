@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
+    BeforeValidator,
     ConfigDict,
     Discriminator,
     Field,
@@ -49,6 +50,7 @@ from aiperf.config.dataset.video import (
     VideoConfig,
 )
 from aiperf.config.loader.normalizers import _hoist_synthetic_prompt_fields
+from aiperf.config.loader.parsing import reject_moved_custom_dataset_type
 from aiperf.config.types import SamplingDistribution
 from aiperf.plugin.enums import DatasetSamplingStrategy, PublicDatasetType
 
@@ -327,6 +329,7 @@ class FileDataset(SystemPromptMixin):
 
     format: Annotated[
         DatasetFormat,
+        BeforeValidator(reject_moved_custom_dataset_type),
         Field(
             default=DatasetFormat.SINGLE_TURN,
             description="Dataset file format determining parsing logic and expected file structure. "
@@ -337,6 +340,18 @@ class FileDataset(SystemPromptMixin):
             "timestamped trace files for replay. "
             "sagemaker_data_capture: JSONL captured by SageMaker DataCapture. "
             "random_pool: directory of reusable prompts.",
+        ),
+    ]
+
+    weka_nested_timestamp_basis: Annotated[
+        Literal["auto", "absolute", "relative"] | None,
+        Field(
+            default=None,
+            description="Corpus-wide interpretation of timestamps nested inside "
+            "Weka subagent markers. Unset uses auto for Weka inputs. Auto selects "
+            "relative if any child precedes its marker by more than 1 microsecond, "
+            "otherwise absolute; this heuristic cannot certify uniform conventions. "
+            "Absolute uses root-trace time and relative adds the marker time.",
         ),
     ]
 
@@ -557,15 +572,14 @@ class FileDataset(SystemPromptMixin):
         Field(
             default=None,
             ge=0.0,
-            description="Hard ceiling (seconds) for idle gaps within each individual trace. "
-            "For Weka trace replay, AIPerf looks at all parent and subagent request "
-            "submission timestamps within one root trace, compresses long gaps between "
-            "consecutive request submissions, and derives turn delays from the "
-            "compressed per-trace timeline. Original request api_time values are not "
-            "used to decide these idle gaps. When set for Weka, this takes precedence over "
-            "`--inter-turn-delay-cap-seconds` so individual parent/subagent-line "
-            "delays are not separately capped. Defaults to None (no per-trace "
-            "idle-gap compression).",
+            description="Hard ceiling (seconds) for observed runtime idle time within "
+            "each AgentX trajectory tree. The idle clock covers initial future work and "
+            "restarts when the final in-flight request across the root and all descendant "
+            "streams completes. If no request from that tree reaches the wire before the "
+            "cap, AIPerf uniformly advances "
+            "only that tree's pending replay timers. Dataset timestamps are unchanged, "
+            "and request order, spawn/join dependencies, and replay barriers remain "
+            "authoritative. Defaults to None (no per-trace runtime idle cap).",
         ),
     ]
 
@@ -691,6 +705,18 @@ class FileDataset(SystemPromptMixin):
                 "max_context_length (--max-context-length) only applies to "
                 f"format weka_trace; got format {self.format}. It filters by "
                 "recorded peak prompt+output length at load time."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_weka_timestamp_basis_scope(self) -> FileDataset:
+        """Reject an explicit Weka timestamp policy on a known non-Weka format."""
+        if self.weka_nested_timestamp_basis is None:
+            return self
+        if self.format not in (DatasetFormat.WEKA_TRACE, DatasetFormat.SINGLE_TURN):
+            raise ValueError(
+                "weka_nested_timestamp_basis (--weka-nested-timestamp-basis) "
+                f"only applies to Weka traces; got format {self.format}."
             )
         return self
 
@@ -871,6 +897,18 @@ class PublicDataset(SystemPromptMixin):
         ),
     ]
 
+    weka_nested_timestamp_basis: Annotated[
+        Literal["auto", "absolute", "relative"] | None,
+        Field(
+            default=None,
+            description="Corpus-wide interpretation of timestamps nested inside "
+            "Weka subagent markers. Unset uses auto for Weka inputs. Auto selects "
+            "relative if any child precedes its marker by more than 1 microsecond, "
+            "otherwise absolute; this heuristic cannot certify uniform conventions. "
+            "Absolute uses root-trace time and relative adds the marker time.",
+        ),
+    ]
+
     inter_turn_delay_cap_seconds: Annotated[
         float | None,
         Field(
@@ -888,11 +926,10 @@ class PublicDataset(SystemPromptMixin):
         Field(
             default=None,
             ge=0.0,
-            description="Hard ceiling (seconds) for idle gaps within each "
-            "individual trace for HF-backed Weka replay (mirror of "
-            "``FileDataset.trace_idle_gap_cap_seconds``). When set, takes "
-            "precedence over ``inter_turn_delay_cap_seconds``. Defaults to "
-            "None (no per-trace idle-gap compression).",
+            description="Hard ceiling (seconds) for observed runtime idle time within "
+            "each AgentX trajectory tree for HF-backed Weka replay (mirror of "
+            "``FileDataset.trace_idle_gap_cap_seconds``). Dataset timestamps remain "
+            "unchanged. Defaults to None (no per-trace runtime idle cap).",
         ),
     ]
 
@@ -1043,6 +1080,18 @@ class PublicDataset(SystemPromptMixin):
                 "max_context_length (--max-context-length) only applies to "
                 f"Weka public datasets; got dataset {self.dataset}. It filters "
                 "by recorded peak prompt+output length at load time."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_weka_timestamp_basis_scope(self) -> PublicDataset:
+        """Reject an explicit Weka timestamp policy on non-Weka datasets."""
+        if self.weka_nested_timestamp_basis is None:
+            return self
+        if "weka" not in str(self.dataset).lower():
+            raise ValueError(
+                "weka_nested_timestamp_basis (--weka-nested-timestamp-basis) "
+                f"only applies to Weka public datasets; got dataset {self.dataset}."
             )
         return self
 

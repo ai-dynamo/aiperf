@@ -90,6 +90,7 @@ async def cleanup(
         from aiperf.kubernetes import console as kube_console
         from aiperf.kubernetes.cli_helpers import resolve_benchmark_namespace
         from aiperf.kubernetes.client import k8s_client
+        from aiperf.kubernetes.constants import MERGE_PATCH_CONTENT_TYPE
         from aiperf.kubernetes.cr_refs import AIPERF_JOB_GROUP, AIPERF_JOB_VERSION
 
         namespace = resolve_benchmark_namespace(
@@ -150,6 +151,7 @@ async def cleanup(
                         namespace=namespace,
                         name=name,
                         body={"spec": {"cancel": True}},
+                        _content_type=MERGE_PATCH_CONTENT_TYPE,
                     )
                 await custom.delete_namespaced_custom_object(
                     group=AIPERF_JOB_GROUP,

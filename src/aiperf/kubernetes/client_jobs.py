@@ -10,6 +10,7 @@ from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient
 from kubernetes_asyncio.client.exceptions import ApiException
 
+from aiperf.kubernetes.constants import MERGE_PATCH_CONTENT_TYPE
 from aiperf.kubernetes.cr_refs import (
     AIPERF_JOB_GROUP,
     AIPERF_JOB_PLURAL,
@@ -294,7 +295,7 @@ async def cancel_aiperf_job(api: ApiClient, name: str, namespace: str) -> None:
         namespace=namespace,
         name=name,
         body={"spec": {"cancel": True}},
-        _content_type="application/merge-patch+json",
+        _content_type=MERGE_PATCH_CONTENT_TYPE,
     )
 
 
