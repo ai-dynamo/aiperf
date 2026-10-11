@@ -3,7 +3,9 @@
 
 from unittest.mock import Mock
 
+import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models import ParsedResponse
@@ -15,6 +17,7 @@ from aiperf.common.models.model_endpoint_info import (
 )
 from aiperf.common.models.record_models import (
     InferenceServerResponse,
+    SSEMessage,
     TextResponseData,
     Turn,
 )
@@ -183,6 +186,36 @@ class TestHuggingFaceGenerateEndpoint:
 
         assert isinstance(result, ParsedResponse)
         endpoint.make_text_response_data.assert_called_once_with("world")
+
+    @pytest.mark.parametrize(
+        "special",
+        [
+            param(True, id="special-token"),
+            param(False, id="ordinary-token"),
+        ],
+    )  # fmt: skip
+    def test_parse_streaming_respects_special_token_flag(
+        self, model_endpoint: ModelEndpointInfo, special: bool
+    ) -> None:
+        model_endpoint.endpoint.streaming = True
+        endpoint = HuggingFaceGenerateEndpoint(model_endpoint)
+        events = [
+            {"token": {"text": "Hello", "special": False}},
+            {
+                "token": {"text": "</s>", "special": special},
+                "generated_text": "Hello" if special else "Hello</s>",
+            },
+        ]
+        parsed = [
+            endpoint.parse_response(
+                SSEMessage.parse(b"data: " + orjson.dumps(event), perf_ns=index + 1)
+            )
+            for index, event in enumerate(events)
+        ]
+
+        text = "".join(part.data.text for part in parsed if part and part.data)
+
+        assert text == events[-1]["generated_text"]
 
     def test_parse_streaming_bad_json_returns_none(self, endpoint):
         response = Mock(spec=InferenceServerResponse)

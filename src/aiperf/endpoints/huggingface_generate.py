@@ -94,6 +94,8 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
                 return None
 
             token_obj = json_obj.get("token")
+            if token_obj and token_obj.get("special"):
+                return None
             text = token_obj.get("text") if token_obj else None
 
             if not text:
