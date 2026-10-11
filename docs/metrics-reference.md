@@ -525,6 +525,7 @@ input_sequence_length = len(tokenizer.encode(prompt, add_special_tokens=False))
 
 **Notes:**
 - Tokenization uses `add_special_tokens=False` to count only content tokens, excluding special tokens added by the tokenizer.
+- For `solido_rag`, input tokens come from the final request's `query` text; routing filters and the inference model name are excluded.
 - Useful for understanding the relationship between input size and latency/throughput.
 
 ---

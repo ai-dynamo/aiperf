@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from pytest import param
 
 from aiperf.common.models import Text, Turn
 from aiperf.common.models.record_models import (
@@ -32,6 +33,34 @@ class TestSolidoEndpointMetadata:
         assert metadata.produces_tokens is True
         assert metadata.tokenizes_input is True
         assert metadata.metrics_title == "SOLIDO RAG Metrics"
+
+
+@pytest.mark.parametrize(
+    "query_override",
+    [
+        param(None, id="turn-text"),
+        param(["Wire query", "Another query"], id="payload-override"),
+        param("Wire query", id="string-query"),
+        param([], id="empty-query"),
+    ],
+)  # fmt: skip
+def test_extract_payload_inputs_uses_wire_query(
+    query_override: list[str] | str | None,
+) -> None:
+    model_endpoint = create_model_endpoint(EndpointType.SOLIDO_RAG)
+    endpoint = SolidoEndpoint(model_endpoint)
+    turn = Turn(
+        texts=[Text(contents=["Original query"])],
+        extra_body={"query": query_override} if query_override is not None else None,
+    )
+    payload = endpoint.format_payload(
+        create_request_info(model_endpoint=model_endpoint, turns=[turn])
+    )
+
+    inputs = endpoint.extract_payload_inputs(payload)
+
+    expected = query_override if query_override is not None else ["Original query"]
+    assert inputs.texts == ([expected] if isinstance(expected, str) else expected)
 
 
 class TestSolidoEndpointFormatPayload:
