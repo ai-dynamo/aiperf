@@ -105,18 +105,13 @@ class ArtifactDirResolver:
             raw_records_dir = artifact_dir / OutputDefaults.RAW_RECORDS_FOLDER
             stale_raw_files = sorted(raw_records_dir.glob("raw_records_*.jsonl"))
             if stale_raw_files:
-                archive_dir = (
-                    artifact_dir.parent
-                    / ".aiperf-stale-raw-records"
-                    / (artifact_dir.name or "root")
-                    / uuid4().hex
-                )
+                archive_dir = artifact_dir / ".aiperf-stale-raw-records" / uuid4().hex
                 archive_dir.mkdir(parents=True, exist_ok=False)
                 for stale_file in stale_raw_files:
                     stale_file.replace(archive_dir / stale_file.name)
                 _logger.warning(
                     f"Archived {len(stale_raw_files)} stale raw-record shard(s) "
-                    f"outside the artifact directory: {archive_dir}"
+                    f"inside the artifact directory: {archive_dir}"
                 )
 
         # Purge stale output fragments from a prior failed run. Fragment files
