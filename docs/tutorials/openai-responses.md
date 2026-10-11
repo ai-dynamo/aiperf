@@ -416,6 +416,9 @@ This enables accurate measurement of TTFT, ITL, and token throughput metrics whe
 
 A `response.failed` event marks the request as failed even when the HTTP status
 is 200 and some output has already arrived. AIPerf retains the earlier events
-and reports the server's error message. `response.incomplete` remains a
-non-error event, including responses that reach `max_output_tokens`.
+and reports the server's error message, even if the failure event contains an
+SSE comment. Failed responses use the text-only fallback for conversation
+replay; partial structured output items, such as unfinished tool calls, are
+not passed to FORK children. `response.incomplete` remains a non-error event,
+including responses that reach `max_output_tokens`.
 

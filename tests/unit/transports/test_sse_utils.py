@@ -681,6 +681,18 @@ class TestInspectMessageForError:
                 id="responses-failed-named-event",
             ),
             param(
+                'event: response.failed\n: heartbeat\ndata: {"type":"response.failed","response":{"error":{"message":"Overloaded","code":503}}}',
+                "Overloaded",
+                503,
+                id="responses-failed-comment-preserves-nested-error",
+            ),
+            param(
+                'event: error\n: Keep comment precedence\ndata: {"error":{"message":"Structured error","code":503}}',
+                "Keep comment precedence",
+                502,
+                id="generic-error-comment-precedence",
+            ),
+            param(
                 'data: {"type":"response.failed","response":{"error":null}}',
                 "Response failed",
                 502,

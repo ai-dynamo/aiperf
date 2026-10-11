@@ -17,6 +17,9 @@ _SSE_DATA_FIELD_NAME = "data"
 _SSE_ERROR_EVENT_VALUE = "error"
 _RESPONSES_FAILED_EVENT_VALUE = "response.failed"
 _SSE_EVENT_FIELD_NAME = "event"
+_SSE_ERROR_EVENT_VALUES = frozenset(
+    {_SSE_ERROR_EVENT_VALUE, _RESPONSES_FAILED_EVENT_VALUE}
+)
 
 
 def _raise_for_data_error(data_content: str) -> None:
@@ -55,9 +58,9 @@ def _raise_for_data_error(data_content: str) -> None:
     )
 
 
-def _classify_message_fields(message: SSEMessage) -> tuple[bool, bool]:
-    """Return named-error and structured-data-candidate flags."""
-    has_error_event = False
+def _classify_message_fields(message: SSEMessage) -> tuple[str | None, bool]:
+    """Return the named error event and structured-data-candidate flag."""
+    error_event = None
     has_data_error_candidate = False
     for packet in message.packets:
         if packet.name == _SSE_DATA_FIELD_NAME:
@@ -69,11 +72,10 @@ def _classify_message_fields(message: SSEMessage) -> tuple[bool, bool]:
         if (
             packet.name.casefold() == _SSE_EVENT_FIELD_NAME
             and packet.value is not None
-            and packet.value.casefold()
-            in {_SSE_ERROR_EVENT_VALUE, _RESPONSES_FAILED_EVENT_VALUE}
+            and packet.value.casefold() in _SSE_ERROR_EVENT_VALUES
         ):
-            has_error_event = True
-    return has_error_event, has_data_error_candidate
+            error_event = packet.value.casefold()
+    return error_event, has_data_error_candidate
 
 
 class AsyncSSEStreamReader:
@@ -144,9 +146,10 @@ class AsyncSSEStreamReader:
     def inspect_message_for_error(message: SSEMessage) -> None:
         """Raise for named SSE errors or structured ``data`` error payloads.
 
-        A named error uses its first comment when present. Without a comment,
-        structured data supplies the message and code before the unknown-error
-        fallback. Responses API failures carry the error inside ``response``.
+        A generic named error uses its first comment when present. Responses
+        API failures prefer their nested ``response.error`` over comments.
+        Structured data supplies the message and code before the unknown-error
+        fallback.
         Data is checked for exact markers before JSON decoding to keep normal
         streaming messages on the fast path.
         """
@@ -161,9 +164,12 @@ class AsyncSSEStreamReader:
                 _raise_for_data_error(data_content)
             return
 
-        has_error_event, has_data_error_candidate = _classify_message_fields(message)
+        error_event, has_data_error_candidate = _classify_message_fields(message)
 
-        if has_error_event:
+        if error_event == _RESPONSES_FAILED_EVENT_VALUE:
+            _raise_for_data_error(message.extract_data_content())
+
+        if error_event:
             error_message = None
             for packet in message.packets:
                 if packet.name == _SSE_COMMENT_FIELD_NAME:
@@ -176,10 +182,10 @@ class AsyncSSEStreamReader:
                     error_code=502,
                 )
 
-        if has_data_error_candidate:
+        if has_data_error_candidate and error_event != _RESPONSES_FAILED_EVENT_VALUE:
             _raise_for_data_error(message.extract_data_content())
 
-        if has_error_event:
+        if error_event:
             raise SSEResponseError(
                 f"Error occurred in SSE response: Unknown error in SSE response: {message}",
                 error_code=502,

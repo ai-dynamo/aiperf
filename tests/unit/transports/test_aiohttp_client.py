@@ -14,10 +14,13 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from aiperf.common.models import SSEField, SSEMessage
+from aiperf.common.models import SSEField, SSEMessage, Turn
 from aiperf.common.monotonic_clock import process_clock
+from aiperf.endpoints.openai_responses import ResponsesEndpoint
+from aiperf.plugin.enums import EndpointType
 from aiperf.transports.aiohttp_client import AioHttpClient
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
+from tests.unit.endpoints.conftest import create_model_endpoint, create_request_info
 from tests.unit.transports.conftest import (
     MockStreamReader,
     assert_error_request_record,
@@ -218,7 +221,6 @@ class TestAioHttpClient:
     async def test_responses_failed_event_marks_http_200_request_as_error(
         self, aiohttp_client: AioHttpClient, with_callback: bool
     ) -> None:
-        """A real Responses stream retains partial data but reports its failure."""
         delta = {"type": "response.output_text.delta", "delta": "Partial answer"}
         failed = {
             "type": "response.failed",
@@ -256,6 +258,66 @@ class TestAioHttpClient:
         assert [response.get_json() for response in record.responses] == [delta]
         if callback:
             callback.assert_awaited_once()
+
+    @pytest.mark.parametrize("with_callback", [False, True])
+    @pytest.mark.parametrize("failed", [False, True])
+    async def test_responses_transport_failure_prevents_structured_replay(
+        self, aiohttp_client: AioHttpClient, with_callback: bool, failed: bool
+    ) -> None:
+        item = {
+            "type": "function_call",
+            "id": "fc_1",
+            "call_id": "call_1",
+            "name": "lookup",
+            "arguments": "{}",
+        }
+        done = {"type": "response.output_item.done", "item": item}
+        terminal = {
+            "type": "response.failed" if failed else "response.completed",
+            "response": {
+                "status": "failed" if failed else "completed",
+                "output": [item],
+                "error": {"message": "Generation failed"} if failed else None,
+            },
+        }
+        body = b"".join(
+            b"data: " + orjson.dumps(event) + b"\n\n" for event in (done, terminal)
+        )
+
+        async def handler(request: web.Request) -> web.Response:
+            await request.read()
+            return web.Response(body=body, content_type="text/event-stream")
+
+        callback = AsyncMock(return_value=True) if with_callback else None
+        app = web.Application()
+        app.router.add_post("/v1/responses", handler)
+        async with TestServer(app) as server:
+            record = await aiohttp_client.post_request(
+                str(server.make_url("/v1/responses")),
+                b'{"stream":true}',
+                {"Content-Type": "application/json"},
+                first_token_callback=callback,
+            )
+
+        assert record.has_error is failed
+        assert [response.get_json() for response in record.responses] == (
+            [done] if failed else [done, terminal]
+        )
+        model_endpoint = create_model_endpoint(EndpointType.RESPONSES, streaming=True)
+        endpoint = ResponsesEndpoint(model_endpoint)
+        _, assistant_turn = endpoint.process_responses(
+            record, capture_assistant_turn=True
+        )
+        root = {"role": "user", "content": "root"}
+        child = {"role": "user", "content": "child"}
+        turns = [Turn(raw_messages=[root])]
+        if assistant_turn is not None:
+            turns.append(assistant_turn)
+        turns.append(Turn(raw_messages=[child]))
+        payload = endpoint.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=turns)
+        )
+        assert payload["input"] == ([root, child] if failed else [root, item, child])
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
