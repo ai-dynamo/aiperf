@@ -76,14 +76,13 @@ def test_trajectory_dispatch_preserves_recorded_history(
         f"""aiperf profile
             --model {defaults.model} --endpoint-type chat
             --hf-mooncake-dataset example/trajectories
-            --hf-split test
-            --dataset-field session_id=question_id
-            --dataset-field messages=turns
-            --dataset-field tools=extras.tools
-            --dataset-field output_length=extras.max_tokens
-            --dataset-field extra.temperature=extras.temperature
-            --dataset-field extra.top_p=extras.top_p
-            --dataset-field extra.top_k=extras.top_k
+            --mooncake-trace-to-hf-mapping session_id=question_id
+            --mooncake-trace-to-hf-mapping messages=turns
+            --mooncake-trace-to-hf-mapping tools=extras.tools
+            --mooncake-trace-to-hf-mapping output_length=extras.max_tokens
+            --mooncake-trace-to-hf-mapping extra.temperature=extras.temperature
+            --mooncake-trace-to-hf-mapping extra.top_p=extras.top_p
+            --mooncake-trace-to-hf-mapping extra.top_k=extras.top_k
             --dataset-filter model=source/model
             --dataset-filter benchmark=test-benchmark
             {limits} {"--streaming" if streaming else ""}

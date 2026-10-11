@@ -3,7 +3,6 @@
 
 """Agent trajectories must reuse Mooncake's recorded request semantics."""
 
-from collections.abc import Iterator
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -21,6 +20,7 @@ from aiperf.dataset.loader.hf_mooncake_trace import (
     HFMooncakeTraceDatasetLoader,
     trajectory_to_mooncake,
 )
+from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.workers.session_manager import UserSessionManager
 from tests.unit.conftest import make_run_from_cli
@@ -34,7 +34,13 @@ def row() -> dict[str, Any]:
         "benchmark": "SWE-Bench Multilingual",
         "messages": [
             {"role": "system", "content": "system", "tool_calls": None},
-            {"role": "user", "content": "question", "reasoning_content": None},
+            {
+                "role": "user",
+                "content": "question",
+                "reasoning_content": None,
+                "tool_call_id": None,
+                "name": None,
+            },
             {
                 "role": "assistant",
                 "content": None,
@@ -76,11 +82,14 @@ def loader(**kwargs: Any) -> HFMooncakeTraceDatasetLoader:
     )
 
 
-def test_recorded_prefixes_preserve_payload_and_discard_live_replies(
+@pytest.mark.asyncio
+async def test_recorded_prefixes_preserve_payload_and_discard_live_replies(
     row: dict[str, Any],
 ) -> None:
     before = deepcopy(row)
-    conversation = loader()._convert_rows([row])[0]
+    selected = loader()
+    data = selected._validate_rows([row])
+    conversation = (await selected.convert_to_conversations(data))[0]
     assert row == before
     assert (
         conversation.context_mode
@@ -96,6 +105,7 @@ def test_recorded_prefixes_preserve_payload_and_discard_live_replies(
         assert not session.should_store_response()
         messages = endpoint.build_messages(session.turn_list)
         assert len(messages) == end
+        assert messages[:2] == row["messages"][:2]
         assert [m["role"] for m in messages] == [
             m["role"] for m in row["messages"][:end]
         ]
@@ -114,7 +124,7 @@ def test_recorded_prefixes_preserve_payload_and_discard_live_replies(
             assert messages[2]["content"] is None
             assert "index" not in messages[2]["tool_calls"][0]
             assert messages[3]["tool_call_id"] == "call1"
-    assert "tool_calls" not in conversation.turns[0].raw_messages[0]
+    assert conversation.turns[0].raw_messages[0]["tool_calls"] is None
 
 
 @pytest.mark.parametrize(
@@ -166,20 +176,20 @@ def test_source_column_filters_and_explicit_subset(row: dict[str, Any]) -> None:
     assert selected.hf_subset is None
     assert selected.hf_revision is None
     rows = [row | {"model": "other"}, row | {"benchmark": "other"}, row]
-    assert len(selected._convert_rows(rows)) == 1
+    assert len(selected._validate_rows(rows)) == 1
     assert loader(hf_subset="custom-config").hf_subset == "custom-config"
     with pytest.raises(DatasetLoaderError, match="no trajectories matched"):
-        selected._convert_rows([row | {"benchmark": "other"}])
+        selected._validate_rows([row | {"benchmark": "other"}])
     with pytest.raises(DatasetLoaderError, match="source path.*missing"):
-        loader(filters={"missing": "x"})._convert_rows([row])
+        loader(filters={"missing": "x"})._validate_rows([row])
 
 
 def test_duplicate_ids_rejected(row: dict[str, Any]) -> None:
     with pytest.raises(DatasetLoaderError, match="duplicate session_id"):
-        loader()._convert_rows([row, row])
+        loader()._validate_rows([row, row])
 
 
-def test_materialization_limit_stops_stream(row: dict[str, Any]) -> None:
+def test_session_limit_does_not_truncate_export(row: dict[str, Any]) -> None:
     run = make_run_from_cli(
         CLIConfig(
             model_names=["target"],
@@ -189,11 +199,60 @@ def test_materialization_limit_stops_stream(row: dict[str, Any]) -> None:
         )
     )
 
-    def rows() -> Iterator[dict[str, Any]]:
-        yield row
-        raise AssertionError("loader read beyond the requested session limit")
+    rows = [row, row | {"session_id": "second"}]
+    assert len(loader(run=run)._validate_rows(rows)) == 2
 
-    assert len(loader(run=run)._convert_rows(rows())) == 1
+
+@pytest.mark.asyncio
+async def test_hf_pipeline_delegates_and_matches_mooncake_file(
+    monkeypatch: pytest.MonkeyPatch, row: dict[str, Any], tmp_path: Path
+) -> None:
+    rows = [row, row | {"session_id": "second"}]
+    selected = loader()
+    monkeypatch.setattr(selected, "_load_hf_dataset", lambda: rows)
+    load = Mock(wraps=selected._mooncake.load_dataset)
+    convert = Mock(wraps=selected._mooncake.convert_to_conversations)
+    monkeypatch.setattr(selected._mooncake, "load_dataset", load)
+    monkeypatch.setattr(selected._mooncake, "convert_to_conversations", convert)
+
+    data = await selected.load_dataset()
+    assert list(data) == ["swe:1", "second"]
+    assert all(len(traces) == 3 for traces in data.values())
+    load.assert_called_once_with()
+    assert selected._mooncake.inline_records == []
+    conversations = await selected.convert_to_conversations(data)
+    convert.assert_called_once_with(data)
+
+    filename = tmp_path / "traces.jsonl"
+    filename.write_bytes(
+        b"".join(
+            orjson.dumps(
+                trace.model_dump(exclude_none=True), option=orjson.OPT_APPEND_NEWLINE
+            )
+            for source in rows
+            for trace in trajectory_to_mooncake(source)
+        )
+    )
+    file_loader = MooncakeTraceDatasetLoader(
+        filename=filename, run=selected.run, prompt_generator=Mock()
+    )
+    assert conversations == file_loader.convert_to_conversations(
+        file_loader.load_dataset()
+    )
+
+
+def test_inline_records_released_after_load_failure(
+    monkeypatch: pytest.MonkeyPatch, row: dict[str, Any]
+) -> None:
+    selected = loader()
+    monkeypatch.setattr(
+        selected._mooncake,
+        "load_dataset",
+        Mock(side_effect=ValueError("invalid trace")),
+    )
+    with pytest.raises(ValueError, match="invalid trace"):
+        selected._validate_rows([row])
+    assert selected._mooncake.inline_records == []
 
 
 @pytest.mark.asyncio
@@ -203,13 +262,13 @@ async def test_hf_loading_uses_explicit_source(
     datasets = pytest.importorskip("datasets")
     load = Mock(return_value=[row])
     monkeypatch.setattr(datasets, "load_dataset", load)
-    selected = loader(hf_subset="my-config", hf_revision="my-revision")
+    selected = loader(hf_subset="my-config")
     data = await selected.load_dataset()
     conversations = await selected.convert_to_conversations(data)
     assert len(conversations[0].turns) == 3
     assert load.call_args.args == ("example/trajectories",)
     assert load.call_args.kwargs["name"] == "my-config"
-    assert load.call_args.kwargs["revision"] == "my-revision"
+    assert "revision" not in load.call_args.kwargs
     assert load.call_args.kwargs["split"] == "test"
     assert load.call_args.kwargs["streaming"] is True
 
@@ -277,7 +336,7 @@ def test_output_cap_falls_back_to_request_params(
         assert trace.extra == {}
 
 
-def test_duration_only_requires_materialization_bound() -> None:
+def test_duration_only_loads_available_rows(row: dict[str, Any]) -> None:
     run = make_run_from_cli(
         CLIConfig(
             model_names=["target"],
@@ -286,8 +345,9 @@ def test_duration_only_requires_materialization_bound() -> None:
             benchmark_duration=10,
         )
     )
-    with pytest.raises(DatasetLoaderError, match="materialization limit"):
-        loader(run=run)._max_conversations()
+    traces = loader(run=run)._validate_rows([row])
+    assert len(traces) == 1
+    assert len(traces[row["session_id"]]) == 3
 
 
 @pytest.mark.parametrize("encoded", [False, True])
@@ -321,33 +381,30 @@ def test_mapped_columns_match_canonical_conversations(
             "extra.temperature": "extras.temperature",
             "extra.top_p": "extras.top_p",
         }
-    )._convert_rows([source])
-    assert mapped == loader()._convert_rows([row])
+    )._validate_rows([source])
+    assert mapped == loader()._validate_rows([row])
     assert source == before
 
 
 @pytest.mark.parametrize("mapping,error", [
-    param({"timestamp": "time"}, "unsupported", id="unsupported_target"),
-    param({"extra.": "temperature"}, "unsupported", id="empty_extra_key"),
-    param({"messages": ""}, "invalid source path", id="empty_source"),
-    param({"messages": "nested..messages"}, "invalid source path", id="empty_path_segment"),
     param({"messages": "missing"}, "source path.*missing", id="missing_source"),
     param({"extra.model": "model"}, "must not override", id="mapped_model_override"),
 ])  # fmt: skip
-def test_invalid_mapping_fails_clearly(
+def test_invalid_mapped_row_fails_clearly(
     mapping: dict[str, str], error: str, row: dict[str, Any]
 ) -> None:
     with pytest.raises(DatasetLoaderError, match=error):
-        loader(field_mapping=mapping)._convert_rows([row])
+        loader(field_mapping=mapping)._validate_rows([row])
 
 
 def test_absent_session_ids_are_generated(row: dict[str, Any]) -> None:
     row.pop("session_id")
-    conversations = loader()._convert_rows([row, row])
-    assert len(conversations) == 2
-    assert conversations[0].session_id != conversations[1].session_id
+    traces = loader()._validate_rows([row, row])
+    assert list(traces) == ["hf-row-0", "hf-row-1"]
 
 
 def test_nested_source_filter(row: dict[str, Any]) -> None:
     row["metadata"] = '{"model":"selected"}'
-    assert len(loader(filters={"metadata.model": "selected"})._convert_rows([row])) == 1
+    assert (
+        len(loader(filters={"metadata.model": "selected"})._validate_rows([row])) == 1
+    )

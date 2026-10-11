@@ -10,6 +10,7 @@ from unittest.mock import Mock
 import pytest
 from pytest import param
 
+from aiperf.config.dataset import PublicDataset
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
 from aiperf.config.loader.errors import ConfigurationError
@@ -31,9 +32,7 @@ benchmark:
     dataset: mooncake_hf
     hf_mooncake_dataset: original/repo
     hf_subset: original-subset
-    hf_split: train
-    hf_revision: original-revision
-    field_mapping: {messages: history, tools: functions}
+    mooncake_trace_to_hf_mapping: {messages: history, tools: functions}
     filters: {model: original-model}
   profiling: {type: concurrency, concurrency: 2, sessions: 3}
 """)
@@ -43,43 +42,26 @@ benchmark:
 def test_cli_overrides_hf_yaml_and_composer_arguments(
     config_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cfg = resolve_config(
+    run = make_run_from_cli(
         CLIConfig(
             config_file=config_file,
             hf_dataset_subset="new-subset",
-            hf_split="test",
-            hf_revision="new-revision",
-            dataset_field_mapping=[
+            mooncake_trace_to_hf_mapping=[
                 "messages=turns",
                 "extra.temperature=params.temperature",
             ],
             dataset_filters=["model=new-model"],
         )
     )
-    dataset = cfg.benchmark.get_default_dataset()
+    dataset = run.cfg.get_default_dataset()
     assert dataset.hf_mooncake_dataset == "original/repo"
     assert dataset.hf_subset == "new-subset"
-    assert dataset.hf_split == "test"
-    assert dataset.hf_revision == "new-revision"
-    assert dataset.field_mapping == {
+    assert dataset.mooncake_trace_to_hf_mapping == {
         "messages": "turns",
         "tools": "functions",
         "extra.temperature": "params.temperature",
     }
     assert dataset.filters == {"model": "new-model"}
-    run = make_run_from_cli(
-        CLIConfig(
-            model_names=["target"],
-            public_dataset="mooncake_hf",
-            hf_mooncake_dataset=dataset.hf_mooncake_dataset,
-            hf_split=dataset.hf_split,
-            hf_revision=dataset.hf_revision,
-            hf_dataset_subset=dataset.hf_subset,
-            dataset_field_mapping=[
-                f"{k}={v}" for k, v in dataset.field_mapping.items()
-            ],
-        )
-    )
     composer = PublicDatasetComposer(run=run, tokenizer=None)
     composer.prompt_generator = Mock()
     monkeypatch.setattr(
@@ -90,17 +72,15 @@ def test_cli_overrides_hf_yaml_and_composer_arguments(
     assert kwargs["hf_dataset_name"] == "original/repo"
     assert kwargs["hf_subset"] == "new-subset"
     assert kwargs["hf_split"] == "test"
-    assert kwargs["hf_revision"] == "new-revision"
-    assert kwargs["field_mapping"] == dataset.field_mapping
+    assert "hf_revision" not in kwargs
+    assert kwargs["field_mapping"] == dataset.mooncake_trace_to_hf_mapping
     assert kwargs["streaming"] is True
 
 
 @pytest.mark.parametrize("flags", [
     param({"hf_mooncake_dataset": "other/repo"}, id="repo"),
     param({"hf_dataset_subset": "other-subset"}, id="subset"),
-    param({"hf_split": "train"}, id="split"),
-    param({"hf_revision": "other-revision"}, id="revision"),
-    param({"dataset_field_mapping": ["messages=turns"]}, id="mapping"),
+    param({"mooncake_trace_to_hf_mapping": ["messages=turns"]}, id="mapping"),
     param({"dataset_filters": ["model=other-model"]}, id="filter"),
 ])  # fmt: skip
 def test_hf_options_change_cached_dataset_identity(flags: dict[str, Any]) -> None:
@@ -115,17 +95,36 @@ def test_hf_options_change_cached_dataset_identity(flags: dict[str, Any]) -> Non
 
 
 @pytest.mark.parametrize("flags,error", [
-    param({"public_dataset": "mooncake_hf"}, "requires --hf-mooncake-dataset", id="missing_repo"),
+    param({"public_dataset": "mooncake_hf"}, "requires a non-empty hf_mooncake_dataset", id="missing_repo"),
     param({"public_dataset": "aimo", "hf_mooncake_dataset": "example/repo"}, "--hf-mooncake-dataset", id="wrong_plugin"),
-    param({"hf_split": "test"}, "--hf-split", id="orphan_split"),
-    param({"hf_revision": "pin"}, "--hf-revision", id="orphan_revision"),
-    param({"dataset_field_mapping": ["messages=turns"]}, "--dataset-field", id="orphan_mapping"),
-    param({"public_dataset": "mooncake_hf", "hf_mooncake_dataset": "example/repo", "dataset_field_mapping": ["messages=turns", "messages=other"]}, "Duplicate --dataset-field", id="duplicate_mapping"),
-    param({"public_dataset": "mooncake_hf", "hf_mooncake_dataset": "example/repo", "dataset_field_mapping": ["messages"]}, "Invalid --dataset-field", id="malformed_mapping"),
+    param({"mooncake_trace_to_hf_mapping": ["messages=turns"]}, "--mooncake-trace-to-hf-mapping", id="orphan_mapping"),
+    param({"public_dataset": "aimo", "mooncake_trace_to_hf_mapping": ["messages=turns"]}, "--mooncake-trace-to-hf-mapping", id="mapping_wrong_public_loader"),
+    param({"custom_dataset_type": "mooncake_trace", "mooncake_trace_to_hf_mapping": ["messages=turns"]}, "--mooncake-trace-to-hf-mapping", id="mapping_local_trace"),
+    param({"public_dataset": "mooncake_hf", "hf_mooncake_dataset": "example/repo", "mooncake_trace_to_hf_mapping": ["messages=turns", "messages=other"]}, "Duplicate --mooncake-trace-to-hf-mapping", id="duplicate_mapping"),
+    param({"public_dataset": "mooncake_hf", "hf_mooncake_dataset": "example/repo", "mooncake_trace_to_hf_mapping": ["messages"]}, "Invalid --mooncake-trace-to-hf-mapping", id="malformed_mapping"),
 ])  # fmt: skip
 def test_invalid_hf_flags_fail_clearly(flags: dict[str, Any], error: str) -> None:
     with pytest.raises(ValueError, match=error):
         make_run_from_cli(CLIConfig(model_names=["target"], **flags))
+
+
+@pytest.mark.parametrize("mapping,error", [
+    param({"timestamp": "time"}, "unsupported", id="unsupported_target"),
+    param({"extra.": "temperature"}, "unsupported", id="empty_extra_key"),
+    param({"messages": ""}, "invalid source path", id="empty_source"),
+    param({"messages": "nested..messages"}, "invalid source path", id="empty_path_segment"),
+])  # fmt: skip
+def test_invalid_mapping_rejected_by_config(
+    mapping: dict[str, str], error: str
+) -> None:
+    with pytest.raises(ValueError, match=error):
+        PublicDataset(
+            name="default",
+            type="public",
+            dataset="mooncake_hf",
+            hf_mooncake_dataset="example/trajectories",
+            mooncake_trace_to_hf_mapping=mapping,
+        )
 
 
 @pytest.mark.parametrize("explicit_loader", [False, True])
@@ -135,7 +134,7 @@ def test_repository_flag_selects_mooncake_loader(explicit_loader: bool) -> None:
         CLIConfig(
             model_names=["target"],
             hf_mooncake_dataset="  example/trajectories  ",
-            dataset_field_mapping=["messages=turns"],
+            mooncake_trace_to_hf_mapping=["messages=turns"],
             dataset_filters=["model=source/model"],
             **flags,
         )
@@ -144,7 +143,7 @@ def test_repository_flag_selects_mooncake_loader(explicit_loader: bool) -> None:
     assert dataset.type == "public"
     assert dataset.dataset == "mooncake_hf"
     assert dataset.hf_mooncake_dataset == "example/trajectories"
-    assert dataset.field_mapping == {"messages": "turns"}
+    assert dataset.mooncake_trace_to_hf_mapping == {"messages": "turns"}
     assert dataset.filters == {"model": "source/model"}
 
 

@@ -257,8 +257,6 @@ _VERBATIM_DATASET_FIELDS = (
     ("public_dataset", "dataset", True),
     ("hf_dataset_subset", "hf_subset", False),
     ("hf_mooncake_dataset", "hf_mooncake_dataset", False),
-    ("hf_split", "hf_split", False),
-    ("hf_revision", "hf_revision", False),
     ("hf_weka_dataset", "hf_weka_dataset", False),
     ("weka_nested_timestamp_basis", "weka_nested_timestamp_basis", False),
     ("custom_dataset_type", "format", False),
@@ -295,9 +293,9 @@ def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
         value = getattr(cli, field)
         if _set(cli, field) and (keep_none or value is not None):
             out[key] = value
-    if _set(cli, "dataset_field_mapping"):
-        out["field_mapping"] = _parse_dataset_filters(
-            cli.dataset_field_mapping, flag="--dataset-field"
+    if _set(cli, "mooncake_trace_to_hf_mapping"):
+        out["mooncake_trace_to_hf_mapping"] = _parse_dataset_filters(
+            cli.mooncake_trace_to_hf_mapping, flag="--mooncake-trace-to-hf-mapping"
         )
     if _set(cli, "dataset_filters"):
         out["filters"] = _parse_dataset_filters(cli.dataset_filters)
@@ -307,6 +305,8 @@ def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
         from aiperf.plugin.enums import PublicDatasetType
 
         out["dataset"] = PublicDatasetType.WEKA_HF
+    # --hf-mooncake-dataset alone auto-selects --public-dataset mooncake_hf (docs +
+    # PublicDataset._validate_mooncake_hf expect the pairing).
     if "hf_mooncake_dataset" in out and "dataset" not in out:
         from aiperf.plugin.enums import PublicDatasetType
 
@@ -1442,17 +1442,12 @@ def _run_dataset_rejections(
         cli, declared_format=declared_format if override_mode else None
     )
 
-    hf_mapping_flags = {
-        "hf_split": "--hf-split",
-        "hf_revision": "--hf-revision",
-        "dataset_field_mapping": "--dataset-field",
-    }
-    if not (_implies_public_dataset(cli) or declared_type == DatasetType.PUBLIC):
-        for field, flag in hf_mapping_flags.items():
-            if _set(cli, field) and getattr(cli, field) is not None:
-                raise ValueError(
-                    f"{flag} requires a public dataset of type mooncake_hf"
-                )
+    if cli.mooncake_trace_to_hf_mapping and not (
+        _implies_public_dataset(cli) or declared_type == DatasetType.PUBLIC
+    ):
+        raise ValueError(
+            "--mooncake-trace-to-hf-mapping requires a public dataset of type mooncake_hf"
+        )
 
     if cli.dataset_filters and not (
         _implies_public_dataset(cli) or declared_type == DatasetType.PUBLIC

@@ -88,24 +88,20 @@ class PublicDatasetComposer(BaseDatasetComposer):
         # CLI converter already auto-selects weka_hf and rejects pairing it with
         # any other dataset, so only the repo lookup is needed here.
         hf_weka_dataset = getattr(self._public_dataset, "hf_weka_dataset", None)
+        hf_mooncake_dataset = getattr(self._public_dataset, "hf_mooncake_dataset", None)
         hf_dataset_name = (
-            self._public_dataset.hf_mooncake_dataset
-            or hf_weka_dataset
-            or loader_metadata.hf_dataset_name
+            hf_mooncake_dataset or hf_weka_dataset or loader_metadata.hf_dataset_name
         )
         if hf_dataset_name is not None:
             kwargs["hf_dataset_name"] = hf_dataset_name
-            kwargs["hf_split"] = (
-                self._public_dataset.hf_split or loader_metadata.hf_split
-            )
+            kwargs["hf_split"] = loader_metadata.hf_split
             cli_subset = self._public_dataset.hf_subset
             subset = cli_subset if cli_subset is not None else loader_metadata.hf_subset
             if subset is not None:
                 kwargs["hf_subset"] = subset
 
         optional_fields = {
-            "hf_revision": self._public_dataset.hf_revision,
-            "field_mapping": self._public_dataset.field_mapping or None,
+            "field_mapping": self._public_dataset.mooncake_trace_to_hf_mapping or None,
             "prompt_column": loader_metadata.prompt_column,
             "image_column": loader_metadata.image_column,
             "video_column": loader_metadata.video_column,

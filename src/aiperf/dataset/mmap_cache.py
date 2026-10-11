@@ -714,18 +714,10 @@ def _public_dataset_source_from_run(run: BenchmarkRun) -> dict[str, object] | No
 
     public_dataset = str(public_dataset_type)
     metadata = plugins.get_public_dataset_loader_metadata(public_dataset)
-    if public_dataset == "mooncake_hf":
-        return {
-            "plugin": public_dataset,
-            "hf_dataset_name": dataset.hf_mooncake_dataset,
-            "hf_split": dataset.hf_split or metadata.hf_split,
-            "hf_subset": dataset.hf_subset,
-            "hf_revision": dataset.hf_revision,
-            "field_mapping": dataset.field_mapping,
-            "filters": dataset.filters,
-        }
-    hf_dataset_name = getattr(dataset, "hf_weka_dataset", None) or (
-        metadata.hf_dataset_name
+    hf_dataset_name = (
+        getattr(dataset, "hf_mooncake_dataset", None)
+        or getattr(dataset, "hf_weka_dataset", None)
+        or metadata.hf_dataset_name
     )
     if hf_dataset_name is None:
         return {"plugin": public_dataset}
@@ -739,6 +731,9 @@ def _public_dataset_source_from_run(run: BenchmarkRun) -> dict[str, object] | No
     source["hf_dataset_name"] = hf_dataset_name
     source["hf_split"] = metadata.hf_split
     source["hf_subset"] = hf_subset
+    for field in ("mooncake_trace_to_hf_mapping", "filters"):
+        if value := getattr(dataset, field, None):
+            source[field] = value
     return source
 
 

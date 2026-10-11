@@ -694,30 +694,18 @@ class CLIConfig(BaseConfig):
         CLIParameter(name=("--hf-mooncake-dataset",), group=Groups.INPUT),
     ] = None
 
-    hf_split: Annotated[
-        str | None,
-        Field(description="HuggingFace split for mooncake_hf. Defaults to test."),
-        CLIParameter(name=("--hf-split",), group=Groups.INPUT),
-    ] = None
-
-    hf_revision: Annotated[
-        str | None,
-        Field(
-            description="Optional HuggingFace revision for mooncake_hf (commit, tag, or branch). Unset uses the repository default."
-        ),
-        CLIParameter(name=("--hf-revision",), group=Groups.INPUT),
-    ] = None
-
-    dataset_field_mapping: Annotated[
+    mooncake_trace_to_hf_mapping: Annotated[
         list[str],
         Field(
             default_factory=list,
-            description="Map a Mooncake field to a dotted source column path: TARGET=SOURCE. "
+            description="Map a Mooncake trace field to a dotted HuggingFace column path: MOONCAKE_FIELD=HF_COLUMN. "
             "Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. "
             "Only supported by mooncake_hf. Unmapped fields use canonical column names.",
         ),
         CLIParameter(
-            name=("--dataset-field",), consume_multiple=True, group=Groups.INPUT
+            name=("--mooncake-trace-to-hf-mapping",),
+            consume_multiple=True,
+            group=Groups.INPUT,
         ),
     ]
 

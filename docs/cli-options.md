@@ -682,17 +682,9 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 
 HuggingFace repository for the Mooncake trajectory loader. Auto-selects --public-dataset mooncake_hf. Cannot be combined with another public dataset or a custom dataset. With --config, set the repository in YAML.
 
-#### `--hf-split` `<str>`
+#### `--mooncake-trace-to-hf-mapping` `<list>`
 
-HuggingFace split for mooncake_hf. Defaults to test.
-
-#### `--hf-revision` `<str>`
-
-Optional HuggingFace revision for mooncake_hf (commit, tag, or branch). Unset uses the repository default.
-
-#### `--dataset-field` `<list>`
-
-Map a Mooncake field to a dotted source column path: TARGET=SOURCE. Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. Only supported by mooncake_hf. Unmapped fields use canonical column names.
+Map a Mooncake trace field to a dotted HuggingFace column path: MOONCAKE_FIELD=HF_COLUMN. Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. Only supported by mooncake_hf. Unmapped fields use canonical column names.
 
 #### `--hf-weka-dataset` `<str>`
 
@@ -2312,17 +2304,9 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 
 HuggingFace repository for the Mooncake trajectory loader. Auto-selects --public-dataset mooncake_hf. Cannot be combined with another public dataset or a custom dataset. With --config, set the repository in YAML.
 
-#### `--hf-split` `<str>`
+#### `--mooncake-trace-to-hf-mapping` `<list>`
 
-HuggingFace split for mooncake_hf. Defaults to test.
-
-#### `--hf-revision` `<str>`
-
-Optional HuggingFace revision for mooncake_hf (commit, tag, or branch). Unset uses the repository default.
-
-#### `--dataset-field` `<list>`
-
-Map a Mooncake field to a dotted source column path: TARGET=SOURCE. Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. Only supported by mooncake_hf. Unmapped fields use canonical column names.
+Map a Mooncake trace field to a dotted HuggingFace column path: MOONCAKE_FIELD=HF_COLUMN. Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. Only supported by mooncake_hf. Unmapped fields use canonical column names.
 
 #### `--hf-weka-dataset` `<str>`
 
@@ -3937,17 +3921,9 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 
 HuggingFace repository for the Mooncake trajectory loader. Auto-selects --public-dataset mooncake_hf. Cannot be combined with another public dataset or a custom dataset. With --config, set the repository in YAML.
 
-#### `--hf-split` `<str>`
+#### `--mooncake-trace-to-hf-mapping` `<list>`
 
-HuggingFace split for mooncake_hf. Defaults to test.
-
-#### `--hf-revision` `<str>`
-
-Optional HuggingFace revision for mooncake_hf (commit, tag, or branch). Unset uses the repository default.
-
-#### `--dataset-field` `<list>`
-
-Map a Mooncake field to a dotted source column path: TARGET=SOURCE. Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. Only supported by mooncake_hf. Unmapped fields use canonical column names.
+Map a Mooncake trace field to a dotted HuggingFace column path: MOONCAKE_FIELD=HF_COLUMN. Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. Only supported by mooncake_hf. Unmapped fields use canonical column names.
 
 #### `--hf-weka-dataset` `<str>`
 
@@ -6069,17 +6045,9 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 
 HuggingFace repository for the Mooncake trajectory loader. Auto-selects --public-dataset mooncake_hf. Cannot be combined with another public dataset or a custom dataset. With --config, set the repository in YAML.
 
-#### `--hf-split` `<str>`
+#### `--mooncake-trace-to-hf-mapping` `<list>`
 
-HuggingFace split for mooncake_hf. Defaults to test.
-
-#### `--hf-revision` `<str>`
-
-Optional HuggingFace revision for mooncake_hf (commit, tag, or branch). Unset uses the repository default.
-
-#### `--dataset-field` `<list>`
-
-Map a Mooncake field to a dotted source column path: TARGET=SOURCE. Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. Only supported by mooncake_hf. Unmapped fields use canonical column names.
+Map a Mooncake trace field to a dotted HuggingFace column path: MOONCAKE_FIELD=HF_COLUMN. Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. Only supported by mooncake_hf. Unmapped fields use canonical column names.
 
 #### `--hf-weka-dataset` `<str>`
 

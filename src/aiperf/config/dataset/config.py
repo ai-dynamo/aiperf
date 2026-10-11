@@ -892,19 +892,7 @@ class PublicDataset(SystemPromptMixin):
         "The CLI flag --hf-mooncake-dataset auto-selects this loader.",
     )
 
-    hf_split: str | None = Field(
-        default=None,
-        min_length=1,
-        description="HuggingFace split for mooncake_hf; unset uses test.",
-    )
-
-    hf_revision: str | None = Field(
-        default=None,
-        min_length=1,
-        description="Optional HuggingFace commit, tag, or branch for mooncake_hf; unset uses the repository default.",
-    )
-
-    field_mapping: dict[str, str] = Field(
+    mooncake_trace_to_hf_mapping: dict[str, str] = Field(
         default_factory=dict,
         description="Mooncake target field to dotted source column path for mooncake_hf. "
         "Supports messages, session_id, tools, output_length, extra, and extra.PARAMETER.",
@@ -1124,24 +1112,44 @@ class PublicDataset(SystemPromptMixin):
 
     @model_validator(mode="after")
     def _validate_hf_mooncake(self) -> PublicDataset:
-        """Require a repository and reject loader-specific options elsewhere."""
-        if self.dataset == PublicDatasetType.MOONCAKE_HF:
-            if not (self.hf_mooncake_dataset or "").strip():
-                raise ValueError(
-                    "mooncake_hf requires --hf-mooncake-dataset (hf_mooncake_dataset)"
-                )
-            self.hf_mooncake_dataset = self.hf_mooncake_dataset.strip()
-        elif (
-            any(
-                value is not None
-                for value in (self.hf_mooncake_dataset, self.hf_split, self.hf_revision)
-            )
-            or self.field_mapping
-        ):
+        """Validate the Mooncake HF repository, mapping scope, and mapping syntax."""
+        is_mooncake_hf = self.dataset == PublicDatasetType.MOONCAKE_HF
+        if self.hf_mooncake_dataset is not None and not is_mooncake_hf:
             raise ValueError(
-                "--hf-mooncake-dataset, --hf-split, --hf-revision, and --dataset-field "
-                "require --public-dataset mooncake_hf"
+                "hf_mooncake_dataset (--hf-mooncake-dataset) can only be used with "
+                "dataset mooncake_hf (--public-dataset mooncake_hf)"
             )
+        if is_mooncake_hf:
+            repo = (self.hf_mooncake_dataset or "").strip()
+            if not repo:
+                raise ValueError(
+                    "dataset mooncake_hf (--public-dataset mooncake_hf) requires a "
+                    "non-empty hf_mooncake_dataset (--hf-mooncake-dataset) HuggingFace repo"
+                )
+            self.hf_mooncake_dataset = repo
+        if self.mooncake_trace_to_hf_mapping and not is_mooncake_hf:
+            raise ValueError(
+                "mooncake_trace_to_hf_mapping (--mooncake-trace-to-hf-mapping) can only be used with "
+                "dataset mooncake_hf (--public-dataset mooncake_hf)"
+            )
+        for target, source in self.mooncake_trace_to_hf_mapping.items():
+            if target not in {
+                "session_id",
+                "messages",
+                "tools",
+                "output_length",
+                "extra",
+            } and (
+                not target.startswith("extra.") or not target[6:] or "." in target[6:]
+            ):
+                raise ValueError(
+                    f"--mooncake-trace-to-hf-mapping target {target!r} is unsupported; use session_id, "
+                    "messages, tools, output_length, extra, or extra.PARAMETER"
+                )
+            if not source or any(not part for part in source.split(".")):
+                raise ValueError(
+                    f"--mooncake-trace-to-hf-mapping {target}: invalid source path {source!r}"
+                )
         return self
 
     @model_validator(mode="after")

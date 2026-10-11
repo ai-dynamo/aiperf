@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import orjson
 
@@ -19,24 +19,39 @@ from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.plugin.enums import EndpointType, PhaseType
 
+if TYPE_CHECKING:
+    from aiperf.config.resolution.plan import BenchmarkRun
+
 
 class HFMooncakeTraceDatasetLoader(BaseHFDatasetLoader):
-    """Map Hugging Face trajectory rows to recorded Mooncake request snapshots."""
+    """Load HF trajectories and delegate replay construction to Mooncake.
+
+    ``load_dataset`` selects and maps HF rows into recorded Mooncake requests,
+    then uses the Mooncake loader to parse and group them. Conversation
+    construction shares the same implementation as local Mooncake files.
+    """
 
     def __init__(
         self,
         *,
+        run: BenchmarkRun | None = None,
+        hf_dataset_name: str,
+        hf_split: str = "test",
+        hf_subset: str | None = None,
         prompt_generator: PromptGenerator,
-        hf_revision: str | None = None,
         field_mapping: dict[str, str] | None = None,
         filters: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
-        self.hf_revision = hf_revision
         self.field_mapping = field_mapping or {}
         self.filters = filters or {}
-        _validate_mapping(self.field_mapping)
-        super().__init__(**kwargs)
+        super().__init__(
+            run=run,
+            hf_dataset_name=hf_dataset_name,
+            hf_split=hf_split,
+            hf_subset=hf_subset,
+            **kwargs,
+        )
         if self.run.cfg.endpoint.type != EndpointType.CHAT:
             raise DatasetLoaderError("mooncake_hf requires --endpoint-type chat")
         if any(p.type == PhaseType.FIXED_SCHEDULE for p in self.run.cfg.phases):
@@ -50,44 +65,21 @@ class HFMooncakeTraceDatasetLoader(BaseHFDatasetLoader):
             raise DatasetLoaderError(
                 f"mooncake_hf: --extra-inputs must not override {sorted(keys)}"
             )
+
         self._mooncake = MooncakeTraceDatasetLoader(
             run=self.run, prompt_generator=prompt_generator, inline_records=[]
         )
 
-    def _max_conversations(self) -> int:
-        """Bound remote materialization by explicit entries or profiling limits."""
-        if entries := getattr(self.run.cfg.get_default_dataset(), "entries", None):
-            return entries
-        limits = [
-            limit
-            for phase in self.run.cfg.get_profiling_phases()
-            for limit in (
-                getattr(phase, "sessions", None),
-                getattr(phase, "requests", None),
-            )
-            if limit is not None
-        ]
-        if limits:
-            return max(limits)
-        raise DatasetLoaderError(
-            "mooncake_hf requires a finite materialization limit: "
-            "--num-dataset-entries, --num-sessions, or --request-count"
-        )
+    async def load_dataset(self) -> dict[str, list[MooncakeTrace]]:
+        """Download HF rows and prepare grouped traces with the Mooncake loader."""
+        raw = await super().load_dataset()
+        return await asyncio.to_thread(self._validate_rows, raw["dataset"])
 
-    async def load_dataset(self) -> dict[str, Any]:
-        """Validate the materialization bound before opening the HF stream."""
-        self._max_conversations()
-        return await super().load_dataset()
-
-    async def convert_to_conversations(
-        self, data: dict[str, Any]
-    ) -> list[Conversation]:
-        """Iterate the remote stream and normalize rows outside the event loop."""
-        return await asyncio.to_thread(self._convert_rows, data["dataset"])
-
-    def _convert_rows(self, rows: Iterable[dict[str, Any]]) -> list[Conversation]:
-        limit = self._max_conversations()
-        conversations: list[Conversation] = []
+    def _validate_rows(
+        self, rows: Iterable[dict[str, Any]]
+    ) -> dict[str, list[MooncakeTrace]]:
+        """Select source rows and expand each trajectory into recorded requests."""
+        records: list[dict[str, Any]] = []
         seen: set[str] = set()
         for index, row in enumerate(rows):
             try:
@@ -106,24 +98,28 @@ class HFMooncakeTraceDatasetLoader(BaseHFDatasetLoader):
                     raise ValueError(f"session {session_id!r}: duplicate session_id")
                 seen.add(session_id)
                 mapped["session_id"] = session_id
-                traces = trajectory_to_mooncake(mapped)
+                records.extend(
+                    trace.model_dump(exclude_none=True)
+                    for trace in trajectory_to_mooncake(mapped)
+                )
             except (TypeError, ValueError) as exc:
                 raise DatasetLoaderError(f"mooncake_hf row {index}: {exc}") from exc
-            conversations.extend(
-                self._mooncake.convert_to_conversations({session_id: traces})
-            )
-            if len(conversations) >= limit:
-                break
-        if not conversations:
+        if not records:
             raise DatasetLoaderError(
                 f"mooncake_hf: no trajectories matched filters {self.filters!r} "
                 f"in {self.hf_dataset_name!r}"
             )
-        self.info(
-            f"Loaded {len(conversations)} agent trajectories / "
-            f"{sum(len(c.turns) for c in conversations)} recorded request steps"
-        )
-        return conversations
+        self._mooncake.inline_records = records
+        try:
+            return self._mooncake.load_dataset()
+        finally:
+            self._mooncake.inline_records = []
+
+    async def convert_to_conversations(
+        self, data: dict[str, list[MooncakeTrace]]
+    ) -> list[Conversation]:
+        """Delegate conversation construction to the original Mooncake loader."""
+        return await asyncio.to_thread(self._mooncake.convert_to_conversations, data)
 
 
 def _messages(value: Any) -> list[dict[str, Any]]:
@@ -134,9 +130,6 @@ def _messages(value: Any) -> list[dict[str, Any]]:
         if not isinstance(raw, dict):
             raise ValueError(f"message {index}: expected an object")
         message = dict(raw)
-        for key in ("reasoning_content", "tool_calls", "tool_call_id", "name"):
-            if message.get(key) is None:
-                message.pop(key, None)
         if calls := message.get("tool_calls"):
             if not isinstance(calls, list) or not all(
                 isinstance(c, dict) for c in calls
@@ -149,25 +142,6 @@ def _messages(value: Any) -> list[dict[str, Any]]:
             ]
         messages.append(message)
     return messages
-
-
-def _validate_mapping(mapping: dict[str, str]) -> None:
-    for target, source in mapping.items():
-        if target not in {
-            "session_id",
-            "messages",
-            "tools",
-            "output_length",
-            "extra",
-        } and (not target.startswith("extra.") or not target[6:] or "." in target[6:]):
-            raise DatasetLoaderError(
-                f"--dataset-field target {target!r} is unsupported; use session_id, "
-                "messages, tools, output_length, extra, or extra.PARAMETER"
-            )
-        if not source or any(not part for part in source.split(".")):
-            raise DatasetLoaderError(
-                f"--dataset-field {target}: invalid source path {source!r}"
-            )
 
 
 def _decode_json(value: Any) -> Any:
