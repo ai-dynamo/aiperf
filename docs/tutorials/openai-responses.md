@@ -409,7 +409,16 @@ For reference, AIPerf processes these Responses API streaming events:
 | `response.function_call_arguments.delta` | Tool call arguments delta |
 | `response.output_text.done` | Final text (fallback for providers that emit text only in done events) |
 | `response.completed` | Usage statistics and response ID |
+| `response.failed` | Request error from the response's nested `error` object |
 | All other events | Skipped |
 
 This enables accurate measurement of TTFT, ITL, and token throughput metrics when streaming is enabled.
+
+A `response.failed` event marks the request as failed even when the HTTP status
+is 200 and some output has already arrived. AIPerf retains the earlier events
+and reports the server's error message, even if the failure event contains an
+SSE comment. Failed responses use the text-only fallback for conversation
+replay; partial structured output items, such as unfinished tool calls, are
+not passed to FORK children. `response.incomplete` remains a non-error event,
+including responses that reach `max_output_tokens`.
 

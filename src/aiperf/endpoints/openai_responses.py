@@ -656,6 +656,11 @@ class ResponsesEndpoint(BaseEndpoint):
         Falls back to the base text-only behaviour when no items are
         recoverable, so callers without tool-using workloads see no change.
         """
+        # The transport records failures before retaining their terminal event.
+        # Preserve the same text-only fallback when that event is absent.
+        if record.has_error:
+            return super().build_assistant_turn(record)
+
         items_by_key: dict[str, dict[str, Any]] = {}
         done_items: list[dict[str, Any]] = []
 
