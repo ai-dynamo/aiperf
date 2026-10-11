@@ -885,6 +885,31 @@ class PublicDataset(SystemPromptMixin):
         ),
     ]
 
+    hf_mooncake_dataset: str | None = Field(
+        default=None,
+        min_length=1,
+        description="HuggingFace repository for mooncake_hf; required for this loader. "
+        "The CLI flag --hf-mooncake-dataset auto-selects this loader.",
+    )
+
+    hf_split: str | None = Field(
+        default=None,
+        min_length=1,
+        description="HuggingFace split for mooncake_hf; unset uses test.",
+    )
+
+    hf_revision: str | None = Field(
+        default=None,
+        min_length=1,
+        description="Optional HuggingFace commit, tag, or branch for mooncake_hf; unset uses the repository default.",
+    )
+
+    field_mapping: dict[str, str] = Field(
+        default_factory=dict,
+        description="Mooncake target field to dotted source column path for mooncake_hf. "
+        "Supports messages, session_id, tools, output_length, extra, and extra.PARAMETER.",
+    )
+
     hf_weka_dataset: Annotated[
         str | None,
         Field(
@@ -1094,6 +1119,28 @@ class PublicDataset(SystemPromptMixin):
             raise ValueError(
                 "weka_nested_timestamp_basis (--weka-nested-timestamp-basis) "
                 f"only applies to Weka public datasets; got dataset {self.dataset}."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_hf_mooncake(self) -> PublicDataset:
+        """Require a repository and reject loader-specific options elsewhere."""
+        if self.dataset == PublicDatasetType.MOONCAKE_HF:
+            if not (self.hf_mooncake_dataset or "").strip():
+                raise ValueError(
+                    "mooncake_hf requires --hf-mooncake-dataset (hf_mooncake_dataset)"
+                )
+            self.hf_mooncake_dataset = self.hf_mooncake_dataset.strip()
+        elif (
+            any(
+                value is not None
+                for value in (self.hf_mooncake_dataset, self.hf_split, self.hf_revision)
+            )
+            or self.field_mapping
+        ):
+            raise ValueError(
+                "--hf-mooncake-dataset, --hf-split, --hf-revision, and --dataset-field "
+                "require --public-dataset mooncake_hf"
             )
         return self
 

@@ -53,6 +53,11 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
       <td>Conversations from <a href="https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/resolve/main/ShareGPT_V3_unfiltered_cleaned_split.json"><code>--public-dataset sharegpt</code></a></td>
     </tr>
     <tr>
+      <td><strong>Hugging Face trajectories</strong></td>
+      <td style="text-align: center;">✅</td>
+      <td>Recorded trajectories from <a href="#hugging-face-mooncake-trajectory-replay"><code>--public-dataset mooncake_hf</code></a></td>
+    </tr>
+    <tr>
       <td><strong>Exgentic</strong></td>
       <td style="text-align: center;">✅</td>
       <td>Recorded agent sessions from <a href="https://huggingface.co/datasets/Exgentic/agent-llm-traces"><code>--public-dataset exgentic</code></a></td>
@@ -106,3 +111,128 @@ aiperf profile \
 Fixed-schedule mode emits each recorded call as an independently scheduled one-turn request using its start offset from the source session. Calls that overlapped in the trace therefore overlap during replay. Selected source sessions start together at offset zero. Without `--fixed-schedule`, each source session remains a closed-loop multi-turn conversation: AIPerf waits for one live response before applying the recorded residual delay and sending the next request.
 
 Size the target context window for the selected trace plus the target model's chat-template overhead. Recorded contexts reach about 178K tokens, and some Gemini tool-calling sessions exceed 64K before target formatting. `tool_calling_with_shortlisting` alternates a selector request containing the full tool catalog with executor requests containing a changing subset of schemas. Low executor prefix-cache reuse is expected for that harness and is not a loader error.
+
+## Hugging Face Mooncake Trajectory Replay
+
+Use `--public-dataset mooncake_hf` to replay complete recorded trajectories
+from a Hugging Face repository selected with `--hf-mooncake-dataset`. This flag
+automatically selects `mooncake_hf`, following the `--hf-weka-dataset`
+convention. The loader extends
+the Hugging Face reader and delegates to Mooncake's recorded request snapshots
+(`message_array_with_responses`). It has no built-in repository, revision, or
+source column aliases. This mode expects **one complete trajectory per row**;
+it does not replay timestamped single-request rows.
+
+For example, map [nvidia/Agentic-Traces](https://huggingface.co/datasets/nvidia/Agentic-Traces)
+using explicit source columns:
+
+```bash
+aiperf profile \
+  --model nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16 \
+  --url http://pool0-01804:8000 \
+  --endpoint-type chat \
+  --hf-mooncake-dataset nvidia/Agentic-Traces \
+  --hf-subset NVIDIA-Nemotron-3-Super-120B-A12B-BF16 \
+  --hf-split test \
+  --dataset-filter model=nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16 \
+  --dataset-field session_id=question_id \
+  --dataset-field messages=turns \
+  --dataset-field tools=extras.tools \
+  --dataset-field output_length=extras.max_tokens \
+  --dataset-field extra=extras.request_params \
+  --dataset-field extra.temperature=extras.temperature \
+  --dataset-field extra.top_p=extras.top_p \
+  --dataset-field extra.top_k=extras.top_k \
+  --concurrency 64 \
+  --num-sessions 261 \
+  --num-dataset-entries 261 \
+  --streaming
+```
+
+The source repository is required; the split defaults to `test` and the subset
+is unset unless `--hf-subset` is supplied. `--hf-revision COMMIT_OR_TAG` optionally
+pins the source; otherwise Hugging Face resolves its default revision.
+`--dataset-filter COLUMN=VALUE` compares source column values as exact strings.
+Repeat it to require multiple matches, for example
+`--dataset-filter 'benchmark=SWE-Bench Multilingual'`. Filters support dotted
+paths and never select the served model: `--model` remains authoritative.
+
+Each `--dataset-field TARGET=SOURCE` maps a Mooncake field to a dotted source
+path. Supported targets are `session_id`, `messages`, `tools`, `output_length`,
+`extra`, and `extra.PARAMETER` for a top-level request parameter. Unmapped fields
+use their canonical Mooncake column names. Explicit source paths must exist;
+misspelled paths fail with the row index. Optional values may be null.
+Absent or null session IDs get generated IDs; explicit IDs must be nonempty
+strings and unique. No mappings are needed for canonical Mooncake columns.
+
+Equivalent YAML dataset selection (inside `benchmark`):
+
+```yaml
+dataset:
+  type: public
+  dataset: mooncake_hf
+  hf_mooncake_dataset: nvidia/Agentic-Traces
+  hf_subset: NVIDIA-Nemotron-3-Super-120B-A12B-BF16
+  hf_split: test
+  # hf_revision: YOUR_PINNED_COMMIT
+  filters:
+    model: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
+  field_mapping:
+    session_id: question_id
+    messages: turns
+    tools: extras.tools
+    output_length: extras.max_tokens
+    extra: extras.request_params
+    extra.temperature: extras.temperature
+    extra.top_p: extras.top_p
+    extra.top_k: extras.top_k
+```
+
+With `--config`, declare the loader and `hf_mooncake_dataset` in YAML; the
+repository flag is rejected alongside `--config`, just like `--hf-weka-dataset`.
+Split, subset, revision, mappings, and filters can still be overridden on the CLI.
+Mapping and filter overrides merge by key with YAML values.
+They also participate in dataset cache identity. The new repository, split,
+revision, and mapping flags are currently supported only by `mooncake_hf`;
+using them with another dataset fails explicitly.
+
+Each HF row remains one session. The loader creates a request before **every
+assistant message**, including tool-call-only messages. For example,
+`[system, user, assistant, tool, assistant, tool, assistant, tool]` produces:
+
+1. `[system, user]`
+2. `[system, user, assistant, tool]`
+3. `[system, user, assistant, tool, assistant, tool]`
+
+The recorded assistant replies and tool results supply all later histories.
+Live replies are measured but never inserted into subsequent requests. Tools
+are not executed. Messages after the final assistant boundary do not create
+another request. Messages must satisfy Mooncake's chat-message schema.
+
+The loader accepts structured or JSON-encoded `messages`, `tools`, and `extra`.
+Dotted source paths can traverse JSON-encoded objects. It preserves recorded
+reasoning and tool-call IDs, removes null optional message fields introduced by
+Parquet, and drops streaming-only tool-call `index` fields. Message content is
+passed through verbatim; JSON-looking content strings are not decoded.
+
+An `extra.PARAMETER` mapping with a non-null value overrides the same key in the
+mapped `extra` object. `output_length` falls back to `extra.max_tokens` or
+`extra.max_completion_tokens`; it is a ceiling, not a forced output length.
+The benchmark selects the target model and streaming mode, so recorded
+`stream`/`stream_options` are omitted. Request extras may not overwrite
+`messages`, `input`, `model`, or `tools`. Row-level tools and parameters apply to
+every request in the trajectory. Per-call timing and parameter changes are not
+represented by this format.
+
+Use concurrency or request-rate scheduling. Fixed scheduling is rejected because
+these trajectories contain no per-call timestamps. Requests within each session
+run sequentially, while separate sessions can run concurrently. `--num-sessions`
+counts trajectories; `--request-count` counts individual generation steps and
+can stop partway through a trajectory. Use the selected trajectory count to
+replay each once with sequential sampling.
+
+Remote materialization requires a finite limit: `--num-dataset-entries` takes
+precedence; otherwise the loader uses the largest profiling session/request
+limit. Duration-only runs must set `--num-dataset-entries`. Duplicate trajectory
+IDs, empty histories, histories without assistant messages, and an assistant
+with an empty first prefix are rejected with the session ID in the error.
