@@ -74,14 +74,16 @@ def compute_submission_outcome(
     total_responses: int = 0,
     context_overflow_count: int = 0,
     was_cancelled: bool = False,
+    runtime_invalid_reasons: list[str] | None = None,
 ) -> tuple[bool | None, list[str]]:
     """Combine validator outcome with runtime threshold checks into a final verdict.
 
     The validator-side outcome covers static config violations (handled at
     UserConfig.model_post_init by ``validate_scenario``). This helper folds
     in runtime-only signals that are only knowable post-run -- the >1%
-    context-overflow rate per spec §7, and early cancellation (Ctrl+C): a
-    cancelled run produces partial metrics and is never a valid submission.
+    context-overflow rate per spec §7, post-run validation failures, and early
+    cancellation (Ctrl+C): a cancelled run produces partial metrics and is never
+    a valid submission.
 
     Rate semantics: strictly greater than
     ``Environment.AGENTX.CONTEXT_OVERFLOW_RATE_LIMIT`` (default 0.01 per
@@ -110,6 +112,8 @@ def compute_submission_outcome(
         was_cancelled: Whether the run was cancelled early (graceful
             Ctrl+C). True flips ``submission_valid`` to False with reason
             ``"run_cancelled"``.
+        runtime_invalid_reasons: Runtime validation reason tags to merge into
+            the final verdict. Any value makes the submission invalid.
 
     Returns:
         A ``(submission_valid, reasons)`` tuple suitable for feeding into
@@ -137,6 +141,11 @@ def compute_submission_outcome(
         valid = False
         if RUN_CANCELLED_REASON not in reasons:
             reasons.append(RUN_CANCELLED_REASON)
+
+    for reason in runtime_invalid_reasons or []:
+        valid = False
+        if reason not in reasons:
+            reasons.append(reason)
 
     return valid, reasons
 

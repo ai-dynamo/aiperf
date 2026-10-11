@@ -39,6 +39,7 @@ pre-commit install    # Install pre-commit hooks
 | `make first-time-setup` | Full environment setup (venv + install + hooks) |
 | `make install` | Install project, mock server, and fake amdsmi bindings in editable mode |
 | `make install-app` | Install project only |
+| `make install-app-locked` | Install project only, at the exact versions in `uv.lock` (what CI's `make ci-install` uses) |
 | `make install-mock-server` | Install mock server only |
 | `make install-mock-amdsmi` | Install fake `amdsmi` bindings to exercise the AMD telemetry path on non-AMD hardware (see [Mocking a ROCm Environment](docs/reference/mock-amdsmi.md)) |
 | `make test` | Unit tests (parallel, excludes integration) |
@@ -201,6 +202,14 @@ Contributions intended to add significant new functionality must follow a more c
 
 Feature branches use `<username>/feature-name` format, forked from `main`.
 
+## Required Checks
+
+A PR can merge into `main` only after the `pre-commit` and `Unit Tests Gate` checks pass. `Unit Tests Gate` is the last job in `.github/workflows/run-unit-tests.yml` and fails unless every unit test job passed.
+
+Unit tests run on NVIDIA runners, so copy-pr-bot copies each PR to a `pull-request/<number>` branch to run them. A PR is copied automatically only when its author is trusted and every commit is cryptographically signed (GPG or SSH; this is separate from the DCO sign-off below). Fork PRs, PRs with unsigned commits, and bot PRs such as Dependabot's wait for a maintainer to review them and comment `/ok to test <sha>`. Until then the PR shows `Unit Tests Gate` as expected and cannot merge. Docs-only PRs are not exempt, because several unit tests check the docs. Repository admins can bypass the requirement when needed.
+
+A PR must also be up to date with `main` before it merges, and every branch update creates a new head commit that needs a full unit test run. For a PR that is not copied automatically, a maintainer must comment `/ok to test <sha>` again after each update. If a job fails from a known flake, rerun the failed jobs with `gh run rerun <run-id> --failed`, which also reruns `Unit Tests Gate`.
+
 ## Running GitHub Actions Locally
 
 You can use the `act` tool to run GitHub Actions locally. See [act usage](https://nektosact.com/introduction.html).
@@ -210,6 +219,12 @@ act -j run-integration-tests
 ```
 
 You can also use the Visual Studio Code extension [GitHub Local Actions](https://marketplace.visualstudio.com/items?itemName=SanjulaGanepola.github-local-actions).
+
+## Nightly Slack Alerts
+
+The nightly workflow ends with a `notify-slack` job that calls the reusable `.github/workflows/notify-slack.yml`. It lists the run's jobs through the Actions API and, when any job failed, timed out, or was cancelled, posts one Slack alert per configured webhook. Advisory jobs listed in the caller's `ignored_jobs` input (currently Suggest Shard Weights) are not reported, and nothing is posted for a green run or when the run itself was cancelled.
+
+Configuration lives in repository settings. `SLACK_NOTIFY_NIGHTLY_WEBHOOK_URL` (secret) is the incoming webhook for the release automation channel and falls back to the legacy `NIGHTLY_SLACK_WEBHOOK` secret. `SLACK_NOTIFY_AIPERF_DEV_WEBHOOK_URL` (secret) is the webhook for the AIPerf dev channel. `NIGHTLY_SLACK_MENTION` (variable) holds optional Slack IDs to mention, `S...` for a team or `U...` for a user, comma separated. Every webhook is optional; with none configured the job logs a warning and stays green.
 
 ## Signing Off Your Work
 

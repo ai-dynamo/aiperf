@@ -233,6 +233,33 @@ class _APIServerSettings(BaseSettings):
     )
 
 
+class _AWSSettings(BaseSettings):
+    """AWS request-signing settings.
+
+    Controls credential-rotation behavior for the SigV4 request signer
+    (--auth-type sigv4).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_AWS_")
+
+    CREDENTIAL_RERESOLVE_INTERVAL: float = Field(
+        ge=0.0,
+        default=900.0,
+        description="Seconds between full credential-chain re-resolutions "
+        "(new botocore.session.Session, re-run the credential provider chain) "
+        "during a benchmark, on top of botocore's own per-call expiry-based "
+        "refresh (get_frozen_credentials()). Expiry-based refresh alone only "
+        "picks up a NEW credential value from the SAME already-resolved "
+        "provider (e.g. STS/SSO auto-renewal); it does not notice if the "
+        "underlying source changed entirely (e.g. a rotated static key in "
+        "~/.aws/credentials, a re-issued credential_process). Periodic "
+        "re-resolution protects long-running benchmarks (hours) against "
+        "continuing to sign with a leaked/rotated-out credential after its "
+        "replacement is already available. Set to 0 to disable and rely "
+        "solely on expiry-based refresh.",
+    )
+
+
 class _ChatSettings(BaseSettings):
     """Settings for the interactive ``aiperf chat`` command."""
 
@@ -1038,7 +1065,7 @@ class _MetricsSettings(BaseSettings):
     )
     LIST_BACKEND: Literal["ragged", "tdigest"] = Field(
         default="ragged",
-        description="Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (at most 0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint.",
+        description="Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (at most 0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. 'tdigest' requires the optional crick dependency: install with `pip install \"aiperf[tdigest]\"`. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint.",
     )
 
 
@@ -2475,6 +2502,10 @@ class _Environment(BaseSettings):
     API_SERVER: _APIServerSettings = Field(
         default_factory=_APIServerSettings,
         description="API server settings",
+    )
+    AWS: _AWSSettings = Field(
+        default_factory=_AWSSettings,
+        description="AWS request-signing settings (SigV4 credential rotation)",
     )
     CHAT: _ChatSettings = Field(
         default_factory=_ChatSettings,

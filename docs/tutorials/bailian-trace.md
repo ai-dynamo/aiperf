@@ -47,10 +47,10 @@ Example entries:
 
 ```json
 {"chat_id": 159, "parent_chat_id": -1, "timestamp": 61.114, "input_length": 521, "output_length": 132, "type": "text", "turn": 1}
-{"chat_id": 160, "parent_chat_id": 159, "timestamp": 62.5, "input_length": 400, "output_length": 80, "type": "text", "turn": 2}
+{"chat_id": 160, "parent_chat_id": 159, "timestamp": 62.5, "input_length": 676, "output_length": 80, "type": "text", "turn": 2}
 ```
 
-Entries with the same root `chat_id` form a session and are replayed in `turn` order.
+Entries with the same root `chat_id` form a session and are replayed in `turn` order. Each entry is a complete request as the service received it: a follow-up's `input_length` counts the history the service retained plus the new text, and its `hash_ids` cover that whole span. Sessions therefore run in [`message_array_with_responses`](../reference/conversation-context-mode.md) mode and every turn is sent as its own generated prompt, rather than accumulating earlier turns and live responses in front of it.
 
 ---
 

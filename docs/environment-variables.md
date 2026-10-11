@@ -87,6 +87,14 @@ API server settings. Controls the host and port of the API server.
 | `AIPERF_API_SERVER_POST_COMPLETE_GRACE` | `5.0` | ≥ 0.0, ≤ 300.0 | Seconds the API listener stays open after a benchmark terminates so polling clients can observe the final status before the server shuts down. Set to 0 to skip the grace window and shut down immediately. Not used under ServiceRunType.KUBERNETES, where the controller pod outlives its benchmark and is retired explicitly via POST /api/shutdown instead -- see FastAPIService._on_shutdown_command. A fixed window there is shorter than the operator's monitor interval and strands the AIPerfJob in a pre-terminal phase. |
 | `AIPERF_API_SERVER_WEBSOCKET_MAX_CONNECTIONS` | `100` | ≥ 1, ≤ 100000 | Maximum simultaneous clients accepted by the API WebSocket endpoint |
 
+## AWS
+
+AWS request-signing settings. Controls credential-rotation behavior for the SigV4 request signer (--auth-type sigv4).
+
+| Environment Variable | Default | Constraints | Description |
+|----------------------|---------|-------------|-------------|
+| `AIPERF_AWS_CREDENTIAL_RERESOLVE_INTERVAL` | `900.0` | ≥ 0.0 | Seconds between full credential-chain re-resolutions (new botocore.session.Session, re-run the credential provider chain) during a benchmark, on top of botocore's own per-call expiry-based refresh (get_frozen_credentials()). Expiry-based refresh alone only picks up a NEW credential value from the SAME already-resolved provider (e.g. STS/SSO auto-renewal); it does not notice if the underlying source changed entirely (e.g. a rotated static key in ~/.aws/credentials, a re-issued credential_process). Periodic re-resolution protects long-running benchmarks (hours) against continuing to sign with a leaked/rotated-out credential after its replacement is already available. Set to 0 to disable and rely solely on expiry-based refresh. |
+
 ## CHAT
 
 Settings for the interactive ``aiperf chat`` command.
@@ -526,7 +534,7 @@ Metrics collection and storage configuration. Controls metrics storage allocatio
 | `AIPERF_METRICS_OSL_MISMATCH_PCT_THRESHOLD` | `5.0` | ≥ 0.0, ≤ 100.0 | Percentage difference threshold for flagging discrepancies between requested and actual output sequence length (default: 5%) |
 | `AIPERF_METRICS_OSL_MISMATCH_MAX_TOKEN_THRESHOLD` | `50` | ≥ 1 | Maximum absolute token threshold for OSL mismatch. The effective threshold is min(requested_osl * pct_threshold, this value). Makes threshold tighter for large OSL values (default: 50 tokens) |
 | `AIPERF_METRICS_TDIGEST_COMPRESSION` | `500` | ≥ 20, ≤ 10000 | t-digest sketch compression for list-valued record metric aggregation. Higher = more centroids, tighter percentile accuracy, larger sketch. Default 500 measured to keep worst-case relative percentile error under 0.05% on 50M-sample workloads (40x under the 0.5% claimed accuracy band) at ~4 KB sketch size. |
-| `AIPERF_METRICS_LIST_BACKEND` | `'ragged'` | one of: 'ragged' / 'tdigest' | Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (at most 0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint. |
+| `AIPERF_METRICS_LIST_BACKEND` | `'ragged'` | one of: 'ragged' / 'tdigest' | Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (at most 0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. 'tdigest' requires the optional crick dependency: install with `pip install "aiperf[tdigest]"`. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint. |
 
 ## MLFLOW
 

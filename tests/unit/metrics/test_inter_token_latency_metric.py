@@ -6,7 +6,11 @@ from pytest import approx
 
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.metrics.metric_dicts import MetricRecordDict
-from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMetric
+from aiperf.metrics.types.decode_duration_metric import FullDecodeDurationMetric
+from aiperf.metrics.types.inter_token_latency_metric import (
+    FullResponseInterTokenLatencyMetric,
+    InterTokenLatencyMetric,
+)
 from aiperf.metrics.types.output_sequence_length_metric import (
     OutputSequenceLengthMetric,
 )
@@ -184,3 +188,59 @@ class TestInterTokenLatencyMetric:
         )
 
         assert metric_results[InterTokenLatencyMetric.tag] == approx([16.0])
+
+
+class TestFullResponseInterTokenLatencyMetric:
+    def test_calculates_full_decode_duration_per_token_interval(self) -> None:
+        record = create_record()
+        metric_dict = MetricRecordDict(
+            {
+                FullDecodeDurationMetric.tag: 1_000_000_000,
+                OutputSequenceLengthMetric.tag: 11,
+            }
+        )
+
+        result = FullResponseInterTokenLatencyMetric().parse_record(record, metric_dict)
+
+        assert result == 100_000_000
+
+    def test_kimi_parser_gap_uses_full_request_end(self) -> None:
+        request_start_ns = 1_000_000_000
+        record = create_record(
+            start_ns=request_start_ns,
+            responses=[1_529_058_811, 1_610_559_573],
+        )
+        record.request.end_perf_ns = request_start_ns + 145_861_451_008
+        assert record.token_counts is not None
+        record.token_counts.output = 26_571
+
+        metric_results = run_simple_metrics_pipeline(
+            [record],
+            InterTokenLatencyMetric.tag,
+            FullResponseInterTokenLatencyMetric.tag,
+        )
+
+        assert metric_results[InterTokenLatencyMetric.tag] == pytest.approx(
+            [81_500_762 / 26_570]
+        )
+        assert metric_results[FullResponseInterTokenLatencyMetric.tag] == pytest.approx(
+            [145_332_392_197 / 26_570]
+        )
+
+    def test_requires_at_least_two_tokens(self) -> None:
+        record = create_record()
+        metric_dict = MetricRecordDict(
+            {
+                FullDecodeDurationMetric.tag: 1_000_000_000,
+                OutputSequenceLengthMetric.tag: 1,
+            }
+        )
+
+        with pytest.raises(NoMetricValue, match="at least 2"):
+            FullResponseInterTokenLatencyMetric().parse_record(record, metric_dict)
+
+    def test_requires_dependencies(self) -> None:
+        with pytest.raises(NoMetricValue):
+            FullResponseInterTokenLatencyMetric().parse_record(
+                create_record(), MetricRecordDict()
+            )
