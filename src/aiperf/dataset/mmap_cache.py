@@ -868,6 +868,8 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         "weka_aux_reduction_ratio": Environment.DATASET.WEKA_AUX_REDUCTION_RATIO,
         "weka_worker_group_min": Environment.DATASET.WEKA_WORKER_GROUP_MIN,
         "weka_tool_shaped_messages": (Environment.DATASET.WEKA_TOOL_SHAPED_MESSAGES),
+        # Changes a forked child's turn-0 messages baked into the cached mmap.
+        "weka_fork_parent_messages": (Environment.DATASET.WEKA_FORK_PARENT_MESSAGES),
         # Join-seam stitching knobs: gate whether a far-future continuation is
         # stitched onto an existing LCP chain vs spawned as a new conversation
         # (weka_trace.py -> detect_agent_chains), so they change session
