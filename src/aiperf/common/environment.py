@@ -572,6 +572,14 @@ class _DatasetSettings(BaseSettings):
         "legacy traces are unaffected. Default False keeps the byte-exact "
         "plain-user replay shape.",
     )
+    WEKA_FORK_PARENT_MESSAGES: bool = Field(
+        default=True,
+        description="When True (default), a child conversation's first turn "
+        "re-sends its parent turn's messages for the shared hash_id prefix, then "
+        "adds its new content as one user message, so its rendered prompt keeps "
+        "the parent's prefix. Set to False for the previous behavior: one "
+        "flattened user message, which shares only the parent's first message.",
+    )
     WEKA_SEAM_MAX_GAP_SECONDS: float = Field(
         ge=0.0,
         default=3600.0,
