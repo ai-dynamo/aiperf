@@ -50,23 +50,24 @@ class TestSolidoEndpointMetadata:
 
 
 @pytest.mark.parametrize(
-    "query_override",
+    "query_override,expected_texts",
     [
-        param(None, id="turn-text"),
-        param(["Wire query", "Another query"], id="payload-override"),
-        param("Wire query", id="string-query"),
-        param([], id="empty-query"),
+        param(["Wire query", "Another query"], ["Wire query", "Another query"], id="payload-override"),
+        param(["Wire query", 1, "Another query"], ["Wire query", "Another query"], id="mixed-query"),
+        param("Wire query", ["Wire query"], id="string-query"),
+        param([], [], id="empty-query"),
     ],
 )  # fmt: skip
 def test_extract_payload_inputs_uses_wire_query(
-    query_override: list[str] | str | None,
+    query_override: list[str | int] | str,
+    expected_texts: list[str],
 ) -> None:
     """Extract the final query after applying request-level overrides."""
     model_endpoint = create_model_endpoint(EndpointType.SOLIDO_RAG)
     endpoint = SolidoEndpoint(model_endpoint)
     turn = Turn(
         texts=[Text(contents=["Original query"])],
-        extra_body={"query": query_override} if query_override is not None else None,
+        extra_body={"query": query_override},
     )
     payload = endpoint.format_payload(
         create_request_info(model_endpoint=model_endpoint, turns=[turn])
@@ -74,8 +75,7 @@ def test_extract_payload_inputs_uses_wire_query(
 
     inputs = endpoint.extract_payload_inputs(payload)
 
-    expected = query_override if query_override is not None else ["Original query"]
-    assert inputs.texts == ([expected] if isinstance(expected, str) else expected)
+    assert inputs.texts == expected_texts
 
 
 @pytest.mark.asyncio
