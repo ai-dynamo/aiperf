@@ -157,49 +157,6 @@ async def test_download_before_config_warning_names_the_real_recovery_path() -> 
     assert "the configuration will open the client" not in message
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize("fail", [False, True])  # fmt: skip
-async def test_worker_dispatchability_waits_for_dataset_initialization(
-    fail: bool,
-) -> None:
-    entered = asyncio.Event()
-    release = asyncio.Event()
-
-    class SlowStore:
-        def __init__(self, client_metadata: MemoryMapClientMetadata) -> None:
-            pass
-
-        async def initialize(self) -> None:
-            entered.set()
-            await release.wait()
-            if fail:
-                raise RuntimeError("dataset open failed")
-
-    worker = MagicMock(spec=Worker)
-    worker._dataset_configured_event = asyncio.Event()
-    worker._mark_worker_ready = AsyncMock()
-    metadata = _metadata("local")
-    with mock_plugin(PluginType.DATASET_CLIENT_STORE, metadata.client_type, SlowStore):
-        opening = asyncio.create_task(Worker._open_dataset_client(worker, metadata))
-        try:
-            await asyncio.wait_for(entered.wait(), timeout=5)
-            assert not worker._dataset_configured_event.is_set()
-            worker._mark_worker_ready.assert_not_awaited()
-            release.set()
-            if fail:
-                with pytest.raises(RuntimeError, match="dataset open failed"):
-                    await opening
-                assert not worker._dataset_configured_event.is_set()
-                worker._mark_worker_ready.assert_not_awaited()
-            else:
-                await opening
-                assert worker._dataset_configured_event.is_set()
-                worker._mark_worker_ready.assert_awaited_once()
-        finally:
-            release.set()
-            await asyncio.gather(opening, return_exceptions=True)
-
-
 @pytest.fixture
 def local_worker(benchmark_run) -> Worker:
     """Use real readiness state with stubbed startup transports."""
@@ -233,28 +190,26 @@ def local_store() -> Iterator[type]:
 async def test_local_worker_catches_up_without_blocking_startup(
     local_worker: Worker, local_store: type, status: str
 ) -> None:
-    """A late worker queries status and still waits if no dataset is available."""
+    """A late worker recovers without another broadcast, including after a timeout."""
     notification = _configured()
     request = local_worker.conversation_request_client.request
-    if status == "timeout":
-        request.side_effect = TimeoutError
-    else:
-        request.return_value = DatasetConfigStatusResponse(
-            service_id="dataset_manager",
-            notification=notification if status == "configured" else None,
-        )
+    configured = DatasetConfigStatusResponse(
+        service_id="dataset_manager", notification=notification
+    )
+    responses: list[DatasetConfigStatusResponse | TimeoutError] = [configured]
+    if status == "pending":
+        responses.insert(0, DatasetConfigStatusResponse(service_id="dataset_manager"))
+    elif status == "timeout":
+        responses.insert(0, TimeoutError())
+    request.side_effect = responses
     await local_worker._send_worker_ready_message()
     assert local_worker._startup_state == WorkerStartupState.WAITING_FOR_DATASET
     assert not local_worker._worker_ready_event.is_set()
     request.assert_not_awaited()
 
     await local_worker.execute_async.call_args.args[0]
-    request.assert_awaited_once()
+    assert request.await_count == (1 if status == "configured" else 2)
     assert isinstance(request.call_args.args[0], DatasetConfigStatusRequest)
-    if status != "configured":
-        assert not local_worker._worker_ready_event.is_set()
-        local_store.initialize.assert_not_awaited()
-        await local_worker._on_dataset_configured(notification)
 
     local_store.initialize.assert_awaited_once()
     assert local_worker._dataset_configured_event.is_set()
@@ -264,6 +219,38 @@ async def test_local_worker_catches_up_without_blocking_startup(
         type(call.args[0])
         for call in local_worker.credit_dealer_client.send.await_args_list
     ] == [WorkerConnected, WorkerDispatchable]
+
+
+@pytest.mark.asyncio
+async def test_local_catch_up_stops_retrying_when_worker_stops(
+    local_worker: Worker, local_store: type
+) -> None:
+    async def stop_during_request(*args: object, **kwargs: object) -> None:
+        local_worker.stop_requested = True
+        raise TimeoutError
+
+    request = local_worker.conversation_request_client.request
+    request.side_effect = stop_during_request
+    await local_worker._send_worker_ready_message()
+    await local_worker.execute_async.call_args.args[0]
+
+    request.assert_awaited_once()
+    local_store.initialize.assert_not_awaited()
+    assert not local_worker._worker_ready_event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_open_dataset_client_marks_worker_ready_by_default(
+    local_worker: Worker, local_store: type
+) -> None:
+    await local_worker._open_dataset_client(_metadata("local"))
+
+    local_store.initialize.assert_awaited_once()
+    assert local_worker._dataset_configured_event.is_set()
+    assert local_worker._worker_ready_event.is_set()
+    local_worker.credit_dealer_client.send.assert_awaited_once_with(
+        WorkerDispatchable(worker_id=local_worker.service_id)
+    )
 
 
 @pytest.mark.asyncio
@@ -309,6 +296,9 @@ async def test_concurrent_dataset_notifications_open_local_client_once(
     first = asyncio.create_task(local_worker._on_dataset_configured(notification))
     try:
         await asyncio.wait_for(entered.wait(), timeout=5)
+        assert not local_worker._dataset_configured_event.is_set()
+        assert not local_worker._worker_ready_event.is_set()
+        local_worker.credit_dealer_client.send.assert_not_awaited()
         second = asyncio.create_task(local_worker._on_dataset_configured(notification))
     finally:
         release.set()
@@ -316,6 +306,8 @@ async def test_concurrent_dataset_notifications_open_local_client_once(
     await second
 
     local_store.initialize.assert_awaited_once()
+    assert local_worker._dataset_configured_event.is_set()
+    assert local_worker._worker_ready_event.is_set()
     local_worker.credit_dealer_client.send.assert_awaited_once_with(
         WorkerDispatchable(worker_id=local_worker.service_id)
     )

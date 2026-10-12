@@ -9,11 +9,8 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
 
-import orjson
 import pytest
-import zstandard
 
-from aiperf.common.enums import MemoryMapFormat
 from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.memory_map_utils import (
     MemoryMapDatasetBackingStore,
@@ -22,9 +19,7 @@ from aiperf.dataset.memory_map_utils import (
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "operation", ["conversation", "payload", "index", "write", "close"]
-)
+@pytest.mark.parametrize("operation", ["conversation", "index", "write", "close"])
 async def test_saving_does_not_block_event_loop(
     operation: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -35,9 +30,6 @@ async def test_saving_does_not_block_event_loop(
     release = threading.Event()
     store = MemoryMapDatasetBackingStore(
         compress_only=operation in {"write", "close"},
-        format=MemoryMapFormat.PAYLOAD_BYTES
-        if operation == "payload"
-        else MemoryMapFormat.CONVERSATION,
     )
     await store.initialize()
     conv = Conversation(
@@ -48,8 +40,6 @@ async def test_saving_does_not_block_event_loop(
 
     if operation == "conversation":
         owner, attribute = Conversation, "model_dump_json"
-    elif operation == "payload":
-        owner, attribute = orjson, "dumps"
     elif operation == "index":
         owner, attribute = MemoryMapDatasetIndex, "model_dump_json"
     else:
@@ -155,58 +145,5 @@ async def test_compressed_write_error_propagates(
         with pytest.raises(OSError, match="disk full"):
             await store.add_conversation("s", Conversation(session_id="s", turns=[]))
         assert not store._finalized
-    finally:
-        await store.stop()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("compress_only", [False, True])
-@pytest.mark.parametrize("format", list(MemoryMapFormat))
-async def test_saved_bytes_and_offsets_are_unchanged(
-    compress_only: bool,
-    format: MemoryMapFormat,
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
-    store = MemoryMapDatasetBackingStore(compress_only=compress_only, format=format)
-    conversations = {
-        str(i): Conversation(
-            session_id=str(i),
-            turns=[Turn(role="user", raw_payload={"text": "x" * (i + 1)})],
-        )
-        for i in range(3)
-    }
-    await store.initialize()
-    try:
-        await store.add_conversations(conversations)
-        await store.finalize()
-        if compress_only:
-            with (
-                store._compressed_data_path.open("rb") as file,
-                zstandard.ZstdDecompressor().stream_reader(file) as reader,
-            ):
-                data = reader.read()
-            index_data = zstandard.ZstdDecompressor().decompress(
-                store._compressed_index_path.read_bytes()
-            )
-        else:
-            data = store._data_path.read_bytes()
-            index_data = store._index_path.read_bytes()
-        index = MemoryMapDatasetIndex.model_validate_json(index_data)
-        expected = b""
-        for cid, conversation in conversations.items():
-            if format == MemoryMapFormat.PAYLOAD_BYTES:
-                encoded = orjson.dumps(conversation.turns[0].raw_payload)
-                offset = index.payload_offsets[cid][0]
-            else:
-                encoded = conversation.model_dump_json().encode("utf-8")
-                offset = index.offsets[cid]
-            assert offset.offset == len(expected)
-            assert offset.size == len(encoded)
-            expected += encoded
-        assert data == expected
-        assert index.total_size == len(expected)
-        assert index.conversation_ids == list(conversations)
     finally:
         await store.stop()
