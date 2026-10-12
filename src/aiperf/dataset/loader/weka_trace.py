@@ -761,7 +761,6 @@ def _expand_subagent_to_child_plans(
 
 
 def _fork_request_idx(chain: AgentChain) -> int | None:
-    """Index of the request a detected chain forked from, if it shares a prefix."""
     fork = chain.fork
     if fork is None or fork.depth <= 0:
         return None

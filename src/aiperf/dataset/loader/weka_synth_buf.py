@@ -88,7 +88,6 @@ class ParentPrefix:
     """
 
     hash_ids: tuple[int, ...]
-    """The parent turn's hash ids."""
     segments: tuple[RoleSegment, ...]
     """Copies of the parent's segments. Token lists are shared, never mutated."""
     next_tool_turn: int
@@ -123,7 +122,6 @@ class ParentPrefixes:
         recon: ConversationReconstructor,
         hash_ids: list[int],
     ) -> None:
-        """Store the layout of ``turn`` if a child forks from it."""
         if (session_id, turn) in self.wanted:
             self.layouts[(session_id, turn)] = recon.parent_prefix(hash_ids)
 
