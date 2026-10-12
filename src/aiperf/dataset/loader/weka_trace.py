@@ -837,7 +837,6 @@ class _FlatChainPlan:
     """Outer index of the request this chain forked from; None when the chain
     shares no prefix with an earlier chain."""
     fork_source: tuple[str, int] | None = None
-    """See :attr:`_ChildPlan.fork_source`."""
 
 
 def _flat_chain_end_seconds(fp: _FlatChainPlan) -> float:

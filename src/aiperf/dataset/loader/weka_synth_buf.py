@@ -713,7 +713,7 @@ def _shared_without_split_tool_pair(parent: ParentPrefix, shared: int) -> int:
 
 
 def _role_at(parent: ParentPrefix, block: int) -> _Role:
-    """Role of the parent segment that holds hash index ``block``."""
+    """Defaults to user when no parent segment covers ``block``."""
     for seg, end in parent.spans():
         if seg.block_start <= block < end:
             return seg.role
