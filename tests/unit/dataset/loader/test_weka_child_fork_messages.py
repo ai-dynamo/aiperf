@@ -602,6 +602,56 @@ def test_child_turn_0_tokens_unchanged_by_fork_messages(
     assert len(_tokens(forked)) == recorded
 
 
+def _tool_fork_trace(shared_blocks: int) -> dict:
+    """Root turn 2 is user[0,10) + assistant[10,11) + tool[11,20) +
+    assistant[20,22) + tool[22,30); a tool-result child shares its first
+    ``shared_blocks`` blocks, then sends one more tool result."""
+    return _trace(
+        "tf",
+        [
+            _req(0, _blocks(10)),
+            {**_req(2, _blocks(20), tool_result=True), "out": 100},
+            _req(4, _blocks(30), api=5, tool_result=True),
+            _req(5, _blocks(shared_blocks) + _blocks(10, 100), tool_result=True),
+            _req(10, _blocks(shared_blocks) + _blocks(20, 100), tool_result=True),
+            _req(12, _blocks(40)),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "shared_blocks, roles",
+    [
+        param(22, ["user", "assistant", "tool", "assistant", "tool"], id="ends-at-assistant"),
+        param(21, ["user", "assistant", "tool", "user"], id="cuts-inside-assistant"),
+    ],
+)  # fmt: skip
+def test_tool_result_child_answers_inherited_assistant(
+    monkeypatch, shared_blocks: int, roles: list[str]
+):
+    trace = _tool_fork_trace(shared_blocks)
+    _set_fork_messages(monkeypatch, False, True)
+    flat = _turn_0(_convert(trace)["tf::fa:000"])
+    _set_fork_messages(monkeypatch, True, True)
+    convs = _convert(trace)
+    child = _turn_0(convs["tf::fa:000"])
+    parent = _messages_at(convs["tf"], 2)
+
+    assert [m["role"] for m in child] == roles
+    assert child[: len(roles) - 1] == parent[: len(roles) - 1]
+    if roles[-1] == "tool":
+        assert child[-1]["tool_call_id"] == child[-2]["tool_calls"][0]["id"]
+        assert child[-1]["tool_call_id"] == parent[-1]["tool_call_id"]
+    assert _tokens(child) == _tokens(flat)
+    assert len(_tokens(child)) == trace["requests"][3]["in"]
+    ids = [
+        m["tool_call_id"]
+        for m in _messages_at(convs["tf::fa:000"], 1)
+        if m["role"] == "tool"
+    ]
+    assert len(ids) == len(set(ids)) == roles.count("tool") + 1
+
+
 def _random_trace(seed: int) -> dict:
     """Growing root requests, flat branches off them, and maybe a subagent,
     with random partial last blocks, missing blocks and tool results."""
@@ -615,11 +665,16 @@ def _random_trace(seed: int) -> dict:
     reqs = [_req(0, main, short=short())]
     t = 1.0
     for i in range(rng.randint(2, 4)):
-        main = main + _blocks(rng.randint(1, 10), 1000 * (i + 1))
+        # A branch cut here ends with the next request's 1-block assistant.
+        after_assistant = len(main) + 1
+        main = main + _blocks(rng.randint(2, 10), 1000 * (i + 1))
         reqs.append(_req(t, main, api=5, short=short(), tool_result=rng.random() < 0.3))
         if rng.random() < 0.7:
-            branch = main + _blocks(rng.randint(1, 10), 50000 + 1000 * i)
-            reqs.append(_req(t + 1, branch, short=short()))
+            base = main if rng.random() < 0.5 else main[:after_assistant]
+            branch = base + _blocks(rng.randint(1, 10), 50000 + 1000 * i)
+            reqs.append(
+                _req(t + 1, branch, short=short(), tool_result=rng.random() < 0.5)
+            )
             more = _blocks(rng.randint(1, 5), 60000 + 1000 * i)
             reqs.append(_req(t + 6, branch + more, short=short()))
         t += 7
@@ -649,7 +704,7 @@ def _recorded_in(trace: dict, conv: Conversation) -> int:
 def test_random_traces_tokens_unchanged_by_fork_messages(monkeypatch, tool_shaped):
     """Every turn of every session sends the same tokens with the setting on
     and off, and every turn 0 sends exactly its recorded ``in``."""
-    forks = missing = 0
+    forks = missing = tool_tails = 0
     for seed in range(40):
         trace = _random_trace(seed)
         missing += any(
@@ -669,8 +724,10 @@ def test_random_traces_tokens_unchanged_by_fork_messages(monkeypatch, tool_shape
                 ), (seed, sid, k)
             assert len(_tokens(_turn_0(conv))) == _recorded_in(trace, conv)
             forks += len(_turn_0(conv)) > len(_turn_0(flat[sid]))
+            tool_tails += _turn_0(conv)[-1]["role"] == "tool"
     assert forks > 10
     assert missing > 10
+    assert (tool_tails > 0) is tool_shaped
 
 
 @pytest.mark.parametrize("tool_shaped", [False, True])
@@ -680,7 +737,12 @@ def test_child_fork_messages_serial_parallel_byte_identical(
     monkeypatch.setattr(
         env_mod.Environment.DATASET, "WEKA_TOOL_SHAPED_MESSAGES", tool_shaped
     )
-    traces = [_flat_fork_trace(), _subagent_fork_trace(), _chained_fork_trace()]
+    traces = [
+        _flat_fork_trace(),
+        _subagent_fork_trace(),
+        _chained_fork_trace(),
+        _tool_fork_trace(22),
+    ]
     serial, _parallel = _run_both(tmp_path, monkeypatch, traces)
     by_sid = {c.session_id: c for c in serial}
     assert len(by_sid["chain::fa:001"].turns[0].raw_messages) > 2

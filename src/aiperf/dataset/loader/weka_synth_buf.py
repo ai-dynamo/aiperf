@@ -80,8 +80,6 @@ class RoleSegment:
 
 @dataclass(frozen=True, slots=True)
 class LayoutSegment:
-    """One parent message's role, first block and tool mark."""
-
     role: _Role
     block_start: int
     tool_result_turn: int | None = None
@@ -233,6 +231,7 @@ class ConversationReconstructor:
             hash_ids=hash_ids,
             in_tokens=in_tokens,
             seed=seed,
+            is_tool_result=is_tool_result,
             turn_0_pullbacks=turn_0_pullbacks,
         ):
             return
@@ -327,12 +326,14 @@ class ConversationReconstructor:
         hash_ids: list[int],
         in_tokens: int,
         seed: str,
+        is_tool_result: bool,
         turn_0_pullbacks: Collection[int],
     ) -> bool:
         """Split turn 0 into the parent's messages over the shared prefix.
 
         Only roles and message starts come from the parent; the rest is one
-        user message. The tokens are this request's own, as in the flat split.
+        user message, or the tool result for an inherited assistant's call.
+        The tokens are this request's own, as in the flat split.
 
         Returns False and changes nothing when:
         - the shared prefix ends inside the parent's first non-system message
@@ -346,8 +347,18 @@ class ConversationReconstructor:
             list(parent.hash_ids), hash_ids, in_tokens, self.block_size
         )
         shared = min(geo.lcp, geo.m_curr_covered)
+        tool_turn = None
         if self.tool_shaped_messages:
-            shared = _shared_without_split_tool_pair(parent, shared)
+            # Keep the assistant only if the child adds a tail and no later
+            # turn cuts back to its end.
+            answers_call = (
+                is_tool_result
+                and in_tokens > shared * self.block_size
+                and shared not in turn_0_pullbacks
+            )
+            shared, tool_turn = _shared_without_split_tool_pair(
+                parent, shared, answers_call
+            )
         if shared <= _first_message_end(parent):
             return False
         if any(
@@ -375,6 +386,7 @@ class ConversationReconstructor:
                     block_count=geo.m_curr_covered - shared,
                     tokens=new_tokens,
                     content=self.decode_tokens_to_text(new_tokens),
+                    tool_result_turn=tool_turn,
                 )
             )
         self._segments = segs
@@ -705,7 +717,9 @@ def _first_message_end(parent: ParentPrefix) -> int:
     return len(parent.hash_ids)
 
 
-def _shared_without_split_tool_pair(parent: ParentPrefix, shared: int) -> int:
+def _shared_without_split_tool_pair(
+    parent: ParentPrefix, shared: int, answers_call: bool
+) -> tuple[int, int | None]:
     """Move ``shared`` back to the start of an assistant segment it cuts or
     ends at, when the next segment is that assistant's tool result.
 
@@ -713,14 +727,20 @@ def _shared_without_split_tool_pair(parent: ParentPrefix, shared: int) -> int:
     followed it. Without the tool result, the child would send the assistant
     without ``tool_calls``, a message the parent never sent. Its blocks go to
     the child's new user message instead.
+
+    When ``answers_call`` and ``shared`` ends exactly at the assistant, the
+    child's tail is the tool result instead: ``shared`` stays and the parent's
+    call turn is returned, so the assistant keeps the parent's call id.
     """
     spans = parent.spans()
     for (seg, end), (nxt, _) in zip(spans, spans[1:], strict=False):
         if seg.block_start < shared <= end:
             if seg.role == "assistant" and nxt.tool_result_turn is not None:
-                return seg.block_start
+                if answers_call and shared == end:
+                    return shared, nxt.tool_result_turn
+                return seg.block_start, None
             break
-    return shared
+    return shared, None
 
 
 def _role_at(parent: ParentPrefix, block: int) -> _Role:
