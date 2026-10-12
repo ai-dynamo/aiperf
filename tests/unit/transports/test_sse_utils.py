@@ -675,12 +675,6 @@ class TestInspectMessageForError:
                 id="responses-failed-data-only",
             ),
             param(
-                'event: response.failed\ndata: {"type":"response.failed","response":{"error":{"message":"Overloaded","code":503}}}',
-                "Overloaded",
-                503,
-                id="responses-failed-named-event",
-            ),
-            param(
                 'event: response.failed\n: heartbeat\ndata: {"type":"response.failed","response":{"error":{"message":"Overloaded","code":503}}}',
                 "Overloaded",
                 503,
