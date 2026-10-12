@@ -586,7 +586,9 @@ If some runs fail, AIPerf will:
 
 ### Single Successful Run (Degraded Mode)
 
-If exactly one run succeeds, AIPerf does **not** raise — instead it enters a degraded single-run mode and emits a warning:
+When execution completes with exactly one successful run and no failed runs, AIPerf exports aggregates and exits successfully. This includes adaptive searches that stop after the first successful benchmark, even when that point does not satisfy the SLA. Finding no feasible point is a search outcome, not a benchmark execution failure.
+
+The confidence aggregator enters a degraded single-run mode and emits a warning:
 
 ```
 WARNING: ConfidenceAggregation: only 1 successful run (num_successful=1 / total=N);
@@ -595,6 +597,8 @@ num_profile_runs >= 2 for meaningful confidence intervals.
 ```
 
 The aggregate JSON is still produced, with `std=0`, `ci_low == ci_high == mean`, and a `single_run: true` flag in `metadata` so downstream consumers can render an "n=1, no CI" badge instead of mistaking the zero-width interval for a real measurement.
+
+If other runs failed and only one succeeded, the CLI retains its existing partial-failure behavior: it skips aggregation and exits non-zero. Aggregation and export exceptions are not suppressed.
 
 ### All Runs Failed
 
