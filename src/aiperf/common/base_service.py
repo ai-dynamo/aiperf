@@ -8,7 +8,7 @@ import os
 import signal
 import uuid
 from abc import ABC
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 import zmq
 
@@ -62,6 +62,16 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
 
     _service_type_cache: ServiceType | None = None
     """Cached service type (class-level)."""
+
+    reports_startup_failure: ClassVar[bool] = False
+    """Publish a start-up failure to the SystemController as SERVICE_ERROR.
+
+    Off by default: every SERVICE_ERROR the controller receives becomes an exit
+    error, so an optional collector (GPU telemetry, server metrics) opting in
+    would turn a degraded run into a failed one. Workers opt in because in
+    multi-process mode they are not required services, so without this a
+    worker that dies before registering is invisible to the controller.
+    """
 
     @classmethod
     def get_service_type(cls) -> ServiceType:
@@ -216,6 +226,32 @@ class BaseService(HealthServerMixin, CommandHandlerMixin, ProcessHealthMixin, AB
             await self._kill()
             return
         await super().stop()
+
+    async def _fail(self, e: Exception) -> None:
+        if self.reports_startup_failure and self.state in (
+            LifecycleState.INITIALIZING,
+            LifecycleState.STARTING,
+        ):
+            # Before super()._fail(): that stops the service, which tears down
+            # the comms this publish needs.
+            await self._publish_startup_failure(e)
+        await super()._fail(e)
+
+    async def _publish_startup_failure(self, e: Exception) -> None:
+        """Best-effort, as in ``_kill``: failing to report must not mask the
+        start-up failure itself, which still propagates through ``_fail``."""
+        try:
+            await self.publish(
+                BaseServiceErrorMessage(
+                    service_id=self.service_id,
+                    error=ErrorDetails.from_exception(e),
+                )
+            )
+        except Exception as publish_error:
+            self.warning(
+                lambda err=publish_error: "Could not report start-up failure to the "
+                f"SystemController (comms may not be up yet): {err!r}"
+            )
 
     async def _kill(self) -> None:
         """Kill the lifecycle. This is used when the lifecycle is requested to stop, but is already in a stopping state.

@@ -16,7 +16,8 @@ Out of scope (covered elsewhere):
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import re
+from collections.abc import Callable, Iterator
 from typing import cast
 
 import pytest
@@ -24,6 +25,7 @@ from pydantic import ValidationError
 from pytest import param
 
 from aiperf.kubernetes.crd_models import AIPerfJobSpec, AIPerfSweepSpec
+from aiperf.kubernetes.spec_converter import validate_job_spec
 from tools.generate_crd import _build_crd, build_aiperfsweep_crd
 
 # =============================================================================
@@ -499,3 +501,155 @@ class TestGeneratedCrdSchemaConsistency:
         assert sweep_names["kind"] == "AIPerfSweep"
         assert sweep_names["plural"] == "aiperfsweeps"
         assert sweep_names["shortNames"] == ["aps"]
+
+
+class TestSageMakerEndpointRequiresUrlsOrEndpointName:
+    """A SageMaker resource legitimately omits ``urls`` -- the runtime URL is
+    derived from the region. If the CRD kept ``urls`` unconditionally required,
+    the apiserver would reject that resource before any Python validator ran, so
+    the derivation would be unreachable from Kubernetes.
+    """
+
+    def test_urls_is_not_unconditionally_required(self) -> None:
+        endpoint = _endpoint_node(_job_spec_node())
+        assert "urls" not in cast(list, endpoint.get("required", []))
+
+    def test_an_empty_region_does_not_satisfy_the_region_rule(self) -> None:
+        """``has()`` is true for ``awsRegion: ""``, which EndpointConfig rejects,
+        so admission let through a resource the operator then failed."""
+        for node in (
+            _endpoint_node(_job_spec_node()),
+            _endpoint_node(_sweep_spec_node()),
+        ):
+            rules = [
+                cast(dict, r)["rule"]
+                for r in cast(list, node.get("x-kubernetes-validations", []))
+                if "awsRegion" in cast(dict, r)["rule"]
+            ]
+            assert rules
+            for rule in rules:
+                assert "size(self.awsRegion) > 0" in rule, rule
+
+    def test_urls_or_an_endpoint_name_is_left_to_the_operator(self) -> None:
+        """``urls`` is a typeless preserve-unknown field (it also accepts a
+        single string), so CEL cannot see it: a rule selecting it fails to
+        compile and the apiserver rejects the whole CRD. The requirement is
+        enforced by ``EndpointConfig`` and surfaces as ``status.phase=Failed``,
+        as main does for the model/dataset shorthands."""
+        for node in (
+            _endpoint_node(_job_spec_node()),
+            _endpoint_node(_sweep_spec_node()),
+        ):
+            rules = [
+                cast(dict, r)["rule"]
+                for r in cast(list, node.get("x-kubernetes-validations", []))
+            ]
+            assert not [r for r in rules if "self.urls" in r], rules
+
+    def test_the_operator_rejects_an_endpoint_with_neither(self) -> None:
+        """What admission no longer checks, the operator's spec validation must."""
+        benchmark = {**_VALID_BENCHMARK, "endpoint": {"type": "chat"}}
+        with pytest.raises((ValidationError, ValueError), match="urls"):
+            validate_job_spec(_job_spec(benchmark=benchmark))
+
+    def test_the_operator_accepts_an_endpoint_name_with_a_region(self) -> None:
+        benchmark = {
+            **_VALID_BENCHMARK,
+            "endpoint": {
+                "type": "chat",
+                "sagemaker": {"endpointName": "my-ep"},
+                "awsRegion": "us-west-2",
+            },
+        }
+        spec = validate_job_spec(_job_spec(benchmark=benchmark))
+        assert spec.benchmark.endpoint.urls == [
+            "https://runtime.sagemaker.us-west-2.amazonaws.com"
+        ]
+
+    def test_the_same_holds_for_the_sweep_crd(self) -> None:
+        endpoint = _endpoint_node(_sweep_spec_node())
+        assert "urls" not in cast(list, endpoint.get("required", []))
+
+    def test_an_endpoint_name_without_a_region_is_rejected_at_admission(self) -> None:
+        """EndpointConfig rejects this combination, but only after the apiserver
+        has already accepted the resource. Mirroring it in CEL means the user
+        finds out on `kubectl apply` rather than from a failed job."""
+        for node in (
+            _endpoint_node(_job_spec_node()),
+            _endpoint_node(_sweep_spec_node()),
+        ):
+            rules = [
+                cast(dict, r)["rule"]
+                for r in cast(list, node.get("x-kubernetes-validations", []))
+            ]
+            assert any(
+                "endpointName" in rule and "awsRegion" in rule for rule in rules
+            ), f"no endpointName-requires-awsRegion rule among: {rules}"
+
+    def test_an_empty_endpoint_name_counts_as_unset(self) -> None:
+        """CEL ``has()`` is true for ``endpointName: ""``, but EndpointConfig
+        treats an empty name as unset. Without a size check the apiserver admits
+        a resource with neither ``urls`` nor a usable name, and the job fails
+        later with "urls: Field required"."""
+        for node in (
+            _endpoint_node(_job_spec_node()),
+            _endpoint_node(_sweep_spec_node()),
+        ):
+            rules = [
+                cast(dict, r)["rule"]
+                for r in cast(list, node.get("x-kubernetes-validations", []))
+                if "endpointName" in cast(dict, r)["rule"]
+            ]
+            assert rules
+            for rule in rules:
+                assert "size(self.sagemaker.endpointName)" in rule, rule
+
+
+_SELF_PATH = re.compile(r"\bself((?:\.[A-Za-z_][A-Za-z0-9_]*)+)")
+
+
+def _rules_with_scope(node: object) -> Iterator[tuple[str, SchemaNode]]:
+    """Every CEL rule in the schema, with the node it is evaluated against."""
+    if isinstance(node, dict):
+        for rule in cast(list, node.get("x-kubernetes-validations", [])):
+            yield cast(dict, rule)["rule"], cast(SchemaNode, node)
+        for value in node.values():
+            yield from _rules_with_scope(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _rules_with_scope(value)
+
+
+def _cel_visible(schema: SchemaNode) -> bool:
+    """Whether Kubernetes declares this property to CEL at all.
+
+    The apiserver builds CEL declarations only for properties with a type, or
+    int-or-string; a typeless preserve-unknown property is omitted, and any
+    rule selecting it fails to compile.
+    """
+    return "type" in schema or bool(schema.get("x-kubernetes-int-or-string"))
+
+
+@pytest.mark.parametrize(
+    "spec_node",
+    [param(_job_spec_node, id="aiperfjob"), param(_sweep_spec_node, id="aiperfsweep")],
+)  # fmt: skip
+def test_every_cel_rule_selects_only_cel_visible_fields(
+    spec_node: Callable[[], SchemaNode],
+) -> None:
+    """Rule-text tests cannot catch a rule the apiserver will not compile, and PR
+    CI never installs the CRDs. A rule that selects a typeless field makes the
+    apiserver reject the whole CRD, blocking every operator install."""
+    offenders = []
+    for rule, scope in _rules_with_scope(spec_node()):
+        for match in _SELF_PATH.finditer(rule):
+            schema: SchemaNode = scope
+            for name in match.group(1).lstrip(".").split("."):
+                props = schema.get("properties")
+                if not isinstance(props, dict) or name not in props:
+                    break  # a method such as startsWith, not a field
+                schema = cast(SchemaNode, props[name])
+                if not _cel_visible(schema):
+                    offenders.append(f"self.{name} in: {rule}")
+                    break
+    assert not offenders, offenders

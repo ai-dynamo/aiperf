@@ -363,8 +363,10 @@ spec:
                         type: string
                         enum:
                         - http
-                        description: Transport plugin name. Currently only 'http' (aiohttp-based HTTP/1.1) is shipped. Auto-detected
-                          from URL when unset; explicit setting overrides auto-detection.
+                        - sagemaker
+                        description: Transport plugin name. 'http' (aiohttp-based HTTP/1.1) and 'sagemaker' (AWS SageMaker
+                          Runtime, normally derived from sagemaker.endpoint_name) are shipped. Auto-detected from the URL
+                          when unset, which always selects 'http'; explicit setting overrides auto-detection.
                       awsRegion:
                         type: string
                         description: AWS region for the request. Required when auth_type='sigv4'.
@@ -385,6 +387,30 @@ spec:
                           as ''sagemaker'' and ''bedrock-runtime'' as ''bedrock''. Required when auth_type=''sigv4'', unless
                           the selected transport declares which AWS API it speaks, in which case the scope is resolved from
                           botocore''s service model.'
+                      sagemaker:
+                        type: object
+                        description: SageMaker Runtime routing options. Setting sagemaker.endpoint_name selects the SageMaker
+                          transport.
+                        properties:
+                          endpointName:
+                            type: string
+                            description: 'Name of the SageMaker endpoint to invoke. Setting this is normally all that is needed:
+                              it selects the SageMaker transport, enables SigV4 signing, and derives the runtime base URL
+                              from aws_region.'
+                          targetModel:
+                            type: string
+                            description: 'SageMaker TargetModel value, for multi-model endpoints only: SageMaker rejects requests
+                              that carry it on a single-model endpoint. Sent only when set -- it is a relative model-artifact
+                              path, so the request''s model name is never used in its place. Not sent on streaming requests,
+                              which the API does not accept it on.'
+                          inferenceComponentName:
+                            type: string
+                            description: SageMaker InferenceComponentName to target, for endpoints hosting multiple inference
+                              components.
+                          targetVariant:
+                            type: string
+                            description: SageMaker production variant to pin every request to, bypassing the endpoint's traffic
+                              split. Useful for benchmarking one variant of an A/B deployment in isolation.
                       connectionReuse:
                         type: string
                         description: 'HTTP connection management strategy. pooled: shared connection pool (fastest), never:
@@ -528,9 +554,10 @@ spec:
                             description: 'Relative path for profiler stop. Default: /stop_profile.'
                         description: When enabled, start/stop the server profiler around each profiling phase. Accepts false
                           | true | {timeout_seconds?, start_path?, stop_path?}.
-                    required:
-                    - urls
                     x-kubernetes-validations:
+                    - rule: '!has(self.sagemaker) || !has(self.sagemaker.endpointName) || size(self.sagemaker.endpointName)
+                        == 0 || (has(self.awsRegion) && size(self.awsRegion) > 0)'
+                      message: endpoint.awsRegion is required when endpoint.sagemaker.endpointName is set
                     - rule: '!has(self.type) || self.type != ''template'' || has(self.template)'
                       message: endpoint.template is required when endpoint.type='template'
                     - rule: '!has(self.template) || !has(self.type) || self.type == ''template'''
