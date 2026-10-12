@@ -45,6 +45,7 @@ from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.models.spec_decode_models import SpecDecodeAcceptanceRecord
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
+from aiperf.common.monotonic_clock import process_clock
 from aiperf.common.types import JsonObject, MetricTagT, PhaseKind
 from aiperf.common.utils import load_json_str
 
@@ -1164,6 +1165,18 @@ class RequestInfo(RecordContext):
     )
 
 
+def _wall_ns_at_start_perf(data: dict[str, Any]) -> int:
+    """Wall time of the record's own ``start_perf_ns``, via the per-process anchor.
+
+    A wall read at construction would describe when the record was built, not
+    when the request started; for records built after a timeout or a poll loop
+    that is seconds late. Being a default factory rather than an after-validator
+    keeps the field out of ``model_fields_set``: assigning it there grows every
+    record's fields set past CPython's resize threshold (+512 B per record).
+    """
+    return process_clock().wall_ns_at(data["start_perf_ns"])
+
+
 class RequestRecord(AIPerfBaseModel):
     """Record of a request with its associated responses."""
 
@@ -1188,13 +1201,14 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         description="The name of the model targeted by the request.",
     )
-    timestamp_ns: int = Field(
-        default_factory=time.time_ns,
-        description="The wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns).",
-    )
+    # Declared before ``timestamp_ns``: its default factory reads this value.
     start_perf_ns: int = Field(
         default_factory=time.perf_counter_ns,
         description="The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).",
+    )
+    timestamp_ns: int = Field(
+        default_factory=_wall_ns_at_start_perf,
+        description="The wall clock timestamp of the request start in nanoseconds: the wall time of ``start_perf_ns``. When omitted it is derived from ``start_perf_ns`` through the per-process anchor (``process_clock``). DO NOT USE FOR LATENCY CALCULATIONS.",
     )
     end_perf_ns: int | None = Field(
         default=None,
@@ -1258,9 +1272,12 @@ class RequestRecord(AIPerfBaseModel):
         "Kubernetes mode, where both clocks are the same clock and no "
         "correction is meaningful. Signed, so no bounds apply. Measured in the "
         "tracker's anchored clock domain (a wall-clock anchor advanced by "
-        "perf_counter deltas) while ``timestamp_ns`` is raw ``time.time_ns``, "
-        "so an NTP step mid-run leaves the correction carrying that step as "
-        "residual error - bounded by the step size, typically sub-millisecond.",
+        "perf_counter deltas). ``timestamp_ns`` is anchored the same way but "
+        "through ``process_clock``, a separate anchor, so a wall-clock step "
+        "after both anchors exist moves neither; a step between their two "
+        "initializations leaves the anchors differing by that step, which the "
+        "correction carries as residual error - bounded by the step size, "
+        "typically sub-millisecond.",
     )
 
     @property
