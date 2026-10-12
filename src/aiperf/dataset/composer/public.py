@@ -89,6 +89,9 @@ class PublicDatasetComposer(BaseDatasetComposer):
         # any other dataset, so only the repo lookup is needed here.
         hf_weka_dataset = getattr(self._public_dataset, "hf_weka_dataset", None)
         hf_mooncake_dataset = getattr(self._public_dataset, "hf_mooncake_dataset", None)
+        mooncake_trace_to_hf_mapping = getattr(
+            self._public_dataset, "mooncake_trace_to_hf_mapping", None
+        )
         hf_dataset_name = (
             hf_mooncake_dataset or hf_weka_dataset or loader_metadata.hf_dataset_name
         )
@@ -101,12 +104,12 @@ class PublicDatasetComposer(BaseDatasetComposer):
                 kwargs["hf_subset"] = subset
 
         optional_fields = {
-            "field_mapping": self._public_dataset.mooncake_trace_to_hf_mapping or None,
             "prompt_column": loader_metadata.prompt_column,
             "image_column": loader_metadata.image_column,
             "video_column": loader_metadata.video_column,
             "audio_column": loader_metadata.audio_column,
             "prompt_template": loader_metadata.prompt_template,
+            "field_mapping": mooncake_trace_to_hf_mapping,
         }
         kwargs.update({k: v for k, v in optional_fields.items() if v is not None})
 

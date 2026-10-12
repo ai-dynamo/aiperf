@@ -41,7 +41,10 @@ def trajectory_rows() -> list[dict[str, Any]]:
             "question_id": f"trajectory-{i}",
             "model": "source/model",
             "benchmark": "test-benchmark",
-            "turns": messages[:end],
+            "turns": [
+                messages[0] | {"content": f"Recorded system {i}"},
+                *messages[1:end],
+            ],
             "extras": {
                 "tools": [{"type": "function", "function": {"name": "bash"}}],
                 "max_tokens": 8,
@@ -92,14 +95,16 @@ def test_trajectory_dispatch_preserves_recorded_history(
     )
     assert result.request_count == (4 if request_limit else 5)
     assert result.raw_records is not None
+    sources = {row["question_id"]: row for row in trajectory_rows}
     assert len(result.raw_records) == (4 if request_limit else 5)
     session_turns: dict[str, list[int]] = {}
     for record in result.raw_records:
         idx = record.metadata.turn_index
         session_turns.setdefault(record.metadata.x_correlation_id, []).append(idx)
         payload = record.payload
-        assert payload["messages"] == trajectory_rows[0]["turns"][: [2, 4, 6][idx]]
-        assert payload["tools"] == trajectory_rows[0]["extras"]["tools"]
+        source = sources[record.metadata.conversation_id]
+        assert payload["messages"] == source["turns"][: [2, 4, 6][idx]]
+        assert payload["tools"] == source["extras"]["tools"]
         assert payload["model"] == defaults.model
         assert payload.get("max_completion_tokens", payload.get("max_tokens")) == 8
         for key, value in {"temperature": 0.7, "top_p": 0.8, "top_k": 20}.items():

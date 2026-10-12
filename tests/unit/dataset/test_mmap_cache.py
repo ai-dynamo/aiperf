@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.constants import IS_WINDOWS
 from aiperf.config.flags.cli_config import CLIConfig
@@ -1198,6 +1199,33 @@ class TestComputeCacheKeyRunGates:
 class TestSettingsPayloadFromRun:
     """Field extraction from the resolved run into the cache-key payload."""
 
+    @pytest.mark.parametrize(
+        "flags",
+        [
+            param({"hf_mooncake_dataset": "other/repo"}, id="repo"),
+            param({"hf_dataset_subset": "other-subset"}, id="subset"),
+            param({"mooncake_trace_to_hf_mapping": ["messages=turns"]}, id="mapping"),
+            param({"dataset_filters": ["model=other-model", "benchmark=original-benchmark"]}, id="model_filter"),
+            param({"dataset_filters": ["model=original-model", "benchmark=other-benchmark"]}, id="benchmark_filter"),
+        ],
+    )  # fmt: skip
+    def test_mooncake_hf_source_changes_payload(self, flags: dict[str, object]) -> None:
+        base = {
+            "model_names": ["test-model"],
+            "random_seed": 42,
+            "hf_mooncake_dataset": "original/repo",
+            "hf_dataset_subset": "original-subset",
+            "mooncake_trace_to_hf_mapping": ["messages=history"],
+            "dataset_filters": ["model=original-model", "benchmark=original-benchmark"],
+        }
+        before = mmap_cache._settings_payload_from_run(
+            make_run_from_cli(CLIConfig(**base))
+        )
+        after = mmap_cache._settings_payload_from_run(
+            make_run_from_cli(CLIConfig(**(base | flags)))
+        )
+        assert before != after
+
     def test_prompt_dump_excludes_cache_bust(self) -> None:
         run = make_run_from_cli(CLIConfig(model_names=["test-model"]))
         payload = mmap_cache._settings_payload_from_run(run)
@@ -1217,19 +1245,45 @@ class TestSettingsPayloadFromRun:
         )
         assert mmap_cache._public_dataset_source_from_run(run) == {"plugin": "sharegpt"}
 
-    def test_public_dataset_source_includes_hf_identity(self) -> None:
+    @pytest.mark.parametrize(
+        "flags,expected",
+        [
+            param(
+                {"public_dataset": "mmstar"},
+                {"hf_dataset_name": "Lin-Chen/MMStar"},
+                id="registered_repo",
+            ),
+            param(
+                {"hf_weka_dataset": "example/weka"},
+                {"hf_dataset_name": "example/weka"},
+                id="weka_runtime_repo",
+            ),
+            param(
+                {
+                    "hf_mooncake_dataset": "example/trajectories",
+                    "hf_dataset_subset": "custom-subset",
+                    "mooncake_trace_to_hf_mapping": ["messages=turns"],
+                    "dataset_filters": ["model=source/model", "benchmark=source-benchmark"],
+                },
+                {
+                    "hf_dataset_name": "example/trajectories",
+                    "hf_split": "test",
+                    "hf_subset": "custom-subset",
+                    "mooncake_trace_to_hf_mapping": {"messages": "turns"},
+                    "filters": {"model": "source/model", "benchmark": "source-benchmark"},
+                },
+                id="mooncake_runtime_repo",
+            ),
+        ],
+    )  # fmt: skip
+    def test_public_dataset_source_includes_hf_identity(
+        self, flags: dict[str, object], expected: dict[str, object]
+    ) -> None:
         """An HF-backed public dataset keys on the resolved HF source."""
-        from aiperf.plugin.enums import PublicDatasetType
-
-        run = make_run_from_cli(
-            CLIConfig(
-                model_names=["test-model"],
-                public_dataset=PublicDatasetType.MMSTAR,
-            )
-        )
+        run = make_run_from_cli(CLIConfig(model_names=["test-model"], **flags))
         source = mmap_cache._public_dataset_source_from_run(run)
         assert source is not None
-        assert source["hf_dataset_name"] == "Lin-Chen/MMStar"
+        assert source.items() >= expected.items()
         assert "hf_split" in source
 
     def test_public_dataset_source_none_for_file_dataset(self, tmp_path: Path) -> None:

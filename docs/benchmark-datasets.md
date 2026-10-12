@@ -114,129 +114,34 @@ Size the target context window for the selected trace plus the target model's ch
 
 ## Hugging Face Mooncake Trajectory Replay
 
-Use `--public-dataset mooncake_hf` to replay complete recorded trajectories
-from a Hugging Face repository selected with `--hf-mooncake-dataset`. This flag
-automatically selects `mooncake_hf`, following the `--hf-weka-dataset`
-convention. The loader extends
-the Hugging Face reader and delegates to Mooncake's recorded request snapshots
-(`message_array_with_responses`). It has no built-in repository, revision, or
-source column aliases. This mode expects **one complete trajectory per row**;
-it does not replay timestamped single-request rows.
+Use `--public-dataset mooncake_hf` to replay complete recorded trajectories from a Hugging Face repository selected with `--hf-mooncake-dataset`. This flag automatically selects `mooncake_hf`.
+The loader extends the Hugging Face reader and delegates to Mooncake's recorded request snapshots (`message_array_with_responses`). This mode expects **one complete trajectory per row**.
 
-For example, map [nvidia/Agentic-Traces](https://huggingface.co/datasets/nvidia/Agentic-Traces)
-using explicit source columns:
+For example, map [sammshen/lmcache-agentic-traces](https://huggingface.co/datasets/sammshen/lmcache-agentic-traces) using explicit source columns:
 
 ```bash
 aiperf profile \
-  --model nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16 \
-  --url http://pool0-01804:8000 \
+  --model MiniMaxAI/MiniMax-M2.5 \
+  --url http://localhost:8000/v1/chat/completions \
   --endpoint-type chat \
-  --hf-mooncake-dataset nvidia/Agentic-Traces \
-  --hf-subset NVIDIA-Nemotron-3-Super-120B-A12B-BF16 \
-  --dataset-filter model=nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16 \
-  --mooncake-trace-to-hf-mapping session_id=question_id \
-  --mooncake-trace-to-hf-mapping messages=turns \
-  --mooncake-trace-to-hf-mapping tools=extras.tools \
-  --mooncake-trace-to-hf-mapping output_length=extras.max_tokens \
-  --mooncake-trace-to-hf-mapping extra=extras.request_params \
-  --mooncake-trace-to-hf-mapping extra.temperature=extras.temperature \
-  --mooncake-trace-to-hf-mapping extra.top_p=extras.top_p \
-  --mooncake-trace-to-hf-mapping extra.top_k=extras.top_k \
+  --hf-mooncake-dataset sammshen/lmcache-agentic-traces \
+  --dataset-filter model=minimax-m2.5 \
+  --mooncake-trace-to-hf-mapping messages=input \
   --concurrency 64 \
-  --num-sessions 261 \
+  --num-sessions 100 \
   --streaming
 ```
 
-The source repository is required; the split defaults to `test` and the subset
-is unset unless `--hf-subset` is supplied. Hugging Face resolves the repository's
-default revision.
-`--dataset-filter COLUMN=VALUE` compares source column values as exact strings.
-Repeat it to require multiple matches, for example
-`--dataset-filter 'benchmark=SWE-Bench Multilingual'`. Filters support dotted
-paths and never select the served model: `--model` remains authoritative.
+Each `--mooncake-trace-to-hf-mapping TARGET=SOURCE` maps a Mooncake field to a dotted source path.
+Supported targets are `session_id`, `messages`, `tools`, `output_length`, `extra`, and `extra.PARAMETER` for a top-level request parameter.
+Unmapped fields use their canonical Mooncake column names.
 
-Each `--mooncake-trace-to-hf-mapping TARGET=SOURCE` maps a Mooncake field to a dotted source
-path. Supported targets are `session_id`, `messages`, `tools`, `output_length`,
-`extra`, and `extra.PARAMETER` for a top-level request parameter. Unmapped fields
-use their canonical Mooncake column names. Explicit source paths must exist;
-misspelled paths fail with the row index. Optional values may be null.
-Unsupported targets and malformed dotted paths are rejected during configuration
-validation, before loading the HF dataset.
-Absent or null session IDs get generated IDs; explicit IDs must be nonempty
-strings and unique. No mappings are needed for canonical Mooncake columns.
-
-Equivalent YAML dataset selection (inside `benchmark`):
-
-```yaml
-dataset:
-  type: public
-  dataset: mooncake_hf
-  hf_mooncake_dataset: nvidia/Agentic-Traces
-  hf_subset: NVIDIA-Nemotron-3-Super-120B-A12B-BF16
-  filters:
-    model: nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16
-  mooncake_trace_to_hf_mapping:
-    session_id: question_id
-    messages: turns
-    tools: extras.tools
-    output_length: extras.max_tokens
-    extra: extras.request_params
-    extra.temperature: extras.temperature
-    extra.top_p: extras.top_p
-    extra.top_k: extras.top_k
-```
-
-With `--config`, declare the loader and `hf_mooncake_dataset` in YAML; the
-repository flag is rejected alongside `--config`, just like `--hf-weka-dataset`.
-Subset, mappings, and filters can still be overridden on the CLI.
-Mapping and filter overrides merge by key with YAML values.
-They also participate in dataset cache identity. The repository and mapping
-flags are supported only by `mooncake_hf`;
-using them with another dataset fails explicitly.
-
-Each HF row remains one session. The loader creates a request before **every
-assistant message**, including tool-call-only messages. For example,
-`[system, user, assistant, tool, assistant, tool, assistant, tool]` produces:
+Each HF row remains one session. The loader creates a request before **every assistant message**, including tool-call-only messages.
+For example, `[system, user, assistant, tool, assistant, tool, assistant, tool]` produces:
 
 1. `[system, user]`
 2. `[system, user, assistant, tool]`
 3. `[system, user, assistant, tool, assistant, tool]`
 
-The recorded assistant replies and tool results supply all later histories.
-Live replies are measured but never inserted into subsequent requests. Tools
-are not executed. Messages after the final assistant boundary do not create
-another request. Messages must satisfy Mooncake's chat-message schema.
-
-The loader accepts structured or JSON-encoded `messages`, `tools`, and `extra`.
-Dotted source paths can traverse JSON-encoded objects. It preserves recorded
-reasoning, tool-call IDs, and null optional message fields, and drops
-streaming-only tool-call `index` fields. Message content is
-passed through verbatim; JSON-looking content strings are not decoded.
-
-An `extra.PARAMETER` mapping with a non-null value overrides the same key in the
-mapped `extra` object. `output_length` falls back to `extra.max_tokens` or
-`extra.max_completion_tokens`; it is a ceiling, not a forced output length.
-The benchmark selects the target model and streaming mode, so recorded
-`stream`/`stream_options` are omitted. Request extras may not overwrite
-`messages`, `input`, `model`, or `tools`. Row-level tools and parameters apply to
-every request in the trajectory. Per-call timing and parameter changes are not
-represented by this format.
-
-Use concurrency or request-rate scheduling. Fixed scheduling is rejected because
-these trajectories contain no per-call timestamps. Requests within each session
-run sequentially, while separate sessions can run concurrently. `--num-sessions`
-counts trajectories; `--request-count` counts individual generation steps and
-can stop partway through a trajectory. Use the selected trajectory count to
-replay each once with sequential sampling.
-
-Like the HF Weka loader, this adapter separates loading from conversation
-construction. `load_dataset()` selects and maps HF rows, then passes inline
-records to the existing Mooncake loader for parsing and session grouping.
-`convert_to_conversations()` delegates directly to that loader. This shares the
-local Mooncake replay implementation without temporary files.
-
-All selected rows are converted before benchmarking, just as for a local Mooncake
-trace file. Session, request, and duration limits control replay, rather than
-truncating the export. Duplicate trajectory
-IDs, empty histories, histories without assistant messages, and an assistant
-with an empty first prefix are rejected with the session ID in the error.
+Use concurrency or request-rate scheduling. Fixed scheduling is rejected because these trajectories contain no per-call timestamps.
+Requests within each session run sequentially, while separate sessions can run concurrently. `--num-sessions` counts trajectories; `--request-count` counts individual generation steps and can stop partway through a trajectory. Use the selected trajectory count to replay each once with sequential sampling.

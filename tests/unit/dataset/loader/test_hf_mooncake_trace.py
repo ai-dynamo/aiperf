@@ -1,12 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Agent trajectories must reuse Mooncake's recorded request semantics."""
+"""Tests for ``HFMooncakeTraceDatasetLoader`` and recorded trajectory conversion."""
 
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import orjson
 import pytest
@@ -15,13 +15,17 @@ from pytest import param
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.config.flags import CLIConfig
-from aiperf.config.flags.resolver import resolve_config
+from aiperf.config.resolution.plan import BenchmarkRun
+from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 from aiperf.dataset.loader.hf_mooncake_trace import (
     HFMooncakeTraceDatasetLoader,
     trajectory_to_mooncake,
 )
+from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
 from aiperf.endpoints.openai_chat import ChatEndpoint
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import DatasetSamplingStrategy, PluginType, PublicDatasetType
 from aiperf.workers.session_manager import UserSessionManager
 from tests.unit.conftest import make_run_from_cli
 
@@ -72,339 +76,477 @@ def row() -> dict[str, Any]:
     }
 
 
-def loader(**kwargs: Any) -> HFMooncakeTraceDatasetLoader:
+@pytest.fixture
+def loader(
+    benchmark_run: BenchmarkRun, mock_prompt_generator: Mock
+) -> HFMooncakeTraceDatasetLoader:
     return HFMooncakeTraceDatasetLoader(
+        run=benchmark_run,
         hf_dataset_name="example/trajectories",
-        hf_split="test",
         streaming=True,
-        prompt_generator=Mock(),
-        **kwargs,
+        prompt_generator=mock_prompt_generator,
     )
 
 
-@pytest.mark.asyncio
-async def test_recorded_prefixes_preserve_payload_and_discard_live_replies(
-    row: dict[str, Any],
-) -> None:
-    before = deepcopy(row)
-    selected = loader()
-    data = selected._validate_rows([row])
-    conversation = (await selected.convert_to_conversations(data))[0]
-    assert row == before
-    assert (
-        conversation.context_mode
-        == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
-    )
-    assert len(conversation.turns) == 3
-    session = UserSessionManager().create_and_store(
-        x_correlation_id="test", conversation=conversation, num_turns=3
-    )
-    endpoint = ChatEndpoint(model_endpoint=Mock())
-    for index, end in enumerate([2, 4, 6]):
-        session.advance_turn(index)
-        assert not session.should_store_response()
-        messages = endpoint.build_messages(session.turn_list)
-        assert len(messages) == end
-        assert messages[:2] == row["messages"][:2]
-        assert [m["role"] for m in messages] == [
-            m["role"] for m in row["messages"][:end]
-        ]
-        turn = conversation.turns[index]
-        assert turn.max_tokens == 2048
-        assert turn.raw_tools == orjson.loads(row["tools"])
-        assert turn.extra_body == {
-            "temperature": 0.7,
-            "top_p": 0.8,
-            "top_k": -1,
-            "seed": 42,
-        }
-        assert turn.model is None
-        if index:
-            assert messages[2]["reasoning_content"] == "recorded reasoning"
-            assert messages[2]["content"] is None
-            assert "index" not in messages[2]["tool_calls"][0]
-            assert messages[3]["tool_call_id"] == "call1"
-    assert conversation.turns[0].raw_messages[0]["tool_calls"] is None
+@pytest.fixture
+def mock_hf_dataset(monkeypatch: pytest.MonkeyPatch, row: dict[str, Any]) -> AsyncMock:
+    mock = AsyncMock(return_value={"dataset": [row]})
+    monkeypatch.setattr(BaseHFDatasetLoader, "load_dataset", mock)
+    return mock
 
 
-@pytest.mark.parametrize(
-    "roles,lengths",
-    [
-        param(["user", "assistant"], [1], id="final_assistant"),
-        param(["system", "user", "assistant", "tool", "assistant", "tool", "assistant", "tool"], [2, 4, 6], id="original_example"),
-        param(["user", "user", "assistant", "assistant", "tool", "tool", "assistant"], [2, 3, 6], id="consecutive_roles"),
-    ],
-)  # fmt: skip
-def test_boundary_splitting(
-    roles: list[str], lengths: list[int], row: dict[str, Any]
-) -> None:
-    row["messages"] = [
-        {"role": role, "content": str(i)} for i, role in enumerate(roles)
-    ]
-    assert [len(t.messages) for t in trajectory_to_mooncake(row)] == lengths
+class TestConfiguration:
+    def test_records_hf_source_defaults(
+        self, loader: HFMooncakeTraceDatasetLoader
+    ) -> None:
+        assert loader.hf_dataset_name == "example/trajectories"
+        assert loader.hf_split == "test"
+        assert loader.hf_subset is None
+        assert loader.hf_revision is None
+        assert loader.streaming is True
 
-
-@pytest.mark.parametrize(
-    "patch,error",
-    [
-        param({"messages": []}, "nonempty", id="empty"),
-        param({"messages": [{"role": "assistant", "content": "x"}]}, "message 0", id="empty_prefix"),
-        param({"messages": [{"role": "user", "content": "x"}]}, "no assistant", id="no_boundary"),
-        param({"messages": [None]}, "message 0", id="invalid_message"),
-        param({"tools": "invalid JSON"}, "session", id="tools_json"),
-        param({"extra": '[]'}, "object", id="params_type"),
-        param({"extra": '{"messages":[]}'}, "override", id="history_override"),
-        param({"extra": '{"model":"other"}'}, "override", id="model_override"),
-        param({"output_length": 0}, "output_length", id="invalid_cap"),
-    ],
-)  # fmt: skip
-def test_invalid_rows_fail_with_session(
-    patch: dict[str, Any], error: str, row: dict[str, Any]
-) -> None:
-    with pytest.raises(DatasetLoaderError, match=error) as caught:
-        trajectory_to_mooncake(row | patch)
-    assert "swe:1" in str(caught.value)
-
-
-def test_source_column_filters_and_explicit_subset(row: dict[str, Any]) -> None:
-    selected = loader(
-        filters={
-            "model": "google/gemma-4-26B-A4B-it",
-            "benchmark": "SWE-Bench Multilingual",
-        }
-    )
-    assert selected.hf_subset is None
-    assert selected.hf_revision is None
-    rows = [row | {"model": "other"}, row | {"benchmark": "other"}, row]
-    assert len(selected._validate_rows(rows)) == 1
-    assert loader(hf_subset="custom-config").hf_subset == "custom-config"
-    with pytest.raises(DatasetLoaderError, match="no trajectories matched"):
-        selected._validate_rows([row | {"benchmark": "other"}])
-    with pytest.raises(DatasetLoaderError, match="source path.*missing"):
-        loader(filters={"missing": "x"})._validate_rows([row])
-
-
-def test_duplicate_ids_rejected(row: dict[str, Any]) -> None:
-    with pytest.raises(DatasetLoaderError, match="duplicate session_id"):
-        loader()._validate_rows([row, row])
-
-
-def test_session_limit_does_not_truncate_export(row: dict[str, Any]) -> None:
-    run = make_run_from_cli(
-        CLIConfig(
-            model_names=["target"],
-            public_dataset="mooncake_hf",
-            hf_mooncake_dataset="example/trajectories",
-            conversation_num=1,
+    def test_explicit_subset(
+        self, benchmark_run: BenchmarkRun, mock_prompt_generator: Mock
+    ) -> None:
+        loader = HFMooncakeTraceDatasetLoader(
+            run=benchmark_run,
+            hf_dataset_name="example/trajectories",
+            prompt_generator=mock_prompt_generator,
+            hf_subset="custom-config",
         )
-    )
+        assert loader.hf_subset == "custom-config"
 
-    rows = [row, row | {"session_id": "second"}]
-    assert len(loader(run=run)._validate_rows(rows)) == 2
-
-
-@pytest.mark.asyncio
-async def test_hf_pipeline_delegates_and_matches_mooncake_file(
-    monkeypatch: pytest.MonkeyPatch, row: dict[str, Any], tmp_path: Path
-) -> None:
-    rows = [row, row | {"session_id": "second"}]
-    selected = loader()
-    monkeypatch.setattr(selected, "_load_hf_dataset", lambda: rows)
-    load = Mock(wraps=selected._mooncake.load_dataset)
-    convert = Mock(wraps=selected._mooncake.convert_to_conversations)
-    monkeypatch.setattr(selected._mooncake, "load_dataset", load)
-    monkeypatch.setattr(selected._mooncake, "convert_to_conversations", convert)
-
-    data = await selected.load_dataset()
-    assert list(data) == ["swe:1", "second"]
-    assert all(len(traces) == 3 for traces in data.values())
-    load.assert_called_once_with()
-    assert selected._mooncake.inline_records == []
-    conversations = await selected.convert_to_conversations(data)
-    convert.assert_called_once_with(data)
-
-    filename = tmp_path / "traces.jsonl"
-    filename.write_bytes(
-        b"".join(
-            orjson.dumps(
-                trace.model_dump(exclude_none=True), option=orjson.OPT_APPEND_NEWLINE
+    @pytest.mark.parametrize("flags,error", [
+        param({"endpoint_type": "completions"}, "chat", id="endpoint"),
+        param({"fixed_schedule": True}, "no recorded timing", id="timing"),
+        param({"extra_inputs": {"messages": []}}, "override", id="messages"),
+        param({"extra_inputs": {"model": "other"}}, "override", id="model"),
+    ])  # fmt: skip
+    def test_incompatible_config_raises(
+        self,
+        mock_prompt_generator: Mock,
+        flags: dict[str, Any],
+        error: str,
+    ) -> None:
+        benchmark_run = make_run_from_cli(
+            CLIConfig(
+                model_names=["target"],
+                hf_mooncake_dataset="example/trajectories",
+                **flags,
             )
-            for source in rows
-            for trace in trajectory_to_mooncake(source)
         )
-    )
-    file_loader = MooncakeTraceDatasetLoader(
-        filename=filename, run=selected.run, prompt_generator=Mock()
-    )
-    assert conversations == file_loader.convert_to_conversations(
-        file_loader.load_dataset()
-    )
-
-
-def test_inline_records_released_after_load_failure(
-    monkeypatch: pytest.MonkeyPatch, row: dict[str, Any]
-) -> None:
-    selected = loader()
-    monkeypatch.setattr(
-        selected._mooncake,
-        "load_dataset",
-        Mock(side_effect=ValueError("invalid trace")),
-    )
-    with pytest.raises(ValueError, match="invalid trace"):
-        selected._validate_rows([row])
-    assert selected._mooncake.inline_records == []
+        with pytest.raises(DatasetLoaderError, match=error):
+            HFMooncakeTraceDatasetLoader(
+                run=benchmark_run,
+                hf_dataset_name="example/trajectories",
+                prompt_generator=mock_prompt_generator,
+            )
 
 
 @pytest.mark.asyncio
-async def test_hf_loading_uses_explicit_source(
-    monkeypatch: pytest.MonkeyPatch, row: dict[str, Any]
-) -> None:
-    datasets = pytest.importorskip("datasets")
-    load = Mock(return_value=[row])
-    monkeypatch.setattr(datasets, "load_dataset", load)
-    selected = loader(hf_subset="my-config")
-    data = await selected.load_dataset()
-    conversations = await selected.convert_to_conversations(data)
-    assert len(conversations[0].turns) == 3
-    assert load.call_args.args == ("example/trajectories",)
-    assert load.call_args.kwargs["name"] == "my-config"
-    assert "revision" not in load.call_args.kwargs
-    assert load.call_args.kwargs["split"] == "test"
-    assert load.call_args.kwargs["streaming"] is True
-
-
-@pytest.mark.parametrize("flags,error", [
-    param({"endpoint_type": "completions"}, "chat", id="endpoint"),
-    param({"fixed_schedule": True}, "no recorded timing", id="timing"),
-    param({"extra_inputs": {"messages": []}}, "override", id="messages"),
-    param({"extra_inputs": {"model": "other"}}, "override", id="model"),
-])  # fmt: skip
-def test_incompatible_config(flags: dict[str, Any], error: str) -> None:
-    run = make_run_from_cli(
-        CLIConfig(
-            model_names=["target"],
-            public_dataset="mooncake_hf",
-            hf_mooncake_dataset="example/trajectories",
-            **flags,
-        )
-    )
-    with pytest.raises(DatasetLoaderError, match=error):
-        loader(run=run)
-
-
-def test_filters_route_from_yaml_and_cli_override(tmp_path: Path) -> None:
-    config = tmp_path / "config.yaml"
-    config.write_text("""schemaVersion: "2.0"
-benchmark:
-  model: target
-  endpoint: {type: chat, url: "http://localhost:8000"}
-  dataset:
-    type: public
-    dataset: mooncake_hf
-    hf_mooncake_dataset: example/trajectories
-    filters: {model: google/gemma-4-26B-A4B-it}
-  profiling: {type: concurrency, concurrency: 2, sessions: 3}
-""")
-    cfg = resolve_config(
-        CLIConfig(
-            dataset_filters=[
-                "model=google/gemma-4-26B-A4B-it",
-                "benchmark=SWE-Bench Multilingual",
-            ]
-        ),
-        config,
-    )
-    dataset = cfg.benchmark.get_default_dataset()
-    assert dataset.filters == {
-        "model": "google/gemma-4-26B-A4B-it",
-        "benchmark": "SWE-Bench Multilingual",
-    }
-
-
-@pytest.mark.parametrize("params", [
-    param({"max_tokens": 8}, id="max_tokens"),
-    param({"max_completion_tokens": 8}, id="max_completion_tokens"),
-    param({"max_tokens": None, "max_completion_tokens": 8}, id="null_legacy"),
-])  # fmt: skip
-def test_output_cap_falls_back_to_request_params(
-    params: dict[str, Any], row: dict[str, Any]
-) -> None:
-    row["output_length"] = None
-    row["extra"] = orjson.dumps(params).decode()
-    for trace in trajectory_to_mooncake(row):
-        assert trace.output_length == 8
-        assert trace.extra == {}
-
-
-def test_duration_only_loads_available_rows(row: dict[str, Any]) -> None:
-    run = make_run_from_cli(
-        CLIConfig(
-            model_names=["target"],
-            public_dataset="mooncake_hf",
-            hf_mooncake_dataset="example/trajectories",
-            benchmark_duration=10,
-        )
-    )
-    traces = loader(run=run)._validate_rows([row])
-    assert len(traces) == 1
-    assert len(traces[row["session_id"]]) == 3
-
-
-@pytest.mark.parametrize("encoded", [False, True])
-def test_mapped_columns_match_canonical_conversations(
-    row: dict[str, Any], encoded: bool
-) -> None:
-    source = {
-        "question_id": row["session_id"],
-        "turns": row["messages"],
-        "extras": {
-            "tools": row["tools"],
-            "max_tokens": row["output_length"],
-            "request_params": orjson.dumps(
-                row["extra"] | {"temperature": 0.1}
-            ).decode(),
-            "temperature": 0.7,
-            "top_p": None,
-        },
-    }
-    if encoded:
-        source["extras"] = orjson.dumps(source["extras"]).decode()
-        source["turns"] = orjson.dumps(source["turns"]).decode()
-    before = deepcopy(source)
-    mapped = loader(
-        field_mapping={
-            "session_id": "question_id",
-            "messages": "turns",
-            "tools": "extras.tools",
-            "output_length": "extras.max_tokens",
-            "extra": "extras.request_params",
-            "extra.temperature": "extras.temperature",
-            "extra.top_p": "extras.top_p",
+class TestLoadDatasetRowValidation:
+    async def test_returns_validated_traces_keyed_by_id(
+        self,
+        loader: HFMooncakeTraceDatasetLoader,
+        mock_hf_dataset: AsyncMock,
+        row: dict[str, Any],
+    ) -> None:
+        mock_hf_dataset.return_value = {
+            "dataset": [row, row | {"session_id": "second"}]
         }
-    )._validate_rows([source])
-    assert mapped == loader()._validate_rows([row])
-    assert source == before
+        data = await loader.load_dataset()
+        mock_hf_dataset.assert_awaited_once_with()
+        assert list(data) == ["swe:1", "second"]
+        for session_id, traces in data.items():
+            assert len(traces) == 3
+            assert all(isinstance(trace, MooncakeTrace) for trace in traces)
+            assert all(trace.session_id == session_id for trace in traces)
+        assert loader._mooncake.inline_records == []
+
+    async def test_empty_dataset_raises(
+        self,
+        loader: HFMooncakeTraceDatasetLoader,
+        mock_hf_dataset: AsyncMock,
+    ) -> None:
+        mock_hf_dataset.return_value = {"dataset": []}
+        with pytest.raises(DatasetLoaderError, match="no trajectories matched"):
+            await loader.load_dataset()
+
+    async def test_filters_require_model_and_benchmark_matches(
+        self,
+        benchmark_run: BenchmarkRun,
+        mock_prompt_generator: Mock,
+        mock_hf_dataset: AsyncMock,
+        row: dict[str, Any],
+    ) -> None:
+        loader = HFMooncakeTraceDatasetLoader(
+            run=benchmark_run,
+            hf_dataset_name="example/trajectories",
+            prompt_generator=mock_prompt_generator,
+            filters={"model": row["model"], "benchmark": row["benchmark"]},
+        )
+        mock_hf_dataset.return_value = {
+            "dataset": [row | {"model": "other"}, row | {"benchmark": "other"}, row]
+        }
+        assert list(await loader.load_dataset()) == [row["session_id"]]
+
+    async def test_no_matching_rows_raises(
+        self,
+        benchmark_run: BenchmarkRun,
+        mock_prompt_generator: Mock,
+        mock_hf_dataset: AsyncMock,
+    ) -> None:
+        loader = HFMooncakeTraceDatasetLoader(
+            run=benchmark_run,
+            hf_dataset_name="example/trajectories",
+            prompt_generator=mock_prompt_generator,
+            filters={"benchmark": "other"},
+        )
+        with pytest.raises(DatasetLoaderError, match="no trajectories matched"):
+            await loader.load_dataset()
+
+    async def test_missing_filter_column_raises(
+        self,
+        benchmark_run: BenchmarkRun,
+        mock_prompt_generator: Mock,
+        mock_hf_dataset: AsyncMock,
+    ) -> None:
+        loader = HFMooncakeTraceDatasetLoader(
+            run=benchmark_run,
+            hf_dataset_name="example/trajectories",
+            prompt_generator=mock_prompt_generator,
+            filters={"missing": "x"},
+        )
+        with pytest.raises(DatasetLoaderError, match="row 0:.*source path.*missing"):
+            await loader.load_dataset()
+
+    async def test_nested_source_filter(
+        self,
+        benchmark_run: BenchmarkRun,
+        mock_prompt_generator: Mock,
+        mock_hf_dataset: AsyncMock,
+        row: dict[str, Any],
+    ) -> None:
+        row["metadata"] = '{"model":"selected"}'
+        loader = HFMooncakeTraceDatasetLoader(
+            run=benchmark_run,
+            hf_dataset_name="example/trajectories",
+            prompt_generator=mock_prompt_generator,
+            filters={"metadata.model": "selected"},
+        )
+        assert list(await loader.load_dataset()) == [row["session_id"]]
+
+    async def test_duplicate_session_ids_raises(
+        self,
+        loader: HFMooncakeTraceDatasetLoader,
+        mock_hf_dataset: AsyncMock,
+        row: dict[str, Any],
+    ) -> None:
+        mock_hf_dataset.return_value = {"dataset": [row, row]}
+        with pytest.raises(DatasetLoaderError, match="row 1:.*duplicate session_id"):
+            await loader.load_dataset()
+
+    @pytest.mark.parametrize("session_id", [
+        param("", id="empty"),
+        param(123, id="non_string"),
+    ])  # fmt: skip
+    async def test_invalid_session_id_raises_with_row_index(
+        self,
+        loader: HFMooncakeTraceDatasetLoader,
+        mock_hf_dataset: AsyncMock,
+        row: dict[str, Any],
+        session_id: str | int,
+    ) -> None:
+        mock_hf_dataset.return_value = {
+            "dataset": [row, row | {"session_id": session_id}]
+        }
+        with pytest.raises(DatasetLoaderError, match="row 1:.*nonempty string"):
+            await loader.load_dataset()
+
+    @pytest.mark.parametrize("missing_id", [
+        param({}, id="absent"),
+        param({"session_id": None}, id="null"),
+    ])  # fmt: skip
+    async def test_absent_or_null_session_ids_are_generated(
+        self,
+        loader: HFMooncakeTraceDatasetLoader,
+        mock_hf_dataset: AsyncMock,
+        row: dict[str, Any],
+        missing_id: dict[str, None],
+    ) -> None:
+        row.pop("session_id")
+        mock_hf_dataset.return_value = {"dataset": [row | missing_id, row | missing_id]}
+        assert list(await loader.load_dataset()) == ["hf-row-0", "hf-row-1"]
+
+    @pytest.mark.parametrize("flags", [
+        param({"conversation_num": 1}, id="session_limit"),
+        param({"benchmark_duration": 10}, id="duration_only"),
+    ])  # fmt: skip
+    async def test_stop_limits_do_not_truncate_loaded_rows(
+        self,
+        mock_prompt_generator: Mock,
+        mock_hf_dataset: AsyncMock,
+        row: dict[str, Any],
+        flags: dict[str, int],
+    ) -> None:
+        benchmark_run = make_run_from_cli(
+            CLIConfig(
+                model_names=["target"],
+                hf_mooncake_dataset="example/trajectories",
+                **flags,
+            )
+        )
+        mock_hf_dataset.return_value = {
+            "dataset": iter([row, row | {"session_id": "second"}])
+        }
+        loader = HFMooncakeTraceDatasetLoader(
+            run=benchmark_run,
+            hf_dataset_name="example/trajectories",
+            prompt_generator=mock_prompt_generator,
+            streaming=True,
+        )
+        traces = await loader.load_dataset()
+        assert list(traces) == ["swe:1", "second"]
+        assert all(len(turns) == 3 for turns in traces.values())
+
+    async def test_inline_records_released_after_load_failure(
+        self,
+        loader: HFMooncakeTraceDatasetLoader,
+        mock_hf_dataset: AsyncMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            loader._mooncake,
+            "load_dataset",
+            Mock(side_effect=ValueError("invalid trace")),
+        )
+        with pytest.raises(ValueError, match="invalid trace"):
+            await loader.load_dataset()
+        assert loader._mooncake.inline_records == []
 
 
-@pytest.mark.parametrize("mapping,error", [
-    param({"messages": "missing"}, "source path.*missing", id="missing_source"),
-    param({"extra.model": "model"}, "must not override", id="mapped_model_override"),
-])  # fmt: skip
-def test_invalid_mapped_row_fails_clearly(
-    mapping: dict[str, str], error: str, row: dict[str, Any]
-) -> None:
-    with pytest.raises(DatasetLoaderError, match=error):
-        loader(field_mapping=mapping)._validate_rows([row])
+class TestFieldMapping:
+    @pytest.mark.parametrize("encoded", [False, True])
+    def test_mapped_columns_match_canonical_traces(
+        self,
+        loader: HFMooncakeTraceDatasetLoader,
+        benchmark_run: BenchmarkRun,
+        mock_prompt_generator: Mock,
+        row: dict[str, Any],
+        encoded: bool,
+    ) -> None:
+        source = {
+            "question_id": row["session_id"],
+            "turns": row["messages"],
+            "extras": {
+                "tools": row["tools"],
+                "max_tokens": row["output_length"],
+                "request_params": orjson.dumps(
+                    row["extra"] | {"temperature": 0.1}
+                ).decode(),
+                "temperature": 0.7,
+                "top_p": None,
+            },
+        }
+        if encoded:
+            source["extras"] = orjson.dumps(source["extras"]).decode()
+            source["turns"] = orjson.dumps(source["turns"]).decode()
+        before = deepcopy(source)
+        mapped = HFMooncakeTraceDatasetLoader(
+            run=benchmark_run,
+            hf_dataset_name="example/trajectories",
+            prompt_generator=mock_prompt_generator,
+            field_mapping={
+                "session_id": "question_id",
+                "messages": "turns",
+                "tools": "extras.tools",
+                "output_length": "extras.max_tokens",
+                "extra": "extras.request_params",
+                "extra.temperature": "extras.temperature",
+                "extra.top_p": "extras.top_p",
+            },
+        )._validate_rows([source])
+        assert mapped == loader._validate_rows([row])
+        assert source == before
+
+    @pytest.mark.parametrize("mapping,error", [
+        param({"messages": "missing"}, "source path.*missing", id="missing_source"),
+        param({"extra.model": "model"}, "must not override", id="mapped_model_override"),
+    ])  # fmt: skip
+    def test_invalid_mapped_row_fails_clearly(
+        self,
+        benchmark_run: BenchmarkRun,
+        mock_prompt_generator: Mock,
+        mapping: dict[str, str],
+        error: str,
+        row: dict[str, Any],
+    ) -> None:
+        with pytest.raises(DatasetLoaderError, match=error):
+            HFMooncakeTraceDatasetLoader(
+                run=benchmark_run,
+                hf_dataset_name="example/trajectories",
+                prompt_generator=mock_prompt_generator,
+                field_mapping=mapping,
+            )._validate_rows([row])
 
 
-def test_absent_session_ids_are_generated(row: dict[str, Any]) -> None:
-    row.pop("session_id")
-    traces = loader()._validate_rows([row, row])
-    assert list(traces) == ["hf-row-0", "hf-row-1"]
+class TestTrajectoryConversion:
+    @pytest.mark.parametrize(
+        "roles,lengths",
+        [
+            param(["user", "assistant"], [1], id="final_assistant"),
+            param(["system", "user", "assistant", "tool", "assistant", "tool", "assistant", "tool"], [2, 4, 6], id="original_example"),
+            param(["user", "user", "assistant", "assistant", "tool", "tool", "assistant"], [2, 3, 6], id="consecutive_roles"),
+        ],
+    )  # fmt: skip
+    def test_splits_before_every_assistant(
+        self, roles: list[str], lengths: list[int], row: dict[str, Any]
+    ) -> None:
+        row["messages"] = [
+            {"role": role, "content": str(i)} for i, role in enumerate(roles)
+        ]
+        traces = trajectory_to_mooncake(row)
+        assert [trace.messages for trace in traces] == [
+            row["messages"][:end] for end in lengths
+        ]
+        assert all(trace.assistant_responses == "recorded" for trace in traces)
+
+    @pytest.mark.parametrize(
+        "patch,error",
+        [
+            param({"messages": []}, "nonempty", id="empty"),
+            param({"messages": [{"role": "assistant", "content": "x"}]}, "message 0", id="empty_prefix"),
+            param({"messages": [{"role": "user", "content": "x"}]}, "no assistant", id="no_boundary"),
+            param({"messages": [None]}, "message 0", id="invalid_message"),
+            param({"tools": "invalid JSON"}, "session", id="tools_json"),
+            param({"extra": '[]'}, "object", id="params_type"),
+            param({"extra": '{"messages":[]}'}, "override", id="history_override"),
+            param({"extra": '{"model":"other"}'}, "override", id="model_override"),
+            param({"output_length": 0}, "output_length", id="invalid_cap"),
+        ],
+    )  # fmt: skip
+    def test_invalid_rows_fail_with_session(
+        self, patch: dict[str, Any], error: str, row: dict[str, Any]
+    ) -> None:
+        with pytest.raises(DatasetLoaderError, match=error) as caught:
+            trajectory_to_mooncake(row | patch)
+        assert "swe:1" in str(caught.value)
+
+    @pytest.mark.parametrize("params", [
+        param({"max_tokens": 8}, id="max_tokens"),
+        param({"max_completion_tokens": 8}, id="max_completion_tokens"),
+        param({"max_tokens": None, "max_completion_tokens": 8}, id="null_legacy"),
+    ])  # fmt: skip
+    def test_output_cap_falls_back_to_request_params(
+        self, params: dict[str, Any], row: dict[str, Any]
+    ) -> None:
+        row["output_length"] = None
+        row["extra"] = orjson.dumps(params).decode()
+        for trace in trajectory_to_mooncake(row):
+            assert trace.output_length == 8
+            assert trace.extra == {}
 
 
-def test_nested_source_filter(row: dict[str, Any]) -> None:
-    row["metadata"] = '{"model":"selected"}'
-    assert (
-        len(loader(filters={"metadata.model": "selected"})._validate_rows([row])) == 1
-    )
+@pytest.mark.asyncio
+class TestConvertToConversationsDelegation:
+    async def test_hf_pipeline_delegates_and_matches_mooncake_file(
+        self,
+        loader: HFMooncakeTraceDatasetLoader,
+        mock_hf_dataset: AsyncMock,
+        mock_prompt_generator: Mock,
+        monkeypatch: pytest.MonkeyPatch,
+        row: dict[str, Any],
+        tmp_path: Path,
+    ) -> None:
+        rows = [row, row | {"session_id": "second"}]
+        mock_hf_dataset.return_value = {"dataset": rows}
+        load = Mock(wraps=loader._mooncake.load_dataset)
+        convert = Mock(wraps=loader._mooncake.convert_to_conversations)
+        monkeypatch.setattr(loader._mooncake, "load_dataset", load)
+        monkeypatch.setattr(loader._mooncake, "convert_to_conversations", convert)
+        data = await loader.load_dataset()
+        load.assert_called_once_with()
+        conversations = await loader.convert_to_conversations(data)
+        convert.assert_called_once_with(data)
+
+        filename = tmp_path / "traces.jsonl"
+        filename.write_bytes(
+            b"".join(
+                orjson.dumps(
+                    trace.model_dump(exclude_none=True),
+                    option=orjson.OPT_APPEND_NEWLINE,
+                )
+                for source in rows
+                for trace in trajectory_to_mooncake(source)
+            )
+        )
+        file_loader = MooncakeTraceDatasetLoader(
+            filename=filename, run=loader.run, prompt_generator=mock_prompt_generator
+        )
+        assert conversations == file_loader.convert_to_conversations(
+            file_loader.load_dataset()
+        )
+
+    async def test_recorded_prefixes_preserve_payload_and_disable_response_storage(
+        self,
+        loader: HFMooncakeTraceDatasetLoader,
+        mock_hf_dataset: AsyncMock,
+        row: dict[str, Any],
+    ) -> None:
+        before = deepcopy(row)
+        expected_messages = deepcopy(row["messages"])
+        expected_messages[2]["tool_calls"][0].pop("index")
+        data = await loader.load_dataset()
+        conversation = (await loader.convert_to_conversations(data))[0]
+        assert row == before
+        assert (
+            conversation.context_mode
+            == ConversationContextMode.MESSAGE_ARRAY_WITH_RESPONSES
+        )
+        assert len(conversation.turns) == 3
+        session = UserSessionManager().create_and_store(
+            x_correlation_id="test", conversation=conversation, num_turns=3
+        )
+        endpoint = ChatEndpoint(model_endpoint=Mock())
+        for index, end in enumerate([2, 4, 6]):
+            session.advance_turn(index)
+            assert not session.should_store_response()
+            messages = endpoint.build_messages(session.turn_list)
+            assert messages == expected_messages[:end]
+            turn = conversation.turns[index]
+            assert turn.max_tokens == 2048
+            assert turn.raw_tools == orjson.loads(row["tools"])
+            assert turn.extra_body == {
+                "temperature": 0.7,
+                "top_p": 0.8,
+                "top_k": -1,
+                "seed": 42,
+            }
+            assert turn.model is None
+
+
+class TestSamplingStrategy:
+    def test_preferred_sampling_strategy_is_sequential(self) -> None:
+        assert (
+            HFMooncakeTraceDatasetLoader.get_preferred_sampling_strategy()
+            == DatasetSamplingStrategy.SEQUENTIAL
+        )
+
+
+class TestPluginRegistry:
+    def test_class_registered_under_public_dataset_loader(self) -> None:
+        assert (
+            plugins.get_class(
+                PluginType.PUBLIC_DATASET_LOADER, PublicDatasetType.MOONCAKE_HF
+            )
+            is HFMooncakeTraceDatasetLoader
+        )
+
+    def test_metadata_uses_runtime_repository_and_test_split(self) -> None:
+        metadata = plugins.get_public_dataset_loader_metadata(
+            PublicDatasetType.MOONCAKE_HF
+        )
+        assert metadata.is_trace is True
+        assert metadata.streaming is True
+        assert metadata.hf_dataset_name is None
+        assert metadata.hf_split == "test"
