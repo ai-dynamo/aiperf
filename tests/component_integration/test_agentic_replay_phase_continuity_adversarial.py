@@ -64,6 +64,7 @@ def _make_strategy(
     cfg = MagicMock()
     cfg.phase = phase
     cfg.concurrency = len(source.trajectories)
+    cfg.finite_replay = False
     issuer = issuer if issuer is not None else AsyncMock()
     scheduler = scheduler if scheduler is not None else MagicMock()
     strategy = AgenticReplayStrategy(
