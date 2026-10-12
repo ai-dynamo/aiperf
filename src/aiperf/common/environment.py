@@ -1176,23 +1176,30 @@ class _RecordSettings(BaseSettings):
         ge=0.0,
         le=86400.0,
         default=600.0,
-        description="Seconds of zero record progress, while a profiling phase "
-        "is still waiting on in-flight requests, after which the run fails "
-        "instead of waiting indefinitely. A phase completes only once the "
-        "credit phase reports its final count, so a credit that is never "
-        "returned leaves that condition unevaluable and the run waits forever "
-        "with no output. Per-request timeouts do not cover this: they default "
-        "to 6 hours and never apply to a request that was not dispatched. Set "
-        "to 0 to disable and restore the previous unbounded wait.",
+        description="Seconds during which a profiling phase has requests in "
+        "flight and none of them complete, after which the run fails instead "
+        "of waiting indefinitely. A phase completes only once the credit "
+        "phase reports its final count, so a credit that is never returned "
+        "leaves that condition unevaluable and the run waits forever with no "
+        "output. Per-request timeouts do not cover this: they default to 6 "
+        "hours and never apply to a request that was not dispatched. Note "
+        "that a single legitimately long request will fail the run if it "
+        "exceeds this timeout while nothing else completes, so raise this "
+        "value for workloads whose individual requests run longer. Each "
+        "profiling phase is judged on its own counters, so an overlapping "
+        "`seamless` phase that keeps completing work does not mask a stall in "
+        "another. Set to 0 to disable and restore the previous unbounded "
+        "wait.",
     )
 
     PROGRESS_STALL_CHECK_INTERVAL: float = Field(
         ge=1.0,
         le=600.0,
         default=30.0,
-        description="Seconds between stall checks. Each check with no progress "
-        "also logs how many records are still outstanding, so a stalled run is "
-        "diagnosable from the log rather than silent.",
+        description="Seconds between stall checks. Each check with no "
+        "completions also logs how many requests are still in flight and "
+        "which phase they belong to, so a stalled run is diagnosable from the "
+        "log rather than silent.",
     )
 
     CHECKPOINT_INTERVAL: float = Field(

@@ -532,9 +532,47 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ``in_flight_requests``/``requests_completed``. Only the credit side
         tracks what was sent versus what came back, so the watchdog reads this
         snapshot instead.
+
+        Keyed by ``phase_index`` rather than held in a single slot: under
+        ``seamless`` a later profiling phase starts while the previous one
+        drains, and both keep publishing every interval. Sharing one slot let
+        the two interleave, and because each carries its own
+        ``requests_completed`` the count moved on nearly every tick -- which
+        reads as progress and resets the stall clock, so a stuck request in
+        either phase was never caught.
         """
         if isinstance(stats, CreditPhaseStats) and stats.phase == CreditPhase.PROFILING:
-            self._latest_profiling_credit_stats = stats
+            self._latest_profiling_credit_stats[stats.phase_index] = stats
+
+    def _longest_stalled_phase(
+        self, now: float
+    ) -> tuple[int | None, CreditPhaseStats, float] | None:
+        """The profiling phase stuck longest, or ``None`` if all are moving.
+
+        Each phase is judged on its own counters, and advances its own clock as
+        a side effect. A single shared clock cannot work here: under
+        ``seamless`` two profiling phases publish concurrently, and either one
+        alone failing to complete is enough to hang the run.
+        """
+        worst: tuple[int | None, CreditPhaseStats, float] | None = None
+        for phase_index, stats in self._latest_profiling_credit_stats.items():
+            # A missing entry reads as "never seen", so the first sight of a
+            # phase starts its clock rather than judging it.
+            progressed = (
+                stats.requests_completed
+                != self._progress_stall_last_total.get(phase_index)
+            )
+            if stats.in_flight_requests <= 0 or progressed:
+                # Nothing outstanding, or progress since the last tick. Reset
+                # this phase's clock so a quiet stretch does not accumulate
+                # toward a later, unrelated stall.
+                self._progress_stall_last_total[phase_index] = stats.requests_completed
+                self._progress_stall_since[phase_index] = now
+                continue
+            stalled_for = now - self._progress_stall_since.get(phase_index, now)
+            if worst is None or stalled_for > worst[2]:
+                worst = (phase_index, stats, stalled_for)
+        return worst
 
     @background_task(
         interval=lambda self: Environment.RECORD.PROGRESS_STALL_CHECK_INTERVAL,
@@ -570,31 +608,28 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if not self._profiling_started:
             return
 
-        stats = self._latest_profiling_credit_stats
-        if stats is None:
+        if not self._latest_profiling_credit_stats:
             # No profiling progress has been reported yet; there is nothing to
-            # judge, and the clock must not start before the first snapshot.
-            self._progress_stall_since = time.monotonic()
+            # judge, and no clock may start before the first snapshot.
             return
+
+        worst = self._longest_stalled_phase(time.monotonic())
+        if worst is None:
+            return
+        stalled_index, stats, stalled_for = worst
         in_flight = stats.in_flight_requests
         total = stats.requests_completed
+        phase_label = "" if stalled_index is None else f" in phase {stalled_index}"
 
-        # Nothing outstanding means nothing to wait for. Reset the clock so a
-        # quiet stretch does not accumulate toward a later, unrelated stall.
-        if in_flight <= 0 or total != self._progress_stall_last_total:
-            self._progress_stall_last_total = total
-            self._progress_stall_since = time.monotonic()
-            return
-
-        stalled_for = time.monotonic() - self._progress_stall_since
         if stalled_for < timeout:
             # Stay quiet until a full check interval has genuinely elapsed:
             # the tick right after the clock resets would otherwise report
             # "0s with no completion", which reads as alarming and is not.
             if stalled_for >= Environment.RECORD.PROGRESS_STALL_CHECK_INTERVAL:
                 self.warning(
-                    f"{in_flight:,} request(s) in flight with no completion "
-                    f"for {stalled_for:.0f}s ({total:,} completed so far). "
+                    f"{in_flight:,} request(s) in flight{phase_label} with no "
+                    f"completion for {stalled_for:.0f}s "
+                    f"({total:,} completed so far). "
                     f"Failing at {timeout:.0f}s "
                     "(AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to wait "
                     "indefinitely)."
@@ -613,8 +648,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._progress_stall_triggered = True
         await self._request_profile_cancel(
             ProfileCancelReason.PROGRESS_STALL,
-            f"Benchmark stalled: {in_flight:,} request(s) in flight with no "
-            f"completion for {stalled_for:.0f}s ({total:,} completed). A "
+            f"Benchmark stalled: {in_flight:,} request(s) in flight"
+            f"{phase_label} with no completion for {stalled_for:.0f}s "
+            f"({total:,} completed). A "
             f"request was dispatched but never returned, so the phase can "
             f"never report complete. Set "
             f"AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to disable this check.",
@@ -828,13 +864,15 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._stall_last_total_records: int = -1
         self._stall_last_progress_ns: int = 0
         self._profiling_started = False
-        self._progress_stall_last_total: int = -1
-        self._progress_stall_since: float = 0.0
-        # Latest profiling CreditPhaseStats. The credit side is the only source
-        # of sent/completed/cancelled counts; the records tracker's
+        # Keyed by phase_index: under `seamless` a later profiling phase starts
+        # while the previous one drains, and both keep publishing.
+        self._progress_stall_last_total: dict[int | None, int] = {}
+        self._progress_stall_since: dict[int | None, float] = {}
+        # Latest profiling CreditPhaseStats per phase. The credit side is the
+        # only source of sent/completed/cancelled counts; the records tracker's
         # PhaseRecordsStats carries record counts and has no notion of what is
         # still in flight.
-        self._latest_profiling_credit_stats: CreditPhaseStats | None = None
+        self._latest_profiling_credit_stats: dict[int | None, CreditPhaseStats] = {}
         # Latch so a stalled run requests cancellation once, not every tick.
         self._progress_stall_triggered: bool = False
         # Set to a human-readable reason when the run is finalized without every
@@ -1398,9 +1436,6 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         phase: CreditPhase,
         cancelled: bool,
         error: BaseException,
-        *,
-        stage: str = "result_finalization",
-        reason_prefix: str = "Result finalization failed",
     ) -> ProcessRecordsResult:
         """Publish an explicitly-failed, empty result so the run can terminate.
 
@@ -1411,7 +1446,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """
         error_details = ErrorDetails.from_exception(
             error,
-            stage=stage,
+            stage="result_finalization",
             **{ERROR_FATAL_DETAIL_KEY: True},
         )
         now = time.time_ns()
@@ -1423,7 +1458,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 end_ns=now,
                 was_cancelled=cancelled,
                 is_complete=False,
-                incomplete_reason=f"{reason_prefix}: {error_details.message}",
+                incomplete_reason=(
+                    f"Result finalization failed: {error_details.message}"
+                ),
             ),
             errors=[error_details],
         )

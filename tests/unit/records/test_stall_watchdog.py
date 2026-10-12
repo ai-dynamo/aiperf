@@ -32,11 +32,15 @@ class _Manager:
     task swallowed it, and the suite stayed green while the watchdog never ran.
     """
 
+    # The watchdog delegates per-phase bookkeeping here; use the real
+    # implementation so the fake cannot drift from what ships.
+    _longest_stalled_phase = RecordsManager._longest_stalled_phase
+
     def __init__(self) -> None:
         self._profiling_started = True
-        self._progress_stall_last_total = -1
-        self._progress_stall_since = 0.0
-        self._latest_profiling_credit_stats: CreditPhaseStats | None = None
+        self._progress_stall_last_total: dict[int | None, int] = {}
+        self._progress_stall_since: dict[int | None, float] = {}
+        self._latest_profiling_credit_stats: dict[int | None, CreditPhaseStats] = {}
         self._progress_stall_triggered = False
         self.warnings: list[str] = []
         self.cancels: list[tuple[str, str]] = []
@@ -49,12 +53,15 @@ class _Manager:
         self.warnings.append(msg() if callable(msg) else msg)
 
 
-def _observe(mgr: _Manager, completed: int, in_flight: int) -> None:
+def _observe(
+    mgr: _Manager, completed: int, in_flight: int, phase_index: int | None = None
+) -> None:
     """Publish a real profiling snapshot the way the message handlers do."""
     RecordsManager._remember_profiling_credit_stats(
         mgr,
         CreditPhaseStats(
             phase=CreditPhase.PROFILING,
+            phase_index=phase_index,
             requests_sent=completed + in_flight,
             requests_completed=completed,
             requests_cancelled=0,
@@ -185,3 +192,54 @@ def test_the_watchdog_is_actually_scheduled() -> None:
     assert not hasattr(
         RecordsManager._remember_profiling_credit_stats, "__aiperf_hook_type__"
     ), "the snapshot helper is called from message handlers, not scheduled"
+
+
+@pytest.mark.asyncio
+async def test_a_stuck_phase_is_caught_while_another_phase_keeps_completing(
+    monkeypatch,
+) -> None:
+    """Overlapping profiling phases must each be judged on their own counters.
+
+    Under ``seamless`` a later profiling phase starts while the previous one
+    drains, and both publish every interval. Held in one slot the snapshots
+    interleaved, and since each phase carries its own ``requests_completed``
+    the count changed on nearly every tick -- which reads as progress. The
+    stall clock reset perpetually and a request stuck in either phase was
+    never caught, so the run hung with the watchdog armed and silent.
+    """
+    monkeypatch.setattr(Environment.RECORD, "PROGRESS_STALL_TIMEOUT", 100.0)
+    monkeypatch.setattr(Environment.RECORD, "PROGRESS_STALL_CHECK_INTERVAL", 10.0)
+    mgr = _Manager()
+
+    # Phase 0 is wedged at 5 completed with one request outstanding, while
+    # phase 1 keeps completing work the whole time.
+    for i, now in enumerate([0.0, 50.0, 150.0, 250.0]):
+        _observe(mgr, completed=5, in_flight=1, phase_index=0)
+        _observe(mgr, completed=100 + i, in_flight=4, phase_index=1)
+        monkeypatch.setattr(
+            "aiperf.records.records_manager.time.monotonic", lambda now=now: now
+        )
+        await RecordsManager._watch_for_progress_stall(mgr)
+
+    assert mgr.cancels, (
+        "a request stuck in phase 0 never triggered the watchdog while phase 1 "
+        "kept reporting completions"
+    )
+    assert "in phase 0" in mgr.cancels[0][1], mgr.cancels[0][1]
+
+
+@pytest.mark.asyncio
+async def test_two_phases_both_progressing_stay_quiet(monkeypatch) -> None:
+    """The per-phase clocks must not manufacture a stall out of two healthy phases."""
+    monkeypatch.setattr(Environment.RECORD, "PROGRESS_STALL_TIMEOUT", 100.0)
+    mgr = _Manager()
+    for i, now in enumerate([0.0, 50.0, 150.0, 250.0, 5_000.0]):
+        _observe(mgr, completed=i, in_flight=2, phase_index=0)
+        _observe(mgr, completed=i * 3, in_flight=2, phase_index=1)
+        monkeypatch.setattr(
+            "aiperf.records.records_manager.time.monotonic", lambda now=now: now
+        )
+        await RecordsManager._watch_for_progress_stall(mgr)
+
+    assert mgr.cancels == []
+    assert mgr.warnings == []

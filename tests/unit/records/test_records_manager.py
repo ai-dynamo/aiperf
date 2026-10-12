@@ -1029,6 +1029,12 @@ def _create_credit_phase_stats() -> CreditPhaseStats:
 
 def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager = RecordsManager.__new__(RecordsManager)
+    # Built via __new__, so __init__ never ran. The stall watchdog indexes
+    # these by phase_index, which needs the containers to already exist.
+    manager._latest_profiling_credit_stats = {}
+    manager._progress_stall_last_total = {}
+    manager._progress_stall_since = {}
+    manager._progress_stall_triggered = False
     manager._dataset_configured_event = asyncio.Event()
     manager._dataset_configured_event.set()
     manager._records_tracker = MagicMock()
