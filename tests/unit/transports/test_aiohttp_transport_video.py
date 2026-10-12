@@ -1354,6 +1354,8 @@ class TestVideoDownloadRedirects:
         param("/next", "https://origin.test/next"),
         param("?key=a%2Fb&key=c%2Bd#fragment", "https://origin.test/signed/content?key=a%2Fb&key=c%2Bd"),
         param("//cdn.test/path%2Ffile?sig=%2B", "https://cdn.test/path%2Ffile?sig=%2B"),
+        param("/vidéo?sig=a%2Fb", "https://origin.test/vid%C3%A9o?sig=a%2Fb"),
+        param("https://bücher.test/v", "https://xn--bcher-kva.test/v"),
     ])  # fmt: skip
     async def test_resolves_against_actual_signed_url(
         self, transport: AioHttpTransport, location: str, expected: str
@@ -1380,6 +1382,32 @@ class TestVideoDownloadRedirects:
             )
             == b"video"
         )
+        assert str(transport.aiohttp_client.get_request.call_args.args[0]) == expected
+
+    @pytest.mark.parametrize("url,expected", [
+        param("https://origin.test/vidéo.mp4?name=é&sig=a%2Fb", "https://origin.test/vid%C3%A9o.mp4?name=%C3%A9&sig=a%2Fb"),
+        param("https://bücher.test:8443/v.mp4", "https://xn--bcher-kva.test:8443/v.mp4"),
+    ])  # fmt: skip
+    async def test_non_ascii_url_is_signed_and_sent_as_ascii(
+        self, transport: AioHttpTransport, url: str, expected: str
+    ) -> None:
+        """The signer must see the request target that goes on the wire."""
+
+        async def sign(
+            method: str, url: str, headers: dict[str, str], body: bytes | None = None
+        ) -> SignedRequest:
+            return SignedRequest(url=url, headers=headers)
+
+        transport.request_signer = AsyncMock()
+        transport.request_signer.sign.side_effect = sign
+        transport.aiohttp_client.get_request.return_value = binary_record()
+        assert (
+            await transport._download_video_content(
+                "job", url, {}, signing_origin_url=url.rsplit("/", 1)[0] + "/job"
+            )
+            == b"video"
+        )
+        assert transport.request_signer.sign.call_args.args[1] == expected
         assert str(transport.aiohttp_client.get_request.call_args.args[0]) == expected
 
     @pytest.mark.parametrize("url", [

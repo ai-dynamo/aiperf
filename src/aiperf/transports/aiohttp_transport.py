@@ -11,7 +11,7 @@ import re
 import time
 from collections.abc import Mapping
 from typing import Any
-from urllib.parse import urljoin, urlsplit, urlunsplit
+from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 
 import aiohttp
 import orjson
@@ -58,6 +58,8 @@ _DEFAULT_PORTS = {"http": 80, "https": 443}
 # query signature and needs no inherited headers at all.
 _FOREIGN_ORIGIN_HEADER_ALLOWLIST = frozenset({"user-agent"})
 
+_NON_ASCII = re.compile(r"[^\x00-\x7f]+")
+
 
 class _VideoDownloadPolicyError(ValueError):
     """A download policy failure with a fixed, credential-free diagnostic."""
@@ -98,17 +100,25 @@ def _validated_video_url(url: str) -> str:
         raise ValueError("Invalid download port")
     if "%" in parts.hostname:
         raise ValueError("Encoded download hostname is unsupported")
+    if not url.isascii():
+        # Requests go out with encoded=True, which sends text verbatim. Encode
+        # non-ASCII here, before signing, leaving existing %XX escapes intact.
+        parts = parts._replace(
+            netloc=URL(f"{parts.scheme}://{parts.netloc}").raw_authority,
+            path=_NON_ASCII.sub(lambda match: quote(match[0]), parts.path),
+            query=_NON_ASCII.sub(lambda match: quote(match[0]), parts.query),
+        )
     return urlunsplit(parts._replace(fragment=""))
 
 
-def _video_download_origin(url: str) -> tuple[str, aiohttp.BasicAuth | None]:
+def _split_configured_auth(url: str) -> tuple[str, aiohttp.BasicAuth | None]:
     """Separate configured authentication from URLs selected by the server."""
     _validate_video_url_reference(url)
     parts = urlsplit(url)
-    origin = _validated_video_url(
+    poll_url = _validated_video_url(
         urlunsplit(parts._replace(netloc=parts.netloc.rsplit("@", 1)[-1]))
     )
-    return origin, aiohttp.BasicAuth.from_url(URL(url, encoded=True))
+    return poll_url, aiohttp.BasicAuth.from_url(URL(url, encoded=True))
 
 
 def _resolve_video_redirect(requested_url: str, location: str) -> str:
@@ -786,16 +796,16 @@ class AioHttpTransport(BaseTransport):
         )
 
     async def _prepare_video_download_request(
-        self, url: str, origin: str, headers: dict[str, str]
+        self, url: str, poll_url: str, headers: dict[str, str]
     ) -> SignedRequest:
         """Rebuild headers for each hop and constrain signer URL changes to the origin."""
-        if not _same_origin(url, origin):
+        if not _same_origin(url, poll_url):
             return SignedRequest(
                 url=url, headers=_strip_credentials_for_foreign_origin(headers)
             )
         signed = await self._sign_if_needed("GET", url, dict(headers))
         signed.url = _validated_video_url(signed.url)
-        if not _same_origin(signed.url, origin):
+        if not _same_origin(signed.url, poll_url):
             raise _VideoDownloadPolicyError("Signer changed the request origin")
         return signed
 
@@ -832,17 +842,17 @@ class AioHttpTransport(BaseTransport):
 
         try:
             async with asyncio.timeout(timeout):
-                origin, auth = _video_download_origin(signing_origin_url)
+                poll_url, auth = _split_configured_auth(signing_origin_url)
                 current_url = _validated_video_url(
-                    content_url if content_url is not None else f"{origin}/content"
+                    content_url if content_url is not None else f"{poll_url}/content"
                 )
                 while True:
                     stage = "signing"
                     signed = await self._prepare_video_download_request(
-                        current_url, origin, headers
+                        current_url, poll_url, headers
                     )
                     requested_url = signed.url
-                    same_origin = _same_origin(requested_url, origin)
+                    same_origin = _same_origin(requested_url, poll_url)
 
                     stage = "request"
                     record = await self.aiohttp_client.get_request(
@@ -878,7 +888,7 @@ class AioHttpTransport(BaseTransport):
                         "HTTP or network request failed"
                         if record.error
                         else "No binary content returned",
-                        status if record.error or not 200 <= status < 300 else 500,
+                        status if record.error else 500,
                     )
         except _VideoDownloadPolicyError as error:
             return failure(

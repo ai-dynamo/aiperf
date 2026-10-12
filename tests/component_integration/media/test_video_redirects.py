@@ -108,6 +108,38 @@ async def test_cross_origin_chain_preserves_signed_url_bytes_and_credentials(
     assert "Cookie" not in seen[3][2]
 
 
+@pytest.mark.parametrize("redirect", [param(False, id="direct"), param(True, id="redirect")])  # fmt: skip
+async def test_non_ascii_request_target_is_percent_encoded(redirect: bool) -> None:
+    """Strict HTTP parsers, aiohttp's included, reject raw UTF-8 request targets."""
+    seen: list[str] = []
+
+    async def handler(request: web.Request) -> web.StreamResponse:
+        seen.append(request.raw_path)
+        if request.path == "/start":
+            return web.Response(
+                status=302, headers={"Location": "/vidéo.mp4?sig=a%2Fb"}
+            )
+        return web.Response(body=b"video", content_type="video/mp4")
+
+    async with serve(handler) as origin:
+        client = AioHttpClient(timeout=1)
+        transport = AioHttpTransport(
+            model_endpoint=create_model_endpoint_info(base_url=origin)
+        )
+        transport.aiohttp_client = client
+        try:
+            result = await transport._download_video_content(
+                "job",
+                origin + ("/start" if redirect else "/vidéo.mp4?sig=a%2Fb"),
+                {},
+                signing_origin_url=origin + "/job",
+            )
+        finally:
+            await client.close()
+    assert result == b"video"
+    assert seen[-1] == "/vid%C3%A9o.mp4?sig=a%2Fb"
+
+
 @pytest.mark.parametrize("start", [param("direct"), param("origin"), param("foreign")])  # fmt: skip
 async def test_configured_basic_auth_is_restored_only_at_origin(
     monkeypatch: pytest.MonkeyPatch, start: str
