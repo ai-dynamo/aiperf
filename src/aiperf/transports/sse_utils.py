@@ -59,7 +59,6 @@ def _raise_for_data_error(data_content: str) -> None:
 
 
 def _classify_message_fields(message: SSEMessage) -> tuple[str | None, bool]:
-    """Return the named error event and structured-data-candidate flag."""
     error_event = None
     has_data_error_candidate = False
     for packet in message.packets:

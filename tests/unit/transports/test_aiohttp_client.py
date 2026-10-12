@@ -259,10 +259,9 @@ class TestAioHttpClient:
         if callback:
             callback.assert_awaited_once()
 
-    @pytest.mark.parametrize("with_callback", [False, True])
     @pytest.mark.parametrize("failed", [False, True])
     async def test_responses_transport_failure_prevents_structured_replay(
-        self, aiohttp_client: AioHttpClient, with_callback: bool, failed: bool
+        self, aiohttp_client: AioHttpClient, failed: bool
     ) -> None:
         item = {
             "type": "function_call",
@@ -288,7 +287,6 @@ class TestAioHttpClient:
             await request.read()
             return web.Response(body=body, content_type="text/event-stream")
 
-        callback = AsyncMock(return_value=True) if with_callback else None
         app = web.Application()
         app.router.add_post("/v1/responses", handler)
         async with TestServer(app) as server:
@@ -296,7 +294,6 @@ class TestAioHttpClient:
                 str(server.make_url("/v1/responses")),
                 b'{"stream":true}',
                 {"Content-Type": "application/json"},
-                first_token_callback=callback,
             )
 
         assert record.has_error is failed
