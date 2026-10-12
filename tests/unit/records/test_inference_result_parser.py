@@ -1286,5 +1286,8 @@ class TestSpecDecodeZeroStepRecords:
         assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
         server_token_parser.warning.assert_not_called()
         server_token_parser.error.assert_not_called()
-        messages = [c.args[0]() for c in server_token_parser.debug.call_args_list]
+        messages = [
+            arg() if callable(arg) else arg
+            for arg in (c.args[0] for c in server_token_parser.debug.call_args_list)
+        ]
         assert any("zero-step" in m for m in messages)
