@@ -55,6 +55,7 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset import FileDataset, PublicDataset
 from aiperf.dataset import mmap_cache
+from aiperf.dataset.json_stream import iter_json_bytes
 from aiperf.dataset.memory_map_utils import turn_from_payload_turn
 from aiperf.dataset.utils import encode_image
 from aiperf.plugin import plugins
@@ -531,16 +532,18 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
             model_endpoint = ModelEndpointInfo.from_run(self.run)
 
-            def serialize_inputs() -> bytes:
-                inputs = self._generate_input_payloads(model_endpoint)
-                return orjson.dumps(
-                    inputs.model_dump(exclude_none=True, mode="json"),
-                    option=orjson.OPT_INDENT_2,
+            inputs = await asyncio.to_thread(
+                self._generate_input_payloads, model_endpoint
+            )
+            data = {
+                "data": (
+                    session.model_dump(exclude_none=True, mode="json")
+                    for session in inputs.data
                 )
-
-            inputs_bytes = await asyncio.to_thread(serialize_inputs)
+            }
             async with aiofiles.open(temp_file_path, "wb") as f:
-                await f.write(inputs_bytes)
+                async for chunk in iter_json_bytes(data, pretty=True):
+                    await f.write(chunk)
             temp_file_path.replace(file_path)
 
             duration = time.perf_counter() - start_time
