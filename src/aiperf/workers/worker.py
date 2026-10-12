@@ -105,6 +105,7 @@ from aiperf.dataset.memory_map_utils import (
 from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType
+from aiperf.records.dataset_gate import DatasetConfigCatchUp
 from aiperf.records.payload_retention import resolve_strip_record_payload_bytes
 from aiperf.workers.clock_offset_tracker import ClockOffsetTracker
 from aiperf.workers.inference_client import InferenceClient
@@ -835,6 +836,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             await self._mark_worker_ready()
         else:
             await self._publish_startup_state(WorkerStartupState.WAITING_FOR_DATASET)
+            catch_up = DatasetConfigCatchUp(
+                self.conversation_request_client,
+                self._on_dataset_configured,
+                self.service_id,
+            )
+
+            async def catch_up_dataset() -> None:
+                await catch_up.try_once(self._dataset_configured_event)
+
+            self.start_background_task(catch_up_dataset, stop_on_error=True)
 
     def _is_group_managed_mode(self) -> bool:
         """Check if a WorkerGroupManager owns this worker's startup lifecycle."""
@@ -1199,7 +1210,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 "Kubernetes mode: deferring dataset open until pod-local download"
             )
             return
-        await self._open_dataset_client(msg.client_metadata)
+        async with self._worker_ready_lock:
+            if not self._dataset_configured_event.is_set():
+                await self._open_dataset_client(msg.client_metadata, mark_ready=False)
+            await self._mark_worker_ready_locked()
 
     async def _open_dataset_client(
         self, client_metadata: DatasetClientMetadata, mark_ready: bool = True

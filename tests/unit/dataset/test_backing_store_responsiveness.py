@@ -72,7 +72,6 @@ async def test_saving_does_not_block_event_loop(
     )
     try:
         await asyncio.wait_for(started.wait(), timeout=2)
-        # This coroutine runs while saving is blocked in a background thread.
         assert not task.done()
         release.set()
         await task
