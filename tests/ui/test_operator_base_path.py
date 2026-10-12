@@ -5,17 +5,22 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
 
 from tests.ui.node_utils import run_node
 
-_UI_LIB = (
-    Path(__file__).resolve().parents[2] / "src" / "aiperf" / "operator" / "ui" / "lib"
-)
+_UI_ROOT = Path(__file__).resolve().parents[2] / "src" / "aiperf" / "operator" / "ui"
+_UI_LIB = _UI_ROOT / "lib"
 _BASE_PATH = (_UI_LIB / "base-path.js").as_uri()
 _JOB_WS = (_UI_LIB / "job-ws.js").as_uri()
+_TOP_NAV_PATH = _UI_ROOT / "components" / "top-nav.js"
+
+# A quote or backtick directly followed by /api/ or /dashboard/ starts a
+# root-absolute URL that would drop a reverse-proxy prefix.
+_ROOT_ABSOLUTE_URL_RE = re.compile(r"['\"`]/(api|dashboard)/")
 
 
 def _resolve(base_uri: str) -> dict[str, str]:
@@ -80,3 +85,51 @@ def test_job_ws_url_keeps_reverse_proxy_prefix() -> None:
     """
 
     assert run_node(script) == "wss://gw.example.test/aiperf/api/v1/jobs/ns/job/ws"
+
+
+def test_ui_sources_build_no_root_absolute_api_or_dashboard_urls() -> None:
+    """Every API and dashboard URL must go through ``API_BASE`` or ``appPath``."""
+    violations = []
+    for path in sorted(_UI_ROOT.rglob("*.js")):
+        if "vendor" in path.relative_to(_UI_ROOT).parts:
+            continue
+        for lineno, line in enumerate(path.read_text().splitlines(), start=1):
+            if line.lstrip().startswith(("//", "*", "/*")):
+                continue
+            if _ROOT_ABSOLUTE_URL_RE.search(line):
+                rel = path.relative_to(_UI_ROOT)
+                violations.append(f"{rel}:{lineno}: {line.strip()}")
+
+    assert violations == []
+
+
+def _plots_link(base_uri: str, features: dict[str, bool] | None) -> str | None:
+    source = _TOP_NAV_PATH.read_text()
+    helpers = source[
+        source.index("const PRIMARY_GROUP") : source.index("function isActive")
+    ]
+    script = f"""
+        globalThis.document = {{ baseURI: {json.dumps(base_uri)} }};
+        const {{ appPath }} = await import({_BASE_PATH!r});
+        const buildNavGroups = eval({json.dumps(helpers + "buildNavGroups")});
+        const items = buildNavGroups({json.dumps(features)}).flatMap((g) => g.items);
+        const plots = items.find((item) => item.testId === 'nav-link-plots');
+        console.log(JSON.stringify(plots ? plots.path : null));
+    """
+    return json.loads(run_node(script))
+
+
+def test_plots_link_is_offered_at_origin_root_when_dashboard_enabled() -> None:
+    root = "http://operator.example.test/"
+    assert _plots_link(root, {"dashboard_enabled": True}) == "/dashboard/"
+    assert _plots_link(root, {"dashboard_enabled": False}) is None
+    assert _plots_link(root, None) is None
+    assert (
+        _plots_link(f"{root}index.html", {"dashboard_enabled": True}) == "/dashboard/"
+    )
+
+
+def test_plots_link_is_hidden_under_reverse_proxy_prefix() -> None:
+    # The Dash app only loads from the origin-root /dashboard/ prefix.
+    prefixed = "https://gw.example.test/aiperf/"
+    assert _plots_link(prefixed, {"dashboard_enabled": True}) is None

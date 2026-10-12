@@ -91,14 +91,17 @@ def test_sweep_aggregate_artifact_urls_are_epoch_scoped_and_encoded() -> None:
     source = _source(_API_PATH)
 
     assert "sweepArtifactListUrl(ns, sweepName, epoch)" in source
-    assert "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts`" in source
+    assert (
+        "`${API_BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts`" in source
+    )
     assert "sweepArtifactBundleUrl(ns, sweepName, epoch)" in source
     assert (
-        "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts.zip`" in source
+        "`${API_BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts.zip`"
+        in source
     )
     assert "sweepArtifactFileUrl(ns, sweepName, epoch, filename)" in source
     assert (
-        "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/${fileSeg}`"
+        "`${API_BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/${fileSeg}`"
         in source
     )
     assert "sweepProfileExportUrl(ns, sweepName, epoch, format = 'json')" in source
