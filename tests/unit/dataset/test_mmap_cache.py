@@ -1204,6 +1204,7 @@ class TestSettingsPayloadFromRun:
         [
             param({"hf_mooncake_dataset": "other/repo"}, id="repo"),
             param({"hf_dataset_subset": "other-subset"}, id="subset"),
+            param({"hf_mooncake_split": "train"}, id="split"),
             param({"mooncake_trace_to_hf_mapping": ["messages=turns"]}, id="mapping"),
             param({"dataset_filters": ["model=other-model", "benchmark=original-benchmark"]}, id="model_filter"),
             param({"dataset_filters": ["model=original-model", "benchmark=other-benchmark"]}, id="benchmark_filter"),
@@ -1273,6 +1274,11 @@ class TestSettingsPayloadFromRun:
                     "filters": {"model": "source/model", "benchmark": "source-benchmark"},
                 },
                 id="mooncake_runtime_repo",
+            ),
+            param(
+                {"hf_mooncake_dataset": "example/trajectories", "hf_mooncake_split": "train"},
+                {"hf_dataset_name": "example/trajectories", "hf_split": "train"},
+                id="mooncake_split_override",
             ),
         ],
     )  # fmt: skip

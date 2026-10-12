@@ -694,6 +694,15 @@ class CLIConfig(BaseConfig):
         CLIParameter(name=("--hf-mooncake-dataset",), group=Groups.INPUT),
     ] = None
 
+    hf_mooncake_split: Annotated[
+        str | None,
+        Field(
+            description="HuggingFace split for mooncake_hf (e.g. train or test). "
+            "Defaults to test. Only supported by --public-dataset mooncake_hf.",
+        ),
+        CLIParameter(name=("--hf-mooncake-split",), group=Groups.INPUT),
+    ] = None
+
     mooncake_trace_to_hf_mapping: Annotated[
         list[str],
         Field(

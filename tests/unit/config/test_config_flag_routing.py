@@ -149,7 +149,8 @@ def test_no_flags_with_config_is_fine(base_yaml: Path) -> None:
     assert resolved.benchmark.models.items[0].name == "test-model"
 
 
-def test_hf_trace_overrides_merge_with_yaml(tmp_path: Path) -> None:
+@pytest.mark.parametrize("split", [None, "validation"])
+def test_hf_trace_overrides_merge_with_yaml(tmp_path: Path, split: str | None) -> None:
     config = tmp_path / "hf.yaml"
     config.write_text(
         """\
@@ -162,6 +163,7 @@ benchmark:
     dataset: mooncake_hf
     hf_mooncake_dataset: original/repo
     hf_subset: original-subset
+    hf_mooncake_split: train
     mooncake_trace_to_hf_mapping: {messages: history, tools: functions}
     filters: {model: original-model, benchmark: original-benchmark}
   phases: {type: concurrency, concurrency: 2, sessions: 3}
@@ -169,6 +171,7 @@ benchmark:
     )
     resolved = resolve_config(
         cli(
+            **({"hf_mooncake_split": split} if split is not None else {}),
             hf_dataset_subset="new-subset",
             mooncake_trace_to_hf_mapping=[
                 "messages=turns",
@@ -181,6 +184,7 @@ benchmark:
     dataset = resolved.benchmark.get_default_dataset()
     assert dataset.hf_mooncake_dataset == "original/repo"
     assert dataset.hf_subset == "new-subset"
+    assert dataset.hf_mooncake_split == (split or "train")
     assert dataset.mooncake_trace_to_hf_mapping == {
         "messages": "turns",
         "tools": "functions",

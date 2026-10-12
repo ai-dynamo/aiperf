@@ -68,6 +68,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "headers",
         "hf_dataset_subset",
         "hf_mooncake_dataset",
+        "hf_mooncake_split",
         "mooncake_trace_to_hf_mapping",
         "hf_weka_dataset",
         "ignore_trace_delays",

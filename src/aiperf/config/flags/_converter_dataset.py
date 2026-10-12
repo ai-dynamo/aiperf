@@ -257,6 +257,7 @@ _VERBATIM_DATASET_FIELDS = (
     ("public_dataset", "dataset", True),
     ("hf_dataset_subset", "hf_subset", False),
     ("hf_mooncake_dataset", "hf_mooncake_dataset", False),
+    ("hf_mooncake_split", "hf_mooncake_split", False),
     ("hf_weka_dataset", "hf_weka_dataset", False),
     ("weka_nested_timestamp_basis", "weka_nested_timestamp_basis", False),
     ("custom_dataset_type", "format", False),

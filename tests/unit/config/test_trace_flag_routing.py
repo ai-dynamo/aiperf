@@ -547,6 +547,11 @@ class TestMooncakeHFFailFast:
             param({"mooncake_trace_to_hf_mapping": ["messages=turns"]}, "--mooncake-trace-to-hf-mapping", id="orphan_mapping"),
             param({"public_dataset": "aimo", "mooncake_trace_to_hf_mapping": ["messages=turns"]}, "--mooncake-trace-to-hf-mapping", id="mapping_wrong_public_loader"),
             param({"custom_dataset_type": "mooncake_trace", "mooncake_trace_to_hf_mapping": ["messages=turns"]}, "--mooncake-trace-to-hf-mapping", id="mapping_local_trace"),
+            param({"hf_mooncake_split": "train"}, "hf_mooncake_split", id="orphan_split"),
+            param({"public_dataset": "aimo", "hf_mooncake_split": "train"}, "--hf-mooncake-split", id="split_wrong_public_loader"),
+            param({"custom_dataset_type": "mooncake_trace", "hf_mooncake_split": "train"}, "hf_mooncake_split", id="split_local_trace"),
+            param({"hf_mooncake_dataset": "example/repo", "hf_mooncake_split": ""}, "hf_mooncake_split", id="empty_split"),
+            param({"hf_mooncake_dataset": "example/repo", "hf_mooncake_split": "   "}, "hf_mooncake_split", id="blank_split"),
             param({"hf_mooncake_dataset": "example/repo", "mooncake_trace_to_hf_mapping": ["messages=turns", "messages=other"]}, "Duplicate --mooncake-trace-to-hf-mapping", id="duplicate_mapping"),
             param({"hf_mooncake_dataset": "example/repo", "mooncake_trace_to_hf_mapping": ["messages"]}, "Invalid --mooncake-trace-to-hf-mapping", id="malformed_mapping"),
             param({"hf_mooncake_dataset": "example/repo", "hf_weka_dataset": "example/weka"}, "--hf-mooncake-dataset", id="conflicting_repos"),
@@ -627,14 +632,19 @@ class TestHfMooncakeDatasetConverterRouting:
         assert dataset.dataset == PublicDatasetType.MOONCAKE_HF
         assert dataset.hf_mooncake_dataset == "example/trajectories"
 
+    @pytest.mark.parametrize(
+        "split,expected_split",
+        [param(None, "test", id="default"), param("train", "train", id="override")],
+    )  # fmt: skip
     def test_mooncake_source_settings_reach_loader(
-        self, monkeypatch: pytest.MonkeyPatch
+        self, monkeypatch: pytest.MonkeyPatch, split: str | None, expected_split: str
     ) -> None:
         run = make_run_from_cli(
             CLIConfig(
                 model_names=["m"],
                 hf_mooncake_dataset="example/trajectories",
                 hf_dataset_subset="custom-subset",
+                hf_mooncake_split=split,
                 mooncake_trace_to_hf_mapping=[
                     "messages=turns",
                     "extra.temperature=params.temperature",
@@ -659,7 +669,7 @@ class TestHfMooncakeDatasetConverterRouting:
         )
         assert kwargs["hf_dataset_name"] == "example/trajectories"
         assert kwargs["hf_subset"] == "custom-subset"
-        assert kwargs["hf_split"] == "test"
+        assert kwargs["hf_split"] == expected_split
         assert "hf_revision" not in kwargs
         assert kwargs["field_mapping"] == dataset.mooncake_trace_to_hf_mapping
         assert kwargs["filters"] == dataset.filters

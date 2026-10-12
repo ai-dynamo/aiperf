@@ -892,6 +892,14 @@ class PublicDataset(SystemPromptMixin):
         "The CLI flag --hf-mooncake-dataset auto-selects this loader.",
     )
 
+    hf_mooncake_split: str | None = Field(
+        default=None,
+        min_length=1,
+        pattern=r"\S",
+        description="HuggingFace split override for mooncake_hf (e.g. train or test). "
+        "Unset uses the plugin default, test. Only supported by mooncake_hf.",
+    )
+
     mooncake_trace_to_hf_mapping: dict[str, str] = Field(
         default_factory=dict,
         description="Mooncake target field to dotted source column path for mooncake_hf. "
@@ -1112,13 +1120,14 @@ class PublicDataset(SystemPromptMixin):
 
     @model_validator(mode="after")
     def _validate_hf_mooncake(self) -> PublicDataset:
-        """Validate the Mooncake HF repository, mapping scope, and mapping syntax."""
+        """Validate the Mooncake HF source, mapping scope, and mapping syntax."""
         is_mooncake_hf = self.dataset == PublicDatasetType.MOONCAKE_HF
-        if self.hf_mooncake_dataset is not None and not is_mooncake_hf:
-            raise ValueError(
-                "hf_mooncake_dataset (--hf-mooncake-dataset) can only be used with "
-                "dataset mooncake_hf (--public-dataset mooncake_hf)"
-            )
+        for field in ("hf_mooncake_dataset", "hf_mooncake_split"):
+            if getattr(self, field) is not None and not is_mooncake_hf:
+                raise ValueError(
+                    f"{field} (--{field.replace('_', '-')}) can only be used with "
+                    "dataset mooncake_hf (--public-dataset mooncake_hf)"
+                )
         if is_mooncake_hf:
             repo = (self.hf_mooncake_dataset or "").strip()
             if not repo:

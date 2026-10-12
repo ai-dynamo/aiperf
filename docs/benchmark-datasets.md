@@ -117,16 +117,19 @@ Size the target context window for the selected trace plus the target model's ch
 Use `--public-dataset mooncake_hf` to replay complete recorded trajectories from a Hugging Face repository selected with `--hf-mooncake-dataset`. This flag automatically selects `mooncake_hf`.
 The loader extends the Hugging Face reader and delegates to Mooncake's recorded request snapshots (`message_array_with_responses`). This mode expects **one complete trajectory per row**.
 
-For example, map [sammshen/lmcache-agentic-traces](https://huggingface.co/datasets/sammshen/lmcache-agentic-traces) using explicit source columns:
+The default split is `test`. Use `--hf-mooncake-split <split>` for other split selection.
+
+For example, map [trace-commons/agent-traces](https://huggingface.co/datasets/trace-commons/agent-traces) using explicit source columns:
 
 ```bash
 aiperf profile \
-  --model MiniMaxAI/MiniMax-M2.5 \
+  --model TARGET_MODEL \
   --url http://localhost:8000/v1/chat/completions \
   --endpoint-type chat \
-  --hf-mooncake-dataset sammshen/lmcache-agentic-traces \
-  --dataset-filter model=minimax-m2.5 \
-  --mooncake-trace-to-hf-mapping messages=input \
+  --hf-mooncake-dataset trace-commons/agent-traces \
+  --hf-mooncake-split train \
+  --dataset-filter harness=claude_code \
+  --mooncake-trace-to-hf-mapping output_length=metadata.usage.output_tokens \
   --concurrency 64 \
   --num-sessions 100 \
   --streaming

@@ -729,7 +729,7 @@ def _public_dataset_source_from_run(run: BenchmarkRun) -> dict[str, object] | No
     )
     source = metadata.model_dump(mode="json", exclude_none=True)
     source["hf_dataset_name"] = hf_dataset_name
-    source["hf_split"] = metadata.hf_split
+    source["hf_split"] = dataset.hf_mooncake_split or metadata.hf_split
     source["hf_subset"] = hf_subset
     for field in ("mooncake_trace_to_hf_mapping", "filters"):
         if value := getattr(dataset, field, None):

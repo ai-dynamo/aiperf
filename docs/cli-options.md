@@ -682,6 +682,10 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 
 HuggingFace repository for the Mooncake trajectory loader. Auto-selects --public-dataset mooncake_hf. Cannot be combined with another public dataset or a custom dataset. With --config, set the repository in YAML.
 
+#### `--hf-mooncake-split` `<str>`
+
+HuggingFace split for mooncake_hf (e.g. train or test). Defaults to test. Only supported by --public-dataset mooncake_hf.
+
 #### `--mooncake-trace-to-hf-mapping` `<list>`
 
 Map a Mooncake trace field to a dotted HuggingFace column path: MOONCAKE_FIELD=HF_COLUMN. Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. Only supported by mooncake_hf. Unmapped fields use canonical column names.
@@ -2304,6 +2308,10 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 
 HuggingFace repository for the Mooncake trajectory loader. Auto-selects --public-dataset mooncake_hf. Cannot be combined with another public dataset or a custom dataset. With --config, set the repository in YAML.
 
+#### `--hf-mooncake-split` `<str>`
+
+HuggingFace split for mooncake_hf (e.g. train or test). Defaults to test. Only supported by --public-dataset mooncake_hf.
+
 #### `--mooncake-trace-to-hf-mapping` `<list>`
 
 Map a Mooncake trace field to a dotted HuggingFace column path: MOONCAKE_FIELD=HF_COLUMN. Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. Only supported by mooncake_hf. Unmapped fields use canonical column names.
@@ -3920,6 +3928,10 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 #### `--hf-mooncake-dataset` `<str>`
 
 HuggingFace repository for the Mooncake trajectory loader. Auto-selects --public-dataset mooncake_hf. Cannot be combined with another public dataset or a custom dataset. With --config, set the repository in YAML.
+
+#### `--hf-mooncake-split` `<str>`
+
+HuggingFace split for mooncake_hf (e.g. train or test). Defaults to test. Only supported by --public-dataset mooncake_hf.
 
 #### `--mooncake-trace-to-hf-mapping` `<list>`
 
@@ -6044,6 +6056,10 @@ HuggingFace dataset subset/config name to override the plugin default (e.g. `sha
 #### `--hf-mooncake-dataset` `<str>`
 
 HuggingFace repository for the Mooncake trajectory loader. Auto-selects --public-dataset mooncake_hf. Cannot be combined with another public dataset or a custom dataset. With --config, set the repository in YAML.
+
+#### `--hf-mooncake-split` `<str>`
+
+HuggingFace split for mooncake_hf (e.g. train or test). Defaults to test. Only supported by --public-dataset mooncake_hf.
 
 #### `--mooncake-trace-to-hf-mapping` `<list>`
 
