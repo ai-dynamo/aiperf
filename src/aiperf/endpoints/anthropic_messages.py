@@ -36,6 +36,7 @@ class ContentBlockType(CaseInsensitiveStrEnum):
 
     TEXT = "text"
     THINKING = "thinking"
+    REDACTED_THINKING = "redacted_thinking"
     TOOL_USE = "tool_use"
     TOOL_RESULT = "tool_result"
 
@@ -239,13 +240,14 @@ def _absorb_message(
             text = block.get("text")
             if isinstance(text, str):
                 text_parts.append(text)
-        elif block_type == ContentBlockType.THINKING:
+        elif block_type in (
+            ContentBlockType.THINKING,
+            ContentBlockType.REDACTED_THINKING,
+        ):
             idx = len(thinking_blocks_by_index)
             # Preserve the full block (thinking, signature, anything else
             # the server emits) so _finalise_thinking round-trips it.
-            thinking_blocks_by_index[idx] = {
-                k: v for k, v in block.items() if k != "type"
-            }
+            thinking_blocks_by_index[idx] = dict(block)
         elif block_type == ContentBlockType.TOOL_USE:
             idx = len(tool_uses_by_index)
             # Preserve every field the server emits (id, name, input,
@@ -268,12 +270,13 @@ def _absorb_content_block_start(
     block = json_obj.get("content_block") or {}
     block_type = block.get("type")
     idx = json_obj.get("index")
-    if block_type == ContentBlockType.THINKING:
+    if block_type in (ContentBlockType.THINKING, ContentBlockType.REDACTED_THINKING):
         slot = idx if idx is not None else len(thinking_blocks_by_index)
-        thinking_blocks_by_index[slot] = {k: v for k, v in block.items() if k != "type"}
+        thinking_blocks_by_index[slot] = dict(block)
         # Ensure the accumulator fields exist so deltas can append safely.
-        thinking_blocks_by_index[slot].setdefault("thinking", "")
-        thinking_blocks_by_index[slot].setdefault("signature", "")
+        if block_type == ContentBlockType.THINKING:
+            thinking_blocks_by_index[slot].setdefault("thinking", "")
+            thinking_blocks_by_index[slot].setdefault("signature", "")
         return
     if block_type != ContentBlockType.TOOL_USE:
         return
@@ -350,6 +353,8 @@ def _finalise_thinking(accumulator: dict[str, Any]) -> dict[str, Any]:
     strings on open) rather than stripped, so the resulting block matches
     the wire shape of the original.
     """
+    if accumulator.get("type") == ContentBlockType.REDACTED_THINKING:
+        return dict(accumulator)
     block = {"type": "thinking"}
     block.update({k: v for k, v in accumulator.items() if v is not None})
     return block

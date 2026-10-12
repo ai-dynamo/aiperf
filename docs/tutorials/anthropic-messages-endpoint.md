@@ -422,6 +422,7 @@ Reassembly rules (`anthropic_messages.py`):
 
 - **Text** — accumulated from `content_block_delta` events with `delta.type == "text_delta"`.
 - **Thinking** — keyed by SSE `index`; `thinking_delta` fragments append to `thinking`, `signature_delta` fragments append to `signature`. Both round-trip — the server requires the matching signature to accept a thinking block on replay.
+- **Redacted thinking** — `redacted_thinking` blocks retain their opaque `data` unchanged in streaming and non-streaming replies. They are replayed with the other thinking blocks, without treating the encrypted data as text for token counting.
 - **Tool use** — keyed by SSE `index`; `input_json_delta.partial_json` fragments concatenate into a raw string, parsed once at finalise. Malformed JSON is preserved as a string under `input` rather than dropped, so the server rejects it loudly instead of AIPerf silently losing data.
 - **Non-streaming `type=message`** responses are absorbed by walking the full `content` array directly.
 
