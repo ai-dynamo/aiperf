@@ -585,8 +585,8 @@ class _ChildPlan:
     """Inner index of the request this spawned chain forked from (nested LCP
     detection); None for the main chain or a chain with no shared prefix."""
     fork_source: tuple[str, int] | None = None
-    """``(session_id, turn)`` whose messages turn 0 re-sends for the shared
-    prefix; see :func:`_assign_fork_sources`."""
+    """``(session_id, turn)`` whose message layout turn 0 follows over the
+    shared prefix; see :func:`_assign_fork_sources`."""
 
 
 def _expand_subagent_to_child_plans(

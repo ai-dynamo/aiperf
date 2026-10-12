@@ -78,7 +78,7 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
-    # v28: a forked weka child's first turn now re-sends the parent's messages
+    # v28: a forked weka child's first turn now keeps the parent's message layout
     # (AIPERF_DATASET_WEKA_FORK_PARENT_MESSAGES, default on), so its raw_messages
     # decode differently for the same trace. The flag is in the key payload, but
     # the content changed, so bump per this file's contract.

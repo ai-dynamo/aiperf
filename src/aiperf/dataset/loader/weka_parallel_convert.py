@@ -204,7 +204,7 @@ class _WekaChildPayload(TypedDict):
     system_tokens: int
     requests: list[_WekaNormalRequestPayload]
     fork_source: NotRequired[tuple[str, int] | None]
-    """``(session_id, turn)`` whose message layout turn 0 re-sends; see
+    """``(session_id, turn)`` whose message layout turn 0 follows; see
     ``weka_trace._assign_fork_sources``."""
 
 

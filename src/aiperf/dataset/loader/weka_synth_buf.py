@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Collection
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from typing import Literal
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -79,22 +79,28 @@ class RoleSegment:
 
 
 @dataclass(frozen=True, slots=True)
-class ParentPrefix:
-    """One parent turn's segments, for a child's turn 0 to inherit.
+class LayoutSegment:
+    """One parent message's role, first block and tool mark."""
 
-    Segments are located by ``block_start``, not by summing block counts: when
-    a turn shares the previous turn's partial last block, that segment keeps
-    its partial-tail tokens and the next segment starts one block later.
+    role: _Role
+    block_start: int
+    tool_result_turn: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ParentPrefix:
+    """One parent turn's message layout, for a child's turn 0.
+
+    A segment ends where the next one starts: after a shared partial block,
+    the next segment starts one block later.
     """
 
     hash_ids: tuple[int, ...]
-    segments: tuple[RoleSegment, ...]
-    """Copies of the parent's segments. Token lists are shared, never mutated."""
+    segments: tuple[LayoutSegment, ...]
     next_tool_turn: int
-    """First tool-call id number past every id the parent has used, so the
-    child's own synthetic ids never collide with inherited ones."""
+    """First tool-call id number past the parent's, so child ids never collide."""
 
-    def spans(self) -> list[tuple[RoleSegment, int]]:
+    def spans(self) -> list[tuple[LayoutSegment, int]]:
         """Each segment with the hash index where it ends (the next
         segment's ``block_start``, or the end of ``hash_ids``)."""
         if not self.segments:
@@ -231,10 +237,7 @@ class ConversationReconstructor:
         ):
             return
         bs = self.block_size
-        m_full = in_tokens // bs
-        partial_tail_tokens_n = in_tokens - m_full * bs
-        covered_blocks = min(m_full, len(hash_ids))
-        missing_block_tokens = (m_full - covered_blocks) * bs
+        covered_blocks = min(in_tokens // bs, len(hash_ids))
 
         cursor = 0
         segs: list[RoleSegment] = []
@@ -291,10 +294,13 @@ class ConversationReconstructor:
         # boundary cut and flag a spurious disturbance (reset_context) on a
         # pure-growth turn — skip it unless it is the only segment.
         user_blocks = covered_blocks - cursor
-        user_tokens = self.decode_block_tokens(hash_ids[cursor : cursor + user_blocks])
-        synth_tail_n = missing_block_tokens + partial_tail_tokens_n
-        if synth_tail_n > 0:
-            user_tokens.extend(self.sample_partial_tail_tokens(synth_tail_n, seed))
+        user_tokens = self._own_tokens(
+            hash_ids,
+            start=cursor,
+            covered=covered_blocks,
+            in_tokens=in_tokens,
+            seed=seed,
+        )
         if user_tokens or not segs:
             segs.append(
                 RoleSegment(
@@ -323,14 +329,10 @@ class ConversationReconstructor:
         seed: str,
         turn_0_pullbacks: Collection[int],
     ) -> bool:
-        """Build turn 0 from the parent's messages, then the child's new content.
+        """Split turn 0 into the parent's messages over the shared prefix.
 
-        Flattening the parent's history into one user message cuts the shared
-        rendered prefix at the end of the parent's first message. So the
-        parent's segments over the shared hash prefix are re-sent as the
-        parent sent them, and the rest becomes one final user message, with a
-        synthesized tail that keeps ``sum(tokens) == in_tokens`` (unless the
-        inherited segments alone run past it; see below).
+        Only roles and message starts come from the parent; the rest is one
+        user message. The tokens are this request's own, as in the flat split.
 
         Returns False and changes nothing when:
         - the shared prefix ends inside the parent's first non-system message
@@ -340,9 +342,8 @@ class ConversationReconstructor:
           message and add nothing (``turn_0_pullbacks``).
         A request cannot end with an assistant message.
         """
-        bs = self.block_size
         geo = compute_turn_block_geometry(
-            list(parent.hash_ids), hash_ids, in_tokens, bs
+            list(parent.hash_ids), hash_ids, in_tokens, self.block_size
         )
         shared = min(geo.lcp, geo.m_curr_covered)
         if self.tool_shaped_messages:
@@ -355,17 +356,14 @@ class ConversationReconstructor:
         ):
             return False
 
-        segs = self._inherited_segments(parent, shared)
-        new_tokens = self.decode_block_tokens(hash_ids[shared : geo.m_curr_covered])
-        # Inherited tails need not match the blocks they span, so size the
-        # child's tail from what is left to keep sum(tokens) == in_tokens. If
-        # the parent's own segments already run past their blocks (its
-        # truncation sums block counts, which lag positions after a shared
-        # partial block), the child re-sends them unchanged and runs over by
-        # the same amount: falling back would lose the whole shared prefix.
-        tail_n = in_tokens - sum(len(seg.tokens) for seg in segs) - len(new_tokens)
-        if tail_n > 0:
-            new_tokens.extend(self.sample_partial_tail_tokens(tail_n, seed))
+        segs = self._inherited_segments(parent, hash_ids, shared)
+        new_tokens = self._own_tokens(
+            hash_ids,
+            start=shared,
+            covered=geo.m_curr_covered,
+            in_tokens=in_tokens,
+            seed=seed,
+        )
         if not new_tokens and segs[-1].role != "user":
             return False
 
@@ -387,40 +385,51 @@ class ConversationReconstructor:
         return True
 
     def _inherited_segments(
-        self, parent: ParentPrefix, shared: int
+        self, parent: ParentPrefix, hash_ids: list[int], shared: int
     ) -> list[RoleSegment]:
-        """The parent's segments over the first ``shared`` hash blocks.
-
-        Mirrors what the parent's own next turn keeps when it shares
-        ``shared`` blocks: a segment the shared prefix runs past is kept as
-        sent (with any tail), and the segment it ends in is cut to its shared
-        blocks (dropping a tail with no hash behind it). ``block_count``
-        becomes the span, so summed counts (what truncation uses) equal
-        ``block_start`` positions in the child.
-        """
+        """Segments with the parent's roles that tile ``[0, shared)``, holding
+        this request's decoded ``hash_ids``."""
         segs: list[RoleSegment] = []
+        cursor = 0
         for seg, end in parent.spans():
-            if seg.block_start >= shared:
+            if cursor >= shared:
                 break
-            span = min(end, shared) - seg.block_start
-            if shared > seg.block_start + seg.block_count:
-                segs.append(replace(seg, block_count=span))
+            stop = min(end, shared)
+            if stop == cursor:
                 continue
-            tokens = seg.tokens[: span * self.block_size]
-            if tokens:
-                content = (
-                    seg.content
-                    if len(tokens) == len(seg.tokens)
-                    else self.decode_tokens_to_text(tokens)
+            tokens = self.decode_block_tokens(hash_ids[cursor:stop])
+            segs.append(
+                RoleSegment(
+                    role=seg.role,
+                    block_start=cursor,
+                    block_count=stop - cursor,
+                    tokens=tokens,
+                    content=self.decode_tokens_to_text(tokens),
+                    tool_result_turn=seg.tool_result_turn,
                 )
-                segs.append(
-                    replace(seg, block_count=span, tokens=tokens, content=content)
-                )
-            break
+            )
+            cursor = stop
         return segs
 
+    def _own_tokens(
+        self,
+        hash_ids: list[int],
+        *,
+        start: int,
+        covered: int,
+        in_tokens: int,
+        seed: str,
+    ) -> list[int]:
+        """Decoded ``hash_ids[start:covered]``, then a sampled tail for the
+        missing blocks and the partial block, so the prompt has ``in_tokens``."""
+        tokens = self.decode_block_tokens(hash_ids[start:covered])
+        tail_n = in_tokens - covered * self.block_size
+        if tail_n > 0:
+            tokens.extend(self.sample_partial_tail_tokens(tail_n, seed))
+        return tokens
+
     def parent_prefix(self, hash_ids: list[int]) -> ParentPrefix:
-        """Capture the current turn's segments for a child's turn 0.
+        """Capture the current turn's layout for a child's turn 0.
 
         ``hash_ids`` are the current turn's hash ids. Call this after
         :meth:`turn_delta`, so tool-result marks are in the state they were
@@ -428,7 +437,10 @@ class ConversationReconstructor:
         """
         return ParentPrefix(
             hash_ids=tuple(hash_ids),
-            segments=tuple(replace(seg) for seg in self._segments),
+            segments=tuple(
+                LayoutSegment(seg.role, seg.block_start, seg.tool_result_turn)
+                for seg in self._segments
+            ),
             next_tool_turn=self._turn_index + self._tool_turn_offset + 1,
         )
 

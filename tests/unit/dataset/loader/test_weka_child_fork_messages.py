@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""A child conversation's turn 0 re-sends its parent's messages for the shared prefix."""
+"""A child conversation's turn 0 follows its parent's message layout for the shared prefix."""
 
 from __future__ import annotations
 
-from dataclasses import replace
+import random
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -16,6 +16,7 @@ from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
 from aiperf.common.models import Conversation
 from aiperf.dataset.loader.weka_synth_buf import (
     ConversationReconstructor,
+    LayoutSegment,
     ParentPrefix,
     compute_asst_block_caps,
 )
@@ -25,6 +26,7 @@ from tests.unit.dataset.loader.conftest import make_weka_run
 from tests.unit.dataset.loader.test_weka_flat_split_parallel_adv import _run_both
 
 _BS = 4
+_TRACE_BS = 64
 
 
 def _decode_blocks(hash_ids: list[int]) -> list[int]:
@@ -48,6 +50,11 @@ def _recon(tool_shaped: bool = False) -> ConversationReconstructor:
 def _render(messages: list[dict[str, Any]]) -> str:
     """Stand-in chat template: role delimiters around every message."""
     return "".join(f"<{m['role']}>{m['content']}</{m['role']}>" for m in messages)
+
+
+def _tokens(messages: list[dict[str, Any]]) -> list[str]:
+    """Content token ids (the test decoder writes one number per token)."""
+    return [tok for m in messages for tok in (m.get("content") or "").split()]
 
 
 def _parent(
@@ -151,15 +158,21 @@ def test_init_turn_0_parent_prefix_keeps_parent_messages_then_one_user():
     assert _render(delta.delta_messages).startswith(_render(parent_messages))
 
 
-def test_init_turn_0_parent_prefix_copies_segments_after_a_shared_partial_block():
+def test_init_turn_0_parent_prefix_keeps_layout_after_a_shared_partial_block():
+    """The parent's first message holds 2 blocks and a tail, and the next
+    starts at block 3; the child fills block 3 with its own hash content."""
     parent = _parent(**_GAP)
     assert [s.block_start for s in parent._segments] == [0, 3, 4]
     child = _fork(parent, [1, 2, 3, 4, 5, 6, 90], 7 * _BS)
 
-    messages = child.turn_delta().delta_messages
-    assert messages[:3] == parent.snapshot_messages()
-    assert messages[3]["content"] == _decode_text(_decode_blocks([90]) + [7, 7])
-    assert sum(len(s.tokens) for s in child._segments) == 7 * _BS
+    assert [(s.role, s.block_start, s.block_count) for s in child._segments] == [
+        ("user", 0, 3),
+        ("assistant", 3, 1),
+        ("user", 4, 2),
+        ("user", 6, 1),
+    ]
+    assert child._segments[0].tokens == _decode_blocks([1, 2, 3])
+    assert child.turn_delta().delta_messages[1:3] == parent.snapshot_messages()[1:]
 
 
 def test_init_turn_0_parent_prefix_drops_synthesized_missing_blocks():
@@ -211,32 +224,39 @@ def test_init_turn_0_parent_prefix_falls_back_to_flat_split(parent_kwargs, hash_
     assert forked._turn_index == 0
 
 
-def test_init_turn_0_parent_prefix_keeps_parent_segments_that_run_long():
-    """A parent whose segments run past their blocks is re-sent unchanged:
-    the child overshoots by the same amount instead of losing the prefix."""
-    parent = _parent()
-    first, second = parent._segments[:2]
-    oversized = ParentPrefix(
-        hash_ids=(1, 2, 3, 4, 5),
-        segments=(
-            replace(first, tokens=[0] * 9 * _BS, content=_decode_text([0] * 9 * _BS)),
-            second,
-        ),
-        next_tool_turn=2,
-    )
-    child = _recon()
-    child.init_turn_0(
-        hash_ids=[1, 2, 3, 90],
-        in_tokens=4 * _BS,
-        tool_tokens=0,
-        system_tokens=0,
-        seed="c0",
-        parent_prefix=oversized,
-    )
+@pytest.mark.parametrize(
+    "parent_kwargs, hash_ids, in_tokens",
+    [
+        param({}, [1, 2, 3, 4, 5, 90], 6 * _BS + 1, id="whole-blocks"),
+        param(_GAP, [1, 2, 3, 4, 5, 6, 90], 6 * _BS + 3, id="parent-partial-block"),
+        param(dict(t1=([1, 2, 3, 4], 6 * _BS)), [1, 2, 3, 4, 90], 8 * _BS, id="parent-missing-blocks"),
+        param({}, [1, 2, 3, 4, 5], 9 * _BS, id="child-missing-blocks"),
+    ],
+)  # fmt: skip
+def test_init_turn_0_parent_prefix_keeps_own_tokens(
+    parent_kwargs, hash_ids: list[int], in_tokens: int
+):
+    """Only roles and message starts come from the parent: the tokens are the
+    flat split's, in order, and sum to ``in_tokens``."""
+    child = _fork(_parent(**parent_kwargs), hash_ids, in_tokens)
     messages = child.turn_delta().delta_messages
-    assert messages[0]["content"] == _decode_text([0] * 9 * _BS)
-    assert [m["role"] for m in messages] == ["user", "assistant", "user"]
-    assert sum(len(s.tokens) for s in child._segments) == 9 * _BS + 2 * _BS
+    assert len(messages) > 1
+    assert _tokens(messages) == _tokens(_flat(hash_ids, in_tokens).snapshot_messages())
+    assert len(_tokens(messages)) == in_tokens
+
+
+def test_parent_prefix_is_a_layout_copy():
+    """The captured layout has no tokens and survives the parent's later cut."""
+    parent = _parent()
+    layout = parent.parent_prefix(parent.t1_hash_ids)
+    expected = (
+        LayoutSegment("user", 0),
+        LayoutSegment("assistant", 2),
+        LayoutSegment("user", 3),
+    )
+    assert layout.segments == expected
+    _advance(parent, (parent.t1_hash_ids, 5 * _BS), ([1, 2, 3], 3 * _BS))
+    assert layout.segments == expected
 
 
 def test_init_turn_0_parent_prefix_with_empty_parent_falls_back():
@@ -297,8 +317,7 @@ def test_forked_child_later_pullback_never_ends_on_assistant(
     assert child._trailing_non_user_turns == []
     if forks:
         expected = parent.snapshot_messages()[: len(messages)]
-        assert messages[:-1] == expected[:-1]
-        assert expected[-1]["content"].startswith(messages[-1]["content"])
+        assert [m["role"] for m in messages] == [m["role"] for m in expected]
 
 
 def test_init_turn_0_parent_prefix_keeps_declared_system_message():
@@ -329,7 +348,7 @@ def _req(
         "t": t,
         "type": "n",
         "model": "m",
-        "in": len(hash_ids) * 64 - short,
+        "in": len(hash_ids) * _TRACE_BS - short,
         "out": 40,
         "hash_ids": hash_ids,
         "api_time": api,
@@ -347,7 +366,7 @@ def _trace(trace_id: str, requests: list[dict]) -> dict:
     return {
         "id": trace_id,
         "models": ["m"],
-        "block_size": 64,
+        "block_size": _TRACE_BS,
         "hash_id_scope": "local",
         "tool_tokens": 0,
         "system_tokens": 0,
@@ -450,35 +469,51 @@ def _messages_at(conv: Conversation, k: int) -> list[dict[str, Any]]:
     return messages
 
 
+def _set_fork_messages(monkeypatch, enabled: bool, tool_shaped: bool = False) -> None:
+    dataset = env_mod.Environment.DATASET
+    monkeypatch.setattr(dataset, "WEKA_FORK_PARENT_MESSAGES", enabled)
+    monkeypatch.setattr(dataset, "WEKA_TOOL_SHAPED_MESSAGES", tool_shaped)
+
+
+def _turn_0(conv: Conversation) -> list[dict[str, Any]]:
+    return _messages_at(conv, 0)
+
+
 @pytest.fixture
 def flat_children(monkeypatch):
-    monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_FORK_PARENT_MESSAGES", False)
+    _set_fork_messages(monkeypatch, False)
 
 
 @pytest.mark.parametrize(
-    "trace_fn, child_sid, parent_sid, parent_turn",
+    "trace_fn, child_sid, parent_sid, parent_turn, whole_blocks",
     [
-        param(_flat_fork_trace, "fork::fa:000", "fork", 1, id="flat-chain"),
-        param(_subagent_fork_trace, "safork::sa:a1", "safork", 1, id="subagent"),
+        param(_flat_fork_trace, "fork::fa:000", "fork", 1, True, id="flat-chain"),
+        param(_subagent_fork_trace, "safork::sa:a1", "safork", 1, True, id="subagent"),
         param(
-            _subagent_fork_trace, "safork::sa:a1:fa:000", "safork::sa:a1", 1,
+            _subagent_fork_trace, "safork::sa:a1:fa:000", "safork::sa:a1", 1, True,
             id="subagent-inner-chain",
         ),
-        param(_chained_fork_trace, "chain::fa:000", "chain", 1, id="partial-blocks"),
-        param(_chained_fork_trace, "chain::fa:001", "chain::fa:000", 0, id="chain-to-chain"),
+        param(_chained_fork_trace, "chain::fa:000", "chain", 1, False, id="partial-blocks"),
+        param(_chained_fork_trace, "chain::fa:001", "chain::fa:000", 0, False, id="chain-to-chain"),
     ],
 )  # fmt: skip
-def test_child_turn_0_resends_parent_messages(
-    trace_fn, child_sid: str, parent_sid: str, parent_turn: int
+def test_child_turn_0_follows_parent_layout(
+    trace_fn, child_sid: str, parent_sid: str, parent_turn: int, whole_blocks: bool
 ):
+    """The child sends the parent's roles; the content matches too when the
+    parent's messages hold whole blocks (a partial tail is the parent's own)."""
     convs = _convert(trace_fn())
     parent_messages = _messages_at(convs[parent_sid], parent_turn)
-    child_messages = _messages_at(convs[child_sid], 0)
+    child_messages = _turn_0(convs[child_sid])
 
     assert len(parent_messages) > 1
-    assert child_messages[:-1] == parent_messages
+    assert [m["role"] for m in child_messages[:-1]] == [
+        m["role"] for m in parent_messages
+    ]
     assert child_messages[-1]["role"] == "user"
-    assert _render(child_messages).startswith(_render(parent_messages))
+    if whole_blocks:
+        assert child_messages[:-1] == parent_messages
+        assert _render(child_messages).startswith(_render(parent_messages))
 
 
 @pytest.mark.parametrize(
@@ -493,7 +528,7 @@ def test_child_turn_0_flag_off_sends_one_flattened_user_message(
 ):
     convs = _convert(trace_fn())
     parent_messages = _messages_at(convs[parent_sid], parent_turn)
-    child_messages = _messages_at(convs[child_sid], 0)
+    child_messages = _turn_0(convs[child_sid])
 
     assert [m["role"] for m in child_messages] == ["user"]
     assert not _render(child_messages).startswith(_render(parent_messages))
@@ -504,7 +539,7 @@ def test_child_turn_0_flag_off_sends_one_flattened_user_message(
 )
 def test_non_child_sessions_unchanged_by_fork_messages(monkeypatch, trace_fn):
     forked = _convert(trace_fn())
-    monkeypatch.setattr(env_mod.Environment.DATASET, "WEKA_FORK_PARENT_MESSAGES", False)
+    _set_fork_messages(monkeypatch, False)
     flat = _convert(trace_fn())
 
     root = trace_fn()["id"]
@@ -512,6 +547,130 @@ def test_non_child_sessions_unchanged_by_fork_messages(monkeypatch, trace_fn):
     assert [t.raw_messages for t in forked[root].turns] == [
         t.raw_messages for t in flat[root].turns
     ]
+
+
+def _overhang_trace() -> dict:
+    """The parent's last request renders more tokens than it recorded; the
+    subagent child extends it."""
+    cut = _blocks(15) + [900]
+    parent = cut + _blocks(10, 910)
+    return _trace(
+        "overhang",
+        [
+            _req(0, _blocks(10), short=20),
+            _req(2, _blocks(20), short=10),
+            _req(8, cut, api=5),
+            _req(14, parent, api=5),
+            _subagent(15, [_req(16, parent + _blocks(10, 1000))]),
+        ],
+    )
+
+
+def _filler_trace() -> dict:
+    """The parent's first message holds 9 blocks and a 44-token tail; the
+    child shares hash 9 as a full block and ends with a 1-token tail."""
+    return _trace(
+        "filler",
+        [
+            _req(0, _blocks(10), short=20),
+            _req(2, _blocks(20), api=5, short=10),
+            _req(3, _blocks(20) + _blocks(5, 100), short=63),
+            _req(8, _blocks(30)),
+            _req(10, _blocks(20) + _blocks(10, 100)),
+            _req(12, _blocks(40)),
+        ],
+    )
+
+
+@pytest.mark.parametrize(
+    "trace_fn, child_sid, recorded",
+    [
+        param(_overhang_trace, "overhang::sa:a1", 36 * _TRACE_BS, id="parent-overhang"),
+        param(_filler_trace, "filler::fa:000", 24 * _TRACE_BS + 1, id="parent-tail-filler"),
+    ],
+)  # fmt: skip
+def test_child_turn_0_tokens_unchanged_by_fork_messages(
+    monkeypatch, trace_fn, child_sid: str, recorded: int
+):
+    _set_fork_messages(monkeypatch, False)
+    flat = _turn_0(_convert(trace_fn())[child_sid])
+    _set_fork_messages(monkeypatch, True)
+    forked = _turn_0(_convert(trace_fn())[child_sid])
+
+    assert len(forked) > 1
+    assert _tokens(forked) == _tokens(flat)
+    assert len(_tokens(forked)) == recorded
+
+
+def _random_trace(seed: int) -> dict:
+    """Growing root requests, flat branches off them, and maybe a subagent,
+    with random partial last blocks, missing blocks and tool results."""
+    rng = random.Random(seed)
+
+    def short() -> int:
+        # Negative: ``in`` runs past the recorded hash blocks (missing blocks).
+        return rng.choice([0, rng.randint(1, 63), -rng.randint(1, 3 * _TRACE_BS)])
+
+    main = _blocks(rng.randint(2, 10))
+    reqs = [_req(0, main, short=short())]
+    t = 1.0
+    for i in range(rng.randint(2, 4)):
+        main = main + _blocks(rng.randint(1, 10), 1000 * (i + 1))
+        reqs.append(_req(t, main, api=5, short=short(), tool_result=rng.random() < 0.3))
+        if rng.random() < 0.7:
+            branch = main + _blocks(rng.randint(1, 10), 50000 + 1000 * i)
+            reqs.append(_req(t + 1, branch, short=short()))
+            more = _blocks(rng.randint(1, 5), 60000 + 1000 * i)
+            reqs.append(_req(t + 6, branch + more, short=short()))
+        t += 7
+    if rng.random() < 0.5:
+        sa = main + _blocks(rng.randint(1, 10), 90000)
+        reqs.append(
+            _subagent(
+                t + 0.5,
+                [
+                    _req(t + 1, sa, short=short()),
+                    _req(t + 3, sa + _blocks(5, 91000), short=short()),
+                ],
+            )
+        )
+    return _trace(f"rand{seed}", reqs)
+
+
+def _recorded_in(trace: dict, conv: Conversation) -> int:
+    turn = conv.turns[0]
+    req = trace["requests"][turn.source_outer_idx]
+    if turn.source_inner_idx is not None:
+        req = req["requests"][turn.source_inner_idx]
+    return req["in"]
+
+
+@pytest.mark.parametrize("tool_shaped", [False, True])
+def test_random_traces_tokens_unchanged_by_fork_messages(monkeypatch, tool_shaped):
+    """Every turn of every session sends the same tokens with the setting on
+    and off, and every turn 0 sends exactly its recorded ``in``."""
+    forks = missing = 0
+    for seed in range(40):
+        trace = _random_trace(seed)
+        missing += any(
+            len(r["hash_ids"]) < r["in"] // _TRACE_BS
+            for r in trace["requests"]
+            if r["type"] == "n"
+        )
+        _set_fork_messages(monkeypatch, False, tool_shaped)
+        flat = _convert(trace)
+        _set_fork_messages(monkeypatch, True, tool_shaped)
+        forked = _convert(trace)
+        assert forked.keys() == flat.keys()
+        for sid, conv in forked.items():
+            for k in range(len(conv.turns)):
+                assert _tokens(_messages_at(conv, k)) == _tokens(
+                    _messages_at(flat[sid], k)
+                ), (seed, sid, k)
+            assert len(_tokens(_turn_0(conv))) == _recorded_in(trace, conv)
+            forks += len(_turn_0(conv)) > len(_turn_0(flat[sid]))
+    assert forks > 10
+    assert missing > 10
 
 
 @pytest.mark.parametrize("tool_shaped", [False, True])
