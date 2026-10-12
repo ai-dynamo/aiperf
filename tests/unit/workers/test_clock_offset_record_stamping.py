@@ -105,6 +105,7 @@ async def test_worker_announces_connectivity_without_awaiting_the_rtt_probe(
     worker._measure_baseline_rtt = MagicMock(side_effect=lambda: "probe-coro")
     worker.execute_async = MagicMock(side_effect=probe_coros.append)
     worker.credit_dealer_client = AsyncMock()
+    worker.conversation_request_client = AsyncMock()
     worker.credit_dealer_client.send = AsyncMock(
         side_effect=lambda msg: sent.append(type(msg).__name__)
     )
@@ -123,7 +124,6 @@ async def test_worker_announces_connectivity_without_awaiting_the_rtt_probe(
     await Worker._send_worker_ready_message(worker)
 
     assert sent == expected_sent
-    # Dispatched, never awaited on this path -- in both modes.
     assert probe_coros == (["probe-coro"] if group_managed else [])
 
 
