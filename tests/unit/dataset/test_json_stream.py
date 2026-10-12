@@ -3,6 +3,7 @@
 """Bounded JSON serialization preserves bytes and yields during real encoding."""
 
 import asyncio
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,10 @@ from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.dataset.json_stream import _CHUNK_SIZE, _STRING_CHARS, iter_json_bytes
-from aiperf.dataset.memory_map_utils import MemoryMapDatasetBackingStore
+from aiperf.dataset.memory_map_utils import (
+    MemoryMapDatasetBackingStore,
+    MemoryMapDatasetIndex,
+)
 
 
 @pytest.mark.parametrize("pretty", [False, True])
@@ -86,9 +90,14 @@ async def test_large_payload_encoding_allows_heartbeats(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Real encoding bounds every orjson call and allows heartbeat progress."""
-    payload = {"text": 'é\n\\"' * 500_000, "items": list(range(10_000))}
+    payloads = [
+        {"text": 'é\n\\"' * 500_000, "items": list(range(10_000))},
+        {"text": "end"},
+    ]
+    encoded_payloads = [orjson.dumps(payload) for payload in payloads]
     conversation = Conversation(
-        session_id="large", turns=[Turn(role="user", raw_payload=payload)]
+        session_id="large",
+        turns=[Turn(role="user", raw_payload=payload) for payload in payloads],
     )
     manager = populated_dataset_manager
     manager.dataset = {"large": conversation}
@@ -100,7 +109,7 @@ async def test_large_payload_encoding_allows_heartbeats(
             option=orjson.OPT_INDENT_2,
         )
         if operation == "inputs"
-        else orjson.dumps(payload)
+        else b"".join(encoded_payloads)
     )
     monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
     store = MemoryMapDatasetBackingStore(
@@ -109,6 +118,7 @@ async def test_large_payload_encoding_allows_heartbeats(
     )
     await store.initialize()
     loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
     heartbeats = 0
     samples = []
     original = orjson.dumps
@@ -119,6 +129,7 @@ async def test_large_payload_encoding_allows_heartbeats(
         handle = loop.call_soon(heartbeat)
 
     def bounded_dumps(value: Any, **kwargs: Any) -> bytes:
+        assert threading.get_ident() != loop_thread
         if isinstance(value, str):
             assert len(value) <= _STRING_CHARS
         samples.append(heartbeats)
@@ -141,17 +152,27 @@ async def test_large_payload_encoding_allows_heartbeats(
             ).read_bytes()
         else:
             await store.finalize()
-            offset = store._payload_offsets["large"][0]
-            assert offset.offset == 0
-            assert offset.size == len(expected)
             if store._compress_only:
                 with (
                     store._compressed_data_path.open("rb") as file,
                     zstandard.ZstdDecompressor().stream_reader(file) as reader,
                 ):
                     data = reader.read()
+                index_data = zstandard.ZstdDecompressor().decompress(
+                    store._compressed_index_path.read_bytes()
+                )
             else:
                 data = store._data_path.read_bytes()
+                index_data = store._index_path.read_bytes()
+            index = MemoryMapDatasetIndex.model_validate_json(index_data)
+            position = 0
+            for offset, encoded in zip(
+                index.payload_offsets["large"], encoded_payloads, strict=True
+            ):
+                assert offset.offset == position
+                assert offset.size == len(encoded)
+                position += len(encoded)
+            assert index.total_size == len(expected)
         assert data == expected
     finally:
         handle.cancel()
@@ -161,16 +182,26 @@ async def test_large_payload_encoding_allows_heartbeats(
 async def test_inputs_stream_preserves_model_serialization(
     populated_dataset_manager: DatasetManager, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Session omission and nested nulls match the previous Pydantic export."""
-    inputs = InputsFile(
-        data=[SessionPayloads(payloads=[{"value": None}]) for _ in range(2000)]
+    """Session exports preserve omission and nested nulls outside the event loop."""
+    inputs = InputsFile(data=[SessionPayloads(payloads=[{"value": None}])])
+    expected = orjson.dumps(
+        inputs.model_dump(exclude_none=True, mode="json"), option=orjson.OPT_INDENT_2
     )
+    loop_thread = threading.get_ident()
+    dump_threads = []
+    original = SessionPayloads.model_dump
+
+    def dump(self: SessionPayloads, **kwargs: Any) -> dict:
+        dump_threads.append(threading.get_ident())
+        return original(self, **kwargs)
+
     manager = populated_dataset_manager
     monkeypatch.setattr(manager, "_generate_input_payloads", lambda _: inputs)
+    monkeypatch.setattr(SessionPayloads, "model_dump", dump)
     await manager._generate_inputs_json_file()
+    assert len(dump_threads) == 1
+    assert dump_threads[0] != loop_thread
     data = (
         manager.run.cfg.artifacts.dir / OutputDefaults.INPUTS_JSON_FILE
     ).read_bytes()
-    assert data == orjson.dumps(
-        inputs.model_dump(exclude_none=True, mode="json"), option=orjson.OPT_INDENT_2
-    )
+    assert data == expected

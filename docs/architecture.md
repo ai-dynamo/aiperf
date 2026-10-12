@@ -125,8 +125,8 @@ opening and page preloading run in a background thread so that initialization
 does not occupy the worker event loop. Existing startup timeouts still bound
 initialization, and heartbeat eviction still applies to dispatchable workers.
 Local workers use the existing dataset status query to recover a notification
-that arrived before they subscribed. An unconfigured response leaves them
-waiting for the normal notification.
+that arrived before they subscribed. They retry after a timeout or an
+unconfigured response until the dataset opens or the worker stops.
 
 Dataset saving streams `inputs.json` and verbatim turn payloads in bounded JSON
 chunks. String escaping also uses bounded chunks, so a single large turn does

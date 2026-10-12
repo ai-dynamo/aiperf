@@ -859,14 +859,20 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             await self._mark_worker_ready()
         else:
             await self._publish_startup_state(WorkerStartupState.WAITING_FOR_DATASET)
-            catch_up = DatasetConfigCatchUp(
-                self.conversation_request_client,
-                self._on_dataset_configured,
-                self.service_id,
-            )
 
             async def catch_up_dataset() -> None:
-                await catch_up.try_once(self._dataset_configured_event)
+                while (
+                    not self.stop_requested
+                    and not self._dataset_configured_event.is_set()
+                ):
+                    # Each poll needs a fresh one-shot query.
+                    await DatasetConfigCatchUp(
+                        self.conversation_request_client,
+                        self._on_dataset_configured,
+                        self.service_id,
+                    ).try_once(self._dataset_configured_event)
+                    if not self._dataset_configured_event.is_set():
+                        await asyncio.sleep(Environment.DATASET.STATE_POLL_INTERVAL)
 
             self.start_background_task(catch_up_dataset, stop_on_error=True)
 
