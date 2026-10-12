@@ -40,7 +40,7 @@ error instead of a wrong benchmark.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from aiperf.config.flags._section_fields import (
     ACCURACY_FIELDS,
@@ -51,6 +51,7 @@ from aiperf.config.flags._section_fields import (
     SWEEPING_FIELDS,
     TOKENIZER_FIELDS,
 )
+from aiperf.config.flags.recipes import _SLA_TARGET_FIELDS, _SWEEP_OVERRIDE_FIELDS
 
 if TYPE_CHECKING:
     from aiperf.config.flags import CLIConfig
@@ -133,6 +134,8 @@ _ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
         # scenario lock, via _apply_scenario_overrides
         "scenario",
         "unsafe_override",
+        # magic-list sweep topology, read by promote_benchmark_magic_lists
+        "sweep_type",
         # inter-turn delay cap, carried onto trace datasets by build_dataset
         "inter_turn_delay_cap_seconds",
         # verbatim system prompt, carried onto the dataset by
@@ -152,41 +155,24 @@ _ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
 )
 
 
-# SWEEPING members that resolve cleanly under --config and change nothing,
-# each verified by resolving with the flag and diffing the result. Notably
-# --ttft-sla-ms does NOT take effect even alongside --search-recipe plus
-# --streaming, contrary to the example in resolver's module docstring.
-SWEEP_FIELDS_NOT_ROUTED: frozenset[str] = frozenset(
-    {
-        "concurrency_max",
-        "concurrency_min",
-        "concurrency_steps",
-        "convergence_mode",
-        "convergence_stat",
-        "degradation_metric_tag",
-        "degradation_stat",
-        "e2e_sla_ms",
-        "isl_max",
-        "isl_min",
-        "isl_steps",
-        "itl_sla_ms",
-        "osl_max",
-        "osl_min",
-        "osl_steps",
-        "parameter_sweep_cooldown_seconds",
-        "parameter_sweep_mode",
-        "parameter_sweep_same_seed",
-        "search_style",
-        "sweep_variants",
-        "tpot_sla_ms",
-        "ttft_sla_ms",
-    }
+# Inputs to a --search-recipe: SLA targets and sweep-range overrides the
+# recipe reads from SearchRecipeContext. Derived from the tuples the recipe
+# context is built from, so the two cannot drift. Without a recipe nothing
+# reads them.
+RECIPE_INPUT_FIELDS: frozenset[str] = frozenset(
+    {*_SLA_TARGET_FIELDS, *_SWEEP_OVERRIDE_FIELDS, "isl_osl_pairs"}
+)
+
+# Details of trial-level convergence; build_multi_run only emits them once a
+# convergence metric turns convergence on.
+CONVERGENCE_DETAIL_FIELDS: frozenset[str] = frozenset(
+    {"convergence_mode", "convergence_stat", "convergence_threshold"}
 )
 
 
-# Kept as the invariant suite's source of companion test inputs. The resolver
-# now evaluates the effective YAML+CLI configuration, so none of the routed
-# flags require a CLI-only companion before reaching that validation.
+# Kept (empty) as the invariant suite's hook; companion-required sweep flags are
+# covered by reject_missing_sweep_companions here and by SWEEP_FLAG_COMPANIONS
+# in tests/unit/config/test_config_override_invariants.py.
 COMPANION_ROUTED: dict[str, frozenset[str]] = {}
 
 
@@ -334,17 +320,11 @@ def _build_routed_under_config() -> frozenset[str]:
     # + resolve_auto_plot, build_tokenizer, build_accuracy.
     whole_sections = OUTPUT_FIELDS | TOKENIZER_FIELDS | ACCURACY_FIELDS
 
-    # SWEEPING minus the members verified to resolve cleanly while changing
-    # nothing (see SWEEP_FIELDS_NOT_ROUTED). The rest -- --search-recipe,
-    # --search-space and friends -- do take effect. build_sweep / expand_search_recipe
-    # consume the section, but only conditionally -- e.g. --concurrency-min /
-    # --concurrency-max / --concurrency-steps under --config verifiably
-    # produce no sweep at all, while --ttft-sla-ms does take effect alongside
-    # --search-recipe. Separating genuine drops from "needs a companion flag"
-    # requires a combination audit that is out of scope here, and erroring on
-    # the whole section would break valid recipe invocations. Tracked as
-    # follow-up work; see AIP-1133.
-    sweeping = set(SWEEPING_FIELDS) - SWEEP_FIELDS_NOT_ROUTED
+    # Every SWEEPING member reaches the resolver, but some act only beside a
+    # companion. reject_missing_sweep_companions raises for the ones it knows
+    # (recipe inputs, convergence details, --sweep-type, --search-sla and
+    # --search-sla-tier); routed does not by itself mean a flag acts alone.
+    sweeping = set(SWEEPING_FIELDS)
 
     return frozenset(
         endpoint
@@ -387,13 +367,9 @@ UNROUTED_UNDER_CONFIG: frozenset[str] = frozenset(
         # Every other INPUT field now routes through _apply_dataset_overrides;
         # these would swap the dataset the YAML declared rather than shape it.
         *DATASET_SOURCE_FIELDS,
-        # ----- sweep flags that resolve cleanly and do nothing -----
-        *SWEEP_FIELDS_NOT_ROUTED,
         # ----- outside every section frozenset -----
-        # Still dropped: --sweep-type needs a sweep block to attach to, and
-        # --disable-auto-fixed-schedule is consumed by phase construction
-        # which this path does not rebuild. Both need their own routing.
-        "sweep_type",
+        # Still dropped: consumed by phase construction, which this path does
+        # not rebuild.
         "disable_auto_fixed_schedule",
         # ----- loadgen: ramps, pacing, cancellation -----
     }
@@ -472,3 +448,231 @@ def reject_unrouted_cli_flags(cli: CLIConfig) -> None:
         f"YAML config file, or drop --config and pass the run entirely on "
         f"the command line."
     )
+
+
+def _cli_magic_list_fields(cli: CLIConfig) -> list[str]:
+    from aiperf.config.sweep import MAGIC_LIST_FIELDS
+
+    return sorted(
+        field
+        for field in cli.model_fields_set
+        if field in MAGIC_LIST_FIELDS and isinstance(getattr(cli, field), list)
+    )
+
+
+def _yaml_declares_convergence(yaml_dict: dict[str, Any]) -> bool:
+    multi_run = yaml_dict.get("multi_run", yaml_dict.get("multiRun"))
+    return isinstance(multi_run, dict) and isinstance(
+        multi_run.get("convergence"), dict
+    )
+
+
+def _missing_companion_problems(cli: CLIConfig, yaml_dict: dict[str, Any]) -> list[str]:
+    set_fields = cli.model_fields_set
+    has_yaml_sweep = isinstance(yaml_dict.get("sweep"), dict)
+    has_recipe = "search_recipe" in set_fields and cli.search_recipe is not None
+    has_metric = (
+        "convergence_metric" in set_fields and cli.convergence_metric is not None
+    )
+    problems: list[str] = []
+    if not has_recipe:
+        problems.extend(
+            f"{_describe(field)} requires --search-recipe; it is an input to "
+            f"a search recipe and nothing else reads it"
+            for field in sorted(set_fields & RECIPE_INPUT_FIELDS)
+        )
+    if not has_metric and not _yaml_declares_convergence(yaml_dict):
+        problems.extend(
+            f"{_describe(field)} requires --convergence-metric or a "
+            f"multi_run.convergence block in the config file"
+            for field in sorted(set_fields & CONVERGENCE_DETAIL_FIELDS)
+        )
+    problems.extend(_search_filter_problems(cli, has_recipe=has_recipe))
+    if "sweep_type" in set_fields:
+        if has_yaml_sweep:
+            problems.append(
+                "--sweep-type cannot change the sweep the config file "
+                "declares; set sweep.type in the file instead"
+            )
+        elif not _cli_magic_list_fields(cli):
+            problems.append(
+                "--sweep-type requires list-valued flags to sweep over "
+                "(e.g. --concurrency 1,2,4)"
+            )
+    if has_recipe and has_yaml_sweep:
+        problems.append(
+            "--search-recipe defines its own sweep and cannot be combined "
+            "with the sweep the config file declares; remove one"
+        )
+    if "search_space" in set_fields and cli.search_space and has_yaml_sweep:
+        problems.append(
+            f"{_describe('search_space')} defines its own sweep and cannot be "
+            f"combined with the sweep the config file declares; remove one"
+        )
+    return problems
+
+
+def _search_filter_problems(cli: CLIConfig, *, has_recipe: bool) -> list[str]:
+    """``--search-sla`` / ``--search-sla-tier`` only shape a search's results;
+    with neither a recipe nor ``--search-space`` there is no search to shape.
+
+    Whether a recipe expands to the adaptive search tiers need is known only
+    after expansion; ``reject_search_filters_for_recipe`` checks that.
+    """
+    set_fields = cli.model_fields_set
+    has_search_space = "search_space" in set_fields and bool(cli.search_space)
+    if has_recipe or has_search_space:
+        return []
+    problems: list[str] = []
+    if "search_sla" in set_fields and cli.search_sla:
+        problems.append(
+            f"{_describe('search_sla')} requires --search-recipe or "
+            f"--search-space; it filters a search's results. To filter the "
+            f"config file's sweep, set sweep.sla_filters there"
+        )
+    if "search_sla_tier" in set_fields and cli.search_sla_tier:
+        problems.append(
+            f"{_describe('search_sla_tier')} requires an adaptive search: "
+            f"--search-space, or a --search-recipe that expands to one"
+        )
+    return problems
+
+
+def reject_search_filters_for_recipe(
+    cli: CLIConfig, recipe_output: dict[str, Any]
+) -> None:
+    """Raise when ``--search-sla`` / ``--search-sla-tier`` cannot reach the
+    sweep a recipe expanded to.
+
+    Tiers rank adaptive-search trials, so a grid or scenarios recipe would drop
+    them; scenario sweeps carry only the recipe's own SLA filters.
+
+    Raises:
+        ConfigurationError: naming each flag and the recipe's sweep kind.
+    """
+    from aiperf.config.loader.errors import ConfigurationError
+
+    if recipe_output.get("adaptive_search") is not None:
+        return
+    kind = "scenario" if recipe_output.get("scenarios") else "grid"
+    set_fields = cli.model_fields_set
+    problems: list[str] = []
+    if "search_sla_tier" in set_fields and cli.search_sla_tier:
+        problems.append(
+            f"{_describe('search_sla_tier')} requires an adaptive search, but "
+            f"--search-recipe {cli.search_recipe} expands to a {kind} sweep"
+        )
+    if kind == "scenario" and "search_sla" in set_fields and cli.search_sla:
+        problems.append(
+            f"{_describe('search_sla')} is not applied to a scenario recipe "
+            f"such as {cli.search_recipe}"
+        )
+    if problems:
+        details = "\n  - ".join(problems)
+        raise ConfigurationError(
+            f"Search filters passed with --config cannot take effect:\n  - {details}"
+        )
+
+
+def reject_missing_sweep_companions(cli: CLIConfig, yaml_dict: dict[str, Any]) -> None:
+    """Raise when a sweep flag under ``--config`` lacks the flag it needs.
+
+    A recipe input without ``--search-recipe``, a convergence detail without
+    a convergence metric, or ``--sweep-type`` with nothing to sweep resolves
+    cleanly and changes nothing -- the silent drop this module exists to
+    prevent. Only rules answerable before the merge live here; rules about
+    the final sweep block are enforced where that block is written.
+
+    Args:
+        cli: the parsed ``CLIConfig`` for this invocation.
+        yaml_dict: the loaded (rendered) config file.
+
+    Raises:
+        ConfigurationError: naming every offending flag at once.
+    """
+    from aiperf.config.loader.errors import ConfigurationError
+
+    problems = _missing_companion_problems(cli, yaml_dict)
+    if problems:
+        details = "\n  - ".join(problems)
+        raise ConfigurationError(
+            f"Sweep flags passed with --config cannot take effect:\n  - {details}"
+        )
+
+
+# Flags that define a sweep. A sweep may be defined in one place only, so
+# these cannot be combined with a sweep: block in the config file.
+FILE_SWEEP_BLOCK_FLAGS: frozenset[str] = frozenset(
+    {"search_recipe", "search_space", "sweep_type", "sweep_variants"}
+)
+
+
+def reject_cli_flags_against_hoisted_blocks(cli: CLIConfig, *, sweep_cfg: Any) -> None:
+    """Raise when a sweep-defining flag meets the file's ``sweep:`` block.
+
+    A sweep may be defined only once, so ``aiperf kube sweep`` rejects the
+    defining flags against a file that already declares one. Flags that adjust
+    the sweep (``--parameter-sweep-*``, ``--convergence-*``) are not rejected:
+    kube sweep applies them to the file's blocks after its merge (see
+    :func:`hoisted_block_adjusting_fields`).
+
+    Args:
+        cli: the parsed ``CLIConfig`` for this invocation.
+        sweep_cfg: the file's hoisted ``sweep:`` block, or None.
+
+    Raises:
+        ConfigurationError: naming every offending flag at once.
+    """
+    from aiperf.config.loader.errors import ConfigurationError
+
+    if not isinstance(sweep_cfg, dict):
+        return
+    problems = [
+        f"{_describe(field)} cannot be combined with the sweep: block in "
+        f"the file under `aiperf kube sweep`; set it in the file"
+        for field in sorted(cli.model_fields_set & FILE_SWEEP_BLOCK_FLAGS)
+    ]
+    if problems:
+        details = "\n  - ".join(problems)
+        raise ConfigurationError(
+            f"Sweep-defining flags cannot be combined with the file's sweep: "
+            f"block under `aiperf kube sweep`:\n  - {details}"
+        )
+
+
+def hoisted_block_adjusting_fields(
+    cli: CLIConfig, *, sweep_cfg: Any, multirun_cfg: Any
+) -> frozenset[str]:
+    """Return the user-set flags that adjust a block ``kube sweep`` hoisted.
+
+    ``aiperf kube sweep`` hoists the file's ``sweep:`` / ``multiRun:`` blocks
+    out before the shared resolver runs, so the resolver cannot see them and
+    would report these flags as having nothing to apply to. Kube sweep defers
+    them past the resolver and applies them once the blocks are merged back.
+    Convergence details are deferred only without ``--convergence-metric``;
+    with it, the resolver emits the whole convergence block itself.
+
+    Args:
+        cli: the parsed ``CLIConfig`` for this invocation.
+        sweep_cfg: the file's hoisted ``sweep:`` block, or None.
+        multirun_cfg: the file's hoisted ``multiRun:`` block, or None.
+
+    Returns:
+        The ``CLIConfig`` field names to defer; empty when none apply.
+    """
+    from aiperf.config.flags.converter import _PARAMETER_SWEEP_KEYS
+
+    set_fields = cli.model_fields_set
+    deferred: set[str] = set()
+    if isinstance(sweep_cfg, dict):
+        deferred |= set_fields & {cli_field for cli_field, _ in _PARAMETER_SWEEP_KEYS}
+    has_metric = (
+        "convergence_metric" in set_fields and cli.convergence_metric is not None
+    )
+    if (
+        isinstance(multirun_cfg, dict)
+        and isinstance(multirun_cfg.get("convergence"), dict)
+        and not has_metric
+    ):
+        deferred |= set_fields & CONVERGENCE_DETAIL_FIELDS
+    return frozenset(deferred)
