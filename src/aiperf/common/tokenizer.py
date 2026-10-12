@@ -680,6 +680,10 @@ class Tokenizer:
             if cached_alias is not None and cached_alias != name:
                 candidates.append(cached_alias)
 
+        for candidate in candidates:
+            if Path(candidate).is_dir():
+                return str(Path(candidate))
+
         last_err: Exception | None = None
         for candidate in candidates:
             try:
