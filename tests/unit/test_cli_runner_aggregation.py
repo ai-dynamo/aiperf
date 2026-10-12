@@ -10,7 +10,7 @@ import orjson
 import pytest
 from pytest import param
 
-from aiperf.cli_runner._multi_run import _summarize_and_export
+from aiperf.cli_runner._multi_run import _run_multi_benchmark, _summarize_and_export
 from aiperf.cli_runner._sweep_aggregate import (
     _aggregate_group_to_stats,
     _build_per_combination_stats,
@@ -26,6 +26,7 @@ from aiperf.config.sweep import AdaptiveSearchSweep, GridSweep, Objective
 from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter
 from aiperf.orchestrator.models import RunResult
 from aiperf.orchestrator.strategies import FixedTrialsStrategy
+from aiperf.plugin.enums import UIType
 
 _MINIMAL_CONFIG = {
     "models": ["test-model"],
@@ -302,17 +303,18 @@ class TestSummarizeAndExport:
     """A successful one-run execution must reach the existing aggregation path."""
 
     @pytest.mark.parametrize(
-        "mode",
+        "mode,through_cli",
         [
-            param("single", id="single-config"),
-            param("grid", id="single-point-grid"),
-            param("search", id="one-point-search-with-no-feasible-point"),
+            param("single", False, id="single-config"),
+            param("grid", False, id="single-point-grid"),
+            param("search", False, id="one-point-search-with-no-feasible-point"),
+            param("search", True, id="one-point-search-cli-with-no-feasible-point"),
         ],
     )  # fmt: skip
     def test_single_success_exports_and_returns_zero(
-        self, mode: str, tmp_path: Path
+        self, mode: str, through_cli: bool, tmp_path: Path
     ) -> None:
-        """One successful run exports aggregates and returns zero across plan modes."""
+        """A single success exports aggregates with code zero, including the search CLI."""
         sweep = None
         if mode == "grid":
             sweep = GridSweep(parameters={"phases.profiling.concurrency": [10]})
@@ -339,22 +341,44 @@ class TestSummarizeAndExport:
                 ],
             )
         plan = BenchmarkPlan(
-            configs=[BenchmarkConfig.model_validate(_MINIMAL_CONFIG)],
+            configs=[
+                BenchmarkConfig.model_validate(
+                    {**_MINIMAL_CONFIG, "runtime": {"ui": UIType.SIMPLE}}
+                )
+            ],
             trials=1,
             sweep=sweep,
         )
         result = _successful_result(label="c10_t0", concurrency=10, throughput=100.0)
 
-        exit_code = _summarize_and_export(
-            plan,
-            [result],
-            total_runs=1,
-            strategy=FixedTrialsStrategy(num_trials=1),
-            base_dir=tmp_path,
-            logger=MagicMock(),
-        )
+        if through_cli:
+            with (
+                patch("aiperf.common.logging.setup_rich_logging"),
+                patch(
+                    "aiperf.cli_runner._multi_run._estimate_and_log_duration",
+                    return_value=tmp_path,
+                ),
+                patch(
+                    "aiperf.cli_runner._multi_run._execute_multi_benchmark",
+                    return_value=[result],
+                ) as execute,
+                patch("aiperf.cli_runner._multi_run.os._exit") as exit_process,
+            ):
+                _run_multi_benchmark(plan)
 
-        assert exit_code == 0
+            execute.assert_called_once()
+            assert execute.call_args.args[:2] == (plan, tmp_path)
+            exit_process.assert_called_once_with(0)
+        else:
+            exit_code = _summarize_and_export(
+                plan,
+                [result],
+                total_runs=1,
+                strategy=FixedTrialsStrategy(num_trials=1),
+                base_dir=tmp_path,
+                logger=MagicMock(),
+            )
+            assert exit_code == 0
         aggregates = list(tmp_path.rglob("profile_export_aiperf_aggregate.json"))
         assert len(aggregates) == 1
         aggregate = orjson.loads(aggregates[0].read_bytes())
