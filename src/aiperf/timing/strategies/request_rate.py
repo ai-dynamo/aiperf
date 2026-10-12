@@ -391,7 +391,7 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         """
         if (
             self._branch_orchestrator is None
-            or self._branch_orchestrator.unpark_child_turn(
+            or self._branch_orchestrator.try_claim_parked_child_turn(
                 child_returning_credit.x_correlation_id
             )
         ):

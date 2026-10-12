@@ -1635,7 +1635,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
     ) -> None:
         if (
             self.branch_orchestrator is None
-            or self.branch_orchestrator.unpark_child_turn(turn.x_correlation_id)
+            or self.branch_orchestrator.try_claim_parked_child_turn(
+                turn.x_correlation_id
+            )
         ):
             await dispatch(turn)
 

@@ -1790,7 +1790,7 @@ async def test_profiling_snapshot_child_refusal_drains_join():
     )
     branch_orchestrator = MagicMock()
     branch_orchestrator.on_child_stopped = AsyncMock()
-    branch_orchestrator.unpark_child_turn.return_value = True
+    branch_orchestrator.try_claim_parked_child_turn.return_value = True
     cfg = MagicMock()
     cfg.phase = CreditPhase.PROFILING
     cfg.concurrency = 1

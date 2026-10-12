@@ -529,7 +529,7 @@ async def test_cutoff_stops_child_parked_between_turns() -> None:
     assert not orch.has_pending_branch_work()
     assert "corr-kid" not in orch._child_to_join
     assert orch.stats.children_truncated == 1
-    assert orch.unpark_child_turn("corr-kid") is False
+    assert orch.try_claim_parked_child_turn("corr-kid") is False
 
 
 @pytest.mark.asyncio
@@ -562,7 +562,7 @@ async def test_unparked_child_turn_is_not_stopped_at_cutoff() -> None:
 
     await orch.intercept(_mk_credit("parent", "P", 0))
     orch.park_child_turn("corr-kid")
-    assert orch.unpark_child_turn("corr-kid") is True
+    assert orch.try_claim_parked_child_turn("corr-kid") is True
 
     await _stop_sending(orch, scheduler)
 
