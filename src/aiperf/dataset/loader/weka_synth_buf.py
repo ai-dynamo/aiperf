@@ -687,7 +687,6 @@ class ConversationReconstructor:
 
 
 def _first_message_end(parent: ParentPrefix) -> int:
-    """Hash index where the parent's first non-system segment ends."""
     for seg, end in parent.spans():
         if seg.role != "system":
             return end
