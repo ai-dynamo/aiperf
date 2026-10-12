@@ -342,15 +342,15 @@ async def test_inputs_serialization_runs_off_event_loop(
     loop_thread = threading.get_ident()
     started = asyncio.Event()
     release = threading.Event()
-    original = InputsFile.model_dump
+    original = SessionPayloads.model_dump
 
-    def slow_dump(self: InputsFile, **kwargs) -> dict:
+    def slow_dump(self: SessionPayloads, **kwargs) -> dict:
         assert threading.get_ident() != loop_thread
         loop.call_soon_threadsafe(started.set)
         assert release.wait(timeout=5)
         return original(self, **kwargs)
 
-    monkeypatch.setattr(InputsFile, "model_dump", slow_dump)
+    monkeypatch.setattr(SessionPayloads, "model_dump", slow_dump)
     task = asyncio.create_task(populated_dataset_manager._generate_inputs_json_file())
     try:
         await asyncio.wait_for(started.wait(), timeout=2)
