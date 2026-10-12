@@ -58,6 +58,7 @@ from aiperf.common.models import (
     MemoryMapClientMetadata,
     Turn,
 )
+from aiperf.dataset.json_stream import iter_json_bytes
 
 _logger = AIPerfLogger(__name__)
 
@@ -210,19 +211,20 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             # without the full Conversation.
             turn_offsets: list[PayloadOffset] = []
             for turn in conversation.turns:
-                payload_bytes = await asyncio.to_thread(orjson.dumps, turn.raw_payload)
+                start_offset = self._current_offset
+                async for chunk in iter_json_bytes(turn.raw_payload):
+                    await self._write_bytes(chunk)
+                    self._current_offset += len(chunk)
                 turn_offsets.append(
                     PayloadOffset(
-                        offset=self._current_offset,
-                        size=len(payload_bytes),
+                        offset=start_offset,
+                        size=self._current_offset - start_offset,
                         max_tokens=_resolve_turn_max_tokens(turn),
                         timestamp=turn.timestamp,
                         source_kind=turn.source_kind,
                         audio_duration_seconds=turn.audio_duration_seconds,
                     )
                 )
-                self._current_offset += len(payload_bytes)
-                await self._write_bytes(payload_bytes)
             self._payload_offsets[conversation_id] = turn_offsets
         else:
             conv_bytes = await asyncio.to_thread(

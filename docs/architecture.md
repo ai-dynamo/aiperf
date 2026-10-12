@@ -125,6 +125,12 @@ opening and page preloading run in a background thread so that initialization
 does not occupy the worker event loop. Existing startup timeouts still bound
 initialization, and heartbeat eviction still applies to dispatchable workers.
 
+Dataset saving streams `inputs.json` and verbatim turn payloads in bounded JSON
+chunks. String escaping also uses bounded chunks, so a single large turn does
+not require a document-sized `orjson.dumps` call that holds Python's global
+interpreter lock. Output formatting, conversation order, and byte offsets stay
+the same.
+
 ### Record Processor
 
 The Record Processor processes and interprets the responses received from the inference server during benchmarking.
