@@ -728,7 +728,7 @@ For YAML configuration, use `benchmark.artifacts.records: [jsonl]`; add
 for distribution convergence. CLI and YAML configurations use the resolved
 artifact export level for this validation.
 
-For sweeps, every expanded benchmark config is checked, including per-variation
+For local/CLI sweeps, every expanded benchmark config is checked, including per-variation
 artifact overrides. A summary-only variation is rejected before execution even
 if the base config uses `records` or `raw`. Conversely, a summary-only base is
 valid when every expanded config enables per-request records. Mixing `records`
