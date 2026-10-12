@@ -312,6 +312,7 @@ class TestSummarizeAndExport:
     def test_single_success_exports_and_returns_zero(
         self, mode: str, tmp_path: Path
     ) -> None:
+        """One successful run exports aggregates and returns zero across plan modes."""
         sweep = None
         if mode == "grid":
             sweep = GridSweep(parameters={"phases.profiling.concurrency": [10]})
@@ -387,6 +388,7 @@ class TestSummarizeAndExport:
         expected_aggregations: int,
         tmp_path: Path,
     ) -> None:
+        """Failures and multiple successes retain their existing exit and export behavior."""
         results = [
             RunResult(label=f"run_{i}", success=success)
             for i, success in enumerate(successes)
@@ -411,6 +413,7 @@ class TestSummarizeAndExport:
     def test_single_success_propagates_aggregation_or_export_errors(
         self, error_type: type[Exception], tmp_path: Path
     ) -> None:
+        """Aggregation and export errors propagate even when the single run succeeds."""
         result = _successful_result(label="c10_t0", concurrency=10, throughput=100.0)
         with (
             patch(
