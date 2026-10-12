@@ -1,23 +1,37 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from unittest.mock import AsyncMock
+
+import orjson
 import pytest
 from pytest import param
 
-from aiperf.common.models import Text, Turn
+from aiperf.common.models import RequestRecord, SSEMessage, Text, Turn
 from aiperf.common.models.record_models import (
     TextResponseData,
 )
+from aiperf.common.tokenizer import Tokenizer
 from aiperf.endpoints.solido_rag import SolidoEndpoint
+from aiperf.metrics.accumulator import MetricsAccumulator
+from aiperf.metrics.types.input_sequence_length_metric import (
+    InputSequenceLengthMetric,
+    TotalInputSequenceLengthMetric,
+)
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import EndpointType
 from aiperf.plugin.schema.schemas import EndpointMetadata
+from aiperf.post_processors.metric_record_processor import MetricRecordProcessor
+from aiperf.records.inference_result_parser import InferenceResultParser
+from aiperf.workers.inference_client import InferenceClient
+from tests.unit.conftest import make_benchmark_run
 from tests.unit.endpoints.conftest import (
     create_endpoint_with_mock_transport,
     create_mock_response,
     create_model_endpoint,
     create_request_info,
 )
+from tests.unit.post_processors.conftest import create_metric_metadata
 
 
 class TestSolidoEndpointMetadata:
@@ -47,6 +61,7 @@ class TestSolidoEndpointMetadata:
 def test_extract_payload_inputs_uses_wire_query(
     query_override: list[str] | str | None,
 ) -> None:
+    """Extract the final query after applying request-level overrides."""
     model_endpoint = create_model_endpoint(EndpointType.SOLIDO_RAG)
     endpoint = SolidoEndpoint(model_endpoint)
     turn = Turn(
@@ -61,6 +76,63 @@ def test_extract_payload_inputs_uses_wire_query(
 
     expected = query_override if query_override is not None else ["Original query"]
     assert inputs.texts == ([expected] if isinstance(expected, str) else expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "query_override,expected_tokens",
+    [
+        param(["Wire query", "One more query"], 5, id="list-query"),
+        param("Wire query uses override", 4, id="string-query"),
+    ],
+)  # fmt: skip
+async def test_send_request_query_override_drives_input_metrics(
+    query_override: list[str] | str,
+    expected_tokens: int,
+    mock_tokenizer_cls: type[Tokenizer],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Count the serialized override through the client, parser, and metrics."""
+    run = make_benchmark_run(endpoint_type=EndpointType.SOLIDO_RAG, streaming=True)
+    parser = InferenceResultParser(run=run)
+    model_endpoint = parser.model_endpoint
+    parser.tokenizers[model_endpoint.primary_model_name] = (
+        mock_tokenizer_cls.from_pretrained(model_endpoint.primary_model_name)
+    )
+    client = InferenceClient(model_endpoint=model_endpoint, service_id="test-solido")
+    transport_send = AsyncMock(
+        return_value=RequestRecord(
+            start_perf_ns=100,
+            end_perf_ns=200,
+            responses=[SSEMessage.parse('data: {"content":"Answer"}', perf_ns=150)],
+        )
+    )
+    monkeypatch.setattr(client.transport, "send_request", transport_send)
+    turn = Turn(
+        texts=[Text(contents=["Original query"])],
+        extra_body={"query": query_override},
+    )
+    request_info = create_request_info(model_endpoint=model_endpoint, turns=[turn])
+
+    record = await client.send_request(request_info)
+
+    wire_payload = transport_send.call_args.kwargs["payload"]
+    assert isinstance(wire_payload, bytes)
+    assert orjson.loads(wire_payload)["query"] == query_override
+    assert record.request_info.payload_bytes == wire_payload
+
+    parsed_record = await parser.parse_request_record(record)
+    assert not parsed_record.has_error
+    metric_record = await MetricRecordProcessor(run).process_record(
+        parsed_record, create_metric_metadata()
+    )
+    assert metric_record.metrics[InputSequenceLengthMetric.tag] == expected_tokens
+
+    accumulator = MetricsAccumulator(run)
+    await accumulator.process_record(metric_record)
+    summary = await accumulator.summarize()
+    assert summary.results[InputSequenceLengthMetric.tag].avg == expected_tokens
+    assert summary.results[TotalInputSequenceLengthMetric.tag].avg == expected_tokens
 
 
 class TestSolidoEndpointFormatPayload:
