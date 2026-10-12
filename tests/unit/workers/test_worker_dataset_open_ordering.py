@@ -10,17 +10,21 @@ died with "Data file not found" and the run failed at 'Configure Profiling'.
 """
 
 import asyncio
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import MemoryMapFormat
+from aiperf.common.enums import MemoryMapFormat, WorkerStartupState
 from aiperf.common.messages import (
+    DatasetConfigStatusRequest,
+    DatasetConfigStatusResponse,
     DatasetConfiguredNotification,
     DatasetDownloadedNotification,
 )
 from aiperf.common.models.dataset_models import DatasetMetadata, MemoryMapClientMetadata
+from aiperf.credit.messages import WorkerConnected, WorkerDispatchable
 from aiperf.plugin.enums import DatasetSamplingStrategy, PluginType
 from aiperf.workers.worker import Worker
 from tests.harness import mock_plugin
@@ -51,6 +55,9 @@ class _FakeWorker:
         self._is_kubernetes = is_kubernetes
         self._pod_index = pod_index
         self._pending_dataset_metadata = None
+        self._worker_ready_lock = asyncio.Lock()
+        self._dataset_configured_event = asyncio.Event()
+        self._mark_worker_ready_locked = AsyncMock()
         self.session_manager = AsyncMock()
         self.opened: list[MemoryMapClientMetadata] = []
         self.debug = lambda *a, **k: None
@@ -58,6 +65,7 @@ class _FakeWorker:
 
     async def _open_dataset_client(self, client_metadata, mark_ready=True) -> None:
         self.opened.append(client_metadata)
+        self._dataset_configured_event.set()
 
 
 @pytest.mark.asyncio
@@ -150,10 +158,9 @@ async def test_download_before_config_warning_names_the_real_recovery_path() -> 
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("group_managed", [False, True])  # fmt: skip
 @pytest.mark.parametrize("fail", [False, True])  # fmt: skip
 async def test_worker_dispatchability_waits_for_dataset_initialization(
-    group_managed: bool, fail: bool
+    fail: bool,
 ) -> None:
     entered = asyncio.Event()
     release = asyncio.Event()
@@ -169,7 +176,6 @@ async def test_worker_dispatchability_waits_for_dataset_initialization(
                 raise RuntimeError("dataset open failed")
 
     worker = MagicMock(spec=Worker)
-    worker._is_group_managed_mode.return_value = group_managed
     worker._dataset_configured_event = asyncio.Event()
     worker._mark_worker_ready = AsyncMock()
     metadata = _metadata("local")
@@ -192,3 +198,124 @@ async def test_worker_dispatchability_waits_for_dataset_initialization(
         finally:
             release.set()
             await asyncio.gather(opening, return_exceptions=True)
+
+
+@pytest.fixture
+def local_worker(benchmark_run) -> Worker:
+    """Use real readiness state with stubbed startup transports."""
+    worker = Worker(run=benchmark_run, service_id="late-worker")
+    worker.publish = AsyncMock()
+    worker.credit_dealer_client.send = AsyncMock()
+    worker.conversation_request_client.request = AsyncMock()
+    worker._await_return_channel_ready = AsyncMock()
+    worker.execute_async = MagicMock()
+    return worker
+
+
+@pytest.fixture
+def local_store() -> Iterator[type]:
+    """Track dataset initialization through the real plugin factory."""
+
+    class Store:
+        initialize = AsyncMock()
+
+        def __init__(self, client_metadata: MemoryMapClientMetadata) -> None:
+            pass
+
+    with mock_plugin(
+        PluginType.DATASET_CLIENT_STORE, _metadata("local").client_type, Store
+    ):
+        yield Store
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["configured", "pending", "timeout"])  # fmt: skip
+async def test_local_worker_catches_up_without_blocking_startup(
+    local_worker: Worker, local_store: type, status: str
+) -> None:
+    """A late worker queries status and still waits if no dataset is available."""
+    notification = _configured()
+    request = local_worker.conversation_request_client.request
+    if status == "timeout":
+        request.side_effect = TimeoutError
+    else:
+        request.return_value = DatasetConfigStatusResponse(
+            service_id="dataset_manager",
+            notification=notification if status == "configured" else None,
+        )
+    await local_worker._send_worker_ready_message()
+    assert local_worker._startup_state == WorkerStartupState.WAITING_FOR_DATASET
+    assert not local_worker._worker_ready_event.is_set()
+    request.assert_not_awaited()
+
+    await local_worker.execute_async.call_args.args[0]
+    request.assert_awaited_once()
+    assert isinstance(request.call_args.args[0], DatasetConfigStatusRequest)
+    if status != "configured":
+        assert not local_worker._worker_ready_event.is_set()
+        local_store.initialize.assert_not_awaited()
+        await local_worker._on_dataset_configured(notification)
+
+    local_store.initialize.assert_awaited_once()
+    assert local_worker._dataset_configured_event.is_set()
+    assert local_worker._worker_ready_event.is_set()
+    assert local_worker._startup_state == WorkerStartupState.READY
+    assert [
+        type(call.args[0])
+        for call in local_worker.credit_dealer_client.send.await_args_list
+    ] == [WorkerConnected, WorkerDispatchable]
+
+
+@pytest.mark.asyncio
+async def test_local_catch_up_logs_dataset_open_failure(
+    local_worker: Worker, local_store: type, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A failed background open stays non-dispatchable and reports the cause."""
+    local_worker.conversation_request_client.request.return_value = (
+        DatasetConfigStatusResponse(
+            service_id="dataset_manager", notification=_configured()
+        )
+    )
+    local_store.initialize.side_effect = RuntimeError("dataset open failed")
+
+    await local_worker._send_worker_ready_message()
+    await local_worker.execute_async.call_args.args[0]
+
+    assert not local_worker._dataset_configured_event.is_set()
+    assert not local_worker._worker_ready_event.is_set()
+    assert (
+        "Error in background task catch_up_dataset: dataset open failed" in caplog.text
+    )
+    local_worker.credit_dealer_client.send.assert_awaited_once_with(
+        WorkerConnected(worker_id=local_worker.service_id)
+    )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_dataset_notifications_open_local_client_once(
+    local_worker: Worker,
+    local_store: type,
+) -> None:
+    """A catch-up response racing the broadcast must not replace an open client."""
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def initialize() -> None:
+        entered.set()
+        await release.wait()
+
+    local_store.initialize.side_effect = initialize
+    notification = _configured()
+    first = asyncio.create_task(local_worker._on_dataset_configured(notification))
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        second = asyncio.create_task(local_worker._on_dataset_configured(notification))
+    finally:
+        release.set()
+        await first
+    await second
+
+    local_store.initialize.assert_awaited_once()
+    local_worker.credit_dealer_client.send.assert_awaited_once_with(
+        WorkerDispatchable(worker_id=local_worker.service_id)
+    )

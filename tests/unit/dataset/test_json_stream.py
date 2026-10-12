@@ -60,7 +60,7 @@ async def test_stream_rejects_cycle() -> None:
 async def test_deep_indentation_keeps_native_calls_bounded(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The size estimate includes opening and closing indentation."""
+    """Numeric batches stay bounded even with deeply nested indentation."""
     value = [[0] for _ in range(2100)]
     for _ in range(100):
         value = [value]
