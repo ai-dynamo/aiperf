@@ -71,9 +71,7 @@ class TestFiniteClockSynchronization:
         # Start the phase
         lifecycle.start()
         assert lifecycle.started_at_perf_ns == current_perf
-        assert lifecycle.started_at_ns == router_clock.wall_ns_at(
-            current_perf
-        )
+        assert lifecycle.started_at_ns == router_clock.wall_ns_at(current_perf)
 
         # Subsequent now_ns() calls remain locked to the router clock
         current_perf += 500
@@ -167,8 +165,7 @@ class TestFiniteClockSynchronization:
         # Step 6: Worker dispatches request and sends TransportDispatched
         event_perf_on_controller = current_perf + 15_000_000  # wire event at +15 ms
         worker_event_wall = (
-            router_clock.wall_ns_at(event_perf_on_controller)
-            + worker_clock_offset_ns
+            router_clock.wall_ns_at(event_perf_on_controller) + worker_clock_offset_ns
         )
 
         # Controller converts worker wall timestamp back to controller perf time
@@ -306,8 +303,7 @@ class TestFiniteClockSynchronization:
         # Worker dispatches and controller converts back
         event_perf_on_controller = current_perf + 15_000_000
         worker_event_wall = (
-            router_clock.wall_ns_at(event_perf_on_controller)
-            + worker_clock_offset_ns
+            router_clock.wall_ns_at(event_perf_on_controller) + worker_clock_offset_ns
         )
 
         handler_ctx = MagicMock()
@@ -379,8 +375,7 @@ class TestFiniteClockSynchronization:
         worker_clock_offset_ns = 500_000_000
         # Worker wall timestamp derived from the router clock (the correct frame)
         worker_event_wall = (
-            router_clock.wall_ns_at(event_perf_on_controller)
-            + worker_clock_offset_ns
+            router_clock.wall_ns_at(event_perf_on_controller) + worker_clock_offset_ns
         )
 
         handler_ctx = MagicMock()

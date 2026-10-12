@@ -1709,9 +1709,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 phase=credit.phase,
                 phase_index=credit.phase_index,
                 worker_id=self.service_id,
-                transport_start_wall_ns=(
-                    self.clock_offset_tracker.wall_ns_at(perf_ns)
-                ),
+                transport_start_wall_ns=(self.clock_offset_tracker.wall_ns_at(perf_ns)),
                 clock_offset_ns=correction,
                 clock_offset_spread_ns=spread,
             )
@@ -1732,8 +1730,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             correction, spread = self._snapshot_finite_clock_state(
                 error_message="Finite replay worker clock lost calibration"
             )
-            context.transport_eof_wall_ns = (
-                self.clock_offset_tracker.wall_ns_at(perf_ns)
+            context.transport_eof_wall_ns = self.clock_offset_tracker.wall_ns_at(
+                perf_ns
             )
             context.transport_eof_correction_ns = correction
             context.transport_eof_clock_offset_spread_ns = spread

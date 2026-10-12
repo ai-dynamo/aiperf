@@ -179,7 +179,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                 record.timestamp_ns = process_clock().wall_ns_at(record.start_perf_ns)
                 if transport_start_callback is not None:
                     transport_start_callback(record.start_perf_ns)
-                
+
                 async with session.request(
                     method, url, data=data, headers=headers, **kwargs
                 ) as response:
