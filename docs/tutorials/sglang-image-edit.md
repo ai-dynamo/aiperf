@@ -92,6 +92,8 @@ aiperf profile \
 
 **Done!** This sends 50 requests to `http://localhost:30000/v1/images/edits` with multipart-encoded prompt + reference image, plus diffusion-specific extras (`size`, `num_inference_steps`, `guidance_scale`).
 
+Image throughput and image latency use the single reference image sent in each request, whether uploaded as a file or supplied through the SGLang `url` field. The output image count (`n`) does not change the reference image count.
+
 **Sample Output (shape only — exact numbers will depend on your hardware):**
 ```
                                   NVIDIA AIPerf | Image Edit Metrics

@@ -3,6 +3,7 @@
 from typing import Any
 
 from aiperf.common.models import (
+    ExtractedPayload,
     ImageDataItem,
     ImageResponseData,
     InferenceServerResponse,
@@ -52,6 +53,17 @@ class ImageEditEndpoint(BaseEndpoint):
     ``url`` form-field path (HTTP/HTTPS reference image) is an SGLang
     extension; stock OpenAI ``/v1/images/edits`` only accepts file uploads.
     """
+
+    def extract_payload_inputs(self, payload: dict[str, Any]) -> ExtractedPayload:
+        """Count the multipart reference image alongside the text prompt."""
+        result = super().extract_payload_inputs(payload)
+        image = payload.get("image")
+        url = payload.get("url")
+        if (isinstance(image, dict) and image.get("b64_data")) or (
+            isinstance(url, str) and url
+        ):
+            result.image_count = 1
+        return result
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         """Format an OpenAI Image Edit multipart payload from RequestInfo.
