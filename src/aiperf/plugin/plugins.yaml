@@ -2382,7 +2382,7 @@ public_dataset_loader:
       dataset. Selected automatically when you pass --hf-mooncake-dataset
       (which supplies the HuggingFace dataset repo name); passing
       --public-dataset mooncake_hf explicitly is equivalent.
-      Use --dataset-field to map source columns to Mooncake fields.
+      Use --mooncake-trace-to-hf-mapping to map source columns to Mooncake fields.
       Usage: --hf-mooncake-dataset org/trajectory-dataset
     metadata:
       hf_split: test
