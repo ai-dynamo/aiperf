@@ -4,6 +4,7 @@
 
 import asyncio
 import json
+import time
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -11,6 +12,7 @@ import aiohttp
 import pytest
 
 from aiperf.common.models import SSEField, SSEMessage
+from aiperf.common.monotonic_clock import process_clock
 from aiperf.transports.aiohttp_client import AioHttpClient
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
 from tests.unit.transports.conftest import (
@@ -612,6 +614,30 @@ class TestFirstTokenCallback:
         # All messages should be collected
         assert len(record.responses) == 2
         assert record.error is None
+
+
+class TestRecordWallClock:
+    """Records from one worker must share one wall-clock anchor."""
+
+    async def test_timestamps_follow_perf_counter_across_a_wall_clock_step(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_aiohttp_response: Mock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        process_clock()
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            setup_mock_session(mock_session_class, mock_aiohttp_response, ["request"])
+            first = await aiohttp_client.post_request("http://test.com/api", b"{}", {})
+            # An NTP step backwards between two requests on the same worker
+            # must not reorder their exported timestamps.
+            monkeypatch.setattr(time, "time_ns", lambda: 0)
+            second = await aiohttp_client.post_request("http://test.com/api", b"{}", {})
+
+        assert (
+            second.timestamp_ns - first.timestamp_ns
+            == second.start_perf_ns - first.start_perf_ns
+        )
 
 
 class TestExpectedRequestBodySize:
