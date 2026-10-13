@@ -216,10 +216,10 @@ def is_trace_or_verbatim_dataset(
     custom_dataset_type: object | None,
     public_dataset: object | None,
 ) -> bool:
-    """Whether a dataset is a trace / verbatim / weka type.
+    """Whether a dataset is a trace or verbatim type.
 
     True for the custom-dataset types in ``TRACE_VERBATIM_DATASET_TYPES`` and for
-    the HF-hosted weka public datasets (``weka_hf`` and the
+    the HF-hosted trace datasets (``mooncake_hf``, ``weka_hf``, and the
     ``semianalysis_cc_traces_weka*`` family). These are the datasets that use the
     mmap cache and skip inputs.json; everything else is treated as a cheap
     non-trace dataset that is never cached and always emits inputs.json.
@@ -231,7 +231,9 @@ def is_trace_or_verbatim_dataset(
         return True
     if public_dataset is not None:
         name = str(public_dataset)
-        if name == "weka_hf" or name.startswith("semianalysis_cc_traces_weka"):
+        if name in {"weka_hf", "mooncake_hf"} or name.startswith(
+            "semianalysis_cc_traces_weka"
+        ):
             return True
     return False
 

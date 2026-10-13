@@ -1209,7 +1209,9 @@ class TestSettingsPayloadFromRun:
             param({"dataset_filters": ["model=other-model", "benchmark=original-benchmark"]}, id="model_filter"),
         ],
     )  # fmt: skip
-    def test_mooncake_hf_source_changes_payload(self, flags: dict[str, object]) -> None:
+    def test_mooncake_hf_source_changes_cache_key(
+        self, flags: dict[str, object]
+    ) -> None:
         base = {
             "model_names": ["test-model"],
             "random_seed": 42,
@@ -1218,12 +1220,13 @@ class TestSettingsPayloadFromRun:
             "mooncake_trace_to_hf_mapping": ["messages=history"],
             "dataset_filters": ["model=original-model", "benchmark=original-benchmark"],
         }
-        before = mmap_cache._settings_payload_from_run(
+        before = mmap_cache.compute_cache_key_from_run(
             make_run_from_cli(CLIConfig(**base))
         )
-        after = mmap_cache._settings_payload_from_run(
+        after = mmap_cache.compute_cache_key_from_run(
             make_run_from_cli(CLIConfig(**(base | flags)))
         )
+        assert before is not None and after is not None
         assert before != after
 
     def test_prompt_dump_excludes_cache_bust(self) -> None:
