@@ -629,7 +629,7 @@ class TestRealtimeTelemetryDashboard:
             mock_all_nodes.remove_class.assert_called_once_with("hidden")
             mock_all_nodes.update.assert_called_once_with(metrics)
 
-    def test_a_status_message_after_data_gives_way_to_the_next_batch(
+    def test_on_realtime_telemetry_metrics_after_status_message_unhides_view(
         self, dashboard: RealtimeTelemetryDashboard
     ) -> None:
         """Under --ui dashboard, data is already flowing when the pane is toggled,
