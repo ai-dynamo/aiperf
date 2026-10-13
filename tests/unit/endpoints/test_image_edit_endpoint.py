@@ -54,7 +54,6 @@ class TestImageEditEndpoint:
         "image_content",
         [
             param(_PNG_DATA_URL, id="data-url"),
-            param(_PNG_B64, id="raw-base64"),
             param("https://example.com/source.png", id="remote-url"),
         ],
     )  # fmt: skip

@@ -92,7 +92,7 @@ aiperf profile \
 
 **Done!** This sends 50 requests to `http://localhost:30000/v1/images/edits` with multipart-encoded prompt + reference image, plus diffusion-specific extras (`size`, `num_inference_steps`, `guidance_scale`).
 
-Image throughput and image latency use the single reference image sent in each request, whether uploaded as a file or supplied through the SGLang `url` field. The output image count (`n`) does not change the reference image count.
+Image throughput and image latency use the single reference image sent in each request, whether uploaded as a file or supplied through the SGLang `url` field. The output image count (`n`) does not change this input count, but it can affect request latency and therefore the reported metric values.
 
 **Sample Output (shape only — exact numbers will depend on your hardware):**
 ```
@@ -144,8 +144,8 @@ Image edit shares its metric set with image generation; both endpoints report im
 |---|---|
 | **Request Latency (ms)** | End-to-end time per request — from sending the multipart body to receiving the edited image. |
 | **Input Sequence Length (tokens)** | Token count of the prompt portion only; the reference image is uploaded separately as binary and does not contribute. |
-| **Image Throughput (images/sec)** | Number of edited images returned per second across all concurrent workers. |
-| **Image Latency (ms/image)** | Per-image latency; equals request latency when each request returns one image. |
+| **Image Throughput (images/sec)** | Per-request reference image count divided by request latency in seconds. With one reference image, this is `1 / request_latency_seconds`. |
+| **Image Latency (ms/image)** | Request latency in milliseconds divided by the reference image count. With one reference image, this equals request latency, regardless of the output image count (`n`). |
 | **Request Throughput (requests/sec)** | Sustained request rate. |
 | **Request Count (requests)** | Total completed requests. |
 
