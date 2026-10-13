@@ -222,7 +222,7 @@ aiperf profile \
     --request-count 2
 ```
 
-Without `audio_duration_seconds`, RTFx is omitted from the results for these requests. The value is self-reported and unvalidated against the actual audio content, so it must be greater than 0 to produce RTFx — `0` (or omitting the field) is treated the same as "unknown" and silently yields no RTFx for that request.
+Without `audio_duration_seconds`, RTFx is omitted from the results for these requests. The value is self-reported and unvalidated against the actual audio content; it must be a finite value greater than 0 (`0`, negative, or infinite values are rejected when the dataset is loaded).
 
 ---
 

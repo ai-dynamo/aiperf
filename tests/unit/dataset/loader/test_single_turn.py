@@ -118,10 +118,9 @@ class TestSingleTurn:
         with pytest.raises(ValueError):
             SingleTurn(text="Hello", audio_duration_seconds=float("inf"))
 
-    def test_create_with_audio_duration_seconds_zero_allowed(self):
-        data = SingleTurn(text="Hello", audio_duration_seconds=0.0)
-
-        assert data.audio_duration_seconds == 0.0
+    def test_create_with_audio_duration_seconds_zero_raises(self):
+        with pytest.raises(ValueError):
+            SingleTurn(text="Hello", audio_duration_seconds=0.0)
 
     def test_create_with_delay(self):
         """Test creating SingleTurn with delay."""
