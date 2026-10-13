@@ -24,7 +24,7 @@ Your goal is operational: find the single concurrency value that maximizes `outp
 
 ## The first run
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server weight=420 timeout=1800 -->
+<!-- aiperf-run-vllm-longrun-openai-endpoint-server weight=1200 timeout=5400 -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -39,7 +39,7 @@ aiperf profile \
     --request-count 20 \
     --warmup-request-count 5
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- /aiperf-run-vllm-longrun-openai-endpoint-server -->
 
 Flag-by-flag for this scenario (general semantics live in the [BO reference](../sweeping/bayesian-optimization.md#flag-reference)):
 
