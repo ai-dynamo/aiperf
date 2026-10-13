@@ -104,7 +104,7 @@ def _walk_item(
     role = item.get("role")
     in_messages = isinstance(role, str)
     _walk_item_tool_calls(item, result, in_messages=in_messages)
-    _walk_item_function_call(item, result)
+    _walk_item_function_call(item, result, type_to_media)
     if in_messages:
         # Chat templates expect string content. Concatenate the text parts
         # of mixed-content messages; media parts are dropped here (they don't
@@ -122,6 +122,8 @@ def _walk_item_content(
     item: dict[str, Any],
     result: ExtractedPayload,
     type_to_media: dict[str, MediaType],
+    *,
+    content_field: str = "content",
 ) -> list[str]:
     """Chat-shape ``content`` (string or content-parts array).
 
@@ -129,7 +131,7 @@ def _walk_item_content(
     assemble the message's chat-template ``content`` string.
     """
     msg_text_parts: list[str] = []
-    content = item.get("content")
+    content = item.get(content_field)
     if isinstance(content, str):
         result.texts.append(content)
         msg_text_parts.append(content)
@@ -191,7 +193,11 @@ def _walk_item_tool_calls(
                 _append_tool_texts(result, collected)
 
 
-def _walk_item_function_call(item: dict[str, Any], result: ExtractedPayload) -> None:
+def _walk_item_function_call(
+    item: dict[str, Any],
+    result: ExtractedPayload,
+    type_to_media: dict[str, MediaType],
+) -> None:
     """Responses-shape replayed ``function_call`` and ``function_call_output``."""
     item_type = item.get("type")
     collected: list[str] = []
@@ -201,6 +207,13 @@ def _walk_item_function_call(item: dict[str, Any], result: ExtractedPayload) -> 
         output_text = item.get("output")
         if isinstance(output_text, str) and output_text:
             collected.append(output_text)
+        elif isinstance(output_text, list):
+            collected = _walk_item_content(
+                item, result, type_to_media, content_field="output"
+            )
+            # These role-less items are absent from the chat-template view.
+            result.tool_texts.extend(collected)
+            return
     _append_tool_texts(result, collected)
 
 

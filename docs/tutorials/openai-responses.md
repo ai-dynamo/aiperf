@@ -399,6 +399,10 @@ When migrating AIPerf benchmarks from `--endpoint-type chat` to `--endpoint-type
 
 ## Streaming Event Handling
 
+Client-side Input Sequence Length includes text from `function_call_output`
+items, whether their `output` is a string or an array of `input_text` parts.
+`input_image` parts in those arrays also contribute to input image counts.
+
 For reference, AIPerf processes these Responses API streaming events:
 
 | Event Type | Data Extracted |
