@@ -670,7 +670,8 @@ class CLIConfig(BaseConfig):
         Field(
             description="Additional input parameters to include in every API request payload. Specify as `key:value` pairs "
             "(e.g., `--extra-inputs temperature:0.7 top_p:0.9`) or as JSON string (e.g., `'{\"temperature\": 0.7}'`). "
-            "These parameters are merged with request-specific inputs and sent directly to the endpoint API.",
+            "These parameters are merged with request-specific inputs and sent directly to the endpoint API. "
+            "JSON values preserve their types; key:value strings are automatically coerced.",
         ),
         CLIParameter(
             name=("--extra-inputs",),
@@ -686,7 +687,7 @@ class CLIConfig(BaseConfig):
             description="Custom HTTP headers to include with every request. Specify as `Header:Value` pairs "
             "(e.g., `--header X-Custom-Header:value`) or as JSON string. Can be specified multiple times. "
             "Useful for custom authentication, tracking, or API-specific requirements. Combined with auto-generated headers "
-            "(e.g., `Authorization` from `--api-key`).",
+            "(e.g., `Authorization` from `--api-key`). Use JSON to preserve literal values such as `none`.",
         ),
         BeforeValidator(parse_str_or_dict_as_tuple_list),
         CLIParameter(
