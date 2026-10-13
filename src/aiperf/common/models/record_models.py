@@ -1730,9 +1730,16 @@ class ParsedResponseRecord:
     """Engine-neutral per-request speculative-decoding acceptance record, filled
     by a ``SpecDecodeAdapterProtocol`` when the response carried spec-decode
     stats. ``None`` when: spec decode is off or the request had no verify steps
-    (no payload); the request produced multiple sequences (``n > 1``, which is
-    suppressed); no registered adapter recognized the payload; or the payload
-    was malformed and the adapter rejected it."""
+    (no payload, or a zero-step payload the parser drops); the request produced
+    multiple sequences (``n > 1``, which is suppressed); no registered adapter
+    recognized the payload; or the payload was malformed and the adapter
+    rejected it."""
+
+    spec_decode_zero_step: bool = False
+    """True when the engine reported spec-decode stats for this request but it
+    ran no verify step (``num_spec_steps == 0``). Its record is dropped, so
+    ``spec_decode_acceptance`` is None; this flag lets the run count such
+    requests separately from runs where spec decode is off."""
 
     @cached_property
     def final_usage(self) -> Usage | None:

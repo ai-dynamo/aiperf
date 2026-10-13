@@ -132,6 +132,11 @@ class SpecDecodeAcceptanceRecord(AIPerfBaseModel):
                 f"num_accepted_draft_tokens ({self.num_accepted_draft_tokens}) "
                 f"exceeds num_draft_tokens ({self.num_draft_tokens})"
             )
+        if self.num_spec_steps == 0 and self.num_draft_tokens > 0:
+            raise ValueError(
+                f"num_draft_tokens is {self.num_draft_tokens}, but num_spec_steps "
+                "is 0: every proposed draft is verified in some step"
+            )
         self._check_per_step_invariants()
         return self
 
