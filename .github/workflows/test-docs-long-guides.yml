@@ -6,8 +6,10 @@
 #
 # A Bayesian search runs 30 iterations x 3 trials (~90 benchmarks, ~100 min);
 # a search recipe self-terminates on improvement-patience after ~25 iterations
-# (~30 min). Together that is ~2h15m, which would roughly triple the nightly
-# matrix's ~45 min wall clock every weeknight.
+# (~30 min); the adaptive-search walkthrough runs 6 iterations whose per-point
+# concurrency the planner is free to push to 64 (~30 min observed). Together
+# that is ~2h45m, which would more than triple the nightly matrix's ~45 min
+# wall clock every weeknight.
 #
 # Weekly rather than nightly: the search machinery changes about once a week
 # (13 of 191 commits over 90 days), so a nightly run would re-test unchanged
@@ -36,11 +38,11 @@ jobs:
     name: Test Docs End-to-End (long-running guides)
     runs-on: prod-aiperf-tester-amd-gpu-v1
     # The per-command ceilings live on the tags themselves (timeout=9000 /
-    # timeout=5400) and already sum to 240 minutes, so the job needs headroom
-    # above that for the image build, the vLLM boot and the model download --
-    # at 240 a shard that actually ran to its ceilings would be killed before
-    # reporting.
-    timeout-minutes: 300
+    # timeout=5400 / timeout=5400) and already sum to 330 minutes, so the job
+    # needs headroom above that for the image build, the vLLM boot and the
+    # model download -- at 330 a shard that actually ran to its ceilings would
+    # be killed before reporting.
+    timeout-minutes: 390
     strategy:
       fail-fast: false
       matrix:
