@@ -14,6 +14,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from pytest import param
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TOOL = REPO_ROOT / "tools/check_docs_e2e_tags.py"
@@ -243,3 +244,76 @@ def test_tagging_a_non_aiperf_block_does_not_satisfy_the_gate(tmp_path) -> None:
     assert gate.tagged_run_count(doc) == 0, (
         "a tagged block with no aiperf command must not count as coverage"
     )
+
+
+def test_editing_an_untagged_backlog_doc_does_not_fail_the_gate(
+    tmp_path, monkeypatch
+) -> None:
+    """``--diff-filter=A`` is load-bearing and nothing else pins it.
+
+    69 committed docs carry runnable commands without tags, tracked separately
+    as backlog. Dropping the filter widens the gate from added files to every
+    modified one, so a PR that merely edits a prose line in any of them starts
+    failing on a tag it was never asked to add.
+    """
+    import check_docs_e2e_tags as gate
+
+    repo = _repo_with_one_committed_doc(tmp_path)
+    (repo / "docs" / "existing.md").write_text(UNTAGGED_DOC)
+    _git(repo, "add", "-A")
+    monkeypatch.setattr(gate, "REPO_ROOT", repo)
+    monkeypatch.setattr(sys, "argv", ["check_docs_e2e_tags.py", "--base", "HEAD"])
+
+    gate.main()  # modified, not added: no SystemExit
+
+
+def test_an_uppercase_md_extension_is_still_collected(tmp_path, monkeypatch) -> None:
+    """``entry.endswith(".md")`` skipped ``.MD`` outright, so a new doc named
+    that way escaped the gate however it was written."""
+    import check_docs_e2e_tags as gate
+
+    repo = _repo_with_one_committed_doc(tmp_path)
+    _stage_new_doc(repo, "Shouty.MD", UNTAGGED_DOC)
+    monkeypatch.setattr(gate, "REPO_ROOT", repo)
+    monkeypatch.setattr(sys, "argv", ["check_docs_e2e_tags.py", "--base", "HEAD"])
+
+    with pytest.raises(SystemExit) as excinfo:
+        gate.main()
+    assert excinfo.value.code == 1
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        param("$ aiperf profile --model m", id="shell-prompt"),
+        param("uv run aiperf profile --model m", id="uv-run"),
+        param("$ uv run aiperf profile --model m", id="prompt-and-uv-run"),
+        param("FOO=1 uv run aiperf profile --model m", id="env-then-uv-run"),
+    ],
+)  # fmt: skip
+def test_a_decorated_invocation_still_counts(tmp_path, command: str) -> None:
+    """A prompt or a runner in front of the command does not make it prose."""
+    import check_docs_e2e_tags as gate
+
+    doc = tmp_path / "decorated.md"
+    doc.write_text(f"# D\n\n```bash\n{command}\n```\n")
+    assert gate.has_runnable_command(doc)
+
+
+def test_a_command_split_across_a_continuation_counts(tmp_path) -> None:
+    """``aiperf \\`` with ``profile`` on the next line is one command, and
+    neither line alone reads as a profile run."""
+    import check_docs_e2e_tags as gate
+
+    doc = tmp_path / "wrapped.md"
+    doc.write_text("# W\n\n```bash\naiperf \\\n    profile \\\n    --model m\n```\n")
+    assert gate.has_runnable_command(doc)
+
+
+def test_a_non_profile_subcommand_survives_prefix_stripping(tmp_path) -> None:
+    """Stripping prefixes must not turn ``aiperf kube`` into a profile run."""
+    import check_docs_e2e_tags as gate
+
+    doc = tmp_path / "kube.md"
+    doc.write_text("# K\n\n```bash\n$ uv run aiperf kube deploy --name x\n```\n")
+    assert not gate.has_runnable_command(doc)

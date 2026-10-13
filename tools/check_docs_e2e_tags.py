@@ -88,7 +88,7 @@ def added_markdown_files(base: str) -> list[Path]:
             f"::error::Could not diff against {base}: {e.stderr.strip() or e}. "
             "Refusing to report success without checking any files."
         ) from e
-    return [Path(entry) for entry in out.split("\0") if entry.endswith(".md")]
+    return [Path(entry) for entry in out.split("\0") if entry.lower().endswith(".md")]
 
 
 # A command may be prefixed with environment assignments
@@ -96,6 +96,12 @@ def added_markdown_files(base: str) -> list[Path]:
 # stripped before the subcommand is read, or the line reads as no command at
 # all and the doc silently escapes the gate.
 _ENV_ASSIGNMENT = re.compile(r"""^[A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*)\s+""")
+
+# A copyable command is also written with a shell prompt in front of it
+# (``$ aiperf profile ...``, as ``docs/sweeping/search-recipes.md`` does) or
+# behind a runner that execs it (``uv run aiperf profile ...``). Both read as
+# "no command" unless stripped, and the doc escapes the gate untagged.
+_RUN_PREFIXES = (re.compile(r"^\$\s+"), re.compile(r"^uv\s+run\s+"))
 
 
 def invokes_aiperf_profile(line: str) -> bool:
@@ -111,8 +117,13 @@ def invokes_aiperf_profile(line: str) -> bool:
     the allowlist.
     """
     text = line.strip()
-    while match := _ENV_ASSIGNMENT.match(text):
-        text = text[match.end() :]
+    changed = True
+    while changed:
+        changed = False
+        for pattern in (_ENV_ASSIGNMENT, *_RUN_PREFIXES):
+            if match := pattern.match(text):
+                text = text[match.end() :]
+                changed = True
     return text.startswith("aiperf profile")
 
 
@@ -124,8 +135,30 @@ def has_runnable_command(path: Path) -> bool:
     """
     return any(
         invokes_aiperf_profile(line)
-        for line in _fenced_lines(path.read_text(encoding="utf-8"))
+        for line in _join_continuations(_fenced_lines(path.read_text(encoding="utf-8")))
     )
+
+
+def _join_continuations(lines: Iterator[str]) -> Iterator[str]:
+    """Fold backslash-continued lines into the command they belong to.
+
+    Guides wrap long invocations, and ``aiperf \\`` with ``profile`` on the
+    next line reads as neither a command nor a subcommand when each line is
+    inspected alone.
+    """
+    pending: list[str] = []
+    for line in lines:
+        stripped = line.rstrip()
+        if stripped.endswith("\\"):
+            pending.append(stripped[:-1].strip())
+            continue
+        if pending:
+            yield " ".join([*pending, stripped.strip()])
+            pending = []
+        else:
+            yield line
+    if pending:
+        yield " ".join(pending)
 
 
 def _fenced_lines(text: str) -> Iterator[str]:
