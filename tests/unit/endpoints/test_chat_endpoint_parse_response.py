@@ -82,7 +82,6 @@ class TestChatEndpointParseResponse:
         data_key: str,
         content: str | None,
     ) -> None:
-        """Legacy function output contributes content and client-side tokens."""
         response = create_mock_response(
             123456789,
             {
@@ -111,7 +110,6 @@ class TestChatEndpointParseResponse:
     def test_process_responses_legacy_function_call_chunks(
         self, endpoint: ChatEndpoint
     ) -> None:
-        """Retain each function delta for timing and reassemble it for replay."""
         deltas = [
             {"name": "get_weather", "arguments": ""},
             {"arguments": '{"city":'},
