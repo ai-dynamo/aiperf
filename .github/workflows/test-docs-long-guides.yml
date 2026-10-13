@@ -7,9 +7,15 @@
 # A Bayesian search runs 30 iterations x 3 trials (~90 benchmarks, ~100 min);
 # a search recipe self-terminates on improvement-patience after ~25 iterations
 # (~30 min); the adaptive-search walkthrough runs 6 iterations whose per-point
-# concurrency the planner is free to push to 64 (~30 min observed). Together
-# that is ~2h45m, which would more than triple the nightly matrix's ~45 min
-# wall clock every weeknight.
+# concurrency the planner is free to push to 64 (~30 min observed); the AIME
+# accuracy example gives each of its 4 problems a 32768-token reasoning budget,
+# and a single problem took ~20 min against Qwen3-0.6B (~60 min). Together that
+# is ~3h40m, which would roughly quintuple the nightly matrix's ~45 min wall
+# clock every weeknight.
+#
+# Neither long guide is shrunk to fit: capping AIME's generation truncates the
+# chain-of-thought mid-reasoning, which breaks the grader and the guide's
+# trt-llm recipe alignment. The scale is the thing under test.
 #
 # Weekly rather than nightly: the search machinery changes about once a week
 # (13 of 191 commits over 90 days), so a nightly run would re-test unchanged
@@ -37,12 +43,13 @@ jobs:
   test-docs-end-to-end-long:
     name: Test Docs End-to-End (long-running guides)
     runs-on: prod-aiperf-tester-amd-gpu-v1
-    # The per-command ceilings live on the tags themselves (timeout=9000 /
-    # timeout=5400 / timeout=5400) and already sum to 330 minutes, so the job
-    # needs headroom above that for the image build, the vLLM boot and the
-    # model download -- at 330 a shard that actually ran to its ceilings would
-    # be killed before reporting.
-    timeout-minutes: 390
+    # The per-command ceilings live on the tags themselves (one timeout=9000
+    # plus three timeout=5400) and already sum to 420 minutes, so the job needs
+    # headroom above that for the image build, the vLLM boot and the model
+    # download -- at 420 a shard that actually ran to every ceiling would be
+    # killed before reporting. Expected wall clock is far lower: the ceilings
+    # are worst cases, and the guides above total ~3h40m in practice.
+    timeout-minutes: 480
     strategy:
       fail-fast: false
       matrix:
