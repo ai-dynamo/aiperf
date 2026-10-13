@@ -1532,6 +1532,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 type="CreditProcessingError",
                 code=500,
             )
+        failed_at_perf_ns = time.perf_counter_ns()
         await self._send_inference_result_message(
             RequestRecord(
                 request_info=RecordContext(
@@ -1549,9 +1550,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     parent_correlation_id=credit.parent_correlation_id,
                 ),
                 model_name=self.model_endpoint.primary_model_name,
-                timestamp_ns=time.time_ns(),
-                start_perf_ns=time.perf_counter_ns(),
-                end_perf_ns=time.perf_counter_ns(),
+                start_perf_ns=failed_at_perf_ns,
+                end_perf_ns=failed_at_perf_ns,
                 error=error,
             )
         )
@@ -2247,6 +2247,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Check for error in conversation response
         if isinstance(conversation_response, ErrorMessage):
             error = conversation_response.error
+            failed_at_perf_ns = time.perf_counter_ns()
             await self._send_inference_result_message(
                 RequestRecord(
                     request_info=RecordContext(
@@ -2264,9 +2265,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                         parent_correlation_id=credit_context.credit.parent_correlation_id,
                     ),
                     model_name=self.model_endpoint.primary_model_name,
-                    timestamp_ns=time.time_ns(),
-                    start_perf_ns=time.perf_counter_ns(),
-                    end_perf_ns=time.perf_counter_ns(),
+                    start_perf_ns=failed_at_perf_ns,
+                    end_perf_ns=failed_at_perf_ns,
                     error=error,
                 )
             )

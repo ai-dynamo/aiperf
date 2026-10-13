@@ -226,7 +226,6 @@ dependencies = [
     { name = "aiofiles" },
     { name = "aiohttp" },
     { name = "aiosqlite" },
-    { name = "crick" },
     { name = "cyclopts" },
     { name = "dash" },
     { name = "dash-bootstrap-components" },
@@ -296,6 +295,7 @@ botorch = [
 dev = [
     { name = "black" },
     { name = "botocore" },
+    { name = "crick" },
     { name = "httpx" },
     { name = "hypothesis" },
     { name = "jsonschema" },
@@ -328,8 +328,12 @@ otel = [
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
 ]
+tdigest = [
+    { name = "crick" },
+]
 test = [
     { name = "botocore" },
+    { name = "crick" },
     { name = "httpx" },
     { name = "hypothesis" },
     { name = "jsonschema" },
@@ -363,7 +367,8 @@ requires-dist = [
     { name = "black", marker = "extra == 'dev'", specifier = ">=25.1.0" },
     { name = "botocore", marker = "extra == 'aws'", specifier = ">=1.34.0" },
     { name = "botorch", marker = "extra == 'botorch'", specifier = ">=0.10" },
-    { name = "crick", specifier = "~=0.0.8" },
+    { name = "crick", marker = "extra == 'tdigest'", specifier = "~=0.0.8" },
+    { name = "crick", marker = "extra == 'test'", specifier = "~=0.0.8" },
     { name = "cyclopts", specifier = ">=4,<5" },
     { name = "dash", specifier = "~=3.1.0" },
     { name = "dash-bootstrap-components", specifier = "~=2.0.0" },
@@ -435,7 +440,7 @@ requires-dist = [
     { name = "wandb", marker = "extra == 'wandb'", specifier = ">=0.19.0,<1.0.0" },
     { name = "zstandard", specifier = ">=0.25.0" },
 ]
-provides-extras = ["mlflow", "wandb", "otel", "aws", "test", "dev", "botorch", "optuna", "accuracy"]
+provides-extras = ["tdigest", "mlflow", "wandb", "otel", "aws", "test", "dev", "botorch", "optuna", "accuracy"]
 
 [package.metadata.requires-dev]
 dev = [
