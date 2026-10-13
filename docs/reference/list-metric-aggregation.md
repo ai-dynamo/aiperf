@@ -10,7 +10,7 @@ Some record metrics carry a `list[...]` value per request rather than a single s
 
 At the run level the records-manager has to summarize across all per-request lists into a single set of stats (`avg`, `min`, `max`, `std`, `p50`, `p90`, `p99`, …). Naïvely concatenating the lists into a flat array gives exact stats but linear memory: `records × samples_per_record × 8 B`. For a long-context streaming benchmark (1 M requests × ~5 K chunks/request) that reaches **~37 GB** on the records-manager pod alone — the original cause of an OOM at ramp scale.
 
-To bound memory, AIPerf aggregates list-valued record metrics with a **t-digest sketch** + **five running side-channel scalars**.
+To bound memory, AIPerf aggregates list-valued record metrics with a **t-digest sketch** + **six running side-channel scalars**.
 
 ## What stays exact, what becomes approximate
 
@@ -20,7 +20,7 @@ To bound memory, AIPerf aggregates list-valued record metrics with a **t-digest 
 | `sum` | running `float64` | agrees with a direct numpy sum to floating-point round-off; the summation order follows the ingest batches |
 | `min`, `max` | running scalars | bit-exact |
 | `avg` | `sum / count` | as `sum` |
-| `std` | Welford's online algorithm (`sqrt(max(0, m2/count))`) | population std; batch `extend` is bit-exact against `np.std`, per-sample `append` agrees to ~1e-14 relative |
+| `std` | Welford's online algorithm (`sqrt(max(0, m2/count))`) | population std; a single `extend` matched `np.std` bit-for-bit on the tested inputs; repeated `extend` (the per-record path) and per-sample `append` carry order- and offset-dependent round-off, see below |
 | `p1` … `p99` | t-digest sketch | approximate — see empirical band below |
 
 Memory cost of the side-channel scalars is **48 bytes** regardless of sample count (`_count`, `_sum`, `_mean`, `_m2`, `_min`, `_max`). T-digest centroids stay bounded (~4 KB sketch at the default compression) regardless of sample count.
@@ -37,7 +37,7 @@ The textbook one-pass form, `sqrt(sum_sq/count − avg²)`, subtracts two large 
 
 Relative to `np.std`, seed 1342, 50 K samples per case. At `1e12` ns the textbook form cancels to exactly zero while Welford holds to eight digits. `TDigestListMetricAggregator` keeps a running mean and `m2` for this reason.
 
-The two ingest paths reduce in different orders, so they are not bit-identical to each other: `extend` computes a batch mean and `m2` and merges with Chan's parallel combine, which reproduces `np.std` bit-for-bit, while `append` accumulates per sample and lands within about 1e-14. Neither is a correctness problem at nanosecond magnitudes, but only the batch path is bit-exact.
+The two ingest paths reduce in different orders, so neither is bit-identical to the other or, in general, to `np.std`. A single `extend` computes the batch mean and `m2` directly and matched `np.std` bit-for-bit on all three cases above. Production ingest calls `extend` once per record (`add_for_record`), so every record after the first is merged with Chan's parallel combine, and the result depends on the reduction order: with the same samples split into 100-value records, the merged `std` differs from `np.std` by 4.9e-12 relative at `1e9` ns and 9.2e-11 at `1e12` ns. `append` uses Welford's per-sample update, and its error grows with the offset relative to the spread, as the table shows. These are measurements on the fixtures above, not error bounds; at nanosecond latencies they sit far below anything a benchmark resolves.
 
 ## Empirical accuracy
 
