@@ -1521,3 +1521,22 @@ class TestSingleTrialLayout:
 
     def test_the_pareto_frontier_is_found(self):
         assert self._compute()["pareto_optimal"] == [{"concurrency": 4}]
+
+    def test_a_compound_stat_objective_is_read_from_the_tag_block(self):
+        """``ci_low`` contains an underscore, so the key must not be split at
+        the last one (which would look up tag ``time_to_first_token_ci``)."""
+        stats = {
+            ParameterCombination({"concurrency": c}): {
+                "request_throughput": {"mean": thr, "avg": thr},
+                "time_to_first_token": {"mean": 50.0, "avg": 50.0, "ci_low": lo},
+            }
+            for c, thr, lo in [(1, 10.0, 5.0), (2, 20.0, 8.0), (3, 15.0, 9.0)]
+        }
+        objectives = [
+            ParetoObjective("request_throughput_avg", OptimizationDirection.MAXIMIZE),
+            ParetoObjective(
+                "time_to_first_token_ci_low", OptimizationDirection.MINIMIZE
+            ),
+        ]
+        pareto = identify_pareto_optimal(stats, objectives)
+        assert sorted(c.parameters["concurrency"] for c in pareto) == [1, 2]

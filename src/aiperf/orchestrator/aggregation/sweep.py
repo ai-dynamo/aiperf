@@ -155,6 +155,20 @@ def _dominates(
     return better_or_equal == len(objectives) and strictly_better > 0
 
 
+# Stat names that contain an underscore themselves, so a flattened key
+# ending in one of them must not be split at its last underscore.
+_COMPOUND_STATS: tuple[str, ...] = ("ci_low", "ci_high")
+
+
+def _split_flat_key(flat_key: str) -> tuple[str, str]:
+    """Split ``<metric tag>_<stat>`` into ``(metric tag, stat)``."""
+    for stat in _COMPOUND_STATS:
+        if flat_key.endswith(f"_{stat}"):
+            return flat_key[: -len(stat) - 1], stat
+    metric_tag, _, stat = flat_key.rpartition("_")
+    return metric_tag, stat
+
+
 def _stat_value(stats: dict[str, Any], flat_key: str) -> float | None:
     """Read a flattened ``<metric tag>_<stat>`` key from either stats layout.
 
@@ -166,7 +180,7 @@ def _stat_value(stats: dict[str, Any], flat_key: str) -> float | None:
     block = stats.get(flat_key)
     if isinstance(block, dict) and "mean" in block:
         return block["mean"]
-    metric_tag, _, stat = flat_key.rpartition("_")
+    metric_tag, stat = _split_flat_key(flat_key)
     if not metric_tag:
         return None
     return read_metric_value(stats, metric_tag, stat)
@@ -183,7 +197,7 @@ def _objective_values(
 
 
 def _stat_unit(stats: dict[str, Any], flat_key: str, default: str) -> str:
-    block = stats.get(flat_key) or stats.get(flat_key.rpartition("_")[0]) or {}
+    block = stats.get(flat_key) or stats.get(_split_flat_key(flat_key)[0]) or {}
     return block.get("unit") or default
 
 
