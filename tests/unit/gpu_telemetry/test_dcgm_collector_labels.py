@@ -32,6 +32,13 @@ def test_lowercase_hostname_label_is_read(collector):
     assert records[0].hostname == "node-1"
 
 
+def test_legacy_uppercase_only_still_read(collector):
+    records = collector._parse_metrics_to_records(METRIC.format(label="Hostname"))
+
+    assert records
+    assert records[0].hostname == "node-1"
+
+
 def test_lowercase_wins_when_both_labels_are_present(collector):
     metric = (
         "# HELP DCGM_FI_DEV_GPU_TEMP GPU temperature\n"
