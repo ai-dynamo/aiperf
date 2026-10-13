@@ -124,3 +124,22 @@ def test_shards_stay_balanced() -> None:
     assert max(load) <= 1.35 * (sum(load) / len(load)), (
         f"shard weights are lopsided: {load}"
     )
+
+
+def test_importing_main_does_not_configure_logging(tmp_path, monkeypatch) -> None:
+    """``shard_commands`` lives in ``main``, so the unit tests import it.
+
+    ``setup_logging`` ran at module scope, attaching a ``FileHandler`` to the
+    root logger and creating ``test_execution.log`` in whatever directory
+    pytest was invoked from -- a side effect no fixture here undoes, and one
+    that outlives the import for the rest of the xdist worker.
+    """
+    import logging
+
+    monkeypatch.chdir(tmp_path)
+    before = list(logging.getLogger().handlers)
+
+    import main  # noqa: F401
+
+    assert logging.getLogger().handlers == before
+    assert not list(tmp_path.iterdir())

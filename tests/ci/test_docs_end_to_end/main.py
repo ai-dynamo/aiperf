@@ -15,8 +15,6 @@ from parser import MarkdownParser
 from test_runner import EndToEndTestRunner
 from utils import get_repo_root, setup_logging
 
-# Configure logging using centralized utility
-setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -72,6 +70,12 @@ def shard_commands(
 def main():
     """Main function"""
     import argparse
+
+    # Configured here rather than at import: setup_logging attaches a
+    # FileHandler to the root logger and creates test_execution.log in the
+    # caller's working directory, which the unit tests that import this module
+    # for shard_commands should not inherit.
+    setup_logging()
 
     parser = argparse.ArgumentParser(
         description="Run end-to-end tests from markdown documentation"
