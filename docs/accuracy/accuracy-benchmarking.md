@@ -16,7 +16,7 @@ aiperf profile --model Qwen/Qwen3-0.6B \
   --extra-inputs '{"temperature": 0, "stop": ["\n"]}'
 ```
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server weight=120 -->
+<!-- aiperf-run-vllm-longrun-openai-endpoint-server weight=3600 timeout=5400 -->
 ```bash
 # AIME competition math — defaults match the trt-llm benchmark recipe
 # (8-shot, chain-of-thought on, sympy-backed math grader)
@@ -28,7 +28,7 @@ aiperf profile --model Qwen/Qwen3-0.6B \
   --concurrency 4 \
   --extra-inputs '{"temperature": 0}'
 ```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+<!-- /aiperf-run-vllm-longrun-openai-endpoint-server -->
 
 ## trt-llm reference alignment
 
