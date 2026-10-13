@@ -451,6 +451,27 @@ async def test_cutoff_cancels_fallback_sleep_dispatch() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cutoff_abandons_child_whose_timer_already_fired() -> None:
+    parent = _parent_conv([_spawn_branch("b0", ["kid"], start_timestamp_ms=0.0)])
+    scheduler = MagicMock()
+    orch, _, issuer = _mk_harness(
+        [parent, _child_conv("kid", 4_000_000.0)], scheduler=scheduler
+    )
+
+    await orch.intercept(_mk_credit("parent", "P", 0))
+    # A timer that already fired is a running task, which cancel_all_pending()
+    # does not close: it resumes after the cutoff has rolled the child back.
+    fired = scheduler.schedule_later.call_args.args[1]
+    await orch.expire_replay_deadlines()
+    await fired
+
+    issuer.dispatch_first_turn.assert_not_awaited()
+    assert orch.stats.children_truncated == 1
+    assert orch.stats.children_spawned == 0
+    assert not orch.has_pending_branch_work()
+
+
+@pytest.mark.asyncio
 async def test_cutoff_leaves_fallback_task_already_dispatching() -> None:
     parent = _parent_conv(
         [_spawn_branch("b0", ["early", "late"], start_timestamp_ms=0.0)]

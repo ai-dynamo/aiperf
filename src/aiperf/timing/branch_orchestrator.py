@@ -1866,11 +1866,10 @@ class BranchOrchestrator:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + seconds
         while not self._cleaning_up and still_sendable():
-            remaining = deadline - loop.time()
-            if remaining <= 0:
-                return
             try:
-                await asyncio.wait_for(self._think_time_wake.wait(), timeout=remaining)
+                await asyncio.wait_for(
+                    self._think_time_wake.wait(), timeout=deadline - loop.time()
+                )
             except TimeoutError:
                 return
 
