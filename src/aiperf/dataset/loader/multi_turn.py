@@ -228,11 +228,11 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                 hoisted = None
 
             # A second consecutive leading system turn fails the hoist guard
-            # and stays as turn 0 (role="system"). The endpoints now merge
+            # and stays as turn 0 (role="system"). The endpoints merge
             # system_message into a rendered leading system message
             # unconditionally, so the hoisted prompt would reach the wire --
             # but fused into the second system turn as a single message,
-            # silently collapsing two the trace kept separate. Un-hoist:
+            # silently collapsing two messages the trace kept separate. Un-hoist:
             # restore the hoisted turn as turn 0 so both dispatch normally,
             # matching pre-hoist behavior for this ambiguous input.
             elif hoisted is not None and conversation.turns[0].role == "system":

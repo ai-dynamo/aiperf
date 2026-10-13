@@ -180,6 +180,18 @@ class ResponsesEndpoint(BaseEndpoint):
 
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         """Format OpenAI Responses API request payload from RequestInfo."""
+        payload, _ = self._build_payload(request_info)
+        self.trace(lambda: f"Formatted payload: {payload}")
+        return payload
+
+    def _build_payload(self, request_info: RequestInfo) -> tuple[dict[str, Any], bool]:
+        """Build the wire payload and report whether the system prompt was
+        merged into an input item that actually ships.
+
+        The flag is read off the final payload, after endpoint ``extra`` and
+        per-turn ``extra_body`` are applied, because either may replace
+        ``input`` and discard the merged item.
+        """
         if not request_info.turns:
             raise ValueError("Responses endpoint requires at least one turn.")
 
@@ -271,8 +283,8 @@ class ResponsesEndpoint(BaseEndpoint):
 
         self._maybe_enable_usage_stream_options(payload, model_endpoint)
 
-        self.trace(lambda: f"Formatted payload: {payload}")
-        return payload
+        merged_shipped = merge_prefix is not None and payload["input"] is input_items
+        return payload, merged_shipped
 
     @staticmethod
     def _system_prompt_already_stored(request_info: RequestInfo) -> bool:
@@ -310,18 +322,20 @@ class ResponsesEndpoint(BaseEndpoint):
 
         The worker records this next to the response ID on success only, so
         the flag always describes the response being chained onto. It holds
-        when the chain already carried the prompt, or when this request merged
-        it into an input item; prompts sent as ``instructions`` are not stored.
+        when the request still chains onto a history that carried the prompt,
+        or when the merged input item survived onto the wire; prompts sent as
+        ``instructions`` are not stored. Both are read from the built payload
+        so explicit overrides of ``input`` or ``previous_response_id`` are
+        reflected rather than inferred from the turns.
         """
         if not request_info.system_message:
             return False
-        if self._system_prompt_already_stored(request_info):
-            return True
-        turns = request_info.turns
-        rendered = self.build_messages(
-            [turns[-1]] if request_info.previous_response_id else turns
+        payload, merged_shipped = self._build_payload(request_info)
+        still_chained = (
+            self._system_prompt_already_stored(request_info)
+            and payload.get("previous_response_id") == request_info.previous_response_id
         )
-        return self._system_prompt_carrier(request_info, rendered)[1] is not None
+        return still_chained or merged_shipped
 
     _warned_chaining_isl: bool = False
 

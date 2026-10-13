@@ -1823,7 +1823,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 )
             )
         ):
-            stored_has_system_prompt = getattr(
+            compute_stored_flag = getattr(
                 self.inference_client.endpoint,
                 "stored_history_has_system_prompt",
                 None,
@@ -1831,9 +1831,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             session.store_response_id(
                 extract_response_id(record),
                 system_prompt_in_history=bool(
-                    stored_has_system_prompt
+                    compute_stored_flag
                     and request_info is not None
-                    and stored_has_system_prompt(request_info)
+                    and compute_stored_flag(request_info)
                 ),
             )
         self._populate_response_metrics(credit_context, record, parsed_responses)

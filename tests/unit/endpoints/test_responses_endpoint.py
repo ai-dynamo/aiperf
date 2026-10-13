@@ -1446,6 +1446,52 @@ class TestResponsesStatefulChaining:
         assert payload["input"][0]["content"] == "TURN POLICY"
         assert store_endpoint.stored_history_has_system_prompt(info) is True
 
+    @pytest.mark.parametrize("override_source", ["turn_extra", "endpoint_extra"])
+    def test_input_override_drops_merged_prompt_and_next_resends_instructions(
+        self, store_endpoint: ResponsesEndpoint, override_source: str
+    ) -> None:
+        """An explicit ``input`` override wins on the wire, so the merged prompt
+        never reaches stored history and the next chained request must resend it."""
+        override = [{"role": "user", "content": "OVERRIDE"}]
+        turn0 = self._system_user_turn("DATASET POLICY", "FIRST")
+        if override_source == "turn_extra":
+            turn0.extra_body = {"input": override}
+        else:
+            store_endpoint.model_endpoint.endpoint.extra = [("input", override)]
+        first_info = self._request(store_endpoint, [turn0])
+
+        first = store_endpoint.format_payload(first_info)
+        stored = store_endpoint.stored_history_has_system_prompt(first_info)
+        store_endpoint.model_endpoint.endpoint.extra = []
+        second = store_endpoint.format_payload(
+            self._request(
+                store_endpoint,
+                [turn0, self._user_turn("SECOND")],
+                previous_response_id="resp_first",
+                in_history=stored,
+            )
+        )
+
+        assert first["input"] == override
+        assert "instructions" not in first
+        assert stored is False
+        assert second["instructions"] == "CLI POLICY"
+
+    def test_previous_response_id_override_does_not_inherit_stored_flag(
+        self, store_endpoint: ResponsesEndpoint
+    ) -> None:
+        """Chaining onto a different response than the session's last one
+        means the session's stored-prompt fact no longer describes it."""
+        turn = self._user_turn("SECOND")
+        turn.extra_body = {"previous_response_id": "resp_elsewhere"}
+        info = self._request(
+            store_endpoint,
+            [turn],
+            previous_response_id="resp_first",
+            in_history=True,
+        )
+        assert store_endpoint.stored_history_has_system_prompt(info) is False
+
     def test_stored_history_has_system_prompt_false_without_system_message(
         self, store_endpoint: ResponsesEndpoint
     ) -> None:
