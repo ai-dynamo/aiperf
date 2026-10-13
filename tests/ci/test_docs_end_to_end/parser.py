@@ -66,9 +66,12 @@ class MarkdownParser:
 
             # Look for HTML comment tags. Two forms:
             #   <!-- tag-name -->
-            #   <!-- tag-name weight=<int> -->  (optional runtime hint, seconds)
-            # The weight hint is only meaningful on opening aiperf-run tags;
-            # it's silently ignored on closing tags (which the categorizer
+            #   <!-- tag-name attr=<value> ... -->
+            # Attributes parse generically; the ones read today are
+            # weight=<int> (runtime hint, seconds), timeout=<int> (per-command
+            # override) and path=<relative path> (on setup-file- tags). weight
+            # and timeout are only meaningful on opening aiperf-run tags; they
+            # are silently ignored on closing tags (which the categorizer
             # filters out anyway).
             if line.startswith("<!--") and line.endswith("-->"):
                 tag_match = re.match(r"<!--\s*(\S+)((?:\s+\w+=\S+)*)\s*-->", line)
@@ -171,7 +174,7 @@ class MarkdownParser:
         raw: str | None,
         attr: str,
         tag_name: str,
-        file_path: Path,
+        file_path: str,
         line: int,
     ) -> int | None:
         """Parse a positive-integer tag attribute, or None if absent or invalid.

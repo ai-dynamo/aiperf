@@ -4,7 +4,6 @@
 Test runner for executing server setup, health checks, and AIPerf tests.
 """
 
-import contextlib
 import logging
 import os
 import re
@@ -42,8 +41,13 @@ def _has_explicit_ui_flag(command: str) -> bool:
 
     Tokenizes so quoted text is not mistaken for an option: guides pass JSON
     payloads (``--extra-inputs '{"note": "--ui-type none"}'``) whose contents
-    are data, not flags. Treating that as an explicit choice would leave the
-    interactive UI on and hang the command in CI.
+    are data, not flags.
+
+    Neither direction hangs -- the runner pipes stdout, and AIPerf selects
+    ``UIType.NONE`` itself when no UI is set and stdout is not a TTY. What is
+    at stake is the opposite error: missing a flag the guide really did pass
+    means injecting a second one, and AIPerf rejects that outright with
+    ``Parameter --ui-type specified multiple times``.
     """
     try:
         tokens = shlex.split(command, comments=False)
@@ -61,9 +65,11 @@ def _first_unquoted_index(command: str, needle: str) -> int:
     """Index of ``needle`` outside any quoted span or shell comment, or -1.
 
     Guides routinely show a commented variant above the command they actually
-    run (``# aiperf profile --model other``). Matching that line would inject
-    the UI flag into the comment and leave the real invocation interactive,
-    which hangs the command until the watchdog kills it.
+    run (``# aiperf profile --model other``). Matching that line would bury the
+    injected flag in the comment, so the real invocation never receives it.
+    That does not hang -- AIPerf falls back to ``UIType.NONE`` on a piped
+    stdout -- but the harness then only appears to control the UI, and the
+    guide's own documented choice is what silently stops being honoured.
     """
     quote: str | None = None
     i = 0
@@ -109,25 +115,21 @@ def inject_ui_type(command: str, ui_type: str = AIPERF_UI_TYPE) -> str:
     return f"{command[:end]} --ui-type {ui_type}{command[end:]}"
 
 
-def deliver_command_over_stdin(process, command: str, label: str) -> bool:
-    """Write the command to the process and close stdin. True if delivered.
+def build_command_exec_argv(container_id: str, command: str) -> list[str]:
+    """Build the ``docker exec`` argv that runs one tagged command.
 
-    The command watchdog kills ``docker exec`` on timeout, which breaks this
-    pipe mid-write. That is the command failing, not the suite crashing:
-    letting ``BrokenPipeError`` propagate leaves ``run_tests`` entirely and
-    silently skips every remaining server.
+    The command is an argv element, never interpolated into a shell string.
+    Guides routinely pass JSON in single quotes (``--extra-inputs
+    '{"temperature": 0}'``); building ``bash -c '<command>'`` as text lets the
+    command's own quotes close the wrapper early, so the payload arrives as
+    ``{temperature: 0}`` and fails JSON validation.
+
+    Note the absence of ``-i``: the caller runs this with stdin closed. A
+    script delivered over stdin shares that stream with the commands it runs,
+    so the first one to read stdin consumes the rest of the block. Shared with
+    the unit tests so both properties are pinned where they are consumed.
     """
-    try:
-        process.stdin.write(command + "\n")
-        process.stdin.close()
-    except OSError as e:
-        logger.error(f"AIPerf {label}: could not deliver the command ({e!r})")
-        # Reap it, so the failure is a non-zero return code rather than a
-        # process left behind holding the container.
-        with contextlib.suppress(Exception):
-            process.kill()
-        return False
-    return True
+    return ["docker", "exec", container_id, "bash", "-c", command]
 
 
 def resolve_command_timeout(aiperf_cmd) -> int:
@@ -138,6 +140,18 @@ def resolve_command_timeout(aiperf_cmd) -> int:
     to ignore it, which is exactly the regression this guards.
     """
     return aiperf_cmd.timeout or AIPERF_COMMAND_TIMEOUT
+
+
+def is_unsafe_fixture_path(path: str) -> bool:
+    """Whether a ``path=`` attribute would escape the container working dir.
+
+    `path=` is ordinary documentation text that reaches a shell, so it is
+    checked twice: once up front, where an invalid guide is rejected before
+    anything is built or booted, and again at write time, which is the call
+    that actually depends on it. Shared so the two cannot disagree.
+    """
+    target = PurePosixPath(path)
+    return target.is_absolute() or ".." in target.parts
 
 
 def build_fixture_write_command(target: PurePosixPath) -> str:
@@ -388,15 +402,29 @@ class EndToEndTestRunner:
                 missing.append("health-check")
             if not server.aiperf_commands:
                 missing.append("aiperf-run")
+            # A conflict is two tags claiming one path, not an absent tag, so
+            # it reads as nonsense folded into the missing-command list
+            # ("missing non-conflicting fixtures for [...] command(s)").
+            problems = []
+            if missing:
+                problems.append(f"is missing {', '.join(missing)} command(s)")
             if server.fixture_conflicts:
-                missing.append(
-                    f"non-conflicting fixtures for {sorted(set(server.fixture_conflicts))}"
+                problems.append(
+                    "declares more than one file fixture for "
+                    f"{sorted(set(server.fixture_conflicts))}"
+                )
+            unsafe = sorted(
+                f.path for f in server.files if is_unsafe_fixture_path(f.path)
+            )
+            if unsafe:
+                problems.append(
+                    f"declares file fixtures outside the working directory {unsafe}"
                 )
 
-            if missing:
+            if problems:
                 logger.error(
-                    f"Server '{server_name}' is missing {', '.join(missing)} "
-                    f"command(s); skipping it and failing the run"
+                    f"Server '{server_name}' {' and '.join(problems)}; "
+                    f"skipping it and failing the run"
                 )
                 invalid.append(server_name)
                 continue
@@ -609,20 +637,22 @@ class EndToEndTestRunner:
 
             # Execute aiperf command in the container with verbose output
             aiperf_command_with_ui = inject_ui_type(aiperf_cmd.command)
-            # The command goes in over stdin, not interpolated into a
-            # single-quoted `bash -c '...'`. Guides routinely pass JSON in
-            # single quotes (--extra-inputs '{"temperature": 0}'), and wrapping
-            # that in single quotes strips them: the payload arrives as
-            # {temperature: 0} and fails JSON validation. Any guide using a
-            # single quote is otherwise impossible to tag.
-            exec_argv = [
-                "docker",
-                "exec",
-                "-i",
-                self.aiperf_container_id,
-                "bash",
-                "-s",
-            ]
+            # The command is passed as an argv element, never interpolated
+            # into a shell string. Guides routinely pass JSON in single quotes
+            # (--extra-inputs '{"temperature": 0}'); building `bash -c
+            # '<command>'` as text lets the command's own quotes close the
+            # wrapper early, so the payload arrives as {temperature: 0} and
+            # fails JSON validation.
+            #
+            # stdin is closed rather than carrying the script. Delivering the
+            # script over stdin leaves it on the same stream the commands read
+            # from, so the first command that reads stdin swallows the rest of
+            # the block: `cat` followed by another command prints that command
+            # instead of running it and still exits 0 -- a guide that silently
+            # benchmarks nothing while CI reports a pass.
+            exec_argv = build_command_exec_argv(
+                self.aiperf_container_id, aiperf_command_with_ui
+            )
 
             logger.info(
                 f"Executing AIPerf command {i + 1}/{len(server.aiperf_commands)} against {server.name}:"
@@ -634,7 +664,7 @@ class EndToEndTestRunner:
 
             aiperf_process = subprocess.Popen(
                 exec_argv,
-                stdin=subprocess.PIPE,
+                stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -642,8 +672,6 @@ class EndToEndTestRunner:
                 universal_newlines=True,
                 start_new_session=True,
             )
-            assert aiperf_process.stdin is not None
-
             kill_guard = _ProcessGroupKillGuard()
             command_timeout = resolve_command_timeout(aiperf_cmd)
             watchdog = threading.Timer(
@@ -660,15 +688,6 @@ class EndToEndTestRunner:
             watchdog.start()
 
             try:
-                # Delivered inside the watchdog's scope: if docker exec stops
-                # reading, this write blocks on a full pipe, and a watchdog
-                # armed afterwards would never start to kill it.
-                deliver_command_over_stdin(
-                    aiperf_process,
-                    aiperf_command_with_ui,
-                    f"test {i + 1} for {server.name}",
-                )
-
                 # Show real-time output
                 aiperf_output_lines = []
                 while True:
@@ -724,7 +743,7 @@ class EndToEndTestRunner:
         """
         for fixture in server.files:
             target = PurePosixPath(fixture.path)
-            if target.is_absolute() or ".." in target.parts:
+            if is_unsafe_fixture_path(fixture.path):
                 logger.error(
                     f"Refusing to write fixture outside the working directory: "
                     f"{fixture.path} ({fixture.file_path}:{fixture.start_line})"

@@ -19,6 +19,7 @@ HARNESS = Path(__file__).resolve().parents[3] / "tests/ci/test_docs_end_to_end"
 sys.path.insert(0, str(HARNESS))
 
 from parser import MarkdownParser  # noqa: E402
+from test_runner import is_unsafe_fixture_path  # noqa: E402
 
 SERVER = "vllm-default-openai"
 
@@ -261,3 +262,23 @@ def test_equivalent_paths_spelled_differently_still_conflict(tmp_path) -> None:
     server = servers["dup"]
     assert len(server.fixture_conflicts) == 1
     assert len(server.files) == 1
+
+
+@pytest.mark.parametrize(
+    "path,unsafe",
+    [
+        param("config.yaml", False, id="plain"),
+        param("nested/config.yaml", False, id="nested"),
+        param("./config.yaml", False, id="dot-relative"),
+        param("/etc/passwd", True, id="absolute"),
+        param("../outside.yaml", True, id="parent-escape"),
+        param("nested/../../outside.yaml", True, id="buried-parent-escape"),
+    ],
+)  # fmt: skip
+def test_unsafe_fixture_paths_are_recognised(path: str, unsafe: bool) -> None:
+    """The guard runs up front and again at write time, off this one predicate.
+
+    Validating only at write time meant a guide with an unwritable path still
+    built an image and booted a server before anything objected.
+    """
+    assert is_unsafe_fixture_path(path) is unsafe

@@ -3,20 +3,28 @@
 """A tagged command must survive the trip to the container verbatim.
 
 Guides routinely pass JSON in single quotes -- ``--extra-inputs
-'{"temperature": 0}'``. Interpolating that into ``bash -c '<command>'``
-strips the quotes, so AIPerf receives ``{temperature: 0}`` and rejects it as
-invalid JSON. Passing the command over stdin keeps it intact, and every guide
-using a quote stays taggable.
+'{"temperature": 0}'``. Interpolating that into a ``bash -c '<command>'``
+*shell string* strips the quotes, so AIPerf receives ``{temperature: 0}`` and
+rejects it as invalid JSON. Passing the command as an argv element keeps it
+intact, and every guide using a quote stays taggable.
 """
 
 from __future__ import annotations
 
+import shlex
 import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 from pytest import param
 
 from aiperf.common.constants import IS_WINDOWS
+
+REPO = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(REPO / "tests/ci/test_docs_end_to_end"))
+
+from test_runner import build_command_exec_argv  # noqa: E402
 
 # The docs-e2e runner only ever executes inside a Linux container, and these
 # tests assert on real shell behaviour, so there is nothing to verify on a
@@ -38,10 +46,11 @@ QUOTED = """aiperf profile --model m --extra-inputs '{"temperature": 0}'"""
     ],
 )  # fmt: skip
 def test_command_reaches_the_shell_unmodified(command: str) -> None:
-    """stdin delivery is byte-exact; `bash -c '<cmd>'` interpolation is not."""
+    """argv delivery is byte-exact; `bash -c '<cmd>'` interpolation is not."""
+    argv = build_command_exec_argv("unused", f"printf '%s' {shlex.quote(command)}")
     proc = subprocess.run(
-        ["bash", "-s"],
-        input=f"printf '%s' {chr(34)}$(cat <<'AIPERF_EOF'\n{command}\nAIPERF_EOF\n)\x22",
+        argv[argv.index("bash") :],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
     )
