@@ -397,13 +397,21 @@ class ResponsesEndpoint(BaseEndpoint):
         text: the worker's per-event callers (first-token detection, request
         latency) treat it as a plain data-bearing event and neither sums
         tokens, so they see no behavioral change.
+
+        Reasoning summaries are a per-item fallback: when raw reasoning
+        deltas exist, summary deltas retain their timestamps with empty data
+        but do not contribute duplicate reasoning tokens. Resolve this after
+        the walk because a summary may arrive before its raw reasoning.
         """
         parsed: list[ParsedResponse] = []
         streamed_parts: set[tuple[Any, Any]] = set()
+        raw_reasoning_items: set[tuple[str, str | int | None]] = set()
+        summary_parts: list[tuple[int, tuple[str, str | int | None]]] = []
         for response in record.responses:
             json_obj = response.get_json()
             if not json_obj:
                 continue
+            event_type = None
             if isinstance(json_obj, dict):
                 event_type = json_obj.get("type")
                 part = (json_obj.get("output_index"), json_obj.get("content_index"))
@@ -425,8 +433,40 @@ class ResponsesEndpoint(BaseEndpoint):
                     )
                     continue
             if result := self._route_parsed_json(json_obj, response.perf_ns):
+                if event_type == "response.reasoning_text.delta":
+                    raw_reasoning_items.add(self._reasoning_item_key(json_obj))
+                elif event_type == "response.reasoning_summary_text.delta":
+                    summary_parts.append(
+                        (len(parsed), self._reasoning_item_key(json_obj))
+                    )
                 parsed.append(result)
+        return self._dedup_reasoning_summaries(
+            parsed, raw_reasoning_items, summary_parts
+        )
+
+    @staticmethod
+    def _dedup_reasoning_summaries(
+        parsed: list[ParsedResponse],
+        raw_reasoning_items: set[tuple[str, str | int | None]],
+        summary_parts: list[tuple[int, tuple[str, str | int | None]]],
+    ) -> list[ParsedResponse]:
+        """Keep summary timing while selecting raw reasoning when both are present."""
+        for index, item_key in summary_parts:
+            if item_key in raw_reasoning_items:
+                parsed[index] = ParsedResponse(
+                    perf_ns=parsed[index].perf_ns,
+                    data=ReasoningResponseData(reasoning=""),
+                )
         return parsed
+
+    @staticmethod
+    def _reasoning_item_key(json_obj: JsonObject) -> tuple[str, str | int | None]:
+        """Prefer the item ID; tolerate providers that send only an output index."""
+        item_id = json_obj.get("item_id")
+        if isinstance(item_id, str) and item_id:
+            return "item_id", item_id
+        output_index = json_obj.get("output_index")
+        return "output_index", output_index if isinstance(output_index, int) else None
 
     def _parse_streaming_event(
         self, json_obj: JsonObject, perf_ns: int
@@ -489,7 +529,10 @@ class ResponsesEndpoint(BaseEndpoint):
             delta = json_obj.get("delta")
             return TextResponseData(text=delta) if delta else None
 
-        if event_type == "response.reasoning_text.delta":
+        if event_type in (
+            "response.reasoning_text.delta",
+            "response.reasoning_summary_text.delta",
+        ):
             delta = json_obj.get("delta")
             return ReasoningResponseData(reasoning=delta) if delta else None
 
