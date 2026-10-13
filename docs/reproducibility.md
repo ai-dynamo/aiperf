@@ -88,10 +88,10 @@ Reproducibility is enforced by automated tests on every commit:
 
 ```bash
 # Reproducible dataset
-aiperf --random-seed 42 [options...]
+aiperf profile --random-seed 42 [options...]
 
 # Non-reproducible (default)
-aiperf [options...]
+aiperf profile [options...]
 ```
 
 Same seed + same config = identical dataset content. Performance metrics always vary.
@@ -100,23 +100,23 @@ Same seed + same config = identical dataset content. Performance metrics always 
 
 **Debugging:** Reproduce exact prompts across runs to isolate prompt-related vs. network/timing issues
 ```bash
-aiperf --random-seed 42 [...] --profile-export-file run1.json
-aiperf --random-seed 42 [...] --profile-export-file run2.json
+aiperf profile --random-seed 42 [...] --profile-export-file run1.json
+aiperf profile --random-seed 42 [...] --profile-export-file run2.json
 # Prompts identical; metrics may vary
 ```
 
 **Performance Testing:** Compare metrics with same dataset
 ```bash
-aiperf --random-seed 42 [...] --profile-export-file baseline.json
+aiperf profile --random-seed 42 [...] --profile-export-file baseline.json
 # After optimization...
-aiperf --random-seed 42 [...] --profile-export-file optimized.json
+aiperf profile --random-seed 42 [...] --profile-export-file optimized.json
 # Use statistical analysis (median, p95, p99)
 ```
 
 **Stress Testing:** Vary patterns by omitting seed
 ```bash
 for i in {1..10}; do
-  aiperf [...] --profile-export-file run_$i.json
+  aiperf profile [...] --profile-export-file run_$i.json
 done
 ```
 

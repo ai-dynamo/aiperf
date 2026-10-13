@@ -20,6 +20,11 @@ Five ASR datasets are built in:
 | AMI | `ami` | No | Meeting recordings with individual headset microphone audio |
 | SPGISpeech | `spgispeech` | Yes | Financial earnings call recordings (Kensho) |
 
+Audio rows can contain embedded audio bytes or a path to a local/cache file.
+Both forms are decoded to WAV for requests and checked against the duration limit.
+Path-backed files with unreadable duration metadata are skipped without loading
+their full contents.
+
 Clips longer than 30 seconds are automatically skipped to stay within typical ASR model context
 limits.
 
@@ -181,3 +186,16 @@ aiperf profile \
     --request-count 10 \
     --concurrency 4
 ```
+
+## Multipart Transcription Parameters
+
+For servers exposing `/v1/audio/transcriptions`, select
+`--endpoint-type audio_transcription`. Array-valued multipart parameters are
+sent as repeated fields with the exact supplied name. For example, to request
+word and segment timestamps from a Whisper-compatible server, add:
+
+```bash
+--extra-inputs '{"response_format":"verbose_json","timestamp_granularities[]":["word","segment"]}'
+```
+
+Use the field name expected by your server, including `[]` when required.

@@ -63,7 +63,7 @@ CustomDatasetType = plugins.create_enum(PluginType.CUSTOM_DATASET_LOADER, "Custo
 
 PublicDatasetTypeStr: TypeAlias = str
 PublicDatasetType = plugins.create_enum(PluginType.PUBLIC_DATASET_LOADER, "PublicDatasetType", module=__name__)
-"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.SPEC_BENCH, PublicDatasetType.WEKA_HF"""
+"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.SPEC_AL_MTBENCH, PublicDatasetType.WEKA_HF"""
 
 EndpointTypeStr: TypeAlias = str
 EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType", module=__name__)
@@ -71,7 +71,7 @@ EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType", module=_
 
 TransportTypeStr: TypeAlias = str
 TransportType = plugins.create_enum(PluginType.TRANSPORT, "TransportType", module=__name__)
-"""Dynamic enum for transport. Example: TransportType.HTTP"""
+"""Dynamic enum for transport. Example: TransportType.HTTP, TransportType.SAGEMAKER"""
 
 RequestSignerTypeStr: TypeAlias = str
 RequestSignerType = plugins.create_enum(PluginType.REQUEST_SIGNER, "RequestSignerType", module=__name__)
@@ -99,7 +99,7 @@ AnalyzerType = plugins.create_enum(PluginType.ANALYZER, "AnalyzerType", module=_
 
 SpecDecodeAdapterTypeStr: TypeAlias = str
 SpecDecodeAdapterType = plugins.create_enum(PluginType.SPEC_DECODE_ADAPTER, "SpecDecodeAdapterType", module=__name__)
-"""Dynamic enum for spec decode adapter. Example: SpecDecodeAdapterType.VLLM"""
+"""Dynamic enum for spec decode adapter. Example: SpecDecodeAdapterType.TENSORRT_LLM, SpecDecodeAdapterType.VLLM"""
 
 AccuracyGraderTypeStr: TypeAlias = str
 AccuracyGraderType = plugins.create_enum(PluginType.ACCURACY_GRADER, "AccuracyGraderType", module=__name__)
