@@ -22,6 +22,7 @@ from pydantic import (
     field_validator,
     model_serializer,
 )
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic.functional_validators import AfterValidator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -44,6 +45,7 @@ from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.models.spec_decode_models import SpecDecodeAcceptanceRecord
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
+from aiperf.common.monotonic_clock import process_clock
 from aiperf.common.types import JsonObject, MetricTagT, PhaseKind
 from aiperf.common.utils import load_json_str
 
@@ -424,6 +426,36 @@ class PhaseProfileResults(AIPerfBaseModel):
     )
 
 
+class ProfileMetricDurationCoverage(AIPerfBaseModel):
+    """Observed profiling-metric coverage relative to a configured phase duration."""
+
+    phase_name: str = Field(description="Name of the profiling phase checked.")
+    expected_duration_seconds: float = Field(
+        gt=0.0, description="Configured profiling duration in seconds."
+    )
+    required_ratio: float = Field(
+        gt=0.0, le=1.0, description="Minimum required metric coverage ratio."
+    )
+    ttft_ratio: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Fraction of the phase covered by TTFT observations.",
+    )
+    inter_token_latency_ratio: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Fraction of the phase covered by inter-token-latency observations.",
+    )
+
+    @property
+    def passed(self) -> bool:
+        """Return whether any latency signal proves late profiling activity."""
+        return (
+            self.ttft_ratio >= self.required_ratio
+            or self.inter_token_latency_ratio >= self.required_ratio
+        )
+
+
 class ProfileResults(AIPerfBaseModel):
     """The results of a profile run."""
 
@@ -500,6 +532,14 @@ class ProfileResults(AIPerfBaseModel):
         "normal metric accumulation and stream export, retained only for "
         "aggregate runtime submission validation.",
     )
+    metric_duration_coverage: list[ProfileMetricDurationCoverage] = Field(
+        default_factory=list,
+        description="Post-run latency-signal duration-coverage checks, when enabled.",
+    )
+    runtime_submission_invalid_reasons: list[str] = Field(
+        default_factory=list,
+        description="Runtime reason tags that invalidate a scenario submission.",
+    )
     phase_records: list[PhaseProfileResults] | None = Field(
         default=None,
         description="Internal per-phase metric summaries used for phase artifacts.",
@@ -531,6 +571,10 @@ class ProcessRecordsResult(AIPerfBaseModel):
     errors: list[ErrorDetails] = Field(
         default_factory=list,
         description="Any error that occurred while processing the profile results",
+    )
+    fatal_errors: list[ErrorDetails] = Field(
+        default_factory=list,
+        description="Post-processing validation errors that require a non-zero exit.",
     )
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
@@ -640,19 +684,20 @@ class TextResponse:
             return None
 
 
-@dataclass(slots=True)
+# Nested stdlib dataclasses ignore byte encoding settings; use Pydantic here.
+# Reject extra fields so response unions cannot select the wrong dataclass.
+@pydantic_dataclass(
+    slots=True,
+    config=ConfigDict(extra="forbid", ser_json_bytes="base64", val_json_bytes="base64"),
+)
 class BinaryResponse:
     """Raw binary response from an inference client for non-text content types."""
-
-    # Reject extra fields so Pydantic's union discrimination (e.g. in
-    # RequestRecord.responses) doesn't match the wrong dataclass type.
-    __pydantic_config__ = ConfigDict(extra="forbid")
 
     perf_ns: int
     """The performance timestamp of the response in nanoseconds (perf_counter_ns)."""
 
     raw_bytes: bytes
-    """The raw binary body of the response."""
+    """The original response bytes; JSON encodes them as URL-safe base64."""
 
     content_type: str | None = None
     """The content type of the response. e.g. 'video/mp4', 'application/octet-stream'."""
@@ -802,6 +847,63 @@ class SSEMessage:
             if data_content in ("", None, "[DONE]"):
                 return None
             return load_json_str(data_content)
+        except orjson.JSONDecodeError:
+            return None
+
+
+@dataclass(slots=True)
+class AwsEventStreamMessage:
+    """One decoded line from an AWS eventstream response's PayloadPart bytes.
+
+    Distinct from SSEMessage: SageMaker's PayloadPart format has no SSE field
+    typing (event/id/retry) and no \\n\\n message delimiter -- the payload bytes
+    are newline-delimited lines of text (optionally ``data: ``-prefixed by
+    convention, not spec), and a line may span PayloadParts or share one with
+    other lines. Modeling it as its own type instead of a fake single-field
+    SSEMessage means it can't silently miss SSEMessage.parse()'s behavior
+    (continuation-line stitching, multi-field parsing) it was never entitled to.
+
+    This is the first vendor-specific type living alongside the generic
+    SSEMessage/TextResponse/BinaryResponse siblings in this file. It belongs
+    here rather than in ``aiperf.transports.aws.eventstream`` (its only
+    producer) because it's a member of the ``RequestRecord``/``RawRecordInfo``
+    ``responses`` unions defined in this module -- those are common models
+    that ``aiperf.transports`` depends on, so the type can't live on the
+    transports side without inverting that dependency direction.
+    """
+
+    # Reject extra fields so Pydantic's union discrimination (e.g. in
+    # RequestRecord.responses) doesn't match the wrong dataclass type. The
+    # field name `line` (not `text`) is deliberate: it must not structurally
+    # overlap with TextResponse's {perf_ns, text, content_type} shape.
+    __pydantic_config__ = ConfigDict(extra="forbid")
+
+    perf_ns: int
+    """The performance timestamp of the chunk in nanoseconds (perf_counter_ns)."""
+
+    line: str
+    """The decoded PayloadPart text, with any leading `data:` prefix stripped."""
+
+    raw_line: bytes
+    """The undecoded PayloadPart bytes exactly as received, before UTF-8
+    decoding or `data:` prefix stripping. Distinct from `line` so get_raw()
+    returns genuinely raw wire content, not the same processed value get_text()
+    returns."""
+
+    def get_raw(self) -> Any | None:
+        """Get the raw representation of the chunk."""
+        return self.raw_line
+
+    def get_text(self) -> str | None:
+        """Get the text representation of the chunk."""
+        return self.line or None
+
+    def get_json(self) -> JsonObject | None:
+        """Get the JSON representation of the chunk."""
+        if not self.line or self.line == "[DONE]":
+            return None
+        try:
+            return load_json_str(self.line)
         except orjson.JSONDecodeError:
             return None
 
@@ -1063,6 +1165,18 @@ class RequestInfo(RecordContext):
     )
 
 
+def _wall_ns_at_start_perf(data: dict[str, Any]) -> int:
+    """Wall time of the record's own ``start_perf_ns``, via the per-process anchor.
+
+    A wall read at construction would describe when the record was built, not
+    when the request started; for records built after a timeout or a poll loop
+    that is seconds late. Being a default factory rather than an after-validator
+    keeps the field out of ``model_fields_set``: assigning it there grows every
+    record's fields set past CPython's resize threshold (+512 B per record).
+    """
+    return process_clock().wall_ns_at(data["start_perf_ns"])
+
+
 class RequestRecord(AIPerfBaseModel):
     """Record of a request with its associated responses."""
 
@@ -1087,13 +1201,14 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         description="The name of the model targeted by the request.",
     )
-    timestamp_ns: int = Field(
-        default_factory=time.time_ns,
-        description="The wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns).",
-    )
+    # Declared before ``timestamp_ns``: its default factory reads this value.
     start_perf_ns: int = Field(
         default_factory=time.perf_counter_ns,
         description="The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).",
+    )
+    timestamp_ns: int = Field(
+        default_factory=_wall_ns_at_start_perf,
+        description="The wall clock timestamp of the request start in nanoseconds: the wall time of ``start_perf_ns``. When omitted it is derived from ``start_perf_ns`` through the per-process anchor (``process_clock``). DO NOT USE FOR LATENCY CALCULATIONS.",
     )
     end_perf_ns: int | None = Field(
         default=None,
@@ -1113,7 +1228,9 @@ class RequestRecord(AIPerfBaseModel):
     # NOTE: We need to use SerializeAsAny to allow for generic subclass support
     # NOTE: The order of the types is important, as that is the order they are type checked.
     #       Start with the most specific types and work towards the most general types.
-    responses: SerializeAsAny[list[SSEMessage | TextResponse | BinaryResponse]] = Field(
+    responses: SerializeAsAny[
+        list[SSEMessage | AwsEventStreamMessage | TextResponse | BinaryResponse]
+    ] = Field(
         default_factory=list,
         description="The raw responses received from the request.",
     )
@@ -1155,9 +1272,12 @@ class RequestRecord(AIPerfBaseModel):
         "Kubernetes mode, where both clocks are the same clock and no "
         "correction is meaningful. Signed, so no bounds apply. Measured in the "
         "tracker's anchored clock domain (a wall-clock anchor advanced by "
-        "perf_counter deltas) while ``timestamp_ns`` is raw ``time.time_ns``, "
-        "so an NTP step mid-run leaves the correction carrying that step as "
-        "residual error - bounded by the step size, typically sub-millisecond.",
+        "perf_counter deltas). ``timestamp_ns`` is anchored the same way but "
+        "through ``process_clock``, a separate anchor, so a wall-clock step "
+        "after both anchors exist moves neither; a step between their two "
+        "initializations leaves the anchors differing by that step, which the "
+        "correction carries as residual error - bounded by the step size, "
+        "typically sub-millisecond.",
     )
 
     @property
@@ -1610,9 +1730,16 @@ class ParsedResponseRecord:
     """Engine-neutral per-request speculative-decoding acceptance record, filled
     by a ``SpecDecodeAdapterProtocol`` when the response carried spec-decode
     stats. ``None`` when: spec decode is off or the request had no verify steps
-    (no payload); the request produced multiple sequences (``n > 1``, which is
-    suppressed); no registered adapter recognized the payload; or the payload
-    was malformed and the adapter rejected it."""
+    (no payload, or a zero-step payload the parser drops); the request produced
+    multiple sequences (``n > 1``, which is suppressed); no registered adapter
+    recognized the payload; or the payload was malformed and the adapter
+    rejected it."""
+
+    spec_decode_zero_step: bool = False
+    """True when the engine reported spec-decode stats for this request but it
+    ran no verify step (``num_spec_steps == 0``). Its record is dropped, so
+    ``spec_decode_acceptance`` is None; this flag lets the run count such
+    requests separately from runs where spec decode is off."""
 
     @cached_property
     def final_usage(self) -> Usage | None:
@@ -1785,7 +1912,9 @@ class RawRecordInfo(AIPerfBaseModel):
         default=None,
         description="The headers of the response.",
     )
-    responses: SerializeAsAny[list[SSEMessage | TextResponse | BinaryResponse]] = Field(
+    responses: SerializeAsAny[
+        list[SSEMessage | AwsEventStreamMessage | TextResponse | BinaryResponse]
+    ] = Field(
         ...,
         description="The raw responses received from the request.",
     )
