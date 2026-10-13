@@ -12,6 +12,8 @@ never dispatched.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -243,3 +245,45 @@ async def test_two_phases_both_progressing_stay_quiet(monkeypatch) -> None:
 
     assert mgr.cancels == []
     assert mgr.warnings == []
+
+
+@pytest.mark.asyncio
+async def test_no_snapshot_yet_is_not_a_stall(monkeypatch) -> None:
+    """Before the first credit snapshot there is nothing to judge.
+
+    Ticking in that window must not start a clock: a run whose first phase has
+    not reported yet would otherwise accumulate toward a stall it was never in.
+    """
+    monkeypatch.setattr(Environment.RECORD, "PROGRESS_STALL_TIMEOUT", 100.0)
+    mgr = _Manager()
+
+    for now in (0.0, 500.0, 50_000.0):
+        monkeypatch.setattr(
+            "aiperf.records.records_manager.time.monotonic", lambda now=now: now
+        )
+        await RecordsManager._watch_for_progress_stall(mgr)
+
+    assert mgr.cancels == []
+    assert mgr.warnings == []
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_that_cannot_be_sent_reports_failure(monkeypatch) -> None:
+    """If the PROFILE_CANCEL command cannot go out, say so and report False.
+
+    The caller uses the return value to decide whether its own abort latch
+    stays set, so swallowing the error would leave the run believing a
+    cancellation is in flight that never left this process.
+    """
+    mgr = SimpleNamespace(
+        service_id="records-manager-test",
+        warning=MagicMock(),
+        send_command_to_controller=AsyncMock(side_effect=RuntimeError("bus down")),
+    )
+
+    sent = await RecordsManager._request_profile_cancel(
+        mgr, ProfileCancelReason.PROGRESS_STALL, "stalled"
+    )
+
+    assert sent is False
+    assert "Failed to request PROFILE_CANCEL" in mgr.warning.call_args[0][0]

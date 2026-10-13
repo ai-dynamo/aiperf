@@ -1945,3 +1945,31 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         assert isinstance(published, BaseServiceErrorMessage)
         # ... and the record is not processed.
         manager._dispatch_record.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_abort_request_clears_the_latch_so_a_later_record_retries() -> (
+    None
+):
+    """A cancel that never left the process must not look like one in flight.
+
+    ``_failed_request_abort_triggered`` is set before the request goes out, so
+    leaving it set after a failed send would suppress every later attempt and
+    the run would keep going past its own failure threshold in silence.
+    """
+    manager = _create_manager_for_timing_dispatch()
+    manager._failed_request_threshold = 0.2
+    manager._failed_request_grace_floor = 1
+    manager.warning = MagicMock()
+    manager._records_tracker.total_records_for_phase.return_value = 10
+    manager._records_tracker.error_records_for_phase.return_value = 10
+    manager._request_profile_cancel = AsyncMock(return_value=False)
+
+    await RecordsManager._maybe_trigger_failed_request_abort(
+        manager, CreditPhase.PROFILING, phase_index=0, profiling_index=0
+    )
+
+    manager._request_profile_cancel.assert_awaited_once()
+    assert manager._failed_request_abort_triggered is False, (
+        "a cancel that could not be sent must leave the abort retryable"
+    )
