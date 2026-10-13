@@ -153,4 +153,6 @@ For example, `[system, user, assistant, tool, assistant, tool, assistant, tool]`
 Use concurrency or request-rate scheduling. Fixed scheduling is rejected because these trajectories contain no per-call timestamps.
 Requests within each session run sequentially, while separate sessions can run concurrently. `--num-sessions` counts trajectories; `--request-count` counts individual generation steps and can stop partway through a trajectory. Use the selected trajectory count to replay each once with sequential sampling.
 
+Streaming dataset loading uses the shared Hugging Face materialization bound: the largest profiling-phase request count when set, otherwise the configured dataset entry count. Only matching trajectories count toward the bound, and each selected trajectory is kept in full. Duration-only runs without an entry limit still load all matching rows.
+
 Each generation step stores its full recorded history, so long trajectories can require much more memory and disk space than the source dataset. With similarly sized messages, total prefix storage grows quadratically with trajectory length.

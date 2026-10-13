@@ -312,22 +312,17 @@ class TestLoadDatasetRowValidation:
         mock_hf_dataset.return_value = {"dataset": [row | missing_id, row | missing_id]}
         assert list(await loader.load_dataset()) == ["hf-row-0", "hf-row-1"]
 
-    @pytest.mark.parametrize("flags", [
-        param({"conversation_num": 1}, id="session_limit"),
-        param({"benchmark_duration": 10}, id="duration_only"),
-    ])  # fmt: skip
-    async def test_stop_limits_do_not_truncate_loaded_rows(
+    async def test_duration_only_loads_all_rows(
         self,
         mock_prompt_generator: Mock,
         mock_hf_dataset: AsyncMock,
         row: dict[str, Any],
-        flags: dict[str, int],
     ) -> None:
         benchmark_run = make_run_from_cli(
             CLIConfig(
                 model_names=["target"],
                 hf_mooncake_dataset="example/trajectories",
-                **flags,
+                benchmark_duration=10,
             )
         )
         mock_hf_dataset.return_value = {
@@ -342,6 +337,44 @@ class TestLoadDatasetRowValidation:
         traces = await loader.load_dataset()
         assert list(traces) == ["swe:1", "second"]
         assert all(len(turns) == 3 for turns in traces.values())
+
+    @pytest.mark.parametrize("flags,expected", [
+        param({"conversation_num": 1}, 1, id="sessions"),
+        param({"request_count": 1}, 1, id="requests"),
+        param({"request_count": 2, "concurrency": 2}, 2, id="concurrent_requests"),
+        param({"conversation_num_dataset_entries": 1, "benchmark_duration": 10}, 1, id="entries"),
+    ])  # fmt: skip
+    async def test_limit_stops_stream_after_complete_matching_trajectory(
+        self,
+        mock_prompt_generator: Mock,
+        mock_hf_dataset: AsyncMock,
+        row: dict[str, Any],
+        flags: dict[str, int],
+        expected: int,
+    ) -> None:
+        loader = HFMooncakeTraceDatasetLoader(
+            run=make_run_from_cli(
+                CLIConfig(
+                    model_names=["target"],
+                    hf_mooncake_dataset="example/trajectories",
+                    **flags,
+                )
+            ),
+            hf_dataset_name="example/trajectories",
+            prompt_generator=mock_prompt_generator,
+            filters={"model": row["model"]},
+            streaming=True,
+        )
+        selected = [row | {"session_id": str(i)} for i in range(expected)]
+        unread = row | {"session_id": "unread"}
+        rows = iter([row | {"model": "other"}, *selected, unread])
+        mock_hf_dataset.return_value = {"dataset": rows}
+
+        traces = await loader.load_dataset()
+
+        assert list(traces) == [source["session_id"] for source in selected]
+        assert all(len(turns) == 3 for turns in traces.values())
+        assert next(rows) is unread
 
     async def test_inline_records_released_after_load_failure(
         self,

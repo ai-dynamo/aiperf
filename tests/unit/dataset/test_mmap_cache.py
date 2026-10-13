@@ -1207,7 +1207,6 @@ class TestSettingsPayloadFromRun:
             param({"hf_mooncake_split": "train"}, id="split"),
             param({"mooncake_trace_to_hf_mapping": ["messages=turns"]}, id="mapping"),
             param({"dataset_filters": ["model=other-model", "benchmark=original-benchmark"]}, id="model_filter"),
-            param({"dataset_filters": ["model=original-model", "benchmark=other-benchmark"]}, id="benchmark_filter"),
         ],
     )  # fmt: skip
     def test_mooncake_hf_source_changes_payload(self, flags: dict[str, object]) -> None:

@@ -81,6 +81,7 @@ class HFMooncakeTraceDatasetLoader(BaseHFDatasetLoader):
         """Select source rows and expand each trajectory into recorded requests."""
         records: list[dict[str, Any]] = []
         seen: set[str] = set()
+        max_conversations = self._max_conversations()
         for index, row in enumerate(rows):
             try:
                 if not all(
@@ -104,6 +105,8 @@ class HFMooncakeTraceDatasetLoader(BaseHFDatasetLoader):
                     trace.model_dump(exclude_none=True)
                     for trace in trajectory_to_mooncake(mapped)
                 )
+                if max_conversations is not None and len(seen) >= max_conversations:
+                    break
             except (TypeError, ValueError) as exc:
                 raise DatasetLoaderError(f"mooncake_hf row {index}: {exc}") from exc
         if not records:
