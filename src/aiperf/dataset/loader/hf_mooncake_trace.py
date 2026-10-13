@@ -84,7 +84,7 @@ class HFMooncakeTraceDatasetLoader(BaseHFDatasetLoader):
         for index, row in enumerate(rows):
             try:
                 if not all(
-                    str(_source_value(row, path)) == value
+                    _matches_filter(_source_value(row, path), value)
                     for path, value in self.filters.items()
                 ):
                     continue
@@ -92,8 +92,10 @@ class HFMooncakeTraceDatasetLoader(BaseHFDatasetLoader):
                 session_id = mapped.get("session_id")
                 if session_id is None:
                     session_id = f"hf-row-{index}"
+                if isinstance(session_id, int) and not isinstance(session_id, bool):
+                    session_id = str(session_id)
                 if not isinstance(session_id, str) or not session_id:
-                    raise ValueError("session_id must be a nonempty string")
+                    raise ValueError("session_id must be a nonempty string or integer")
                 if session_id in seen:
                     raise ValueError(f"session {session_id!r}: duplicate session_id")
                 seen.add(session_id)
@@ -122,6 +124,19 @@ class HFMooncakeTraceDatasetLoader(BaseHFDatasetLoader):
         return await asyncio.to_thread(self._mooncake.convert_to_conversations, data)
 
 
+def _drop_null_fields(value: Any) -> Any:
+    """Omit null object fields from Arrow, preserving null list items and JSON strings."""
+    if isinstance(value, dict):
+        return {k: _drop_null_fields(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_drop_null_fields(item) for item in value]
+    return value
+
+
+def _matches_filter(value: Any, expected: str) -> bool:
+    return str(value) == expected or orjson.dumps(value).decode() == expected
+
+
 def _messages(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list) or not value:
         raise ValueError("messages must be a nonempty list of messages")
@@ -129,7 +144,7 @@ def _messages(value: Any) -> list[dict[str, Any]]:
     for index, raw in enumerate(value):
         if not isinstance(raw, dict):
             raise ValueError(f"message {index}: expected an object")
-        message = dict(raw)
+        message = _drop_null_fields(raw)
         if calls := message.get("tool_calls"):
             if not isinstance(calls, list) or not all(
                 isinstance(c, dict) for c in calls
@@ -200,7 +215,7 @@ def _parameters(row: dict[str, Any]) -> tuple[Any, int | None, dict[str, Any]]:
         raise ValueError("output_length must be a positive integer")
     for key in ("max_tokens", "max_completion_tokens", "stream", "stream_options"):
         params.pop(key, None)
-    return _decode_json(row.get("tools")), output_length, params
+    return _drop_null_fields(_decode_json(row.get("tools"))), output_length, params
 
 
 def trajectory_to_mooncake(row: dict[str, Any]) -> list[MooncakeTrace]:

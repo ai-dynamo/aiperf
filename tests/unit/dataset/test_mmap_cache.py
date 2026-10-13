@@ -1271,7 +1271,6 @@ class TestSettingsPayloadFromRun:
                     "hf_split": "test",
                     "hf_subset": "custom-subset",
                     "mooncake_trace_to_hf_mapping": {"messages": "turns"},
-                    "filters": {"model": "source/model", "benchmark": "source-benchmark"},
                 },
                 id="mooncake_runtime_repo",
             ),

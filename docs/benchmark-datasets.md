@@ -119,7 +119,7 @@ The loader extends the Hugging Face reader and delegates to Mooncake's recorded 
 
 The default split is `test`. Use `--hf-mooncake-split <split>` for other split selection.
 
-For example, map [trace-commons/agent-traces](https://huggingface.co/datasets/trace-commons/agent-traces) using explicit source columns:
+For example, replay [trace-commons/agent-traces](https://huggingface.co/datasets/trace-commons/agent-traces):
 
 ```bash
 aiperf profile \
@@ -138,6 +138,10 @@ aiperf profile \
 Each `--mooncake-trace-to-hf-mapping TARGET=SOURCE` maps a Mooncake field to a dotted source path.
 Supported targets are `session_id`, `messages`, `tools`, `output_length`, `extra`, and `extra.PARAMETER` for a top-level request parameter.
 Unmapped fields use their canonical Mooncake column names.
+Session IDs accept nonempty strings or integers; integers are converted to strings before checking for duplicates.
+Filters accept both JSON and Python scalar spellings: `true`/`True`, `false`/`False`, and `null`/`None`. For example, use `--dataset-filter success=true` or `--dataset-filter score=null`. String filters remain case-sensitive.
+
+`output_length` sets the same output-token cap for **every generation step** in the trajectory; it does not specify per-step recorded lengths. For example, mapping `output_length=metadata.usage.output_tokens` in `trace-commons/agent-traces` would apply the final API call's usage to every step.
 
 Each HF row remains one session. The loader creates a request before **every assistant message**, including tool-call-only messages.
 For example, `[system, user, assistant, tool, assistant, tool, assistant, tool]` produces:
@@ -148,3 +152,5 @@ For example, `[system, user, assistant, tool, assistant, tool, assistant, tool]`
 
 Use concurrency or request-rate scheduling. Fixed scheduling is rejected because these trajectories contain no per-call timestamps.
 Requests within each session run sequentially, while separate sessions can run concurrently. `--num-sessions` counts trajectories; `--request-count` counts individual generation steps and can stop partway through a trajectory. Use the selected trajectory count to replay each once with sequential sampling.
+
+Each generation step stores its full recorded history, so long trajectories can require much more memory and disk space than the source dataset. With similarly sized messages, total prefix storage grows quadratically with trajectory length.

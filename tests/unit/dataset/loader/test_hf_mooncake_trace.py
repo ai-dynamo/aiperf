@@ -205,6 +205,32 @@ class TestLoadDatasetRowValidation:
         with pytest.raises(DatasetLoaderError, match="no trajectories matched"):
             await loader.load_dataset()
 
+    @pytest.mark.parametrize("value,spelling,other", [
+        param(True, "true", 1, id="json_true"),
+        param(False, "false", 0, id="json_false"),
+        param(True, "True", False, id="python_true"),
+        param(False, "False", True, id="python_false"),
+        param(None, "null", "None", id="json_null"),
+        param(None, "None", False, id="python_none"),
+        param(42, "42", 43, id="integer"),
+        param(1.5, "1.5", 2.5, id="float"),
+        param("true", "true", "True", id="string"),
+    ])  # fmt: skip
+    async def test_scalar_filter_selects_matching_rows(
+        self,
+        loader: HFMooncakeTraceDatasetLoader,
+        mock_hf_dataset: AsyncMock,
+        row: dict[str, Any],
+        value: bool | str | int | float | None,
+        spelling: str,
+        other: bool | str | int | float,
+    ) -> None:
+        loader.filters = {"success": spelling}
+        mock_hf_dataset.return_value = {
+            "dataset": [row | {"success": other}, row | {"success": value}]
+        }
+        assert list(await loader.load_dataset()) == [row["session_id"]]
+
     async def test_missing_filter_column_raises(
         self,
         benchmark_run: BenchmarkRun,
@@ -236,26 +262,34 @@ class TestLoadDatasetRowValidation:
         )
         assert list(await loader.load_dataset()) == [row["session_id"]]
 
+    @pytest.mark.parametrize("session_ids", [
+        param(("swe:1", "swe:1"), id="strings"),
+        param((1, "1"), id="normalized_integer"),
+    ])  # fmt: skip
     async def test_duplicate_session_ids_raises(
         self,
         loader: HFMooncakeTraceDatasetLoader,
         mock_hf_dataset: AsyncMock,
         row: dict[str, Any],
+        session_ids: tuple[str | int, str | int],
     ) -> None:
-        mock_hf_dataset.return_value = {"dataset": [row, row]}
+        mock_hf_dataset.return_value = {
+            "dataset": [row | {"session_id": value} for value in session_ids]
+        }
         with pytest.raises(DatasetLoaderError, match="row 1:.*duplicate session_id"):
             await loader.load_dataset()
 
     @pytest.mark.parametrize("session_id", [
         param("", id="empty"),
-        param(123, id="non_string"),
+        param(True, id="boolean"),
+        param(1.5, id="float"),
     ])  # fmt: skip
     async def test_invalid_session_id_raises_with_row_index(
         self,
         loader: HFMooncakeTraceDatasetLoader,
         mock_hf_dataset: AsyncMock,
         row: dict[str, Any],
-        session_id: str | int,
+        session_id: str | bool | float,
     ) -> None:
         mock_hf_dataset.return_value = {
             "dataset": [row, row | {"session_id": session_id}]
@@ -326,6 +360,20 @@ class TestLoadDatasetRowValidation:
 
 
 class TestFieldMapping:
+    @pytest.mark.parametrize("session_id", [0, 123])
+    def test_integer_session_id_mapping_normalizes_to_string(
+        self,
+        loader: HFMooncakeTraceDatasetLoader,
+        row: dict[str, Any],
+        session_id: int,
+    ) -> None:
+        loader.field_mapping = {"session_id": "question_id"}
+        traces = loader._validate_rows([row | {"question_id": session_id}])
+        assert list(traces) == [str(session_id)]
+        assert all(
+            trace.session_id == str(session_id) for trace in traces[str(session_id)]
+        )
+
     @pytest.mark.parametrize("encoded", [False, True])
     def test_mapped_columns_match_canonical_traces(
         self,
@@ -494,7 +542,10 @@ class TestConvertToConversationsDelegation:
         row: dict[str, Any],
     ) -> None:
         before = deepcopy(row)
-        expected_messages = deepcopy(row["messages"])
+        expected_messages = [
+            {key: value for key, value in message.items() if value is not None}
+            for message in deepcopy(row["messages"])
+        ]
         expected_messages[2]["tool_calls"][0].pop("index")
         data = await loader.load_dataset()
         conversation = (await loader.convert_to_conversations(data))[0]

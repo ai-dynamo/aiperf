@@ -3,11 +3,13 @@
 
 """Verify the actual requests and stop limits for complete recorded trajectories."""
 
+from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
-from aiperf.dataset.loader.hf_mooncake_trace import HFMooncakeTraceDatasetLoader
 from tests.component_integration.conftest import (
     ComponentIntegrationTestDefaults as defaults,
 )
@@ -46,7 +48,20 @@ def trajectory_rows() -> list[dict[str, Any]]:
                 *messages[1:end],
             ],
             "extras": {
-                "tools": [{"type": "function", "function": {"name": "bash"}}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "bash" if i == 0 else "read_file",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "command" if i == 0 else "path": {"type": "string"},
+                                },
+                            },
+                        },
+                    }
+                ],
                 "max_tokens": 8,
                 "temperature": 0.7,
                 "top_p": 0.8,
@@ -62,14 +77,14 @@ def trajectory_rows() -> list[dict[str, Any]]:
 @pytest.mark.parametrize("request_limit", [False, True])
 def test_trajectory_dispatch_preserves_recorded_history(
     cli: AIPerfCLI,
-    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
     trajectory_rows: list[dict[str, Any]],
     streaming: bool,
     request_limit: bool,
 ) -> None:
-    monkeypatch.setattr(
-        HFMooncakeTraceDatasetLoader, "_load_hf_dataset", lambda self: trajectory_rows
-    )
+    dataset_dir = tmp_path / "trajectories"
+    dataset_dir.mkdir()
+    pq.write_table(pa.Table.from_pylist(trajectory_rows), dataset_dir / "test.parquet")
     limits = (
         "--request-count 4 --concurrency 1"
         if request_limit
@@ -78,7 +93,7 @@ def test_trajectory_dispatch_preserves_recorded_history(
     result = cli.run_sync(
         f"""aiperf profile
             --model {defaults.model} --endpoint-type chat
-            --hf-mooncake-dataset example/trajectories
+            --hf-mooncake-dataset {dataset_dir}
             --mooncake-trace-to-hf-mapping session_id=question_id
             --mooncake-trace-to-hf-mapping messages=turns
             --mooncake-trace-to-hf-mapping tools=extras.tools
