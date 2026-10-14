@@ -5,6 +5,7 @@ from pathlib import Path
 import orjson
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.common.enums import DatasetType
 from aiperf.config.dataset import FileDataset
@@ -118,3 +119,31 @@ def test_remote_dag_without_stop_condition_is_rejected() -> None:
                 custom_dataset_type=CustomDatasetType.DAG_JSONL,
             )
         )
+
+
+@pytest.mark.parametrize(
+    ("bad_ref", "reason"),
+    [
+        param(
+            "ftp://h.example/t.jsonl?X-Amz-Signature=deadbeefsecret",
+            "Unsupported dataset reference scheme",
+            id="unsupported-scheme",
+        ),
+        param(
+            "s3://AB/k?X-Amz-Signature=deadbeefsecret",
+            "not a valid S3 bucket name",
+            id="bad-bucket",
+        ),
+        param(
+            "hf://org/repo?token=deadbeefsecret",
+            "cannot carry a query string",
+            id="hf-query",
+        ),
+    ],
+)  # fmt: skip
+def test_cli_config_error_hides_presigned_secret(bad_ref: str, reason: str) -> None:
+    with pytest.raises(ValidationError) as exc_info:
+        CLIConfig(model_names=["m"], input_file=bad_ref)
+    text = str(exc_info.value)
+    assert "deadbeefsecret" not in text
+    assert reason in text
