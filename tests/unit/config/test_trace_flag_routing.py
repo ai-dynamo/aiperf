@@ -559,8 +559,10 @@ class TestMooncakeHFFailFast:
         ],
     )  # fmt: skip
     def test_invalid_mooncake_flags_raise(
-        self, flags: dict[str, object], error: str
+        self, trace_jsonl: Path, flags: dict[str, object], error: str
     ) -> None:
+        if "custom_dataset_type" in flags and "hf_mooncake_dataset" not in flags:
+            flags = flags | {"input_file": str(trace_jsonl)}
         with pytest.raises(ValueError, match=error):
             convert_cli_to_aiperf(CLIConfig(model_names=["m"], **flags))
 
