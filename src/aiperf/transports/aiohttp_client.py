@@ -7,6 +7,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
+from yarl import URL
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.environment import Environment
@@ -19,7 +20,13 @@ from aiperf.common.models import (
     RequestRecord,
     TextResponse,
 )
+from aiperf.common.monotonic_clock import process_clock
 from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
+from aiperf.transports.aws.eventstream import (
+    EVENTSTREAM_CONTENT_TYPE,
+    AwsEventStreamError,
+    AwsEventStreamReader,
+)
 from aiperf.transports.http_defaults import AioHttpDefaults, SocketDefaults
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
 
@@ -45,6 +52,9 @@ def _expected_request_body_size(data: Any) -> int | None:
         except (ValueError, TypeError, AttributeError):
             return None
     return None
+
+
+VIDEO_DOWNLOAD_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
 
 class AioHttpClient(AIPerfLoggerMixin):
@@ -76,7 +86,7 @@ class AioHttpClient(AIPerfLoggerMixin):
     async def _request(
         self,
         method: str,
-        url: str,
+        url: str | URL,
         headers: dict[str, str],
         *,
         data: bytes | aiohttp.FormData | None = None,
@@ -85,6 +95,8 @@ class AioHttpClient(AIPerfLoggerMixin):
         trace_data: AioHttpTraceData | None = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
+        capture_redirects: bool = False,
+        trust_env: bool | None = None,
         **kwargs: Any,
     ) -> RequestRecord:
         """Generic request method that handles common logic for all HTTP methods.
@@ -101,11 +113,18 @@ class AioHttpClient(AIPerfLoggerMixin):
                 If None, uses self.tcp_connector (shared pool).
             connector_owner: If True, the session will close the connector when done.
                 Use True for per-request connections that should be closed after use.
+            capture_redirects: Capture download redirect headers without reading the body.
+                Requires GET and explicit allow_redirects=False.
+            trust_env: Override environment proxy and netrc use for this session.
             **kwargs: Additional arguments to pass to the request
 
         Returns:
             RequestRecord with the response data
         """
+        if capture_redirects and (
+            method != "GET" or kwargs.get("allow_redirects") is not False
+        ):
+            raise ValueError("Redirect capture requires GET with allow_redirects=False")
         self.debug(lambda: f"Sending {method} request to {url}")
 
         # Use provided trace_data or create new one
@@ -147,18 +166,28 @@ class AioHttpClient(AIPerfLoggerMixin):
                 ],
                 connector_owner=connector_owner,
                 trace_configs=[trace_config],
-                trust_env=AioHttpDefaults.TRUST_ENV,
+                trust_env=AioHttpDefaults.TRUST_ENV if trust_env is None else trust_env,
             ) as session:
-                # Re-pair start_perf_ns with timestamp_ns at the same instant: the Pydantic
-                # default_factory fired at record construction (above), but session setup
-                # has now moved start_perf_ns forward, so timestamp_ns needs the same shift
-                # to keep the (wall, perf) pairing used by compute_time_ns.
+                # Session setup moved start_perf_ns past record construction; re-derive
+                # timestamp_ns from it.
                 record.start_perf_ns = time.perf_counter_ns()
-                record.timestamp_ns = time.time_ns()
+                record.timestamp_ns = process_clock().wall_ns_at(record.start_perf_ns)
                 async with session.request(
                     method, url, data=data, headers=headers, **kwargs
                 ) as response:
                     record.status = response.status
+
+                    if (
+                        capture_redirects
+                        and response.status in VIDEO_DOWNLOAD_REDIRECT_STATUSES
+                    ):
+                        record._redirect_locations = tuple(
+                            response.headers.getall("Location", ())
+                        )
+                        record.end_perf_ns = time.perf_counter_ns()
+                        # An unfinished redirect body must not delay the next hop.
+                        response.close()
+                        return record
 
                     # Treat the full 2xx range as success so async job APIs can
                     # return accepted/created responses without being rejected.
@@ -174,9 +203,9 @@ class AioHttpClient(AIPerfLoggerMixin):
 
                     record.recv_start_perf_ns = time.perf_counter_ns()
 
-                    if (
-                        method == "POST"
-                        and response.content_type == "text/event-stream"
+                    is_eventstream = response.content_type == EVENTSTREAM_CONTENT_TYPE
+                    if method == "POST" and (
+                        response.content_type == "text/event-stream" or is_eventstream
                     ):
                         # Parse SSE stream with optimal performance
                         # Wrap the content stream to track chunks for trace data
@@ -208,14 +237,28 @@ class AioHttpClient(AIPerfLoggerMixin):
                                 _trace.response_receive_end_perf_ns = chunk_ns
                                 yield chunk
 
+                        # AWS services stream over binary eventstream framing
+                        # rather than raw SSE. AwsEventStreamReader mirrors
+                        # AsyncSSEStreamReader's interface exactly (__aiter__
+                        # yielding a message implementing InferenceServerResponse,
+                        # inspect_message_for_error), so the reader class is the
+                        # only thing that varies below -- downstream code relies
+                        # on that shared protocol, not on SSEMessage specifically.
+                        # Selection is by content type alone, never by service,
+                        # which is what lets Bedrock reuse this unchanged.
+                        reader_cls = (
+                            AwsEventStreamReader
+                            if is_eventstream
+                            else AsyncSSEStreamReader
+                        )
+                        sse_messages = reader_cls(tracked_content_stream())
+
                         # Separate code paths for performance: avoid callback checks
                         # when no callback is registered
                         if first_token_callback:
                             first_token_acquired = False
-                            async for message in AsyncSSEStreamReader(
-                                tracked_content_stream()
-                            ):
-                                AsyncSSEStreamReader.inspect_message_for_error(message)
+                            async for message in sse_messages:
+                                reader_cls.inspect_message_for_error(message)
                                 record.responses.append(message)
                                 # Fire callback until it returns True (meaningful content found)
                                 if not first_token_acquired:
@@ -225,10 +268,8 @@ class AioHttpClient(AIPerfLoggerMixin):
                                     )
                         else:
                             # Fast path: no callback, just collect responses
-                            async for message in AsyncSSEStreamReader(
-                                tracked_content_stream()
-                            ):
-                                AsyncSSEStreamReader.inspect_message_for_error(message)
+                            async for message in sse_messages:
+                                reader_cls.inspect_message_for_error(message)
                                 record.responses.append(message)
                         record.end_perf_ns = time.perf_counter_ns()
                     else:
@@ -280,10 +321,15 @@ class AioHttpClient(AIPerfLoggerMixin):
                             f"{method} request to {url} completed in {(record.end_perf_ns - record.start_perf_ns) / NANOS_PER_SECOND} seconds"
                         )
                     )
-        except SSEResponseError as e:
+        except (SSEResponseError, AwsEventStreamError) as e:
             record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Error in SSE response: {e!r}")
+            self.error(f"Error in streaming response: {e!r}")
             record.error = ErrorDetails.from_exception(e)
+            if isinstance(e, AwsEventStreamError) and e.exception_type:
+                # Preserve AWS's own label (ModelStreamError,
+                # InternalStreamFailure, ...) so the error table groups
+                # distinct server-side failures separately.
+                record.error.type = e.exception_type
         except asyncio.CancelledError:
             # Task was cancelled externally (e.g., credit cancellation from router)
             # Record the cancellation and re-raise to allow proper cleanup
@@ -451,7 +497,7 @@ class AioHttpClient(AIPerfLoggerMixin):
             )
 
     async def get_request(
-        self, url: str, headers: dict[str, str], **kwargs: Any
+        self, url: str | URL, headers: dict[str, str], **kwargs: Any
     ) -> RequestRecord:
         """Send a GET request to the specified URL with the given headers.
 

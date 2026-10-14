@@ -1029,6 +1029,12 @@ def _create_credit_phase_stats() -> CreditPhaseStats:
 
 def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager = RecordsManager.__new__(RecordsManager)
+    # Built via __new__, so __init__ never ran. The stall watchdog indexes
+    # these by phase_index, which needs the containers to already exist.
+    manager._latest_profiling_credit_stats = {}
+    manager._progress_stall_last_total = {}
+    manager._progress_stall_since = {}
+    manager._progress_stall_triggered = False
     manager._dataset_configured_event = asyncio.Event()
     manager._dataset_configured_event.set()
     manager._records_tracker = MagicMock()
@@ -1465,7 +1471,15 @@ class TestRecordsManagerTimingDispatch:
         )
         assert orjson.loads(
             manager.send_command_to_controller.await_args.kwargs["payload"]
-        ) == {"origin_service_id": "records-manager"}
+        ) == {
+            "origin_service_id": "records-manager",
+            "reason": "failed_request_threshold",
+            "reason_detail": (
+                "10/10 profiling requests failed (100.0%), exceeding the "
+                "--failed-request-threshold limit of 20.0%. Check inference "
+                "server logs."
+            ),
+        }
         assert (
             manager._records_tracker.total_records_for_phase(CreditPhase.PROFILING)
             == 10
@@ -1518,7 +1532,15 @@ class TestRecordsManagerTimingDispatch:
         )
         assert orjson.loads(
             manager.send_command_to_controller.await_args.kwargs["payload"]
-        ) == {"origin_service_id": "records-manager"}
+        ) == {
+            "origin_service_id": "records-manager",
+            "reason": "failed_request_threshold",
+            "reason_detail": (
+                "10/10 profiling requests failed (100.0%), exceeding the "
+                "--failed-request-threshold limit of 50.0%. Check inference "
+                "server logs."
+            ),
+        }
 
     @pytest.mark.asyncio
     async def test_failed_request_threshold_read_from_owning_phase(self) -> None:
@@ -1659,6 +1681,7 @@ class TestRecordsManagerAnalyzerMetrics:
         manager.run.cfg.gpu_telemetry_disabled = True
         manager.run.cfg.server_metrics_disabled = True
         manager.run.cfg.network_latency.enabled = False
+        manager.run.cfg.scenario = None
 
         summary_metrics = [
             MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
@@ -1922,3 +1945,31 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         assert isinstance(published, BaseServiceErrorMessage)
         # ... and the record is not processed.
         manager._dispatch_record.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_abort_request_clears_the_latch_so_a_later_record_retries() -> (
+    None
+):
+    """A cancel that never left the process must not look like one in flight.
+
+    ``_failed_request_abort_triggered`` is set before the request goes out, so
+    leaving it set after a failed send would suppress every later attempt and
+    the run would keep going past its own failure threshold in silence.
+    """
+    manager = _create_manager_for_timing_dispatch()
+    manager._failed_request_threshold = 0.2
+    manager._failed_request_grace_floor = 1
+    manager.warning = MagicMock()
+    manager._records_tracker.total_records_for_phase.return_value = 10
+    manager._records_tracker.error_records_for_phase.return_value = 10
+    manager._request_profile_cancel = AsyncMock(return_value=False)
+
+    await RecordsManager._maybe_trigger_failed_request_abort(
+        manager, CreditPhase.PROFILING, phase_index=0, profiling_index=0
+    )
+
+    manager._request_profile_cancel.assert_awaited_once()
+    assert manager._failed_request_abort_triggered is False, (
+        "a cancel that could not be sent must leave the abort retryable"
+    )

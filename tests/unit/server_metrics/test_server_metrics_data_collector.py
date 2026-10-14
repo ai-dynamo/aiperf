@@ -1040,10 +1040,10 @@ class TestServerMetricsDataCollectorCredentialRedaction:
         response_cm.__aenter__ = AsyncMock(return_value=response)
         response_cm.__aexit__ = AsyncMock(return_value=None)
         mock_session = MagicMock()
-        mock_session.head = MagicMock(return_value=response_cm)
+        mock_session.get = MagicMock(return_value=response_cm)
 
         assert await collector._check_reachability_with_session(mock_session)
-        mock_session.head.assert_called_once_with(
+        mock_session.get.assert_called_once_with(
             collector._endpoint_url, headers={}, allow_redirects=True
         )
 
@@ -1059,31 +1059,28 @@ class TestServerMetricsDataCollectorCredentialRedaction:
         response_cm.__aenter__ = AsyncMock(return_value=response)
         response_cm.__aexit__ = AsyncMock(return_value=None)
         mock_session = MagicMock()
-        mock_session.head = MagicMock(return_value=response_cm)
+        mock_session.get = MagicMock(return_value=response_cm)
 
         assert await collector._check_reachability_with_session(mock_session)
-        mock_session.head.assert_called_once_with(
+        mock_session.get.assert_called_once_with(
             collector._endpoint_url, headers=headers, allow_redirects=False
         )
 
     @pytest.mark.asyncio
-    async def test_reachability_fallback_get_does_not_forward_redirects(self) -> None:
+    async def test_reachability_uses_get_without_head_probe(self) -> None:
         headers = {"X-Acme-Token": "metrics-secret"}
         collector = ServerMetricsDataCollector(
             endpoint_url="http://localhost:8081/metrics", headers=headers
         )
 
-        head_cm = MagicMock()
-        head_cm.__aenter__ = AsyncMock(return_value=MagicMock(status=405))
-        head_cm.__aexit__ = AsyncMock(return_value=None)
         get_cm = MagicMock()
         get_cm.__aenter__ = AsyncMock(return_value=MagicMock(status=200))
         get_cm.__aexit__ = AsyncMock(return_value=None)
         mock_session = MagicMock()
-        mock_session.head = MagicMock(return_value=head_cm)
         mock_session.get = MagicMock(return_value=get_cm)
 
         assert await collector._check_reachability_with_session(mock_session)
+        mock_session.head.assert_not_called()
         mock_session.get.assert_called_once_with(
             collector._endpoint_url, headers=headers, allow_redirects=False
         )
