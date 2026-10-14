@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import pytest
-from aiohttp import BasicAuth, web
+from aiohttp import encode_basic_auth, web
 from pytest import param
 
 from aiperf.common.models import ErrorDetails, TextResponse
@@ -140,6 +140,7 @@ async def test_non_ascii_request_target_is_percent_encoded(redirect: bool) -> No
     assert seen[-1] == "/vid%C3%A9o.mp4?sig=a%2Fb"
 
 
+@pytest.mark.filterwarnings("error::DeprecationWarning")
 @pytest.mark.parametrize("start", [param("direct"), param("origin"), param("foreign")])  # fmt: skip
 async def test_configured_basic_auth_is_restored_only_at_origin(
     monkeypatch: pytest.MonkeyPatch, start: str
@@ -191,9 +192,7 @@ async def test_configured_basic_auth_is_restored_only_at_origin(
     assert [entry[0] for entry in seen] == expected_origins[start]
     for kind, path, headers in seen:
         if kind == "origin":
-            assert BasicAuth.decode(headers["Authorization"]) == BasicAuth(
-                "user", "p@ss:word"
-            )
+            assert headers["Authorization"] == encode_basic_auth("user", "p@ss:word")
             assert headers["X-Private"] == "endpoint-secret"
         else:
             assert path == target
@@ -425,7 +424,7 @@ async def test_video_workflow_timing_and_published_responses(
             await client.close()
     assert record.error is None and record.status == 200
     assert auth_headers == [
-        BasicAuth("user", "password").encode() if url_auth else None
+        encode_basic_auth("user", "password") if url_auth else None
     ] * len(seen)
     assert len(record.responses) == 2
     assert all(isinstance(response, TextResponse) for response in record.responses)

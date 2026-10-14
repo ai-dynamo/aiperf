@@ -1216,7 +1216,35 @@ class TestVideoDownloadRedirects:
         )
         args, kwargs = transport.aiohttp_client.get_request.call_args
         assert str(args[0]) == "https://origin.test/file%2Fname?sig=%2b%2F"
-        assert kwargs["auth"] == aiohttp.BasicAuth("user", "p@ss:word")
+        assert args[1] == {
+            "Authorization": aiohttp.encode_basic_auth("user", "p@ss:word")
+        }
+        assert "auth" not in kwargs
+
+    @pytest.mark.parametrize("headers,signed_headers", [
+        param({"authorization": "Bearer token"}, None, id="endpoint-header"),
+        param({}, {"Authorization": "AWS4-HMAC-SHA256 signature"}, id="signer-header"),
+    ])  # fmt: skip
+    async def test_configured_auth_conflicting_with_authorization_is_not_sent(
+        self,
+        transport: AioHttpTransport,
+        headers: dict[str, str],
+        signed_headers: dict[str, str] | None,
+    ) -> None:
+        if signed_headers is not None:
+            transport.request_signer = AsyncMock()
+            transport.request_signer.sign.return_value = SignedRequest(
+                url="https://origin.test/content", headers=signed_headers
+            )
+        result = await transport._download_video_content(
+            "job",
+            "https://origin.test/content",
+            headers,
+            signing_origin_url="https://user:secret@origin.test/job",
+        )
+        assert isinstance(result, ErrorDetails) and result.code == 500
+        assert "secret" not in result.message and "token" not in result.message
+        transport.aiohttp_client.get_request.assert_not_awaited()
 
     async def test_setting_is_read_once_per_download(
         self, transport: AioHttpTransport, monkeypatch: pytest.MonkeyPatch

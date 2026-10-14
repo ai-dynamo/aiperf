@@ -111,14 +111,20 @@ def _validated_video_url(url: str) -> str:
     return urlunsplit(parts._replace(fragment=""))
 
 
-def _split_configured_auth(url: str) -> tuple[str, aiohttp.BasicAuth | None]:
-    """Separate configured authentication from URLs selected by the server."""
+def _split_configured_auth(url: str) -> tuple[str, str | None]:
+    """Separate configured Basic authentication from URLs selected by the server."""
     _validate_video_url_reference(url)
     parts = urlsplit(url)
     poll_url = _validated_video_url(
         urlunsplit(parts._replace(netloc=parts.netloc.rsplit("@", 1)[-1]))
     )
-    return poll_url, aiohttp.BasicAuth.from_url(URL(url, encoded=True))
+    configured = URL(url, encoded=True)
+    if configured.raw_user is None and configured.raw_password is None:
+        return poll_url, None
+    # latin1 matches the BasicAuth.from_url encoding aiohttp applied to URL auth.
+    return poll_url, aiohttp.encode_basic_auth(
+        configured.user or "", configured.password or "", "latin1"
+    )
 
 
 def _resolve_video_redirect(requested_url: str, location: str) -> str:
@@ -796,7 +802,11 @@ class AioHttpTransport(BaseTransport):
         )
 
     async def _prepare_video_download_request(
-        self, url: str, poll_url: str, headers: dict[str, str]
+        self,
+        url: str,
+        poll_url: str,
+        headers: dict[str, str],
+        authorization: str | None,
     ) -> SignedRequest:
         """Rebuild headers for each hop and constrain signer URL changes to the origin."""
         if not _same_origin(url, poll_url):
@@ -807,6 +817,13 @@ class AioHttpTransport(BaseTransport):
         signed.url = _validated_video_url(signed.url)
         if not _same_origin(signed.url, poll_url):
             raise _VideoDownloadPolicyError("Signer changed the request origin")
+        if authorization is not None:
+            # Added after signing, so a signer's Authorization conflicts too.
+            if any(name.lower() == "authorization" for name in signed.headers):
+                raise _VideoDownloadPolicyError(
+                    "Configured URL credentials conflict with an Authorization header"
+                )
+            signed.headers = {**signed.headers, "Authorization": authorization}
         return signed
 
     async def _download_video_content(
@@ -842,14 +859,14 @@ class AioHttpTransport(BaseTransport):
 
         try:
             async with asyncio.timeout(timeout):
-                poll_url, auth = _split_configured_auth(signing_origin_url)
+                poll_url, authorization = _split_configured_auth(signing_origin_url)
                 current_url = _validated_video_url(
                     content_url if content_url is not None else f"{poll_url}/content"
                 )
                 while True:
                     stage = "signing"
                     signed = await self._prepare_video_download_request(
-                        current_url, poll_url, headers
+                        current_url, poll_url, headers, authorization
                     )
                     requested_url = signed.url
                     same_origin = _same_origin(requested_url, poll_url)
@@ -860,7 +877,6 @@ class AioHttpTransport(BaseTransport):
                         signed.headers,
                         allow_redirects=False,
                         capture_redirects=True,
-                        auth=auth if same_origin else None,
                         # netrc can otherwise add BasicAuth after header filtering.
                         trust_env=None if same_origin else False,
                     )
