@@ -14,6 +14,8 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import orjson
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 from aiperf.common.environment import Environment
@@ -41,6 +43,7 @@ def trace_url(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     (root / "mooncake.jsonl").write_bytes(
         b"\n".join(orjson.dumps(r) for r in _ROWS) + b"\n"
     )
+    pq.write_table(pa.Table.from_pylist(_ROWS), root / "mooncake.parquet")
     cache = tmp_path / "remote-cache"
     monkeypatch.setenv("AIPERF_DATASET_REMOTE_CACHE_DIR", str(cache))
     monkeypatch.setattr(Environment.DATASET, "REMOTE_CACHE_DIR", cache)
@@ -102,3 +105,25 @@ class TestRemoteInputFile:
         )
         assert result.raw_records is not None
         assert len(result.raw_records) == 2
+
+    def test_remote_parquet_trace_auto_promotes_and_replays_every_row(
+        self, cli: AIPerfCLI, trace_url: str
+    ) -> None:
+        """The same rows as parquet replay exactly like the JSONL file."""
+        parquet_url = trace_url.removesuffix(".jsonl") + ".parquet"
+        result = cli.run_sync(
+            f"""
+            aiperf profile \
+                --model {defaults.model} \
+                --endpoint-type chat \
+                --custom-dataset-type mooncake_trace \
+                --input-file {parquet_url} \
+                --isl-block-size 16 \
+                --workers-max {defaults.workers_max} \
+                --export-level raw \
+                --ui {defaults.ui}
+            """,
+            timeout=90.0,
+        )
+        assert result.raw_records is not None
+        assert len(result.raw_records) == len(_ROWS)
