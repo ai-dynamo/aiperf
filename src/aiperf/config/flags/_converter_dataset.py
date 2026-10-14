@@ -305,8 +305,7 @@ def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
         from aiperf.plugin.enums import PublicDatasetType
 
         out["dataset"] = PublicDatasetType.WEKA_HF
-    # --hf-mooncake-dataset alone auto-selects --public-dataset mooncake_hf (docs +
-    # PublicDataset._validate_mooncake_hf expect the pairing).
+
     if "hf_mooncake_dataset" in out and "dataset" not in out:
         from aiperf.plugin.enums import PublicDatasetType
 
