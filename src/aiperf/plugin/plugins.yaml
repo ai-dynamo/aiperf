@@ -2889,6 +2889,18 @@ public_dataset_loader:
       hf_split: train
       is_trace: true
 
+dataset_source_resolver:
+  https:
+    class: aiperf.dataset.remote.http:HTTPSourceResolver
+    description: |
+      Downloads a single dataset file from an https:// URL (including presigned S3/GCS
+      URLs). Redirects are followed with per-hop origin checks; the cache is keyed by ETag
+      or Last-Modified.
+  http:
+    class: aiperf.dataset.remote.http:HTTPSourceResolver
+    description: |
+      Same as https, for plain http:// URLs (internal mirrors).
+
 # =============================================================================
 # ZMQ Proxies
 # =============================================================================
