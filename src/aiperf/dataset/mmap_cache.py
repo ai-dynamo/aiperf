@@ -734,9 +734,10 @@ def _public_dataset_source_from_run(run: BenchmarkRun) -> dict[str, object] | No
 
 
 # Loaders that reconstruct through ``WekaTraceLoader`` and therefore honour
-# "fixed schedule wins over --ignore-trace-delays". Other loaders that read the
-# flag (h_cua_perf) apply it unconditionally, so keying them on the effective
-# value would introduce the same mismatch in the opposite direction.
+# "fixed schedule wins over --ignore-trace-delays". The only other loader that
+# reads the flag (h_cua_perf) rejects it outright rather than honouring it
+# (``reject_ignore_trace_delays``), so no cache key there has an effective
+# value to track.
 _WEKA_RECONSTRUCTED_FORMATS = frozenset({"weka_trace", "tracelab"})
 
 
@@ -760,7 +761,6 @@ def _is_weka_reconstructed(dataset: object) -> bool:
     from aiperf.dataset.loader.semianalysis_cc_traces_weka import (
         SemiAnalysisCCTracesWekaLoader,
     )
-    from aiperf.plugin import plugins
 
     try:
         loader = plugins.get_class("public_dataset_loader", str(name))
