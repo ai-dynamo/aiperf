@@ -10,18 +10,23 @@ import errno
 import hashlib
 import os
 import re
+import threading
+import time
 import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Iterable
 from pathlib import Path
 
 import aiofiles
-from filelock import FileLock
+from filelock import FileLock, Timeout
 
 from aiperf.common.environment import Environment
 from aiperf.config.dataset.remote_ref import RemoteRef
 from aiperf.dataset.remote.errors import RemoteErrorKind, RemoteSourceError, RemoteStage
 
 _LOCK_TIMEOUT_S = 1800.0
+# Each acquire attempt blocks a worker thread at most this long, bounding how long
+# a cancelled waiter's thread outlives it.
+_LOCK_POLL_S = 1.0
 _UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 _VERSION_NAME_MAX_CHARS = 48
 # Local filesystem failures a retry cannot fix (and re-downloading GBs would not help).
@@ -90,13 +95,65 @@ def entry_dir(ref: RemoteRef) -> Path:
     )
 
 
+class _LockAttempt:
+    """One bounded acquire on a worker thread that a cancelled waiter can abandon.
+
+    asyncio cannot interrupt the thread, so whichever side finishes second
+    releases a lock nobody will use.
+    """
+
+    def __init__(self, lock: FileLock) -> None:
+        self._lock = lock
+        self._mutex = threading.Lock()
+        self._acquired = False
+        self._abandoned = False
+
+    def run(self, timeout: float) -> bool:
+        """Try to acquire for up to ``timeout`` seconds; True when the caller now owns the lock."""
+        try:
+            self._lock.acquire(timeout=timeout)
+        except Timeout:
+            return False
+        with self._mutex:
+            self._acquired = True
+            if self._abandoned:
+                self._lock.release()
+            return not self._abandoned
+
+    def abandon(self) -> None:
+        with self._mutex:
+            self._abandoned = True
+            if self._acquired:
+                self._lock.release()
+
+
+async def _acquire(lock: FileLock) -> None:
+    """Acquire ``lock`` in short attempts so a cancelled waiter strands no blocked thread.
+
+    Raises:
+        Timeout: Another holder kept the lock for ``_LOCK_TIMEOUT_S``.
+    """
+    deadline = time.monotonic() + _LOCK_TIMEOUT_S
+    while True:
+        attempt = _LockAttempt(lock)
+        timeout = min(_LOCK_POLL_S, max(deadline - time.monotonic(), 0.0))
+        try:
+            if await asyncio.to_thread(attempt.run, timeout):
+                return
+        except BaseException:
+            attempt.abandon()
+            raise
+        if time.monotonic() >= deadline:
+            raise Timeout(lock.lock_file)
+
+
 @contextlib.asynccontextmanager
 async def entry_lock(entry: Path) -> AsyncIterator[None]:
     """Serialize concurrent downloads of the same cache entry across processes."""
     await asyncio.to_thread(entry.parent.mkdir, parents=True, exist_ok=True)
     # thread_local=False: acquire and release run on different to_thread workers.
     lock = FileLock(f"{entry}.lock", thread_local=False)
-    await asyncio.to_thread(lock.acquire, timeout=_LOCK_TIMEOUT_S)
+    await _acquire(lock)
     try:
         yield
     finally:

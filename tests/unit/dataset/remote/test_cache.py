@@ -2,10 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import hashlib
-from collections.abc import AsyncIterator
+import threading
+import time
+from collections.abc import AsyncIterator, Callable, Iterator
 from pathlib import Path
 
 import pytest
+from filelock import FileLock, Timeout
 
 from aiperf.common.environment import Environment
 from aiperf.config.dataset.remote_ref import RemoteRef
@@ -133,6 +136,118 @@ def test_write_atomically_failure_leaves_no_partial(tmp_path: Path) -> None:
     with pytest.raises(OSError):
         cache.write_atomically(chunks(), tmp_path / "out.jsonl")
     assert list(tmp_path.iterdir()) == []
+
+
+def _lock_is_free(entry: Path, timeout: float) -> bool:
+    probe = FileLock(f"{entry}.lock", thread_local=False)
+    try:
+        probe.acquire(timeout=timeout)
+    except Timeout:
+        return False
+    probe.release()
+    return True
+
+
+def _wait_until(predicate: Callable[[], bool], timeout: float) -> bool:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.02)
+    return True
+
+
+async def _enter_and_hold(entry: Path) -> None:
+    async with cache.entry_lock(entry):
+        await asyncio.Event().wait()
+
+
+@pytest.fixture
+def held_entry(tmp_path: Path) -> Iterator[tuple[Path, FileLock]]:
+    """A cache entry whose lock another holder owns until the test releases it."""
+    entry = tmp_path / "a" / "b"
+    entry.parent.mkdir(parents=True)
+    holder = FileLock(f"{entry}.lock", thread_local=False)
+    holder.acquire()
+    yield entry, holder
+    if holder.is_locked:
+        holder.release(force=True)
+
+
+@pytest.mark.asyncio
+async def test_entry_lock_cancelled_waiter_stops_waiting_on_its_thread(
+    held_entry: tuple[Path, FileLock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry, holder = held_entry
+    active: list[int] = []
+
+    class SpyLock(FileLock):
+        def acquire(self, *args, **kwargs):
+            active.append(1)
+            try:
+                return super().acquire(*args, **kwargs)
+            finally:
+                active.pop()
+
+    monkeypatch.setattr(cache, "FileLock", SpyLock)
+    try:
+        waiter = asyncio.create_task(_enter_and_hold(entry))
+        done, _ = await asyncio.wait({waiter}, timeout=0.3)
+        assert not done and active
+        started = time.monotonic()
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert time.monotonic() - started < 1.0
+        # While the other holder still has the lock, no worker thread may stay blocked
+        # in acquire: one would hang interpreter shutdown for the full lock timeout.
+        assert await asyncio.to_thread(_wait_until, lambda: not active, 3.0)
+    finally:
+        # Released here, not by the fixture: the event loop joins its worker threads
+        # before fixture teardown, so a stranded acquire would deadlock it.
+        holder.release()
+    assert await asyncio.to_thread(_lock_is_free, entry, 5.0)
+
+
+@pytest.mark.asyncio
+async def test_entry_lock_times_out_at_the_deadline(
+    held_entry: tuple[Path, FileLock], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entry, holder = held_entry
+    monkeypatch.setattr(cache, "_LOCK_TIMEOUT_S", 0.3)
+    started = time.monotonic()
+    try:
+        with pytest.raises(Timeout):
+            async with cache.entry_lock(entry):
+                pass
+        assert time.monotonic() - started < 3.0
+    finally:
+        holder.release()
+
+
+def test_lock_attempt_abandoned_after_acquiring_releases(tmp_path: Path) -> None:
+    lock = FileLock(f"{tmp_path / 'e'}.lock", thread_local=False)
+    attempt = cache._LockAttempt(lock)
+    assert attempt.run(timeout=1.0)
+    attempt.abandon()
+    assert not lock.is_locked
+
+
+def test_lock_attempt_abandoned_while_waiting_releases_on_acquire(
+    held_entry: tuple[Path, FileLock],
+) -> None:
+    entry, holder = held_entry
+    lock = FileLock(f"{entry}.lock", thread_local=False)
+    attempt = cache._LockAttempt(lock)
+    results: list[bool] = []
+    thread = threading.Thread(target=lambda: results.append(attempt.run(timeout=5.0)))
+    thread.start()
+    attempt.abandon()
+    holder.release()
+    thread.join(timeout=10.0)
+    assert results == [False]
+    assert not lock.is_locked
+    assert _lock_is_free(entry, 1.0)
 
 
 @pytest.mark.asyncio
