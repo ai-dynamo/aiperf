@@ -50,7 +50,7 @@ Only folders whose format reads a directory work as `path`.
   "aiperf_manifest_version": 1,
   "format": "mooncake_trace",
   "path": "data/chat-2026-08.jsonl.gz",
-  "sha256": "<lowercase hex sha256 of the file>",
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "block_size": 512,
   "requires": {"aiperf": ">=0.14.0.dev0", "endpoint_types": ["chat"], "max_context_tokens": 131072},
   "description": "Anonymized chat traffic, Aug 2026",
@@ -73,8 +73,9 @@ Only folders whose format reads a directory work as `path`.
 
 Notes:
 
-- Compute the checksum with `sha256sum data/chat-2026-08.jsonl.gz` (`shasum -a 256` on macOS).
-  A mismatch fails the run with a `checksum_mismatch` error.
+- The `sha256` above is a placeholder of 64 zeros: replace it with the file's real digest, from
+  `sha256sum data/chat-2026-08.jsonl.gz` (`shasum -a 256` on macOS). A mismatch fails the run
+  with a sha256 mismatch error.
 - `requires.aiperf` follows PEP 440, so development builds sort below the release:
   `0.14.0.dev12` does not satisfy `>=0.14`. Write `>=0.14.0.dev0` if you want development
   builds to qualify.

@@ -10,8 +10,9 @@ AIPerf checks access, pins the exact version, downloads the data into a local ca
 and then replays it exactly as it would the same file on disk.
 
 ```bash
+# hf://<org>/<repo> is a placeholder; use a real published trace
 aiperf profile --model my-model --url localhost:8000 --endpoint-type chat \
-    --input-file hf://llm-d/chat-traces
+    --input-file hf://<org>/<repo>
 ```
 
 Remote references are for local runs. Kubernetes (`aiperf kube`) support for remote
@@ -40,7 +41,7 @@ ones.
 
 ```bash
 # A single file in a Hugging Face repo, pinned to a commit
-aiperf profile ... --input-file hf://datasets/llm-d/chat-traces@<commit>/data/chat.jsonl.gz \
+aiperf profile ... --input-file hf://datasets/<org>/<repo>@<commit>/data/chat.jsonl.gz \
     --custom-dataset-type mooncake_trace
 
 # An S3 prefix that holds an aiperf.json
@@ -83,7 +84,7 @@ stop condition (`--conversation-num`, `--request-count`, or `--benchmark-duratio
 The run log prints the exact version used, for example:
 
 ```text
-Remote dataset hf://llm-d/chat-traces: using hf://datasets/llm-d/chat-traces@3e1f.../data/chat.jsonl.gz (version 3e1f..., 1 file(s), 48211093 bytes, sha256 9c1d4f0a7b2e)
+Remote dataset hf://<org>/<repo>: using hf://datasets/<org>/<repo>@3e1f.../data/chat.jsonl.gz (version 3e1f..., 1 file(s), 48211093 bytes, sha256 9c1d4f0a7b2e)
 ```
 
 Copy the `using ...` reference to reproduce the run. The same information (reference, pinned
@@ -135,20 +136,30 @@ suggests generating a new one.
 
 ## Troubleshooting
 
-Errors read `Cannot use <reference>: <what went wrong>. <how to fix it>.`
+Errors read `Cannot use <reference>: <what went wrong>. <how to fix it>.` Find your message
+in the table.
 
-| Error kind | Typical cause | Fix |
+| The message says | Typical cause | Fix |
 |---|---|---|
-| `auth_missing` | A private repo or object and no credentials, or no usable AWS credentials | Set `HF_TOKEN` / run `hf auth login`, or configure AWS credentials |
-| `auth_denied` | Token lacks permission, AWS credentials expired, or a presigned URL expired | Check permissions; refresh credentials or generate a new presigned URL |
-| `gated` | The dataset's terms have not been accepted | Accept them on the dataset page, then retry |
-| `not_found` | Wrong repo, path, key, or URL; or offline mode with nothing cached | Check the reference; run once with network access |
-| `revision_not_found` | The `@<rev>` does not exist | Check the branch, tag, or commit |
-| `manifest_invalid` | A repo, folder, or prefix has no `aiperf.json`, or it is malformed | Ask the publisher to fix or add it |
-| `incompatible` | The manifest needs a newer AIPerf or another `--endpoint-type`, or conflicts with your options | Upgrade AIPerf, or change the flag the error names |
-| `checksum_mismatch` | The downloaded file does not match the manifest's `sha256` | Retry; if it persists, the publisher's file or manifest is wrong |
-| `missing_dependency` | `s3://` without the AWS extra | `uv pip install 'aiperf[aws]'` |
-| `transient` | Network trouble or a rate-limited server | Retry later |
+| "requires authentication (HTTP 401)", "was not found; it may be private", or "no usable AWS credentials" | A private repo or object and no credentials | Set `HF_TOKEN` / run `hf auth login`, or configure AWS credentials |
+| "the AWS credentials are expired or invalid" | Expired AWS session | Refresh them (for example `aws sso login`) |
+| "denied access" or "S3 denied access" | The token or IAM role lacks permission, or an HTTPS presigned URL expired | Check permissions, or generate a new presigned URL. Without `s3:ListBucket`, S3 also answers this for a key that does not exist |
+| "has not accepted its terms" | A gated Hugging Face dataset | Accept the terms on the dataset page, then retry |
+| "has no revision" or "has no version" | The `@<rev>` or `?versionId=` does not exist | Check the branch, tag, commit, or version id |
+| "was not found, or your token can't access it", "S3 has no such bucket or key", or "the server has no such file" | Wrong repo, path, key, or URL | Check the reference |
+| "offline mode is on and it is not in the local cache" | Offline mode with nothing downloaded for that reference | Run once with network access, or unset `AIPERF_DATASET_REMOTE_OFFLINE` / `HF_HUB_OFFLINE` |
+| "no `aiperf.json` describing it" or "no `aiperf.json` under it" | A repo, folder, or prefix without a manifest | Point at a data file, or ask the publisher to add `aiperf.json` |
+| "its manifest points at" ... "which does not exist", or "its manifest" ... "is invalid" | A malformed or stale manifest | Ask the publisher to fix `aiperf.json` |
+| "it requires AIPerf", "newer than this AIPerf supports", or "does not have" | The manifest needs a newer AIPerf | Upgrade AIPerf |
+| "it supports --endpoint-type" | The manifest limits the endpoint types | Pass a supported `--endpoint-type` |
+| "its manifest declares format" or "conflicts with this run's dataset options" | The manifest disagrees with your flags | Drop the conflicting option, or pass the manifest's format |
+| "its first record does not look like" | The file is not in the declared format | Check the manifest's format, or pass the right `--custom-dataset-type` |
+| "the downloaded file's sha256 is" | The file does not match the manifest's `sha256` | Retry; if it persists, the publisher's file or manifest is wrong |
+| "changed after AIPerf pinned its version" | The remote changed during the run | Run again to use the new version |
+| "need the optional botocore dependency" | `s3://` without the AWS extra | `uv pip install 'aiperf[aws]'` |
+| "cannot be written" | The cache directory is full or read-only | Free disk space or fix permissions, or set `AIPERF_DATASET_REMOTE_CACHE_DIR` (Hugging Face: `HF_HOME`) |
+| "the connection failed", "is unavailable", or "could not be reached" | Network trouble or a rate-limited server | Check network access and retry later |
+| "timed out waiting for another process" | Another AIPerf run holds the download lock | Wait, or delete the lock file the message names if no run is active |
 
 If the manifest declares `requires.max_context_tokens`, AIPerf only warns when it is larger
 than `--max-context-length`. That comparison happens only when `--max-context-length` is set,
