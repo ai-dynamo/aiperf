@@ -70,8 +70,15 @@ def test_infer_dataset_type_baseten_parquet_keeps_schema_priority(
 
 def test_create_dataset_parquet_with_non_parquet_format_raises(tmp_path: Path) -> None:
     path = write_parquet(tmp_path / "t.parquet", ROWS)
-    composer = _composer(path, custom_dataset_type=CustomDatasetType.BURST_GPT_TRACE)
+    # The config converter rejects this pairing first, so hand the composer the
+    # format directly to exercise its own guard.
+    composer = _composer(path)
     with (
+        patch.object(
+            composer,
+            "_explicit_format",
+            return_value=CustomDatasetType.BURST_GPT_TRACE,
+        ),
         patch.object(composer, "_create_loader_instance") as create_loader,
         pytest.raises(
             ValueError,

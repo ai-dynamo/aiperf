@@ -10,7 +10,12 @@ import orjson
 
 from aiperf.common.enums import ConversationContextMode, DatasetFormat
 from aiperf.common.models import Conversation
-from aiperf.common.record_files import first_record, is_parquet_input, parquet_files
+from aiperf.common.record_files import (
+    first_record,
+    is_parquet_input,
+    parquet_files,
+    require_parquet_reader,
+)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str, open_text_maybe_gzip
 from aiperf.config.dataset import FileDataset
@@ -87,7 +92,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
         # Validate synthesis options are only used with mooncake_trace
         self._validate_synthesis_config(dataset_type)
         if not is_inline and is_parquet_input(self._file_path):
-            self._require_parquet_reader(dataset_type)
+            require_parquet_reader(dataset_type)
             if (
                 dataset_type == CustomDatasetType.BASETEN_TRACE
                 and Path(self._file_path).is_dir()
@@ -195,16 +200,6 @@ class CustomDatasetComposer(BaseDatasetComposer):
         with contextlib.suppress(ValueError):
             return self._infer_type(data=None, filename=first_file)
         return self._infer_type(data=first_record(path), filename=first_file)
-
-    @staticmethod
-    def _require_parquet_reader(dataset_type: CustomDatasetType) -> None:
-        """Reject a loader that reads files itself and so cannot take parquet input."""
-        LoaderClass = plugins.get_class(PluginType.CUSTOM_DATASET_LOADER, dataset_type)
-        if not getattr(LoaderClass, "reads_parquet", False):
-            raise ValueError(
-                f"Dataset format '{dataset_type}' does not read parquet files; "
-                "convert the data to JSONL or choose a format that reads parquet"
-            )
 
     def _infer_type(
         self, data: dict[str, Any] | None = None, filename: str | Path | None = None

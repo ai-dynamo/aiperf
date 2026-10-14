@@ -123,6 +123,25 @@ def parquet_files(path: str | Path) -> list[Path]:
     return [p / name for name in select_parquet_shards(_data_names(p))]
 
 
+def require_parquet_reader(dataset_type: object) -> None:
+    """Reject a dataset format whose loader reads files itself and so cannot take parquet input.
+
+    Call it only for parquet input; every caller guards with :func:`is_parquet_input`.
+
+    Raises:
+        ValueError: The loader for ``dataset_type`` does not set ``reads_parquet``.
+    """
+    from aiperf.plugin import plugins
+    from aiperf.plugin.enums import PluginType
+
+    LoaderClass = plugins.get_class(PluginType.CUSTOM_DATASET_LOADER, dataset_type)
+    if not getattr(LoaderClass, "reads_parquet", False):
+        raise ValueError(
+            f"Dataset format '{dataset_type}' does not read parquet files; "
+            "convert the data to JSONL or choose a format that reads parquet"
+        )
+
+
 def _pyarrow() -> tuple[Any, Any]:
     try:
         import pyarrow as pa
