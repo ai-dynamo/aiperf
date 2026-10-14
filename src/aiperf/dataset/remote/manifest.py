@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from pathlib import PurePosixPath
+from pathlib import PurePosixPath, PureWindowsPath
 from typing import Literal
 
 import orjson
@@ -48,7 +48,9 @@ class AIPerfManifest(AIPerfBaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-    aiperf_manifest_version: int = Field(ge=1, description="Manifest schema version.")
+    aiperf_manifest_version: int = Field(
+        ge=1, strict=True, description="Manifest schema version."
+    )
     format: str | None = Field(
         default=None, description="Custom dataset loader name, e.g. `mooncake_trace`."
     )
@@ -89,11 +91,14 @@ def _invalid(ref_display: str, what: str) -> RemoteSourceError:
 
 def _check_contained(path: str, ref_display: str) -> None:
     pure = PurePosixPath(path)
+    windows = PureWindowsPath(path)
     if (
         not path.strip()
         or path.strip() == "."
         or "\\" in path
         or pure.is_absolute()
+        or windows.drive
+        or windows.anchor
         or ".." in pure.parts
     ):
         raise _invalid(
@@ -137,7 +142,11 @@ def parse_manifest(
     if not isinstance(data, dict):
         raise _invalid(ref_display, f"its {kind} manifest is not a JSON object")
     version = data.get("aiperf_manifest_version")
-    if isinstance(version, int) and version > SUPPORTED_MANIFEST_VERSION:
+    if (
+        isinstance(version, int)
+        and not isinstance(version, bool)
+        and version > SUPPORTED_MANIFEST_VERSION
+    ):
         raise _error(
             ref_display,
             RemoteErrorKind.INCOMPATIBLE,
