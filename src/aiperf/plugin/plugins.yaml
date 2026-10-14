@@ -2890,6 +2890,12 @@ public_dataset_loader:
       is_trace: true
 
 dataset_source_resolver:
+  hf:
+    class: aiperf.dataset.remote.hf:HFSourceResolver
+    description: |
+      Resolves hf://[datasets/]<org>/<repo>[@<rev>][/<path>] to a Hugging Face dataset repo.
+      A file path downloads that file (optional <file>.aiperf.json sidecar); a repo or folder
+      requires an aiperf.json manifest. Pins the commit SHA; files live in the HF cache.
   https:
     class: aiperf.dataset.remote.http:HTTPSourceResolver
     description: |

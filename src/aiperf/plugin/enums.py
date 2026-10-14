@@ -67,7 +67,7 @@ PublicDatasetType = plugins.create_enum(PluginType.PUBLIC_DATASET_LOADER, "Publi
 
 DatasetSourceSchemeStr: TypeAlias = str
 DatasetSourceScheme = plugins.create_enum(PluginType.DATASET_SOURCE_RESOLVER, "DatasetSourceScheme", module=__name__)
-"""Dynamic enum for dataset source resolver. Example: DatasetSourceScheme.HTTP, DatasetSourceScheme.HTTPS"""
+"""Dynamic enum for dataset source resolver. Example: DatasetSourceScheme.HF, DatasetSourceScheme.HTTP, DatasetSourceScheme.HTTPS"""
 
 EndpointTypeStr: TypeAlias = str
 EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType", module=__name__)
