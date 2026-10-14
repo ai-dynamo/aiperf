@@ -200,8 +200,10 @@ class ResponsesEndpoint(BaseEndpoint):
 
         # Responses API carries the system prompt in top-level ``instructions``
         # rather than in ``input``. The per-conversation ``user_context_message``
-        # is a leading user item.
-        if request_info.previous_response_id:
+        # is a leading user item. Branch on the outgoing id, not the session's:
+        # an override to ``None`` breaks the chain, so the server has no history
+        # to replay and the full conversation must ship as in a stateless run.
+        if self._outgoing_previous_response_id(request_info):
             # Stateful chaining: previous_response_id points to server-side history.
             self._warn_chaining_isl_once()
             rendered = self.build_messages([turns[-1]])
