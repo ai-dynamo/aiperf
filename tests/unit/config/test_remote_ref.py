@@ -289,3 +289,23 @@ def test_presigned_canonical_drops_only_credential_and_envelope_parameters(
     value: str, expected: str
 ) -> None:
     assert RemoteRef(ref=value).canonical == expected
+
+
+@pytest.mark.parametrize("version", [None, "etag-1"])
+def test_serializer_emits_raw_ref_only_when_secrets_are_requested(
+    version: str | None,
+) -> None:
+    raw = "https://h/t.jsonl?X-Amz-Signature=secret"
+    ref = RemoteRef(ref=raw)
+    if version is not None:
+        ref = ref.with_version(version)
+    dumped = ref.model_dump(context={"include_secrets": True})
+    expected = raw if version is None else {"ref": raw, "resolved_version": version}
+    assert dumped == expected
+    assert (
+        RemoteRef.model_validate(dumped if version is not None else {"ref": dumped})
+        == ref
+    )
+    assert "secret" not in str(ref.model_dump())
+    assert "secret" not in ref.model_dump_json()
+    assert "secret" not in ref.model_dump_json(context={"include_secrets": False})

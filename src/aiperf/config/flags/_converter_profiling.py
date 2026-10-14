@@ -641,6 +641,22 @@ def _fixed_schedule_conflicts(prof: dict[str, Any]) -> list[str]:
     return [k for k in _FIXED_SCHEDULE_CONFLICT_KEYS if k in prof]
 
 
+def _remote_fixed_schedule_conflicts(prof: dict[str, Any], cli: CLIConfig) -> list[str]:
+    """_fixed_schedule_conflicts plus the dataset options a fixed_schedule phase rejects.
+
+    For a local file these surface after promotion, from BenchmarkConfig's
+    phase/dataset compatibility check. A remote phase is validated before its
+    first record is known, so they must keep it from being promoted optimistically.
+    """
+    from aiperf.plugin.enums import DatasetSamplingStrategy
+
+    conflicts = _fixed_schedule_conflicts(prof)
+    sampling = cli.dataset_sampling_strategy
+    if sampling is not None and sampling != DatasetSamplingStrategy.SEQUENTIAL:
+        conflicts.append(f"--dataset-sampling-strategy {sampling}")
+    return conflicts
+
+
 def _maybe_auto_promote_trace(
     prof: dict[str, Any], cli: CLIConfig, file_path: Path | None
 ) -> None:
@@ -675,7 +691,7 @@ def _defer_remote_auto_promotion(prof: dict[str, Any], cli: CLIConfig) -> None:
 
     if not _auto_promotion_may_apply(prof, cli):
         return
-    conflicts = _fixed_schedule_conflicts(prof)
+    conflicts = _remote_fixed_schedule_conflicts(prof, cli)
     # A rate-shaped phase without a conflict key (--request-rate-series) cannot be
     # built as fixed_schedule either; name its type so the error stays actionable.
     if conflicts or prof["type"] != PhaseType.CONCURRENCY:

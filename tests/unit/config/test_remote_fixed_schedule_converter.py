@@ -54,3 +54,48 @@ def test_sweep_records_conflict_without_promoting() -> None:
 )  # fmt: skip
 def test_no_marker_when_promotion_cannot_apply(kwargs: dict) -> None:
     assert _run(**kwargs).cfg.get_default_dataset().remote_fixed_schedule_check is None
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"custom_dataset_type": CustomDatasetType.MOONCAKE_TRACE},
+        {},
+    ],
+    ids=["typed", "untyped"],
+)  # fmt: skip
+@pytest.mark.parametrize("sampling", ["random", "shuffle"])
+def test_non_sequential_sampling_records_conflict_without_promoting(
+    kwargs: dict, sampling: str
+) -> None:
+    # A fixed_schedule phase requires sequential sampling, which BenchmarkConfig
+    # validation checks before the access preflight can read the first record.
+    run = _run(dataset_sampling_strategy=sampling, **kwargs)
+    check = run.cfg.get_default_dataset().remote_fixed_schedule_check
+    assert str(_profiling(run).type) == str(PhaseType.CONCURRENCY)
+    assert check is not None and not check.promoted
+    assert f"--dataset-sampling-strategy {sampling}" in check.conflict_error
+
+
+def test_explicit_sequential_sampling_still_promotes() -> None:
+    run = _run(
+        custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+        dataset_sampling_strategy="sequential",
+    )
+    assert str(_profiling(run).type) == str(PhaseType.FIXED_SCHEDULE)
+
+
+def test_local_timestamped_trace_with_random_sampling_still_fails_at_parse(
+    tmp_path,
+) -> None:
+    trace = tmp_path / "t.jsonl"
+    trace.write_bytes(b'{"timestamp": 0, "input_length": 4, "output_length": 2}\n')
+    with pytest.raises(ValueError, match="requires sequential sampling"):
+        make_run_from_cli(
+            CLIConfig(
+                model_names=["m"],
+                input_file=str(trace),
+                custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                dataset_sampling_strategy="random",
+            )
+        )

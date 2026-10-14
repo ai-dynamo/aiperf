@@ -39,10 +39,12 @@ class FakeResolver:
     ) -> None:
         self.data, self.manifest, self.filename = data, manifest, filename
         self.probes = 0
+        self.probed_refs: list[str] = []
         self.prefix_sizes: list[int] = []
 
     async def probe(self, ref):
         self.probes += 1
+        self.probed_refs.append(ref.ref)
         pinned = ref.with_version(f"etag-{self.probes}")
         manifest = (
             parse_manifest(
@@ -232,6 +234,45 @@ def test_every_variant_run_is_finalized(
         assert ds.remote_fixed_schedule_check is None
         assert ds.path.resolved_version == "etag-1"
         assert _profiling_type(cfg) == str(expected)
+
+
+def test_presigned_ref_survives_variant_expansion(monkeypatch) -> None:
+    resolver = _install(monkeypatch, FakeResolver(TS_ROWS))
+    cli = CLIConfig(model_names=["m"], input_file=PRESIGNED, custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+                    sweep_variants=["a: concurrency=2", "b: concurrency=4"])  # fmt: skip
+    plan = build_benchmark_plan(resolve_config(cli, None))
+    assert [c.get_default_dataset().path.ref for c in plan.configs] == [PRESIGNED] * 2
+    preflight.preflight_remote_access(plan.configs)
+    assert resolver.probed_refs == [PRESIGNED]
+    for cfg in plan.configs:
+        # run_config.json and the child-process payload use the default dump.
+        assert "sekrit123" not in cfg.model_dump_json()
+        assert "sekrit123" not in str(cfg.model_dump())
+
+
+@pytest.mark.parametrize(
+    ("data", "timestamped"),
+    [(TS_ROWS, True), (NO_TS_ROWS, False)],
+    ids=["timestamped", "untimestamped"],
+)  # fmt: skip
+def test_random_sampling_conflicts_only_if_the_trace_promotes(
+    monkeypatch, data: bytes, timestamped: bool
+) -> None:
+    _install(monkeypatch, FakeResolver(data))
+    cfg = _cfg(
+        custom_dataset_type=CustomDatasetType.MOONCAKE_TRACE,
+        dataset_sampling_strategy="random",
+    )
+    assert _profiling_type(cfg) == str(PhaseType.CONCURRENCY)
+    if timestamped:
+        with pytest.raises(
+            ConfigurationError, match="--dataset-sampling-strategy random"
+        ):
+            preflight.preflight_remote_access([cfg])
+    else:
+        preflight.preflight_remote_access([cfg])
+        assert _profiling_type(cfg) == str(PhaseType.CONCURRENCY)
+        assert cfg.get_default_dataset().remote_fixed_schedule_check is None
 
 
 def test_timestamped_trace_with_rate_flag_raises_the_recorded_conflict(
