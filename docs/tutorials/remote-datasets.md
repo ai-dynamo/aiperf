@@ -15,8 +15,10 @@ aiperf profile --model my-model --url localhost:8000 --endpoint-type chat \
     --input-file hf://<org>/<repo>
 ```
 
-Remote references are for local runs. Kubernetes (`aiperf kube`) support for remote
-`--input-file` is not part of this release.
+Remote references are for local runs. Kubernetes runs (`aiperf kube` commands, and
+`AIPerfJob`/`AIPerfSweep` resources applied to the operator) reject them before anything is
+scheduled, with "Remote dataset references (hf://, s3://, https://) are not yet supported for
+Kubernetes runs". Download the file and use a local path instead.
 
 To publish a trace that others can run this way, see [Publishing traces](publishing-traces.md).
 
@@ -158,6 +160,7 @@ in the table.
 | "the downloaded file's sha256 is" | The file does not match the manifest's `sha256` | Retry; if it persists, the publisher's file or manifest is wrong |
 | "changed after AIPerf pinned its version" | The remote changed during the run | Run again to use the new version |
 | "need the optional botocore dependency" | `s3://` without the AWS extra | `uv pip install 'aiperf[aws]'` |
+| "are not yet supported for Kubernetes runs" | A remote reference passed to `aiperf kube` or set in an `AIPerfJob`/`AIPerfSweep` | Download the file and use a local path |
 | "cannot be written" | The cache directory is full or read-only | Free disk space or fix permissions, or set `AIPERF_DATASET_REMOTE_CACHE_DIR` (Hugging Face: `HF_HOME`) |
 | "the connection failed", "is unavailable", or "could not be reached" | Network trouble or a rate-limited server | Check network access and retry later |
 | "timed out waiting for another process" | Another AIPerf run holds the download lock | Wait, or delete the lock file the message names if no run is active |
