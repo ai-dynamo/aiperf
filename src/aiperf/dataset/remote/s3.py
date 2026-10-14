@@ -12,12 +12,18 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal, NamedTuple, NoReturn, TypeVar
 from urllib.parse import quote
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.optional_dependencies import (
     AWS_EXTRA,
     install_optional_dependency_hint,
 )
-from aiperf.common.record_files import ParquetSplitError, select_data_shards
+from aiperf.common.record_files import (
+    DEFAULT_SPLIT,
+    ParquetSplitError,
+    select_data_shards,
+    shard_splits,
+)
 from aiperf.config.dataset.remote_ref import RemoteRef
 from aiperf.dataset.remote.cache import (
     digest,
@@ -41,6 +47,7 @@ from aiperf.dataset.remote.manifest import (
 from aiperf.dataset.remote.models import ProbeResult, RemoteFile, ResolvedSource
 
 T = TypeVar("T")
+_logger = AIPerfLogger(__name__)
 
 _CHUNK = 1 << 20
 _CONNECT_TIMEOUT_S = 10
@@ -358,10 +365,18 @@ def _folder_shards(
     except ParquetSplitError as e:
         raise _error(
             ref, kind=RemoteErrorKind.MANIFEST_INVALID, stage=RemoteStage.ACCESS,
-            what=f"its manifest folder '{data_key}' holds the splits {', '.join(sorted(e.splits))} and none is named 'train'",
-            hint="Ask the publisher to keep one split in the folder, or to name it 'train'",
+            what=f"its manifest folder '{data_key}' holds the splits {', '.join(sorted(e.splits))} and none is named '{DEFAULT_SPLIT}'",
+            hint=f"Ask the publisher to keep one split in the folder, or to name it '{DEFAULT_SPLIT}'",
         ) from e  # fmt: skip
-    return None if chosen is None else [prefix + n for n in chosen]
+    if chosen is None:
+        return None
+    splits = shard_splits(names)
+    if len(splits) > 1:
+        _logger.info(
+            f"Remote dataset {ref.display}: '{data_key}' holds splits "
+            f"{', '.join(s or '(unnamed)' for s in splits)}; using '{DEFAULT_SPLIT}'"
+        )
+    return [prefix + n for n in chosen]
 
 
 class S3SourceResolver:

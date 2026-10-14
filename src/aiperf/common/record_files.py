@@ -56,6 +56,19 @@ def is_ignored_name(name: str) -> bool:
     )
 
 
+def _split_groups(names: Sequence[str]) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = {}
+    for name in sorted(n for n in names if n.lower().endswith(PARQUET_SUFFIX)):
+        match = _HF_SHARD_NAME.match(name)
+        groups.setdefault(match.group("split") if match else "", []).append(name)
+    return groups
+
+
+def shard_splits(names: Sequence[str]) -> list[str]:
+    """The sorted split names among the parquet ``names``; '' for files outside split naming."""
+    return sorted(_split_groups(names))
+
+
 def select_parquet_shards(names: Sequence[str]) -> list[str]:
     """The parquet file names to read from one directory, in read order.
 
@@ -66,10 +79,7 @@ def select_parquet_shards(names: Sequence[str]) -> list[str]:
     Raises:
         ParquetSplitError: Several splits are present and none is ``train``.
     """
-    groups: dict[str, list[str]] = {}
-    for name in sorted(n for n in names if n.lower().endswith(PARQUET_SUFFIX)):
-        match = _HF_SHARD_NAME.match(name)
-        groups.setdefault(match.group("split") if match else "", []).append(name)
+    groups = _split_groups(names)
     if len(groups) <= 1:
         return next(iter(groups.values()), [])
     if DEFAULT_SPLIT in groups:

@@ -3,6 +3,7 @@
 import asyncio
 import errno
 import io
+import logging
 import threading
 import time
 from collections.abc import Iterator
@@ -586,9 +587,11 @@ def _parquet_keys(*names: str) -> list[dict]:
 
 
 @pytest.mark.asyncio
-async def test_prefix_manifest_parquet_folder_lists_train_shards() -> None:
+async def test_prefix_manifest_parquet_folder_lists_train_shards(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     client = _client()
-    with Stubber(client) as s:
+    with Stubber(client) as s, caplog.at_level(logging.INFO):
         _stub_directory_probe(s, _parquet_keys(
             "train-00001-of-00002.parquet", "train-00000-of-00002.parquet",
             "test-00000-of-00001.parquet", "README.md",
@@ -599,6 +602,11 @@ async def test_prefix_manifest_parquet_folder_lists_train_shards() -> None:
     assert probe.data_files == [
         "set/traces/train-00000-of-00002.parquet",
         "set/traces/train-00001-of-00002.parquet",
+    ]
+    assert [
+        r.getMessage() for r in caplog.records if "holds splits" in r.getMessage()
+    ] == [
+        "Remote dataset s3://bucket/set/: 'set/traces' holds splits test, train; using 'train'"
     ]
 
 

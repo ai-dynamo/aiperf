@@ -23,6 +23,7 @@ from aiperf.common.record_files import (
     parquet_files,
     select_data_shards,
     select_parquet_shards,
+    shard_splits,
 )
 
 ROWS = [
@@ -185,6 +186,12 @@ def test_select_parquet_shards_picks_read_order(
     names: list[str], expected: list[str]
 ) -> None:
     assert select_parquet_shards(names) == expected
+
+
+def test_shard_splits_lists_splits_of_parquet_names_only() -> None:
+    names = ["test-00000-of-00001.parquet", "train-00000-of-00002.parquet",
+             "train-00001-of-00002.parquet", "0000.parquet", "README.md"]  # fmt: skip
+    assert shard_splits(names) == ["", "test", "train"]
 
 
 def test_select_parquet_shards_no_train_raises_with_splits() -> None:
