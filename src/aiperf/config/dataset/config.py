@@ -40,6 +40,7 @@ from aiperf.config.dataset.content import (
     PromptSelectionConfig,
     RankingsConfig,
 )
+from aiperf.config.dataset.remote_ref import RemoteRef, coerce_remote_ref
 from aiperf.config.dataset.system_prompt import SystemPromptMixin
 from aiperf.config.dataset.trace import (
     SynthesisConfig,
@@ -293,7 +294,8 @@ class FileDataset(SystemPromptMixin, EndOnTruncationMixin):
     Supports trace replay and custom sampling strategies.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    # A raw presigned URL in ``path`` would otherwise be echoed in ValidationError text.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     name: _DatasetName
 
@@ -303,10 +305,14 @@ class FileDataset(SystemPromptMixin, EndOnTruncationMixin):
     ]
 
     path: Annotated[
-        Path | None,
+        Path | RemoteRef | None,
+        # Before Path coercion: Path("hf://x") collapses "//" and corrupts the reference.
+        BeforeValidator(coerce_remote_ref),
         Field(
             default=None,
-            description="Path to file or directory containing benchmark dataset. "
+            description="Path to file or directory containing benchmark dataset, or a "
+            "remote reference: `hf://[datasets/]<org>/<repo>[@<rev>][/<path>]`, "
+            "`s3://<bucket>/<key>[?versionId=<id>]`, or an `https://`/`http://` URL. "
             "Can be absolute or relative. Mutually exclusive with `records:`. "
             "Supported formats depend on the format field: "
             "JSONL for single_turn/multi_turn, JSONL (optionally gzipped) for "
