@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import errno
 import hashlib
 import os
 import re
@@ -18,10 +19,15 @@ from filelock import FileLock
 
 from aiperf.common.environment import Environment
 from aiperf.config.dataset.remote_ref import RemoteRef
+from aiperf.dataset.remote.errors import RemoteErrorKind, RemoteSourceError, RemoteStage
 
 _LOCK_TIMEOUT_S = 1800.0
 _UNSAFE_NAME_CHARS = re.compile(r"[^A-Za-z0-9._-]")
 _VERSION_NAME_MAX_CHARS = 48
+# Local filesystem failures a retry cannot fix (and re-downloading GBs would not help).
+_LOCAL_FS_ERRNOS = frozenset(
+    {errno.ENOSPC, errno.EDQUOT, errno.EROFS, errno.EACCES, errno.EPERM}
+)
 
 
 def remote_cache_dir() -> Path:
@@ -30,6 +36,30 @@ def remote_cache_dir() -> Path:
     if configured is not None:
         return Path(configured)
     return Path.home() / ".cache" / "aiperf" / "remote"
+
+
+def local_fs_error(
+    exc: BaseException,
+    *,
+    ref_display: str,
+    stage: RemoteStage,
+    cache: str | None = None,
+    env_var: str = "AIPERF_DATASET_REMOTE_CACHE_DIR",
+) -> RemoteSourceError | None:
+    """The non-retried error for a cache that cannot be written; None for any other failure.
+
+    ``cache`` describes the cache being written (default: AIPerf's remote cache) and
+    ``env_var`` names the variable that moves it.
+    """
+    if not isinstance(exc, OSError) or exc.errno not in _LOCAL_FS_ERRNOS:
+        return None
+    cache = cache or f"the remote dataset cache at {remote_cache_dir()}"
+    return RemoteSourceError(
+        ref=ref_display, kind=RemoteErrorKind.NOT_FOUND, stage=stage,
+        what=f"{cache} cannot be written ({exc.strerror})",
+        hint=f"Free disk space or fix permissions there, or set {env_var} to another "
+        "location, then retry",
+    )  # fmt: skip
 
 
 def digest(value: str, length: int) -> str:

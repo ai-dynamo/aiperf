@@ -2,14 +2,19 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import contextlib
+import errno
+import gzip
 import hashlib
+import os
 from collections.abc import AsyncIterator
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import orjson
 import pytest
 from aiohttp import web
 from filelock import Timeout
+from pytest import param
 
 from aiperf.common.enums import DatasetType
 from aiperf.config.dataset import FileDataset
@@ -311,3 +316,74 @@ async def test_presigned_ref_serializes_redacted_and_child_finds_cache(
         assert "topsecret" not in str(path)
         if path.is_file() and path.suffix == ".json":
             assert b"topsecret" not in path.read_bytes()
+
+
+@pytest.mark.asyncio
+async def test_gzip_content_encoding_is_cached_as_published(http_server) -> None:
+    stored = gzip.compress(BODY)
+    seen_encodings: list[str | None] = []
+
+    async def handler(request: web.Request) -> web.Response:
+        seen_encodings.append(request.headers.get("Accept-Encoding"))
+        if request.path.endswith(".aiperf.json"):
+            manifest = {
+                "aiperf_manifest_version": 1,
+                "sha256": hashlib.sha256(stored).hexdigest(),
+            }
+            return web.Response(body=orjson.dumps(manifest))
+        # An object store serves its stored Content-Encoding metadata whatever the
+        # client accepts.
+        return web.Response(
+            body=stored, headers={"ETag": '"gz"', "Content-Encoding": "gzip"}
+        )
+
+    app = web.Application()
+    app.router.add_route("*", "/{name}", handler)
+    url = f"{await http_server(app)}/t.jsonl.gz"
+    probe = await service.probe_ref(RemoteRef(ref=url))
+    prefix, _ = await service.get_resolver("http").read_prefix(probe, 4)
+    source = await service.materialize_probe(probe)
+    assert prefix == stored[:4]
+    assert source.local_path.read_bytes() == stored
+    assert source.files[0].size_bytes == len(stored)
+    assert seen_encodings and set(seen_encodings) == {"identity"}
+
+
+@pytest.mark.parametrize(
+    "err",
+    [
+        param(errno.ENOSPC, id="disk-full"),
+        param(errno.EACCES, id="permission-denied"),
+        param(errno.EROFS, id="read-only"),
+    ],
+)  # fmt: skip
+@pytest.mark.asyncio
+async def test_https_local_disk_error_is_not_retried_and_names_cache_dir(
+    http_server, tmp_path: Path, err: int
+) -> None:
+    probe = await service.probe_ref(RemoteRef(ref=await _serve(http_server, tmp_path)))
+    failing = MagicMock(side_effect=OSError(err, os.strerror(err)))
+    with (
+        patch("aiperf.dataset.remote.http_fetch.stream_to_file", failing),
+        pytest.raises(RemoteSourceError, match="cannot be written") as exc,
+    ):
+        await service.materialize_probe(probe)
+    assert exc.value.kind == RemoteErrorKind.NOT_FOUND
+    assert exc.value.stage == RemoteStage.MATERIALIZE
+    assert str(remote_cache_dir()) in str(exc.value)
+    assert failing.call_count == 1
+    assert read_index(probe.ref) is None
+
+
+@pytest.mark.asyncio
+async def test_unwritable_cache_dir_maps_to_cannot_be_written(
+    http_server, tmp_path: Path, monkeypatch
+) -> None:
+    probe = await service.probe_ref(RemoteRef(ref=await _serve(http_server, tmp_path)))
+    monkeypatch.setattr(
+        service, "write_index", MagicMock(side_effect=OSError(errno.EROFS, "Read-only"))
+    )
+    with pytest.raises(RemoteSourceError, match="cannot be written") as exc:
+        await service.materialize_probe(probe)
+    assert exc.value.kind == RemoteErrorKind.NOT_FOUND
+    assert "AIPERF_DATASET_REMOTE_CACHE_DIR" in str(exc.value)

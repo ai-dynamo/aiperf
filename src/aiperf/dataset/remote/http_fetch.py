@@ -1,4 +1,3 @@
-# src/aiperf/dataset/remote/http_fetch.py
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 """Streaming HTTP(S) helpers for remote dataset sources, with origin-checked redirects."""
@@ -14,7 +13,7 @@ import aiohttp
 from yarl import URL
 
 from aiperf.common.url_origin import same_origin, strip_credentials_for_foreign_origin
-from aiperf.dataset.remote.cache import stream_to_file
+from aiperf.dataset.remote.cache import local_fs_error, stream_to_file
 from aiperf.dataset.remote.errors import RemoteErrorKind, RemoteSourceError, RemoteStage
 from aiperf.transports.aiohttp_client import create_tcp_connector
 
@@ -42,11 +41,17 @@ class HttpMetadata:
 
 @contextlib.asynccontextmanager
 async def open_session() -> AsyncIterator[aiohttp.ClientSession]:
-    """Yield a session with no total timeout, so only stalled reads fail."""
+    """Yield a session that reads bodies byte-for-byte as published, with no total timeout."""
     # No total timeout: multi-GB downloads legitimately run long; stalls trip sock_read.
     timeout = aiohttp.ClientTimeout(total=None, sock_connect=30, sock_read=300)
+    # Object stores send a stored Content-Encoding whatever the client accepts; decoding
+    # it would cache bytes that no longer match the manifest's sha256 and size.
     async with aiohttp.ClientSession(
-        connector=create_tcp_connector(), timeout=timeout, trust_env=True
+        connector=create_tcp_connector(),
+        timeout=timeout,
+        trust_env=True,
+        headers={"Accept-Encoding": "identity"},
+        auto_decompress=False,
     ) as session:
         yield session
 
@@ -284,6 +289,12 @@ async def download_to(
             sha, size = await stream_to_file(
                 resp.content.iter_chunked(_DOWNLOAD_CHUNK), dest
             )
+        # aiohttp.ClientOSError is also an OSError, so transport errors go first.
         except (TimeoutError, aiohttp.ClientError) as e:
             raise _transport_error(e, ref_display=ref_display, stage=stage) from e
+        except OSError as e:
+            local = local_fs_error(e, ref_display=ref_display, stage=stage)
+            if local is None:
+                raise
+            raise local from e
         return sha, size, _metadata(resp)

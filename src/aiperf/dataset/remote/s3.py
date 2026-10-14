@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import errno
 import hashlib
 import threading
 from collections.abc import Awaitable, Callable, Iterable, Iterator
@@ -22,7 +21,7 @@ from aiperf.config.dataset.remote_ref import RemoteRef
 from aiperf.dataset.remote.cache import (
     digest,
     entry_dir,
-    remote_cache_dir,
+    local_fs_error,
     write_atomically,
 )
 from aiperf.dataset.remote.errors import (
@@ -46,10 +45,6 @@ _CHUNK = 1 << 20
 _CONNECT_TIMEOUT_S = 10
 _READ_TIMEOUT_S = 30
 _MANIFEST_MAX_BYTES = 1 << 20
-# Local filesystem failures a retry cannot fix (and re-downloading GBs would not help).
-_LOCAL_FS_ERRNOS = frozenset(
-    {errno.ENOSPC, errno.EDQUOT, errno.EROFS, errno.EACCES, errno.EPERM}
-)
 # HEAD responses carry no body, so their error code is the bare HTTP status.
 _MISSING_CODES = frozenset({"404", "NoSuchKey", "NotFound"})
 _AUTH_MISSING_CODES = frozenset(
@@ -228,13 +223,8 @@ def _classify(
         )  # fmt: skip
     if isinstance(exc, ClientError):
         return _classify_client_error(ref, exc, stage)
-    if isinstance(exc, OSError) and exc.errno in _LOCAL_FS_ERRNOS:
-        return _error(
-            ref, kind=RemoteErrorKind.NOT_FOUND, stage=stage,
-            what=f"the remote dataset cache at {remote_cache_dir()} cannot be written ({exc.strerror})",
-            hint="Free disk space or fix permissions there, or set AIPERF_DATASET_REMOTE_CACHE_DIR "
-            "to another location, then retry",
-        )  # fmt: skip
+    if (local := local_fs_error(exc, ref_display=ref.display, stage=stage)) is not None:
+        return local
     if isinstance(exc, OSError | TimeoutError):
         return _error(
             ref, kind=RemoteErrorKind.TRANSIENT, stage=stage,
