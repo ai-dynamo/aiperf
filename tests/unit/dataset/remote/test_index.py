@@ -4,6 +4,7 @@ import hashlib
 import os
 from pathlib import Path
 
+import orjson
 import pytest
 
 from aiperf.common.environment import Environment
@@ -110,3 +111,70 @@ def test_source_resolver_protocol_is_runtime_checkable() -> None:
 
     assert isinstance(_Full(), SourceResolverProtocol)
     assert not isinstance(object(), SourceResolverProtocol)
+
+
+_REF = "https://h/t.jsonl"
+
+
+def _pinned(version: str) -> RemoteRef:
+    return RemoteRef(ref=_REF).with_version(version)
+
+
+def test_read_index_truncated_file_is_none(caplog: pytest.LogCaptureFixture) -> None:
+    source = _source("v1")
+    index.write_index(source)
+    path = index.index_path(source.probe.ref)
+    path.write_bytes(path.read_bytes()[:20])
+    with caplog.at_level("WARNING"):
+        assert index.read_index(_pinned("v1")) is None
+    assert any(
+        str(path) in r.getMessage() and "https://h/t.jsonl" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_read_index_empty_file_is_none() -> None:
+    source = _source("v1")
+    index.write_index(source)
+    index.index_path(source.probe.ref).write_bytes(b"")
+    assert index.read_index(_pinned("v1")) is None
+
+
+def test_read_index_old_schema_is_none() -> None:
+    source = _source("v1")
+    index.write_index(source)
+    path = index.index_path(source.probe.ref)
+    data = orjson.loads(path.read_bytes())
+    del data["files"][0]["size_bytes"]
+    path.write_bytes(orjson.dumps(data))
+    assert index.read_index(_pinned("v1")) is None
+
+
+def test_latest_indexed_version_skips_corrupt_newest() -> None:
+    old, new = _source("v-old"), _source("v-new")
+    index.write_index(old)
+    index.write_index(new)
+    os.utime(index.index_path(old.probe.ref), (1, 1))
+    index.index_path(new.probe.ref).write_bytes(b"{not json")
+    assert index.latest_indexed_version(_pinned("x")) == "v-old"
+
+
+def test_latest_indexed_version_all_corrupt_is_none() -> None:
+    source = _source("v1")
+    index.write_index(source)
+    index.index_path(source.probe.ref).write_bytes(b"")
+    assert index.latest_indexed_version(_pinned("x")) is None
+
+
+def test_latest_indexed_version_equal_mtimes_is_deterministic() -> None:
+    a, b = _source("v-a"), _source("v-b")
+    index.write_index(a)
+    index.write_index(b)
+    paths = {
+        p: s.probe.ref.resolved_version
+        for p, s in ((index.index_path(s.probe.ref), s) for s in (a, b))
+    }
+    for p in paths:
+        os.utime(p, ns=(10**18, 10**18))
+    expected = paths[max(paths, key=lambda p: p.name)]
+    assert {index.latest_indexed_version(_pinned("x")) for _ in range(5)} == {expected}
