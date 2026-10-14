@@ -36,6 +36,11 @@ from aiperf.common.models import (
     TextResponse,
 )
 from aiperf.common.redact import redact_headers
+from aiperf.common.url_origin import (
+    DEFAULT_PORTS,
+    same_origin,
+    strip_credentials_for_foreign_origin,
+)
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import TransportType
 from aiperf.transports.aiohttp_client import (
@@ -48,15 +53,6 @@ from aiperf.transports.base_transports import (
     FirstTokenCallback,
     TransportMetadata,
 )
-
-_DEFAULT_PORTS = {"http": 80, "https": 443}
-
-# Only these survive a hop to an origin the benchmarked server chose. An
-# allowlist rather than a denylist because nothing marks "X-Acme-Token" as a
-# secret -- a name-based denylist can only catch the names it thought of. The
-# natural content_url is a presigned S3 URL, which authenticates through its own
-# query signature and needs no inherited headers at all.
-_FOREIGN_ORIGIN_HEADER_ALLOWLIST = frozenset({"user-agent"})
 
 _NON_ASCII = re.compile(r"[^\x00-\x7f]+")
 
@@ -80,7 +76,7 @@ def _validated_video_url(url: str) -> str:
     _validate_video_url_reference(url)
     parts = urlsplit(url)
     if (
-        parts.scheme not in _DEFAULT_PORTS
+        parts.scheme not in DEFAULT_PORTS
         or not parts.hostname
         or parts.username is not None
     ):
@@ -147,51 +143,6 @@ def _video_redirect_target(
     if len(record._redirect_locations) != 1:
         raise _VideoDownloadPolicyError("Expected exactly one Location header")
     return _resolve_video_redirect(requested_url, record._redirect_locations[0])
-
-
-def _strip_credentials_for_foreign_origin(headers: dict[str, str]) -> dict[str, str]:
-    """Keep only allowlisted headers, matching names case-insensitively.
-
-    HTTP header names are case-insensitive but these live in a plain dict, so a
-    lowercase ``authorization`` would otherwise slip past a literal comparison.
-    """
-    return {
-        name: value
-        for name, value in headers.items()
-        if name.lower() in _FOREIGN_ORIGIN_HEADER_ALLOWLIST
-    }
-
-
-def _origin_of(url: str) -> tuple[str, str | None, int | None] | None:
-    """Scheme, host and normalized port, or None when the URL will not parse.
-
-    ``urlsplit`` accepts a malformed port and only raises when ``.port`` is
-    read, so the read happens here inside the guard; leaving it to the caller
-    lets ``ValueError`` escape the fail-closed contract.
-
-    An omitted port is normalized to the scheme default, so ``https://host``
-    and ``https://host:443`` compare equal. The scheme stays part of the tuple,
-    so ``http://host:443`` is still a different origin from ``https://host``.
-    """
-    try:
-        parts = urlsplit(url)
-        port = parts.port or _DEFAULT_PORTS.get(parts.scheme)
-        return parts.scheme, parts.hostname, port
-    except ValueError:
-        return None
-
-
-def _same_origin(url: str, reference: str) -> bool:
-    """Whether ``url`` targets the same scheme, host, and port as ``reference``.
-
-    Used to decide whether a URL the benchmarked server handed us may be signed
-    with the endpoint's AWS credentials, so it fails closed: a URL that does not
-    parse counts as foreign rather than raising into the caller.
-    """
-    origin = _origin_of(url)
-    # Explicit None check: two unparseable URLs must not compare equal and be
-    # read as "same origin".
-    return origin is not None and origin == _origin_of(reference)
 
 
 def _has_http_scheme(url: str) -> bool:
@@ -809,13 +760,13 @@ class AioHttpTransport(BaseTransport):
         authorization: str | None,
     ) -> SignedRequest:
         """Rebuild headers for each hop and constrain signer URL changes to the origin."""
-        if not _same_origin(url, poll_url):
+        if not same_origin(url, poll_url):
             return SignedRequest(
-                url=url, headers=_strip_credentials_for_foreign_origin(headers)
+                url=url, headers=strip_credentials_for_foreign_origin(headers)
             )
         signed = await self._sign_if_needed("GET", url, dict(headers))
         signed.url = _validated_video_url(signed.url)
-        if not _same_origin(signed.url, poll_url):
+        if not same_origin(signed.url, poll_url):
             raise _VideoDownloadPolicyError("Signer changed the request origin")
         if authorization is not None:
             # Added after signing, so a signer's Authorization conflicts too.
@@ -869,7 +820,7 @@ class AioHttpTransport(BaseTransport):
                         current_url, poll_url, headers, authorization
                     )
                     requested_url = signed.url
-                    same_origin = _same_origin(requested_url, poll_url)
+                    is_same_origin = same_origin(requested_url, poll_url)
 
                     stage = "request"
                     record = await self.aiohttp_client.get_request(
@@ -878,7 +829,7 @@ class AioHttpTransport(BaseTransport):
                         allow_redirects=False,
                         capture_redirects=True,
                         # netrc can otherwise add BasicAuth after header filtering.
-                        trust_env=None if same_origin else False,
+                        trust_env=None if is_same_origin else False,
                     )
                     status = record.status or 500
                     if status in VIDEO_DOWNLOAD_REDIRECT_STATUSES and not record.error:
