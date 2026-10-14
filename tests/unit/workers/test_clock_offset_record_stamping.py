@@ -337,6 +337,7 @@ def test_clock_remeasure_is_registered_as_a_periodic_background_task() -> None:
 
     assert params.interval == Environment.WORKER.CLOCK_REMEASURE_INTERVAL
     assert params.immediate is False
+    assert params.stop_on_error is False
 
 
 @pytest.mark.asyncio

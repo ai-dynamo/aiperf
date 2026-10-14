@@ -16,6 +16,7 @@ from aiperf.common.models import (
     DatasetMetadata,
     TurnMetadata,
 )
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.credit.messages import CreditReturn, FirstToken, TransportDispatched
@@ -54,6 +55,7 @@ class MockCreditRouter:
     _return_cb: Callable[[str, CreditReturn], Awaitable[None]] | None = None
     _first_token_cb: Callable[[FirstToken], Awaitable[None]] | None = None
     _pending: list[asyncio.Task] = field(default_factory=list)
+    clock: MonotonicClock = field(default_factory=MonotonicClock)
 
     async def send_credit(self, credit: Credit) -> None:
         self.sent_credits.append(credit)

@@ -108,6 +108,8 @@ zero-delay cross-stream completion edges and SPAWN timing from trace timestamps;
 it does not accept the typed dependency format in issue #1458. Finite mode
 requires HTTP and excludes warmup, request/duration caps, cancellation, dataset
 wrapping, and trace-delay compression.
+Local workers use the same performance clock as the controller for dependency
+timing. Kubernetes workers calibrate their clock offset before dispatch.
 
 For successful finite requests, `profile_export.jsonl` records the client-side
 response-body EOF separately as `metadata.response_body_eof_ns`. With

@@ -446,19 +446,27 @@ class CreditCallbackHandler:
             try:
                 eof_perf_ns = None
                 eof_clock_spread_ns = None
-                if (
-                    credit.finite_replay
-                    and credit_return.transport_eof_wall_ns is not None
+                if credit.finite_replay and (
+                    credit_return.transport_eof_perf_ns is not None
+                    or credit_return.transport_eof_wall_ns is not None
                 ):
-                    if credit_return.clock_offset_ns is None:
-                        raise RuntimeError("Finite replay EOF has no clock correction")
                     if credit_return.clock_offset_spread_ns is None:
                         raise RuntimeError("Finite replay EOF has no clock spread")
-                    eof_perf_ns = self._controller_perf_ns(
-                        handler,
-                        credit_return.transport_eof_wall_ns,
-                        credit_return.clock_offset_ns,
-                    )
+                    if credit_return.transport_eof_perf_ns is not None:
+                        eof_perf_ns = credit_return.transport_eof_perf_ns
+                    else:
+                        worker_wall_ns = credit_return.transport_eof_wall_ns
+                        if worker_wall_ns is None:
+                            raise RuntimeError("Finite replay EOF has no timestamp")
+                        if credit_return.clock_offset_ns is None:
+                            raise RuntimeError(
+                                "Finite replay EOF has no clock correction"
+                            )
+                        eof_perf_ns = self._controller_perf_ns(
+                            handler,
+                            worker_wall_ns,
+                            credit_return.clock_offset_ns,
+                        )
                     eof_clock_spread_ns = credit_return.clock_offset_spread_ns
                 observe_credit_return(
                     credit,
@@ -650,9 +658,11 @@ class CreditCallbackHandler:
         if handler is None or handler.lifecycle.is_complete:
             return
         try:
-            perf_ns = self._controller_perf_ns(
-                handler, event.transport_start_wall_ns, event.clock_offset_ns
-            )
+            perf_ns = event.transport_start_perf_ns
+            if perf_ns is None:
+                perf_ns = self._controller_perf_ns(
+                    handler, event.transport_start_wall_ns, event.clock_offset_ns
+                )
             handler.strategy.observe_transport_dispatched(
                 event.credit_id, perf_ns, event.clock_offset_spread_ns
             )

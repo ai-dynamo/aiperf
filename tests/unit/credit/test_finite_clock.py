@@ -22,6 +22,7 @@ import pytest
 from aiperf.common.enums import CreditPhase
 from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.credit.callback_handler import CreditCallbackHandler
+from aiperf.credit.messages import TransportDispatched
 from aiperf.plugin.enums import TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
@@ -44,6 +45,50 @@ def _make_phase_config(
 
 class TestFiniteClockSynchronization:
     """Verifies clock coherence between StickyCreditRouter, PhaseLifecycle, and Workers."""
+
+    @pytest.mark.asyncio
+    async def test_local_transport_uses_shared_perf_clock_despite_anchor_gap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        phase_start_perf_ns = 1_000_000_000
+        event_perf_ns = phase_start_perf_ns + 50_000_000
+        worker_clock = MonotonicClock(
+            perf_anchor_ns=phase_start_perf_ns,
+            wall_anchor_ns=1_700_000_000_000_000_000,
+        )
+        controller_clock = MonotonicClock(
+            perf_anchor_ns=phase_start_perf_ns,
+            wall_anchor_ns=1_700_000_000_005_000_000,
+        )
+        lifecycle = PhaseLifecycle(config=_make_phase_config(), clock=controller_clock)
+        monkeypatch.setattr(time, "perf_counter_ns", lambda: phase_start_perf_ns)
+        lifecycle.start()
+
+        handler = CreditCallbackHandler(MagicMock())
+        context = MagicMock(lifecycle=lifecycle)
+        handler._phase_handlers[CreditPhase.PROFILING] = context
+        event = TransportDispatched(
+            credit_id=1,
+            phase=CreditPhase.PROFILING,
+            phase_index=None,
+            worker_id="worker-1",
+            transport_start_wall_ns=worker_clock.wall_ns_at(event_perf_ns),
+            transport_start_perf_ns=event_perf_ns,
+            clock_offset_ns=0,
+            clock_offset_spread_ns=0,
+        )
+
+        await handler.on_transport_dispatched(event)
+
+        context.strategy.observe_transport_dispatched.assert_called_once_with(
+            1, event_perf_ns, 0
+        )
+        assert (
+            CreditCallbackHandler._controller_perf_ns(
+                context, event.transport_start_wall_ns, 0
+            )
+            == event_perf_ns - 5_000_000
+        )
 
     def test_preflight_and_phase_share_single_monotonic_clock_frame(
         self, monkeypatch: pytest.MonkeyPatch

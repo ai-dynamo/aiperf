@@ -14,6 +14,7 @@ from aiperf.common.models import (
     DatasetMetadata,
     TurnMetadata,
 )
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.config.rate_series import RateSeriesConfig
 from aiperf.credit.sticky_router import StickyCreditRouter
 from aiperf.credit.structs import Credit
@@ -170,6 +171,7 @@ def pub() -> MagicMock:
 @pytest.fixture
 def router() -> MagicMock:
     m = MagicMock()
+    m.clock = MonotonicClock()
     m.send_credit = m.cancel_all_credits = AsyncMock()
     m.wait_for_workers = AsyncMock()
     m.mark_credits_complete = MagicMock()

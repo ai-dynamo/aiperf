@@ -19,7 +19,6 @@ from aiperf.common.enums import BaselineKind, CacheBustTarget, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.mixins import TaskManagerMixin
-from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.common.phase import phase_runtime_key
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.plugin import plugins
@@ -200,9 +199,7 @@ class PhaseRunner(TaskManagerMixin):
 
         # Per-phase components - order matters
         self._scheduler = LoopScheduler()
-        clock_candidate = getattr(self._credit_router, "clock", None)
-        clock = clock_candidate if isinstance(clock_candidate, MonotonicClock) else None
-        self._lifecycle = PhaseLifecycle(self._config, clock=clock)
+        self._lifecycle = PhaseLifecycle(self._config, clock=self._credit_router.clock)
         self._progress = PhaseProgressTracker(self._config)
         self._stop_checker = StopConditionChecker(
             config=self._config,

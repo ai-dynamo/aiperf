@@ -1170,7 +1170,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     @background_task(
         immediate=False,
         interval=Environment.WORKER.CLOCK_REMEASURE_INTERVAL,
-        stop_on_error=True,
     )
     async def _clock_remeasure_task(self) -> None:
         """Re-probe credit-channel RTT so the transit estimate does not go stale.
@@ -1201,7 +1200,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         previous_measurement_count = (
             self.clock_offset_tracker.baseline_measurement_count
         )
-        await self._measure_baseline_rtt()
+        try:
+            await self._measure_baseline_rtt()
+        except Exception as exc:
+            await self._handle_finite_clock_calibration_failure(exc)
+            return
         if (
             not self.clock_offset_tracker.is_currently_calibrated
             or self.clock_offset_tracker.baseline_rtt_ns is None
@@ -1210,12 +1213,17 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         ):
             await self._handle_finite_clock_calibration_failure()
 
-    async def _handle_finite_clock_calibration_failure(self) -> None:
+    async def _handle_finite_clock_calibration_failure(
+        self, cause: Exception | None = None
+    ) -> None:
         """Terminate the worker after unrecoverable finite replay clock calibration loss"""
         self.clock_offset_tracker.baseline_rtt_ns = None
         self.clock_offset_tracker.estimated_one_way_ns = None
 
-        error = RuntimeError("Finite replay clock calibration was lost")
+        message = "Finite replay clock calibration was lost"
+        if cause is not None:
+            message = f"{message}: {cause}"
+        error = RuntimeError(message)
         self.error(str(error))
 
         try:
@@ -1701,17 +1709,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         key = _credit_task_key(credit)
 
         def on_start(perf_ns: int) -> None:
-            correction, spread = self._snapshot_finite_clock_state(
-                error_message="Finite replay worker clock is not calibrated"
-            )
+            correction, spread = self._snapshot_finite_clock_state()
             event = TransportDispatched(
                 credit_id=credit.id,
                 phase=credit.phase,
                 phase_index=credit.phase_index,
                 worker_id=self.service_id,
-                transport_start_wall_ns=(self.clock_offset_tracker.wall_ns_at(perf_ns)),
+                transport_start_wall_ns=self.clock_offset_tracker.wall_ns_at(perf_ns),
                 clock_offset_ns=correction,
                 clock_offset_spread_ns=spread,
+                transport_start_perf_ns=(
+                    perf_ns if not self._tracks_clock_offset else None
+                ),
             )
             task = asyncio.create_task(self.credit_return_push_client.send(event))
             self._transport_start_tasks[key] = task
@@ -1732,6 +1741,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
             context.transport_eof_wall_ns = self.clock_offset_tracker.wall_ns_at(
                 perf_ns
+            )
+            context.transport_eof_perf_ns = (
+                perf_ns if not self._tracks_clock_offset else None
             )
             context.transport_eof_correction_ns = correction
             context.transport_eof_clock_offset_spread_ns = spread
@@ -1769,6 +1781,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             worker_id=self.service_id,
             transport_eof_wall_ns=(
                 context.transport_eof_wall_ns
+                if context.error is None and not context.cancelled
+                else None
+            ),
+            transport_eof_perf_ns=(
+                context.transport_eof_perf_ns
                 if context.error is None and not context.cancelled
                 else None
             ),
@@ -1911,6 +1928,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         if record.error is not None:
             record.response_body_eof_perf_ns = None
             credit_context.transport_eof_wall_ns = None
+            credit_context.transport_eof_perf_ns = None
             credit_context.transport_eof_correction_ns = None
             credit_context.transport_eof_clock_offset_spread_ns = None
         self._populate_response_metrics(credit_context, record)
@@ -2213,6 +2231,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         if record.error is not None:
             record.response_body_eof_perf_ns = None
             credit_context.transport_eof_wall_ns = None
+            credit_context.transport_eof_perf_ns = None
             credit_context.transport_eof_correction_ns = None
             credit_context.transport_eof_clock_offset_spread_ns = None
         await self._send_inference_result_message(record)

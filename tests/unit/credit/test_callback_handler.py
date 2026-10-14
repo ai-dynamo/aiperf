@@ -173,6 +173,39 @@ async def test_finite_terminal_failure_marks_phase_fatal(
 
 
 @pytest.mark.asyncio
+async def test_local_finite_eof_uses_perf_timestamp_directly(
+    registered_handler, mock_lifecycle, mock_strategy
+) -> None:
+    mock_lifecycle.started_at_perf_ns = 1_000_000_000
+    mock_lifecycle.started_at_ns = 1_700_000_000_005_000_000
+    credit = Credit(
+        id=1,
+        phase=CreditPhase.PROFILING,
+        conversation_id="root",
+        x_correlation_id="root-correlation",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=1,
+        finite_replay=True,
+    )
+    eof_perf_ns = 1_050_000_000
+    credit_return = CreditReturn(
+        credit=credit,
+        transport_eof_perf_ns=eof_perf_ns,
+        transport_eof_wall_ns=1_700_000_000_050_000_000,
+        clock_offset_ns=0,
+        clock_offset_spread_ns=0,
+    )
+
+    await registered_handler.on_credit_return("worker-1", credit_return)
+
+    assert (
+        mock_strategy.observe_credit_return.call_args.kwargs["transport_eof_perf_ns"]
+        == eof_perf_ns
+    )
+
+
+@pytest.mark.asyncio
 async def test_finite_background_child_terminal_failure_real_graph(
     callback_handler,
     mock_concurrency,

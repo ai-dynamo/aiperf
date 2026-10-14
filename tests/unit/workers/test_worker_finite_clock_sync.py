@@ -119,6 +119,24 @@ async def test_clock_remeasure_task_fails_worker_when_calibration_lost_in_finite
     assert published.service_id == "worker-1"
 
 
+@pytest.mark.asyncio
+async def test_clock_remeasure_probe_error_routes_to_finite_failure() -> None:
+    probe_error = OSError("ping send failed")
+    worker = SimpleNamespace(
+        _tracks_clock_offset=True,
+        _finite_replay_enabled=True,
+        clock_offset_tracker=MagicMock(baseline_measurement_count=1),
+        _measure_baseline_rtt=AsyncMock(side_effect=probe_error),
+        _handle_finite_clock_calibration_failure=AsyncMock(),
+    )
+
+    await Worker._clock_remeasure_task(worker)
+
+    worker._handle_finite_clock_calibration_failure.assert_awaited_once_with(
+        probe_error
+    )
+
+
 def test_uncalibrated_worker_rejects_finite_start_and_eof_callbacks() -> None:
     """Callbacks raise immediately if the Kubernetes worker clock loses calibration."""
     worker = SimpleNamespace(

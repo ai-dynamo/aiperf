@@ -8,7 +8,7 @@ import asyncio
 import math
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -30,6 +30,16 @@ if TYPE_CHECKING:
 
 _logger = AIPerfLogger(__name__)
 _MAX_TIMESTAMP_NS = 2**63 - 1
+
+
+def _is_finite_timestamp(value: object) -> bool:
+    """Accept numeric timestamps while excluding bool and non-finite values."""
+    if not isinstance(value, int | float) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(float(value))
+    except OverflowError:
+        return False
 
 
 @dataclass(frozen=True, slots=True, order=True)
@@ -215,7 +225,6 @@ class ReplayBarrierCoordinator:
         self._finite_clock_spread_max_ns = 0
         self._active = False
         self._releases_paused = False
-        self._scheduler = scheduler
         self._root_idle_gap_cap_seconds = root_idle_gap_cap_seconds
         self._root_idle_jumps = 0
         self._root_idle_seconds_skipped = 0.0
@@ -315,7 +324,7 @@ class ReplayBarrierCoordinator:
                 raise RuntimeError(
                     f"Finite replay root {conversation_id!r} turn 0 has no timestamp_ms"
                 )
-            if not math.isfinite(float(timestamp)):
+            if not _is_finite_timestamp(timestamp):
                 raise RuntimeError(
                     f"Finite replay root {conversation_id!r} turn 0 timestamp_ms is not finite"
                 )
@@ -333,9 +342,9 @@ class ReplayBarrierCoordinator:
                 getattr(branch, "dispatch_timing", "post") == "pre"
                 for branch in parent.branches
             ):
-                raise RuntimeError(
-                    f"Finite replay does not support pre-session branches in "
-                    f"conversation {parent.conversation_id!r}"
+                raise NotImplementedError(
+                    f"conversation {parent.conversation_id!r}: "
+                    "finite replay does not support pre-session branches"
                 )
             branches_by_id = {branch.branch_id: branch for branch in parent.branches}
             self._add_parent_spawn_dependencies(
@@ -351,11 +360,7 @@ class ReplayBarrierCoordinator:
     ) -> None:
         for parent_turn_index, parent_turn in enumerate(parent.turns):
             parent_start_value = parent_turn.timestamp_ms
-            if (
-                not isinstance(parent_start_value, int | float)
-                or isinstance(parent_start_value, bool)
-                or not math.isfinite(float(parent_start_value))
-            ):
+            if not _is_finite_timestamp(parent_start_value):
                 raise RuntimeError(
                     f"Finite replay turn {parent.conversation_id!r}/{parent_turn_index} "
                     "has no finite timestamp_ms"
@@ -409,11 +414,7 @@ class ReplayBarrierCoordinator:
                 f"Finite replay SPAWN branch {branch_id!r} crosses root traces"
             )
         child_start_value = child.turns[0].timestamp_ms
-        if (
-            not isinstance(child_start_value, int | float)
-            or isinstance(child_start_value, bool)
-            or not math.isfinite(float(child_start_value))
-        ):
+        if not _is_finite_timestamp(child_start_value):
             raise RuntimeError(
                 f"Finite replay SPAWN child {child_id!r} turn 0 "
                 "has no finite timestamp_ms"
@@ -423,9 +424,13 @@ class ReplayBarrierCoordinator:
         if (
             not math.isfinite(delay_ms)
             or not math.isfinite(delay_ns_value)
-            or delay_ms < 0
             or delay_ns_value > _MAX_TIMESTAMP_NS
         ):
+            raise RuntimeError(
+                f"Finite replay SPAWN child {child_id!r} has an invalid "
+                f"dispatch delay from {parent.conversation_id!r}/{parent_turn_index}"
+            )
+        if delay_ms < 0:
             raise RuntimeError(
                 f"Finite replay SPAWN child {child_id!r} starts before "
                 f"its declaring turn {parent.conversation_id!r}/{parent_turn_index}"
@@ -485,9 +490,9 @@ class ReplayBarrierCoordinator:
             timestamp_value, bool
         ):
             raise RuntimeError(f"Finite replay turn {key!r} has no timestamp_ms")
-        timestamp = float(timestamp_value)
-        if not math.isfinite(timestamp):
+        if not _is_finite_timestamp(timestamp_value):
             raise RuntimeError(f"Finite replay turn {key!r} timestamp is not finite")
+        timestamp = float(timestamp_value)
         floor_ms = timestamp - root_timestamp
         floor_scaled = floor_ms * 1_000_000
         if (
@@ -535,11 +540,7 @@ class ReplayBarrierCoordinator:
                 )
             predecessor_turn = predecessor_conversation.turns[predecessor.turn_index]
             predecessor_timestamp = predecessor_turn.timestamp_ms
-            if (
-                not isinstance(predecessor_timestamp, int | float)
-                or isinstance(predecessor_timestamp, bool)
-                or not math.isfinite(float(predecessor_timestamp))
-            ):
+            if not _is_finite_timestamp(predecessor_timestamp):
                 raise RuntimeError(
                     f"Finite replay dependency {predecessor!r} has no finite timestamp_ms"
                 )
@@ -567,20 +568,29 @@ class ReplayBarrierCoordinator:
     ) -> None:
         visiting: set[ReplayTurnKey] = set()
         visited: set[ReplayTurnKey] = set()
-
-        def visit(key: ReplayTurnKey) -> None:
-            if key in visiting:
-                raise RuntimeError(f"Finite replay dependency cycle at {key!r}")
-            if key in visited:
-                return
-            visiting.add(key)
-            for predecessor in graph[key]:
-                visit(predecessor)
-            visiting.remove(key)
-            visited.add(key)
-
-        for key in graph:
-            visit(key)
+        for start in graph:
+            if start in visited:
+                continue
+            visiting.add(start)
+            stack: list[tuple[ReplayTurnKey, Iterator[ReplayTurnKey]]] = [
+                (start, iter(graph[start]))
+            ]
+            while stack:
+                key, predecessors = stack[-1]
+                try:
+                    predecessor = next(predecessors)
+                except StopIteration:
+                    stack.pop()
+                    visiting.remove(key)
+                    visited.add(key)
+                    continue
+                if predecessor in visiting:
+                    raise RuntimeError(
+                        f"Finite replay dependency cycle at {predecessor!r}"
+                    )
+                if predecessor not in visited:
+                    visiting.add(predecessor)
+                    stack.append((predecessor, iter(graph[predecessor])))
 
     def activate(self) -> None:
         """Enable barriers after baseline cache priming completes."""

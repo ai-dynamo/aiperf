@@ -146,9 +146,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self.branch_orchestrator = branch_orchestrator
         self._progress = progress
         finite_root_ids = (
-            getattr(conversation_source, "finite_root_ids", ())
-            if config.finite_replay
-            else ()
+            conversation_source.finite_root_ids if config.finite_replay else ()
         )
         self._finite_roots: deque[str] = deque(finite_root_ids)
         self._finite_active_lanes: set[int] = set()
@@ -393,11 +391,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
 
     def _has_fatal_error(self) -> bool:
         """True when the phase has encountered a fatal phase error."""
-        fatal = (
-            getattr(self._progress, "fatal_error", None)
-            if self._progress is not None
-            else None
-        )
+        fatal = self._progress.fatal_error if self._progress is not None else None
         return isinstance(fatal, BaseException)
 
     def _on_tree_drained(self, root_corr: str, phase: CreditPhase | int) -> None:

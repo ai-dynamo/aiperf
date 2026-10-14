@@ -67,6 +67,8 @@ async def test_start_notification_is_queued_and_eof_precedes_terminal_return() -
     start_message, terminal_message = sent
     assert isinstance(start_message, TransportDispatched)
     assert isinstance(terminal_message, CreditReturn)
+    assert start_message.transport_start_perf_ns == start_ns
+    assert terminal_message.transport_eof_perf_ns == start_ns + 1_000_000
     assert terminal_message.transport_eof_wall_ns is not None
     assert (
         start_message.transport_start_wall_ns < terminal_message.transport_eof_wall_ns

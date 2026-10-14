@@ -14,7 +14,7 @@ from aiperf.common.models import (
     TurnMetadata,
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
-from aiperf.timing.replay_dependencies import ReplayBarrierCoordinator
+from aiperf.timing.replay_dependencies import ReplayBarrierCoordinator, ReplayTurnKey
 
 
 def _coordinator(conversations: list[ConversationMetadata]) -> ReplayBarrierCoordinator:
@@ -116,7 +116,10 @@ async def test_pre_session_branch_raises_error() -> None:
         parent_conversation_id="parent",
         is_root=False,
     )
-    with pytest.raises(RuntimeError, match="does not support pre-session branches"):
+    with pytest.raises(
+        NotImplementedError,
+        match="conversation 'parent': finite replay does not support pre-session branches",
+    ):
         _coordinator([parent, child])
 
 
@@ -191,6 +194,30 @@ async def test_spawn_child_starting_before_declaring_turn_raises_error() -> None
         is_root=False,
     )
     with pytest.raises(RuntimeError, match="starts before its declaring turn"):
+        _coordinator([parent, child])
+
+
+@pytest.mark.asyncio
+async def test_spawn_child_delay_outside_ns_range_reports_invalid_delay() -> None:
+    branch = ConversationBranchInfo(
+        branch_id="b0",
+        child_conversation_ids=["child"],
+        mode=ConversationBranchMode.SPAWN,
+    )
+    parent = ConversationMetadata(
+        conversation_id="parent",
+        turns=[TurnMetadata(timestamp_ms=0.0, branch_ids=["b0"])],
+        branches=[branch],
+        is_root=True,
+    )
+    child = ConversationMetadata(
+        conversation_id="child",
+        turns=[TurnMetadata(timestamp_ms=1e20)],
+        parent_conversation_id="parent",
+        is_root=False,
+    )
+
+    with pytest.raises(RuntimeError, match="invalid dispatch delay"):
         _coordinator([parent, child])
 
 
@@ -283,6 +310,17 @@ async def test_dependency_cycle_raises_error() -> None:
     )
     with pytest.raises(RuntimeError, match="dependency cycle"):
         _coordinator([root, child])
+
+
+def test_long_dependency_chain_does_not_exceed_recursion_limit() -> None:
+    graph = {
+        ReplayTurnKey("root", index): (
+            {ReplayTurnKey("root", index - 1)} if index else set()
+        )
+        for index in reversed(range(1_500))
+    }
+
+    ReplayBarrierCoordinator._validate_dependency_graph(graph)
 
 
 @pytest.mark.asyncio

@@ -142,6 +142,9 @@ class CreditReturn(
             envelope). Lets the router attribute the return to the right worker.
         transport_eof_wall_ns: Successful response-body EOF in the worker's
             monotonic wall-clock domain. Finite replay only.
+        transport_eof_perf_ns: Same-host performance timestamp for EOF in local
+            finite replay. The controller uses this directly instead of mapping
+            between independently anchored wall clocks.
         clock_offset_ns: Worker-to-controller wall-clock correction sampled at
             the EOF event. Finite replay only.
     """
@@ -155,12 +158,17 @@ class CreditReturn(
     output_sequence_length: int | None = None
     worker_id: str | None = None
     transport_eof_wall_ns: int | None = None
+    transport_eof_perf_ns: int | None = None
     clock_offset_ns: int | None = None
     clock_offset_spread_ns: int | None = None
 
 
 class TransportDispatched(Struct, frozen=True, kw_only=True, tag_field="t", tag="td"):
-    """Request invocation boundary on the existing credit return channel."""
+    """Request invocation boundary on the existing credit return channel.
+
+    ``transport_start_perf_ns`` carries the same-host clock in local finite
+    replay. Kubernetes uses the wall timestamp and clock correction instead.
+    """
 
     credit_id: int
     phase: CreditPhase
@@ -169,6 +177,7 @@ class TransportDispatched(Struct, frozen=True, kw_only=True, tag_field="t", tag=
     transport_start_wall_ns: int
     clock_offset_ns: int
     clock_offset_spread_ns: int
+    transport_start_perf_ns: int | None = None
 
 
 class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):

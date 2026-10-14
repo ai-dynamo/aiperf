@@ -145,6 +145,7 @@ class CreditContext(
     error: str | ErrorDetails | None = None
     record_emitted: bool = False
     transport_eof_wall_ns: int | None = None
+    transport_eof_perf_ns: int | None = None
     transport_eof_correction_ns: int | None = None
     transport_eof_clock_offset_spread_ns: int | None = None
     transport_start_sent: bool = False
