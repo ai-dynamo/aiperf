@@ -128,10 +128,11 @@ def main():
         # the tie-break the same code would assign tests to different shards
         # locally vs in CI.
         #
-        # Packing individual commands is safe because a tagged block that
-        # writes a file also runs against it in the same block; nothing reads
-        # a file another block created. ``test_docs_e2e_block_self_contained``
-        # fails the build if that stops being true.
+        # Packing individual commands is safe only while a tagged block that
+        # writes a file also runs against it in the same block; nothing
+        # currently reads a file another block created. That invariant is
+        # upheld by convention here -- a guard test arrives with the guides
+        # that first depend on it.
         sorted_cmds = sorted(
             server.aiperf_commands,
             key=lambda c: (-c.weight, c.file_path, c.start_line),

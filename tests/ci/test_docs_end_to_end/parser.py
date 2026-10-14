@@ -53,8 +53,10 @@ class MarkdownParser:
 
         i = 0
         # Tags inside a fenced block are documentation *about* the tag syntax,
-        # not tags. Without this, docs/reference/docs-e2e-tagging.md's own
-        # examples register as real commands against real server groups.
+        # not tags. Without this, any page that spells a tag out to explain it
+        # would have its own examples registered as real commands against real
+        # server groups -- see this harness's README, which documents the tags
+        # only in placeholder form for exactly that reason.
         fence: tuple[str, int] | None = None
         while i < len(lines):
             line = lines[i].strip()

@@ -306,10 +306,10 @@ COPY --from=python-licenses /opt/licenses/ /
 # with the [test] extra (pytest, hypothesis, etc.) from the already-built wheel,
 # and add curl for server health checks.
 #
-# otel and mlflow ride along because the docs end-to-end test executes
-# docs/tutorials/otel-mlflow.md, and --otel-url / --mlflow-tracking-uri need
-# those client libraries present. They are user-facing export paths, so a
-# silent break there is exactly what that test exists to catch.
+# otel and mlflow ride along so that docs/tutorials/otel-mlflow.md can be
+# tagged without a second image change: --otel-url / --mlflow-tracking-uri
+# need those client libraries present. They are user-facing export paths, so
+# a silent break there is what tagging that guide is meant to catch.
 FROM env-builder AS test
 
 COPY --from=wheel-builder /dist /tmp/dist
