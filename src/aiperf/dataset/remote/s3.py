@@ -13,7 +13,7 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal, NamedTuple, NoReturn, TypeVar
 from urllib.parse import quote
 
-from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.optional_dependencies import (
     AWS_EXTRA,
     install_optional_dependency_hint,
@@ -40,7 +40,6 @@ from aiperf.dataset.remote.manifest import (
 )
 from aiperf.dataset.remote.models import ProbeResult, RemoteFile, ResolvedSource
 
-_logger = AIPerfLogger(__name__)
 T = TypeVar("T")
 
 _CHUNK = 1 << 20
@@ -124,14 +123,14 @@ def _join(root: str, rel: str) -> str:
 def _is_safe_relpath(rel: str) -> bool:
     """Whether a key below the data prefix maps to a file inside the cache entry.
 
-    Checked per segment: on Windows a drive in any later segment (``x/D:y``) resets
-    the joined path, and any ``:`` names an NTFS alternate data stream.
+    Checked per segment. ``:`` is a legal file-name character on POSIX, but on
+    Windows a drive in any later segment (``x/D:y``) resets the joined path, and any
+    ``:`` names an NTFS alternate data stream.
     """
     return all(
         part not in ("", ".", "..")
-        and ":" not in part
         and "\\" not in part
-        and not PureWindowsPath(part).anchor
+        and not (IS_WINDOWS and (":" in part or PureWindowsPath(part).anchor))
         for part in rel.split("/")
     )
 
@@ -424,13 +423,17 @@ class S3SourceResolver:
             for page in pages:
                 for obj in page.get("Contents", []):
                     rel = obj["Key"][len(prefix) :]
-                    if _is_safe_relpath(rel):
-                        out.append(_Object(obj["Key"], obj["ETag"], _version_id(obj)))
-                    elif rel and not rel.endswith("/"):
-                        _logger.warning(
-                            f"Skipping S3 object {obj['Key']!r} under {ref.display}: "
-                            "its key cannot be stored as a local file"
-                        )
+                    if not rel or rel.endswith("/"):
+                        continue  # a folder marker, not data
+                    # Skipping a key would replay a subset of the dataset unnoticed.
+                    if not _is_safe_relpath(rel):
+                        raise _error(
+                            ref, kind=RemoteErrorKind.MANIFEST_INVALID, stage=stage,
+                            what=f"S3 key {obj['Key']!r} under the data prefix cannot be "
+                            "stored as a local file on this system",
+                            hint="Ask the publisher to rename that object",
+                        )  # fmt: skip
+                    out.append(_Object(obj["Key"], obj["ETag"], _version_id(obj)))
             return sorted(out)
 
         return await _call(ref, asyncio.to_thread(collect), stage=stage)
