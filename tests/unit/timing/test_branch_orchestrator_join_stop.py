@@ -98,7 +98,7 @@ def recorded_holds(monkeypatch):
     async def _spy(self, seconds: float) -> None:
         holds.append(seconds)
 
-    monkeypatch.setattr(BranchOrchestrator, "_sleep_until_schedule_target", _spy)
+    monkeypatch.setattr(BranchOrchestrator, "_interruptible_sleep", _spy)
     return holds
 
 

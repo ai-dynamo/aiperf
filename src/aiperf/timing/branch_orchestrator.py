@@ -1599,33 +1599,39 @@ class BranchOrchestrator:
         # Under fixed schedule the deadline is an instant on the recorded
         # timeline, not a stopwatch started here. ``delay_ms`` is an
         # end-to-start delta, so arming relative to now inherits however late
-        # the previous turn's response landed: with a 1s TTFT the parent
-        # recorded at t+5s fired at t+6.1s, and at 2s TTFT at t+7.1s -- the
-        # error tracks server latency, so the replay stretches the very trace
-        # it exists to reproduce. The lower-bound wait in
-        # ``_await_recorded_join_target`` cannot pull that back; it only ever
-        # delays further. Child completion remains the other prerequisite, so
-        # this still cannot release a parent ahead of its subagents.
-        delay_sec = delay_ms / 1000.0
+        # the previous turn's response landed, and the error tracks server
+        # latency -- the replay stretches the very trace it exists to
+        # reproduce. The lower-bound wait in ``_await_recorded_join_target``
+        # cannot pull that back; it only ever delays further. Child completion
+        # remains the other prerequisite, so this still cannot release a parent
+        # ahead of its subagents.
         target = self._recorded_join_target_perf_sec(pending)
-        if target is not None and not self._accelerated_warmup_started:
-            delay_sec = max(0.0, target - time.perf_counter())
+        on_recorded_timeline = (
+            target is not None and not self._accelerated_warmup_started
+        )
+        delay_sec = (
+            max(0.0, target - time.perf_counter())
+            if on_recorded_timeline
+            else delay_ms / 1000.0
+        )
 
         if delay_sec <= 0.0 or self._scheduler is None:
             pending.replay_deadline_elapsed = True
             return
         pending.replay_deadline_armed = True
         pending.replay_deadline_elapsed = False
-        self._scheduler.schedule_later(
-            delay_sec,
-            self._on_join_replay_deadline(
-                pending.parent_x_correlation_id,
-                pending.gated_turn_index,
-            ),
-            group_id=(
-                pending.parent_root_correlation_id or pending.parent_x_correlation_id
-            ),
+        deadline = self._on_join_replay_deadline(
+            pending.parent_x_correlation_id,
+            pending.gated_turn_index,
         )
+        group_id = pending.parent_root_correlation_id or pending.parent_x_correlation_id
+        # The recorded instant is handed over as-is: re-deriving a relative
+        # delay here would resample ``perf_counter`` a second time and give
+        # back the drift the absolute target exists to remove.
+        if on_recorded_timeline:
+            self._scheduler.schedule_at_perf_sec(target, deadline, group_id=group_id)
+        else:
+            self._scheduler.schedule_later(delay_sec, deadline, group_id=group_id)
 
     async def _on_join_replay_deadline(
         self, parent_corr: str, gated_idx: int | None
@@ -1931,7 +1937,7 @@ class BranchOrchestrator:
 
         remaining = target - time.perf_counter()
         if remaining > 0:
-            await self._sleep_until_schedule_target(remaining)
+            await self._interruptible_sleep(remaining)
 
     def _recorded_join_target_perf_sec(
         self, pending: PendingBranchJoin
@@ -1957,7 +1963,7 @@ class BranchOrchestrator:
             return None
         return resolver(timestamp_ms)
 
-    async def _sleep_until_schedule_target(self, seconds: float) -> None:
+    async def _interruptible_sleep(self, seconds: float) -> None:
         """Hold for ``seconds``, or until the run stops wanting the hold.
 
         Returns early once the phase stops scheduling (or cleanup fires). Past
