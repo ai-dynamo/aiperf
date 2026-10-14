@@ -102,3 +102,11 @@ async def test_responses_function_output_counts_wire_text_and_images(
     assert parsed.media_counts.images == image_count
     assert parsed.media_counts.audios == 0
     assert parsed.media_counts.videos == 0
+    if apply_chat_template:
+        tokenizer._tokenizer.apply_chat_template.assert_called_once_with(
+            [{"role": "user", "content": "read result"}],
+            tokenize=True,
+            add_generation_prompt=True,
+        )
+    else:
+        tokenizer._tokenizer.apply_chat_template.assert_not_called()
