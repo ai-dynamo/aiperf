@@ -38,11 +38,14 @@ class ParquetReadError(ValueError):
 class ParquetSplitError(ParquetReadError):
     """Parquet shards hold several splits and none is the default one."""
 
-    def __init__(self, splits: dict[str, list[str]]) -> None:
+    def __init__(
+        self, splits: dict[str, list[str]], folder: str | Path | None = None
+    ) -> None:
         self.splits = splits
         names = ", ".join(sorted(name or "(unnamed)" for name in splits))
+        where = f" in {folder}" if folder is not None else ""
         super().__init__(
-            f"the parquet files hold the splits {names} and none is named "
+            f"the parquet files{where} hold the splits {names} and none is named "
             f"'{DEFAULT_SPLIT}'; point at one split's files"
         )
 
@@ -132,7 +135,11 @@ def parquet_files(path: str | Path) -> list[Path]:
     p = Path(path)
     if p.is_file():
         return [p]
-    return [p / name for name in select_parquet_shards(_data_names(p))]
+    try:
+        names = select_parquet_shards(_data_names(p))
+    except ParquetSplitError as e:
+        raise ParquetSplitError(e.splits, folder=p) from None
+    return [p / name for name in names]
 
 
 def require_parquet_reader(dataset_type: object) -> None:

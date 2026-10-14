@@ -265,6 +265,17 @@ def test_first_record_parquet_decodes_one_small_batch_and_closes(
     assert len(closed) == 1
 
 
+def test_parquet_files_split_error_names_the_folder(tmp_path: Path) -> None:
+    folder = tmp_path / "d"
+    write_parquet(folder / "test-00000-of-00001.parquet", ROWS)
+    write_parquet(folder / "validation-00000-of-00001.parquet", ROWS)
+    with pytest.raises(ParquetSplitError) as exc_info:
+        parquet_files(folder)
+    message = str(exc_info.value)
+    assert f"in {folder} hold the splits test, validation" in message
+    assert exc_info.value.splits.keys() == {"test", "validation"}
+
+
 def test_count_parquet_rows_sums_shards(tmp_path: Path) -> None:
     write_parquet(tmp_path / "d" / "train-00000-of-00002.parquet", ROWS)
     write_parquet(tmp_path / "d" / "train-00001-of-00002.parquet", ROWS[:1])
