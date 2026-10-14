@@ -28,6 +28,9 @@ from aiperf.config.dataset.remote_ref import (
         param("s3://bucket", "s3", "bucket", None, None, True, id="s3-bucket-root"),
         param("s3://bucket/k.jsonl?versionId=abc", "s3", "bucket", "k.jsonl", "abc", False, id="s3-version"),
         param("s3://bucket/my traces/día 1.jsonl", "s3", "bucket", "my traces/día 1.jsonl", None, False, id="s3-space-unicode"),
+        param("s3://bucket?versionId=x", "s3", "bucket", None, "x", True, id="s3-bucket-root-version"),
+        param("hf://org/repo@refs%2Fpr%2F1/data/t.jsonl", "hf", "org/repo", "data/t.jsonl", "refs/pr/1", False, id="hf-encoded-revision-path"),
+        param("hf://org/repo@refs/pr/1/data/t.jsonl", "hf", "org/repo", "pr/1/data/t.jsonl", "refs", False, id="hf-literal-slashes-in-revision-position"),
         param("https://h.example/x/t.jsonl", "https", "https://h.example/x/t.jsonl", None, None, False, id="https"),
         param("http://h.example/t.jsonl", "http", "http://h.example/t.jsonl", None, None, False, id="http"),
     ],
@@ -46,9 +49,15 @@ def test_parse_table(value, scheme, location, path, revision, is_container) -> N
         param("hf://models/org/repo", "only Hugging Face dataset repos", id="hf-model-repo"),
         param("hf://org/repo@", "empty repo name or revision", id="hf-empty-rev"),
         param("s3://", "must name a bucket", id="s3-no-bucket"),
-        param("s3://b/k?foo=1", "only versionId is allowed", id="s3-bad-query"),
+        param("s3://bucket/k?foo=1", "only versionId is allowed", id="s3-bad-query"),
         param("gs://b/k", r"Supported schemes: hf://, s3://, https://, http://", id="unknown-scheme"),
         param("https://", "has no host", id="https-no-host"),
+        param("hf://org/repo?token=x", "query string or fragment", id="hf-query"),
+        param("hf://org/repo#frag", "query string or fragment", id="hf-fragment"),
+        param("s3://bucket/k#frag", "fragment", id="s3-fragment"),
+        param("s3://Bad_Bucket/k", "not a valid S3 bucket name", id="s3-bad-bucket-chars"),
+        param("s3://ab/k", "not a valid S3 bucket name", id="s3-bucket-too-short"),
+        param("s3://" + "a" * 64 + "/k", "not a valid S3 bucket name", id="s3-bucket-too-long"),
     ],
 )  # fmt: skip
 def test_parse_errors(value: str, match: str) -> None:
@@ -64,8 +73,12 @@ def test_parse_errors(value: str, match: str) -> None:
         param("hf://models/org/repo?token=secret", id="hf-model-repo"),
         param("hf://org/@/?token=secret", id="hf-empty-rev"),
         param("s3:///k?token=secret", id="s3-no-bucket"),
-        param("s3://b/k?foo=1&X-Amz-Signature=secret", id="s3-bad-query"),
+        param("s3://bucket/k?foo=1&X-Amz-Signature=secret", id="s3-bad-query"),
         param("https://?token=secret", id="https-no-host"),
+        param("hf://org/repo?token=secret", id="hf-query"),
+        param("hf://org/repo#secret", id="hf-fragment"),
+        param("s3://bucket?X-Amz-Signature=secret#secret", id="s3-fragment"),
+        param("s3://Bad_Bucket?X-Amz-Signature=secret", id="s3-bad-bucket-chars"),
     ],
 )  # fmt: skip
 def test_parse_errors_never_contain_the_secret(value: str) -> None:
@@ -164,12 +177,12 @@ def test_serializer_never_emits_presigned_secret() -> None:
 
 
 def test_coerce_remote_ref_round_trips_and_passes_through_local() -> None:
-    ref = coerce_remote_ref("s3://b/k")
+    ref = coerce_remote_ref("s3://bucket/k")
     assert isinstance(ref, RemoteRef)
     assert coerce_remote_ref(ref) is ref
     assert (
         coerce_remote_ref(
-            {"ref": "s3://b/k", "resolved_version": "v:1"}
+            {"ref": "s3://bucket/k", "resolved_version": "v:1"}
         ).resolved_version
         == "v:1"
     )
@@ -182,3 +195,97 @@ def test_remote_ref_is_frozen_and_validates() -> None:
         RemoteRef(ref="gs://b/k")
     with pytest.raises(ValidationError):
         ref.ref = "hf://x/y"  # type: ignore[misc]
+
+
+def test_parse_remote_ref_round_trips_through_canonical() -> None:
+    cases = [
+        "hf://org/repo",
+        "hf://datasets/org/repo",
+        "hf://org/repo/",
+        "hf://org/repo@v1/data/t.jsonl",
+        "hf://org/repo@refs%2Fpr%2F1",
+        "hf://org/repo@refs%2Fpr%2F1/data/t.jsonl",
+        "hf://org/repo@refs/pr/1/data/t.jsonl",
+        "s3://bucket/traces/t.jsonl",
+        "s3://bucket/traces/",
+        "s3://bucket",
+        "s3://bucket?versionId=x",
+        "s3://bucket/k.jsonl?versionId=abc",
+        "s3://bucket/k.jsonl?versionId=a%26b%2Bc",
+        "s3://bucket/my traces/día 1.jsonl",
+        "https://h.example/x/t.jsonl",
+        "http://h.example/t.jsonl",
+    ]
+    for value in cases:
+        ref = RemoteRef(ref=value)
+        assert parse_remote_ref(ref.canonical) == ref.parsed, value
+
+
+def test_distinct_hf_refs_have_distinct_canonicals() -> None:
+    encoded = RemoteRef(ref="hf://org/repo@refs%2Fpr%2F1/data/t.jsonl")
+    literal = RemoteRef(ref="hf://org/repo@refs/pr/1/data/t.jsonl")
+    assert encoded.canonical != literal.canonical
+    assert encoded.canonical == "hf://datasets/org/repo@refs%2Fpr%2F1/data/t.jsonl"
+
+
+def test_s3_bucket_root_with_query_never_leaks_into_location() -> None:
+    ref = RemoteRef(ref="s3://bucket?versionId=x")
+    assert ref.parsed.location == "bucket"
+    assert ref.canonical == "s3://bucket/?versionId=x"
+
+
+@pytest.mark.parametrize(
+    "first,second",
+    [
+        param(
+            "https://h/get?file=a.jsonl&token=T1",
+            "https://h/get?file=b.jsonl&token=T2",
+            id="tokenized-different-files",
+        ),
+        param(
+            "https://h/t.jsonl?X-Amz-Signature=s&page=1",
+            "https://h/t.jsonl?X-Amz-Signature=s&page=2",
+            id="presigned-different-page",
+        ),
+    ],
+)  # fmt: skip
+def test_presigned_canonicals_keep_non_credential_parameters(
+    first: str, second: str
+) -> None:
+    assert RemoteRef(ref=first).canonical != RemoteRef(ref=second).canonical
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        param(
+            "https://h/get?file=a.jsonl&token=T1",
+            "https://h/get?file=a.jsonl",
+            id="token-dropped",
+        ),
+        param(
+            "https://h/get?b=2&a=%20x&X-Amz-Date=1&X-Amz-Expires=9&Expires=5&X-Amz-Signature=s",
+            "https://h/get?b=2&a=%20x",
+            id="order-and-encoding-preserved",
+        ),
+        param(
+            "https://acct.blob.core.windows.net/c/t.jsonl?sv=2022&se=2030&sp=r&sr=b&sig=s&snapshot=1",
+            "https://acct.blob.core.windows.net/c/t.jsonl?snapshot=1",
+            id="azure-sas",
+        ),
+        param(
+            "https://h/t.jsonl?X-Goog-Algorithm=A&X-Goog-Signature=s#frag",
+            "https://h/t.jsonl",
+            id="goog-all-dropped-and-no-question-mark",
+        ),
+        param(
+            "https://h/t.jsonl?page=2&sv=keep",
+            "https://h/t.jsonl?page=2&sv=keep",
+            id="not-presigned-keeps-everything",
+        ),
+    ],
+)  # fmt: skip
+def test_presigned_canonical_drops_only_credential_and_envelope_parameters(
+    value: str, expected: str
+) -> None:
+    assert RemoteRef(ref=value).canonical == expected

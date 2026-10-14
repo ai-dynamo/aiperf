@@ -8,16 +8,44 @@ import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Annotated, Any
-from urllib.parse import parse_qsl, unquote, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlsplit, urlunsplit
 
 from pydantic import ConfigDict, Field, model_serializer, model_validator
 
-from aiperf.common.redact import has_sensitive_query_parameters, redact_url
+from aiperf.common.redact import (
+    has_sensitive_query_parameters,
+    is_sensitive_query_parameter_name,
+    redact_url,
+)
 from aiperf.config.base import BaseConfig
 
 _SCHEME_RE = re.compile(r"^([a-zA-Z][a-zA-Z0-9+.-]*)://")
 SUPPORTED_SCHEMES: tuple[str, ...] = ("hf", "s3", "https", "http")
 _HF_OTHER_REPO_TYPES = ("models/", "spaces/")
+_S3_BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$")
+
+# Presigned-URL parameters that change on every signing without naming a
+# different object. Credential-bearing names are matched separately by
+# ``is_sensitive_query_parameter_name``.
+_SIGNING_ENVELOPE_PREFIXES = ("x-amz-", "x-goog-")
+_SIGNING_ENVELOPE_NAMES = frozenset(
+    {
+        "expires",
+        "se",
+        "st",
+        "sp",
+        "sv",
+        "sr",
+        "spr",
+        "sig",
+        "skoid",
+        "sktid",
+        "skt",
+        "ske",
+        "sks",
+        "skv",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +59,7 @@ class ParsedRemoteRef:
     path: str | None
     """Path inside the repo or bucket; None for a repo/bucket root or an http(s) URL."""
     revision: str | None
-    """HF revision or S3 versionId as written by the user."""
+    """HF revision (percent-decoded) or S3 versionId."""
     is_container: bool
     """True when the syntax alone says this names a repo or prefix rather than one object."""
 
@@ -69,6 +97,11 @@ def parse_remote_ref(value: str) -> ParsedRemoteRef:
     )
 
 
+def _without_fragment(value: str) -> str:
+    """Redacted ``value`` with any fragment dropped; redaction does not cover fragments."""
+    return redact_url(value.partition("#")[0])
+
+
 def _parse_hf(value: str, rest: str) -> ParsedRemoteRef:
     if rest.startswith("datasets/"):
         rest = rest[len("datasets/") :]
@@ -76,6 +109,11 @@ def _parse_hf(value: str, rest: str) -> ParsedRemoteRef:
         raise ValueError(
             f"'{redact_url(value)}': only Hugging Face dataset repos are supported "
             "(hf://datasets/<org>/<repo> or hf://<org>/<repo>)"
+        )
+    if "?" in rest or "#" in rest:
+        raise ValueError(
+            f"'{_without_fragment(value)}': a Hugging Face reference cannot "
+            "carry a query string or fragment"
         )
     segments = [s for s in rest.split("/") if s]
     if len(segments) < 2:
@@ -97,11 +135,21 @@ def _parse_hf(value: str, rest: str) -> ParsedRemoteRef:
 
 
 def _parse_s3(value: str, rest: str) -> ParsedRemoteRef:
-    bucket, _, key_and_query = rest.partition("/")
+    if "#" in rest:
+        raise ValueError(
+            f"'{_without_fragment(value)}': an S3 reference cannot carry a fragment"
+        )
+    # The query ends the reference, so split it off before looking for the key.
+    head, _, query = rest.partition("?")
+    bucket, _, key = head.partition("/")
     if not bucket:
         raise ValueError(f"'{redact_url(value)}': an S3 reference must name a bucket")
-    # Keys are literal (no percent-decoding), matching the AWS CLI; '?' starts the query.
-    key, _, query = key_and_query.partition("?")
+    if not _S3_BUCKET_RE.fullmatch(bucket) or ".." in bucket:
+        raise ValueError(
+            f"'{redact_url(value)}': not a valid S3 bucket name (3-63 lowercase "
+            "letters, digits, '.' or '-')"
+        )
+    # Keys are literal (no percent-decoding), matching the AWS CLI.
     version: str | None = None
     if query:
         params = dict(parse_qsl(query, keep_blank_values=True))
@@ -126,6 +174,17 @@ def _parse_http(value: str, scheme: str) -> ParsedRemoteRef:
         raise ValueError(f"'{redact_url(value)}': URL has no host")
     return ParsedRemoteRef(
         scheme=scheme, location=value, path=None, revision=None, is_container=False
+    )
+
+
+def _is_signing_parameter(pair: str) -> bool:
+    """Return True for a raw ``name=value`` query pair that varies per signing."""
+    name = pair.partition("=")[0]
+    if is_sensitive_query_parameter_name(name):
+        return True
+    lowered = unquote(name).lower()
+    return lowered in _SIGNING_ENVELOPE_NAMES or lowered.startswith(
+        _SIGNING_ENVELOPE_PREFIXES
     )
 
 
@@ -175,17 +234,22 @@ class RemoteRef(BaseConfig):
         """Normalized identity used for dedupe and cache keys (no credentials)."""
         p = self.parsed
         if p.scheme == "hf":
-            rev = f"@{p.revision}" if p.revision else ""
+            # Re-encode so a '/' inside the revision cannot merge with the path.
+            rev = f"@{quote(p.revision, safe='')}" if p.revision else ""
             sub = f"/{p.path}" if p.path else ""
             return f"hf://datasets/{p.location}{rev}{sub}"
         if p.scheme == "s3":
-            ver = f"?versionId={p.revision}" if p.revision else ""
+            ver = f"?versionId={quote(p.revision, safe='')}" if p.revision else ""
             return f"s3://{p.location}/{p.path or ''}{ver}"
         parts = urlsplit(self.ref)
+        query = parts.query
         if is_presigned(self.ref):
-            # Each signing changes the query; the object identity is scheme+host+path.
-            return urlunsplit(parts._replace(query="", fragment=""))
-        return urlunsplit(parts._replace(fragment=""))
+            # Each signing changes the credential and envelope parameters; the
+            # remaining ones can still select a different object.
+            query = "&".join(
+                pair for pair in query.split("&") if not _is_signing_parameter(pair)
+            )
+        return urlunsplit(parts._replace(query=query, fragment=""))
 
     def with_version(self, version: str) -> RemoteRef:
         return self.model_copy(update={"resolved_version": version})
