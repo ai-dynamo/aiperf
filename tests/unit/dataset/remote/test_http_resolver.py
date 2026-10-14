@@ -5,12 +5,14 @@ from pathlib import Path
 import orjson
 import pytest
 from aiohttp import web
+from pytest import param
 
 from aiperf.common.redact import REDACTED_VALUE
 from aiperf.config.dataset.remote_ref import RemoteRef
+from aiperf.dataset.remote import service
 from aiperf.dataset.remote.cache import entry_dir
 from aiperf.dataset.remote.errors import RemoteErrorKind, RemoteSourceError
-from aiperf.dataset.remote.http import HTTPSourceResolver
+from aiperf.dataset.remote.http import HTTPSourceResolver, _filename_of
 from aiperf.dataset.remote.models import UNVERSIONED
 from aiperf.dataset.remote.protocols import SourceResolverProtocol
 from aiperf.plugin import plugins
@@ -150,3 +152,98 @@ async def test_read_prefix(http_server, tmp_path: Path) -> None:
     probe = await resolver.probe(RemoteRef(ref=f"{base}/t.jsonl"))
     assert await resolver.read_prefix(probe, 4) == (BODY[:4], False)
     assert await resolver.read_prefix(probe, 4096) == (BODY, True)
+
+
+def _sidecar_app(sidecar: web.Response) -> web.Application:
+    """Serve BODY at /t.jsonl (strong ETag) and ``sidecar`` at its sidecar path."""
+
+    async def data(_: web.Request) -> web.Response:
+        return web.Response(body=BODY, headers={"ETag": '"v1"'})
+
+    async def side(_: web.Request) -> web.Response:
+        return sidecar
+
+    app = web.Application()
+    app.router.add_get("/t.jsonl", data)
+    app.router.add_get("/t.jsonl.aiperf.json", side)
+    return app
+
+
+@pytest.mark.asyncio
+async def test_html_sidecar_is_treated_as_absent(http_server) -> None:
+    """SPA catch-alls and SSO landing pages answer any path with 200 HTML."""
+    page = web.Response(text="<html>sign in</html>", content_type="text/html")
+    url = f"{await http_server(_sidecar_app(page))}/t.jsonl"
+    probe = await service.probe_ref(RemoteRef(ref=url))
+    assert probe.manifest is None and probe.manifest_sha256 is None
+    source = await service.materialize_probe(probe)
+    assert source.local_path.read_bytes() == BODY
+
+
+@pytest.mark.asyncio
+async def test_oversize_sidecar_is_invalid(http_server) -> None:
+    huge = web.Response(body=b" " * ((1 << 20) + 1), content_type="application/json")
+    url = f"{await http_server(_sidecar_app(huge))}/t.jsonl"
+    with pytest.raises(RemoteSourceError, match="larger than 1 MiB") as exc:
+        await HTTPSourceResolver().probe(RemoteRef(ref=url))
+    assert exc.value.kind == RemoteErrorKind.MANIFEST_INVALID
+
+
+@pytest.mark.asyncio
+async def test_sidecar_spanning_many_chunks_is_read_whole(http_server) -> None:
+    raw = orjson.dumps({"aiperf_manifest_version": 1, "format": "mooncake_trace"})
+    # Leading padding: a reader that stops after the first chunk never sees the JSON.
+    padded = b" " * ((1 << 20) - len(raw)) + raw
+    sidecar = web.Response(body=padded, content_type="application/json")
+    url = f"{await http_server(_sidecar_app(sidecar))}/t.jsonl"
+    probe = await HTTPSourceResolver().probe(RemoteRef(ref=url))
+    assert probe.manifest is not None and probe.manifest.format == "mooncake_trace"
+
+
+def _etag_app(head_etag: str, get_etag: str) -> web.Application:
+    """HEAD and GET report different ETags, as nginx does when gzip weakens it."""
+
+    async def handler(request: web.Request) -> web.Response:
+        etag = head_etag if request.method == "HEAD" else get_etag
+        return web.Response(body=BODY, headers={"ETag": etag})
+
+    app = web.Application()
+    app.router.add_get("/t.jsonl", handler)
+    return app
+
+
+@pytest.mark.asyncio
+async def test_weak_etag_on_get_matches_strong_pin(http_server) -> None:
+    base = await http_server(_etag_app('"x"', 'W/"x"'))
+    url = f"{base}/t.jsonl"
+    resolver = HTTPSourceResolver()
+    probe = await resolver.probe(RemoteRef(ref=url))
+    assert probe.ref.resolved_version == 'etag:"x"'
+    source = await resolver.materialize(probe)
+    assert source.local_path.read_bytes() == BODY
+
+
+@pytest.mark.asyncio
+async def test_weak_compare_still_detects_a_different_etag(http_server) -> None:
+    base = await http_server(_etag_app('"x"', 'W/"y"'))
+    url = f"{base}/t.jsonl"
+    resolver = HTTPSourceResolver()
+    probe = await resolver.probe(RemoteRef(ref=url))
+    with pytest.raises(RemoteSourceError, match="changed"):
+        await resolver.materialize(probe)
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        param("https://h/d/t.jsonl", "t.jsonl", id="plain"),
+        param("https://h/d/my%20trace.jsonl", "my trace.jsonl", id="percent-decoded"),
+        param("https://h/", "download", id="empty"),
+        param("https://h/a/%2e%2e", "download", id="dot-dot"),
+        param("https://h/a/..", "download", id="literal-dot-dot"),
+        param("https://h/d/%5C..%5C..%5Cx.jsonl", "download", id="backslashes"),
+        param("https://h/d/a%5Cb.jsonl", "download", id="backslash"),
+    ],
+)  # fmt: skip
+def test_filename_of_never_escapes_the_entry_dir(url: str, expected: str) -> None:
+    assert _filename_of(url) == expected
