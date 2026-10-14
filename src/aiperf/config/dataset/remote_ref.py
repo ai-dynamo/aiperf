@@ -278,3 +278,29 @@ def coerce_remote_ref(value: Any) -> Any:
     if isinstance(value, dict) and "ref" in value:
         return RemoteRef.model_validate(value)
     return value
+
+
+class RemoteFixedScheduleCheck(BaseConfig):
+    """Fixed-schedule auto-promotion deferred until a remote trace's first record is readable.
+
+    Set by the CLI converter for a remote --input-file; consumed and cleared by the
+    dataset access preflight.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    promoted: Annotated[
+        bool,
+        Field(
+            description="True when the CLI built the profiling phase as fixed_schedule ahead "
+            "of the timestamp check; the access preflight demotes it if the trace has none."
+        ),
+    ]
+    conflict_error: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description="Error raised if the trace turns out to have timestamps (an "
+            "incompatible rate-shaped mode or a parameter sweep was selected).",
+        ),
+    ]
