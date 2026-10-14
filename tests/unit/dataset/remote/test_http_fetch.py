@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from aiohttp import web
+from pytest import param
 
 from aiperf.dataset.remote import http_fetch
 from aiperf.dataset.remote.errors import RemoteErrorKind, RemoteSourceError
@@ -197,3 +198,96 @@ async def test_same_origin_redirect_keeps_credentials(http_server) -> None:
 )
 def test_content_range_total(value: str | None, total: int | None) -> None:
     assert http_fetch.content_range_total(value) == total
+
+
+@pytest.mark.asyncio
+async def test_head_forbidden_retries_with_range_get(http_server) -> None:
+    seen: dict[str, str | None] = {}
+
+    async def head_denied(_: web.Request) -> web.Response:
+        return web.Response(status=403)
+
+    async def get_ranged(request: web.Request) -> web.Response:
+        seen["range"] = request.headers.get("Range")
+        return web.Response(
+            body=b"x",
+            status=206,
+            headers={
+                "Content-Range": "bytes 0-0/1234",
+                "ETag": '"v1"',
+                "Last-Modified": "Wed, 01 Jan 2025 00:00:00 GMT",
+            },
+        )
+
+    app = web.Application()
+    app.router.add_get("/t", get_ranged, allow_head=False)
+    app.router.add_head("/t", head_denied)
+    url = f"{await http_server(app)}/t"
+    async with http_fetch.open_session() as s:
+        meta = await http_fetch.fetch_metadata(s, url, headers={}, ref_display=url)
+    assert seen["range"] == "bytes=0-0"
+    assert meta == http_fetch.HttpMetadata(
+        etag='"v1"',
+        last_modified="Wed, 01 Jan 2025 00:00:00 GMT",
+        content_length=1234,
+    )
+
+
+@pytest.mark.asyncio
+async def test_head_forbidden_get_200_uses_content_length(http_server) -> None:
+    async def head_denied(_: web.Request) -> web.Response:
+        return web.Response(status=403)
+
+    async def get_full(_: web.Request) -> web.Response:
+        return web.Response(body=BODY, headers={"ETag": '"v2"'})
+
+    app = web.Application()
+    app.router.add_get("/t", get_full, allow_head=False)
+    app.router.add_head("/t", head_denied)
+    url = f"{await http_server(app)}/t"
+    async with http_fetch.open_session() as s:
+        meta = await http_fetch.fetch_metadata(s, url, headers={}, ref_display=url)
+    assert (meta.etag, meta.content_length) == ('"v2"', len(BODY))
+
+
+@pytest.mark.parametrize("status", [401, 403])
+@pytest.mark.asyncio
+async def test_head_and_get_both_denied_is_auth_denied(
+    http_server, status: int
+) -> None:
+    async def denied(_: web.Request) -> web.Response:
+        return web.Response(status=status)
+
+    app = web.Application()
+    app.router.add_route("*", "/t", denied)
+    url = f"{await http_server(app)}/t"
+    async with http_fetch.open_session() as s:
+        with pytest.raises(RemoteSourceError) as exc:
+            await http_fetch.fetch_metadata(s, url, headers={}, ref_display=url)
+    assert exc.value.kind == RemoteErrorKind.AUTH_DENIED
+
+
+@pytest.mark.parametrize(
+    "location,what",
+    [
+        param("http://[bad/x?X-Amz-Signature=SECRETSIG", "invalid URL", id="invalid-ipv6"),
+        param("http://h:99999/x?X-Amz-Signature=SECRETSIG", "invalid URL", id="bad-port"),
+        param("ftp://h.example/x?X-Amz-Signature=SECRETSIG", "non-HTTP URL", id="ftp"),
+    ],
+)  # fmt: skip
+@pytest.mark.asyncio
+async def test_bad_redirect_location_is_not_found_without_leaking(
+    http_server, location: str, what: str
+) -> None:
+    async def redirect(_: web.Request) -> web.Response:
+        return web.Response(status=302, headers={"Location": location})
+
+    app = web.Application()
+    app.router.add_get("/t", redirect)
+    url = f"{await http_server(app)}/t"
+    async with http_fetch.open_session() as s:
+        with pytest.raises(RemoteSourceError) as exc:
+            await http_fetch.read_prefix(s, url, 8, headers={}, ref_display=url)
+    assert exc.value.kind == RemoteErrorKind.NOT_FOUND
+    assert what in str(exc.value)
+    assert "SECRETSIG" not in str(exc.value)

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import aiohttp
@@ -23,6 +23,7 @@ _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 # Credential-free headers a redirected request still needs (HF resolve URLs redirect to a
 # CDN; the token must not go with them but the byte range must).
 _CROSS_ORIGIN_EXTRA_HEADERS = frozenset({"range", "accept", "accept-encoding"})
+_HEAD_UNSUPPORTED_STATUSES = frozenset({401, 403, 405, 501})
 _PREFIX_CHUNK = 64 * 1024
 _DOWNLOAD_CHUNK = 1 << 20
 
@@ -102,6 +103,37 @@ def _metadata(response: aiohttp.ClientResponse) -> HttpMetadata:
     )
 
 
+def _redirect_target(
+    response: aiohttp.ClientResponse,
+    location: str,
+    *,
+    ref_display: str,
+    stage: RemoteStage,
+) -> str:
+    """Resolve a ``Location`` header, rejecting unparseable and non-HTTP targets.
+
+    The target is left out of the errors: it can be a presigned URL.
+    """
+    try:
+        target = response.url.join(URL(location))
+        scheme = target.scheme
+    except ValueError:
+        scheme = None
+    if scheme is None:
+        what = "it redirected to an invalid URL"
+    elif scheme not in ("http", "https"):
+        what = "it redirected to a non-HTTP URL"
+    else:
+        return str(target)
+    raise RemoteSourceError(
+        ref=ref_display,
+        kind=RemoteErrorKind.NOT_FOUND,
+        stage=stage,
+        what=what,
+        hint="Check the URL",
+    )
+
+
 @contextlib.asynccontextmanager
 async def safe_request(
     session: aiohttp.ClientSession,
@@ -123,8 +155,10 @@ async def safe_request(
             raise _transport_error(e, ref_display=ref_display, stage=stage) from e
         location = response.headers.get("Location")
         if response.status in _REDIRECT_STATUSES and location:
-            target = str(response.url.join(URL(location)))
             response.release()
+            target = _redirect_target(
+                response, location, ref_display=ref_display, stage=stage
+            )
             if not same_origin(target, current):
                 current_headers = strip_credentials_for_foreign_origin(
                     current_headers, extra_allowed=_CROSS_ORIGIN_EXTRA_HEADERS
@@ -151,26 +185,42 @@ async def fetch_metadata(
     headers: dict[str, str],
     ref_display: str,
 ) -> HttpMetadata:
-    """HEAD the object (GET when HEAD is unsupported) and return its version headers."""
+    """HEAD the object and return its version headers.
+
+    Presigned URLs (SigV4, GCS V4) sign the HTTP method, so a URL presigned for GET
+    answers HEAD with 401/403; some servers answer 405/501. In those cases one
+    ``Range: bytes=0-0`` GET supplies the same headers, and its body is never read.
+    """
     stage = RemoteStage.ACCESS
     async with safe_request(
         session, "HEAD", url, headers=headers, ref_display=ref_display, stage=stage
     ) as resp:
-        if resp.status not in (405, 501):
+        if resp.status not in _HEAD_UNSUPPORTED_STATUSES:
             if (
                 err := status_error(resp.status, ref_display=ref_display, stage=stage)
             ) is not None:
                 raise err
             return _metadata(resp)
-    # HEAD unsupported: the headers of a GET carry the same fields; the body is never read.
     async with safe_request(
-        session, "GET", url, headers=headers, ref_display=ref_display, stage=stage
+        session,
+        "GET",
+        url,
+        headers={**headers, "Range": "bytes=0-0"},
+        ref_display=ref_display,
+        stage=stage,
     ) as resp:
         if (
             err := status_error(resp.status, ref_display=ref_display, stage=stage)
         ) is not None:
             raise err
-        return _metadata(resp)
+        meta = _metadata(resp)
+        if resp.status == 206:
+            # Content-Length on a 206 is the slice length, not the object size.
+            meta = replace(
+                meta,
+                content_length=content_range_total(resp.headers.get("Content-Range")),
+            )
+        return meta
 
 
 async def read_prefix(
