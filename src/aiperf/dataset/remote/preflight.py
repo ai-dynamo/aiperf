@@ -15,12 +15,21 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from pydantic import ValidationError
 
 from aiperf import __version__
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.record_files import (
+    PARQUET_SUFFIX,
+    PYARROW_MISSING,
+    first_record,
+    is_parquet_input,
+    parquet_available,
+    parquet_files,
+)
 from aiperf.config.dataset import FileDataset
 from aiperf.config.dataset.remote_ref import RemoteRef
 from aiperf.dataset.remote import service
@@ -150,11 +159,26 @@ def _apply_probe(cfg: BenchmarkConfig, probe: ProbeResult) -> FileDataset:
     return rebuilt
 
 
+def _require_parquet_support(probe: ProbeResult) -> None:
+    """Fail before any download when the source is parquet and pyarrow is unavailable."""
+    is_parquet = (
+        probe.data_files is not None
+        or PurePosixPath(probe.filename).suffix.lower() == PARQUET_SUFFIX
+    )
+    if is_parquet and not parquet_available():
+        raise RemoteSourceError(
+            ref=probe.ref.display, kind=RemoteErrorKind.MISSING_DEPENDENCY, stage=RemoteStage.ACCESS,
+            what=PYARROW_MISSING,
+            hint="Use a JSONL copy of the dataset, or run on a platform where pyarrow installs",
+        )  # fmt: skip
+
+
 async def _access(groups: dict[str, list[BenchmarkConfig]]) -> None:
     from aiperf.plugin import plugins
 
     for cfgs in groups.values():
         probe = await service.probe_ref(cfgs[0].get_default_dataset().path)
+        _require_parquet_support(probe)
         _probe_cache.add(probe)
         has_timestamp: bool | None = None
         for cfg in cfgs:
@@ -193,23 +217,31 @@ def _check_first_record_format(fmt: CustomDatasetType, source: ResolvedSource) -
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType
 
-    path = source.local_path
-    if path.is_dir() or path.suffix.lower() in COLUMNAR_SUFFIXES:
-        return
     # A category variant loads a filtered subset, so its can_load says nothing
     # about whether the file itself has the right shape.
     if not plugins.is_autodetectable(
         plugins.get_entry(PluginType.CUSTOM_DATASET_LOADER, fmt)
     ):
         return
-    try:
-        record = DatasetResolver._read_first_jsonl_record(str(path))
-    except OSError:
+    path = source.local_path
+    probe_name = str(path)
+    if is_parquet_input(path):
+        try:
+            probe_name = str(parquet_files(path)[0])
+            record = first_record(path)
+        except (OSError, ValueError):
+            return
+    elif path.is_dir() or path.suffix.lower() in COLUMNAR_SUFFIXES:
         return
+    else:
+        try:
+            record = DatasetResolver._read_first_jsonl_record(str(path))
+        except OSError:
+            return
     if record is None:
         return
     LoaderClass = plugins.get_class(PluginType.CUSTOM_DATASET_LOADER, fmt)
-    if not LoaderClass.can_load(record, str(path)):
+    if not LoaderClass.can_load(record, probe_name):
         raise RemoteSourceError(
             ref=source.probe.ref.display, kind=RemoteErrorKind.INCOMPATIBLE, stage=RemoteStage.MATERIALIZE,
             what=f"its first record does not look like '{fmt}' data",
