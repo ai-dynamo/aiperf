@@ -26,6 +26,8 @@ PYARROW_MISSING = (
     "parquet datasets need pyarrow, which has no Windows-on-ARM wheel "
     "(apache/arrow#47195)"
 )
+# pyarrow's own default; one batch is decoded into Python objects at a time.
+_BATCH_ROWS = 65_536
 _HF_SHARD_NAME = re.compile(r"^(?P<split>.+)-\d{5}-of-\d{5}\.parquet$", re.IGNORECASE)
 
 
@@ -234,7 +236,9 @@ def _check_finite(row: dict[str, Any], float_columns: list[str], file: Path) -> 
             )
 
 
-def _iter_parquet_file(pa: Any, pq: Any, file: Path) -> Iterator[dict[str, Any]]:
+def _iter_parquet_file(
+    pa: Any, pq: Any, file: Path, batch_rows: int
+) -> Iterator[dict[str, Any]]:
     try:
         parquet_file = pq.ParquetFile(file)
     except (OSError, pa.ArrowException) as e:
@@ -250,7 +254,7 @@ def _iter_parquet_file(pa: Any, pq: Any, file: Path) -> Iterator[dict[str, Any]]
                     f"{field.type}, which AIPerf records cannot hold"
                 )
         float_columns = [f.name for f in schema if _has_floating(pa, f.type)]
-        for batch in parquet_file.iter_batches():
+        for batch in parquet_file.iter_batches(batch_size=batch_rows):
             for row in batch.to_pylist():
                 _check_finite(row, float_columns, file)
                 # push_to_hub turns a key a row never had into null; dropping
@@ -258,10 +262,12 @@ def _iter_parquet_file(pa: Any, pq: Any, file: Path) -> Iterator[dict[str, Any]]
                 yield {key: value for key, value in row.items() if value is not None}
 
 
-def _iter_parquet(files: Sequence[Path]) -> Iterator[dict[str, Any]]:
+def _iter_parquet(
+    files: Sequence[Path], batch_rows: int = _BATCH_ROWS
+) -> Iterator[dict[str, Any]]:
     pa, pq = _pyarrow()
     for file in files:
-        yield from _iter_parquet_file(pa, pq, file)
+        yield from _iter_parquet_file(pa, pq, file, batch_rows)
 
 
 def iter_records(path: str | Path) -> Iterator[dict[str, Any]]:
@@ -288,7 +294,12 @@ def iter_records(path: str | Path) -> Iterator[dict[str, Any]]:
 
 def first_record(path: str | Path) -> dict[str, Any] | None:
     """The first record of ``path``, or None when it has none. Raises like :func:`iter_records`."""
-    records = iter_records(path)
+    # One-row batches: a default batch would decode 64K rows to read one.
+    records = (
+        _iter_parquet(parquet_files(path), batch_rows=1)
+        if is_parquet_input(path)
+        else iter_records(path)
+    )
     try:
         return next(records, None)
     finally:

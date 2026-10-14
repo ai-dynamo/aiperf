@@ -356,11 +356,12 @@ class DatasetResolver:
 
         path = Path(file_path)
         if is_parquet_input(path):
-            record, probe_name = DatasetResolver._read_first_parquet_record(path)
-            # Schema-only loaders (baseten_trace) claim the file before its rows are read.
+            # Schema-only loaders (baseten_trace) claim the file before any row is read.
+            probe_name = DatasetResolver._parquet_probe_name(path)
             detected = DatasetResolver._detect_from_record(None, probe_name)
             if detected is not None:
-                return detected, record
+                return detected, None
+            record = DatasetResolver._read_first_parquet_record(path)
             return DatasetResolver._detect_from_record(record, probe_name), record
         data: dict | None = None
         if not path.is_dir():
@@ -371,24 +372,29 @@ class DatasetResolver:
         return DatasetResolver._detect_from_record(data, file_path), data
 
     @staticmethod
-    def _read_first_parquet_record(path: Path) -> tuple[dict | None, str]:
-        """First row of parquet input, and the file name loaders should probe.
+    def _parquet_probe_name(path: Path) -> str:
+        """The file name loaders should probe for parquet input.
 
         Loaders check a parquet file's suffix or schema, so detection hands them
-        the first shard rather than its directory. Unreadable rows give None so
-        schema-only loaders still get a chance.
+        the first shard rather than its directory.
         """
-        from aiperf.common.record_files import first_record, parquet_files
+        from aiperf.common.record_files import parquet_files
 
         try:
-            probe_name = str(parquet_files(path)[0])
+            return str(parquet_files(path)[0])
         except ValueError:
-            return None, str(path)
+            return str(path)
+
+    @staticmethod
+    def _read_first_parquet_record(path: Path) -> dict | None:
+        """First row of parquet input; None when unreadable so schema-only loaders still get a chance."""
+        from aiperf.common.record_files import first_record
+
         try:
             record = first_record(path)
         except (OSError, ValueError):
-            return None, probe_name
-        return (record if isinstance(record, dict) else None), probe_name
+            return None
+        return record if isinstance(record, dict) else None
 
     @staticmethod
     def _detect_from_record(data: dict | None, probe_name: str) -> object | None:
@@ -451,7 +457,7 @@ class DatasetResolver:
 
         path = Path(file_path)
         if is_parquet_input(path):
-            return DatasetResolver._read_first_parquet_record(path)[0]
+            return DatasetResolver._read_first_parquet_record(path)
         if path.is_dir():
             return None
         try:
@@ -504,21 +510,14 @@ class DatasetResolver:
         file_path: str, is_multi_turn: bool
     ) -> tuple[int, set[str]] | None:
         """Record count and session ids of one input, or None when it cannot be read."""
-        from aiperf.common.record_files import is_parquet_input, iter_records
+        from aiperf.common.record_files import is_parquet_input
         from aiperf.common.utils import open_text_maybe_gzip
+
+        if is_parquet_input(file_path):
+            return _scan_parquet_records(file_path, is_multi_turn)
 
         record_count = 0
         session_ids: set[str] = set()
-
-        if is_parquet_input(file_path):
-            try:
-                for data in iter_records(file_path):
-                    record_count += 1
-                    if is_multi_turn:
-                        _add_record_session_id(data, session_ids)
-            except (OSError, ValueError):
-                return None
-            return record_count, session_ids
 
         try:
             with open_text_maybe_gzip(file_path) as f:
@@ -571,6 +570,25 @@ class DatasetResolver:
             )
             return 0
         return len(all_ids - referenced)
+
+
+def _scan_parquet_records(
+    file_path: str, is_multi_turn: bool
+) -> tuple[int, set[str]] | None:
+    """Like ``_scan_records`` for parquet input; only session ids need the rows decoded."""
+    from aiperf.common.record_files import count_parquet_rows, iter_records
+
+    session_ids: set[str] = set()
+    try:
+        if not is_multi_turn:
+            return count_parquet_rows(file_path), session_ids
+        record_count = 0
+        for data in iter_records(file_path):
+            record_count += 1
+            _add_record_session_id(data, session_ids)
+    except (OSError, ValueError):
+        return None
+    return record_count, session_ids
 
 
 def _add_session_id(line: str, session_ids: set[str]) -> None:

@@ -238,6 +238,33 @@ def test_first_record_empty_parquet_returns_none(tmp_path: Path) -> None:
     assert list(iter_records(path)) == []
 
 
+def test_first_record_parquet_decodes_one_small_batch_and_closes(
+    tmp_path: Path,
+) -> None:
+    path = write_parquet(tmp_path / "t.parquet", ROWS * 100)
+    batch_sizes: list[int | None] = []
+    closed: list[object] = []
+    real_iter_batches = pq.ParquetFile.iter_batches
+    real_close = pq.ParquetFile.close
+
+    def iter_batches(self, *args, **kwargs):
+        batch_sizes.append(kwargs.get("batch_size"))
+        return real_iter_batches(self, *args, **kwargs)
+
+    def close(self, *args, **kwargs):
+        closed.append(self)
+        return real_close(self, *args, **kwargs)
+
+    with (
+        patch.object(pq.ParquetFile, "iter_batches", iter_batches),
+        patch.object(pq.ParquetFile, "close", close),
+    ):
+        assert first_record(path) == ROWS[0]
+    assert len(batch_sizes) == 1
+    assert batch_sizes[0] is not None and 1 <= batch_sizes[0] <= 64
+    assert len(closed) == 1
+
+
 def test_count_parquet_rows_sums_shards(tmp_path: Path) -> None:
     write_parquet(tmp_path / "d" / "train-00000-of-00002.parquet", ROWS)
     write_parquet(tmp_path / "d" / "train-00001-of-00002.parquet", ROWS[:1])
