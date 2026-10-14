@@ -222,7 +222,7 @@ aiperf profile \
     --request-count 2
 ```
 
-Without `audio_duration_seconds`, RTFx is omitted from the results for these requests. The value is self-reported and unvalidated against the actual audio content; it must be a finite value greater than 0 (`0`, negative, or infinite values are rejected when the dataset is loaded).
+Without `audio_duration_seconds`, RTFx is omitted from the results for these requests. The value is self-reported and unvalidated against the actual audio content; it must be a finite value greater than 0 (`0`, negative, or infinite values are rejected when the dataset is loaded). It must also describe exactly one clip: the transcription endpoint only sends the first entry of `audios`, so pairing it with more than one audio is rejected at load time rather than silently computing RTFx against the wrong duration. Split multiple clips into one `SingleTurn` entry each.
 
 ---
 

@@ -172,6 +172,29 @@ class SingleTurn(AIPerfBaseModel):
             raise ValueError("At least one modality must be provided")
         return self
 
+    @model_validator(mode="after")
+    def validate_audio_duration_describes_one_audio(self) -> "SingleTurn":
+        """Ensure audio_duration_seconds unambiguously describes a single clip.
+
+        The transcription endpoint only ever sends the first entry of `audios`,
+        so a duration paired with more than one audio would not describe what
+        is actually transmitted and would silently skew RTFx.
+        """
+        if self.audio_duration_seconds is None:
+            return self
+        if self.audios is not None and len(self.audios) > 1:
+            raise ValueError(
+                f"audio_duration_seconds describes a single audio, but "
+                f"{len(self.audios)} were given. Only the first is sent, so the "
+                f"duration would not match the request. Split these into one "
+                f"entry per audio."
+            )
+        if not self.audio and not self.audios:
+            raise ValueError(
+                "audio_duration_seconds requires audio or audios to be set"
+            )
+        return self
+
 
 class MultiTurn(AIPerfBaseModel):
     """Defines the schema for multi-turn conversations.

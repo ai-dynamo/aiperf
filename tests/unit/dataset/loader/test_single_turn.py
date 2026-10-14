@@ -122,6 +122,28 @@ class TestSingleTurn:
         with pytest.raises(ValueError):
             SingleTurn(text="Hello", audio_duration_seconds=0.0)
 
+    def test_create_with_audio_duration_seconds_multiple_audios_raises(self):
+        """audio_duration_seconds is ambiguous when more than one audio is given,
+        since only the first audio is sent to the transcription endpoint."""
+        with pytest.raises(ValueError):
+            SingleTurn(
+                audios=["https://example.com/a.wav", "https://example.com/b.wav"],
+                audio_duration_seconds=45.0,
+            )
+
+    def test_create_with_audio_duration_seconds_single_element_audios_allowed(self):
+        """A single-element audios list still unambiguously describes one clip."""
+        data = SingleTurn(
+            audios=["https://example.com/a.wav"], audio_duration_seconds=30.0
+        )
+
+        assert data.audio_duration_seconds == 30.0
+
+    def test_create_with_audio_duration_seconds_without_audio_raises(self):
+        """audio_duration_seconds requires audio or audios to be set."""
+        with pytest.raises(ValueError):
+            SingleTurn(text="Hello", audio_duration_seconds=30.0)
+
     def test_create_with_delay(self):
         """Test creating SingleTurn with delay."""
         data = SingleTurn(text="Who are you?", delay=1234)
