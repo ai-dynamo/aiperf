@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import io
+import logging
 from contextlib import ExitStack
 from pathlib import Path
 
@@ -53,6 +54,10 @@ async def _resolve(repo: ParquetRepo, ref: str):
         return probe, await resolver.materialize(probe)
 
 
+def _split_logs(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [r.getMessage() for r in caplog.records if "holds splits" in r.getMessage()]
+
+
 async def _probe_error(repo: ParquetRepo, ref: str) -> RemoteSourceError:
     with pytest.raises(RemoteSourceError) as exc_info:
         await _resolve(repo, ref)
@@ -60,13 +65,17 @@ async def _probe_error(repo: ParquetRepo, ref: str) -> RemoteSourceError:
 
 
 @pytest.mark.asyncio
-async def test_probe_push_to_hub_config_dir_selects_its_shards(tmp_path: Path) -> None:
+async def test_probe_push_to_hub_config_dir_selects_its_shards(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     repo = ParquetRepo(tmp_path, {
         "README.md": b"# card",
         "mooncake/train-00001-of-00002.parquet": parquet_bytes(ROWS[1:]),
         "mooncake/train-00000-of-00002.parquet": parquet_bytes(ROWS[:1]),
     })  # fmt: skip
-    probe, source = await _resolve(repo, "hf://datasets/org/repo/mooncake")
+    with caplog.at_level(logging.INFO):
+        probe, source = await _resolve(repo, "hf://datasets/org/repo/mooncake")
+    assert _split_logs(caplog) == []
     shards = [
         "mooncake/train-00000-of-00002.parquet",
         "mooncake/train-00001-of-00002.parquet",
@@ -81,13 +90,19 @@ async def test_probe_push_to_hub_config_dir_selects_its_shards(tmp_path: Path) -
 
 
 @pytest.mark.asyncio
-async def test_probe_several_splits_selects_train(tmp_path: Path) -> None:
+async def test_probe_several_splits_selects_train(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     repo = ParquetRepo(tmp_path, {
         "data/train-00000-of-00001.parquet": parquet_bytes(ROWS),
         "data/test-00000-of-00001.parquet": parquet_bytes(ROWS[:1]),
     })  # fmt: skip
-    probe, source = await _resolve(repo, "hf://org/repo/data")
+    with caplog.at_level(logging.INFO):
+        probe, source = await _resolve(repo, "hf://org/repo/data")
     assert probe.data_files == ["data/train-00000-of-00001.parquet"]
+    assert _split_logs(caplog) == [
+        f"Remote dataset {probe.ref.display}: 'data' holds splits test, train; using 'train'"
+    ]
     assert list(iter_records(source.local_path)) == ROWS
 
 
@@ -118,16 +133,22 @@ async def test_probe_repo_root_with_several_configs_lists_config_refs(
 
 
 @pytest.mark.asyncio
-async def test_probe_convert_parquet_layout_descends_to_train(tmp_path: Path) -> None:
+async def test_probe_convert_parquet_layout_descends_to_train(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     repo = ParquetRepo(tmp_path, {
         "default/train/0000.parquet": parquet_bytes(ROWS[:1]),
         "default/train/0001.parquet": parquet_bytes(ROWS[1:]),
         "default/test/0000.parquet": parquet_bytes(ROWS),
     })  # fmt: skip
-    probe, source = await _resolve(repo, "hf://org/repo")
+    with caplog.at_level(logging.INFO):
+        probe, source = await _resolve(repo, "hf://org/repo")
     assert probe.data_files == [
         "default/train/0000.parquet",
         "default/train/0001.parquet",
+    ]
+    assert _split_logs(caplog) == [
+        f"Remote dataset {probe.ref.display}: 'default' holds splits test, train; using 'train'"
     ]
     assert probe.pinned_ref == f"hf://datasets/org/repo@{SHA}/default/train"
     assert list(iter_records(source.local_path)) == ROWS
@@ -168,19 +189,26 @@ def _folder_manifest(path: str) -> bytes:
 
 
 @pytest.mark.asyncio
-async def test_probe_manifest_parquet_folder_lists_train_shards(tmp_path: Path) -> None:
+async def test_probe_manifest_parquet_folder_lists_train_shards(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     repo = ParquetRepo(tmp_path, {
         "aiperf.json": _folder_manifest("data"),
         "data/train-00000-of-00002.parquet": parquet_bytes(ROWS[:1]),
         "data/train-00001-of-00002.parquet": parquet_bytes(ROWS[1:]),
         "data/test-00000-of-00001.parquet": parquet_bytes(ROWS),
     })  # fmt: skip
-    probe, source = await _resolve(repo, "hf://org/repo")
+    with caplog.at_level(logging.INFO):
+        probe, source = await _resolve(repo, "hf://org/repo")
     shards = ["data/train-00000-of-00002.parquet", "data/train-00001-of-00002.parquet"]
     assert probe.manifest is not None and probe.data_is_dir
     assert probe.data_files == shards
     assert probe.pinned_ref == f"hf://datasets/org/repo@{SHA}"
     assert repo.allow_patterns == [shards]
+    assert [f.path for f in source.files] == shards
+    assert _split_logs(caplog) == [
+        f"Remote dataset {probe.ref.display}: 'data' holds splits test, train; using 'train'"
+    ]
     assert list(iter_records(source.local_path)) == ROWS
 
 

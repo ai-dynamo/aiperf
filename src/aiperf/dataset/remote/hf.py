@@ -11,12 +11,14 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Literal, TypeVar
 from urllib.parse import quote
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.record_files import (
     DEFAULT_SPLIT,
     PARQUET_SUFFIX,
     ParquetSplitError,
     is_ignored_name,
     select_data_shards,
+    shard_splits,
 )
 from aiperf.common.redact import redact_string
 from aiperf.config.dataset.remote_ref import RemoteRef
@@ -39,6 +41,7 @@ from aiperf.dataset.remote.models import ProbeResult, ResolvedSource
 
 T = TypeVar("T")
 _MANIFEST_MAX_BYTES = 1 << 20
+_logger = AIPerfLogger(__name__)
 
 
 def _error(
@@ -390,6 +393,16 @@ def _suggest(ref: RemoteRef, path: str) -> str:
     return f"hf://datasets/{ref.parsed.location}{at}/{path}"
 
 
+def _log_split_choice(ref: RemoteRef, folder: str, splits: list[str]) -> None:
+    """Say which split was read when ``folder`` holds several, so dropped data is visible."""
+    if len(splits) > 1:
+        where = f"'{folder}'" if folder else "the repo root"
+        names = ", ".join(s or "(unnamed)" for s in splits)
+        _logger.info(
+            f"Remote dataset {ref.display}: {where} holds splits {names}; using '{DEFAULT_SPLIT}'"
+        )
+
+
 def _child_of(folder: str, path: str) -> str | None:
     """The first path component of ``path`` below ``folder``, or None if not below it."""
     if not folder:
@@ -441,6 +454,7 @@ def _parquet_layout(
                 what=f"{repo} has several datasets under {where} and no {ROOT_MANIFEST_NAME} saying which to use",
                 hint="Use one of: " + ", ".join(_suggest(ref, _join(folder, c)) for c in children),
             )  # fmt: skip
+        _log_split_choice(ref, folder, children)
         folder = _join(folder, children[0] if len(children) == 1 else DEFAULT_SPLIT)
     try:
         chosen = select_data_shards(names_by_folder[folder])
@@ -448,6 +462,7 @@ def _parquet_layout(
         raise _split_error(ref, folder, e) from e
     if chosen is None:
         return None
+    _log_split_choice(ref, folder, shard_splits(names_by_folder[folder]))
     return folder, [_join(folder, n) for n in chosen]
 
 
@@ -480,7 +495,10 @@ def _manifest_folder_shards(
         chosen = select_data_shards(names)
     except ParquetSplitError as e:
         raise _split_error(ref, folder, e) from e
-    return None if chosen is None else [_join(folder, n) for n in chosen]
+    if chosen is None:
+        return None
+    _log_split_choice(ref, folder, shard_splits(names))
+    return [_join(folder, n) for n in chosen]
 
 
 class HFSourceResolver:
