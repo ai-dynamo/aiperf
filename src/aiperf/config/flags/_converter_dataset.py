@@ -1507,6 +1507,25 @@ def _seed_declared_identity(
             d.pop(key, None)
 
 
+def reject_parquet_without_reader(cli: CLIConfig) -> None:
+    """Fail early when a local parquet input is paired with a format that cannot read it.
+
+    The profiling builder runs format-specific readers (dag root counting,
+    trace sniffing) that open the input as text, so this runs before them
+    rather than letting a parquet file die in a ``UnicodeDecodeError``. A remote
+    reference is not a local path; the access preflight checks it after download.
+    """
+    from aiperf.common.record_files import is_parquet_input, require_parquet_reader
+
+    if (
+        not isinstance(cli.input_file, Path)
+        or cli.custom_dataset_type is None
+        or not is_parquet_input(cli.input_file)
+    ):
+        return
+    require_parquet_reader(cli.custom_dataset_type)
+
+
 def build_dataset(
     cli: CLIConfig,
     *,

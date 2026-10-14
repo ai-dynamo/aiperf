@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING
 from aiperf.common.aiperf_logger import AIPerfLogger
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from aiperf.config.resolution.plan import BenchmarkRun
 
 _logger = AIPerfLogger(__name__)
@@ -166,6 +168,7 @@ class DatasetResolver:
             return
 
         # 1. Resolve and validate path
+        from aiperf.common.record_files import is_parquet_input, require_parquet_reader
         from aiperf.config.dataset.remote_ref import RemoteRef
 
         if isinstance(ds.path, RemoteRef):  # type: ignore[attr-defined]
@@ -192,6 +195,13 @@ class DatasetResolver:
         first_record = None
         explicit_format = "format" in fields_set
         dataset_type = format_map.get(str(fmt)) if explicit_format and fmt else None
+        if (
+            dataset_type is not None
+            and not isinstance(ds.path, RemoteRef)  # type: ignore[attr-defined]
+            and is_parquet_input(resolved)
+        ):
+            # Before any format-specific reader opens the file as text.
+            require_parquet_reader(dataset_type)
         if dataset_type is None:
             dataset_type, first_record = self._detect_type(str(resolved))
 
@@ -350,39 +360,70 @@ class DatasetResolver:
         """
         from pathlib import Path
 
-        from aiperf.plugin import plugins
-        from aiperf.plugin.enums import CustomDatasetType, PluginType
+        from aiperf.common.record_files import is_parquet_input
 
         path = Path(file_path)
+        if is_parquet_input(path):
+            record, probe_name = DatasetResolver._read_first_parquet_record(path)
+            # Schema-only loaders (baseten_trace) claim the file before its rows are read.
+            detected = DatasetResolver._detect_from_record(None, probe_name)
+            if detected is not None:
+                return detected, record
+            return DatasetResolver._detect_from_record(record, probe_name), record
         data: dict | None = None
         if not path.is_dir():
             try:
                 data = DatasetResolver._read_first_jsonl_record(file_path)
             except OSError:
                 return None, None
+        return DatasetResolver._detect_from_record(data, file_path), data
 
-        # Check explicit type field in data
+    @staticmethod
+    def _read_first_parquet_record(path: Path) -> tuple[dict | None, str]:
+        """First row of parquet input, and the file name loaders should probe.
+
+        Loaders check a parquet file's suffix or schema, so detection hands them
+        the first shard rather than its directory. Unreadable rows give None so
+        schema-only loaders still get a chance.
+        """
+        from aiperf.common.record_files import first_record, parquet_files
+
+        try:
+            probe_name = str(parquet_files(path)[0])
+        except ValueError:
+            return None, str(path)
+        try:
+            record = first_record(path)
+        except (OSError, ValueError):
+            return None, probe_name
+        return (record if isinstance(record, dict) else None), probe_name
+
+    @staticmethod
+    def _detect_from_record(data: dict | None, probe_name: str) -> object | None:
+        """The one loader that claims ``data`` / ``probe_name``, or None."""
+        from aiperf.plugin import plugins
+        from aiperf.plugin.enums import CustomDatasetType, PluginType
+
         if data is not None and data.get("type") in CustomDatasetType:
             explicit_type = CustomDatasetType(data["type"])
             LoaderClass = plugins.get_class(
                 PluginType.CUSTOM_DATASET_LOADER, explicit_type
             )
-            if LoaderClass.can_load(data, file_path):
-                return explicit_type, data
+            if LoaderClass.can_load(data, probe_name):
+                return explicit_type
 
-        # Structural detection
         detected = None
         for entry, LoaderClass in plugins.iter_all(PluginType.CUSTOM_DATASET_LOADER):
             if not plugins.is_autodetectable(entry):
                 continue
-            if LoaderClass.can_load(data, file_path):
+            if LoaderClass.can_load(data, probe_name):
                 if detected is not None:
                     _logger.warning(
-                        f"Multiple loaders match dataset '{file_path}', skipping auto-detection"
+                        f"Multiple loaders match dataset '{probe_name}', skipping auto-detection"
                     )
-                    return None, data
+                    return None
                 detected = CustomDatasetType(entry.name)
-        return detected, data
+        return detected
 
     @staticmethod
     def _check_timing_data(
@@ -402,35 +443,43 @@ class DatasetResolver:
 
         record = first_record
         if record is None:
-            from pathlib import Path
-
-            from aiperf.common.utils import load_json_str, open_text_maybe_gzip
-
-            if Path(file_path).is_dir():
-                return False
-            try:
-                with open_text_maybe_gzip(file_path) as f:
-                    for line in f:
-                        if line := line.strip():
-                            record = load_json_str(line)
-                            break
-            except (EOFError, gzip.BadGzipFile, zlib.error) as e:
-                _logger.warning(
-                    f"Truncated or corrupt gzip in dataset file '{file_path}': {e}"
-                )
-                return False
-            except (OSError, UnicodeDecodeError, ValueError):
-                return False
+            record = DatasetResolver._probe_first_record(file_path)
 
         if record is None:
             return False
         return record.get("timestamp") is not None or record.get("delay") is not None
 
     @staticmethod
+    def _probe_first_record(file_path: str) -> dict | None:
+        """First record for timing detection; None for unreadable input or a non-parquet directory."""
+        from pathlib import Path
+
+        from aiperf.common.record_files import is_parquet_input
+        from aiperf.common.utils import load_json_str, open_text_maybe_gzip
+
+        path = Path(file_path)
+        if is_parquet_input(path):
+            return DatasetResolver._read_first_parquet_record(path)[0]
+        if path.is_dir():
+            return None
+        try:
+            with open_text_maybe_gzip(file_path) as f:
+                for line in f:
+                    if line := line.strip():
+                        return load_json_str(line)
+        except (EOFError, gzip.BadGzipFile, zlib.error) as e:
+            _logger.warning(
+                f"Truncated or corrupt gzip in dataset file '{file_path}': {e}"
+            )
+        except (OSError, UnicodeDecodeError, ValueError):
+            pass
+        return None
+
+    @staticmethod
     def _count_records_and_sessions(
         file_path: str, dataset_type: object | None
     ) -> tuple[int, int]:
-        """Count total non-empty records and unique sessions in a JSONL file.
+        """Count total non-empty records and unique sessions in a JSONL or parquet input.
 
         For multi-turn datasets, sessions are identified by session_id or
         chat_id fields. For single-turn, each record is its own session.
@@ -449,10 +498,35 @@ class DatasetResolver:
             CustomDatasetType.BAILIAN_TRACE,
             CustomDatasetType.TRACELAB,
         )
+        scanned = DatasetResolver._scan_records(file_path, is_multi_turn)
+        if scanned is None:
+            return 0, 0
+        record_count, session_ids = scanned
+
+        if is_multi_turn and session_ids:
+            return record_count, len(session_ids)
+        return record_count, record_count
+
+    @staticmethod
+    def _scan_records(
+        file_path: str, is_multi_turn: bool
+    ) -> tuple[int, set[str]] | None:
+        """Record count and session ids of one input, or None when it cannot be read."""
+        from aiperf.common.record_files import is_parquet_input, iter_records
         from aiperf.common.utils import open_text_maybe_gzip
 
         record_count = 0
         session_ids: set[str] = set()
+
+        if is_parquet_input(file_path):
+            try:
+                for data in iter_records(file_path):
+                    record_count += 1
+                    if is_multi_turn:
+                        _add_record_session_id(data, session_ids)
+            except (OSError, ValueError):
+                return None
+            return record_count, session_ids
 
         try:
             with open_text_maybe_gzip(file_path) as f:
@@ -466,13 +540,10 @@ class DatasetResolver:
             _logger.warning(
                 f"Truncated or corrupt gzip in dataset file '{file_path}': {e}"
             )
-            return 0, 0
+            return None
         except (OSError, UnicodeDecodeError):
-            return 0, 0
-
-        if is_multi_turn and session_ids:
-            return record_count, len(session_ids)
-        return record_count, record_count
+            return None
+        return record_count, session_ids
 
     @staticmethod
     def _get_preferred_sampling(dataset_type: object) -> object:
@@ -518,6 +589,11 @@ def _add_session_id(line: str, session_ids: set[str]) -> None:
         data = load_json_str(line)
     except (ValueError, TypeError):
         return
+    _add_record_session_id(data, session_ids)
+
+
+def _add_record_session_id(data: dict, session_ids: set[str]) -> None:
+    """Add one record's session_id/chat_id to the set."""
     sid = data.get("session_id") or data.get("chat_id")
     if sid is not None:
         session_ids.add(str(sid))

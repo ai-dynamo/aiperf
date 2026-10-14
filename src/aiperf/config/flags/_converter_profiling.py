@@ -808,27 +808,22 @@ def _count_dataset_records(file_path: object) -> int:
     """Count records across JSONL, Parquet, or Arrow IPC input."""
     from pathlib import Path
 
+    from aiperf.common.record_files import count_parquet_rows, is_parquet_input
     from aiperf.common.utils import open_text_maybe_gzip
 
     path = Path(file_path)
     try:
+        if is_parquet_input(path):
+            try:
+                return count_parquet_rows(path)
+            except ValueError:
+                return 0
         if path.is_dir():
             total = 0
             for jsonl in path.rglob("*.jsonl"):
                 with open(jsonl, encoding="utf-8") as f:
                     total += sum(1 for line in f if line.strip())
             return total
-        if path.suffix.lower() == ".parquet" and path.is_file():
-            try:
-                import pyarrow as pa
-                import pyarrow.parquet as pq
-            except ImportError:
-                return 0
-
-            try:
-                return pq.ParquetFile(path).metadata.num_rows
-            except (OSError, pa.ArrowException):
-                return 0
         if path.suffix.lower() in {".arrow", ".ipc"} and path.is_file():
             from aiperf.dataset.loader.baseten_trace import (
                 count_baseten_records,
