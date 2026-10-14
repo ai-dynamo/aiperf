@@ -112,12 +112,14 @@ aws s3 cp aiperf.json s3://my-traces/chat/aiperf.json
 ```
 
 Consumers run `--input-file s3://my-traces/chat/` and need `uv pip install 'aiperf[aws]'` plus
-read access (`s3:GetObject`, and `s3:ListBucket` for a prefix). Enable bucket versioning so
+read access (`s3:GetObject`, `s3:ListBucket` for a prefix, and `s3:GetObjectVersion` for
+`?versionId=`). Enable bucket versioning so
 consumers can pin one object with `?versionId=`. For a prefix, AIPerf pins a digest of the
 manifest and the listing, re-lists before downloading, and fetches each object conditionally on
-its listed ETag, so an object replaced mid-run fails the run instead of mixing versions. A key
-under the prefix that cannot be stored as a local file (it contains `..`, an empty segment, a
-backslash, a colon, or a drive letter) is skipped with a warning.
+its listed ETag, so an object replaced mid-run fails the run instead of mixing versions. Every
+key under the prefix must be storable as a local file: a key containing `..`, `.`, an empty
+segment, or a backslash fails the run, naming the key, and so does a colon or a drive letter
+when AIPerf runs on Windows. Folder-marker keys ending in `/` are ignored.
 
 ## Publishing over HTTPS
 

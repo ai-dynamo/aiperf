@@ -27,17 +27,20 @@ from botocore.exceptions import (  # noqa: E402
 from botocore.response import StreamingBody  # noqa: E402
 from botocore.stub import Stubber  # noqa: E402
 
+from aiperf.common.constants import IS_WINDOWS  # noqa: E402
 from aiperf.config.dataset.remote_ref import RemoteRef  # noqa: E402
 from aiperf.dataset.remote.cache import entry_dir, remote_cache_dir  # noqa: E402
 from aiperf.dataset.remote.errors import (  # noqa: E402
     RemoteErrorKind,
     RemoteSourceError,
+    RemoteStage,
 )
 from aiperf.dataset.remote.index import read_index  # noqa: E402
 from aiperf.dataset.remote.models import ProbeResult  # noqa: E402
 from aiperf.dataset.remote.s3 import (  # noqa: E402
     S3SourceResolver,
     _download_object,
+    _is_safe_relpath,
     _Stopped,
 )
 from aiperf.dataset.remote.service import cached_source, materialize_probe  # noqa: E402
@@ -419,28 +422,92 @@ async def test_cancelled_download_stops_the_thread_and_leaves_no_partial() -> No
 
 
 @pytest.mark.parametrize(
-    "unsafe_key",
+    "rel,safe_on_posix,safe_on_windows",
     [
-        param("set/traces/../x.json", id="dot-dot"),
-        param("set/traces//x.json", id="empty-segment"),
-        param("set/traces/a\\b.json", id="backslash"),
-        param("set/traces/x/D:y.json", id="drive-in-later-segment"),
-        param("set/traces/C:/x.json", id="drive-first-segment"),
-        param("set/traces/x.json:stream", id="alternate-data-stream"),
+        param("a.json", True, True, id="plain"),
+        param("sub/a.json", True, True, id="nested"),
+        param("../x.json", False, False, id="dot-dot"),
+        param("./x.json", False, False, id="dot"),
+        param("a//x.json", False, False, id="empty-segment"),
+        param("a\\b.json", False, False, id="backslash"),
+        param("x/D:y.json", True, False, id="drive-in-later-segment"),
+        param("C:/x.json", True, False, id="drive-first-segment"),
+        param("x.json:stream", True, False, id="alternate-data-stream"),
+        param("conv-2026-10-13T12:00:00.json", True, False, id="timestamped-name"),
+    ],
+)  # fmt: skip
+@pytest.mark.parametrize("is_windows", [False, True])
+def test_is_safe_relpath_rejects_colons_and_drives_only_on_windows(
+    rel: str, safe_on_posix: bool, safe_on_windows: bool, is_windows: bool
+) -> None:
+    with patch("aiperf.dataset.remote.s3.IS_WINDOWS", is_windows):
+        assert _is_safe_relpath(rel) is (
+            safe_on_windows if is_windows else safe_on_posix
+        )
+
+
+@pytest.mark.parametrize(
+    "unsafe_key,is_windows",
+    [
+        param("set/traces/../x.json", False, id="dot-dot"),
+        param("set/traces//x.json", False, id="empty-segment"),
+        param("set/traces/a\\b.json", False, id="backslash"),
+        param("set/traces/x/D:y.json", True, id="windows-drive-in-later-segment"),
+        param("set/traces/C:/x.json", True, id="windows-drive-first-segment"),
+        param("set/traces/x.json:stream", True, id="windows-alternate-data-stream"),
     ],
 )  # fmt: skip
 @pytest.mark.asyncio
-async def test_directory_keys_unsafe_as_local_paths_are_never_downloaded(unsafe_key: str) -> None:  # fmt: skip
+async def test_directory_key_unsafe_as_local_path_fails_access_naming_the_key(
+    unsafe_key: str, is_windows: bool
+) -> None:
     client = _client()
     contents = [
+        {"Key": "set/traces/a.json", "ETag": '"a"'},
         {"Key": unsafe_key, "ETag": '"u"'},
+    ]
+    resolver = S3SourceResolver(client=client)
+    with (
+        Stubber(client) as s,
+        patch("aiperf.dataset.remote.s3.IS_WINDOWS", is_windows),
+        pytest.raises(RemoteSourceError) as exc,
+    ):
+        _stub_directory_probe(s, contents)
+        await resolver.probe(RemoteRef(ref="s3://bucket/set/"))
+    assert exc.value.kind == RemoteErrorKind.MANIFEST_INVALID
+    assert exc.value.stage == RemoteStage.ACCESS
+    assert repr(unsafe_key) in str(exc.value)
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="':' is not valid in a Windows file name")
+@pytest.mark.asyncio
+async def test_directory_key_with_colon_is_downloaded_off_windows() -> None:
+    client = _client()
+    key = "set/traces/conv-2026-10-13T12:00:00.json"
+    contents = [{"Key": key, "ETag": '"c"'}]
+    resolver = S3SourceResolver(client=client)
+    with Stubber(client) as s, patch("aiperf.dataset.remote.s3.IS_WINDOWS", False):
+        _stub_directory_probe(s, contents)
+        _stub_listing(s, contents)
+        s.add_response("get_object", {"Body": _body(b"C")}, {"Bucket": "bucket", "Key": key, "IfMatch": '"c"'})  # fmt: skip
+        probe = await resolver.probe(RemoteRef(ref="s3://bucket/set/"))
+        source = await resolver.materialize(probe)
+        s.assert_no_pending_responses()
+    assert [f.path for f in source.files] == [key]
+
+
+@pytest.mark.asyncio
+async def test_directory_marker_keys_are_ignored() -> None:
+    client = _client()
+    contents = [
+        {"Key": "set/traces/", "ETag": '"d"'},
+        {"Key": "set/traces/sub/", "ETag": '"d"'},
         {"Key": "set/traces/a.json", "ETag": '"a"'},
     ]
     resolver = S3SourceResolver(client=client)
     with Stubber(client) as s:
         _stub_directory_probe(s, contents)
         _stub_listing(s, contents)
-        # Only the safe key is stubbed; any GET of the unsafe key fails the Stubber.
         s.add_response("get_object", {"Body": _body(b"A")}, {"Bucket": "bucket", "Key": "set/traces/a.json", "IfMatch": '"a"'})  # fmt: skip
         probe = await resolver.probe(RemoteRef(ref="s3://bucket/set/"))
         source = await resolver.materialize(probe)

@@ -150,6 +150,7 @@ in the table.
 | "offline mode is on and it is not in the local cache" | Offline mode with nothing downloaded for that reference | Run once with network access, or unset `AIPERF_DATASET_REMOTE_OFFLINE` / `HF_HUB_OFFLINE` |
 | "no `aiperf.json` describing it" or "no `aiperf.json` under it" | A repo, folder, or prefix without a manifest | Point at a data file, or ask the publisher to add `aiperf.json` |
 | "its manifest points at" ... "which does not exist", or "its manifest" ... "is invalid" | A malformed or stale manifest | Ask the publisher to fix `aiperf.json` |
+| "under the data prefix cannot be stored as a local file" | An S3 key under the prefix contains `..`, `.`, an empty segment, or a backslash, or (on Windows) a colon or drive letter | Ask the publisher to rename that object |
 | "it requires AIPerf", "newer than this AIPerf supports", or "does not have" | The manifest needs a newer AIPerf | Upgrade AIPerf |
 | "it supports --endpoint-type" | The manifest limits the endpoint types | Pass a supported `--endpoint-type` |
 | "its manifest declares format" or "conflicts with this run's dataset options" | The manifest disagrees with your flags | Drop the conflicting option, or pass the manifest's format |
