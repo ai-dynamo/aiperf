@@ -43,6 +43,7 @@ __all__ = [
     "CancellationConfig",
     "ConcurrencyPhase",
     "ConstantPhase",
+    "DEFAULT_UNBOUNDED_REQUESTS",
     "DurationSpec",
     "FixedSchedulePhase",
     "GammaPhase",
@@ -62,6 +63,10 @@ __all__ = [
     "_parse_duration",
     "get_phase_rate",
 ]
+
+DEFAULT_UNBOUNDED_REQUESTS = 10
+"""Request count the CLI gives a non-fixed-schedule profiling phase that has no
+requests, duration, or sessions, so the run terminates in a reasonable time."""
 
 
 # =============================================================================

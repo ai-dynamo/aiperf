@@ -40,7 +40,11 @@ from aiperf.config.dataset.content import (
     PromptSelectionConfig,
     RankingsConfig,
 )
-from aiperf.config.dataset.remote_ref import RemoteRef, coerce_remote_ref
+from aiperf.config.dataset.remote_ref import (
+    RemoteFixedScheduleCheck,
+    RemoteRef,
+    coerce_remote_ref,
+)
 from aiperf.config.dataset.system_prompt import SystemPromptMixin
 from aiperf.config.dataset.trace import (
     SynthesisConfig,
@@ -628,6 +632,16 @@ class FileDataset(SystemPromptMixin, EndOnTruncationMixin):
                 "(filter-then-cap before entries). Not a DatasetManager tokenize "
                 "filter; rejected for non-Weka formats."
             ),
+        ),
+    ]
+
+    remote_fixed_schedule_check: Annotated[
+        RemoteFixedScheduleCheck | None,
+        Field(
+            default=None,
+            description="Internal: set by the CLI for a remote `--input-file` and cleared by the "
+            "dataset preflight once the first record decides fixed-schedule auto-promotion. "
+            "Do not set in YAML.",
         ),
     ]
 
