@@ -76,6 +76,7 @@ def test_compute_file_hash_shard_directory_is_stable_when_moved(tmp_path: Path) 
         param(CustomDatasetType.MULTI_TURN, True, id="multi-turn"),
         param(CustomDatasetType.BASETEN_TRACE, True, id="baseten"),
         param(CustomDatasetType.BURST_GPT_TRACE, False, id="burst-gpt"),
+        param(CustomDatasetType.SAGEMAKER_DATA_CAPTURE, False, id="sagemaker"),
         param(CustomDatasetType.DAG_JSONL, False, id="dag-jsonl"),
         param(CustomDatasetType.RANDOM_POOL, False, id="random-pool"),
     ],
