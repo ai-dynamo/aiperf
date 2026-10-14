@@ -197,6 +197,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
         the first shard, not the directory, because they check the file suffix.
         """
         first_file = str(parquet_files(path)[0])
+        # Raising here means no columnar-native loader claims the file from its schema.
         with contextlib.suppress(ValueError):
             return self._infer_type(data=None, filename=first_file)
         return self._infer_type(data=first_record(path), filename=first_file)

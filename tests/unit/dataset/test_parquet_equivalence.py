@@ -3,6 +3,7 @@
 """The same records as JSONL and as parquet are indistinguishable to every reader."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 import orjson
 import pyarrow as pa
@@ -128,3 +129,26 @@ def test_timestamp_detection_baseten_parquet_still_true(tmp_path: Path) -> None:
         tmp_path / "t.parquet", [{"timestamp_start_unix_ms": 1, "prompt": "p"}]
     )
     assert first_record_has_timestamp(path)
+
+
+def _fail(*args: object, **kwargs: object) -> None:
+    raise AssertionError("parquet rows must not be decoded here")
+
+
+def test_detect_type_baseten_parquet_reads_schema_only(tmp_path: Path) -> None:
+    path = _parquet(
+        tmp_path / "t.parquet",
+        [{"timestamp_start_unix_ms": 1, "prompt": "p", "input_tokens": 3, "output_tokens": 2}],
+    )  # fmt: skip
+    with patch("aiperf.common.record_files.first_record", _fail):
+        detected, record = DatasetResolver._detect_type(str(path))
+    assert detected == CustomDatasetType.BASETEN_TRACE
+    assert record is None
+
+
+def test_record_counts_parquet_single_turn_read_metadata_only(encodings) -> None:
+    _, parquet = encodings(ROWS)
+    with patch("aiperf.common.record_files.iter_records", _fail):
+        assert DatasetResolver._count_records_and_sessions(
+            str(parquet), CustomDatasetType.MOONCAKE_TRACE
+        ) == (3, 3)
