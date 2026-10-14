@@ -21,6 +21,9 @@ from aiperf.dataset.trace_timestamps import (
 
 COLUMNAR_SUFFIXES = frozenset({".parquet", ".arrow", ".feather", ".ipc"})
 PREFIX_STEPS: tuple[int, ...] = (64 * 1024, 1024 * 1024, 8 * 1024 * 1024)
+# A first line longer than this is left undecided rather than buffered further, so a
+# compressible prefix cannot inflate without bound; the full download decides instead.
+MAX_FIRST_LINE_BYTES = 2 * PREFIX_STEPS[-1]
 _GZIP_MAGIC = b"\x1f\x8b"
 _INFLATE_CHUNK = 64 * 1024
 # The line endings Python's universal-newlines text mode splits on, as the local read does.
@@ -32,7 +35,10 @@ class _CorruptGzip(Exception):
 
 
 def _gunzip(data: bytes, *, complete: bool) -> Iterator[bytes]:
-    """Inflate every gzip member in ``data`` lazily, so a bomb is never fully expanded.
+    """Inflate every gzip member in ``data`` lazily, one bounded chunk per step.
+
+    The caller stops pulling chunks once it has decided or hit MAX_FIRST_LINE_BYTES,
+    so a highly compressible prefix is never inflated beyond that.
 
     Raises ``_CorruptGzip`` where the local gzip reader would fail: a bad stream, or a
     whole file that ends mid-member.
@@ -75,8 +81,10 @@ def _parse_line(line: bytes) -> bool | None:
 
 
 def sniff_first_record_timestamp(prefix: bytes, *, complete: bool) -> bool | None:
-    """True/False once the first record is fully inside ``prefix``; None if more bytes are needed.
+    """True/False once the first record is fully inside ``prefix``; None if undecided.
 
+    None means more bytes are needed, or the first line (inflated) exceeds
+    MAX_FIRST_LINE_BYTES; the caller then reads the full download instead.
     Mirrors first_record_has_timestamp for local files: gzip is decoded, anything else
     is read as text (so zstd and other binaries read as "no timestamp", as they do locally).
     """
@@ -98,6 +106,8 @@ def sniff_first_record_timestamp(prefix: bytes, *, complete: bool) -> bool | Non
                     return result
                 line_start = scan_from = match.end()
             del pending[:line_start]
+            if len(pending) > MAX_FIRST_LINE_BYTES:
+                return None
     except _CorruptGzip:
         return False
     if not complete:
@@ -115,8 +125,9 @@ async def remote_first_record_has_timestamp(probe: ProbeResult) -> bool:
     """first_record_has_timestamp for a probed remote file, read from the fewest bytes.
 
     Prefix reads escalate through PREFIX_STEPS. Offline mode (which allows no network
-    reads), columnar files (whose schema sits in the footer), and a first record longer
-    than the last step read the cached download instead.
+    reads), columnar files (whose schema sits in the footer), and a first record the
+    sniff leaves undecided (longer than the last step, or past MAX_FIRST_LINE_BYTES
+    once inflated) read the cached download instead.
     """
     if probe.data_is_dir:
         # Local parity: first_record_has_timestamp is False for directories.
@@ -134,4 +145,6 @@ async def remote_first_record_has_timestamp(probe: ProbeResult) -> bool:
         result = sniff_first_record_timestamp(data, complete=complete)
         if result is not None:
             return result
+        if complete:
+            break
     return await _downloaded_first_record_has_timestamp(probe)

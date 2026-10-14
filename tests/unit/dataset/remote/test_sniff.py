@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import gzip
 import tracemalloc
+import zlib
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,7 @@ from aiperf.dataset.remote.cache import entry_dir
 from aiperf.dataset.remote.index import write_index
 from aiperf.dataset.remote.models import ProbeResult, RemoteFile, ResolvedSource
 from aiperf.dataset.remote.sniff import (
+    MAX_FIRST_LINE_BYTES,
     PREFIX_STEPS,
     remote_first_record_has_timestamp,
     sniff_first_record_timestamp,
@@ -61,6 +63,45 @@ def test_gzip_prefix_is_inflated_only_until_the_first_line() -> None:
     finally:
         tracemalloc.stop()
     assert peak < 4 * 1024 * 1024
+
+
+def _gzip_single_line(nbytes: int) -> bytes:
+    """Gzip of one ``nbytes``-long line with no line end, built without holding it inflated."""
+    encoder = zlib.compressobj(wbits=31)
+    chunk = b"x" * (1024 * 1024)
+    parts = [encoder.compress(b'{"pad": "')]
+    parts += [encoder.compress(chunk) for _ in range(nbytes // len(chunk))]
+    return b"".join([*parts, encoder.flush()])
+
+
+@pytest.mark.parametrize("complete", [False, True])
+def test_gzip_single_line_bomb_is_capped_and_left_undecided(complete: bool) -> None:
+    """A first line with no line end stops inflating at the cap; the download decides."""
+    blob = _gzip_single_line(128 * 1024 * 1024)
+    assert len(blob) < PREFIX_STEPS[-1]
+    tracemalloc.start()
+    try:
+        assert sniff_first_record_timestamp(blob, complete=complete) is None
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert peak < 3 * MAX_FIRST_LINE_BYTES < 128 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+async def test_capped_first_line_falls_back_to_the_download(monkeypatch) -> None:
+    fake = _FakeResolver(_gzip_single_line(64 * 1024 * 1024))
+    monkeypatch.setattr(service, "get_resolver", lambda scheme: fake)
+    ref = RemoteRef(ref="https://example.com/t.jsonl.gz").with_version("etag-1")
+    source = _cache(ref, fake.data, filename="t.jsonl.gz")
+
+    async def materialize(probe: ProbeResult) -> ResolvedSource:
+        return source
+
+    monkeypatch.setattr(service, "materialize_probe", materialize)
+    assert await remote_first_record_has_timestamp(_probe(ref, "t.jsonl.gz")) is False
+    # The whole object fits in the first step, so no larger prefix is requested.
+    assert fake.reads == [PREFIX_STEPS[0]]
 
 
 # Every payload is checked against the local-file answer, so the remote path reaches
