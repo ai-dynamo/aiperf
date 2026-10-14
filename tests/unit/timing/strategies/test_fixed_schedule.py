@@ -261,7 +261,7 @@ class TestFixedScheduleTimestampConversion:
         "auto_offset,manual_offset",
         [(True, None), (False, None)],
     )  # fmt: skip
-    async def testschedule_target_perf_sec(self, auto_offset, manual_offset) -> None:
+    async def test_schedule_target_perf_sec(self, auto_offset, manual_offset) -> None:
         """Verify timestamp conversion accounts for schedule_zero_ms offset."""
         schedule = (
             [(100, "c1"), (200, "c2")]
