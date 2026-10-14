@@ -20,6 +20,7 @@ sys.path.insert(0, str(HARNESS))
 
 from constants import AIPERF_COMMAND_TIMEOUT  # noqa: E402
 from parser import MarkdownParser  # noqa: E402
+from test_runner import resolve_command_timeout  # noqa: E402
 
 SERVER = "vllm-default-openai"
 
@@ -44,7 +45,6 @@ aiperf profile --model m
 def test_timeout_defaults_to_none_so_the_shared_ceiling_applies(tmp_path: Path) -> None:
     command = _cmd(tmp_path, "")
     assert command.timeout is None
-    assert (command.timeout or AIPERF_COMMAND_TIMEOUT) == AIPERF_COMMAND_TIMEOUT
 
 
 def test_timeout_annotation_is_parsed(tmp_path: Path) -> None:
@@ -79,7 +79,6 @@ def test_the_runner_uses_the_per_command_timeout() -> None:
     to pass `AIPERF_COMMAND_TIMEOUT` to `threading.Timer` regardless, which no
     parser-level test can detect.
     """
-    from test_runner import resolve_command_timeout
 
     class _Cmd:
         timeout = 5400
