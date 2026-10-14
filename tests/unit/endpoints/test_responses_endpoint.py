@@ -1477,20 +1477,62 @@ class TestResponsesStatefulChaining:
         assert stored is False
         assert second["instructions"] == "CLI POLICY"
 
-    def test_previous_response_id_override_does_not_inherit_stored_flag(
-        self, store_endpoint: ResponsesEndpoint
+    @pytest.mark.parametrize(
+        "source, outgoing_id",
+        [
+            param("turn_extra", None, id="turn_extra_null"),
+            param("turn_extra", "resp_elsewhere", id="turn_extra_other_id"),
+            param("endpoint_extra", None, id="endpoint_extra_null"),
+            param("endpoint_extra", "resp_elsewhere", id="endpoint_extra_other_id"),
+        ],
+    )  # fmt: skip
+    def test_previous_response_id_override_sends_instructions_and_drops_flag(
+        self, store_endpoint: ResponsesEndpoint, source: str, outgoing_id: str | None
     ) -> None:
-        """Chaining onto a different response than the session's last one
-        means the session's stored-prompt fact no longer describes it."""
+        """The session's stored-prompt fact describes only the session's chain.
+
+        Overriding ``previous_response_id`` to another response or to ``None``
+        leaves the request without that history, so the current request must
+        carry the prompt and the next flag must not inherit the session's.
+        """
         turn = self._user_turn("SECOND")
-        turn.extra_body = {"previous_response_id": "resp_elsewhere"}
+        if source == "turn_extra":
+            turn.extra_body = {"previous_response_id": outgoing_id}
+        else:
+            store_endpoint.model_endpoint.endpoint.extra = [
+                ("store", True),
+                ("previous_response_id", outgoing_id),
+            ]
         info = self._request(
             store_endpoint,
-            [turn],
+            [self._system_user_turn("DATASET POLICY", "FIRST"), turn],
             previous_response_id="resp_first",
             in_history=True,
         )
+
+        payload = store_endpoint.format_payload(info)
+
+        assert payload["previous_response_id"] == outgoing_id
+        assert payload["instructions"] == "CLI POLICY"
         assert store_endpoint.stored_history_has_system_prompt(info) is False
+
+    def test_previous_response_id_override_to_session_id_keeps_suppression(
+        self, store_endpoint: ResponsesEndpoint
+    ) -> None:
+        """Restating the session's own ID is still the stored chain."""
+        turn = self._user_turn("SECOND")
+        turn.extra_body = {"previous_response_id": "resp_first"}
+        info = self._request(
+            store_endpoint,
+            [self._system_user_turn("DATASET POLICY", "FIRST"), turn],
+            previous_response_id="resp_first",
+            in_history=True,
+        )
+
+        payload = store_endpoint.format_payload(info)
+
+        assert "instructions" not in payload
+        assert store_endpoint.stored_history_has_system_prompt(info) is True
 
     def test_stored_history_has_system_prompt_false_without_system_message(
         self, store_endpoint: ResponsesEndpoint

@@ -287,10 +287,35 @@ class ResponsesEndpoint(BaseEndpoint):
         return payload, merged_shipped
 
     @staticmethod
-    def _system_prompt_already_stored(request_info: RequestInfo) -> bool:
+    def _outgoing_previous_response_id(request_info: RequestInfo) -> str | None:
+        """The ``previous_response_id`` the payload will actually carry.
+
+        Endpoint ``extra`` and the dispatching turn's ``extra_body`` are applied
+        after the payload is built and win over the session's value, including
+        an explicit ``None`` that breaks the chain.
+        """
+        outgoing = request_info.previous_response_id
+        for overrides in (
+            dict(request_info.model_endpoint.endpoint.extra or {}),
+            request_info.turns[-1].extra_body or {},
+        ):
+            if "previous_response_id" in overrides:
+                outgoing = overrides["previous_response_id"]
+        return outgoing
+
+    def _system_prompt_already_stored(self, request_info: RequestInfo) -> bool:
+        """Whether the chain this request continues already holds the prompt.
+
+        The session flag describes the session's last stored response, so it
+        only applies when the outgoing ``previous_response_id`` is still that
+        response; an override to another response or to ``None`` does not
+        inherit it.
+        """
         return bool(
             request_info.previous_response_id
             and request_info.system_prompt_in_stored_history
+            and self._outgoing_previous_response_id(request_info)
+            == request_info.previous_response_id
         )
 
     def _system_prompt_carrier(
@@ -330,12 +355,8 @@ class ResponsesEndpoint(BaseEndpoint):
         """
         if not request_info.system_message:
             return False
-        payload, merged_shipped = self._build_payload(request_info)
-        still_chained = (
-            self._system_prompt_already_stored(request_info)
-            and payload.get("previous_response_id") == request_info.previous_response_id
-        )
-        return still_chained or merged_shipped
+        _, merged_shipped = self._build_payload(request_info)
+        return self._system_prompt_already_stored(request_info) or merged_shipped
 
     _warned_chaining_isl: bool = False
 
