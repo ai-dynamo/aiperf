@@ -14,6 +14,7 @@ from aiperf.common.utils import load_json_str, open_text_maybe_gzip
 from aiperf.config.dataset import FileDataset
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from aiperf.dataset.loader.base_loader import BaseLoader
+from aiperf.dataset.remote.service import local_path_for
 from aiperf.dataset.utils import check_file_exists
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import CustomDatasetType, PluginType
@@ -31,7 +32,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
             raise ValueError("CustomDatasetComposer requires a file-based dataset.")
         self._file_dataset: FileDataset = dataset
         self._file_path: str | None = (
-            str(dataset.path) if dataset.path is not None else None
+            str(local_path_for(dataset.path)) if dataset.path is not None else None
         )
         self._inline_records = dataset.records
         self.loader: BaseLoader | None = None

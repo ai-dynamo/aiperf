@@ -162,7 +162,17 @@ class DatasetResolver:
             return
 
         # 1. Resolve and validate path
-        resolved = ds.path.resolve()  # type: ignore[attr-defined]
+        from aiperf.config.dataset.remote_ref import RemoteRef
+
+        if isinstance(ds.path, RemoteRef):  # type: ignore[attr-defined]
+            # Materialized by the dataset preflight; never touches the network here.
+            # absolute(), not resolve(): HF cache files are symlinks to suffixless
+            # blobs, and following them would drop the name format detection relies on.
+            from aiperf.dataset.remote.service import cached_source
+
+            resolved = cached_source(ds.path).local_path.absolute()  # type: ignore[attr-defined]
+        else:
+            resolved = ds.path.resolve()  # type: ignore[attr-defined]
         if not resolved.exists():
             raise FileNotFoundError(f"Dataset '{name}' file not found: {resolved}")
         acc.paths[name] = resolved
