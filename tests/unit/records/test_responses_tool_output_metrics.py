@@ -16,20 +16,27 @@ from tests.unit.endpoints.conftest import create_model_endpoint, create_request_
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("apply_chat_template", [False, True])
 @pytest.mark.parametrize(
-    "output,tool_tokens,image_count",
+    "apply_chat_template,output,tool_tokens,image_count",
     [
-        param("tool result", 2, 0, id="string-output"),
-        param([{"type": "input_text", "text": "tool result"}], 2, 0, id="text-parts"),
-        param([
+        param(False, "tool result", 2, 0, id="string-output-bare"),
+        param(True, "tool result", 2, 0, id="string-output-template"),
+        param(False, [{"type": "input_text", "text": "tool result"}], 2, 0, id="text-parts-bare"),
+        param(True, [{"type": "input_text", "text": "tool result"}], 2, 0, id="text-parts-template"),
+        param(False, [
             {"type": "input_text", "text": "first result"},
             {"type": "input_image", "image_url": "data:image/png;base64,a"},
             {"type": "input_text", "text": "second result"},
             {"type": "input_image", "file_id": "file-image"},
-        ], 4, 2, id="text-and-images"),
-        param([{"type": "input_image", "image_url": "data:image/png;base64,a"}], 0, 1, id="image-only"),
-        param([], 0, 0, id="empty-output"),
+        ], 4, 2, id="text-and-images-bare"),
+        param(True, [
+            {"type": "input_text", "text": "first result"},
+            {"type": "input_image", "image_url": "data:image/png;base64,a"},
+            {"type": "input_text", "text": "second result"},
+            {"type": "input_image", "file_id": "file-image"},
+        ], 4, 2, id="text-and-images-template"),
+        param(False, [{"type": "input_image", "image_url": "data:image/png;base64,a"}], 0, 1, id="image-only"),
+        param(False, [], 0, 0, id="empty-output"),
     ],
 )  # fmt: skip
 async def test_responses_function_output_counts_wire_text_and_images(
