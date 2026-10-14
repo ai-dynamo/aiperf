@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import asyncio
-import errno
 import hashlib
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
@@ -13,6 +12,7 @@ from typing import Any, Literal, TypeVar
 
 from aiperf.common.redact import redact_string
 from aiperf.config.dataset.remote_ref import RemoteRef
+from aiperf.dataset.remote.cache import local_fs_error
 from aiperf.dataset.remote.errors import (
     RemoteErrorKind,
     RemoteSourceError,
@@ -30,10 +30,6 @@ from aiperf.dataset.remote.manifest import (
 from aiperf.dataset.remote.models import ProbeResult, ResolvedSource
 
 T = TypeVar("T")
-# Local filesystem failures a retry cannot fix (and re-downloading GBs would not help).
-_LOCAL_FS_ERRNOS = frozenset(
-    {errno.ENOSPC, errno.EDQUOT, errno.EROFS, errno.EACCES, errno.EPERM}
-)
 _MANIFEST_MAX_BYTES = 1 << 20
 
 
@@ -83,23 +79,17 @@ def _is_transport_error(e: BaseException) -> bool:
     return any(cls.__name__ == "TransportError" for cls in type(e).__mro__)
 
 
-def _local_fs_error(
-    ref: RemoteRef, e: OSError, stage: RemoteStage
-) -> RemoteSourceError:
-    from huggingface_hub import constants
-
-    return _error(
-        ref, kind=RemoteErrorKind.NOT_FOUND, stage=stage,
-        what=f"the Hugging Face cache at {constants.HF_HUB_CACHE} cannot be written ({e.strerror})",
-        hint="Free disk space or fix permissions there, or set HF_HOME to another location, then retry",
-    )  # fmt: skip
-
-
 def _io_error(
     ref: RemoteRef, e: Exception, stage: RemoteStage
 ) -> RemoteSourceError | None:
-    if isinstance(e, OSError) and e.errno in _LOCAL_FS_ERRNOS:
-        return _local_fs_error(ref, e, stage)
+    from huggingface_hub import constants
+
+    local = local_fs_error(
+        e, ref_display=ref.display, stage=stage, env_var="HF_HOME",
+        cache=f"the Hugging Face cache at {constants.HF_HUB_CACHE}",
+    )  # fmt: skip
+    if local is not None:
+        return local
     if isinstance(e, OSError | TimeoutError) or _is_transport_error(e):
         return _error(
             ref, kind=RemoteErrorKind.TRANSIENT, stage=stage,

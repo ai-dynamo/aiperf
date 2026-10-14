@@ -16,7 +16,7 @@ from filelock import Timeout
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.environment import Environment
 from aiperf.config.dataset.remote_ref import RemoteRef
-from aiperf.dataset.remote.cache import entry_dir, entry_lock
+from aiperf.dataset.remote.cache import entry_dir, entry_lock, local_fs_error
 from aiperf.dataset.remote.errors import RemoteErrorKind, RemoteSourceError, RemoteStage
 from aiperf.dataset.remote.index import latest_indexed_version, read_index, write_index
 from aiperf.dataset.remote.models import (
@@ -166,6 +166,20 @@ async def materialize_probe(probe: ProbeResult) -> ResolvedSource:
         return cached
     if offline:
         raise _offline_error(ref, RemoteStage.MATERIALIZE)
+    try:
+        return await _download(probe, reusable=reusable)
+    except OSError as e:
+        local = local_fs_error(
+            e, ref_display=ref.display, stage=RemoteStage.MATERIALIZE
+        )
+        if local is None:
+            raise
+        raise local from e
+
+
+async def _download(probe: ProbeResult, *, reusable: bool) -> ResolvedSource:
+    """Download ``probe`` under the entry lock and record it in the index."""
+    ref = probe.ref
     resolver = get_resolver(ref.scheme)
     entry = entry_dir(ref)
     async with contextlib.AsyncExitStack() as stack:
