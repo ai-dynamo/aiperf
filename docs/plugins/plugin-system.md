@@ -100,7 +100,7 @@ for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
 
 ## Plugin Categories
 
-AIPerf supports 36 plugin categories organized by function, including `api_router` and `public_dataset_loader`:
+AIPerf's plugin categories are organized by function; the groups below include `api_router` and `public_dataset_loader`. `aiperf plugins --all` lists every category:
 
 ### Timing Categories
 
