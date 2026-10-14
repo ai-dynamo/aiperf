@@ -143,3 +143,27 @@ async def test_json_export_records_remote_provenance_without_signature(
     assert dataset["files"] == [
         {"path": "t.jsonl", "sha256": "f" * 64, "size_bytes": 3}
     ]
+
+
+def test_hf_parquet_layout_is_recorded_in_provenance(tmp_path: Path) -> None:
+    ref = RemoteRef(ref=URL).with_version("etag:1")
+    shard = tmp_path / "d" / "train-00000-of-00001.parquet"
+    shard.parent.mkdir()
+    shard.write_bytes(b"x")
+    probe = ProbeResult(
+        ref=ref, pinned_ref=ref.display, data_relpath="d", data_is_dir=True,
+        filename="d", manifest=None, manifest_sha256=None, needs_auth=False,
+        data_files=["d/train-00000-of-00001.parquet"],
+    )  # fmt: skip
+    write_index(
+        ResolvedSource(
+            probe=probe,
+            local_path=shard.parent,
+            files=[
+                RemoteFile(
+                    path="d/train-00000-of-00001.parquet", sha256="f" * 64, size_bytes=1
+                )
+            ],
+        )
+    )
+    assert remote_dataset_provenance(_cfg(ref))["layout"] == "hf_parquet"

@@ -9,7 +9,15 @@ import hashlib
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal, TypeVar
+from urllib.parse import quote
 
+from aiperf.common.record_files import (
+    DEFAULT_SPLIT,
+    PARQUET_SUFFIX,
+    ParquetSplitError,
+    is_ignored_name,
+    select_data_shards,
+)
 from aiperf.common.redact import redact_string
 from aiperf.config.dataset.remote_ref import RemoteRef
 from aiperf.dataset.remote.cache import local_fs_error
@@ -264,6 +272,24 @@ class _RepoReader:
             return None
         return await asyncio.to_thread(_read_hf_cached, self._ref, local)
 
+    async def tree(self, folder: str) -> list[Any]:
+        """Every file and folder under ``folder`` (the repo root when empty); [] if it is missing."""
+        repo, sha = self._ref.parsed.location, self._sha
+        found = await _hf_call(
+            self._ref,
+            lambda: list(
+                self._api.list_repo_tree(
+                    repo,
+                    path_in_repo=folder or None,
+                    recursive=True,
+                    repo_type="dataset",
+                    revision=sha,
+                )
+            ),
+            missing_ok=True,
+        )
+        return list(found or [])
+
 
 def _parse(
     ref: RemoteRef, raw: bytes, kind: Literal["root", "sidecar"]
@@ -289,13 +315,12 @@ async def _pin(ref: RemoteRef, api: Any) -> tuple[str, bool]:
 
 
 async def _manifest_for_root(
-    ref: RemoteRef, reader: _RepoReader, root: str
+    ref: RemoteRef, reader: _RepoReader, root: str, raw: bytes | None
 ) -> tuple[AIPerfManifest, str, str, bool]:
     """Manifest, its digest, and the data path and kind for a repo root or folder ref."""
     from huggingface_hub.hf_api import RepoFolder
 
     repo, path = ref.parsed.location, ref.parsed.path
-    raw = await reader.fetch(_join(root, ROOT_MANIFEST_NAME))
     if raw is None:
         where = f"'{path}'" if path else "its root"
         raise _error(
@@ -358,6 +383,106 @@ def _require_complete(
     )  # fmt: skip
 
 
+def _suggest(ref: RemoteRef, path: str) -> str:
+    """A ready-to-use hf:// reference to ``path`` at the user's revision."""
+    rev = ref.parsed.revision
+    at = f"@{quote(rev, safe='')}" if rev else ""
+    return f"hf://datasets/{ref.parsed.location}{at}/{path}"
+
+
+def _child_of(folder: str, path: str) -> str | None:
+    """The first path component of ``path`` below ``folder``, or None if not below it."""
+    if not folder:
+        return path.split("/")[0]
+    if path.startswith(folder + "/"):
+        return path[len(folder) + 1 :].split("/")[0]
+    return None
+
+
+def _parquet_layout(
+    ref: RemoteRef, root: str, entries: list[Any]
+) -> tuple[str, list[str]] | None:
+    """The folder and shard paths of a manifest-less Hugging Face parquet layout.
+
+    ``push_to_hub`` writes ``<config>/<split>-NNNNN-of-NNNNN.parquet`` and the Hub's
+    ``refs/convert/parquet`` revision holds ``<config>/<split>/NNNN.parquet``. From
+    ``root``, descend into the only folder holding parquet, or ``train`` when
+    there are several; then pick the split's shards. Returns None when ``root``
+    holds no such layout, so the caller keeps its missing-manifest error.
+    """
+    from huggingface_hub.hf_api import RepoFile
+
+    repo = ref.parsed.location
+    names_by_folder: dict[str, list[str]] = {}
+    for entry in entries:
+        if not isinstance(entry, RepoFile):
+            continue
+        path = PurePosixPath(entry.path)
+        if is_ignored_name(path.name):
+            continue
+        parent = "" if str(path.parent) == "." else str(path.parent)
+        names_by_folder.setdefault(parent, []).append(path.name)
+    parquet_folders = {
+        folder
+        for folder, names in names_by_folder.items()
+        if any(n.lower().endswith(PARQUET_SUFFIX) for n in names)
+    }
+    folder = root
+    while folder not in parquet_folders:
+        children = sorted(
+            {c for f in parquet_folders if (c := _child_of(folder, f)) is not None}
+        )
+        if not children:
+            return None
+        if len(children) > 1 and DEFAULT_SPLIT not in children:
+            where = f"'{folder}'" if folder else "its root"
+            raise _error(
+                ref, kind=RemoteErrorKind.MANIFEST_INVALID, stage=RemoteStage.ACCESS,
+                what=f"{repo} has several datasets under {where} and no {ROOT_MANIFEST_NAME} saying which to use",
+                hint="Use one of: " + ", ".join(_suggest(ref, _join(folder, c)) for c in children),
+            )  # fmt: skip
+        folder = _join(folder, children[0] if len(children) == 1 else DEFAULT_SPLIT)
+    try:
+        chosen = select_data_shards(names_by_folder[folder])
+    except ParquetSplitError as e:
+        raise _split_error(ref, folder, e) from e
+    if chosen is None:
+        return None
+    return folder, [_join(folder, n) for n in chosen]
+
+
+def _split_error(
+    ref: RemoteRef, folder: str, e: ParquetSplitError
+) -> RemoteSourceError:
+    where = f"'{folder}'" if folder else "its root"
+    return _error(
+        ref, kind=RemoteErrorKind.MANIFEST_INVALID, stage=RemoteStage.ACCESS,
+        what=f"{ref.parsed.location} holds the splits {', '.join(sorted(e.splits))} under {where} and none is named '{DEFAULT_SPLIT}'",
+        hint="Use one split's shard, e.g. " + ", ".join(
+            _suggest(ref, _join(folder, files[0])) for _, files in sorted(e.splits.items())
+        ),
+    )  # fmt: skip
+
+
+def _manifest_folder_shards(
+    ref: RemoteRef, folder: str, entries: list[Any]
+) -> list[str] | None:
+    """Parquet shards directly in a manifest-named folder, so the run can sniff and read them."""
+    from huggingface_hub.hf_api import RepoFile
+
+    names = []
+    for entry in entries:
+        path = PurePosixPath(entry.path)
+        parent = "" if str(path.parent) == "." else str(path.parent)
+        if isinstance(entry, RepoFile) and parent == folder:
+            names.append(path.name)
+    try:
+        chosen = select_data_shards(names)
+    except ParquetSplitError as e:
+        raise _split_error(ref, folder, e) from e
+    return None if chosen is None else [_join(folder, n) for n in chosen]
+
+
 class HFSourceResolver:
     """Resolve hf:// references to Hugging Face dataset repos."""
 
@@ -374,6 +499,8 @@ class HFSourceResolver:
         manifest_sha: str | None = None
         data_relpath = ""
         data_is_dir = False
+        data_files: list[str] | None = None
+        layout: tuple[str, list[str]] | None = None
         root: str | None = "" if parsed.path is None else None
         if parsed.path is not None:
             found = await reader.paths([parsed.path])
@@ -385,23 +512,39 @@ class HFSourceResolver:
             else:
                 root = parsed.path
         if root is not None:
-            (
-                manifest,
-                manifest_sha,
-                data_relpath,
-                data_is_dir,
-            ) = await _manifest_for_root(ref, reader, root)
+            raw = await reader.fetch(_join(root, ROOT_MANIFEST_NAME))
+            if raw is None:
+                layout = _parquet_layout(ref, root, await reader.tree(root))
+            if layout is not None:
+                data_relpath, data_files = layout
+                data_is_dir = True
+            else:
+                (
+                    manifest,
+                    manifest_sha,
+                    data_relpath,
+                    data_is_dir,
+                ) = await _manifest_for_root(ref, reader, root, raw)
+                if data_is_dir:
+                    data_files = _manifest_folder_shards(
+                        ref, data_relpath, await reader.tree(data_relpath)
+                    )
         repo = parsed.location
         return ProbeResult(
             ref=ref.with_version(sha),
             pinned_ref=f"hf://datasets/{repo}@{sha}"
-            + (f"/{parsed.path}" if parsed.path else ""),
+            + (
+                (f"/{data_relpath}" if data_relpath else "")
+                if layout is not None
+                else (f"/{parsed.path}" if parsed.path else "")
+            ),
             data_relpath=data_relpath,
             data_is_dir=data_is_dir,
             filename=PurePosixPath(data_relpath).name,
             manifest=manifest,
             manifest_sha256=manifest_sha,
             needs_auth=needs_auth,
+            data_files=data_files,
         )
 
     async def read_prefix(self, probe: ProbeResult, nbytes: int) -> tuple[bytes, bool]:
@@ -432,14 +575,15 @@ class HFSourceResolver:
         if probe.data_is_dir:
             # snapshot_download returns the existing snapshot folder, unverified, when
             # its own repo-info call fails, so the expected file set comes from our own.
-            expected = await _expected_files(ref, relpath)
+            expected = probe.data_files or await _expected_files(ref, relpath)
+            patterns = probe.data_files or [f"{relpath}/**"]
             root = await _hf_call(
                 ref,
                 lambda: snapshot_download(
                     repo,
                     repo_type="dataset",
                     revision=sha,
-                    allow_patterns=[f"{relpath}/**"],
+                    allow_patterns=patterns,
                 ),
                 stage=stage,
             )
@@ -455,5 +599,13 @@ class HFSourceResolver:
                 stage=stage,
             )
             local = Path(str(downloaded))
-        files = await asyncio.to_thread(describe_files, local, relpath)
+        if probe.data_files is not None:
+            # The snapshot folder may also hold other splits from earlier downloads.
+            files = [
+                f
+                for rel in probe.data_files
+                for f in await asyncio.to_thread(describe_files, snapshot / rel, rel)
+            ]
+        else:
+            files = await asyncio.to_thread(describe_files, local, relpath)
         return ResolvedSource(probe=probe, local_path=local, files=files)

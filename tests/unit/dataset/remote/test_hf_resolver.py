@@ -84,6 +84,18 @@ class FakeRepo:
             raise EntryNotFoundError(f"{filename} missing")
         return str(target)
 
+    def tree(self, repo_id, path_in_repo=None, *, recursive, repo_type, revision):
+        base = self.snapshot_dir / (path_in_repo or "")
+        if not base.is_dir():
+            raise EntryNotFoundError(f"{path_in_repo} missing")
+        return [
+            _item(
+                RepoFile if p.is_file() else RepoFolder,
+                p.relative_to(self.snapshot_dir).as_posix(),
+            )
+            for p in sorted(base.rglob("*"))
+        ]
+
     def snapshot(self, repo_id, *, repo_type, revision, allow_patterns):
         for rel in self.snapshot_drops:
             (self.snapshot_dir / rel).unlink(missing_ok=True)
@@ -97,12 +109,13 @@ class FakeRepo:
             patch("huggingface_hub.hf_hub_download", side_effect=self.download),
             patch("huggingface_hub.snapshot_download", side_effect=self.snapshot),
             patch("huggingface_hub.constants.HF_HUB_CACHE", str(self.cache)),
+            patch("huggingface_hub.HfApi.list_repo_tree", side_effect=self.tree),
         )
 
 
 async def _probe(repo: FakeRepo, ref: str):
     p = repo.patches()
-    with p[0], p[1], p[2], p[3], p[4], p[5]:
+    with p[0], p[1], p[2], p[3], p[4], p[5], p[6]:
         resolver = HFSourceResolver()
         probe = await resolver.probe(RemoteRef(ref=ref))
         return resolver, probe, await resolver.materialize(probe)
@@ -294,7 +307,7 @@ async def test_read_prefix_targets_pinned_resolve_url(tmp_path: Path) -> None:
 async def test_service_materialize_indexes_hf_symlink(tmp_path: Path) -> None:
     repo = FakeRepo(tmp_path, {"t.jsonl": b"{}\n"})
     p = repo.patches()
-    with p[0], p[1], p[2], p[3], p[4], p[5]:
+    with p[0], p[1], p[2], p[3], p[4], p[5], p[6]:
         probe = await probe_ref(RemoteRef(ref="hf://org/repo/t.jsonl"))
         source = await materialize_probe(probe)
         # A second call is served from the index without another download.
@@ -371,7 +384,7 @@ async def test_failed_sidecar_fetch_is_not_a_missing_sidecar(
     repo = FakeRepo(tmp_path, {"t.jsonl": b"{}\n"})
     p = repo.patches()
     with (
-        p[0], p[1], p[2], p[4], p[5],
+        p[0], p[1], p[2], p[4], p[5], p[6],
         patch("huggingface_hub.hf_hub_download", side_effect=_local_miss(cause)),
         patch("huggingface_hub.get_token", return_value=token),
         pytest.raises(RemoteSourceError) as exc,
@@ -385,7 +398,7 @@ async def test_failed_root_manifest_fetch_is_transient(tmp_path: Path) -> None:
     repo = FakeRepo(tmp_path, {"aiperf.json": b"{}"})
     p = repo.patches()
     with (
-        p[0], p[1], p[2], p[4], p[5],
+        p[0], p[1], p[2], p[4], p[5], p[6],
         patch("huggingface_hub.hf_hub_download", side_effect=_local_miss(_http_error(429))),
         pytest.raises(RemoteSourceError) as exc,
     ):  # fmt: skip
@@ -406,7 +419,7 @@ async def test_partial_snapshot_is_rejected_and_not_indexed(tmp_path: Path) -> N
     )
     repo.snapshot_drops = ["traces/b.json"]
     p = repo.patches()
-    with p[0], p[1], p[2], p[3], p[4], p[5]:
+    with p[0], p[1], p[2], p[3], p[4], p[5], p[6]:
         probe = await probe_ref(RemoteRef(ref="hf://org/repo"))
         with pytest.raises(RemoteSourceError, match="traces/b.json") as exc:
             await materialize_probe(probe)
@@ -419,7 +432,7 @@ async def test_empty_snapshot_folder_is_rejected(tmp_path: Path) -> None:
     repo = FakeRepo(tmp_path, {"aiperf.json": _DIR_MANIFEST, "traces/a.json": b"{}"})
     repo.info.siblings = [SimpleNamespace(rfilename="aiperf.json")]
     p = repo.patches()
-    with p[0], p[1], p[2], p[3], p[4], p[5]:
+    with p[0], p[1], p[2], p[3], p[4], p[5], p[6]:
         probe = await probe_ref(RemoteRef(ref="hf://org/repo"))
         with pytest.raises(RemoteSourceError, match="no files"):
             await materialize_probe(probe)
@@ -430,7 +443,7 @@ async def test_empty_snapshot_folder_is_rejected(tmp_path: Path) -> None:
 async def test_disk_full_is_not_retried_and_names_cache_dir(tmp_path: Path) -> None:
     repo = FakeRepo(tmp_path, {"t.jsonl": b"{}\n"})
     p = repo.patches()
-    with p[0], p[1], p[2], p[3], p[4], p[5]:
+    with p[0], p[1], p[2], p[3], p[4], p[5], p[6]:
         probe = await probe_ref(RemoteRef(ref="hf://org/repo/t.jsonl"))
         full = Mock(side_effect=OSError(errno.ENOSPC, "No space left on device"))
         with (
@@ -453,7 +466,7 @@ async def test_partial_snapshot_under_nested_folder_is_rejected(tmp_path: Path) 
     )
     repo.snapshot_drops = ["a/b/y.json"]
     p = repo.patches()
-    with p[0], p[1], p[2], p[3], p[4], p[5]:
+    with p[0], p[1], p[2], p[3], p[4], p[5], p[6]:
         probe = await probe_ref(RemoteRef(ref="hf://org/repo"))
         with pytest.raises(RemoteSourceError, match="a/b/y.json"):
             await materialize_probe(probe)

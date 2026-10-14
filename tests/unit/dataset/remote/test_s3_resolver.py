@@ -579,3 +579,50 @@ def test_stop_after_get_object_reads_no_chunk(tmp_path: Path) -> None:
     assert reads == []
     body.close.assert_called_once()
     assert list(tmp_path.glob("*")) == []
+
+
+def _parquet_keys(*names: str) -> list[dict]:
+    return [{"Key": f"set/traces/{n}", "ETag": f'"{i}"'} for i, n in enumerate(names)]
+
+
+@pytest.mark.asyncio
+async def test_prefix_manifest_parquet_folder_lists_train_shards() -> None:
+    client = _client()
+    with Stubber(client) as s:
+        _stub_directory_probe(s, _parquet_keys(
+            "train-00001-of-00002.parquet", "train-00000-of-00002.parquet",
+            "test-00000-of-00001.parquet", "README.md",
+        ))  # fmt: skip
+        probe = await S3SourceResolver(client=client).probe(
+            RemoteRef(ref="s3://bucket/set/")
+        )
+    assert probe.data_files == [
+        "set/traces/train-00000-of-00002.parquet",
+        "set/traces/train-00001-of-00002.parquet",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prefix_manifest_json_folder_has_no_shards() -> None:
+    client = _client()
+    with Stubber(client) as s:
+        _stub_directory_probe(s, [{"Key": "set/traces/a.json", "ETag": '"a"'}])
+        probe = await S3SourceResolver(client=client).probe(
+            RemoteRef(ref="s3://bucket/set/")
+        )
+    assert probe.data_is_dir and probe.data_files is None
+
+
+@pytest.mark.asyncio
+async def test_prefix_manifest_parquet_folder_without_train_fails() -> None:
+    client = _client()
+    with Stubber(client) as s:
+        _stub_directory_probe(s, _parquet_keys(
+            "test-00000-of-00001.parquet", "validation-00000-of-00001.parquet",
+        ))  # fmt: skip
+        with pytest.raises(RemoteSourceError) as exc_info:
+            await S3SourceResolver(client=client).probe(
+                RemoteRef(ref="s3://bucket/set/")
+            )
+    assert exc_info.value.kind == RemoteErrorKind.MANIFEST_INVALID
+    assert "test, validation" in str(exc_info.value)

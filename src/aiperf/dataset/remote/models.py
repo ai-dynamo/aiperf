@@ -46,6 +46,12 @@ class ProbeResult(AIPerfBaseModel):
     needs_auth: bool = Field(
         description="True when reading this source requires credentials."
     )
+    data_files: list[str] | None = Field(
+        default=None,
+        description="Repo or bucket paths of the parquet shards to read, in order, "
+        "when the data is a folder whose data files are all parquet; None for a "
+        "single file or a non-parquet folder.",
+    )
 
 
 class ResolvedSource(AIPerfBaseModel):

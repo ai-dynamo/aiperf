@@ -81,4 +81,6 @@ def remote_dataset_provenance(cfg: BenchmarkConfig) -> dict[str, object] | None:
             "manifest_sha256": source.probe.manifest_sha256,
         }
     )
+    if source.probe.data_files is not None and source.probe.manifest is None:
+        provenance["layout"] = "hf_parquet"
     return provenance
