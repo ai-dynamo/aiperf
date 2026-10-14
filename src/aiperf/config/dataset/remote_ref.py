@@ -10,7 +10,13 @@ from dataclasses import dataclass
 from typing import Annotated, Any
 from urllib.parse import parse_qsl, quote, unquote, urlsplit, urlunsplit
 
-from pydantic import ConfigDict, Field, model_serializer, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    SerializationInfo,
+    model_serializer,
+    model_validator,
+)
 
 from aiperf.common.redact import (
     has_sensitive_query_parameters,
@@ -263,10 +269,18 @@ class RemoteRef(BaseConfig):
         return self.display
 
     @model_serializer(mode="plain")
-    def _serialize(self) -> str | dict[str, str]:
+    def _serialize(self, info: SerializationInfo) -> str | dict[str, str]:
+        """Redacted by default; raw when the caller asks for secrets.
+
+        Sweep expansion rebuilds each run from an ``include_secrets`` dump, which
+        must keep a presigned signature or the expanded runs could not fetch.
+        """
+        context = info.context
+        include_secrets = isinstance(context, dict) and context.get("include_secrets")
+        ref = self.ref if include_secrets else self.display
         if self.resolved_version is None:
-            return self.display
-        return {"ref": self.display, "resolved_version": self.resolved_version}
+            return ref
+        return {"ref": ref, "resolved_version": self.resolved_version}
 
 
 def coerce_remote_ref(value: Any) -> Any:
