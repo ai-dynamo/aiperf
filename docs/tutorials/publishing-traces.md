@@ -39,7 +39,10 @@ one object). A server that answers the sidecar path with an HTML page is treated
 sidecar.
 
 A folder can hold several files (for example a `random_pool` or `raw_payload` directory).
-Only folders whose format reads a directory work as `path`.
+Only folders whose format reads a directory work as `path`, with one exception: a folder of
+parquet shards works for any format that reads parquet. It follows the `train` split rule in
+[Parquet Datasets](remote-datasets.md#parquet-datasets): a folder with several splits and none
+named `train` fails the access check, so publish one split or name it `train`.
 
 ---
 

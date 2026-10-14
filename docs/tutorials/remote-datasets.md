@@ -97,8 +97,19 @@ Without a manifest, AIPerf picks the data as follows:
 1. It descends into the only folder that holds parquet, or into `train` when several folders do.
 2. In a folder of shards it reads the `train` split. When other splits are dropped, the run log
    says so at INFO level.
-3. If there are several datasets and none is named `train`, or the splits have no `train`, the
-   run fails and the error lists ready-to-use references (`Use one of: ...`).
+3. If a folder holds several datasets and none is named `train`, the run fails with "has
+   several datasets under ..." and the hint `Use one of: ...` lists a ready-to-use reference
+   for each. If a folder holds shards of several splits and none is named `train`, the run fails
+   with "holds the splits ..." and the hint `Use one split's shard, e.g. ...` lists a reference
+   to one shard of each split.
+
+A manifest's `path` can also name a folder of parquet shards on Hugging Face or S3. The same
+`train` split rule applies, and several splits with no `train` fail at the access check, before
+anything is downloaded. On Hugging Face only the chosen split's shards are downloaded. On S3 the
+whole prefix is downloaded, and the reader then picks the same split from the local copy. For an
+S3 manifest folder the split error reads "its manifest folder ... holds the splits ... and none
+is named 'train'", and its hint asks the publisher to keep one split in the folder or to name it
+`train`.
 
 A manifest-less remote parquet source replays on its recorded timestamp schedule only when
 `--custom-dataset-type` names a trace format. To also declare the format, add `aiperf.json`;
@@ -112,7 +123,8 @@ see [Publishing traces](publishing-traces.md#publishing-with-datasetspush_to_hub
    that the manifest (if any) is valid and compatible with the run: the format must exist in
    this AIPerf, the `requires.aiperf` version specifier and `requires.endpoint_types` must be
    satisfied. It pins the exact version here (Hugging Face commit SHA, S3 object version or
-   ETag, HTTP ETag). Problems fail at this step, before anything is downloaded.
+   ETag, HTTP ETag). Problems fail at this step, before anything is downloaded. The one exception is a
+   parquet file or folder, which is downloaded here so that its first row can be read (step 2).
 2. **First-record check.** For trace formats, AIPerf reads the first record. If it has
    timestamps, the run replays on the recorded schedule (`--no-fixed-schedule` opts out), just
    like a local trace. To decide this it reads only the leading bytes of the file, in steps of
