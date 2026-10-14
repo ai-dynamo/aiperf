@@ -1118,7 +1118,6 @@ class PublicDataset(SystemPromptMixin):
 
     @model_validator(mode="after")
     def _validate_hf_mooncake(self) -> PublicDataset:
-        """Validate the Mooncake HF source, mapping scope, and mapping syntax."""
         is_mooncake_hf = self.dataset == PublicDatasetType.MOONCAKE_HF
         for field in ("hf_mooncake_dataset", "hf_mooncake_split"):
             if getattr(self, field) is not None and not is_mooncake_hf:

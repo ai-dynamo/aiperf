@@ -278,7 +278,6 @@ _VERBATIM_DATASET_FIELDS = (
 
 
 def _implies_public_dataset(cli: CLIConfig) -> bool:
-    """True for explicit public datasets or repository flags that select a loader."""
     if cli.public_dataset:
         return True
     return any(

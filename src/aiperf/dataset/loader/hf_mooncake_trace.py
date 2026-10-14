@@ -71,14 +71,12 @@ class HFMooncakeTraceDatasetLoader(BaseHFDatasetLoader):
         )
 
     async def load_dataset(self) -> dict[str, list[MooncakeTrace]]:
-        """Download HF rows and prepare grouped traces with the Mooncake loader."""
         raw = await super().load_dataset()
         return await asyncio.to_thread(self._validate_rows, raw["dataset"])
 
     def _validate_rows(
         self, rows: Iterable[dict[str, Any]]
     ) -> dict[str, list[MooncakeTrace]]:
-        """Select source rows and expand each trajectory into recorded requests."""
         records: list[dict[str, Any]] = []
         seen: set[str] = set()
         max_conversations = self._max_conversations()
@@ -123,7 +121,6 @@ class HFMooncakeTraceDatasetLoader(BaseHFDatasetLoader):
     async def convert_to_conversations(
         self, data: dict[str, list[MooncakeTrace]]
     ) -> list[Conversation]:
-        """Delegate conversation construction to the original Mooncake loader."""
         return await asyncio.to_thread(self._mooncake.convert_to_conversations, data)
 
 
