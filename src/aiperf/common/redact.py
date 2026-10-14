@@ -404,7 +404,7 @@ def build_cli_command() -> str:
     return redact_cli_command(cmd)
 
 
-def _is_sensitive_query_parameter_name(name: str) -> bool:
+def is_sensitive_query_parameter_name(name: str) -> bool:
     """Return True when a raw query parameter name denotes a credential.
 
     A server percent-decodes the parameter name before dispatching, so
@@ -430,7 +430,7 @@ def has_sensitive_query_parameters(url: str) -> bool:
     returns True is exactly one whose query ``redact_url`` rewrites.
     """
     return any(
-        _is_sensitive_query_parameter_name(match.group(2))
+        is_sensitive_query_parameter_name(match.group(2))
         for match in _URL_QUERY_PARAMETER_PATTERN.finditer(url)
     )
 
@@ -446,7 +446,7 @@ def _redact_sensitive_query_parameters(url: str) -> str:
 
     def _redact_parameter(match: re.Match[str]) -> str:
         separator, name = match.group(1), match.group(2)
-        if not _is_sensitive_query_parameter_name(name):
+        if not is_sensitive_query_parameter_name(name):
             return match.group(0)
         return f"{separator}{name}={REDACTED_VALUE}"
 
