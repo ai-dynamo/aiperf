@@ -14,6 +14,7 @@ from aiperf.common.record_files import iter_records
 from aiperf.config.dataset.remote_ref import RemoteRef
 from aiperf.dataset.remote.errors import RemoteErrorKind, RemoteSourceError
 from aiperf.dataset.remote.hf import HFSourceResolver
+from aiperf.dataset.remote.service import cached_source, materialize_probe, probe_ref
 from tests.unit.dataset.remote.test_hf_resolver import SHA, FakeRepo
 
 ROWS = [
@@ -235,3 +236,27 @@ async def test_probe_manifest_parquet_folder_without_train_fails(
     err = await _probe_error(repo, "hf://org/repo")
     assert err.kind == RemoteErrorKind.MANIFEST_INVALID
     assert "test, validation" in str(err)
+
+
+@pytest.mark.asyncio
+async def test_parquet_layout_second_materialize_is_a_cache_hit(tmp_path: Path) -> None:
+    repo = ParquetRepo(tmp_path, {
+        "mooncake/train-00000-of-00002.parquet": parquet_bytes(ROWS[:1]),
+        "mooncake/train-00001-of-00002.parquet": parquet_bytes(ROWS[1:]),
+    })  # fmt: skip
+    with ExitStack() as stack:
+        for p in repo.patches():
+            stack.enter_context(p)
+        probe = await probe_ref(RemoteRef(ref="hf://datasets/org/repo/mooncake"))
+        assert probe.data_files is not None and probe.manifest is None
+        first = await materialize_probe(probe)
+        again = await materialize_probe(probe)
+    assert len(repo.allow_patterns) == 1
+    assert again.local_path == first.local_path
+    assert (
+        [f.path for f in again.files]
+        == [f.path for f in first.files]
+        == probe.data_files
+    )
+    assert [f.path for f in cached_source(probe.ref).files] == probe.data_files
+    assert list(iter_records(again.local_path)) == ROWS
