@@ -309,3 +309,11 @@ def test_serializer_emits_raw_ref_only_when_secrets_are_requested(
     assert "secret" not in str(ref.model_dump())
     assert "secret" not in ref.model_dump_json()
     assert "secret" not in ref.model_dump_json(context={"include_secrets": False})
+
+
+def test_https_canonical_drops_userinfo() -> None:
+    assert (
+        RemoteRef(ref="https://user:pw@h.example:8443/t.jsonl").canonical
+        == RemoteRef(ref="https://h.example:8443/t.jsonl").canonical
+        == "https://h.example:8443/t.jsonl"
+    )

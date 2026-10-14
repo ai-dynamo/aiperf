@@ -255,7 +255,10 @@ class RemoteRef(BaseConfig):
             query = "&".join(
                 pair for pair in query.split("&") if not _is_signing_parameter(pair)
             )
-        return urlunsplit(parts._replace(query=query, fragment=""))
+        # Userinfo is a credential and is redacted on serialization, so keeping it
+        # would give a ref read back from run_config.json a different cache key.
+        netloc = parts.netloc.rpartition("@")[2]
+        return urlunsplit(parts._replace(netloc=netloc, query=query, fragment=""))
 
     def with_version(self, version: str) -> RemoteRef:
         return self.model_copy(update={"resolved_version": version})

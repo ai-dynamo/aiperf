@@ -6,8 +6,11 @@ from pathlib import Path
 
 import orjson
 import pytest
+from pytest import param
 
+from aiperf.common.enums import DatasetType
 from aiperf.common.environment import Environment
+from aiperf.config.dataset import FileDataset
 from aiperf.config.dataset.remote_ref import RemoteRef
 from aiperf.dataset.remote import cache, index
 from aiperf.dataset.remote.models import ProbeResult, RemoteFile, ResolvedSource
@@ -178,3 +181,23 @@ def test_latest_indexed_version_equal_mtimes_is_deterministic() -> None:
         os.utime(p, ns=(10**18, 10**18))
     expected = paths[max(paths, key=lambda p: p.name)]
     assert {index.latest_indexed_version(_pinned("x")) for _ in range(5)} == {expected}
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        param("https://user:pw@h.example/t.jsonl", id="user-and-password"),
+        param("https://token@h.example/t.jsonl", id="user-only"),
+        param("https://user:pw@h.example/t.jsonl?X-Amz-Signature=s", id="userinfo-and-presigned"),
+    ],
+)  # fmt: skip
+def test_basic_auth_ref_finds_same_entry_after_run_config_round_trip(ref: str) -> None:
+    pinned = RemoteRef(ref=ref).with_version("etag:1")
+    ds = FileDataset.model_validate(
+        {"name": "main", "type": DatasetType.FILE, "path": pinned}
+    )
+    serialized = ds.model_dump_json()
+    assert "pw@" not in serialized
+    child = FileDataset.model_validate(orjson.loads(serialized)).path
+    assert index.index_path(child) == index.index_path(pinned)
+    assert cache.entry_dir(child) == cache.entry_dir(pinned)
