@@ -43,6 +43,9 @@ def trajectory_rows() -> list[dict[str, Any]]:
             "question_id": f"trajectory-{i}",
             "model": "source/model",
             "benchmark": "test-benchmark",
+            "extra": {"presence_penalty": 0.5}
+            if i == 0
+            else {"frequency_penalty": 0.25},
             "turns": [
                 messages[0] | {"content": f"Recorded system {i}"},
                 *messages[1:end],
@@ -82,7 +85,7 @@ def test_trajectory_dispatch_preserves_recorded_history(
     streaming: bool,
     request_limit: bool,
 ) -> None:
-    dataset_dir = tmp_path / "trajectories"
+    dataset_dir = tmp_path / "recorded trajectories"
     dataset_dir.mkdir()
     pq.write_table(pa.Table.from_pylist(trajectory_rows), dataset_dir / "test.parquet")
     limits = (
@@ -93,7 +96,7 @@ def test_trajectory_dispatch_preserves_recorded_history(
     result = cli.run_sync(
         f"""aiperf profile
             --model {defaults.model} --endpoint-type chat
-            --hf-mooncake-dataset {dataset_dir}
+            --hf-mooncake-dataset "{dataset_dir}"
             --mooncake-trace-to-hf-mapping session_id=question_id
             --mooncake-trace-to-hf-mapping messages=turns
             --mooncake-trace-to-hf-mapping tools=extras.tools
@@ -124,6 +127,11 @@ def test_trajectory_dispatch_preserves_recorded_history(
         assert payload.get("max_completion_tokens", payload.get("max_tokens")) == 8
         for key, value in {"temperature": 0.7, "top_p": 0.8, "top_k": 20}.items():
             assert payload[key] == value
+        assert {
+            key: payload[key]
+            for key in ("presence_penalty", "frequency_penalty")
+            if key in payload
+        } == source["extra"]
     assert sorted(sorted(turns) for turns in session_turns.values()) == (
         [[0], [0, 1, 2]] if request_limit else [[0, 1], [0, 1, 2]]
     )

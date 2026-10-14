@@ -735,6 +735,15 @@ def _public_dataset_source_from_run(run: BenchmarkRun) -> dict[str, object] | No
     source["hf_subset"] = hf_subset
     if mapping := dataset.mooncake_trace_to_hf_mapping:
         source["mooncake_trace_to_hf_mapping"] = mapping
+    if public_dataset == "mooncake_hf":
+        source["max_profiling_requests"] = max(
+            (
+                phase.requests
+                for phase in run.cfg.get_profiling_phases()
+                if getattr(phase, "requests", None) is not None
+            ),
+            default=None,
+        )
     return source
 
 

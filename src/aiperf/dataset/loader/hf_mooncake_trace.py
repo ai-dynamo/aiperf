@@ -202,7 +202,7 @@ def _parameters(row: dict[str, Any]) -> tuple[Any, int | None, dict[str, Any]]:
     params = _decode_json(row.get("extra"))
     if params is not None and not isinstance(params, dict):
         raise ValueError("extra must decode to an object")
-    params = dict(params or {})
+    params = _drop_null_fields(dict(params or {}))
     if keys := {"messages", "input", "model", "tools"}.intersection(params):
         raise ValueError(f"extra must not override {sorted(keys)}")
     output_length = row.get("output_length")

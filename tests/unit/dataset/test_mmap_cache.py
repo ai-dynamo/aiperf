@@ -606,6 +606,27 @@ def _populate_entry(
 
 
 class TestLookupAndPopulate:
+    def test_mooncake_hf_larger_request_limit_does_not_reuse_smoke_cache(self) -> None:
+        keys = [
+            mmap_cache.compute_cache_key_from_run(
+                make_run_from_cli(
+                    CLIConfig(
+                        model_names=["test-model"],
+                        random_seed=42,
+                        hf_mooncake_dataset="example/trajectories",
+                        conversation_num_dataset_entries=6,
+                        request_count=request_count,
+                    )
+                )
+            )
+            for request_count in (2, 12)
+        ]
+        smoke_key, full_key = keys
+        assert smoke_key is not None and full_key is not None
+        _populate_entry(mmap_cache.cache_dir(), cache_key=smoke_key)
+        assert mmap_cache.lookup(smoke_key, compressed=False) is not None
+        assert mmap_cache.lookup(full_key, compressed=False) is None
+
     def test_lookup_returns_none_when_no_entry(self) -> None:
         assert mmap_cache.lookup("deadbeef" * 4, compressed=False) is None
 
