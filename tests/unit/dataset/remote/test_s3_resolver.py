@@ -634,3 +634,20 @@ async def test_prefix_manifest_parquet_folder_without_train_fails() -> None:
             )
     assert exc_info.value.kind == RemoteErrorKind.MANIFEST_INVALID
     assert "test, validation" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_prefix_manifest_spark_folder_lists_part_files() -> None:
+    client = _client()
+    with Stubber(client) as s:
+        _stub_directory_probe(s, _parquet_keys(
+            "part-00000-abc.snappy.parquet", "part-00001-abc.snappy.parquet",
+            "_SUCCESS", "_committed_123", ".part-00000-abc.snappy.parquet.crc",
+        ))  # fmt: skip
+        probe = await S3SourceResolver(client=client).probe(
+            RemoteRef(ref="s3://bucket/set/")
+        )
+    assert probe.data_files == [
+        "set/traces/part-00000-abc.snappy.parquet",
+        "set/traces/part-00001-abc.snappy.parquet",
+    ]

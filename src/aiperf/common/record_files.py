@@ -51,10 +51,15 @@ class ParquetSplitError(ParquetReadError):
 
 
 def is_ignored_name(name: str) -> bool:
-    """Whether a file beside parquet shards is documentation or metadata, not data."""
+    """Whether a file beside parquet shards is documentation or metadata, not data.
+
+    Names starting with ``_`` or ``.`` follow the Hadoop convention Spark and
+    Hive writers rely on: ``_SUCCESS``, ``_committed_*``, ``_metadata`` and
+    ``.crc`` checksums sit beside the ``part-*.parquet`` data files.
+    """
     lowered = name.lower()
     return (
-        name.startswith(".")
+        name.startswith((".", "_"))
         or lowered.startswith("readme")
         or lowered == "aiperf.json"
         or lowered.endswith(".aiperf.json")

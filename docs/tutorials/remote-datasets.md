@@ -72,6 +72,9 @@ only; a directory of Baseten shards is rejected). Any other format fails before 
   columns, and NaN or infinity values, are rejected with the name of the column.
 - A directory reads every shard in order. When the shards are named
   `<split>-00000-of-00002.parquet` and several splits are present, AIPerf reads `train`.
+- Files beside the shards that are not data are skipped: READMEs, `aiperf.json` manifests, and
+  names starting with `.` or `_`. That covers the `_SUCCESS`, `_committed_*`, `_metadata`, and
+  `.crc` files that Spark and Hive write, so their output folders work as-is, on S3 or locally.
 - `pyarrow` ships with AIPerf on every platform except Windows on ARM, which has no wheel. There
   a remote parquet source fails before anything is downloaded.
 

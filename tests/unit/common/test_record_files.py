@@ -292,3 +292,20 @@ def test_iter_records_without_pyarrow_raises_dependency_message(tmp_path: Path) 
     assert str(exc_info.value) == PYARROW_MISSING
     with patch.dict(sys.modules, {"pyarrow": None, "pyarrow.parquet": None}):
         assert not parquet_available()
+
+
+def test_is_parquet_input_spark_output_folder_reads_part_files(tmp_path: Path) -> None:
+    d = tmp_path / "spark"
+    write_parquet(d / "part-00001-abc.snappy.parquet", ROWS[1:])
+    write_parquet(d / "part-00000-abc.snappy.parquet", ROWS[:1])
+    for name in (
+        "_SUCCESS",
+        "_committed_123",
+        "_started_123",
+        "_metadata",
+        "_common_metadata",
+        ".part-00000-abc.snappy.parquet.crc",
+    ):
+        (d / name).write_bytes(b"")
+    assert is_parquet_input(d)
+    assert list(iter_records(d)) == ROWS
