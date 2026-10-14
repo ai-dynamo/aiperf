@@ -22,9 +22,10 @@ from constants import (
     AIPERF_COMMAND_TIMEOUT,
     AIPERF_UI_TYPE,
     CONTAINER_DISCOVERY_TIMEOUT,
+    FIXTURE_WRITE_TIMEOUT,
     SETUP_MONITOR_TIMEOUT,
 )
-from data_types import Server
+from data_types import Command, Server
 from utils import get_repo_root
 
 logger = logging.getLogger(__name__)
@@ -132,7 +133,7 @@ def build_command_exec_argv(container_id: str, command: str) -> list[str]:
     return ["docker", "exec", container_id, "bash", "-c", command]
 
 
-def resolve_command_timeout(aiperf_cmd) -> int:
+def resolve_command_timeout(aiperf_cmd: Command) -> int:
     """Pick the per-command ``timeout=`` if the guide set one, else the global.
 
     Shared with the unit tests so the per-command value is pinned where it is
@@ -235,7 +236,6 @@ class EndToEndTestRunner:
         self.setup_process = None
         self.log_monitoring_thread = None
         self.stop_log_monitoring = threading.Event()
-        self.detached_log_processes = []
 
     def _cleanup_all_containers(self):
         """Stop all containers and prune (nuclear cleanup)"""
@@ -455,13 +455,19 @@ class EndToEndTestRunner:
         except Exception as e:
             logger.debug(f"Log monitoring thread exception: {e}")
 
-    def _known_container_ids(self) -> set[str]:
+    def _known_container_ids(self) -> set[str] | None:
         """Every container id docker knows about, running or not.
 
         ``-a`` matters: a server that boots and dies during setup is gone from
         ``docker ps`` by the time the snapshot is taken, and that is precisely
         the container whose logs are worth having. Omitting it loses the boot
         traceback for the one case this capture exists for.
+
+        ``None`` when discovery itself failed, which is not the same answer as
+        "docker knows of no containers". Collapsing the two made a failed
+        pre-setup snapshot read as an empty baseline, so every container that
+        already existed looked newly started and picked up a follower
+        mislabelled with this server's name.
         """
         try:
             result = subprocess.run(
@@ -471,11 +477,17 @@ class EndToEndTestRunner:
                 check=False,
                 timeout=CONTAINER_DISCOVERY_TIMEOUT,
             )
-        except subprocess.TimeoutExpired:
+        except (subprocess.TimeoutExpired, OSError) as e:
             logger.warning(
-                "docker ps timed out; detached container logs will not be followed"
+                f"docker ps failed ({e}); detached container logs will not be followed"
             )
-            return set()
+            return None
+        if result.returncode != 0:
+            logger.warning(
+                f"docker ps exited {result.returncode}; detached container logs "
+                "will not be followed"
+            )
+            return None
         return set(result.stdout.split())
 
     def _stream_container_logs(self, container_id: str, server_name: str) -> None:
@@ -491,7 +503,6 @@ class EndToEndTestRunner:
         except Exception as e:
             logger.debug(f"Could not follow logs for {container_id}: {e}")
             return
-        self.detached_log_processes.append(process)
         try:
             for line in process.stdout:
                 if self.stop_log_monitoring.is_set():
@@ -501,7 +512,7 @@ class EndToEndTestRunner:
             logger.debug(f"Detached log thread exception: {e}")
 
     def _follow_detached_containers(
-        self, before: set[str], server_name: str
+        self, before: set[str] | None, server_name: str
     ) -> list[threading.Thread]:
         """Attach a log follower to every container the setup block left running.
 
@@ -514,10 +525,17 @@ class EndToEndTestRunner:
 
         Diffing ``docker ps`` rather than parsing the setup block keeps this
         independent of how a guide spells its run command, and covers groups
-        that start several containers (otel-mlflow starts three).
+        whose setup block starts several containers.
         """
         started: list[threading.Thread] = []
-        for container_id in sorted(self._known_container_ids() - before):
+        after = self._known_container_ids()
+        if before is None or after is None:
+            logger.warning(
+                f"Container discovery unavailable; not following detached "
+                f"containers for {server_name}"
+            )
+            return started
+        for container_id in sorted(after - before):
             logger.info(f"Following logs for detached container {container_id[:12]}")
             thread = threading.Thread(
                 target=self._stream_container_logs,
@@ -637,19 +655,6 @@ class EndToEndTestRunner:
 
             # Execute aiperf command in the container with verbose output
             aiperf_command_with_ui = inject_ui_type(aiperf_cmd.command)
-            # The command is passed as an argv element, never interpolated
-            # into a shell string. Guides routinely pass JSON in single quotes
-            # (--extra-inputs '{"temperature": 0}'); building `bash -c
-            # '<command>'` as text lets the command's own quotes close the
-            # wrapper early, so the payload arrives as {temperature: 0} and
-            # fails JSON validation.
-            #
-            # stdin is closed rather than carrying the script. Delivering the
-            # script over stdin leaves it on the same stream the commands read
-            # from, so the first command that reads stdin swallows the rest of
-            # the block: `cat` followed by another command prints that command
-            # instead of running it and still exits 0 -- a guide that silently
-            # benchmarks nothing while CI reports a pass.
             exec_argv = build_command_exec_argv(
                 self.aiperf_container_id, aiperf_command_with_ui
             )
@@ -733,13 +738,18 @@ class EndToEndTestRunner:
 
         return all_aiperf_passed
 
-    def _materialize_files(self, server) -> bool:
+    def _materialize_files(self, server: Server) -> bool:
         """Write a server's declared file fixtures into the AIPerf container.
 
         Content is piped in over stdin rather than interpolated into the shell
         command: YAML and JSON routinely contain quotes, ``$`` and newlines,
         which would otherwise be re-interpreted by the shell wrapping the
         docker exec.
+
+        Every failure is reported as ``False`` rather than raised: this runs
+        inside the per-server loop, and an exception escaping here aborts the
+        whole run, so one server's unwritable fixture would take every later
+        server's commands down with it.
         """
         for fixture in server.files:
             target = PurePosixPath(fixture.path)
@@ -752,21 +762,25 @@ class EndToEndTestRunner:
 
             logger.info(f"Writing fixture {fixture.path} for {server.name}")
             write_command = build_fixture_write_command(target)
-            result = subprocess.run(
-                [
-                    "docker",
-                    "exec",
-                    "-i",
-                    self.aiperf_container_id,
-                    "bash",
-                    "-c",
-                    write_command,
-                ],
-                input=fixture.content,
-                text=True,
-                capture_output=True,
-                timeout=30,
-            )
+            try:
+                result = subprocess.run(
+                    [
+                        "docker",
+                        "exec",
+                        "-i",
+                        self.aiperf_container_id,
+                        "bash",
+                        "-c",
+                        write_command,
+                    ],
+                    input=fixture.content,
+                    text=True,
+                    capture_output=True,
+                    timeout=FIXTURE_WRITE_TIMEOUT,
+                )
+            except (subprocess.TimeoutExpired, OSError) as e:
+                logger.error(f"Failed to write fixture {fixture.path}: {e}")
+                return False
             if result.returncode != 0:
                 logger.error(
                     f"Failed to write fixture {fixture.path}: {result.stderr.strip()}"

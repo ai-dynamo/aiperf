@@ -26,4 +26,5 @@ SETUP_MONITOR_TIMEOUT = 30  # seconds to monitor setup output
 CONTAINER_BUILD_TIMEOUT = 600  # seconds for Docker build
 CONTAINER_START_TIMEOUT = 60  # seconds for container startup
 CONTAINER_DISCOVERY_TIMEOUT = 30  # seconds for a `docker ps` snapshot
+FIXTURE_WRITE_TIMEOUT = 30  # seconds to pipe one fixture into the container
 AIPERF_COMMAND_TIMEOUT = 1200  # seconds for AIPerf commands
