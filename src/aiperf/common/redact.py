@@ -445,8 +445,12 @@ def _redact_sensitive_query_parameters(url: str) -> str:
     """
 
     def _redact_parameter(match: re.Match[str]) -> str:
-        separator, name = match.group(1), match.group(2)
-        if not is_sensitive_query_parameter_name(name):
+        separator, name, value = match.group(1), match.group(2), match.group(3)
+        # An already-redacted value is kept so redaction stays idempotent;
+        # in free text the value span also covers trailing punctuation.
+        if not is_sensitive_query_parameter_name(name) or value.startswith(
+            REDACTED_VALUE
+        ):
             return match.group(0)
         return f"{separator}{name}={REDACTED_VALUE}"
 
@@ -476,6 +480,22 @@ def redact_url(url: str) -> str:
         # Bare userinfo: user:pass@host (no scheme prefix, must contain : before @)
         result = re.sub(r"^([^@:]+:[^@]+)@", REDACTED_VALUE + "@", result)
     return _redact_sensitive_query_parameters(result)
+
+
+_WHITESPACE_RUN = re.compile(r"(\s+)")
+
+
+def redact_text(text: str) -> str:
+    """``redact_url`` for free text that may embed URLs.
+
+    ``redact_url`` treats everything after a sensitive query value as part of that
+    value, so applying it to a whole sentence would swallow the words after the
+    URL. Redacting each whitespace-delimited token keeps the sentence readable.
+    """
+    return "".join(
+        part if part.isspace() else redact_url(part)
+        for part in _WHITESPACE_RUN.split(text)
+    )
 
 
 def redact_endpoint_spec(spec: dict[str, Any]) -> dict[str, Any]:
