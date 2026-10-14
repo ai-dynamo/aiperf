@@ -17,6 +17,7 @@ from aiperf.common.optional_dependencies import (
     AWS_EXTRA,
     install_optional_dependency_hint,
 )
+from aiperf.common.record_files import ParquetSplitError, select_data_shards
 from aiperf.config.dataset.remote_ref import RemoteRef
 from aiperf.dataset.remote.cache import (
     digest,
@@ -342,6 +343,27 @@ def _create_client(ref: RemoteRef) -> Any:
     return botocore.session.get_session().create_client("s3", config=config)
 
 
+def _folder_shards(
+    ref: RemoteRef, data_key: str, objects: list[_Object]
+) -> list[str] | None:
+    """Parquet shards directly under a manifest-named prefix, so the run can sniff and read them.
+
+    The probe already lists the prefix to compute its version, so this needs no
+    extra request.
+    """
+    prefix = f"{data_key}/" if data_key else ""
+    names = [o.key[len(prefix) :] for o in objects if "/" not in o.key[len(prefix) :]]
+    try:
+        chosen = select_data_shards(names)
+    except ParquetSplitError as e:
+        raise _error(
+            ref, kind=RemoteErrorKind.MANIFEST_INVALID, stage=RemoteStage.ACCESS,
+            what=f"its manifest folder '{data_key}' holds the splits {', '.join(sorted(e.splits))} and none is named 'train'",
+            hint="Ask the publisher to keep one split in the folder, or to name it 'train'",
+        ) from e  # fmt: skip
+    return None if chosen is None else [prefix + n for n in chosen]
+
+
 class S3SourceResolver:
     """Resolve s3:// references."""
 
@@ -524,6 +546,7 @@ class S3SourceResolver:
             ref=pinned, pinned_ref=pinned.display, data_relpath=data_key,
             data_is_dir=data_is_dir, filename=PurePosixPath(data_key).name,
             manifest=manifest, manifest_sha256=manifest_sha, needs_auth=True,
+            data_files=_folder_shards(ref, data_key, objects) if data_is_dir else None,
         )  # fmt: skip
 
     async def read_prefix(self, probe: ProbeResult, nbytes: int) -> tuple[bytes, bool]:
