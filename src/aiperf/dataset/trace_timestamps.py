@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import gzip
 import zlib
+from contextlib import closing
 from pathlib import Path
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -32,10 +33,20 @@ def _parquet_has_timestamp(path: Path) -> bool:
     except ImportError:
         return False
     try:
-        if "timestamp_start_unix_ms" in set(
-            pq.read_schema(parquet_files(path)[0]).names
-        ):
-            return True
+        first_file = parquet_files(path)[0]
+        if "timestamp_start_unix_ms" in set(pq.read_schema(first_file).names):
+            # Only the time column is read: Baseten files can hold columns the
+            # record reader rejects, and a null first value is not a timestamp.
+            with closing(pq.ParquetFile(first_file)) as parquet_file:
+                times = (
+                    parquet_file.read_row_group(
+                        0, columns=["timestamp_start_unix_ms"]
+                    ).column(0)
+                    if parquet_file.num_row_groups
+                    else None
+                )
+            if times is not None and len(times) and times[0].is_valid:
+                return True
         record = first_record(path)
     except (OSError, ValueError, pa.ArrowException):
         return False

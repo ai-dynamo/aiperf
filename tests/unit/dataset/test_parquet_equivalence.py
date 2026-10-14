@@ -152,3 +152,25 @@ def test_record_counts_parquet_single_turn_read_metadata_only(encodings) -> None
         assert DatasetResolver._count_records_and_sessions(
             str(parquet), CustomDatasetType.MOONCAKE_TRACE
         ) == (3, 3)
+
+
+def test_timestamp_detection_null_baseten_column_reads_first_row(
+    tmp_path: Path,
+) -> None:
+    rows = [{"timestamp_start_unix_ms": None, "input_length": 10, "output_length": 2}]
+    path = _parquet(tmp_path / "t.parquet", rows)
+    assert not first_record_has_timestamp(path)
+
+
+def test_timestamp_detection_baseten_column_ignores_unreadable_columns(
+    tmp_path: Path,
+) -> None:
+    table = pa.table(
+        {
+            "timestamp_start_unix_ms": pa.array([1], type=pa.int64()),
+            "blob": pa.array([b"\x00"], type=pa.binary()),
+        }
+    )
+    path = tmp_path / "t.parquet"
+    pq.write_table(table, path)
+    assert first_record_has_timestamp(path)
