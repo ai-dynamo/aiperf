@@ -141,8 +141,7 @@ async def test_a_joined_turn_fires_on_recorded_time_not_after_server_latency(
     after arming, and arming happens when the previous turn's response lands.
     So the recorded gap was added on top of server latency instead of
     containing it, and the replay stretched in proportion to how slow the
-    endpoint was: measured +1.11s at 1s TTFT and +2.10s at 2s TTFT against
-    this fixture's parent turn recorded at t+5s.
+    endpoint was.
     """
     async with mock_server_factory(ttft=SLOW_TTFT_MS, itl=5) as server:
         result = await cli.run(
