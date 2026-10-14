@@ -29,6 +29,7 @@ from aiperf.common.record_files import (
     is_parquet_input,
     parquet_available,
     parquet_files,
+    require_parquet_reader,
 )
 from aiperf.config.dataset import FileDataset
 from aiperf.config.dataset.remote_ref import RemoteRef
@@ -159,18 +160,34 @@ def _apply_probe(cfg: BenchmarkConfig, probe: ProbeResult) -> FileDataset:
     return rebuilt
 
 
-def _require_parquet_support(probe: ProbeResult) -> None:
-    """Fail before any download when the source is parquet and pyarrow is unavailable."""
-    is_parquet = (
+def _is_parquet_probe(probe: ProbeResult) -> bool:
+    return (
         probe.data_files is not None
         or PurePosixPath(probe.filename).suffix.lower() == PARQUET_SUFFIX
     )
-    if is_parquet and not parquet_available():
+
+
+def _require_parquet_support(probe: ProbeResult) -> None:
+    """Fail before any download when the source is parquet and pyarrow is unavailable."""
+    if _is_parquet_probe(probe) and not parquet_available():
         raise RemoteSourceError(
             ref=probe.ref.display, kind=RemoteErrorKind.MISSING_DEPENDENCY, stage=RemoteStage.ACCESS,
             what=PYARROW_MISSING,
             hint="Use a JSONL copy of the dataset, or run on a platform where pyarrow installs",
         )  # fmt: skip
+
+
+def _require_parquet_format(probe: ProbeResult, fmt: CustomDatasetType | None) -> None:
+    """Fail before any download when the declared format cannot read a parquet source."""
+    if fmt is None or not _is_parquet_probe(probe):
+        return
+    try:
+        require_parquet_reader(fmt)
+    except ValueError as e:
+        raise RemoteSourceError(
+            ref=probe.ref.display, kind=RemoteErrorKind.INCOMPATIBLE, stage=RemoteStage.ACCESS,
+            what=str(e), hint="",
+        ) from e  # fmt: skip
 
 
 async def _access(groups: dict[str, list[BenchmarkConfig]]) -> None:
@@ -184,9 +201,10 @@ async def _access(groups: dict[str, list[BenchmarkConfig]]) -> None:
         for cfg in cfgs:
             check = cfg.get_default_dataset().remote_fixed_schedule_check
             ds = _apply_probe(cfg, probe)
+            fmt = _declared_format(ds)
+            _require_parquet_format(probe, fmt)
             if check is None:
                 continue
-            fmt = _declared_format(ds)
             is_trace = fmt is not None and plugins.is_trace_dataset(str(fmt))
             if is_trace and has_timestamp is None:
                 has_timestamp = await remote_first_record_has_timestamp(probe)

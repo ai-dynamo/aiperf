@@ -195,15 +195,11 @@ class DatasetResolver:
         first_record = None
         explicit_format = "format" in fields_set
         dataset_type = format_map.get(str(fmt)) if explicit_format and fmt else None
-        if (
-            dataset_type is not None
-            and not isinstance(ds.path, RemoteRef)  # type: ignore[attr-defined]
-            and is_parquet_input(resolved)
-        ):
-            # Before any format-specific reader opens the file as text.
-            require_parquet_reader(dataset_type)
         if dataset_type is None:
             dataset_type, first_record = self._detect_type(str(resolved))
+        if dataset_type is not None and is_parquet_input(resolved):
+            # Before any format-specific reader opens the file as text.
+            require_parquet_reader(dataset_type)
 
         if dataset_type is not None:
             acc.types[name] = dataset_type
