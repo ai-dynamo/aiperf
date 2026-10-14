@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 from pytest import param
 
 from aiperf.common.redact import REDACTED_VALUE, redact_url
+from aiperf.config.config import BenchmarkConfig
 from aiperf.config.dataset.remote_ref import (
     RemoteRef,
     coerce_remote_ref,
@@ -317,3 +318,19 @@ def test_https_canonical_drops_userinfo() -> None:
         == RemoteRef(ref="https://h.example:8443/t.jsonl").canonical
         == "https://h.example:8443/t.jsonl"
     )
+
+
+def test_remote_ref_on_a_non_default_dataset_is_rejected_at_parse_time() -> None:
+    """Only the default dataset is resolved, so a second dataset must never validate."""
+    with pytest.raises(ValidationError, match="at most 1 item"):
+        BenchmarkConfig.model_validate(
+            {
+                "models": ["m"],
+                "endpoint": {"urls": ["http://localhost:8000"]},
+                "datasets": [
+                    {"name": "main", "type": "synthetic", "entries": 1, "prompts": {"isl": 4}},
+                    {"name": "other", "type": "file", "path": "hf://org/repo/t.jsonl"},
+                ],
+                "phases": [{"name": "profiling", "type": "concurrency", "concurrency": 1, "requests": 1}],
+            }
+        )  # fmt: skip

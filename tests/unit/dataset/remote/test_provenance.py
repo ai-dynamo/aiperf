@@ -1,8 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-import json
 from pathlib import Path
 
+import orjson
 import pytest
 
 from aiperf.common.redact import REDACTED_VALUE
@@ -70,7 +70,7 @@ def test_presigned_provenance_has_no_signature(tmp_path: Path) -> None:
     _materialize(tmp_path, ref)
     for prov in (remote_dataset_provenance(_cfg(ref)), _unmaterialized_presigned()):
         assert prov is not None
-        assert "secret" not in json.dumps(prov)
+        assert b"secret" not in orjson.dumps(prov)
         assert REDACTED_VALUE in str(prov["ref"])
 
 
@@ -138,7 +138,7 @@ async def test_json_export_records_remote_provenance_without_signature(
 
     text = (out / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE).read_text()
     assert "secret" not in text
-    dataset = json.loads(text)["metadata"]["dataset"]
+    dataset = orjson.loads(text)["metadata"]["dataset"]
     assert dataset["source_type"] == "remote_file"
     assert dataset["files"] == [
         {"path": "t.jsonl", "sha256": "f" * 64, "size_bytes": 3}
