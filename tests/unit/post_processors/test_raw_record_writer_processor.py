@@ -548,11 +548,7 @@ class TestRawRecordAggregator:
         with pytest.raises(ValueError, match="expected 2 profiling records.*found 1"):
             await aggregator.export()
 
-        archive_root = (
-            run_raw.cfg.artifacts.dir.parent
-            / ".aiperf-stale-raw-records"
-            / run_raw.cfg.artifacts.dir.name
-        )
+        archive_root = run_raw.cfg.artifacts.dir / ".aiperf-stale-raw-records"
         assert len(list(archive_root.rglob(stale_file.name))) == 1
         assert current_file.exists()
         assert not aggregator.output_file.exists()

@@ -424,7 +424,7 @@ class TestArtifactDirResolver:
         ArtifactDirResolver().resolve(run, for_probe=True)
 
         assert stale.exists()
-        assert not (tmp_path / ".aiperf-stale-raw-records").exists()
+        assert not (target / ".aiperf-stale-raw-records").exists()
 
     def test_resolve_skips_fragment_purge_when_export_disabled(
         self, minimal_config, tmp_path
