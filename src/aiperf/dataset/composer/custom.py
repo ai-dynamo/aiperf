@@ -88,6 +88,14 @@ class CustomDatasetComposer(BaseDatasetComposer):
         self._validate_synthesis_config(dataset_type)
         if not is_inline and is_parquet_input(self._file_path):
             self._require_parquet_reader(dataset_type)
+            if (
+                dataset_type == CustomDatasetType.BASETEN_TRACE
+                and Path(self._file_path).is_dir()
+            ):
+                raise ValueError(
+                    "Dataset format 'baseten_trace' reads a single parquet or "
+                    "Arrow file, not a directory of shards"
+                )
 
         self.detected_dataset_type = dataset_type
         self._create_loader_instance(dataset_type)
