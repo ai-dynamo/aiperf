@@ -4,26 +4,9 @@
 
 from __future__ import annotations
 
-import re
-
 from aiperf.common.enums import CaseInsensitiveStrEnum
-from aiperf.common.redact import redact_url
+from aiperf.common.redact import redact_text, redact_url
 from aiperf.config.loader.errors import ConfigurationError
-
-_WHITESPACE_RUN = re.compile(r"(\s+)")
-
-
-def _redact_text(text: str) -> str:
-    """``redact_url`` for free text that may embed URLs.
-
-    ``redact_url`` treats everything after a sensitive query value as part of that
-    value, so applying it to a whole sentence would swallow the words after the
-    URL. Redacting each whitespace-delimited token keeps the sentence readable.
-    """
-    return "".join(
-        part if part.isspace() else redact_url(part)
-        for part in _WHITESPACE_RUN.split(text)
-    )
 
 
 class RemoteErrorKind(CaseInsensitiveStrEnum):
@@ -67,9 +50,9 @@ class RemoteSourceError(ConfigurationError):
         self.stage = stage
         # ``what`` and ``hint`` often embed text from a library exception that
         # quotes the request URL, so every part of the message is redacted.
-        self.hint = _redact_text(hint)
+        self.hint = redact_text(hint)
         super().__init__(
-            f"Cannot use {self.ref}: {_redact_text(what)}. {self.hint}".rstrip()
+            f"Cannot use {self.ref}: {redact_text(what)}. {self.hint}".rstrip()
         )
 
 
