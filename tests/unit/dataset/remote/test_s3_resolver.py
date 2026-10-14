@@ -1,0 +1,407 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+import asyncio
+import errno
+import io
+import threading
+import time
+from collections.abc import Iterator
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import orjson
+import pytest
+from pytest import param
+
+pytest.importorskip("botocore")
+
+import botocore.session  # noqa: E402
+from botocore.exceptions import (  # noqa: E402
+    ClientError,
+    ConnectionClosedError,
+    EndpointConnectionError,
+    NoCredentialsError,
+    ReadTimeoutError,
+)
+from botocore.response import StreamingBody  # noqa: E402
+from botocore.stub import Stubber  # noqa: E402
+
+from aiperf.config.dataset.remote_ref import RemoteRef  # noqa: E402
+from aiperf.dataset.remote.cache import entry_dir, remote_cache_dir  # noqa: E402
+from aiperf.dataset.remote.errors import (  # noqa: E402
+    RemoteErrorKind,
+    RemoteSourceError,
+)
+from aiperf.dataset.remote.index import read_index  # noqa: E402
+from aiperf.dataset.remote.models import ProbeResult  # noqa: E402
+from aiperf.dataset.remote.s3 import S3SourceResolver  # noqa: E402
+from aiperf.dataset.remote.service import cached_source, materialize_probe  # noqa: E402
+from aiperf.plugin import plugins  # noqa: E402
+from aiperf.plugin.enums import PluginType  # noqa: E402
+
+BODY = b'{"timestamp": 1}\n'
+MANIFEST = orjson.dumps(
+    {"aiperf_manifest_version": 1, "format": "weka_trace", "path": "traces"}
+)
+
+
+def _client():
+    return botocore.session.get_session().create_client(
+        "s3", region_name="us-east-1", aws_access_key_id="x", aws_secret_access_key="y"
+    )
+
+
+def _body(data: bytes) -> StreamingBody:
+    return StreamingBody(io.BytesIO(data), len(data))
+
+
+def _missing(stubber: Stubber, method: str, params: dict) -> None:
+    stubber.add_client_error(method, service_error_code="404", http_status_code=404, expected_params=params)  # fmt: skip
+
+
+def _client_error(code: str, status: int, op: str = "GetObject") -> ClientError:
+    return ClientError(
+        {"Error": {"Code": code}, "ResponseMetadata": {"HTTPStatusCode": status}}, op
+    )
+
+
+def _object_probe(version: str, ref: str = "s3://bucket/t.jsonl") -> ProbeResult:
+    key = ref.removeprefix("s3://bucket/").partition("?")[0]
+    pinned = RemoteRef(ref=ref).with_version(version)
+    return ProbeResult(
+        ref=pinned, pinned_ref=pinned.display, data_relpath=key, data_is_dir=False,
+        filename=Path(key).name, manifest=None, manifest_sha256=None, needs_auth=True,
+    )  # fmt: skip
+
+
+def _stub_directory_probe(s: Stubber, contents: list[dict]) -> None:
+    s.add_response("get_object", {"Body": _body(MANIFEST), "ETag": '"m"'}, {"Bucket": "bucket", "Key": "set/aiperf.json"})  # fmt: skip
+    _missing(s, "head_object", {"Bucket": "bucket", "Key": "set/traces"})
+    _stub_listing(s, contents)
+
+
+def _stub_listing(s: Stubber, contents: list[dict]) -> None:
+    s.add_response("list_objects_v2", {"Contents": contents, "IsTruncated": False}, {"Bucket": "bucket", "Prefix": "set/traces/"})  # fmt: skip
+
+
+def test_s3_resolver_is_registered() -> None:
+    assert (
+        plugins.get_class(PluginType.DATASET_SOURCE_RESOLVER, "s3") is S3SourceResolver
+    )
+
+
+@pytest.mark.asyncio
+async def test_versioned_file_probe_prefix_and_download(tmp_path: Path) -> None:
+    client = _client()
+    with Stubber(client) as s:
+        s.add_response("head_object", {"ETag": '"e1"', "VersionId": "v9", "ContentLength": len(BODY)}, {"Bucket": "bucket", "Key": "my traces/t.jsonl"})  # fmt: skip
+        _missing(s, "get_object", {"Bucket": "bucket", "Key": "my traces/t.jsonl.aiperf.json"})  # fmt: skip
+        s.add_response("get_object", {"Body": _body(BODY[:4]), "ContentRange": f"bytes 0-3/{len(BODY)}"},
+                       {"Bucket": "bucket", "Key": "my traces/t.jsonl", "Range": "bytes=0-3", "VersionId": "v9"})  # fmt: skip
+        s.add_response("get_object", {"Body": _body(BODY)}, {"Bucket": "bucket", "Key": "my traces/t.jsonl", "VersionId": "v9"})  # fmt: skip
+        resolver = S3SourceResolver(client=client)
+        probe = await resolver.probe(RemoteRef(ref="s3://bucket/my traces/t.jsonl"))
+        assert probe.ref.resolved_version == "v:v9"
+        assert probe.pinned_ref == "s3://bucket/my traces/t.jsonl?versionId=v9"
+        assert await resolver.read_prefix(probe, 4) == (BODY[:4], False)
+        source = await resolver.materialize(probe)
+    assert source.local_path.read_bytes() == BODY
+
+
+@pytest.mark.asyncio
+async def test_pinned_ref_quotes_the_version_id() -> None:
+    client = MagicMock()
+    client.head_object.return_value = {"ETag": '"e"', "VersionId": "a+b/c"}
+    client.get_object.side_effect = _client_error("NoSuchKey", 404)
+    probe = await S3SourceResolver(client=client).probe(
+        RemoteRef(ref="s3://bucket/t.jsonl")
+    )
+    assert probe.pinned_ref == "s3://bucket/t.jsonl?versionId=a%2Bb%2Fc"
+    assert RemoteRef(ref=probe.pinned_ref).parsed.revision == "a+b/c"
+
+
+@pytest.mark.asyncio
+async def test_unversioned_object_downloads_with_if_match() -> None:
+    client = _client()
+    with Stubber(client) as s:
+        s.add_response("head_object", {"ETag": '"e1"'}, {"Bucket": "bucket", "Key": "t.jsonl"})  # fmt: skip
+        _missing(s, "get_object", {"Bucket": "bucket", "Key": "t.jsonl.aiperf.json"})
+        s.add_response("get_object", {"Body": _body(BODY)}, {"Bucket": "bucket", "Key": "t.jsonl", "IfMatch": '"e1"'})  # fmt: skip
+        resolver = S3SourceResolver(client=client)
+        probe = await resolver.probe(RemoteRef(ref="s3://bucket/t.jsonl"))
+        assert probe.ref.resolved_version == 'etag:"e1"'
+        assert probe.pinned_ref == "s3://bucket/t.jsonl"
+        source = await resolver.materialize(probe)
+    assert source.local_path.read_bytes() == BODY
+
+
+@pytest.mark.asyncio
+async def test_object_replaced_after_pin_is_changed_after_pin() -> None:
+    client = _client()
+    with Stubber(client) as s:
+        s.add_client_error("get_object", service_error_code="PreconditionFailed", http_status_code=412,
+                           expected_params={"Bucket": "bucket", "Key": "t.jsonl", "IfMatch": '"e1"'})  # fmt: skip
+        with pytest.raises(RemoteSourceError, match="changed after AIPerf pinned") as exc:  # fmt: skip
+            await S3SourceResolver(client=client).materialize(_object_probe('etag:"e1"'))  # fmt: skip
+    assert exc.value.kind == RemoteErrorKind.NOT_FOUND
+    assert list(entry_dir(_object_probe('etag:"e1"').ref).glob("*")) == []
+
+
+@pytest.mark.asyncio
+async def test_pinned_version_deleted_is_changed_after_pin() -> None:
+    client = _client()
+    probe = _object_probe("v:v1", "s3://bucket/t.jsonl?versionId=v1")
+    with Stubber(client) as s:
+        s.add_client_error("get_object", service_error_code="NoSuchVersion", http_status_code=404,
+                           expected_params={"Bucket": "bucket", "Key": "t.jsonl", "VersionId": "v1"})  # fmt: skip
+        with pytest.raises(RemoteSourceError, match="changed after AIPerf pinned"):
+            await S3SourceResolver(client=client).materialize(probe)
+
+
+@pytest.mark.asyncio
+async def test_missing_version_id_is_revision_not_found() -> None:
+    client = _client()
+    with Stubber(client) as s:
+        _missing(s, "head_object", {"Bucket": "bucket", "Key": "t.jsonl", "VersionId": "v1"})  # fmt: skip
+        with pytest.raises(RemoteSourceError, match="v1") as exc:
+            await S3SourceResolver(client=client).probe(
+                RemoteRef(ref="s3://bucket/t.jsonl?versionId=v1")
+            )
+    assert exc.value.kind == RemoteErrorKind.REVISION_NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_sidecar_access_denied_is_treated_as_absent() -> None:
+    client = _client()
+    with Stubber(client) as s:
+        s.add_response("head_object", {"ETag": '"e1"'}, {"Bucket": "bucket", "Key": "t.jsonl"})  # fmt: skip
+        s.add_client_error("get_object", service_error_code="AccessDenied", http_status_code=403,
+                           expected_params={"Bucket": "bucket", "Key": "t.jsonl.aiperf.json"})  # fmt: skip
+        probe = await S3SourceResolver(client=client).probe(
+            RemoteRef(ref="s3://bucket/t.jsonl")
+        )
+    assert probe.manifest is None
+
+
+@pytest.mark.asyncio
+async def test_read_prefix_of_empty_object_is_whole() -> None:
+    client = _client()
+    with Stubber(client) as s:
+        s.add_client_error("get_object", service_error_code="InvalidRange", http_status_code=416,
+                           expected_params={"Bucket": "bucket", "Key": "t.jsonl", "Range": "bytes=0-63", "IfMatch": '"e"'})  # fmt: skip
+        result = await S3SourceResolver(client=client).read_prefix(
+            _object_probe('etag:"e"'), 64
+        )
+    assert result == (b"", True)
+
+
+@pytest.mark.asyncio
+async def test_prefix_with_manifest_and_directory_data() -> None:
+    client = _client()
+    with Stubber(client) as s:
+        _stub_directory_probe(s, [{"Key": "set/traces/a.json", "ETag": '"a"'}])
+        probe = await S3SourceResolver(client=client).probe(
+            RemoteRef(ref="s3://bucket/set/")
+        )
+    assert probe.data_is_dir and probe.data_relpath == "set/traces"
+    assert probe.ref.resolved_version.startswith("list:")
+
+
+@pytest.mark.asyncio
+async def test_directory_materialize_pins_each_object_with_if_match() -> None:
+    client = _client()
+    contents = [
+        {"Key": "set/traces/", "ETag": '"dir"'},
+        {"Key": "set/traces/a.json", "ETag": '"a"'},
+        {"Key": "set/traces/sub/b.json", "ETag": '"b"'},
+    ]
+    resolver = S3SourceResolver(client=client)
+    with Stubber(client) as s:
+        _stub_directory_probe(s, contents)
+        _stub_listing(s, contents)
+        s.add_response("get_object", {"Body": _body(b"A")}, {"Bucket": "bucket", "Key": "set/traces/a.json", "IfMatch": '"a"'})  # fmt: skip
+        s.add_response("get_object", {"Body": _body(b"BB")}, {"Bucket": "bucket", "Key": "set/traces/sub/b.json", "IfMatch": '"b"'})  # fmt: skip
+        probe = await resolver.probe(RemoteRef(ref="s3://bucket/set/"))
+        with patch("aiperf.dataset.remote.service.get_resolver", return_value=resolver):  # fmt: skip
+            source = await materialize_probe(probe)
+        s.assert_no_pending_responses()
+    assert source.local_path.name == "traces"
+    assert (source.local_path / "a.json").read_bytes() == b"A"
+    assert (source.local_path / "sub" / "b.json").read_bytes() == b"BB"
+    assert [f.path for f in source.files] == ["set/traces/a.json", "set/traces/sub/b.json"]  # fmt: skip
+    assert cached_source(probe.ref).files == source.files
+
+
+@pytest.mark.asyncio
+async def test_directory_object_replaced_mid_download_writes_no_index() -> None:
+    client = _client()
+    contents = [
+        {"Key": "set/traces/a.json", "ETag": '"a"'},
+        {"Key": "set/traces/b.json", "ETag": '"b"'},
+    ]
+    resolver = S3SourceResolver(client=client)
+    with Stubber(client) as s:
+        _stub_directory_probe(s, contents)
+        _stub_listing(s, contents)
+        s.add_response("get_object", {"Body": _body(b"A")}, {"Bucket": "bucket", "Key": "set/traces/a.json", "IfMatch": '"a"'})  # fmt: skip
+        s.add_client_error("get_object", service_error_code="PreconditionFailed", http_status_code=412,
+                           expected_params={"Bucket": "bucket", "Key": "set/traces/b.json", "IfMatch": '"b"'})  # fmt: skip
+        probe = await resolver.probe(RemoteRef(ref="s3://bucket/set/"))
+        with (
+            patch("aiperf.dataset.remote.service.get_resolver", return_value=resolver),
+            pytest.raises(RemoteSourceError, match="changed after AIPerf pinned") as exc,
+        ):  # fmt: skip
+            await materialize_probe(probe)
+    assert exc.value.kind == RemoteErrorKind.NOT_FOUND
+    assert read_index(probe.ref) is None
+
+
+@pytest.mark.asyncio
+async def test_directory_listing_changed_after_probe_is_changed_after_pin() -> None:
+    client = _client()
+    resolver = S3SourceResolver(client=client)
+    with Stubber(client) as s:
+        _stub_directory_probe(s, [{"Key": "set/traces/a.json", "ETag": '"a"'}])
+        _stub_listing(s, [{"Key": "set/traces/a.json", "ETag": '"a2"'}])
+        probe = await resolver.probe(RemoteRef(ref="s3://bucket/set/"))
+        with pytest.raises(RemoteSourceError, match="changed after AIPerf pinned"):
+            await resolver.materialize(probe)
+        s.assert_no_pending_responses()
+
+
+@pytest.mark.asyncio
+async def test_missing_object_and_prefix_is_not_found() -> None:
+    client = _client()
+    with Stubber(client) as s:
+        _missing(s, "head_object", {"Bucket": "bucket", "Key": "nope.jsonl"})
+        _missing(s, "get_object", {"Bucket": "bucket", "Key": "nope.jsonl/aiperf.json"})
+        with pytest.raises(RemoteSourceError) as exc:
+            await S3SourceResolver(client=client).probe(
+                RemoteRef(ref="s3://bucket/nope.jsonl")
+            )
+    assert exc.value.kind == RemoteErrorKind.NOT_FOUND
+
+
+@pytest.mark.parametrize(
+    "code,status,kind",
+    [
+        param("AccessDenied", 403, RemoteErrorKind.AUTH_DENIED, id="access-denied"),
+        param("403", 403, RemoteErrorKind.AUTH_DENIED, id="head-403"),
+        param("ExpiredToken", 400, RemoteErrorKind.AUTH_MISSING, id="expired-token"),
+        param("SlowDown", 503, RemoteErrorKind.TRANSIENT, id="slow-down"),
+        param("ThrottlingException", 400, RemoteErrorKind.TRANSIENT, id="throttling"),
+        param("RequestTimeout", 400, RemoteErrorKind.TRANSIENT, id="request-timeout"),
+        param("InternalError", 500, RemoteErrorKind.TRANSIENT, id="internal-error"),
+        param("NoSuchBucket", 404, RemoteErrorKind.NOT_FOUND, id="no-such-bucket"),
+        param("400", 400, RemoteErrorKind.NOT_FOUND, id="unmapped-400"),
+    ],
+)  # fmt: skip
+@pytest.mark.asyncio
+async def test_client_error_mapping(code: str, status: int, kind: RemoteErrorKind) -> None:  # fmt: skip
+    client = _client()
+    with Stubber(client) as s:
+        s.add_client_error("head_object", service_error_code=code, http_status_code=status)  # fmt: skip
+        with pytest.raises(RemoteSourceError) as exc:
+            await S3SourceResolver(client=client).probe(
+                RemoteRef(ref="s3://bucket/k.jsonl")
+            )
+    assert exc.value.kind == kind
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        param(EndpointConnectionError(endpoint_url="https://s3.example"), id="endpoint"),
+        param(ConnectionClosedError(endpoint_url="https://s3.example"), id="closed"),
+        param(ReadTimeoutError(endpoint_url="https://s3.example"), id="read-timeout"),
+    ],
+)  # fmt: skip
+@pytest.mark.asyncio
+async def test_connection_errors_are_transient(error: Exception) -> None:
+    client = MagicMock()
+    client.head_object.side_effect = error
+    with pytest.raises(RemoteSourceError) as exc:
+        await S3SourceResolver(client=client).probe(RemoteRef(ref="s3://bucket/k.jsonl"))  # fmt: skip
+    assert exc.value.kind == RemoteErrorKind.TRANSIENT
+
+
+@pytest.mark.asyncio
+async def test_no_credentials_is_auth_missing() -> None:
+    client = MagicMock()
+    client.head_object.side_effect = NoCredentialsError()
+    with pytest.raises(RemoteSourceError, match="AWS credentials") as exc:
+        await S3SourceResolver(client=client).probe(
+            RemoteRef(ref="s3://bucket/k.jsonl")
+        )
+    assert exc.value.kind == RemoteErrorKind.AUTH_MISSING
+
+
+@pytest.mark.asyncio
+async def test_missing_botocore_is_missing_dependency() -> None:
+    with (
+        patch.dict("sys.modules", {"botocore.session": None}),
+        pytest.raises(RemoteSourceError, match=r"aiperf\[aws\]") as exc,
+    ):
+        await S3SourceResolver().probe(RemoteRef(ref="s3://bucket/k.jsonl"))
+    assert exc.value.kind == RemoteErrorKind.MISSING_DEPENDENCY
+
+
+@pytest.mark.asyncio
+async def test_client_is_created_once_off_the_event_loop() -> None:
+    client = MagicMock()
+    client.head_object.return_value = {"ETag": '"e"'}
+    client.get_object.side_effect = _client_error("NoSuchKey", 404)
+    created: list[bool] = []
+
+    def create_client(service: str) -> MagicMock:
+        assert service == "s3"
+        created.append(threading.current_thread() is threading.main_thread())
+        return client
+
+    resolver = S3SourceResolver()
+    with patch("botocore.session.get_session") as get_session:
+        get_session.return_value.create_client.side_effect = create_client
+        await resolver.probe(RemoteRef(ref="s3://bucket/a.jsonl"))
+        await resolver.probe(RemoteRef(ref="s3://bucket/b.jsonl"))
+    assert created == [False]
+
+
+@pytest.mark.asyncio
+async def test_local_disk_full_is_not_transient_and_names_cache_dir() -> None:
+    client = MagicMock()
+    client.get_object.return_value = {"Body": _body(BODY)}
+    disk_full = OSError(errno.ENOSPC, "No space left on device")
+    with (
+        patch("aiperf.dataset.remote.s3.write_atomically", side_effect=disk_full),
+        pytest.raises(RemoteSourceError) as exc,
+    ):
+        await S3SourceResolver(client=client).materialize(_object_probe('etag:"e"'))
+    assert exc.value.kind == RemoteErrorKind.NOT_FOUND
+    assert str(remote_cache_dir()) in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_download_stops_the_thread_and_leaves_no_partial() -> None:
+    started = threading.Event()
+
+    def chunks(chunk_size: int) -> Iterator[bytes]:
+        yield b"x" * 8
+        started.set()
+        # Bounded so a resolver that ignores cancellation fails instead of hanging.
+        for _ in range(2000):
+            time.sleep(0.005)
+            yield b"x" * 8
+
+    body = MagicMock()
+    body.iter_chunks.side_effect = chunks
+    client = MagicMock()
+    client.get_object.return_value = {"Body": body}
+    probe = _object_probe('etag:"e"')
+    task = asyncio.create_task(S3SourceResolver(client=client).materialize(probe))
+    assert await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    # The thread has already finished: it closed the body and removed its partial file.
+    body.close.assert_called_once()
+    assert list(entry_dir(probe.ref).glob("*")) == []

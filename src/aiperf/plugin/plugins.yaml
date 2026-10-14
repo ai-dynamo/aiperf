@@ -2802,6 +2802,12 @@ dataset_source_resolver:
     class: aiperf.dataset.remote.http:HTTPSourceResolver
     description: |
       Same as https, for plain http:// URLs (internal mirrors).
+  s3:
+    class: aiperf.dataset.remote.s3:S3SourceResolver
+    description: |
+      Resolves s3://<bucket>/<key>[?versionId=<id>] with botocore's default credential chain
+      (env vars, ~/.aws, SSO, IRSA/pod identity, instance role). AWS_ENDPOINT_URL_S3 targets
+      S3-compatible stores (MinIO, Ceph, R2). Requires the aiperf[aws] extra.
 
 # =============================================================================
 # ZMQ Proxies
