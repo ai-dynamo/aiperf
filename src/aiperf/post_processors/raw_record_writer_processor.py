@@ -104,6 +104,7 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
         return RawRecordInfo(
             metadata=metadata,
             start_perf_ns=record.request.start_perf_ns,
+            response_body_eof_perf_ns=record.request.response_body_eof_perf_ns,
             payload=None,
             payload_bytes=payload_bytes,
             request_headers=redact_headers(record.request.request_headers),

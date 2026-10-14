@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.plugin.enums import ArrivalPattern, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.runner import PhaseRunner
@@ -43,6 +44,7 @@ def _make_runner(
     pub.publish_phase_complete = AsyncMock()
     pub.publish_progress = AsyncMock()
     router = MagicMock()
+    router.clock = MonotonicClock()
     router.send_credit = router.cancel_all_credits = AsyncMock()
     router.mark_credits_complete = MagicMock()
     router.set_return_callback = router.set_first_token_callback = MagicMock()

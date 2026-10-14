@@ -31,6 +31,7 @@ def _build_real_trajectory_source(
     src._metadata_lookup = {c.conversation_id: c for c in ds.conversations}
     src._random_seed = 0
     src._target_size = len(trajectories)
+    src.finite_root_ids = ()
     src.trajectories = list(trajectories)
     return src
 
@@ -87,6 +88,7 @@ def _make_strategy(
     cfg = MagicMock()
     cfg.phase = phase
     cfg.concurrency = len(trajectories)
+    cfg.finite_replay = False
     return AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,

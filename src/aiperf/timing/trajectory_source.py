@@ -243,6 +243,7 @@ class TrajectorySource(ConversationSource):
         total_expected_requests: int | None = None,
         expected_duration_sec: float | None = None,
         cache_bust_enabled: bool = False,
+        finite_replay: bool = False,
     ) -> None:
         super().__init__(
             dataset_metadata=dataset_metadata, dataset_sampler=dataset_sampler
@@ -267,20 +268,31 @@ class TrajectorySource(ConversationSource):
             for conv in dataset_metadata.conversations
             if getattr(conv, "is_root", True) is not False
         )
-        validate_dataset_wrap_policy(
-            distinct=pool_size,
-            concurrency=concurrency,
-            allow_dataset_wrap=allow_dataset_wrap,
-            expected_num_sessions=expected_num_sessions,
-            total_expected_requests=total_expected_requests,
-            expected_duration_sec=expected_duration_sec,
-            cache_bust_enabled=cache_bust_enabled,
-        )
+        if not finite_replay:
+            validate_dataset_wrap_policy(
+                distinct=pool_size,
+                concurrency=concurrency,
+                allow_dataset_wrap=allow_dataset_wrap,
+                expected_num_sessions=expected_num_sessions,
+                total_expected_requests=total_expected_requests,
+                expected_duration_sec=expected_duration_sec,
+                cache_bust_enabled=cache_bust_enabled,
+            )
         self._concurrency = concurrency
         self._pool_size = pool_size
         self._allow_dataset_wrap = allow_dataset_wrap
+        self.finite_root_ids: tuple[str, ...] = ()
         self._children_by_parent: dict[str, set[str]] = self._build_child_index()
         self._warned_live_delta_snapshot = False
+
+        if finite_replay:
+            self._initialize_finite_replay(
+                dataset_metadata=dataset_metadata,
+                concurrency=concurrency,
+                allow_dataset_wrap=allow_dataset_wrap,
+            )
+            return
+
         # One trajectory per concurrency lane, sampled straight from the dataset
         # sampler (which wraps -- sequential round-robin / shuffle / random --
         # and so alone decides trace selection AND repetition when concurrency
@@ -320,6 +332,29 @@ class TrajectorySource(ConversationSource):
             )
 
         self._log_trajectory_summary()
+
+    def _initialize_finite_replay(
+        self,
+        *,
+        dataset_metadata: DatasetMetadata,
+        concurrency: int,
+        allow_dataset_wrap: bool,
+    ) -> None:
+        if allow_dataset_wrap:
+            raise ValueError("Finite replay does not support dataset wrapping")
+
+        self.finite_root_ids = tuple(
+            conversation.conversation_id
+            for conversation in dataset_metadata.conversations
+            if conversation.is_root and conversation.turns
+        )
+        if not self.finite_root_ids:
+            raise EmptyTracePoolError("Finite replay has no eligible root traces")
+        if len(set(self.finite_root_ids)) != len(self.finite_root_ids):
+            raise ValueError("Finite replay root conversation IDs must be unique")
+
+        self.trajectories: list[Trajectory] = []
+        self._target_size = min(concurrency, len(self.finite_root_ids))
 
     @property
     def cache_bust_ledger(self) -> CacheBustLedger:

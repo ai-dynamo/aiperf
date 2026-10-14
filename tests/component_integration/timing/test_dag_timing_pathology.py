@@ -92,6 +92,7 @@ def _mk_credit(
     c.agent_depth = agent_depth
     c.parent_correlation_id = parent_correlation_id
     c.branch_mode = branch_mode
+    c.finite_replay = False
     c.is_final_turn = turn_index == num_turns - 1
     return c
 

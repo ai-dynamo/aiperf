@@ -31,7 +31,10 @@ from aiperf.transports.http_defaults import AioHttpDefaults, SocketDefaults
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
 
 if TYPE_CHECKING:
-    from aiperf.transports.base_transports import FirstTokenCallback
+    from aiperf.transports.base_transports import (
+        FirstTokenCallback,
+        TransportBoundaryCallback,
+    )
 
 
 def _expected_request_body_size(data: Any) -> int | None:
@@ -92,6 +95,8 @@ class AioHttpClient(AIPerfLoggerMixin):
         data: bytes | aiohttp.FormData | None = None,
         on_request_sent: asyncio.Event | None = None,
         first_token_callback: "FirstTokenCallback | None" = None,
+        transport_start_callback: "TransportBoundaryCallback | None" = None,
+        transport_eof_callback: "TransportBoundaryCallback | None" = None,
         trace_data: AioHttpTraceData | None = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
@@ -172,6 +177,9 @@ class AioHttpClient(AIPerfLoggerMixin):
                 # timestamp_ns from it.
                 record.start_perf_ns = time.perf_counter_ns()
                 record.timestamp_ns = process_clock().wall_ns_at(record.start_perf_ns)
+                if transport_start_callback is not None:
+                    transport_start_callback(record.start_perf_ns)
+
                 async with session.request(
                     method, url, data=data, headers=headers, **kwargs
                 ) as response:
@@ -271,6 +279,17 @@ class AioHttpClient(AIPerfLoggerMixin):
                             async for message in sse_messages:
                                 reader_cls.inspect_message_for_error(message)
                                 record.responses.append(message)
+                        if transport_eof_callback is not None:
+                            if not response.content.at_eof():
+                                async for _ in tracked_content_stream():
+                                    pass
+                            if not response.content.at_eof():
+                                raise SSEResponseError(
+                                    "Successful SSE response did not reach body EOF"
+                                )
+                            eof_perf_ns = time.perf_counter_ns()
+                            record.response_body_eof_perf_ns = eof_perf_ns
+                            transport_eof_callback(eof_perf_ns)
                         record.end_perf_ns = time.perf_counter_ns()
                     else:
                         # Non-SSE response (e.g., JSON or binary)
@@ -287,6 +306,14 @@ class AioHttpClient(AIPerfLoggerMixin):
 
                         if is_binary:
                             raw_bytes = await response.read()
+                            if transport_eof_callback is not None:
+                                if not response.content.at_eof():
+                                    raise SSEResponseError(
+                                        "Successful binary response did not reach body EOF"
+                                    )
+                                eof_perf_ns = time.perf_counter_ns()
+                                record.response_body_eof_perf_ns = eof_perf_ns
+                                transport_eof_callback(eof_perf_ns)
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
                                 BinaryResponse(
@@ -296,6 +323,15 @@ class AioHttpClient(AIPerfLoggerMixin):
                                 )
                             )
                         else:
+                            if transport_eof_callback is not None:
+                                await response.read()
+                                if not response.content.at_eof():
+                                    raise SSEResponseError(
+                                        "Successful HTTP response did not reach body EOF"
+                                    )
+                                eof_perf_ns = time.perf_counter_ns()
+                                record.response_body_eof_perf_ns = eof_perf_ns
+                                transport_eof_callback(eof_perf_ns)
                             raw_response = await response.text()
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
@@ -357,6 +393,8 @@ class AioHttpClient(AIPerfLoggerMixin):
         *,
         cancel_after_ns: int | None = None,
         first_token_callback: "FirstTokenCallback | None" = None,
+        transport_start_callback: "TransportBoundaryCallback | None" = None,
+        transport_eof_callback: "TransportBoundaryCallback | None" = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
         **kwargs: Any,
@@ -384,6 +422,8 @@ class AioHttpClient(AIPerfLoggerMixin):
                 headers,
                 data=payload,
                 first_token_callback=first_token_callback,
+                transport_start_callback=transport_start_callback,
+                transport_eof_callback=transport_eof_callback,
                 connector=connector,
                 connector_owner=connector_owner,
                 **kwargs,
@@ -394,6 +434,8 @@ class AioHttpClient(AIPerfLoggerMixin):
             headers,
             cancel_after_ns,
             first_token_callback=first_token_callback,
+            transport_start_callback=transport_start_callback,
+            transport_eof_callback=transport_eof_callback,
             connector=connector,
             connector_owner=connector_owner,
             **kwargs,

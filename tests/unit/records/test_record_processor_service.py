@@ -219,6 +219,28 @@ class TestRecordProcessorCreateMetricRecordMetadata:
         assert metadata.request_end_ns == expected_end_ns
         assert metadata.worker_id == worker_id
 
+    def test_exact_eof_is_exported_without_redefining_request_end(
+        self, mock_record_processor, sample_request_record
+    ) -> None:
+        start = sample_request_record.start_perf_ns
+        sample_request_record.end_perf_ns = start + 220_000
+        sample_request_record.response_body_eof_perf_ns = start + 200_000
+        last_raw_response = start + 100_000
+
+        metadata = RecordProcessor._create_metric_record_metadata(
+            mock_record_processor,
+            sample_request_record,
+            "worker-2",
+            last_response_perf_ns=last_raw_response,
+        )
+
+        assert metadata.request_end_ns == compute_time_ns(
+            sample_request_record.timestamp_ns, start, last_raw_response
+        )
+        assert metadata.response_body_eof_ns == compute_time_ns(
+            sample_request_record.timestamp_ns, start, start + 200_000
+        )
+
     def test_create_metadata_with_cancellation(
         self, mock_record_processor, sample_request_record
     ):
