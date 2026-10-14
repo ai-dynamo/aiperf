@@ -9,11 +9,15 @@ import uuid
 from pathlib import Path, PurePosixPath
 
 import orjson
+from pydantic import ValidationError
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.config.dataset.remote_ref import RemoteRef
 from aiperf.dataset.mmap_cache import hash_file_bytes
 from aiperf.dataset.remote.cache import digest, remote_cache_dir
 from aiperf.dataset.remote.models import RemoteFile, ResolvedSource
+
+_logger = AIPerfLogger(__name__)
 
 
 def _ref_dir(ref: RemoteRef) -> Path:
@@ -39,28 +43,52 @@ def write_index(source: ResolvedSource) -> None:
         tmp.unlink(missing_ok=True)
 
 
+def _load(path: Path, ref_display: str) -> ResolvedSource | None:
+    """Parse one index entry; None (with a warning) if it is absent or unusable.
+
+    Writes are not fsynced and the cache outlives upgrades, so an entry can be
+    empty, truncated, or from an older schema. Treating those as a miss lets the
+    caller re-materialize instead of failing every later run.
+    """
+    try:
+        return ResolvedSource.model_validate(orjson.loads(path.read_bytes()))
+    except FileNotFoundError:
+        return None
+    except (orjson.JSONDecodeError, ValidationError) as exc:
+        _logger.warning(
+            f"Ignoring unreadable remote dataset index entry for {ref_display} "
+            f"at {path}: {type(exc).__name__}"
+        )
+        return None
+
+
 def read_index(ref: RemoteRef) -> ResolvedSource | None:
-    """Return the indexed source for a pinned ``ref``, or None if absent or unpinned."""
+    """Return the indexed source for a pinned ``ref``; None if absent, unpinned or unreadable."""
     if ref.resolved_version is None:
         return None
-    path = index_path(ref)
-    if not path.is_file():
-        return None
-    return ResolvedSource.model_validate(orjson.loads(path.read_bytes()))
+    return _load(index_path(ref), ref.display)
 
 
 def latest_indexed_version(ref: RemoteRef) -> str | None:
-    """Version of the most recently written index entry for ``ref``, if any."""
+    """Version of the most recently materialized readable index entry for ``ref``.
+
+    Ordering is "last materialized": entry file mtime, with the file name as a
+    deterministic tie-break. Unreadable entries are skipped.
+    """
     directory = _ref_dir(ref)
     if not directory.is_dir():
         return None
-    entries = sorted(
-        directory.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
-    )
-    if not entries:
-        return None
-    source = ResolvedSource.model_validate(orjson.loads(entries[0].read_bytes()))
-    return source.probe.ref.resolved_version
+    stamped: list[tuple[int, str, Path]] = []
+    for path in directory.glob("*.json"):
+        try:
+            stamped.append((path.stat().st_mtime_ns, path.name, path))
+        except FileNotFoundError:
+            continue
+    for _, _, path in sorted(stamped, reverse=True):
+        source = _load(path, ref.display)
+        if source is not None:
+            return source.probe.ref.resolved_version
+    return None
 
 
 def describe_files(local: Path, relpath: str) -> list[RemoteFile]:
