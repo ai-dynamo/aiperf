@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import errno
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -9,6 +10,8 @@ import pytest
 from huggingface_hub.errors import (
     EntryNotFoundError,
     GatedRepoError,
+    HfHubHTTPError,
+    LocalEntryNotFoundError,
     RepositoryNotFoundError,
     RevisionNotFoundError,
 )
@@ -17,6 +20,7 @@ from huggingface_hub.hf_api import RepoFile, RepoFolder
 from aiperf.config.dataset.remote_ref import RemoteRef
 from aiperf.dataset.remote.errors import RemoteErrorKind, RemoteSourceError
 from aiperf.dataset.remote.hf import HFSourceResolver
+from aiperf.dataset.remote.index import read_index
 from aiperf.dataset.remote.service import materialize_probe, probe_ref
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -55,8 +59,13 @@ class FakeRepo:
             link = self.snapshot_dir / rel
             link.parent.mkdir(parents=True, exist_ok=True)
             link.symlink_to(blob)
-        self.info = SimpleNamespace(sha=SHA, private=private, gated=gated)
+        siblings = [SimpleNamespace(rfilename=rel) for rel in files]
+        self.info = SimpleNamespace(
+            sha=SHA, private=private, gated=gated, siblings=siblings
+        )
         self.download_calls: list[str] = []
+        # Simulates snapshot_download falling back to a partial snapshot folder.
+        self.snapshot_drops: list[str] = []
 
     def paths_info(self, repo_id, paths, *, repo_type, revision):
         out = []
@@ -76,6 +85,8 @@ class FakeRepo:
         return str(target)
 
     def snapshot(self, repo_id, *, repo_type, revision, allow_patterns):
+        for rel in self.snapshot_drops:
+            (self.snapshot_dir / rel).unlink(missing_ok=True)
         return str(self.snapshot_dir)
 
     def patches(self):
@@ -248,17 +259,10 @@ async def test_error_text_never_contains_token() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pinned_ref_that_moved_reports_change(tmp_path: Path) -> None:
-    repo = FakeRepo(tmp_path, {"t.jsonl": b"{}\n"})
-    repo.info = SimpleNamespace(sha=OTHER_SHA, private=False, gated=False)
-    p = repo.patches()
+async def test_pinned_commit_that_vanished_reports_change() -> None:
+    gone = RevisionNotFoundError("rev", response=Mock())
     with (
-        p[0],
-        p[1],
-        p[2],
-        p[3],
-        p[4],
-        p[5],
+        patch("huggingface_hub.HfApi.dataset_info", side_effect=gone),
         pytest.raises(RemoteSourceError, match="changed after") as exc,
     ):
         await HFSourceResolver().probe(
@@ -298,3 +302,158 @@ async def test_service_materialize_indexes_hf_symlink(tmp_path: Path) -> None:
         again = await materialize_probe(probe)
     assert again.local_path == source.local_path
     assert len(repo.download_calls) == calls
+
+
+class TransportError(Exception):
+    """Stands in for httpx.TransportError, which the resolver matches by name through the MRO."""
+
+
+class _ReadError(TransportError):
+    pass
+
+
+def _http_error(status: int) -> HfHubHTTPError:
+    return HfHubHTTPError(f"http {status}", response=Mock(status_code=status))
+
+
+@pytest.mark.asyncio
+async def test_transport_error_subclasses_are_transient() -> None:
+    with (
+        patch(
+            "huggingface_hub.HfApi.dataset_info", side_effect=_ReadError("peer reset")
+        ),
+        pytest.raises(RemoteSourceError) as exc,
+    ):
+        await HFSourceResolver().probe(RemoteRef(ref="hf://org/repo/t.jsonl"))
+    assert exc.value.kind == RemoteErrorKind.TRANSIENT
+
+
+@pytest.mark.parametrize(
+    "status,token,kind",
+    [
+        (401, None, RemoteErrorKind.AUTH_MISSING),
+        (401, "hf_x", RemoteErrorKind.AUTH_DENIED),
+        (403, None, RemoteErrorKind.AUTH_DENIED),
+    ],
+)  # fmt: skip
+@pytest.mark.asyncio
+async def test_http_auth_statuses(status, token, kind) -> None:
+    with (
+        patch("huggingface_hub.HfApi.dataset_info", side_effect=_http_error(status)),
+        patch("huggingface_hub.get_token", return_value=token),
+        pytest.raises(RemoteSourceError) as exc,
+    ):
+        await HFSourceResolver().probe(RemoteRef(ref="hf://org/repo/t.jsonl"))
+    assert exc.value.kind == kind
+
+
+def _local_miss(cause: BaseException | None) -> LocalEntryNotFoundError:
+    err = LocalEntryNotFoundError("cannot reach the Hub and nothing is cached")
+    err.__cause__ = cause
+    return err
+
+
+@pytest.mark.parametrize(
+    "cause,token,kind",
+    [
+        (None, "hf_x", RemoteErrorKind.TRANSIENT),
+        (_http_error(429), "hf_x", RemoteErrorKind.TRANSIENT),
+        (_ReadError("reset"), "hf_x", RemoteErrorKind.TRANSIENT),
+        (_http_error(401), None, RemoteErrorKind.AUTH_MISSING),
+        (_http_error(403), "hf_x", RemoteErrorKind.AUTH_DENIED),
+    ],
+)  # fmt: skip
+@pytest.mark.asyncio
+async def test_failed_sidecar_fetch_is_not_a_missing_sidecar(
+    tmp_path: Path, cause, token, kind
+) -> None:
+    """hf_hub_download reports a failed metadata call as LocalEntryNotFoundError, not as a 404."""
+    repo = FakeRepo(tmp_path, {"t.jsonl": b"{}\n"})
+    p = repo.patches()
+    with (
+        p[0], p[1], p[2], p[4], p[5],
+        patch("huggingface_hub.hf_hub_download", side_effect=_local_miss(cause)),
+        patch("huggingface_hub.get_token", return_value=token),
+        pytest.raises(RemoteSourceError) as exc,
+    ):  # fmt: skip
+        await HFSourceResolver().probe(RemoteRef(ref="hf://org/repo/t.jsonl"))
+    assert exc.value.kind == kind
+
+
+@pytest.mark.asyncio
+async def test_failed_root_manifest_fetch_is_transient(tmp_path: Path) -> None:
+    repo = FakeRepo(tmp_path, {"aiperf.json": b"{}"})
+    p = repo.patches()
+    with (
+        p[0], p[1], p[2], p[4], p[5],
+        patch("huggingface_hub.hf_hub_download", side_effect=_local_miss(_http_error(429))),
+        pytest.raises(RemoteSourceError) as exc,
+    ):  # fmt: skip
+        await HFSourceResolver().probe(RemoteRef(ref="hf://org/repo"))
+    assert exc.value.kind == RemoteErrorKind.TRANSIENT
+
+
+_DIR_MANIFEST = orjson.dumps(
+    {"aiperf_manifest_version": 1, "format": "weka_trace", "path": "traces"}
+)
+
+
+@pytest.mark.asyncio
+async def test_partial_snapshot_is_rejected_and_not_indexed(tmp_path: Path) -> None:
+    repo = FakeRepo(
+        tmp_path,
+        {"aiperf.json": _DIR_MANIFEST, "traces/a.json": b"{}", "traces/b.json": b"{}"},
+    )
+    repo.snapshot_drops = ["traces/b.json"]
+    p = repo.patches()
+    with p[0], p[1], p[2], p[3], p[4], p[5]:
+        probe = await probe_ref(RemoteRef(ref="hf://org/repo"))
+        with pytest.raises(RemoteSourceError, match="traces/b.json") as exc:
+            await materialize_probe(probe)
+    assert exc.value.kind == RemoteErrorKind.TRANSIENT
+    assert read_index(probe.ref) is None
+
+
+@pytest.mark.asyncio
+async def test_empty_snapshot_folder_is_rejected(tmp_path: Path) -> None:
+    repo = FakeRepo(tmp_path, {"aiperf.json": _DIR_MANIFEST, "traces/a.json": b"{}"})
+    repo.info.siblings = [SimpleNamespace(rfilename="aiperf.json")]
+    p = repo.patches()
+    with p[0], p[1], p[2], p[3], p[4], p[5]:
+        probe = await probe_ref(RemoteRef(ref="hf://org/repo"))
+        with pytest.raises(RemoteSourceError, match="no files"):
+            await materialize_probe(probe)
+    assert read_index(probe.ref) is None
+
+
+@pytest.mark.asyncio
+async def test_disk_full_is_not_retried_and_names_cache_dir(tmp_path: Path) -> None:
+    repo = FakeRepo(tmp_path, {"t.jsonl": b"{}\n"})
+    p = repo.patches()
+    with p[0], p[1], p[2], p[3], p[4], p[5]:
+        probe = await probe_ref(RemoteRef(ref="hf://org/repo/t.jsonl"))
+        full = Mock(side_effect=OSError(errno.ENOSPC, "No space left on device"))
+        with (
+            patch("huggingface_hub.hf_hub_download", full),
+            pytest.raises(RemoteSourceError, match=str(repo.cache)) as exc,
+        ):
+            await materialize_probe(probe)
+    assert exc.value.kind == RemoteErrorKind.NOT_FOUND
+    assert full.call_count == 1
+    assert read_index(probe.ref) is None
+
+
+@pytest.mark.asyncio
+async def test_partial_snapshot_under_nested_folder_is_rejected(tmp_path: Path) -> None:
+    manifest = orjson.dumps(
+        {"aiperf_manifest_version": 1, "format": "weka_trace", "path": "a/b"}
+    )
+    repo = FakeRepo(
+        tmp_path, {"aiperf.json": manifest, "a/b/x.json": b"{}", "a/b/y.json": b"{}"}
+    )
+    repo.snapshot_drops = ["a/b/y.json"]
+    p = repo.patches()
+    with p[0], p[1], p[2], p[3], p[4], p[5]:
+        probe = await probe_ref(RemoteRef(ref="hf://org/repo"))
+        with pytest.raises(RemoteSourceError, match="a/b/y.json"):
+            await materialize_probe(probe)

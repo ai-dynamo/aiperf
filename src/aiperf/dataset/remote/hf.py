@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import hashlib
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
@@ -29,9 +30,9 @@ from aiperf.dataset.remote.manifest import (
 from aiperf.dataset.remote.models import ProbeResult, ResolvedSource
 
 T = TypeVar("T")
-# huggingface_hub>=1.0 uses httpx, whose transport errors are not OSError subclasses.
-_TRANSIENT_NAMES = frozenset(
-    {"ConnectError", "ConnectTimeout", "ReadTimeout", "RemoteProtocolError", "Timeout"}
+# Local filesystem failures a retry cannot fix (and re-downloading GBs would not help).
+_LOCAL_FS_ERRNOS = frozenset(
+    {errno.ENOSPC, errno.EDQUOT, errno.EROFS, errno.EACCES, errno.EPERM}
 )
 _MANIFEST_MAX_BYTES = 1 << 20
 
@@ -50,9 +51,15 @@ def _error(
 
 
 def _http_error(
-    ref: RemoteRef, e: BaseException, stage: RemoteStage
+    ref: RemoteRef, e: BaseException, stage: RemoteStage, *, has_token: bool
 ) -> RemoteSourceError:
     status = getattr(getattr(e, "response", None), "status_code", None)
+    if status == 401 and not has_token:
+        return _error(
+            ref, kind=RemoteErrorKind.AUTH_MISSING, stage=stage,
+            what="Hugging Face requires authentication (HTTP 401)",
+            hint="Set HF_TOKEN or run `hf auth login`, then retry",
+        )  # fmt: skip
     if status in (401, 403):
         return _error(
             ref, kind=RemoteErrorKind.AUTH_DENIED, stage=stage,
@@ -70,23 +77,69 @@ def _http_error(
     )  # fmt: skip
 
 
-def _translate(
+def _is_transport_error(e: BaseException) -> bool:
+    # huggingface_hub>=1.0 uses httpx, whose transport errors are not OSError
+    # subclasses; matching by name avoids importing httpx.
+    return any(cls.__name__ == "TransportError" for cls in type(e).__mro__)
+
+
+def _local_fs_error(
+    ref: RemoteRef, e: OSError, stage: RemoteStage
+) -> RemoteSourceError:
+    from huggingface_hub import constants
+
+    return _error(
+        ref, kind=RemoteErrorKind.NOT_FOUND, stage=stage,
+        what=f"the Hugging Face cache at {constants.HF_HUB_CACHE} cannot be written ({e.strerror})",
+        hint="Free disk space or fix permissions there, or set HF_HOME to another location, then retry",
+    )  # fmt: skip
+
+
+def _io_error(
     ref: RemoteRef, e: Exception, stage: RemoteStage
 ) -> RemoteSourceError | None:
+    if isinstance(e, OSError) and e.errno in _LOCAL_FS_ERRNOS:
+        return _local_fs_error(ref, e, stage)
+    if isinstance(e, OSError | TimeoutError) or _is_transport_error(e):
+        return _error(
+            ref, kind=RemoteErrorKind.TRANSIENT, stage=stage,
+            what=redact_string(f"the connection failed ({type(e).__name__}: {e})"),
+            hint="Check network access and retry",
+        )  # fmt: skip
+    return None
+
+
+def _translate(
+    ref: RemoteRef, e: Exception, stage: RemoteStage, *, has_token: bool
+) -> RemoteSourceError | None:
     """The user-facing error for a huggingface_hub failure; None when it is not one we map."""
-    from huggingface_hub import get_token
     from huggingface_hub.errors import (
         EntryNotFoundError,
         GatedRepoError,
         HfHubHTTPError,
+        LocalEntryNotFoundError,
         RepositoryNotFoundError,
         RevisionNotFoundError,
     )
 
     repo = ref.parsed.location
     # Order matters: GatedRepoError subclasses RepositoryNotFoundError, and every
-    # one of these subclasses HfHubHTTPError. RemoteEntryNotFoundError (hub>=1.0)
-    # subclasses EntryNotFoundError, so one check covers both.
+    # one of these subclasses HfHubHTTPError. LocalEntryNotFoundError subclasses
+    # EntryNotFoundError but means the metadata call failed (network, 429, 5xx, 403),
+    # not that the file is missing. RemoteEntryNotFoundError (hub>=1.0) subclasses
+    # EntryNotFoundError, so one check covers both.
+    if isinstance(e, LocalEntryNotFoundError):
+        cause = e.__cause__
+        mapped = (
+            _translate(ref, cause, stage, has_token=has_token)
+            if isinstance(cause, Exception)
+            else None
+        )
+        return mapped or _error(
+            ref, kind=RemoteErrorKind.TRANSIENT, stage=stage,
+            what="Hugging Face could not be reached",
+            hint="Check network access and retry",
+        )  # fmt: skip
     if isinstance(e, GatedRepoError):
         return _error(
             ref, kind=RemoteErrorKind.GATED, stage=stage,
@@ -94,14 +147,17 @@ def _translate(
             hint=f"Accept them at https://huggingface.co/datasets/{repo}, then retry",
         )  # fmt: skip
     if isinstance(e, RevisionNotFoundError):
+        if ref.resolved_version is not None:
+            # A pinned commit that no longer resolves was force-pushed away.
+            return changed_after_pin(ref.display, stage, "the repo")
         return _error(
             ref, kind=RemoteErrorKind.REVISION_NOT_FOUND, stage=stage,
-            what=f"{repo} has no revision '{ref.resolved_version or ref.parsed.revision}'",
+            what=f"{repo} has no revision '{ref.parsed.revision}'",
             hint="Check the @revision in the reference",
         )  # fmt: skip
     if isinstance(e, RepositoryNotFoundError):
         # HF answers both "missing" and "private, not yours" with this error.
-        if get_token() is None:
+        if not has_token:
             return _error(
                 ref, kind=RemoteErrorKind.AUTH_MISSING, stage=stage,
                 what=f"{repo} was not found; it may be private",
@@ -119,14 +175,8 @@ def _translate(
             hint="Check the path in the reference",
         )  # fmt: skip
     if isinstance(e, HfHubHTTPError):
-        return _http_error(ref, e, stage)
-    if isinstance(e, OSError | TimeoutError) or type(e).__name__ in _TRANSIENT_NAMES:
-        return _error(
-            ref, kind=RemoteErrorKind.TRANSIENT, stage=stage,
-            what=redact_string(f"the connection failed ({type(e).__name__}: {e})"),
-            hint="Check network access and retry",
-        )  # fmt: skip
-    return None
+        return _http_error(ref, e, stage, has_token=has_token)
+    return _io_error(ref, e, stage)
 
 
 async def _hf_call(
@@ -136,15 +186,26 @@ async def _hf_call(
     stage: RemoteStage = RemoteStage.ACCESS,
     missing_ok: bool = False,
 ) -> T | None:
-    """Run a blocking huggingface_hub call in a thread, mapping its errors to ``RemoteSourceError``."""
-    from huggingface_hub.errors import EntryNotFoundError
+    """Run a blocking huggingface_hub call in a thread, mapping its errors to ``RemoteSourceError``.
+
+    ``missing_ok`` returns None only for a genuine remote 404; a failed metadata
+    call (``LocalEntryNotFoundError``) is an error, not a missing file.
+    """
+    from huggingface_hub import get_token
+    from huggingface_hub.errors import EntryNotFoundError, LocalEntryNotFoundError
 
     try:
         return await asyncio.to_thread(fn)
     except Exception as e:
-        if missing_ok and isinstance(e, EntryNotFoundError):
+        if (
+            missing_ok
+            and isinstance(e, EntryNotFoundError)
+            and not isinstance(e, LocalEntryNotFoundError)
+        ):
             return None
-        mapped = _translate(ref, e, stage)
+        # get_token reads files and env; keep it off the event loop.
+        has_token = await asyncio.to_thread(get_token) is not None
+        mapped = _translate(ref, e, stage, has_token=has_token)
         if mapped is None:
             raise
         raise mapped from e
@@ -234,8 +295,6 @@ async def _pin(ref: RemoteRef, api: Any) -> tuple[str, bool]:
     if info.gated:
         await _hf_call(ref, lambda: api.auth_check(repo, repo_type="dataset"))
     sha: str = info.sha
-    if ref.resolved_version is not None and ref.resolved_version != sha:
-        raise changed_after_pin(ref.display, RemoteStage.ACCESS, "the repo")
     return sha, bool(info.private) or bool(info.gated)
 
 
@@ -268,6 +327,45 @@ async def _manifest_for_root(
             hint="Ask the publisher to fix aiperf.json",
         )  # fmt: skip
     return manifest, manifest_sha, data_relpath, isinstance(found[0], RepoFolder)
+
+
+async def _expected_files(ref: RemoteRef, relpath: str) -> list[str]:
+    """Repo paths under the folder ``relpath`` at the pinned commit."""
+    from huggingface_hub import HfApi
+
+    repo, sha = ref.parsed.location, ref.resolved_version
+    info: Any = await _hf_call(
+        ref,
+        lambda: HfApi().dataset_info(repo, revision=sha),
+        stage=RemoteStage.MATERIALIZE,
+    )
+    prefix = f"{relpath}/"
+    expected = [
+        sibling.rfilename
+        for sibling in info.siblings or []
+        if sibling.rfilename.startswith(prefix)
+    ]
+    if not expected:
+        raise _error(
+            ref, kind=RemoteErrorKind.NOT_FOUND, stage=RemoteStage.MATERIALIZE,
+            what=f"{repo} has no files under '{relpath}' at the pinned version",
+            hint="Ask the publisher to fix aiperf.json",
+        )  # fmt: skip
+    return expected
+
+
+def _require_complete(
+    ref: RemoteRef, snapshot: Path, local: Path, expected: list[str]
+) -> None:
+    missing = [rel for rel in expected if not (snapshot / rel).is_file()]
+    if local.is_dir() and not missing:
+        return
+    shown = ", ".join(missing[:3]) if missing else str(local)
+    raise _error(
+        ref, kind=RemoteErrorKind.TRANSIENT, stage=RemoteStage.MATERIALIZE,
+        what=f"the download is incomplete (missing {shown})",
+        hint="Check network access and retry",
+    )  # fmt: skip
 
 
 class HFSourceResolver:
@@ -342,6 +440,9 @@ class HFSourceResolver:
         relpath = probe.data_relpath or ""
         stage = RemoteStage.MATERIALIZE
         if probe.data_is_dir:
+            # snapshot_download returns the existing snapshot folder, unverified, when
+            # its own repo-info call fails, so the expected file set comes from our own.
+            expected = await _expected_files(ref, relpath)
             root = await _hf_call(
                 ref,
                 lambda: snapshot_download(
@@ -352,7 +453,9 @@ class HFSourceResolver:
                 ),
                 stage=stage,
             )
-            local = Path(str(root)) / relpath
+            snapshot = Path(str(root))
+            local = snapshot / relpath
+            await asyncio.to_thread(_require_complete, ref, snapshot, local, expected)
         else:
             downloaded = await _hf_call(
                 ref,
