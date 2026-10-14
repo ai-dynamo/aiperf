@@ -141,9 +141,14 @@ def _stamp_scenario_submission_metadata(
     """
     base_config = plan.configs[0]
 
-    from aiperf.dataset.provenance import public_dataset_provenance
+    from aiperf.dataset.provenance import (
+        public_dataset_provenance,
+        remote_dataset_provenance,
+    )
 
-    dataset = public_dataset_provenance(base_config)
+    dataset = public_dataset_provenance(base_config) or remote_dataset_provenance(
+        base_config
+    )
     if dataset is not None:
         aggregate.metadata["dataset"] = dataset
 
