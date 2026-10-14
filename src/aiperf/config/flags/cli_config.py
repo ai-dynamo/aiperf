@@ -702,7 +702,9 @@ class CLIConfig(BaseConfig):
     input_file: Annotated[
         Any,
         Field(
-            description="Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. "
+            description="Path to file or directory containing benchmark dataset, or a remote "
+            "reference (`hf://<org>/<repo>[@<rev>][/<path>]`, `s3://<bucket>/<key>`, `https://...`) "
+            "downloaded into a local cache before the run. Required when using `--custom-dataset-type`. "
             "Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), "
             "Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
         ),

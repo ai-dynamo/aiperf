@@ -660,7 +660,14 @@ def _maybe_set_dag_root_sessions(
 def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> None:
     """Apply dataset-sensitive CLI defaults for trace/fixed/dag datasets."""
 
+    from aiperf.config.dataset.remote_ref import RemoteRef
     from aiperf.config.phases import PhaseType
+
+    if isinstance(cli.input_file, RemoteRef):
+        # The file does not exist locally yet; the access preflight finishes these
+        # decisions after it can read the first record (see dataset/remote/preflight.py).
+        _reject_remote_dag_without_stop_condition(prof, cli)
+        return
 
     file_path: Path | None = cli.input_file if cli.input_file is not None else None
 
@@ -677,6 +684,24 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
             prof["requests"] = records
 
     _maybe_set_dag_root_sessions(prof, cli, file_path)
+
+
+def _reject_remote_dag_without_stop_condition(
+    prof: dict[str, Any], cli: CLIConfig
+) -> None:
+    """A remote dag_jsonl cannot be counted before download, so require a bound."""
+    from aiperf.plugin.enums import CustomDatasetType
+
+    dataset_type = cli.custom_dataset_type
+    if dataset_type is None or str(dataset_type) != str(CustomDatasetType.DAG_JSONL):
+        return
+    if any(k in prof for k in ("requests", "duration", "sessions")):
+        return
+    raise ValueError(
+        "--input-file is a remote reference, so AIPerf cannot count the DAG root "
+        "sessions before the run. Pass --conversation-num, --request-count, or "
+        "--benchmark-duration explicitly."
+    )
 
 
 def _columnar_file_has_timestamp(path: Path) -> bool | None:

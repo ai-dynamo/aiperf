@@ -809,7 +809,7 @@ def _raise_file_dataset_violation(
         and attr in _RANDOM_POOL_BATCH_SIZE_FLAGS
         and getattr(cli, attr) != 1
     ]
-    if set_batch_flags and cli.input_file is not None and Path(cli.input_file).is_dir():
+    if set_batch_flags and isinstance(cli.input_file, Path) and cli.input_file.is_dir():
         raise ValueError(
             f"{', '.join(set_batch_flags)} is not supported when --input-file is a "
             "directory: each file forms a separately named pool, and batching "
