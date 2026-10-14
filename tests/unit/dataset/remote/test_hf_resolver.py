@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import errno
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -58,7 +59,10 @@ class FakeRepo:
             blob.write_bytes(data)
             link = self.snapshot_dir / rel
             link.parent.mkdir(parents=True, exist_ok=True)
-            link.symlink_to(blob)
+            try:
+                link.symlink_to(blob)
+            except (OSError, NotImplementedError):
+                pytest.skip("symlinks are not available on this platform")
         siblings = [SimpleNamespace(rfilename=rel) for rel in files]
         self.info = SimpleNamespace(
             sha=SHA, private=private, gated=gated, siblings=siblings
@@ -448,7 +452,7 @@ async def test_disk_full_is_not_retried_and_names_cache_dir(tmp_path: Path) -> N
         full = Mock(side_effect=OSError(errno.ENOSPC, "No space left on device"))
         with (
             patch("huggingface_hub.hf_hub_download", full),
-            pytest.raises(RemoteSourceError, match=str(repo.cache)) as exc,
+            pytest.raises(RemoteSourceError, match=re.escape(str(repo.cache))) as exc,
         ):
             await materialize_probe(probe)
     assert exc.value.kind == RemoteErrorKind.NOT_FOUND
