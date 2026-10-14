@@ -44,6 +44,8 @@ _logger = AIPerfLogger(__name__)
 T = TypeVar("T")
 
 _CHUNK = 1 << 20
+_CONNECT_TIMEOUT_S = 10
+_READ_TIMEOUT_S = 30
 _MANIFEST_MAX_BYTES = 1 << 20
 # Local filesystem failures a retry cannot fix (and re-downloading GBs would not help).
 _LOCAL_FS_ERRNOS = frozenset(
@@ -120,12 +122,22 @@ def _join(root: str, rel: str) -> str:
 
 
 def _is_safe_relpath(rel: str) -> bool:
-    """Whether a key below the data prefix maps to a file inside the cache entry."""
-    return (
-        all(part not in ("", ".", "..") for part in rel.split("/"))
-        and "\\" not in rel
-        and not PureWindowsPath(rel).drive
+    """Whether a key below the data prefix maps to a file inside the cache entry.
+
+    Checked per segment: on Windows a drive in any later segment (``x/D:y``) resets
+    the joined path, and any ``:`` names an NTFS alternate data stream.
+    """
+    return all(
+        part not in ("", ".", "..")
+        and ":" not in part
+        and "\\" not in part
+        and not PureWindowsPath(part).anchor
+        for part in rel.split("/")
     )
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    return path.resolve().is_relative_to(root.resolve())
 
 
 def _revision_missing(ref: RemoteRef, stage: RemoteStage) -> RemoteSourceError:
@@ -278,15 +290,22 @@ class _Stopped(Exception):
 
 
 def _until_stopped(stop: threading.Event, chunks: Iterable[bytes]) -> Iterator[bytes]:
-    for chunk in chunks:
-        if stop.is_set():
-            raise _Stopped
+    """``chunks``, checking ``stop`` before each read so a cancel never waits on one."""
+    iterator = iter(chunks)
+    while not stop.is_set():
+        chunk = next(iterator, None)
+        if chunk is None:
+            return
         yield chunk
+    raise _Stopped
 
 
 def _download_object(
     client: Any, params: dict[str, str], dest: Path, stop: threading.Event
 ) -> tuple[str, int]:
+    # The thread may start after the caller was cancelled; don't open a request then.
+    if stop.is_set():
+        raise _Stopped
     body = client.get_object(**params)["Body"]
     try:
         # write_atomically removes its partial file when the iterator raises.
@@ -317,13 +336,21 @@ async def _in_stoppable_thread(fn: Callable[[threading.Event], T]) -> T:
 def _create_client(ref: RemoteRef) -> Any:
     try:
         import botocore.session
+        from botocore.config import Config
     except ImportError as e:
         raise _error(
             ref, kind=RemoteErrorKind.MISSING_DEPENDENCY, stage=RemoteStage.ACCESS,
             what="s3:// references need the optional botocore dependency",
             hint=install_optional_dependency_hint(AWS_EXTRA),
         ) from e  # fmt: skip
-    return botocore.session.get_session().create_client("s3")
+    # The service already retries transient failures; botocore's default of 5
+    # attempts with 60 s timeouts under it would stall a dead endpoint for minutes.
+    config = Config(
+        connect_timeout=_CONNECT_TIMEOUT_S,
+        read_timeout=_READ_TIMEOUT_S,
+        retries={"mode": "standard", "max_attempts": 1},
+    )
+    return botocore.session.get_session().create_client("s3", config=config)
 
 
 class S3SourceResolver:
@@ -585,5 +612,11 @@ class S3SourceResolver:
                 if probe.data_is_dir
                 else local
             )
+            if not await asyncio.to_thread(_is_within, dest, entry):
+                raise _error(
+                    ref, kind=RemoteErrorKind.MANIFEST_INVALID, stage=stage,
+                    what=f"S3 key {obj.key!r} would be stored outside the cache entry",
+                    hint="Ask the publisher to rename that object",
+                )  # fmt: skip
             files.append(await self._download(ref, _object_params(bucket, obj), dest))
         return ResolvedSource(probe=probe, local_path=local, files=files)
