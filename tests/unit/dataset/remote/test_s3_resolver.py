@@ -6,6 +6,7 @@ import io
 import threading
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -34,7 +35,11 @@ from aiperf.dataset.remote.errors import (  # noqa: E402
 )
 from aiperf.dataset.remote.index import read_index  # noqa: E402
 from aiperf.dataset.remote.models import ProbeResult  # noqa: E402
-from aiperf.dataset.remote.s3 import S3SourceResolver  # noqa: E402
+from aiperf.dataset.remote.s3 import (  # noqa: E402
+    S3SourceResolver,
+    _download_object,
+    _Stopped,
+)
 from aiperf.dataset.remote.service import cached_source, materialize_probe  # noqa: E402
 from aiperf.plugin import plugins  # noqa: E402
 from aiperf.plugin.enums import PluginType  # noqa: E402
@@ -352,10 +357,12 @@ async def test_client_is_created_once_off_the_event_loop() -> None:
     client.head_object.return_value = {"ETag": '"e"'}
     client.get_object.side_effect = _client_error("NoSuchKey", 404)
     created: list[bool] = []
+    configs: list = []
 
-    def create_client(service: str) -> MagicMock:
+    def create_client(service: str, *, config) -> MagicMock:
         assert service == "s3"
         created.append(threading.current_thread() is threading.main_thread())
+        configs.append(config)
         return client
 
     resolver = S3SourceResolver()
@@ -364,6 +371,10 @@ async def test_client_is_created_once_off_the_event_loop() -> None:
         await resolver.probe(RemoteRef(ref="s3://bucket/a.jsonl"))
         await resolver.probe(RemoteRef(ref="s3://bucket/b.jsonl"))
     assert created == [False]
+    # One attempt with short timeouts: the service's transient retry is the only retry layer.
+    assert configs[0].connect_timeout == 10
+    assert configs[0].read_timeout == 30
+    assert configs[0].retries == {"mode": "standard", "max_attempts": 1}
 
 
 @pytest.mark.asyncio
@@ -405,3 +416,99 @@ async def test_cancelled_download_stops_the_thread_and_leaves_no_partial() -> No
     # The thread has already finished: it closed the body and removed its partial file.
     body.close.assert_called_once()
     assert list(entry_dir(probe.ref).glob("*")) == []
+
+
+@pytest.mark.parametrize(
+    "unsafe_key",
+    [
+        param("set/traces/../x.json", id="dot-dot"),
+        param("set/traces//x.json", id="empty-segment"),
+        param("set/traces/a\\b.json", id="backslash"),
+        param("set/traces/x/D:y.json", id="drive-in-later-segment"),
+        param("set/traces/C:/x.json", id="drive-first-segment"),
+        param("set/traces/x.json:stream", id="alternate-data-stream"),
+    ],
+)  # fmt: skip
+@pytest.mark.asyncio
+async def test_directory_keys_unsafe_as_local_paths_are_never_downloaded(unsafe_key: str) -> None:  # fmt: skip
+    client = _client()
+    contents = [
+        {"Key": unsafe_key, "ETag": '"u"'},
+        {"Key": "set/traces/a.json", "ETag": '"a"'},
+    ]
+    resolver = S3SourceResolver(client=client)
+    with Stubber(client) as s:
+        _stub_directory_probe(s, contents)
+        _stub_listing(s, contents)
+        # Only the safe key is stubbed; any GET of the unsafe key fails the Stubber.
+        s.add_response("get_object", {"Body": _body(b"A")}, {"Bucket": "bucket", "Key": "set/traces/a.json", "IfMatch": '"a"'})  # fmt: skip
+        probe = await resolver.probe(RemoteRef(ref="s3://bucket/set/"))
+        source = await resolver.materialize(probe)
+        s.assert_no_pending_responses()
+    assert [f.path for f in source.files] == ["set/traces/a.json"]
+
+
+@pytest.mark.asyncio
+async def test_directory_key_resolving_outside_the_entry_is_rejected() -> None:
+    client = _client()
+    contents = [{"Key": "set/traces/../../escape.json", "ETag": '"e"'}]
+    resolver = S3SourceResolver(client=client)
+    with (
+        Stubber(client) as s,
+        patch("aiperf.dataset.remote.s3._is_safe_relpath", return_value=True),
+    ):
+        _stub_directory_probe(s, contents)
+        _stub_listing(s, contents)
+        probe = await resolver.probe(RemoteRef(ref="s3://bucket/set/"))
+        with pytest.raises(RemoteSourceError, match="outside") as exc:
+            await resolver.materialize(probe)
+        s.assert_no_pending_responses()
+    assert exc.value.kind == RemoteErrorKind.MANIFEST_INVALID
+
+
+@pytest.mark.asyncio
+async def test_cancel_before_get_object_never_requests_it() -> None:
+    # A one-worker default executor, kept busy, holds the download thread back so
+    # the cancellation lands before it reaches get_object.
+    executor = ThreadPoolExecutor(max_workers=1)
+    asyncio.get_running_loop().set_default_executor(executor)
+    release = threading.Event()
+    executor.submit(release.wait, 5)
+    client = MagicMock()
+    probe = _object_probe('etag:"e"')
+    task = asyncio.create_task(S3SourceResolver(client=client).materialize(probe))
+    for _ in range(10):
+        await asyncio.sleep(0)
+    task.cancel()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert not task.done()
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    client.get_object.assert_not_called()
+    assert list(entry_dir(probe.ref).glob("*")) == []
+
+
+def test_stop_after_get_object_reads_no_chunk(tmp_path: Path) -> None:
+    stop = threading.Event()
+    reads: list[int] = []
+
+    def chunks(chunk_size: int) -> Iterator[bytes]:
+        reads.append(chunk_size)
+        yield b"x"
+
+    body = MagicMock()
+    body.iter_chunks.side_effect = chunks
+
+    def get_object(**params: str) -> dict:
+        stop.set()
+        return {"Body": body}
+
+    client = MagicMock()
+    client.get_object.side_effect = get_object
+    with pytest.raises(_Stopped):
+        _download_object(client, {"Bucket": "bucket", "Key": "t.jsonl"}, tmp_path / "t.jsonl", stop)  # fmt: skip
+    assert reads == []
+    body.close.assert_called_once()
+    assert list(tmp_path.glob("*")) == []
