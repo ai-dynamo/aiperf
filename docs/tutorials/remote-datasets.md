@@ -126,7 +126,7 @@ see [Publishing traces](publishing-traces.md#publishing-with-datasetspush_to_hub
    that the manifest (if any) is valid and compatible with the run: the format must exist in
    this AIPerf, the `requires.aiperf` version specifier and `requires.endpoint_types` must be
    satisfied. It pins the exact version here (Hugging Face commit SHA, S3 object version or
-   ETag, HTTP ETag). Problems fail at this step, before anything is downloaded, including a
+   ETag, HTTP `ETag` or, without one, `Last-Modified` and length). Problems fail at this step, before anything is downloaded, including a
    parquet source whose declared format does not read parquet. The one exception is a parquet
    file or folder that needs the first-record check (a trace format declared by flag or
    manifest, and neither `--fixed-schedule` nor `--no-fixed-schedule`): it is downloaded here
