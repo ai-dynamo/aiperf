@@ -104,6 +104,22 @@ it replayed. Tell consumers to pin with `@<commit>` or a tag (`hf://<org>/<repo>
 need comparable results across runs. Gated repos work; consumers must accept the terms on the
 dataset page and authenticate.
 
+## Publishing with `datasets.push_to_hub`
+
+A dataset pushed with `datasets.push_to_hub` already runs, with no manifest:
+
+```python
+from datasets import Dataset
+
+Dataset.from_list(rows).push_to_hub("<org>/<repo>", config_name="mooncake")
+```
+
+Consumers run `--input-file hf://datasets/<org>/<repo>/mooncake --custom-dataset-type mooncake_trace`;
+see [Parquet Datasets](remote-datasets.md#parquet-datasets) for how AIPerf finds the shards.
+Adding an `aiperf.json` still buys the declared `format` (so consumers can drop
+`--custom-dataset-type`), the `requires` checks, and `sha256` verification, which covers single
+files only.
+
 ## Publishing to S3
 
 ```bash

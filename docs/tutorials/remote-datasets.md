@@ -59,6 +59,53 @@ pass both and they disagree, the run fails before anything is downloaded.
 
 ---
 
+## Parquet Datasets
+
+Parquet files and directories of parquet shards work wherever JSONL does, for the formats
+that read their records through the shared reader: `mooncake_trace`, `bailian_trace`,
+`single_turn`, `multi_turn`, the `speed_bench_*` formats, and `baseten_trace` (a single file
+only; a directory of Baseten shards is rejected). Any other format fails before the run with
+"does not read parquet files"; convert the data to JSONL or choose a format that reads parquet.
+
+- Rows are read as JSON records and nulls are dropped, which restores the record shape of the
+  JSONL file that `datasets.push_to_hub` started from. Binary, timestamp, decimal, and map
+  columns, and NaN or infinity values, are rejected with the name of the column.
+- A directory reads every shard in order. When the shards are named
+  `<split>-00000-of-00002.parquet` and several splits are present, AIPerf reads `train`.
+- `pyarrow` ships with AIPerf on every platform except Windows on ARM, which has no wheel. There
+  a remote parquet source fails before anything is downloaded.
+
+A Hugging Face repo with **no `aiperf.json`** also runs when it uses the layout that
+`datasets.push_to_hub` writes, or the one on the `refs/convert/parquet` branch:
+
+```bash
+# A config folder (the only folder holding parquet, or one that has a train split)
+aiperf profile ... --input-file hf://datasets/<org>/<repo>/<config> \
+    --custom-dataset-type mooncake_trace
+
+# The auto-converted parquet branch of any dataset (URL-encode the slashes in the branch)
+aiperf profile ... --input-file "hf://datasets/<org>/<repo>@refs%2Fconvert%2Fparquet/<config>/train" \
+    --custom-dataset-type mooncake_trace
+
+# A single shard file
+aiperf profile ... --input-file hf://datasets/<org>/<repo>/<config>/train-00000-of-00001.parquet \
+    --custom-dataset-type mooncake_trace
+```
+
+Without a manifest, AIPerf picks the data as follows:
+
+1. It descends into the only folder that holds parquet, or into `train` when several folders do.
+2. In a folder of shards it reads the `train` split. When other splits are dropped, the run log
+   says so at INFO level.
+3. If there are several datasets and none is named `train`, or the splits have no `train`, the
+   run fails and the error lists ready-to-use references (`Use one of: ...`).
+
+A manifest-less remote parquet source replays on its recorded timestamp schedule only when
+`--custom-dataset-type` names a trace format. To also declare the format, add `aiperf.json`;
+see [Publishing traces](publishing-traces.md#publishing-with-datasetspush_to_hub).
+
+---
+
 ## What Happens Before the Run
 
 1. **Access check.** AIPerf checks that the source exists, that your credentials work, and
@@ -157,6 +204,11 @@ in the table.
 | "it supports --endpoint-type" | The manifest limits the endpoint types | Pass a supported `--endpoint-type` |
 | "its manifest declares format" or "conflicts with this run's dataset options" | The manifest disagrees with your flags | Drop the conflicting option, or pass the manifest's format |
 | "its first record does not look like" | The file is not in the declared format | Check the manifest's format, or pass the right `--custom-dataset-type` |
+| "has several datasets under" | A manifest-less Hugging Face repo with parquet in several folders, none named `train` | Use one of the references the error lists |
+| "holds the splits" or "hold the splits" | A parquet folder (Hugging Face, S3 manifest folder, or local directory) with several splits and none named `train` | Point at one split's folder or shard, as the error suggests |
+| "does not read parquet files" | A parquet source with a format that only reads JSONL | Convert the data to JSONL, or choose a format that reads parquet |
+| "parquet datasets need pyarrow" | `pyarrow` is missing; it is installed everywhere except Windows on ARM, which has no wheel | Run on another platform, or convert the data to JSONL |
+| "which AIPerf records cannot hold" | A parquet column of binary, timestamp, decimal, or map type, or a NaN or infinity value | Convert that column to a supported type; the message names it |
 | "the downloaded file's sha256 is" | The file does not match the manifest's `sha256` | Retry; if it persists, the publisher's file or manifest is wrong |
 | "changed after AIPerf pinned its version" | The remote changed during the run | Run again to use the new version |
 | "need the optional botocore dependency" | `s3://` without the AWS extra | `uv pip install 'aiperf[aws]'` |
