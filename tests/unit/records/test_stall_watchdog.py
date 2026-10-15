@@ -351,6 +351,22 @@ async def test_offsetting_worker_counts_still_read_as_activity(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
+async def test_a_restarted_worker_s_counter_reset_is_activity(monkeypatch) -> None:
+    """A lone worker whose count drops has restarted, which is not a freeze.
+
+    This is why the comparison is `!=` and not `>`. With a single worker there
+    is no second count to carry the signal, so treating only increases as
+    activity would let the clock run through a restart and cancel a run that
+    is streaming.
+    """
+    mgr = _Manager()
+    await _tick_with_stream(mgr, monkeypatch, now=0.0, chunks={"w1": 900})
+    await _tick_with_stream(mgr, monkeypatch, now=300.0, chunks={"w1": 3})
+    await _tick_with_stream(mgr, monkeypatch, now=700.0, chunks={"w1": 3})
+    assert mgr.cancels == []
+
+
+@pytest.mark.asyncio
 async def test_a_newly_reporting_idle_worker_is_not_activity(monkeypatch) -> None:
     """A worker that first reports zero chunks has streamed nothing."""
     mgr = _Manager()
