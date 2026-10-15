@@ -11,8 +11,10 @@ rest of the YAML becomes ``AIPerfSweep.spec.benchmark``.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import re
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Annotated, Any, NamedTuple
 
 from cyclopts import App, Parameter
@@ -90,12 +92,16 @@ async def sweep(
             --trials 5 --cooldown 30
     """
     from aiperf import cli_utils
+    from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes.cli_helpers import resolve_benchmark_namespace
 
     kube_options = kube_options or KubeOptions()
     config_file = cli_config.config_file
-    with cli_utils.exit_on_error(title="Error Running Kubernetes Sweep"):
-        cr_dict = _build_sweep_cr_dict(
+    # --dry-run stdout is the CR JSON; keep resolution warnings off it.
+    quiet = kube_console.machine_readable_stdout() if dry_run else nullcontext()
+    with cli_utils.exit_on_error(title="Error Running Kubernetes Sweep"), quiet:
+        cr_dict = await asyncio.to_thread(
+            _build_sweep_cr_dict,
             config_file=config_file,
             cli_config=cli_config,
             kube_options=kube_options,
@@ -114,8 +120,6 @@ async def sweep(
         cr_dict.setdefault("metadata", {})["namespace"] = namespace
         if dry_run:
             import orjson
-
-            from aiperf.kubernetes import console as kube_console
 
             kube_console.emit_raw(
                 orjson.dumps(cr_dict, option=orjson.OPT_INDENT_2).decode()
@@ -245,6 +249,7 @@ def _normalized_config_parts(
         apply_cli_overrides,
         apply_deferred_sweep_overrides,
     )
+    from aiperf.kubernetes.remote_datasets import pin_remote_datasets_for_kubernetes
     from aiperf.kubernetes.spec_converter import (
         dataset_names,
         restore_jinja_templates,
@@ -265,6 +270,8 @@ def _normalized_config_parts(
             cli_config, sweep_cfg=sweep_cfg, multirun_cfg=multirun_cfg
         )
         config = apply_cli_overrides(config, cli_config, deferred_fields=deferred)
+    # Pinned once here, every child AIPerfJob inherits the same version.
+    pin_remote_datasets_for_kubernetes(config.benchmark)
     rendered = config.model_dump(
         mode="json",
         by_alias=True,
