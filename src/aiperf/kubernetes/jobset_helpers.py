@@ -197,6 +197,12 @@ def build_shared_volumes(
     return volumes
 
 
+def _normalized_mount_path(mount: dict[str, Any] | None) -> str:
+    """A mount's ``mountPath`` without trailing slashes; empty when absent or not a string."""
+    path = (mount or {}).get("mountPath")
+    return path.rstrip("/") if isinstance(path, str) else ""
+
+
 def build_remote_cache_env_and_mounts(
     pod_template: PodTemplateConfig,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -212,7 +218,7 @@ def build_remote_cache_env_and_mounts(
         (item or {}).get("name") == REMOTE_CACHE_ENV for item in pod_template.env
     )
     user_mount = any(
-        (mount or {}).get("mountPath") == REMOTE_CACHE_MOUNT_PATH
+        _normalized_mount_path(mount) == REMOTE_CACHE_MOUNT_PATH
         for mount in pod_template.volume_mounts
     )
     env = (

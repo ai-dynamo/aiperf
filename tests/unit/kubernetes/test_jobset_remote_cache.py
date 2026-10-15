@@ -80,28 +80,56 @@ def test_other_controller_containers_do_not_mount_remote_cache(name: str) -> Non
     assert _env_values(container, REMOTE_CACHE_ENV) == []
 
 
-def test_dataset_manager_user_remote_cache_env_wins() -> None:
-    template = PodTemplateConfig(
-        env=[{"name": REMOTE_CACHE_ENV, "value": "/pvc/aiperf-remote"}]
-    )
-    container = _container(_controller_pod(template), Containers.DATASET_MANAGER)
-    assert _env_values(container, REMOTE_CACHE_ENV) == ["/pvc/aiperf-remote"]
+_CACHE_CONTAINERS = [
+    param(Containers.DATASET_MANAGER, id="dataset-manager"),
+    param(Containers.CONTROL_PLANE, id="control-plane"),
+]
 
 
-def test_dataset_manager_user_mount_at_remote_cache_path_skips_builtin_mount() -> None:
-    template = PodTemplateConfig(
+def _user_pvc_template(mount_path: str) -> PodTemplateConfig:
+    return PodTemplateConfig(
         volumes=[
             {"name": "pvc-cache", "persistentVolumeClaim": {"claimName": "cache"}}
         ],
-        volume_mounts=[{"name": "pvc-cache", "mountPath": REMOTE_CACHE_MOUNT_PATH}],
+        volume_mounts=[{"name": "pvc-cache", "mountPath": mount_path}],
     )
-    container = _container(_controller_pod(template), Containers.DATASET_MANAGER)
+
+
+@pytest.mark.parametrize("name", _CACHE_CONTAINERS)  # fmt: skip
+def test_user_remote_cache_env_wins(name: str) -> None:
+    template = PodTemplateConfig(
+        env=[{"name": REMOTE_CACHE_ENV, "value": "/pvc/aiperf-remote"}]
+    )
+    container = _container(_controller_pod(template), name)
+    assert _env_values(container, REMOTE_CACHE_ENV) == ["/pvc/aiperf-remote"]
+
+
+@pytest.mark.parametrize("name", _CACHE_CONTAINERS)  # fmt: skip
+@pytest.mark.parametrize(
+    "user_path",
+    [
+        param(REMOTE_CACHE_MOUNT_PATH, id="exact"),
+        param(f"{REMOTE_CACHE_MOUNT_PATH}/", id="trailing-slash"),
+    ],
+)  # fmt: skip
+def test_user_mount_at_remote_cache_path_skips_builtin_mount(
+    name: str, user_path: str
+) -> None:
+    container = _container(_controller_pod(_user_pvc_template(user_path)), name)
     mounts = [
         m
         for m in container["volumeMounts"]
-        if m["mountPath"] == REMOTE_CACHE_MOUNT_PATH
+        if m["mountPath"].rstrip("/") == REMOTE_CACHE_MOUNT_PATH
     ]
-    assert mounts == [{"name": "pvc-cache", "mountPath": REMOTE_CACHE_MOUNT_PATH}]
+    assert mounts == [{"name": "pvc-cache", "mountPath": user_path}]
+
+
+@pytest.mark.parametrize("name", _CACHE_CONTAINERS)  # fmt: skip
+def test_user_mount_without_env_override_keeps_cache_env(name: str) -> None:
+    container = _container(
+        _controller_pod(_user_pvc_template(REMOTE_CACHE_MOUNT_PATH)), name
+    )
+    assert _env_values(container, REMOTE_CACHE_ENV) == [REMOTE_CACHE_MOUNT_PATH]
 
 
 def test_build_shared_volumes_includes_remote_cache_empty_dir() -> None:
