@@ -17,9 +17,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import CreditPhase, ProfileCancelReason
+from aiperf.common.enums import CreditPhase, ProfileCancelReason, WorkerStatus
 from aiperf.common.environment import Environment
-from aiperf.common.models import CreditPhaseStats
+from aiperf.common.messages import WorkerGroupStatsMessage, WorkerHealthMessage
+from aiperf.common.models import CreditPhaseStats, ProcessHealth, WorkerTaskStats
 from aiperf.records.records_manager import RecordsManager
 
 
@@ -37,9 +38,12 @@ class _Manager:
     # The watchdog delegates per-phase bookkeeping here; use the real
     # implementation so the fake cannot drift from what ships.
     _longest_stalled_phase = RecordsManager._longest_stalled_phase
+    _stream_activity_since_last_check = RecordsManager._stream_activity_since_last_check
 
     def __init__(self) -> None:
         self._profiling_started = True
+        self._worker_stream_chunks: dict[str, int] = {}
+        self._progress_stall_last_stream_chunks = 0
         self._progress_stall_last_total: dict[int | None, int] = {}
         self._progress_stall_since: dict[int | None, float] = {}
         self._latest_profiling_credit_stats: dict[int | None, CreditPhaseStats] = {}
@@ -287,3 +291,76 @@ async def test_a_cancel_that_cannot_be_sent_reports_failure(monkeypatch) -> None
 
     assert sent is False
     assert "Failed to request PROFILE_CANCEL" in mgr.warning.call_args[0][0]
+
+
+async def _tick_with_stream(
+    mgr: _Manager, monkeypatch, *, now: float, chunks: dict[str, int]
+) -> None:
+    """A tick where nothing completes but workers report streamed chunks."""
+    for worker_id, count in chunks.items():
+        await RecordsManager._on_worker_health_for_stall(
+            mgr,
+            WorkerHealthMessage(
+                service_id=worker_id,
+                health=ProcessHealth(
+                    pid=1, create_time=0.0, uptime=0.0, cpu_usage=0.0, memory_usage=0
+                ),
+                task_stats=WorkerTaskStats(total=1, stream_chunks_received=count),
+            ),
+        )
+    await _tick(mgr, monkeypatch, total=19, now=now)
+
+
+@pytest.mark.asyncio
+async def test_a_request_still_streaming_is_not_a_stall(monkeypatch) -> None:
+    """A long generation keeps receiving chunks; it is slow, not stuck.
+
+    This is the docs-e2e vision failure: one request streamed for over 600s
+    with no completion, and the watchdog cancelled a healthy run.
+    """
+    mgr = _Manager()
+    for i, now in enumerate([0.0, 300.0, 700.0, 5000.0]):
+        await _tick_with_stream(mgr, monkeypatch, now=now, chunks={"w1": 100 * i})
+    assert mgr.cancels == []
+    assert mgr.warnings == []
+
+
+@pytest.mark.asyncio
+async def test_flat_stream_activity_still_fails(monkeypatch) -> None:
+    """Chunk counts that stop moving are a stall like any other."""
+    mgr = _Manager()
+    await _tick_with_stream(mgr, monkeypatch, now=0.0, chunks={"w1": 500})
+    await _tick_with_stream(mgr, monkeypatch, now=100.0, chunks={"w1": 500})
+    await _tick_with_stream(mgr, monkeypatch, now=1000.0, chunks={"w1": 500})
+    assert len(mgr.cancels) == 1
+    assert mgr.cancels[0][0] == ProfileCancelReason.PROGRESS_STALL
+
+
+@pytest.mark.asyncio
+async def test_stream_chunks_are_keyed_by_worker_across_both_sources() -> None:
+    """A worker seen directly and through its group snapshot counts once."""
+    mgr = _Manager()
+    await RecordsManager._on_worker_health_for_stall(
+        mgr,
+        WorkerHealthMessage(
+            service_id="w1",
+            health=ProcessHealth(
+                pid=1, create_time=0.0, uptime=0.0, cpu_usage=0.0, memory_usage=0
+            ),
+            task_stats=WorkerTaskStats(stream_chunks_received=5),
+        ),
+    )
+    await RecordsManager._on_worker_group_stats_for_stall(
+        mgr,
+        WorkerGroupStatsMessage(
+            service_id="wgm-0",
+            group_id="wgm-0",
+            status=WorkerStatus.HEALTHY,
+            task_stats=WorkerTaskStats(stream_chunks_received=10),
+            worker_task_stats={
+                "w1": WorkerTaskStats(stream_chunks_received=7),
+                "w2": WorkerTaskStats(stream_chunks_received=3),
+            },
+        ),
+    )
+    assert mgr._worker_stream_chunks == {"w1": 7, "w2": 3}

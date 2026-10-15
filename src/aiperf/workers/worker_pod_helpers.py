@@ -80,6 +80,7 @@ def worker_health_message_from_struct(
             total=message.task_total,
             failed=message.task_failed,
             completed=message.task_completed,
+            stream_chunks_received=message.task_stream_chunks_received,
         ),
     )
 

@@ -1185,19 +1185,23 @@ class _RecordSettings(BaseSettings):
         le=86400.0,
         default=600.0,
         description="Seconds during which a profiling phase has requests in "
-        "flight and none of them complete, after which the run fails instead "
+        "flight, none of them complete, and no worker receives streamed "
+        "response data, after which the run fails instead "
         "of waiting indefinitely. A phase completes only once the credit "
         "phase reports its final count, so a credit that is never returned "
         "leaves that condition unevaluable and the run waits forever with no "
         "output. Per-request timeouts do not cover this: they default to 6 "
-        "hours and never apply to a request that was not dispatched. Note "
-        "that a single legitimately long request will fail the run if it "
-        "exceeds this timeout while nothing else completes, so raise this "
-        "value for workloads whose individual requests run longer. Each "
-        "profiling phase is judged on its own counters, so an overlapping "
-        "`seamless` phase that keeps completing work does not mask a stall in "
-        "another. Set to 0 to disable and restore the previous unbounded "
-        "wait.",
+        "hours and never apply to a request that was not dispatched. A "
+        "streaming request that keeps receiving chunks is never treated as "
+        "stalled, however long it runs; a single legitimately long "
+        "non-streaming request will fail the run if it exceeds this timeout "
+        "while nothing else completes, so raise this value for such "
+        "workloads. Completions are judged per profiling phase, so an "
+        "overlapping `seamless` phase that keeps completing work does not mask "
+        "a stall in another. Streamed data cannot be attributed to a phase, so "
+        "streaming in one phase defers detection of a stall in another until "
+        "that streaming stops. Set to 0 to disable and restore the previous "
+        "unbounded wait.",
     )
 
     PROGRESS_STALL_CHECK_INTERVAL: float = Field(

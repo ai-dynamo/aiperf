@@ -53,6 +53,8 @@ from aiperf.common.messages import (
     RecordsMessage,
     RecordsProcessingStatsMessage,
     TelemetryRecordsMessage,
+    WorkerGroupStatsMessage,
+    WorkerHealthMessage,
 )
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.mixins import PullClientMixin
@@ -544,8 +546,22 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         if isinstance(stats, CreditPhaseStats) and stats.phase == CreditPhase.PROFILING:
             self._latest_profiling_credit_stats[stats.phase_index] = stats
 
+    def _stream_activity_since_last_check(self) -> bool:
+        """Whether any worker received streamed chunks since the previous tick.
+
+        A long generation completes nothing for minutes while it streams, so
+        completions alone cannot tell it from a request that will never
+        return. Compared with ``!=`` rather than ``>``: a worker restart
+        resets its count, and that also means the run is not frozen.
+        """
+        total = sum(self._worker_stream_chunks.values())
+        if total == self._progress_stall_last_stream_chunks:
+            return False
+        self._progress_stall_last_stream_chunks = total
+        return True
+
     def _longest_stalled_phase(
-        self, now: float
+        self, now: float, *, streaming: bool = False
     ) -> tuple[int | None, CreditPhaseStats, float] | None:
         """The profiling phase stuck longest, or ``None`` if all are moving.
 
@@ -553,12 +569,16 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         a side effect. A single shared clock cannot work here: under
         ``seamless`` two profiling phases publish concurrently, and either one
         alone failing to complete is enough to hang the run.
+
+        ``streaming`` is not attributable to a phase, so it resets every
+        phase's clock. A phase stuck behind another that is still streaming is
+        therefore caught once that streaming stops, not before.
         """
         worst: tuple[int | None, CreditPhaseStats, float] | None = None
         for phase_index, stats in self._latest_profiling_credit_stats.items():
             # A missing entry reads as "never seen", so the first sight of a
             # phase starts its clock rather than judging it.
-            progressed = (
+            progressed = streaming or (
                 stats.requests_completed
                 != self._progress_stall_last_total.get(phase_index)
             )
@@ -613,7 +633,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             # judge, and no clock may start before the first snapshot.
             return
 
-        worst = self._longest_stalled_phase(time.monotonic())
+        worst = self._longest_stalled_phase(
+            time.monotonic(), streaming=self._stream_activity_since_last_check()
+        )
         if worst is None:
             return
         stalled_index, stats, stalled_for = worst
@@ -628,7 +650,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             if stalled_for >= Environment.RECORD.PROGRESS_STALL_CHECK_INTERVAL:
                 self.warning(
                     f"{in_flight:,} request(s) in flight{phase_label} with no "
-                    f"completion for {stalled_for:.0f}s "
+                    f"completion or streamed response data for {stalled_for:.0f}s "
                     f"({total:,} completed so far). "
                     f"Failing at {timeout:.0f}s "
                     "(AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to wait "
@@ -649,8 +671,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         await self._request_profile_cancel(
             ProfileCancelReason.PROGRESS_STALL,
             f"Benchmark stalled: {in_flight:,} request(s) in flight"
-            f"{phase_label} with no completion for {stalled_for:.0f}s "
-            f"({total:,} completed). A "
+            f"{phase_label} with no completion or streamed response data for "
+            f"{stalled_for:.0f}s ({total:,} completed). A "
             f"request was dispatched but never returned, so the phase can "
             f"never report complete. Set "
             f"AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to disable this check.",
@@ -873,6 +895,11 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # PhaseRecordsStats carries record counts and has no notion of what is
         # still in flight.
         self._latest_profiling_credit_stats: dict[int | None, CreditPhaseStats] = {}
+        # Latest streamed-chunk count per worker, from WORKER_HEALTH and
+        # WORKER_GROUP_STATS. Keyed by worker id so a worker reported through
+        # both sources counts once.
+        self._worker_stream_chunks: dict[str, int] = {}
+        self._progress_stall_last_stream_chunks = 0
         # Latch so a stalled run requests cancellation once, not every tick.
         self._progress_stall_triggered: bool = False
         # Set to a human-readable reason when the run is finalized without every
@@ -1610,6 +1637,21 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self._remember_profiling_credit_stats(message.stats)
         self._records_tracker.update_phase_info(message.stats)
         await self._dispatch_record(message.stats, warn_if_unrouted=False)
+
+    @on_message(MessageType.WORKER_HEALTH)
+    async def _on_worker_health_for_stall(self, message: WorkerHealthMessage) -> None:
+        """Track the worker's streamed-chunk count for the progress-stall watchdog."""
+        self._worker_stream_chunks[message.service_id] = (
+            message.task_stats.stream_chunks_received
+        )
+
+    @on_message(MessageType.WORKER_GROUP_STATS)
+    async def _on_worker_group_stats_for_stall(
+        self, message: WorkerGroupStatsMessage
+    ) -> None:
+        """Track per-worker streamed-chunk counts relayed by a WorkerGroupManager."""
+        for worker_id, task_stats in message.worker_task_stats.items():
+            self._worker_stream_chunks[worker_id] = task_stats.stream_chunks_received
 
     @on_message(MessageType.CREDIT_PHASE_SENDING_COMPLETE)
     async def _on_credit_phase_sending_complete(

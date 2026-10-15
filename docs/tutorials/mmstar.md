@@ -47,6 +47,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --public-dataset mmstar \
+    --output-tokens-mean 100 \
     --request-count 10 \
     --concurrency 4
 ```

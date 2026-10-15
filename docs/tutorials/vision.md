@@ -51,6 +51,7 @@ aiperf profile \
     --image-width-mean 512 \
     --image-height-mean 512 \
     --synthetic-input-tokens-mean 100 \
+    --output-tokens-mean 100 \
     --streaming \
     --url localhost:8000 \
     --request-count 20 \

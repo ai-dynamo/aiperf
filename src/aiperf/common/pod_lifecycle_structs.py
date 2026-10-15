@@ -105,6 +105,9 @@ class GroupWorkerHealth(Struct, frozen=True, kw_only=True, tag_field="t", tag="w
     task_completed: int
     """Number of completed tasks observed by the worker."""
 
+    task_stream_chunks_received: int = 0
+    """Running count of streamed response chunks received by the worker."""
+
 
 class GroupWorkerStartupState(
     Struct, frozen=True, kw_only=True, tag_field="t", tag="ws"
