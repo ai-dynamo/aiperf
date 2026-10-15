@@ -532,6 +532,7 @@ def _redact_dataset_path(dataset: Any) -> None:
 
 
 def _redact_dataset_paths(benchmark: dict[str, Any]) -> None:
+    """Redact every dataset path in a benchmark: ``datasets`` (list or map) and ``dataset``."""
     datasets = benchmark.get("datasets")
     if isinstance(datasets, dict):
         datasets = list(datasets.values())
@@ -555,25 +556,4 @@ def redact_endpoint_spec(spec: dict[str, Any]) -> dict[str, Any]:
         return redacted
     _redact_endpoint_fields(benchmark.get("endpoint"))
     _redact_dataset_paths(benchmark)
-    return redacted
-    endpoint = benchmark.get("endpoint")
-    if not isinstance(endpoint, dict):
-        return redacted
-
-    for key in ("apiKey", "api_key"):
-        if endpoint.get(key) is not None:
-            endpoint[key] = REDACTED_VALUE
-
-    headers = endpoint.get("headers")
-    if isinstance(headers, dict):
-        endpoint["headers"] = redact_headers(headers) or {}
-
-    for key in ("urls", "url"):
-        urls = endpoint.get(key)
-        if isinstance(urls, str):
-            endpoint[key] = redact_url(urls)
-        elif isinstance(urls, list):
-            endpoint[key] = [
-                redact_url(url) if isinstance(url, str) else url for url in urls
-            ]
     return redacted
