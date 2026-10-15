@@ -415,6 +415,15 @@ def consume_injected_dataset_urls() -> list[str] | None:
     )
 
 
+def drop_injected_dataset_urls() -> None:
+    """Remove ``AIPERF_INJECTED_DATASET_URLS`` from this process's environment.
+
+    Every container in a pod receives the full pod-template env, but only
+    dataset-manager downloads; no other process may hold presigned URLs.
+    """
+    os.environ.pop(AIPERF_INJECTED_DATASET_URLS, None)
+
+
 def _injected_refs_by_canonical(urls: list[str]) -> dict[str, RemoteRef]:
     """Parse injected URLs, keyed by canonical reference.
 

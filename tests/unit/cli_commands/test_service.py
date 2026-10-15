@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import inspect
+import io
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -12,10 +13,15 @@ from unittest.mock import MagicMock, patch
 
 import orjson
 import pytest
+from pytest import param
+from rich.console import Console
 
+import aiperf.cli_utils as cli_utils
 from aiperf.cli_commands.service import app, service
 from aiperf.common.environment import Environment
 from aiperf.config import BenchmarkConfig, BenchmarkRun
+from aiperf.config.dataset.remote_ref import RemoteRef
+from aiperf.plugin.enums import ServiceType
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -413,6 +419,10 @@ class TestDatasetUrlRehydration:
         assert seen == [_RAW_DATASET_URL]
         assert os.getenv("AIPERF_INJECTED_DATASET_URLS") is None
         mock_bootstrap.assert_called_once()
+        path = mock_bootstrap.call_args.kwargs["run"].cfg.datasets[0].path
+        assert path.ref == _RAW_DATASET_URL
+        assert path.canonical == RemoteRef(ref=_RAW_DATASET_URL).canonical
+        assert path.resolved_version == "etag:abc"
 
     def test_dataset_manager_without_injected_url_fails_before_bootstrap(
         self,
@@ -424,25 +434,43 @@ class TestDatasetUrlRehydration:
 
         run_file = _write_remote_dataset_run(tmp_path / "run.json")
         monkeypatch.delenv("AIPERF_INJECTED_DATASET_URLS", raising=False)
+        buffer = io.StringIO()
+        monkeypatch.setattr(
+            cli_utils, "console", Console(file=buffer, force_terminal=False, width=200)
+        )
         with pytest.raises(SystemExit):
             service(
                 service_type=ServiceType.DATASET_MANAGER, benchmark_run_file=run_file
             )
         mock_bootstrap.assert_not_called()
+        output = buffer.getvalue()
+        assert "AIPERF_INJECTED_DATASET_URLS has no URL for it" in " ".join(
+            output.replace("│", " ").split()
+        )
+        assert "topsecret" not in output
 
+    @pytest.mark.parametrize(
+        "service_type",
+        [
+            param(ServiceType.SYSTEM_CONTROLLER, id="system-controller"),
+            param(ServiceType.TIMING_MANAGER, id="timing-manager"),
+            param(ServiceType.RECORDS_MANAGER, id="records-manager"),
+            param(ServiceType.API, id="api"),
+            param(ServiceType.WORKER, id="worker"),
+        ],
+    )  # fmt: skip
     def test_other_services_drop_injected_dataset_urls(
         self,
+        service_type: ServiceType,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         mock_bootstrap: MagicMock,
     ) -> None:
-        from aiperf.plugin.enums import ServiceType
-
         run_file = _write_remote_dataset_run(tmp_path / "run.json")
         monkeypatch.setenv(
             "AIPERF_INJECTED_DATASET_URLS", orjson.dumps([_RAW_DATASET_URL]).decode()
         )
-        service(service_type=ServiceType.WORKER, benchmark_run_file=run_file)
+        service(service_type=service_type, benchmark_run_file=run_file)
 
         assert os.getenv("AIPERF_INJECTED_DATASET_URLS") is None
         run = mock_bootstrap.call_args.kwargs["run"]
