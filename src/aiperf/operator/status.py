@@ -30,6 +30,11 @@ class ConditionType(CaseInsensitiveStrEnum):
     RESOURCES_CREATED = "ResourcesCreated"
     WORKERS_READY = "WorkersReady"
     BENCHMARK_RUNNING = "BenchmarkRunning"
+    DATASET_READY = "DatasetReady"
+    """Set to False (reason ``DatasetUnavailable``) when the dataset-manager
+    container exits before the benchmark can run, typically because a dataset
+    could not be fetched. The message repeats ``status.error``."""
+
     RESULTS_AVAILABLE = "ResultsAvailable"
     INDEX_UPDATED = "IndexUpdated"
     """Set to False when the job index write fails; results remain on disk."""

@@ -25,6 +25,7 @@ from kubernetes_asyncio.client.exceptions import ApiException
 
 from aiperf.common.enums import SystemState
 from aiperf.common.environment import Environment
+from aiperf.common.redact import redact_text
 from aiperf.common.results_markers import READY_MARKER_NAME, write_ready_marker
 from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.constants import (
@@ -45,6 +46,7 @@ from aiperf.kubernetes.crd_models import (
     ControllerFetchResult,
     MetricsSummary,
 )
+from aiperf.kubernetes.dataset_startup import POD_PREFIX
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.phase import Phase, as_phase, format_timestamp, parse_timestamp
@@ -2800,6 +2802,33 @@ def _terminated_state(status: Any) -> Any | None:
     return terminated
 
 
+def _termination_detail(terminated: Any) -> str:
+    """The container's termination message as one redacted line ('' when absent).
+
+    With ``FallbackToLogsOnError`` the message is the log tail, which can span
+    lines and quote URLs, so it is flattened and redacted again here.
+    """
+    message = _resource_field(terminated, "message")
+    if not isinstance(message, str):
+        return ""
+    return redact_text(" ".join(message.split()))
+
+
+def _container_failure(status: Any) -> tuple[str, int, str, str] | None:
+    """(name, exit_code, reason, message) for a non-sidecar container that exited non-zero."""
+    name = _resource_field(status, "name", default="") or ""
+    if name == Containers.RESULTS_SIDECAR:
+        return None
+    terminated = _terminated_state(status)
+    if not terminated:
+        return None
+    exit_code = int(_resource_field(terminated, "exitCode", "exit_code", 0) or 0)
+    if exit_code == 0:
+        return None
+    reason = _resource_field(terminated, "reason") or "Error"
+    return name, exit_code, reason, _termination_detail(terminated)
+
+
 def _get_terminated_controller_info(pod: Any) -> tuple[int, str] | None:
     """Return (exit_code, reason) if any control-plane container died non-zero.
 
@@ -2810,6 +2839,10 @@ def _get_terminated_controller_info(pod: Any) -> tuple[int, str] | None:
     salvage; ``control-plane`` is still preferred when several have died so
     the reported reason names the primary failure.
 
+    The container's termination message, when there is one, is appended after
+    ``": "``: the dataset-manager writes the redacted cause of a dataset
+    failure there, and it is the only copy that survives the JobSet's deletion.
+
     Returns None if nothing terminated non-zero, or if the sidecar is missing
     (salvage reads results through it).
     """
@@ -2817,31 +2850,18 @@ def _get_terminated_controller_info(pod: Any) -> tuple[int, str] | None:
     statuses = (
         _resource_field(pod_status, "containerStatuses", "container_statuses") or []
     )
-    sidecar_status = _container_status_by_name(statuses, Containers.RESULTS_SIDECAR)
-    if sidecar_status is None:
+    if _container_status_by_name(statuses, Containers.RESULTS_SIDECAR) is None:
         return None
 
-    failures: list[tuple[str, int, str]] = []
-    for status in statuses:
-        name = _resource_field(status, "name", default="") or ""
-        if name == Containers.RESULTS_SIDECAR:
-            continue
-        terminated = _terminated_state(status)
-        if not terminated:
-            continue
-        exit_code = int(_resource_field(terminated, "exitCode", "exit_code", 0) or 0)
-        if exit_code == 0:
-            continue
-        failures.append(
-            (name, exit_code, _resource_field(terminated, "reason") or "Error")
-        )
-
+    failures = [f for f in map(_container_failure, statuses) if f is not None]
     if not failures:
         return None
     failures.sort(key=lambda f: f[0] != Containers.CONTROL_PLANE)
-    name, exit_code, reason = failures[0]
+    name, exit_code, reason, message = failures[0]
     if name != Containers.CONTROL_PLANE:
         reason = f"{reason} (container {name})"
+    if message:
+        reason = f"{reason}: {message}"
     return exit_code, reason
 
 
@@ -3128,6 +3148,17 @@ async def _recover_from_partial_checkpoints(
     events.failed(body, job_id, error)
 
 
+def _is_dataset_failure(reason: str) -> bool:
+    """Whether a terminated-controller reason carries the dataset-manager's own line.
+
+    ``_get_terminated_controller_info`` appends the termination message after
+    the first ``": "``. Only a message that starts with ``POD_PREFIX`` is a
+    dataset failure: an OOMKilled dataset-manager, or one whose message is a
+    crash's log tail, is not.
+    """
+    return reason.partition(": ")[2].startswith(POD_PREFIX)
+
+
 async def _fail_unrecoverable_controller(
     *,
     body: dict[str, Any],
@@ -3155,6 +3186,10 @@ async def _fail_unrecoverable_controller(
         "ControllerTerminated",
         "Controller terminated before exporting recoverable result files",
     )
+    if _is_dataset_failure(reason):
+        sb.conditions.set_false(
+            ConditionType.DATASET_READY, "DatasetUnavailable", error
+        )
     sb.finalize()
     events.failed(body, job_id, error)
 
