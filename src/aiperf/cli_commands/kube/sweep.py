@@ -431,6 +431,9 @@ def _finalized_spec(spec: dict[str, Any]) -> dict[str, Any]:
         validated.pod_template.env,
         datasets=validated.benchmark.datasets,
     )
+    from aiperf.kubernetes.remote_datasets import report_remote_dataset_checks
+
+    report_remote_dataset_checks(validated.benchmark, spec)
     dumped = validated.model_dump(
         mode="json", by_alias=True, exclude_unset=True, exclude_none=True
     )
