@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import inspect
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -356,3 +357,93 @@ class TestDatasetPreflightGate:
 
         mock_preflight.assert_not_called()
         assert "run" in mock_bootstrap.call_args.kwargs
+
+
+_RAW_DATASET_URL = "https://bucket.s3.amazonaws.com/t.jsonl?X-Amz-Signature=topsecret"
+
+
+def _write_remote_dataset_run(path: Path) -> Path:
+    cfg = BenchmarkConfig.model_validate(
+        {
+            "models": ["m"],
+            "endpoint": {"urls": ["http://server/v1"], "type": "chat"},
+            "datasets": [
+                {
+                    "name": "main",
+                    "type": "file",
+                    "path": {"ref": _RAW_DATASET_URL, "resolved_version": "etag:abc"},
+                    "format": "mooncake_trace",
+                }
+            ],
+            "phases": [
+                {"name": "profiling", "type": "concurrency", "requests": 4, "concurrency": 1}
+            ],
+        }
+    )  # fmt: skip
+    run = BenchmarkRun(benchmark_id="job", cfg=cfg, artifact_dir=path.parent)
+    path.write_bytes(orjson.dumps(run.model_dump(mode="json", exclude_none=True)))
+    return path
+
+
+class TestDatasetUrlRehydration:
+    """Presigned dataset URLs reach only the dataset-manager process."""
+
+    def test_dataset_manager_rehydrates_presigned_dataset_before_preflight(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_bootstrap: MagicMock,
+    ) -> None:
+        from aiperf.plugin.enums import ServiceType
+
+        run_file = _write_remote_dataset_run(tmp_path / "run.json")
+        assert b"topsecret" not in run_file.read_bytes()
+        monkeypatch.setenv(
+            "AIPERF_INJECTED_DATASET_URLS", orjson.dumps([_RAW_DATASET_URL]).decode()
+        )
+        seen: list[str] = []
+        with patch(
+            "aiperf.cli_runner._preflight.preflight_public_datasets_for_run",
+            side_effect=lambda run: seen.append(run.cfg.datasets[0].path.ref),
+        ):
+            service(
+                service_type=ServiceType.DATASET_MANAGER, benchmark_run_file=run_file
+            )
+
+        assert seen == [_RAW_DATASET_URL]
+        assert os.getenv("AIPERF_INJECTED_DATASET_URLS") is None
+        mock_bootstrap.assert_called_once()
+
+    def test_dataset_manager_without_injected_url_fails_before_bootstrap(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_bootstrap: MagicMock,
+    ) -> None:
+        from aiperf.plugin.enums import ServiceType
+
+        run_file = _write_remote_dataset_run(tmp_path / "run.json")
+        monkeypatch.delenv("AIPERF_INJECTED_DATASET_URLS", raising=False)
+        with pytest.raises(SystemExit):
+            service(
+                service_type=ServiceType.DATASET_MANAGER, benchmark_run_file=run_file
+            )
+        mock_bootstrap.assert_not_called()
+
+    def test_other_services_drop_injected_dataset_urls(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_bootstrap: MagicMock,
+    ) -> None:
+        from aiperf.plugin.enums import ServiceType
+
+        run_file = _write_remote_dataset_run(tmp_path / "run.json")
+        monkeypatch.setenv(
+            "AIPERF_INJECTED_DATASET_URLS", orjson.dumps([_RAW_DATASET_URL]).decode()
+        )
+        service(service_type=ServiceType.WORKER, benchmark_run_file=run_file)
+
+        assert os.getenv("AIPERF_INJECTED_DATASET_URLS") is None
+        run = mock_bootstrap.call_args.kwargs["run"]
+        assert "topsecret" not in run.cfg.datasets[0].path.ref

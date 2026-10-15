@@ -10,6 +10,7 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import kopf
 import orjson
 import pytest
 import yaml
@@ -18,6 +19,7 @@ from pytest import param
 from aiperf.cli_commands.kube import generate as generate_cmd
 from aiperf.cli_commands.kube import profile as profile_cmd
 from aiperf.cli_commands.kube import sweep as sweep_cmd
+from aiperf.common.redact import REDACTED_VALUE
 from aiperf.config import BenchmarkConfig
 from aiperf.config.dataset.remote_ref import RemoteRef
 from aiperf.config.flags import CLIConfig
@@ -410,3 +412,93 @@ async def test_profile_dry_run_unpinned_warning_keeps_json_stdout_parseable(
     assert cr["kind"] == "AIPerfJob"
     assert cr["spec"]["benchmark"]["datasets"][0]["path"] == HF_REF
     assert _UNPINNED_WARNING in " ".join(captured.err.split())
+
+
+_PRESIGNED = (
+    "https://h.example/t.jsonl?X-Amz-Date=20261015T000000Z&X-Amz-Expires=3600"
+    "&X-Amz-Signature=topsecret"
+)
+
+
+def test_validate_job_spec_unredacted_presigned_dataset_is_rejected() -> None:
+    with pytest.raises(
+        ConfigurationError, match="AIPERF_INJECTED_DATASET_URLS"
+    ) as exc_info:
+        validate_job_spec(_job_spec(_PRESIGNED))
+    assert "topsecret" not in str(exc_info.value)
+
+
+def test_validate_job_spec_redacted_presigned_dataset_is_accepted() -> None:
+    redacted = _PRESIGNED.replace("topsecret", REDACTED_VALUE)
+    validated = validate_job_spec(_job_spec(redacted))
+    assert validated.benchmark.datasets[0].path.ref == redacted
+
+
+def test_operator_validate_spec_unredacted_presigned_dataset_fails_without_echoing_it() -> (
+    None
+):
+    patch_obj = MagicMock()
+    patch_obj.status = {}
+    status = StatusBuilder(patch_obj)
+    with (
+        patch("aiperf.operator.handlers.create.events") as events,
+        pytest.raises(kopf.PermanentError, match="AIPERF_INJECTED_DATASET_URLS"),
+    ):
+        _validate_spec(_job_spec(_PRESIGNED), {}, status)
+    events.spec_invalid.assert_called_once()
+    assert "topsecret" not in events.spec_invalid.call_args.args[1]
+    assert "topsecret" not in patch_obj.status["error"]
+
+
+def test_kubernetes_deployment_configmap_never_holds_the_signature() -> None:
+    from aiperf.config import AIPerfConfig
+    from aiperf.config.deployment import DeploymentConfig
+    from aiperf.kubernetes.resources import KubernetesDeployment
+
+    config = AIPerfConfig(benchmark=_benchmark(_PRESIGNED))
+    deployment = KubernetesDeployment(
+        job_id="job", namespace="ns", config=config, deployment=DeploymentConfig()
+    )
+    run_config = deployment.get_configmap_spec().data["run_config.json"]
+    assert "topsecret" not in run_config
+    assert f"X-Amz-Signature={REDACTED_VALUE}" in run_config
+
+
+_PRESIGNED_NO_EXPIRY = "https://h.example/t.jsonl?X-Amz-Signature=topsecret"
+
+
+@pytest.mark.parametrize("resolve", _RESOLVERS)  # fmt: skip
+def test_resolve_spec_and_name_presigned_input_file_keeps_signature_out_of_cr(
+    resolve, remote_access: AsyncMock
+) -> None:
+    cli_config = CLIConfig(
+        model_names=["m"],
+        urls=["http://localhost:8000"],
+        input_file=_PRESIGNED_NO_EXPIRY,
+        custom_dataset_type="mooncake_trace",
+    )
+    kube_options = _kube_options(
+        env_from_secrets={"AIPERF_INJECTED_DATASET_URLS": "dataset-urls/urls"}
+    )
+    spec, _, _ = resolve(cli_config, kube_options)
+    assert b"topsecret" not in orjson.dumps(spec)
+    assert spec["benchmark"]["datasets"][0]["path"] == {
+        "ref": _PRESIGNED_NO_EXPIRY.replace("topsecret", REDACTED_VALUE),
+        "resolved_version": SHA,
+    }
+    remote_access.assert_awaited_once()
+
+
+@pytest.mark.parametrize("resolve", _RESOLVERS)  # fmt: skip
+def test_resolve_spec_and_name_presigned_input_file_without_secret_env_is_rejected(
+    resolve, remote_access: AsyncMock
+) -> None:
+    cli_config = CLIConfig(
+        model_names=["m"],
+        urls=["http://localhost:8000"],
+        input_file=_PRESIGNED_NO_EXPIRY,
+        custom_dataset_type="mooncake_trace",
+    )
+    with pytest.raises(ValueError, match="AIPERF_INJECTED_DATASET_URLS") as exc_info:
+        resolve(cli_config, _kube_options())
+    assert "topsecret" not in str(exc_info.value)

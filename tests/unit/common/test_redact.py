@@ -268,7 +268,7 @@ class TestCustomAuthHeaderRedaction:
         )
 
         with pytest.raises(ValueError, match="Secret-backed"):
-            validate_kubernetes_credential_transport(config, pod_env=[])
+            validate_kubernetes_credential_transport(config, pod_env=[], datasets=[])
 
     def test_k8s_transport_allows_benign_headers_without_a_secret(self) -> None:
         """Non-credential headers must not force a Secret on every run."""
@@ -280,7 +280,7 @@ class TestCustomAuthHeaderRedaction:
             urls=["http://localhost:8000"], headers={"X-Request-ID": "req-001"}
         )
 
-        validate_kubernetes_credential_transport(config, pod_env=[])
+        validate_kubernetes_credential_transport(config, pod_env=[], datasets=[])
 
 
 # =============================================================================
