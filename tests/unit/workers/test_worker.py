@@ -1264,3 +1264,22 @@ class TestHealthMessageStreamChunks:
         assert mock_worker.task_stats.stream_chunks_received == 0, (
             "building a health message must not mutate the worker's task stats"
         )
+
+    async def test_create_health_message_tolerates_transport_without_counter(
+        self, mock_worker, monkeypatch
+    ):
+        """A plugin transport written before the counter existed reports 0.
+
+        TransportProtocol is structural, and the health task logs and retries
+        on error, so a missing attribute would silently stop health reports.
+        """
+        monkeypatch.setattr(
+            mock_worker.inference_client, "transport", SimpleNamespace()
+        )
+        health = ProcessHealth(
+            pid=1, create_time=0.0, uptime=0.0, cpu_usage=0.0, memory_usage=0
+        )
+
+        message = mock_worker.create_health_message(health)
+
+        assert message.task_stats.stream_chunks_received == 0
