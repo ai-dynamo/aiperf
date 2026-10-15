@@ -547,17 +547,20 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self._latest_profiling_credit_stats[stats.phase_index] = stats
 
     def _stream_activity_since_last_check(self) -> bool:
-        """Whether any worker received streamed chunks since the previous tick.
+        """Whether any worker's streamed-chunk count changed since the previous tick.
 
         A long generation completes nothing for minutes while it streams, so
         completions alone cannot tell it from a request that will never
-        return. Compared with ``!=`` rather than ``>``: a worker restart
-        resets its count, and that also means the run is not frozen.
+        return. Compared per worker, not as a sum, so a restarted worker's
+        drop cannot cancel out another worker's gain; any change, including
+        that drop, means the run is not frozen. A worker that stops reporting
+        keeps its last value and so never reads as activity.
         """
-        total = sum(self._worker_stream_chunks.values())
-        if total == self._progress_stall_last_stream_chunks:
+        current = self._worker_stream_chunks
+        last = self._progress_stall_last_stream_chunks
+        if all(count == last.get(worker_id, 0) for worker_id, count in current.items()):
             return False
-        self._progress_stall_last_stream_chunks = total
+        self._progress_stall_last_stream_chunks = dict(current)
         return True
 
     def _longest_stalled_phase(
@@ -899,7 +902,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # WORKER_GROUP_STATS. Keyed by worker id so a worker reported through
         # both sources counts once.
         self._worker_stream_chunks: dict[str, int] = {}
-        self._progress_stall_last_stream_chunks = 0
+        self._progress_stall_last_stream_chunks: dict[str, int] = {}
         # Latch so a stalled run requests cancellation once, not every tick.
         self._progress_stall_triggered: bool = False
         # Set to a human-readable reason when the run is finalized without every

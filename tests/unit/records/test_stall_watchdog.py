@@ -43,7 +43,7 @@ class _Manager:
     def __init__(self) -> None:
         self._profiling_started = True
         self._worker_stream_chunks: dict[str, int] = {}
-        self._progress_stall_last_stream_chunks = 0
+        self._progress_stall_last_stream_chunks: dict[str, int] = {}
         self._progress_stall_last_total: dict[int | None, int] = {}
         self._progress_stall_since: dict[int | None, float] = {}
         self._latest_profiling_credit_stats: dict[int | None, CreditPhaseStats] = {}
@@ -334,6 +334,30 @@ async def test_flat_stream_activity_still_fails(monkeypatch) -> None:
     await _tick_with_stream(mgr, monkeypatch, now=1000.0, chunks={"w1": 500})
     assert len(mgr.cancels) == 1
     assert mgr.cancels[0][0] == ProfileCancelReason.PROGRESS_STALL
+
+
+@pytest.mark.asyncio
+async def test_offsetting_worker_counts_still_read_as_activity(monkeypatch) -> None:
+    """A restarted worker's drop must not cancel out another worker's gain.
+
+    Summing would see 10 both times and let the stall clock run, though w2
+    received five new chunks.
+    """
+    mgr = _Manager()
+    await _tick_with_stream(mgr, monkeypatch, now=0.0, chunks={"w1": 10, "w2": 0})
+    await _tick_with_stream(mgr, monkeypatch, now=300.0, chunks={"w1": 5, "w2": 5})
+    await _tick_with_stream(mgr, monkeypatch, now=700.0, chunks={"w1": 5, "w2": 5})
+    assert mgr.cancels == []
+
+
+@pytest.mark.asyncio
+async def test_a_newly_reporting_idle_worker_is_not_activity(monkeypatch) -> None:
+    """A worker that first reports zero chunks has streamed nothing."""
+    mgr = _Manager()
+    await _tick_with_stream(mgr, monkeypatch, now=0.0, chunks={"w1": 500})
+    await _tick_with_stream(mgr, monkeypatch, now=100.0, chunks={"w2": 0})
+    await _tick_with_stream(mgr, monkeypatch, now=650.0, chunks={})
+    assert len(mgr.cancels) == 1, "the idle worker's first report reset the clock"
 
 
 @pytest.mark.asyncio
