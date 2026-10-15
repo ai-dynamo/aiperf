@@ -573,9 +573,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         ``seamless`` two profiling phases publish concurrently, and either one
         alone failing to complete is enough to hang the run.
 
-        ``streaming`` is not attributable to a phase, so it resets every
-        phase's clock. A phase stuck behind another that is still streaming is
-        therefore caught once that streaming stops, not before.
+        ``streaming`` is process-wide, not attributable to a request or a
+        phase, so it resets every phase's clock. A request stuck alongside one
+        that is still streaming, in any phase, is therefore caught once that
+        streaming stops, not before.
         """
         worst: tuple[int | None, CreditPhaseStats, float] | None = None
         for phase_index, stats in self._latest_profiling_credit_stats.items():
