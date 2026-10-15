@@ -191,7 +191,7 @@ class TestArtifactDirResolver:
     def test_resolve_for_probe_skips_user_files_materialization(self, tmp_path):
         """Probe runs must NOT materialize user_files (they re-run per variation).
 
-        ``cli_runner._estimate_and_log_duration`` clones the user's first config
+        ``cli_runner._estimate_and_log_duration`` wraps the user's first config
         into a probe run only to estimate duration. After Task 6 the resolver
         also wrote user_files; that produced a stray artifact tree before the
         actual benchmark and could bake in template values (e.g. ``epoch``)
@@ -644,7 +644,7 @@ class TestDatasetResolver:
     def test_for_probe_populates_only_timing_data(self, tmp_path) -> None:
         """Probe mode must skip full-file record/session/root scans.
 
-        ``cli_runner._estimate_and_log_duration`` clones the first config only
+        ``cli_runner._estimate_and_log_duration`` wraps the first config only
         to satisfy ``TimingResolver``'s ``fixed_schedule`` check; counts are
         discarded with the probe run, so they must not trigger file scans.
         """

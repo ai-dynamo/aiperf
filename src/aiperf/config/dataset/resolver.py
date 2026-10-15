@@ -113,7 +113,7 @@ class DatasetResolver:
         Args:
             run: The BenchmarkRun whose ``cfg.datasets`` to resolve.
             for_probe: When True, populate only ``dataset_has_timing_data``.
-                The multi-run duration-estimate probe clones the first config
+                The multi-run duration-estimate probe wraps the first config
                 only to satisfy ``TimingResolver``'s ``fixed_schedule`` check;
                 record/session/root counts are discarded with the probe run, so
                 the full-file scans are skipped to avoid a startup regression
@@ -170,7 +170,9 @@ class DatasetResolver:
     ) -> None:
         records = getattr(ds, "records", None)
         if records is not None:
-            self._resolve_inline(name=name, ds=ds, format_map=format_map, acc=acc)
+            self._resolve_inline(
+                name=name, ds=ds, format_map=format_map, acc=acc, for_probe=for_probe
+            )
             return
 
         # 1. Resolve and validate path
@@ -229,6 +231,7 @@ class DatasetResolver:
         ds: object,
         format_map: dict[str, object],
         acc: _DatasetResolution,
+        for_probe: bool = False,
     ) -> None:
         """Resolve dataset metadata for an inline records source.
 
@@ -239,6 +242,19 @@ class DatasetResolver:
         from aiperf.plugin.enums import CustomDatasetType
 
         records = ds.records  # type: ignore[attr-defined]
+        if for_probe:
+            if isinstance(records, dict):
+                first_pool = next(iter(records.values()), None)
+                first = first_pool[0] if first_pool else None
+            else:
+                first = records[0] if records else None
+            acc.has_timing[name] = bool(
+                first is not None
+                and (
+                    first.get("timestamp") is not None or first.get("delay") is not None
+                )
+            )
+            return
         fmt = ds.format  # type: ignore[attr-defined]
         dataset_type = format_map.get(str(fmt))
         if dataset_type is not None:
