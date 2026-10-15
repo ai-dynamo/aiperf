@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 """CLI command for running individual AIPerf services."""
 
-import os
 from pathlib import Path
 from typing import Annotated
 
@@ -77,11 +76,11 @@ def service(
 
         from aiperf.common.bootstrap import bootstrap_and_run_service
         from aiperf.common.endpoint_credentials import (
-            AIPERF_INJECTED_DATASET_URLS,
             apply_endpoint_credentials,
             apply_injected_dataset_urls,
             consume_endpoint_credentials,
             consume_injected_dataset_urls,
+            drop_injected_dataset_urls,
         )
         from aiperf.common.environment import Environment
         from aiperf.config.resolution.plan import BenchmarkRun
@@ -89,6 +88,10 @@ def service(
         from aiperf.kubernetes.user_files import (
             materialize_serialized_run_user_files,
         )
+
+        # Only dataset-manager downloads, so only it may hold presigned URLs.
+        if service_type != ServiceType.DATASET_MANAGER:
+            drop_injected_dataset_urls()
 
         # The launcher resolves and freezes one BenchmarkRun for the whole
         # deployment. Re-resolving flags independently in every service can
@@ -122,10 +125,6 @@ def service(
 
             apply_injected_dataset_urls(run, consume_injected_dataset_urls())
             preflight_public_datasets_for_run(run)
-        else:
-            # Only dataset-manager downloads; keep presigned URLs out of every
-            # other process environment.
-            os.environ.pop(AIPERF_INJECTED_DATASET_URLS, None)
 
         if health_host is not None:
             # CLI argument takes precedence over environment variable

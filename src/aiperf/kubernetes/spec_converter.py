@@ -248,8 +248,9 @@ def validate_remote_datasets_for_kubernetes(config: AIPerfConfig) -> None:
         if redact_url(dataset.path.ref) != dataset.path.ref:
             raise ConfigurationError(
                 f"Dataset {dataset.path.display} carries a credential (a presigned "
-                "query or URL userinfo) in the resource itself, so the Kubernetes "
-                "API has already stored it; rotate it. Put the full URL in a "
+                "query or URL userinfo) in the resource itself. If this resource "
+                "was applied to the cluster, the API server has stored it; rotate "
+                "it. Put the full URL in a "
                 "Secret, expose it to the pods as the Secret-backed "
                 f"{AIPERF_INJECTED_DATASET_URLS} env var (a JSON list of URLs), and "
                 f"write the dataset path with the credential values replaced by "
