@@ -43,6 +43,7 @@ HF_REF = "hf://org/repo/t.jsonl"
 S3_REF = "s3://bucket/traces/t.jsonl"
 HTTPS_REF = "https://h.example/t.jsonl"
 _UNPINNED_WARNING = "the dataset-manager pod will pin it"
+_CHECK_WARNING = "needs a Hugging Face token"
 
 _BENCHMARK: dict[str, object] = {
     "models": ["m"],
@@ -110,6 +111,14 @@ def _remote_benchmark(ref: str = HF_REF, **cli: object) -> BenchmarkConfig:
     ).cfg
 
 
+def _needs_auth_unknown() -> AbstractContextManager[AsyncMock]:
+    """The anonymous probe cannot tell, so the pod-credential check warns."""
+    return patch(
+        "aiperf.dataset.remote.anonymous.anonymous_needs_auth",
+        AsyncMock(return_value=None),
+    )
+
+
 def _host_cannot_read() -> AbstractContextManager[AsyncMock]:
     """Every probe from this machine fails with ``AUTH_MISSING``."""
     return patch(
@@ -123,6 +132,15 @@ def _fresh_probe_cache() -> Iterator[None]:
     reset_probe_cache()
     yield
     reset_probe_cache()
+
+
+@pytest.fixture(autouse=True)
+def _public_sources() -> Iterator[None]:
+    with patch(
+        "aiperf.dataset.remote.anonymous.anonymous_needs_auth",
+        AsyncMock(return_value=False),
+    ):
+        yield
 
 
 @pytest.fixture
@@ -356,11 +374,12 @@ def _unpinned_cli_config() -> CLIConfig:
 
 
 @pytest.mark.asyncio
-async def test_generate_unpinned_warning_keeps_yaml_stdout_parseable(
+async def test_generate_unpinned_and_check_warnings_keep_yaml_stdout_parseable(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with (
         _host_cannot_read(),
+        _needs_auth_unknown(),
         patch("aiperf.cli_commands.kube.generate._print_memory_estimate"),
     ):
         await generate_cmd.generate(
@@ -374,13 +393,15 @@ async def test_generate_unpinned_warning_keeps_yaml_stdout_parseable(
     assert cr["spec"]["benchmark"]["datasets"][0]["path"] == HF_REF
     assert _UNPINNED_WARNING not in captured.out
     assert _UNPINNED_WARNING in " ".join(captured.err.split())
+    assert _CHECK_WARNING not in captured.out
+    assert _CHECK_WARNING in " ".join(captured.err.split())
 
 
 @pytest.mark.asyncio
-async def test_sweep_dry_run_unpinned_warning_keeps_json_stdout_parseable(
+async def test_sweep_dry_run_unpinned_and_check_warnings_keep_json_stdout_parseable(
     capsys: pytest.CaptureFixture[str], tmp_path: Path
 ) -> None:
-    with _host_cannot_read():
+    with _host_cannot_read(), _needs_auth_unknown():
         await sweep_cmd.sweep(
             cli_config=CLIConfig(config_file=_write_sweep_yaml(tmp_path)),
             kube_options=_kube_options(namespace="bench-ns"),
@@ -391,14 +412,17 @@ async def test_sweep_dry_run_unpinned_warning_keeps_json_stdout_parseable(
     assert cr["kind"] == "AIPerfSweep"
     assert cr["spec"]["benchmark"]["datasets"][0]["path"] == HF_REF
     assert _UNPINNED_WARNING in " ".join(captured.err.split())
+    assert _CHECK_WARNING not in captured.out
+    assert _CHECK_WARNING in " ".join(captured.err.split())
 
 
 @pytest.mark.asyncio
-async def test_profile_dry_run_unpinned_warning_keeps_json_stdout_parseable(
+async def test_profile_dry_run_unpinned_and_check_warnings_keep_json_stdout_parseable(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with (
         _host_cannot_read(),
+        _needs_auth_unknown(),
         patch("aiperf.cli_commands.kube.profile._print_memory_estimate"),
     ):
         await profile_cmd.profile(
@@ -412,6 +436,8 @@ async def test_profile_dry_run_unpinned_warning_keeps_json_stdout_parseable(
     assert cr["kind"] == "AIPerfJob"
     assert cr["spec"]["benchmark"]["datasets"][0]["path"] == HF_REF
     assert _UNPINNED_WARNING in " ".join(captured.err.split())
+    assert _CHECK_WARNING not in captured.out
+    assert _CHECK_WARNING in " ".join(captured.err.split())
 
 
 _PRESIGNED = (

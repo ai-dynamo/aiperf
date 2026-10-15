@@ -212,6 +212,9 @@ def _resolve_spec_and_name(
         pin_remote_datasets_for_kubernetes(config.benchmark)
         spec = kube_options.to_crd_spec(config)
         name = kube_options.name or generate_benchmark_name(config)
+    from aiperf.kubernetes.remote_datasets import report_remote_dataset_checks
+
+    report_remote_dataset_checks(config.benchmark, spec)
     return spec, config, name
 
 
