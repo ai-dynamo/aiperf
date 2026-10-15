@@ -293,7 +293,6 @@ class AioHttpTransport(BaseTransport):
 
     @property
     def stream_chunks_received(self) -> int:
-        """Streamed chunks received by the underlying aiohttp client."""
         if self.aiohttp_client is None:
             return 0
         return self.aiohttp_client.stream_chunks_received

@@ -327,7 +327,6 @@ async def test_a_request_still_streaming_is_not_a_stall(monkeypatch) -> None:
 
 @pytest.mark.asyncio
 async def test_flat_stream_activity_still_fails(monkeypatch) -> None:
-    """Chunk counts that stop moving are a stall like any other."""
     mgr = _Manager()
     await _tick_with_stream(mgr, monkeypatch, now=0.0, chunks={"w1": 500})
     await _tick_with_stream(mgr, monkeypatch, now=100.0, chunks={"w1": 500})
@@ -368,7 +367,6 @@ async def test_a_restarted_worker_s_counter_reset_is_activity(monkeypatch) -> No
 
 @pytest.mark.asyncio
 async def test_a_newly_reporting_idle_worker_is_not_activity(monkeypatch) -> None:
-    """A worker that first reports zero chunks has streamed nothing."""
     mgr = _Manager()
     await _tick_with_stream(mgr, monkeypatch, now=0.0, chunks={"w1": 500})
     await _tick_with_stream(mgr, monkeypatch, now=100.0, chunks={"w2": 0})
@@ -378,7 +376,6 @@ async def test_a_newly_reporting_idle_worker_is_not_activity(monkeypatch) -> Non
 
 @pytest.mark.asyncio
 async def test_stream_chunks_are_keyed_by_worker_across_both_sources() -> None:
-    """A worker seen directly and through its group snapshot counts once."""
     mgr = _Manager()
     await RecordsManager._on_worker_health_for_stall(
         mgr,
