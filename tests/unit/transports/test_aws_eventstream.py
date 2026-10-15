@@ -540,12 +540,12 @@ class TestLineEdgeWhitespace:
     @pytest.mark.parametrize(
         "payload,expected",
         [
-            param(b"data: \xe2\x80\xa8\n", "\N{LINE SEPARATOR}", id="prefixed-line-separator-only"),
-            param(b"data: tok\xe2\x80\xa9\n", "tok\N{PARAGRAPH SEPARATOR}", id="prefixed-trailing-paragraph-separator"),
-            param(b"\xc2\x85tok\n", "\N{NEXT LINE}tok", id="bare-leading-next-line"),
+            param(b"data: \xe2\x80\xa8\n", "\u2028", id="prefixed-line-separator-only"),
+            param(b"data: tok\xe2\x80\xa9\n", "tok\u2029", id="prefixed-trailing-paragraph-separator"),
+            param(b"\xc2\x85tok\n", "\u0085tok", id="bare-leading-next-line"),
             param(b"data: tok\x0c\n", "tok\x0c", id="prefixed-trailing-form-feed"),
             param(b"\x0c\n", "\x0c", id="form-feed-only-line"),
-            param(b"data: tok\xe2\x80\xa8", "tok\N{LINE SEPARATOR}", id="unterminated-trailing-line-separator"),
+            param(b"data: tok\xe2\x80\xa8", "tok\u2028", id="unterminated-trailing-line-separator"),
             param(b"\x0c", "\x0c", id="unterminated-form-feed-only"),
         ],
     )  # fmt: skip

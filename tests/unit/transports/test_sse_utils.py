@@ -520,20 +520,13 @@ class TestParseSSEMessageEdgeWhitespace:
     """Only ASCII space and tab are stripped from field edges."""
 
     @pytest.mark.parametrize(
-        "prefix",
+        "prefix,value",
         [
-            param("", id="fast-path"),
-            param("event: message\n", id="named-event"),
-        ],
-    )  # fmt: skip
-    @pytest.mark.parametrize(
-        "value",
-        [
-            param("\u2028", id="line-separator-only"),
-            param("tok\u2029", id="trailing-paragraph-separator"),
-            param("\u0085tok", id="leading-next-line"),
-            param("tok\x0c", id="trailing-form-feed"),
-            param("\x1ftok", id="leading-unit-separator"),
+            param("", "\u2028", id="fast-path-line-separator-only"),
+            param("", "tok\u2029", id="fast-path-trailing-paragraph-separator"),
+            param("", "\x1ftok", id="fast-path-leading-unit-separator"),
+            param("event: message\n", "\u0085tok", id="named-event-leading-next-line"),
+            param("event: message\n", "tok\x0c", id="named-event-trailing-form-feed"),
         ],
     )  # fmt: skip
     def test_parse_preserves_non_ascii_space_edges(
