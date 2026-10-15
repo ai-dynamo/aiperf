@@ -21,7 +21,7 @@ from aiperf.common.endpoint_credentials import (
     consume_injected_dataset_urls,
     redact_credential_text,
 )
-from aiperf.common.redact import is_sensitive_query_parameter_name
+from aiperf.common.redact import is_sensitive_query_parameter_name, redact_text
 from aiperf.config.loader.errors import ConfigurationError
 from aiperf.dataset.remote.errors import RemoteStage
 
@@ -67,7 +67,10 @@ def termination_message(error: BaseException, secrets: Iterable[str]) -> str:
         if isinstance(error, ConfigurationError)
         else f"{type(error).__name__}: {error}"
     )
-    line = " ".join(f"{POD_PREFIX} {redact_credential_text(text, secrets)}".split())
+    # Token-wise URL redaction first: applied to the whole text, the URL redactor
+    # swallows every word after a raw signature value.
+    scrubbed = redact_credential_text(redact_text(text), secrets)
+    line = " ".join(f"{POD_PREFIX} {scrubbed}".split())
     capped = line.encode("utf-8")[:MAX_TERMINATION_MESSAGE_BYTES]
     return capped.decode("utf-8", errors="ignore")
 

@@ -79,12 +79,33 @@ def test_termination_message_scrubs_known_secret_values() -> None:
     )
 
 
+def test_termination_message_keeps_text_after_a_raw_presigned_url() -> None:
+    """Whole-text URL redaction would swallow everything after the signature."""
+    line = termination_message(
+        RuntimeError(f"GET {RAW} returned HTTP 403. Check the clock"), secrets=[]
+    )
+    assert line == (
+        f"[dataset-manager pod] RuntimeError: GET {REDACTED} returned HTTP 403. "
+        "Check the clock"
+    )
+
+
 def test_termination_message_multibyte_truncation_stays_valid_utf8() -> None:
-    line = termination_message(ConfigurationError("é\n" * 3000 + RAW), secrets=[])
+    # The one-byte "x" shifts the 2-byte "é" run so byte 4096 lands inside one.
+    # The raw URL comes first so redaction is checked on text that survives the cut.
+    message = f"{RAW}\nx" + "é\n" * 3000
+    untruncated = f"{POD_PREFIX} {REDACTED} x" + " ".join(["é"] * 3000)
+    naive_cut = untruncated.encode("utf-8")[:MAX_TERMINATION_MESSAGE_BYTES]
+    with pytest.raises(UnicodeDecodeError):
+        naive_cut.decode("utf-8")
+
+    line = termination_message(ConfigurationError(message), secrets=[])
+
     encoded = line.encode("utf-8")
     assert len(encoded) <= MAX_TERMINATION_MESSAGE_BYTES
     assert encoded.decode("utf-8") == line
-    assert line.startswith(POD_PREFIX)
+    assert line.startswith(f"{POD_PREFIX} {REDACTED} xé é")
+    assert untruncated.startswith(line)
     assert "\n" not in line
     assert "topsecret" not in line
 

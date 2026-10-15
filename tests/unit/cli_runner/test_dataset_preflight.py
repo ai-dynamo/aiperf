@@ -376,3 +376,27 @@ class TestRemoteDatasetsInTheDatasetManagerPod:
             preflight_datasets_for_run(run)
         access.assert_not_called()
         materialize.assert_called_once_with([run.cfg])
+
+    def test_preflight_datasets_for_run_open_fixed_schedule_choice_raises(
+        self,
+    ) -> None:
+        from aiperf.config.dataset.remote_ref import RemoteFixedScheduleCheck
+        from aiperf.config.loader.errors import ConfigurationError
+
+        dataset = FileDataset(
+            name="main",
+            type="file",
+            path="hf://org/repo/t.jsonl",
+            remote_fixed_schedule_check=RemoteFixedScheduleCheck(promoted=True),
+        )
+        run = SimpleNamespace(cfg=SimpleNamespace(get_default_dataset=lambda: dataset))
+        with (
+            patch("aiperf.dataset.remote.preflight.preflight_remote_access") as access,
+            patch(
+                "aiperf.dataset.remote.preflight.preflight_remote_materialize"
+            ) as materialize,
+            pytest.raises(ConfigurationError, match="before submission"),
+        ):
+            preflight_datasets_for_run(run)
+        access.assert_not_called()
+        materialize.assert_not_called()
