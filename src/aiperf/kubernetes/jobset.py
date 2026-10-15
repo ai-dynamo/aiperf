@@ -565,6 +565,7 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
         service_id: str | None = None,
         extra_env: list[dict[str, Any]] | None = None,
         extra_volume_mounts: list[dict[str, Any]] | None = None,
+        termination_message_policy: str | None = None,
         include_pod_index: bool = True,
         controller_pod: bool = False,
         skip_readiness_probe: bool = False,
@@ -612,6 +613,7 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
             liveness_probe=liveness_probe,
             readiness_probe=readiness_probe,
             security_context=self._create_security_context(),
+            termination_message_policy=termination_message_policy,
         )
 
     def _create_event_bus_proxy_container(self) -> AIPerfContainerSpec:
@@ -732,6 +734,8 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
                 controller_pod=True,
                 extra_env=cache_env,
                 extra_volume_mounts=cache_mounts,
+                # Crashes that never reach the startup handler still surface.
+                termination_message_policy="FallbackToLogsOnError",
             ),
             self._create_container(
                 name=Containers.TIMING_MANAGER,

@@ -1,0 +1,196 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Dataset-manager startup: rehydration, preflight, and the termination message."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from unittest.mock import patch
+
+import orjson
+import pytest
+
+from aiperf.common.endpoint_credentials import AIPERF_INJECTED_DATASET_URLS
+from aiperf.common.redact import REDACTED_VALUE
+from aiperf.config import BenchmarkConfig
+from aiperf.config.loader.errors import ConfigurationError
+from aiperf.config.resolution.plan import BenchmarkRun
+from aiperf.dataset.remote.errors import (
+    RemoteErrorKind,
+    RemoteSourceError,
+    RemoteStage,
+)
+from aiperf.kubernetes import dataset_startup
+from aiperf.kubernetes.constants import Containers
+from aiperf.kubernetes.dataset_startup import (
+    MAX_TERMINATION_MESSAGE_BYTES,
+    POD_PREFIX,
+    prepare_dataset_manager_run,
+    termination_message,
+    write_termination_message,
+)
+from aiperf.kubernetes.jobset import AIPerfJobSetSpec
+
+RAW = "https://bucket.s3.amazonaws.com/t.jsonl?X-Amz-Signature=topsecret"
+REDACTED = RAW.replace("topsecret", REDACTED_VALUE)
+
+
+def _run(artifact_dir: Path, path: object) -> BenchmarkRun:
+    cfg = BenchmarkConfig.model_validate(
+        {
+            "models": ["m"],
+            "endpoint": {"urls": ["http://localhost:8000"], "type": "chat"},
+            "datasets": [{"name": "main", "type": "file", "path": path, "format": "mooncake_trace"}],
+            "phases": [{"name": "profiling", "type": "concurrency", "requests": 4, "concurrency": 1}],
+        }
+    )  # fmt: skip
+    return BenchmarkRun(benchmark_id="job", cfg=cfg, artifact_dir=artifact_dir)
+
+
+@pytest.fixture
+def termination_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    log = tmp_path / "termination-log"
+    monkeypatch.setattr(dataset_startup, "TERMINATION_LOG_PATH", log)
+    return log
+
+
+def test_termination_message_is_one_prefixed_redacted_line() -> None:
+    error = RemoteSourceError(
+        ref=RAW,
+        kind=RemoteErrorKind.AUTH_DENIED,
+        stage=RemoteStage.POD,
+        what="the server denied access (HTTP 403)\nafter a redirect",
+        hint="Generate a new presigned URL",
+    )
+    line = termination_message(error, secrets=[])
+    assert POD_PREFIX == "[dataset-manager pod]"
+    assert line.startswith(f"[dataset-manager pod] Cannot use {REDACTED}: ")
+    assert "\n" not in line
+    assert "topsecret" not in line
+
+
+def test_termination_message_scrubs_known_secret_values() -> None:
+    line = termination_message(
+        RuntimeError("download failed for s3cr3t-v4lue"), secrets=["s3cr3t-v4lue"]
+    )
+    assert (
+        line
+        == f"[dataset-manager pod] RuntimeError: download failed for {REDACTED_VALUE}"
+    )
+
+
+def test_termination_message_multibyte_truncation_stays_valid_utf8() -> None:
+    line = termination_message(ConfigurationError("é\n" * 3000 + RAW), secrets=[])
+    encoded = line.encode("utf-8")
+    assert len(encoded) <= MAX_TERMINATION_MESSAGE_BYTES
+    assert encoded.decode("utf-8") == line
+    assert line.startswith(POD_PREFIX)
+    assert "\n" not in line
+    assert "topsecret" not in line
+
+
+def test_write_termination_message_missing_directory_is_ignored(tmp_path: Path) -> None:
+    write_termination_message(
+        ValueError("no such dataset here"), [], path=tmp_path / "missing" / "log"
+    )
+    assert not (tmp_path / "missing").exists()
+
+
+def test_prepare_dataset_manager_run_rehydrates_before_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, termination_log: Path
+) -> None:
+    monkeypatch.setenv(AIPERF_INJECTED_DATASET_URLS, orjson.dumps([RAW]).decode())
+    run = _run(tmp_path, {"ref": REDACTED, "resolved_version": "etag:abc"})
+    seen: list[str] = []
+    with patch(
+        "aiperf.cli_runner._preflight.preflight_datasets_for_run",
+        side_effect=lambda r: seen.append(r.cfg.datasets[0].path.ref),
+    ):
+        prepare_dataset_manager_run(run, endpoint_secrets=[])
+    assert seen == [RAW]
+    assert not termination_log.exists()
+
+
+def test_prepare_dataset_manager_run_preflight_failure_writes_termination_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, termination_log: Path
+) -> None:
+    monkeypatch.setenv(AIPERF_INJECTED_DATASET_URLS, orjson.dumps([RAW]).decode())
+    run = _run(tmp_path, REDACTED)
+    error = RemoteSourceError(
+        ref=RAW,
+        kind=RemoteErrorKind.AUTH_DENIED,
+        stage=RemoteStage.MATERIALIZE,
+        what=f"GET {RAW} returned HTTP 403",
+        hint="Generate a new presigned URL",
+    )
+    with (
+        patch(
+            "aiperf.cli_runner._preflight.preflight_datasets_for_run", side_effect=error
+        ),
+        pytest.raises(RemoteSourceError),
+    ):
+        prepare_dataset_manager_run(run, endpoint_secrets=[])
+    message = termination_log.read_text(encoding="utf-8")
+    assert message.startswith("[dataset-manager pod] Cannot use ")
+    assert "topsecret" not in message
+
+
+def test_prepare_dataset_manager_run_scrubs_bare_signature_from_injected_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, termination_log: Path
+) -> None:
+    """S3 echoes the signature alone (``<SignatureProvided>``), out of URL context."""
+    monkeypatch.setenv(AIPERF_INJECTED_DATASET_URLS, orjson.dumps([RAW]).decode())
+    run = _run(tmp_path, REDACTED)
+    error = RuntimeError("<SignatureProvided>topsecret</SignatureProvided>")
+    with (
+        patch(
+            "aiperf.cli_runner._preflight.preflight_datasets_for_run", side_effect=error
+        ),
+        pytest.raises(RuntimeError),
+    ):
+        prepare_dataset_manager_run(run, endpoint_secrets=[])
+    message = termination_log.read_text(encoding="utf-8")
+    assert "topsecret" not in message
+    assert REDACTED_VALUE in message
+
+
+def test_prepare_dataset_manager_run_scrubs_endpoint_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, termination_log: Path
+) -> None:
+    monkeypatch.delenv(AIPERF_INJECTED_DATASET_URLS, raising=False)
+    run = _run(tmp_path, "hf://org/repo/t.jsonl")
+    error = RuntimeError("upstream rejected key sk-endpoint-key")
+    with (
+        patch(
+            "aiperf.cli_runner._preflight.preflight_datasets_for_run", side_effect=error
+        ),
+        pytest.raises(RuntimeError),
+    ):
+        prepare_dataset_manager_run(run, endpoint_secrets=["sk-endpoint-key"])
+    assert "sk-endpoint-key" not in termination_log.read_text(encoding="utf-8")
+
+
+def test_prepare_dataset_manager_run_missing_injection_writes_termination_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, termination_log: Path
+) -> None:
+    monkeypatch.delenv(AIPERF_INJECTED_DATASET_URLS, raising=False)
+    run = _run(tmp_path, REDACTED)
+    with pytest.raises(ValueError, match="has no URL for it"):
+        prepare_dataset_manager_run(run, endpoint_secrets=[])
+    assert "has no URL for it" in termination_log.read_text(encoding="utf-8")
+
+
+def test_dataset_manager_container_falls_back_to_logs_for_termination_message() -> None:
+    spec = AIPerfJobSetSpec(name="ts", namespace="ns", job_id="ts-1", image="aiperf:ci")
+    manifest = spec.to_k8s_manifest()
+    job = next(
+        j for j in manifest["spec"]["replicatedJobs"] if j["name"] == "controller"
+    )
+    containers = {
+        c["name"]: c for c in job["template"]["spec"]["template"]["spec"]["containers"]
+    }
+    assert (
+        containers[Containers.DATASET_MANAGER]["terminationMessagePolicy"]
+        == "FallbackToLogsOnError"
+    )
+    assert "terminationMessagePolicy" not in containers[Containers.CONTROL_PLANE]

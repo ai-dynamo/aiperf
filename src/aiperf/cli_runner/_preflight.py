@@ -20,6 +20,8 @@ from aiperf.common.endpoint_auth import auth_headers_for_endpoint
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkPlan
+    from aiperf.config.config import BenchmarkConfig
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 # Re-export for callers still importing the private name; prefer
 # ``auth_headers_for_endpoint`` from ``aiperf.common.endpoint_auth``.
@@ -315,17 +317,42 @@ def _preflight_dataset_materialize(plan: BenchmarkPlan) -> None:
     preflight_remote_materialize(plan.configs)
 
 
-def preflight_public_datasets_for_run(run) -> None:
-    """Run the public-dataset preflights for a single serialized ``BenchmarkRun``.
+def _has_unpinned_remote_dataset(cfg: BenchmarkConfig) -> bool:
+    from aiperf.config.dataset import FileDataset
+    from aiperf.config.dataset.remote_ref import RemoteRef
+
+    dataset = cfg.get_default_dataset()
+    return (
+        isinstance(dataset, FileDataset)
+        and isinstance(dataset.path, RemoteRef)
+        and dataset.path.resolved_version is None
+    )
+
+
+def preflight_datasets_for_run(run: BenchmarkRun) -> None:
+    """Run every dataset preflight for one serialized ``BenchmarkRun``.
 
     The Kubernetes ``aiperf service`` entry point never calls ``run_benchmark``,
-    so without this the gate probe and the resolution download would both fall
-    inside ``DatasetManager``'s configure step and trip
+    so without this the gate probe and the downloads would fall inside
+    ``DatasetManager``'s configure step and trip
     ``AIPERF_DATASET_CONFIGURATION_TIMEOUT``. Only the dataset_manager container
     calls this: it is the sole service that composes the dataset, and every
-    other pod would download the same multi-GB resolution into a private
-    filesystem for nothing.
+    other pod would download the same data into a private filesystem for nothing.
+
+    Public datasets run their access and materialize hooks. A remote file
+    dataset runs the access stage only when it arrives unpinned (the CLI host
+    could not read it, or the resource was applied with kubectl), then the
+    materialize stage, which downloads the pinned version and verifies the pin.
     """
     for LoaderClass, kwargs in _public_dataset_loaders_for_configs([run.cfg]):
         _call_optional_hook(LoaderClass, "preflight_access", kwargs)
         _call_optional_hook(LoaderClass, "preflight_materialize", kwargs)
+
+    from aiperf.dataset.remote.preflight import (
+        preflight_remote_access,
+        preflight_remote_materialize,
+    )
+
+    if _has_unpinned_remote_dataset(run.cfg):
+        preflight_remote_access([run.cfg])
+    preflight_remote_materialize([run.cfg])
