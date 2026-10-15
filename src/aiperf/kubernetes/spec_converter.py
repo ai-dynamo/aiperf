@@ -220,22 +220,27 @@ def restore_sweep_parameter_dataset_names(
                 break
 
 
-def reject_remote_datasets_for_kubernetes(config: AIPerfConfig) -> None:
-    """Fail before scheduling: pods cannot resolve remote dataset references yet.
+def validate_remote_datasets_for_kubernetes(config: AIPerfConfig) -> None:
+    """Reject remote dataset settings a workload CR cannot carry.
 
-    Without this, the job is scheduled and the dataset-manager pod later fails
-    with an internal error, because the dataset preflight runs only locally.
+    Remote references themselves are accepted: the dataset-manager pod pins and
+    downloads them.
 
     Raises:
-        ConfigurationError: A dataset path is an ``hf://``, ``s3://`` or ``https://``
-            reference.
+        ConfigurationError: A dataset carries the CLI-internal
+            ``remote_fixed_schedule_check`` marker.
     """
     for dataset in config.benchmark.datasets:
-        if isinstance(dataset, FileDataset) and isinstance(dataset.path, RemoteRef):
+        if not isinstance(dataset, FileDataset) or not isinstance(
+            dataset.path, RemoteRef
+        ):
+            continue
+        if dataset.remote_fixed_schedule_check is not None:
             raise ConfigurationError(
-                "Remote dataset references (hf://, s3://, https://) are not yet "
-                f"supported for Kubernetes runs: {dataset.path.display}. Download "
-                "the file and use a local path."
+                f"Dataset {dataset.path.display} sets remoteFixedScheduleCheck, "
+                "which only the AIPerf CLI may set; AIPerfJob and AIPerfSweep "
+                "resources cannot carry it. Remove it and choose the profiling "
+                "phase type explicitly."
             )
 
 
@@ -257,7 +262,7 @@ def prepare_workload_spec(
         A rendered workload spec and its post-environment, pre-Jinja envelope.
     """
     config = load_config_from_mapping(build_config_envelope(spec))
-    reject_remote_datasets_for_kubernetes(config)
+    validate_remote_datasets_for_kubernetes(config)
     envelope_keys = set(AIPerfConfig.model_fields)
     envelope_keys.update(
         model_field.alias
