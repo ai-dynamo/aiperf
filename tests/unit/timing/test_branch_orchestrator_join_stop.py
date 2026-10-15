@@ -95,7 +95,7 @@ def recorded_holds(monkeypatch):
     """Capture every recorded-timestamp hold the orchestrator performs."""
     holds: list[float] = []
 
-    async def _spy(self, seconds: float) -> None:
+    async def _spy(self, seconds: float, still_sendable) -> None:
         holds.append(seconds)
 
     monkeypatch.setattr(BranchOrchestrator, "_interruptible_sleep", _spy)
@@ -185,3 +185,84 @@ async def test_cutoff_releases_a_join_already_holding_for_its_target() -> None:
 
     await asyncio.wait_for(holding, timeout=2)
     assert orch._issuer.dispatch_join_turn.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_recorded_hold_returns_when_the_gated_turn_becomes_unsendable() -> None:
+    """A refused join must not keep holding for its recorded timestamp.
+
+    The sending cutoff is not the only way a gated turn stops being sendable:
+    ``--request-count`` / ``--num-conversations`` close the issuer's gate while
+    the phase is still scheduling, so ``_schedule_stopped`` is never set. A
+    hold that watches only that latch then sleeps to a recorded instant for a
+    turn the issuer will refuse on wake, stretching the window throughput is
+    divided by for a request that is never sent.
+
+    Runs the real wait, so it fails by timing out if the gate is ignored.
+    """
+    orch = _orchestrator()
+    pending = _blocked_join(orch)
+    sendable = True
+    orch._issuer.can_dispatch_join = lambda depth: sendable
+    orch._issuer.can_dispatch_child_turn = lambda: sendable
+
+    holding = asyncio.create_task(orch._await_recorded_join_target(pending))
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert not holding.done(), (
+        "precondition: the hold must still be waiting on its recorded target"
+    )
+
+    sendable = False
+    orch._wake_think_time_sleepers()
+
+    await asyncio.wait_for(holding, timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_recorded_hold_keeps_waiting_while_the_turn_is_still_sendable() -> None:
+    """The gate must not collapse the hold into a no-op.
+
+    A wake that is not accompanied by a closed gate (any other sleeper being
+    woken) must leave the recorded target intact -- otherwise the compression
+    this hold exists to prevent returns, and silently.
+    """
+    orch = _orchestrator()
+    pending = _blocked_join(orch)
+    orch._issuer.can_dispatch_join = lambda depth: True
+
+    holding = asyncio.create_task(orch._await_recorded_join_target(pending))
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    orch._wake_think_time_sleepers()
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    assert not holding.done(), (
+        "the recorded-timestamp hold was dropped on a wake even though the "
+        "gated turn was still sendable"
+    )
+    holding.cancel()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_releases_a_join_holding_for_its_recorded_target() -> None:
+    """Teardown without a sending cutoff must still end the hold.
+
+    A phase torn down by a cancel or a failure never reaches
+    ``expire_replay_deadlines``, so ``cleanup()`` is the only thing that fires.
+    If it does not end the hold, shutdown waits out the full recorded target.
+    """
+    orch = _orchestrator()
+    pending = _blocked_join(orch)
+    orch._issuer.can_dispatch_join = lambda depth: True
+
+    holding = asyncio.create_task(orch._await_recorded_join_target(pending))
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert not holding.done()
+
+    orch.cleanup()
+
+    await asyncio.wait_for(holding, timeout=2)

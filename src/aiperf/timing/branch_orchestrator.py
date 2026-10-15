@@ -1937,7 +1937,10 @@ class BranchOrchestrator:
 
         remaining = target - time.perf_counter()
         if remaining > 0:
-            await self._interruptible_sleep(remaining)
+            await self._interruptible_sleep(
+                remaining,
+                lambda: self._issuer.can_dispatch_join(pending.parent_agent_depth),
+            )
 
     def _recorded_join_target_perf_sec(
         self, pending: PendingBranchJoin
@@ -1963,21 +1966,38 @@ class BranchOrchestrator:
             return None
         return resolver(timestamp_ms)
 
-    async def _interruptible_sleep(self, seconds: float) -> None:
+    async def _interruptible_sleep(
+        self, seconds: float, still_sendable: Callable[[], bool]
+    ) -> None:
         """Hold for ``seconds``, or until the run stops wanting the hold.
 
-        Returns early once the phase stops scheduling (or cleanup fires). Past
-        that boundary the issuer refuses the turn anyway, so continuing to wait
-        cannot produce a legal replay -- it only keeps the run alive, and the
-        stalled span is the window throughput gets divided by. A parent
-        recorded at t=20s under ``--benchmark-duration 4`` would otherwise hold
-        to t=20s and report its requests over that window.
+        Returns early once the phase stops scheduling, cleanup fires, or the
+        held turn would now be refused. Past any of those boundaries the
+        issuer refuses the turn anyway, so continuing to wait cannot produce a
+        legal replay -- it only keeps the run alive, and the stalled span is
+        the window throughput gets divided by. A parent recorded at t=20s
+        under ``--benchmark-duration 4`` would otherwise hold to t=20s and
+        report its requests over that window.
+
+        Unlike ``_sleep_think_ms``, a sleeper here does *not* keep waiting
+        just because its turn is still sendable: the instant it holds for is a
+        point on the recorded timeline, which stops meaning anything once the
+        phase stops replaying it. Both cutoff setters pulse
+        ``_think_time_wake``, which is what wakes this loop to re-check.
         """
-        waiter = asyncio.ensure_future(self._schedule_stopped.wait())
-        try:
-            await asyncio.wait([waiter], timeout=seconds)
-        finally:
-            waiter.cancel()
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + seconds
+        while (
+            not self._cleaning_up
+            and not self._schedule_stopped.is_set()
+            and still_sendable()
+        ):
+            try:
+                await asyncio.wait_for(
+                    self._think_time_wake.wait(), timeout=deadline - loop.time()
+                )
+            except TimeoutError:
+                return
 
     async def _release_blocked_join(self, pending: PendingBranchJoin) -> None:
         """Dispatch the parent's gated turn and update stats."""
@@ -2206,10 +2226,6 @@ class BranchOrchestrator:
             return
         self._cleaning_up = True
         self._wake_think_time_sleepers()
-        # Teardown also ends any recorded-timestamp hold: a phase torn down
-        # without reaching expire_replay_deadlines (cancel, failure) must not
-        # leave a join sleeping to its recorded instant.
-        self._schedule_stopped.set()
         self._drain_observer = None
         for task in self._delayed_dispatch_tasks.values():
             task.cancel()
