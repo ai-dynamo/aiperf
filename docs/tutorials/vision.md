@@ -60,6 +60,9 @@ aiperf profile \
 <!-- /aiperf-run-vllm-vision-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
+
+This sample was captured without `--output-tokens-mean`, so its output token counts exceed the 100-token mean set above.
+
 ```
 INFO     Starting AIPerf System
 INFO     Generating synthetic images (512x512 px)

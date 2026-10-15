@@ -56,6 +56,8 @@ aiperf profile \
 
 **Sample Output (Successful Run):**
 
+This sample was captured without `--output-tokens-mean`, so its output sequence lengths exceed the 100-token mean set above.
+
 ```
                                         NVIDIA AIPerf | LLM Metrics
 ┏━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━┓
