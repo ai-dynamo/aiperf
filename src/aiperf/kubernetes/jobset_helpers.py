@@ -23,6 +23,10 @@ from aiperf.kubernetes.environment import K8sEnvironment
 
 _logger = AIPerfLogger(__name__)
 
+REMOTE_CACHE_VOLUME = "remote-cache"
+REMOTE_CACHE_MOUNT_PATH = "/aiperf/remote-cache"
+REMOTE_CACHE_ENV = "AIPERF_DATASET_REMOTE_CACHE_DIR"
+
 
 @lru_cache(maxsize=256)
 def _warn_once(job_identity: str, message: str) -> None:
@@ -185,10 +189,43 @@ def build_shared_volumes(
         {"name": "datasets", "emptyDir": {}},
         # Shared HF cache for the controller pod's warmer + API + dataset-manager.
         {"name": "tokenizer-cache", "emptyDir": {}},
+        # Remote-dataset downloads and their index; the root filesystem is read-only.
+        {"name": REMOTE_CACHE_VOLUME, "emptyDir": {}},
         {"name": "tmp", "emptyDir": {}},
     ]
     volumes.extend(pod_template.volumes)
     return volumes
+
+
+def build_remote_cache_env_and_mounts(
+    pod_template: PodTemplateConfig,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Env and mounts that give a container a writable remote-dataset cache.
+
+    The default cache (``~/.cache/aiperf/remote``) sits on the read-only root
+    filesystem, so dataset-manager downloads into an emptyDir instead, and the
+    control-plane mounts the same volume so exported provenance can read the
+    cache index. A user's ``AIPERF_DATASET_REMOTE_CACHE_DIR`` or a user mount at
+    the same path wins.
+    """
+    user_env = any(
+        (item or {}).get("name") == REMOTE_CACHE_ENV for item in pod_template.env
+    )
+    user_mount = any(
+        (mount or {}).get("mountPath") == REMOTE_CACHE_MOUNT_PATH
+        for mount in pod_template.volume_mounts
+    )
+    env = (
+        []
+        if user_env
+        else [{"name": REMOTE_CACHE_ENV, "value": REMOTE_CACHE_MOUNT_PATH}]
+    )
+    mounts = (
+        []
+        if user_mount
+        else [{"name": REMOTE_CACHE_VOLUME, "mountPath": REMOTE_CACHE_MOUNT_PATH}]
+    )
+    return env, mounts
 
 
 def build_container_args(
@@ -241,10 +278,9 @@ def build_env_vars(
 
     Args:
         controller_pod: When True, this container runs inside the controller
-            pod (api / dataset-manager / etc.) -- emit AIPERF_CONTROLLER_POD=1
-            so bootstrap.py skips HF offline-mode (the controller needs HF
-            egress for prewarming the shared cache). Worker-pod containers
-            default to False and inherit offline mode.
+            pod (api / dataset-manager / etc.): emit AIPERF_CONTROLLER_POD=1 and
+            the controller-only settings below. Nothing toggles HF offline mode
+            from this marker, here or in bootstrap.py.
     """
     datasets_path = K8sEnvironment.JOBSET.DATASETS_PATH
     config_mount_path = K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH
@@ -291,9 +327,8 @@ def build_env_vars(
     ]
 
     if controller_pod:
-        # Marker consumed by aiperf.common.bootstrap._configure_child_process:
-        # presence of this var disables the HF offline-mode default so the
-        # controller pod can reach HuggingFace to warm the shared cache.
+        # Identifies controller-pod containers in the pod spec; AIPerf code
+        # does not branch on it.
         env.append({"name": "AIPERF_CONTROLLER_POD", "value": "1"})
         # Records-manager publishes RealtimeMetricsMessage only when this gate
         # is true (records_manager.py::_report_realtime_inference_metrics_task).

@@ -34,6 +34,7 @@ from aiperf.kubernetes.jobset_helpers import (
     build_container_ports,
     build_env_vars,
     build_health_probe,
+    build_remote_cache_env_and_mounts,
     build_security_context,
     build_service_probes,
     build_shared_volumes,
@@ -563,6 +564,7 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
         controller_host: str | None = None,
         service_id: str | None = None,
         extra_env: list[dict[str, Any]] | None = None,
+        extra_volume_mounts: list[dict[str, Any]] | None = None,
         include_pod_index: bool = True,
         controller_pod: bool = False,
         skip_readiness_probe: bool = False,
@@ -604,7 +606,7 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
             args=args,
             env=env,
             resources=resources,
-            volume_mounts=self._get_volume_mounts(),
+            volume_mounts=[*self._get_volume_mounts(), *(extra_volume_mounts or [])],
             ports=ports,
             startup_probe=startup_probe,
             liveness_probe=liveness_probe,
@@ -697,6 +699,7 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
     def _create_control_plane_containers(self) -> list[AIPerfContainerSpec]:
         """Build the five mandatory control-plane service containers."""
         ports = K8sEnvironment.PORTS
+        cache_env, cache_mounts = build_remote_cache_env_and_mounts(self.pod_template)
         return [
             self._create_container(
                 name=Containers.CONTROL_PLANE,
@@ -714,8 +717,10 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
                     {
                         "name": "AIPERF_K8S_EVENT_BUS_SIDECAR_ENABLED",
                         "value": str(K8sEnvironment.EVENT_BUS_SIDECAR_ENABLED).lower(),
-                    }
+                    },
+                    *cache_env,
                 ],
+                extra_volume_mounts=cache_mounts,
             ),
             self._create_container(
                 name=Containers.DATASET_MANAGER,
@@ -725,6 +730,8 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
                 service_id="dataset_manager",
                 include_pod_index=False,
                 controller_pod=True,
+                extra_env=cache_env,
+                extra_volume_mounts=cache_mounts,
             ),
             self._create_container(
                 name=Containers.TIMING_MANAGER,
