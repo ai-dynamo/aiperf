@@ -1180,6 +1180,9 @@ def _wall_ns_at_start_perf(data: dict[str, Any]) -> int:
 class RequestRecord(AIPerfBaseModel):
     """Record of a request with its associated responses."""
 
+    _redirect_locations: tuple[str, ...] = PrivateAttr(default=())
+    """Download redirect metadata, local to the transport and never serialized."""
+
     _parsed_responses_cache: list[ParsedResponse] | None = PrivateAttr(default=None)
     """Memoized endpoint-final parsed responses, local to this process and never
     serialized. Populated by endpoint response processing and treated as read-only.
@@ -1730,9 +1733,16 @@ class ParsedResponseRecord:
     """Engine-neutral per-request speculative-decoding acceptance record, filled
     by a ``SpecDecodeAdapterProtocol`` when the response carried spec-decode
     stats. ``None`` when: spec decode is off or the request had no verify steps
-    (no payload); the request produced multiple sequences (``n > 1``, which is
-    suppressed); no registered adapter recognized the payload; or the payload
-    was malformed and the adapter rejected it."""
+    (no payload, or a zero-step payload the parser drops); the request produced
+    multiple sequences (``n > 1``, which is suppressed); no registered adapter
+    recognized the payload; or the payload was malformed and the adapter
+    rejected it."""
+
+    spec_decode_zero_step: bool = False
+    """True when the engine reported spec-decode stats for this request but it
+    ran no verify step (``num_spec_steps == 0``). Its record is dropped, so
+    ``spec_decode_acceptance`` is None; this flag lets the run count such
+    requests separately from runs where spec decode is off."""
 
     @cached_property
     def final_usage(self) -> Usage | None:
