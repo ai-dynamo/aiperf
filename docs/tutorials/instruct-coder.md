@@ -47,6 +47,7 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --public-dataset instruct_coder \
+    --output-tokens-mean 1024 \
     --request-count 10 \
     --concurrency 4
 ```
