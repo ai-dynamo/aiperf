@@ -23,6 +23,7 @@ from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient, CustomObjectsApi
 from kubernetes_asyncio.client.exceptions import ApiException
 
+from aiperf.common.endpoint_credentials import redact_credential_text
 from aiperf.common.enums import SystemState
 from aiperf.common.environment import Environment
 from aiperf.common.redact import redact_text
@@ -2792,12 +2793,13 @@ def _termination_detail(terminated: Any) -> str:
     """The container's termination message as one redacted line ('' when absent).
 
     With ``FallbackToLogsOnError`` the message is the log tail, which can span
-    lines and quote URLs, so it is flattened and redacted again here.
+    lines and quote URLs, headers or tokens, so it is flattened and scrubbed
+    with the same pipeline the pod applies to its own line.
     """
     message = _resource_field(terminated, "message")
     if not isinstance(message, str):
         return ""
-    return redact_text(" ".join(message.split()))
+    return redact_credential_text(redact_text(" ".join(message.split())), ())
 
 
 def _container_failure(status: Any) -> tuple[str, int, str, str] | None:
@@ -2815,6 +2817,18 @@ def _container_failure(status: Any) -> tuple[str, int, str, str] | None:
     return name, exit_code, reason, _termination_detail(terminated)
 
 
+def _failure_rank(failure: tuple[str, int, str, str]) -> int:
+    """Sort key: the dataset-manager's own line, then control-plane, then the rest.
+
+    A dataset startup failure can take the control-plane down with it; the
+    dataset-manager's ``POD_PREFIX`` line is then the cause, not a bystander.
+    """
+    name, _, _, message = failure
+    if name == Containers.DATASET_MANAGER and message.startswith(POD_PREFIX):
+        return 0
+    return 1 if name == Containers.CONTROL_PLANE else 2
+
+
 def _get_terminated_controller_info(pod: Any) -> tuple[int, str] | None:
     """Return (exit_code, reason) if any control-plane container died non-zero.
 
@@ -2823,7 +2837,8 @@ def _get_terminated_controller_info(pod: Any) -> tuple[int, str] | None:
     that OOMKilled left salvage un-triggered and the job hung until its
     timeout with a generic message. Any non-zero exit among them is grounds to
     salvage; ``control-plane`` is still preferred when several have died so
-    the reported reason names the primary failure.
+    the reported reason names the primary failure, unless the dataset-manager
+    left its ``POD_PREFIX`` line, which names the cause.
 
     The container's termination message, when there is one, is appended after
     ``": "``: the dataset-manager writes the redacted cause of a dataset
@@ -2842,7 +2857,7 @@ def _get_terminated_controller_info(pod: Any) -> tuple[int, str] | None:
     failures = [f for f in map(_container_failure, statuses) if f is not None]
     if not failures:
         return None
-    failures.sort(key=lambda f: f[0] != Containers.CONTROL_PLANE)
+    failures.sort(key=_failure_rank)
     name, exit_code, reason, message = failures[0]
     if name != Containers.CONTROL_PLANE:
         reason = f"{reason} (container {name})"
