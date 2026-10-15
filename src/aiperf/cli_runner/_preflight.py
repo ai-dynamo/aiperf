@@ -329,6 +329,34 @@ def _has_unpinned_remote_dataset(cfg: BenchmarkConfig) -> bool:
     )
 
 
+def _reject_open_fixed_schedule_choice(cfg: BenchmarkConfig) -> None:
+    """Refuse a run whose phase type still waits on the trace's first record.
+
+    The access stage would settle it by rewriting the profiling phase, but only
+    in this pod's copy of the run; every other pod keeps the phases the
+    controller rendered. The CLI settles it before submission and the operator
+    rejects a resource that carries it, so reaching here means the serialized
+    run was produced some other way.
+    """
+    from aiperf.config.dataset import FileDataset
+    from aiperf.config.loader.errors import ConfigurationError
+
+    dataset = cfg.get_default_dataset()
+    if (
+        not isinstance(dataset, FileDataset)
+        or dataset.remote_fixed_schedule_check is None
+    ):
+        return
+    raise ConfigurationError(
+        f"Dataset {dataset.path} still has its fixed-schedule choice open "
+        "(remote_fixed_schedule_check is set). Settling it here would change the "
+        "profiling phase in the dataset-manager pod only, while every other pod "
+        "keeps the phases it was given. The choice must be made before "
+        "submission: pass --fixed-schedule or --no-fixed-schedule, or submit "
+        "from a machine that can read the source."
+    )
+
+
 def preflight_datasets_for_run(run: BenchmarkRun) -> None:
     """Run every dataset preflight for one serialized ``BenchmarkRun``.
 
@@ -343,7 +371,12 @@ def preflight_datasets_for_run(run: BenchmarkRun) -> None:
     dataset runs the access stage only when it arrives unpinned (the CLI host
     could not read it, or the resource was applied with kubectl), then the
     materialize stage, which downloads the pinned version and verifies the pin.
+
+    Raises:
+        ConfigurationError: The default dataset still carries
+            ``remote_fixed_schedule_check``; the pod must never change phases.
     """
+    _reject_open_fixed_schedule_choice(run.cfg)
     for LoaderClass, kwargs in _public_dataset_loaders_for_configs([run.cfg]):
         _call_optional_hook(LoaderClass, "preflight_access", kwargs)
         _call_optional_hook(LoaderClass, "preflight_materialize", kwargs)
