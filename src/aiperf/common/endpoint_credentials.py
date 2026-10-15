@@ -546,17 +546,12 @@ def credential_values(
     return [value for value in values if value and value != REDACTED_VALUE]
 
 
-def redact_credential_text(text: str, secrets: Iterable[str]) -> str:
-    """Scrub known credential values out of arbitrary text.
+def replace_secret_values(text: str, secrets: Iterable[str]) -> str:
+    """Replace each known credential value in ``text`` with the redaction placeholder.
 
-    Exact-value replacement runs first because an exception message or
-    traceback frame can embed a raw key with none of the ``api_key=`` /
-    ``Authorization:`` context that pattern-based redaction keys off. The
-    generic string and URL redactors then run as a fallback for credentials
-    this process never held. Values shorter than
-    ``_MIN_REDACTABLE_SECRET_LENGTH`` are skipped: a one- or two-character
-    "credential" would shred every unrelated word in a traceback while
-    protecting nothing real.
+    Values shorter than ``_MIN_REDACTABLE_SECRET_LENGTH`` are skipped: a one- or
+    two-character "credential" would shred every unrelated word in a traceback
+    while protecting nothing real.
     """
     unique = {
         secret
@@ -567,7 +562,19 @@ def redact_credential_text(text: str, secrets: Iterable[str]) -> str:
     # password inside it) is replaced whole rather than left partially intact.
     for secret in sorted(unique, key=len, reverse=True):
         text = text.replace(secret, REDACTED_VALUE)
-    return redact_url(redact_string(text))
+    return text
+
+
+def redact_credential_text(text: str, secrets: Iterable[str]) -> str:
+    """Scrub known credential values out of arbitrary text.
+
+    Exact-value replacement (:func:`replace_secret_values`) runs first because
+    an exception message or traceback frame can embed a raw key with none of
+    the ``api_key=`` / ``Authorization:`` context that pattern-based redaction
+    keys off. The generic string and URL redactors then run as a fallback for
+    credentials this process never held.
+    """
+    return redact_url(redact_string(replace_secret_values(text, secrets)))
 
 
 def secret_env_names(pod_env: Iterable[object]) -> set[str]:
