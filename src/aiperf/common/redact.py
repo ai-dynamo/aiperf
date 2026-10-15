@@ -498,18 +498,64 @@ def redact_text(text: str) -> str:
     )
 
 
+def _redact_endpoint_fields(endpoint: Any) -> None:
+    """Redact one endpoint mapping in place (both ``apiKey`` and ``api_key`` shapes)."""
+    if not isinstance(endpoint, dict):
+        return
+    for key in ("apiKey", "api_key"):
+        if endpoint.get(key) is not None:
+            endpoint[key] = REDACTED_VALUE
+
+    headers = endpoint.get("headers")
+    if isinstance(headers, dict):
+        endpoint["headers"] = redact_headers(headers) or {}
+
+    for key in ("urls", "url"):
+        urls = endpoint.get(key)
+        if isinstance(urls, str):
+            endpoint[key] = redact_url(urls)
+        elif isinstance(urls, list):
+            endpoint[key] = [
+                redact_url(url) if isinstance(url, str) else url for url in urls
+            ]
+
+
+def _redact_dataset_path(dataset: Any) -> None:
+    """Redact one dataset's ``path``: a string, or a pinned ``{ref, resolved_version}``."""
+    if not isinstance(dataset, dict):
+        return
+    path = dataset.get("path")
+    if isinstance(path, str):
+        dataset["path"] = redact_url(path)
+    elif isinstance(path, dict) and isinstance(path.get("ref"), str):
+        path["ref"] = redact_url(path["ref"])
+
+
+def _redact_dataset_paths(benchmark: dict[str, Any]) -> None:
+    datasets = benchmark.get("datasets")
+    if isinstance(datasets, dict):
+        datasets = list(datasets.values())
+    for dataset in datasets if isinstance(datasets, list) else []:
+        _redact_dataset_path(dataset)
+    _redact_dataset_path(benchmark.get("dataset"))
+
+
 def redact_endpoint_spec(spec: dict[str, Any]) -> dict[str, Any]:
     """Return a credential-safe copy of a CR spec or benchmark configuration.
 
     Kubernetes CRs use the public ``apiKey`` spelling while Python model dumps
     may use ``api_key``. Both shapes cross persistence and API boundaries, so
     the canonical redactor intentionally handles both without normalizing the
-    rest of the user-authored document.
+    rest of the user-authored document. Dataset paths are redacted as well: a
+    presigned dataset URL is a credential.
     """
     redacted = deepcopy(spec)
     benchmark = redacted.get("benchmark", redacted)
     if not isinstance(benchmark, dict):
         return redacted
+    _redact_endpoint_fields(benchmark.get("endpoint"))
+    _redact_dataset_paths(benchmark)
+    return redacted
     endpoint = benchmark.get("endpoint")
     if not isinstance(endpoint, dict):
         return redacted

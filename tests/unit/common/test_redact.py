@@ -2054,6 +2054,36 @@ class TestRedactEndpointSpec:
             "Bearer header-secret"
         )
 
+    @pytest.mark.parametrize(
+        "benchmark",
+        [
+            param({"datasets": [{"name": "main", "path": "https://h/t.jsonl?X-Amz-Signature=topsecret"}]}, id="string-path"),
+            param({"datasets": [{"name": "main", "path": {"ref": "https://h/t.jsonl?sig=topsecret&se=2026-10-15", "resolved_version": "etag:1"}}]}, id="pinned-path"),
+            param({"datasets": {"main": {"path": "https://h/t.jsonl?X-Goog-Signature=topsecret"}}}, id="named-map"),
+            param({"dataset": {"path": "https://user:topsecret@h/t.jsonl"}}, id="shorthand-userinfo"),
+        ],
+    )  # fmt: skip
+    def test_redact_endpoint_spec_redacts_dataset_paths_without_endpoint(
+        self, benchmark: dict
+    ) -> None:
+        spec = {"benchmark": benchmark}
+        safe = redact_endpoint_spec(spec)
+        assert "topsecret" not in str(safe)
+        assert REDACTED_VALUE in str(safe)
+        assert "topsecret" in str(spec)
+
+    def test_redact_endpoint_spec_keeps_public_dataset_paths(self) -> None:
+        spec = {
+            "benchmark": {
+                "datasets": [
+                    {"name": "a", "path": "hf://org/repo@main/data/t.jsonl"},
+                    {"name": "b", "path": {"ref": "s3://bucket/t.jsonl", "resolved_version": "v:1"}},
+                    {"name": "c", "path": "./traces/t.jsonl"},
+                ]
+            }
+        }  # fmt: skip
+        assert redact_endpoint_spec(spec) == spec
+
 
 # =============================================================================
 # Log filter redaction
