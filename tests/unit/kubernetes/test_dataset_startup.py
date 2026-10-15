@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.endpoint_credentials import AIPERF_INJECTED_DATASET_URLS
 from aiperf.common.redact import REDACTED_VALUE
@@ -77,6 +78,34 @@ def test_termination_message_scrubs_known_secret_values() -> None:
         line
         == f"[dataset-manager pod] RuntimeError: download failed for {REDACTED_VALUE}"
     )
+
+
+@pytest.mark.parametrize(
+    "secret,text,leaks",
+    [
+        param(
+            "https://h/p?X-Amz-Signature=sig&weird=SECRET1",
+            "GET https://h/p?X-Amz-Signature=sig&weird=SECRET1 end",
+            ["SECRET1", "h/p"],
+            id="unlisted-query-parameter",
+        ),
+        param("user:p@ss", "failed for user:p@ss now", ["@ss", "user:p"], id="userinfo"),
+        param(
+            "https://u:p@ss@host/x",
+            "bad https://u:p@ss@host/x end",
+            ["ss@", "@ss", "host"],
+            id="url-with-at-in-password",
+        ),
+    ],
+)  # fmt: skip
+def test_termination_message_exact_secret_wins_over_token_redaction(
+    secret: str, text: str, leaks: list[str]
+) -> None:
+    """A held secret is replaced whole before any pattern rewrites its pieces."""
+    line = termination_message(RuntimeError(text), secrets=[secret])
+    for leak in leaks:
+        assert leak not in line
+    assert line.endswith(f"{REDACTED_VALUE} {text.rsplit(' ', 1)[1]}")
 
 
 def test_termination_message_keeps_text_after_a_raw_presigned_url() -> None:
