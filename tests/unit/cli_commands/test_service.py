@@ -21,6 +21,8 @@ from aiperf.cli_commands.service import app, service
 from aiperf.common.environment import Environment
 from aiperf.config import BenchmarkConfig, BenchmarkRun
 from aiperf.config.dataset.remote_ref import RemoteRef
+from aiperf.dataset.remote.errors import RemoteErrorKind, RemoteSourceError, RemoteStage
+from aiperf.kubernetes import dataset_startup
 from aiperf.plugin.enums import ServiceType
 
 if TYPE_CHECKING:
@@ -33,6 +35,14 @@ def mock_bootstrap() -> Generator[MagicMock, None, None]:
     # Patched at source; works because service() uses lazy imports inside the function body.
     with patch("aiperf.common.bootstrap.bootstrap_and_run_service") as mock:
         yield mock
+
+
+@pytest.fixture(autouse=True)
+def termination_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Keep every startup failure away from the real ``/dev/termination-log``."""
+    log = tmp_path / "termination-log"
+    monkeypatch.setattr(dataset_startup, "TERMINATION_LOG_PATH", log)
+    return log
 
 
 @pytest.fixture
@@ -331,7 +341,7 @@ class TestDatasetPreflightGate:
         from aiperf.plugin.enums import ServiceType
 
         with patch(
-            "aiperf.cli_runner._preflight.preflight_public_datasets_for_run"
+            "aiperf.cli_runner._preflight.preflight_datasets_for_run"
         ) as mock_preflight:
             service(
                 service_type=ServiceType.DATASET_MANAGER,
@@ -354,7 +364,7 @@ class TestDatasetPreflightGate:
         from aiperf.plugin.enums import ServiceType
 
         with patch(
-            "aiperf.cli_runner._preflight.preflight_public_datasets_for_run"
+            "aiperf.cli_runner._preflight.preflight_datasets_for_run"
         ) as mock_preflight:
             service(
                 service_type=getattr(ServiceType, service_type_name),
@@ -409,7 +419,7 @@ class TestDatasetUrlRehydration:
         )
         seen: list[str] = []
         with patch(
-            "aiperf.cli_runner._preflight.preflight_public_datasets_for_run",
+            "aiperf.cli_runner._preflight.preflight_datasets_for_run",
             side_effect=lambda run: seen.append(run.cfg.datasets[0].path.ref),
         ):
             service(
@@ -429,6 +439,7 @@ class TestDatasetUrlRehydration:
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
         mock_bootstrap: MagicMock,
+        termination_log: Path,
     ) -> None:
         from aiperf.plugin.enums import ServiceType
 
@@ -448,6 +459,7 @@ class TestDatasetUrlRehydration:
             output.replace("│", " ").split()
         )
         assert "topsecret" not in output
+        assert "has no URL for it" in termination_log.read_text(encoding="utf-8")
 
     @pytest.mark.parametrize(
         "service_type",
@@ -475,3 +487,37 @@ class TestDatasetUrlRehydration:
         assert os.getenv("AIPERF_INJECTED_DATASET_URLS") is None
         run = mock_bootstrap.call_args.kwargs["run"]
         assert "topsecret" not in run.cfg.datasets[0].path.ref
+
+    def test_dataset_manager_failure_writes_termination_message_and_exits_1(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_bootstrap: MagicMock,
+        termination_log: Path,
+    ) -> None:
+        run_file = _write_remote_dataset_run(tmp_path / "run.json")
+        monkeypatch.setenv(
+            "AIPERF_INJECTED_DATASET_URLS", orjson.dumps([_RAW_DATASET_URL]).decode()
+        )
+        error = RemoteSourceError(
+            ref=_RAW_DATASET_URL,
+            kind=RemoteErrorKind.GATED,
+            stage=RemoteStage.POD,
+            what="it is gated",
+            hint="Accept its terms",
+        )
+        with (
+            patch(
+                "aiperf.cli_runner._preflight.preflight_datasets_for_run",
+                side_effect=error,
+            ),
+            pytest.raises(SystemExit) as exc_info,
+        ):
+            service(
+                service_type=ServiceType.DATASET_MANAGER, benchmark_run_file=run_file
+            )
+        assert exc_info.value.code == 1
+        message = termination_log.read_text(encoding="utf-8")
+        assert message.startswith("[dataset-manager pod] Cannot use ")
+        assert "topsecret" not in message
+        mock_bootstrap.assert_not_called()
