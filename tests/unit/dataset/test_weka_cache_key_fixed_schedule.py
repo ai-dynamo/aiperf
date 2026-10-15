@@ -129,3 +129,62 @@ def test_weka_public_datasets_are_keyed_on_the_effective_mode(tmp_path) -> None:
     )
     assert fixed is not None and non_fixed is not None
     assert fixed != non_fixed
+
+
+class _Formatless:
+    """A dataset reference carrying a public-dataset name but no ``format``."""
+
+    format = None
+
+    def __init__(self, dataset: str | None) -> None:
+        self.dataset = dataset
+
+
+def test_a_dataset_with_neither_format_nor_name_is_not_weka_reconstructed() -> None:
+    """Neither probe applies, so the weka scoping must not claim the dataset.
+
+    Claiming it would fold the effective-mode term into the key of every
+    unrelated dataset, splitting warm entries that are genuinely identical and
+    silently costing a full re-tokenization on each run.
+    """
+    assert mmap_cache._is_weka_reconstructed(_Formatless(None)) is False
+
+
+def test_an_unregistered_public_dataset_is_not_weka_reconstructed() -> None:
+    """A name with no registered loader cannot be weka-reconstructed.
+
+    The lookup must degrade to False rather than propagating, because a typo'd
+    or removed public dataset is diagnosed far more clearly downstream than as
+    a cache-key crash.
+    """
+    assert mmap_cache._is_weka_reconstructed(_Formatless("no_such_public_dataset")) is (
+        False
+    )
+
+
+def test_a_broken_loader_plugin_surfaces_instead_of_degrading_the_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only KeyError/ValueError mean "not registered".
+
+    Swallowing every exception would turn a broken plugin import into a
+    silently mis-keyed cache: the run would read a warm entry built under the
+    other timing mode and report a replay it never performed.
+    """
+
+    def _boom(category: str, name: str):
+        raise ImportError("plugin module failed to import")
+
+    monkeypatch.setattr(mmap_cache.plugins, "get_class", _boom)
+    with pytest.raises(ImportError):
+        mmap_cache._is_weka_reconstructed(_Formatless("semianalysis_cc_traces_weka"))
+
+
+def test_a_registered_non_weka_public_dataset_is_not_weka_reconstructed() -> None:
+    """A loader that is not the weka one must stay out of the weka scoping.
+
+    Dropping the subclass test would fold the effective-mode term into every
+    public dataset's key, including the ones whose loader never consults
+    ``--ignore-trace-delays`` at all.
+    """
+    assert mmap_cache._is_weka_reconstructed(_Formatless("sharegpt")) is False

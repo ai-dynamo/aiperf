@@ -266,3 +266,194 @@ async def test_cleanup_releases_a_join_holding_for_its_recorded_target() -> None
     orch.cleanup()
 
     await asyncio.wait_for(holding, timeout=2)
+
+
+def _armed(orch: BranchOrchestrator) -> tuple[MagicMock, PendingBranchJoin]:
+    """Give the orchestrator a scheduler and a blocked join ready to arm."""
+    scheduler = MagicMock()
+    orch._scheduler = scheduler
+    return scheduler, _blocked_join(orch)
+
+
+@pytest.mark.asyncio
+async def test_a_recorded_join_is_armed_on_its_absolute_target() -> None:
+    """The deadline is an instant on the recorded timeline, not a stopwatch.
+
+    ``delay_ms`` is an end-to-start delta, so arming relative to now inherits
+    however late the previous turn's response landed and the error tracks
+    server latency -- the replay stretches the trace it exists to reproduce.
+    Re-deriving a relative delay here would resample ``perf_counter`` and hand
+    back the drift the absolute target exists to remove, so the target must be
+    passed through as-is.
+    """
+    orch = _orchestrator()
+    scheduler, pending = _armed(orch)
+    expected = orch._recorded_join_target_perf_sec(pending)
+    assert expected is not None
+
+    orch._arm_join_replay_deadline(pending, delay_ms=1.0)
+
+    scheduler.schedule_later.assert_not_called()
+    scheduler.schedule_at_perf_sec.assert_called_once()
+    assert scheduler.schedule_at_perf_sec.call_args.args[0] == pytest.approx(
+        expected, abs=0.5
+    )
+    assert pending.replay_deadline_armed
+    assert not pending.replay_deadline_elapsed
+
+
+@pytest.mark.asyncio
+async def test_a_join_off_the_recorded_timeline_keeps_the_relative_delay() -> None:
+    """Without a resolver the join is reactive, which is its documented mode.
+
+    Routing every join through the absolute path would silently re-time every
+    non-fixed-schedule DAG benchmark against timestamps it never recorded.
+    """
+    orch = _orchestrator()
+    orch.set_schedule_target_resolver(None)
+    scheduler, pending = _armed(orch)
+
+    orch._arm_join_replay_deadline(pending, delay_ms=1000.0)
+
+    scheduler.schedule_at_perf_sec.assert_not_called()
+    scheduler.schedule_later.assert_called_once()
+    assert scheduler.schedule_later.call_args.args[0] == pytest.approx(1.0)
+
+
+@pytest.mark.asyncio
+async def test_a_target_already_in_the_past_arms_nothing_and_elapses() -> None:
+    """Children overran the recorded window: dispatch now, do not compound drift."""
+    orch = _orchestrator()
+    orch.set_schedule_target_resolver(lambda ms: _now() - 100.0)
+    scheduler, pending = _armed(orch)
+
+    orch._arm_join_replay_deadline(pending, delay_ms=1000.0)
+
+    scheduler.schedule_at_perf_sec.assert_not_called()
+    scheduler.schedule_later.assert_not_called()
+    assert pending.replay_deadline_elapsed
+
+
+@pytest.mark.asyncio
+async def test_an_accelerated_warmup_ignores_the_recorded_timeline() -> None:
+    """Warmup exists to finish fast; replaying its recorded pacing defeats it."""
+    orch = _orchestrator()
+    orch._accelerated_warmup_started = True
+    scheduler, pending = _armed(orch)
+
+    orch._arm_join_replay_deadline(pending, delay_ms=5000.0)
+
+    scheduler.schedule_at_perf_sec.assert_not_called()
+    assert pending.replay_deadline_elapsed
+
+
+@pytest.mark.asyncio
+async def test_a_turn_index_past_the_recorded_turns_has_no_target() -> None:
+    """A gated index the metadata does not reach must not raise or invent a time."""
+    orch = _orchestrator()
+    pending = _blocked_join(orch)
+    pending.gated_turn_index = 99
+
+    assert orch._recorded_join_target_perf_sec(pending) is None
+
+
+@pytest.mark.asyncio
+async def test_a_turn_without_a_recorded_timestamp_has_no_target() -> None:
+    """Fixed schedule does not imply every turn carries a timestamp.
+
+    A turn with none stays reactive rather than being pinned to t=0, which
+    would fire it at the start of the run.
+    """
+    orch = _orchestrator()
+    pending = _blocked_join(orch)
+    orch._cs.get_metadata("r").turns[1].timestamp_ms = None
+
+    assert orch._recorded_join_target_perf_sec(pending) is None
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_parent_conversation_has_no_target() -> None:
+    """A metadata lookup that fails degrades to reactive, not to a crash."""
+    orch = _orchestrator()
+    pending = _blocked_join(orch)
+    orch._cs.get_metadata.side_effect = KeyError("r")
+
+    assert orch._recorded_join_target_perf_sec(pending) is None
+
+
+@pytest.mark.asyncio
+async def test_an_ungated_join_has_no_target() -> None:
+    """Without a gated turn index there is no turn whose timestamp to honour."""
+    orch = _orchestrator()
+    pending = _blocked_join(orch)
+    pending.gated_turn_index = None
+
+    assert orch._recorded_join_target_perf_sec(pending) is None
+
+
+@pytest.mark.asyncio
+async def test_a_target_already_reached_does_not_hold_the_release() -> None:
+    """``_await_recorded_join_target`` is a lower bound, never an upper one."""
+    orch = _orchestrator()
+    pending = _blocked_join(orch)
+    orch.set_schedule_target_resolver(lambda ms: _now() - 100.0)
+
+    await asyncio.wait_for(orch._await_recorded_join_target(pending), timeout=2)
+
+
+@pytest.mark.asyncio
+async def test_fixed_schedule_wires_the_strategy_hook_onto_the_orchestrator() -> None:
+    """The hook must actually reach the orchestrator, not just exist.
+
+    ``test_fixed_schedule_without_the_public_hook_fails_loudly`` pins the
+    failure path; without this, a wiring that raised correctly but never
+    called ``set_schedule_target_resolver`` would pass both.
+    """
+    from aiperf.plugin.enums import TimingMode
+    from aiperf.timing.phase.runner import PhaseRunner
+
+    runner = MagicMock(spec=PhaseRunner)
+    runner._branch_orchestrator = MagicMock()
+    runner._config = MagicMock(timing_mode=TimingMode.FIXED_SCHEDULE)
+
+    strategy = MagicMock(spec=["schedule_target_perf_sec"])
+
+    PhaseRunner._wire_join_schedule_target(runner, strategy)
+
+    runner._branch_orchestrator.set_schedule_target_resolver.assert_called_once_with(
+        strategy.schedule_target_perf_sec
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_non_fixed_schedule_phase_clears_any_stale_resolver() -> None:
+    """Phases share one orchestrator, so a stale resolver must be cleared.
+
+    A fixed-schedule warmup followed by a request-rate profiling phase would
+    otherwise keep honouring warmup timestamps on the profiling phase's joins.
+    """
+    from aiperf.plugin.enums import TimingMode
+    from aiperf.timing.phase.runner import PhaseRunner
+
+    runner = MagicMock(spec=PhaseRunner)
+    runner._branch_orchestrator = MagicMock()
+    runner._config = MagicMock(timing_mode=TimingMode.REQUEST_RATE)
+
+    PhaseRunner._wire_join_schedule_target(runner, MagicMock(spec=[]))
+
+    runner._branch_orchestrator.set_schedule_target_resolver.assert_called_once_with(
+        None
+    )
+
+
+@pytest.mark.asyncio
+async def test_wiring_is_a_no_op_without_a_branch_orchestrator() -> None:
+    """A non-DAG run has no orchestrator; wiring must not fault on it."""
+    from aiperf.plugin.enums import TimingMode
+    from aiperf.timing.phase.runner import PhaseRunner
+
+    runner = MagicMock(spec=PhaseRunner)
+    runner._branch_orchestrator = None
+    runner._config = MagicMock(timing_mode=TimingMode.FIXED_SCHEDULE)
+
+    PhaseRunner._wire_join_schedule_target(runner, MagicMock(spec=[]))

@@ -59,6 +59,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.dataset.mmap_cache_lock import acquire_cache_lock as _acquire_cache_lock
 from aiperf.plugin import plugins
+from aiperf.plugin.types import TypeNotFoundError
 
 if TYPE_CHECKING:
     from aiperf.config.config import AIPerfConfig
@@ -764,10 +765,13 @@ def _is_weka_reconstructed(dataset: object) -> bool:
 
     try:
         loader = plugins.get_class("public_dataset_loader", str(name))
-    except (KeyError, ValueError):
-        # An unregistered public dataset cannot be weka-reconstructed. Anything
+    except (TypeNotFoundError, KeyError, ValueError):
+        # An unregistered public dataset cannot be weka-reconstructed.
+        # TypeNotFoundError is what the registry actually raises for an unknown
+        # name; KeyError/ValueError cover the plainer lookup shapes. Anything
         # else (a broken plugin import) must surface rather than silently
-        # degrade the cache key.
+        # degrade the cache key into serving a warm entry built under the other
+        # timing mode.
         return False
     return issubclass(loader, SemiAnalysisCCTracesWekaLoader)
 
