@@ -59,6 +59,10 @@ class AIPerfContainerSpec(AIPerfBaseModel):
     security_context: dict[str, Any] | None = Field(
         default=None, description="Container security context"
     )
+    termination_message_policy: str | None = Field(
+        default=None,
+        description="terminationMessagePolicy: File (default) or FallbackToLogsOnError.",
+    )
 
     def to_k8s_spec(self) -> dict[str, Any]:
         """Convert to Kubernetes container spec."""
