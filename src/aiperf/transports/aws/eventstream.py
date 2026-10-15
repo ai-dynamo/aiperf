@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from botocore.eventstream import EventStreamBuffer
 
 EVENTSTREAM_CONTENT_TYPE = "application/vnd.amazon.eventstream"
-# ASCII padding only, matching SSEMessage.parse: str.strip() would also eat
+# Same ASCII-only policy as SSEMessage.parse: str.strip() would also eat
 # U+0085/U+2028/U+2029 and \x0b-\x0c/\x1c-\x1f, which are content. CR is
 # included because lines split on LF alone, so CRLF leaves a trailing CR.
 _LINE_PADDING = " \t\r"

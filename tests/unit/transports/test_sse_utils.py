@@ -529,7 +529,7 @@ class TestParseSSEMessageEdgeWhitespace:
             param("event: message\n", "tok\x0c", id="named-event-trailing-form-feed"),
         ],
     )  # fmt: skip
-    def test_parse_preserves_non_ascii_space_edges(
+    def test_parse_preserves_non_padding_edges(
         self, prefix: str, value: str, base_perf_ns: int
     ) -> None:
         result = SSEMessage.parse(f"{prefix}data: {value}", base_perf_ns)

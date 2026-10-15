@@ -549,7 +549,7 @@ class TestLineEdgeWhitespace:
             param(b"\x0c", "\x0c", id="unterminated-form-feed-only"),
         ],
     )  # fmt: skip
-    async def test_non_ascii_space_edges_are_kept(
+    async def test_non_padding_edges_are_kept(
         self, payload: bytes, expected: str
     ) -> None:
         frame = encode_frame(payload)
