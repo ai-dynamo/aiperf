@@ -195,7 +195,7 @@ class DatasetResolver:
             dataset_type, first_record = self._detect_type(str(resolved))
         if dataset_type is not None and is_parquet_input(resolved):
             # Before any format-specific reader opens the file as text.
-            require_parquet_reader(dataset_type)
+            require_parquet_reader(dataset_type, is_directory=resolved.is_dir())
 
         if dataset_type is not None:
             acc.types[name] = dataset_type
@@ -206,7 +206,7 @@ class DatasetResolver:
         _warn_ignored_baseten_only_fields(name, ds, dataset_type)
 
         # 3. Count records and sessions (for validation and fixed_schedule)
-        if not resolved.is_dir():
+        if not resolved.is_dir() or is_parquet_input(resolved):
             records, sessions = self._count_records_and_sessions(
                 str(resolved), dataset_type
             )

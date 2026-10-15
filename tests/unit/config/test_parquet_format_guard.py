@@ -158,3 +158,68 @@ def test_yaml_resolver_remote_parquet_with_non_parquet_format_raises(
         pytest.raises(ValueError, match=f"'{fmt}' {MESSAGE}"),
     ):
         DatasetResolver().resolve(run)
+
+
+MOONCAKE_ROWS = [
+    {"timestamp": 0, "input_length": 10, "output_length": 2, "hash_ids": [0]},
+    {"timestamp": 5, "input_length": 12, "output_length": 3, "hash_ids": [1]},
+    {"timestamp": 9, "input_length": 8, "output_length": 4, "hash_ids": [2]},
+]
+BASETEN_ROW = {
+    "timestamp_start_unix_ms": 1,
+    "prompt": "hi",
+    "input_tokens": 3,
+    "output_tokens": 2,
+}
+
+
+def _shards(directory: Path, rows: list[dict]) -> Path:
+    directory.mkdir(parents=True)
+    pq.write_table(
+        pa.Table.from_pylist(rows[:1]), directory / "train-00000-of-00002.parquet"
+    )
+    pq.write_table(
+        pa.Table.from_pylist(rows[1:]), directory / "train-00001-of-00002.parquet"
+    )
+    return directory
+
+
+def test_yaml_resolver_parquet_shard_folder_counts_records(tmp_path: Path) -> None:
+    folder = _shards(tmp_path / "d", MOONCAKE_ROWS)
+    run = BenchmarkRun(
+        benchmark_id="t",
+        cfg=_file_config(str(folder), format=str(CustomDatasetType.MOONCAKE_TRACE)),
+        artifact_dir=tmp_path / "out",
+    )
+    DatasetResolver().resolve(run)
+    assert run.resolved.dataset_total_records.get("main") == len(MOONCAKE_ROWS)
+
+
+@pytest.mark.parametrize("explicit", [param(True, id="explicit"), param(False, id="detected")])  # fmt: skip
+def test_yaml_resolver_baseten_shard_folder_raises(
+    tmp_path: Path, explicit: bool
+) -> None:
+    folder = _shards(tmp_path / "d", [BASETEN_ROW, BASETEN_ROW])
+    dataset = {"format": str(CustomDatasetType.BASETEN_TRACE)} if explicit else {}
+    run = BenchmarkRun(
+        benchmark_id="t",
+        cfg=_file_config(str(folder), **dataset),
+        artifact_dir=tmp_path / "out",
+    )
+    with pytest.raises(
+        ValueError,
+        match="'baseten_trace' reads a single parquet or Arrow file, not a directory of shards",
+    ):
+        DatasetResolver().resolve(run)
+
+
+def test_cli_conversion_baseten_shard_folder_raises(tmp_path: Path) -> None:
+    folder = _shards(tmp_path / "d", [BASETEN_ROW, BASETEN_ROW])
+    cli = CLIConfig(
+        url="http://localhost:8000",
+        model_names=["m"],
+        input_file=folder,
+        custom_dataset_type=CustomDatasetType.BASETEN_TRACE,
+    )
+    with pytest.raises(ValueError, match="not a directory of shards"):
+        convert_cli_to_aiperf(cli)
