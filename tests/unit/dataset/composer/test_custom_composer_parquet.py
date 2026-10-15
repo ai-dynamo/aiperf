@@ -6,7 +6,6 @@ from unittest.mock import patch
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
-from pytest import param
 
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.custom import CustomDatasetComposer
@@ -89,19 +88,12 @@ def test_create_dataset_parquet_with_non_parquet_format_raises(tmp_path: Path) -
     create_loader.assert_not_called()
 
 
-@pytest.mark.parametrize(
-    "kwargs",
-    [
-        param({}, id="auto-detected"),
-        param({"custom_dataset_type": CustomDatasetType.BASETEN_TRACE}, id="explicit"),
-    ],
-)  # fmt: skip
-def test_create_dataset_baseten_shard_directory_raises(
-    tmp_path: Path, kwargs: dict
+def test_create_dataset_auto_detected_baseten_shard_directory_raises(
+    tmp_path: Path,
 ) -> None:
     write_parquet(tmp_path / "d" / "train-00000-of-00002.parquet", BASETEN_ROWS)
     write_parquet(tmp_path / "d" / "train-00001-of-00002.parquet", BASETEN_ROWS)
-    composer = _composer(tmp_path / "d", **kwargs)
+    composer = _composer(tmp_path / "d")
     with (
         patch.object(composer, "_create_loader_instance") as create_loader,
         pytest.raises(
@@ -110,3 +102,12 @@ def test_create_dataset_baseten_shard_directory_raises(
     ):
         composer.create_dataset()
     create_loader.assert_not_called()
+
+
+def test_composer_explicit_baseten_shard_directory_rejected_at_config_time(
+    tmp_path: Path,
+) -> None:
+    write_parquet(tmp_path / "d" / "train-00000-of-00002.parquet", BASETEN_ROWS)
+    write_parquet(tmp_path / "d" / "train-00001-of-00002.parquet", BASETEN_ROWS)
+    with pytest.raises(ValueError, match="not a directory of shards"):
+        _composer(tmp_path / "d", custom_dataset_type=CustomDatasetType.BASETEN_TRACE)

@@ -135,6 +135,9 @@ class BaseFileLoader(BaseLoader):
     """True when this loader accepts parquet input: through ``_iter_record_dicts``,
     or natively (``baseten_trace``)."""
 
+    reads_parquet_directories: ClassVar[bool] = True
+    """False when a parquet-reading loader takes only a single file, not a directory of shards."""
+
     def __init__(
         self,
         *,

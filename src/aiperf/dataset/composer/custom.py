@@ -92,15 +92,9 @@ class CustomDatasetComposer(BaseDatasetComposer):
         # Validate synthesis options are only used with mooncake_trace
         self._validate_synthesis_config(dataset_type)
         if not is_inline and is_parquet_input(self._file_path):
-            require_parquet_reader(dataset_type)
-            if (
-                dataset_type == CustomDatasetType.BASETEN_TRACE
-                and Path(self._file_path).is_dir()
-            ):
-                raise ValueError(
-                    "Dataset format 'baseten_trace' reads a single parquet or "
-                    "Arrow file, not a directory of shards"
-                )
+            require_parquet_reader(
+                dataset_type, is_directory=Path(self._file_path).is_dir()
+            )
 
         self.detected_dataset_type = dataset_type
         self._create_loader_instance(dataset_type)

@@ -182,7 +182,7 @@ def _require_parquet_format(probe: ProbeResult, fmt: CustomDatasetType | None) -
     if fmt is None or not _is_parquet_probe(probe):
         return
     try:
-        require_parquet_reader(fmt)
+        require_parquet_reader(fmt, is_directory=probe.data_is_dir)
     except ValueError as e:
         raise RemoteSourceError(
             ref=probe.ref.display, kind=RemoteErrorKind.INCOMPATIBLE, stage=RemoteStage.ACCESS,

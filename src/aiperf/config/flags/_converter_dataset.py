@@ -1523,7 +1523,9 @@ def reject_parquet_without_reader(cli: CLIConfig) -> None:
         or not is_parquet_input(cli.input_file)
     ):
         return
-    require_parquet_reader(cli.custom_dataset_type)
+    require_parquet_reader(
+        cli.custom_dataset_type, is_directory=cli.input_file.is_dir()
+    )
 
 
 def build_dataset(

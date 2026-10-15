@@ -147,13 +147,16 @@ def parquet_files(path: str | Path) -> list[Path]:
     return [p / name for name in names]
 
 
-def require_parquet_reader(dataset_type: object) -> None:
-    """Reject a dataset format whose loader reads files itself and so cannot take parquet input.
+def require_parquet_reader(dataset_type: object, *, is_directory: bool) -> None:
+    """Reject a dataset format whose loader cannot take this parquet input.
 
     Call it only for parquet input; every caller guards with :func:`is_parquet_input`.
+    ``is_directory`` is True for a folder of shards, which some parquet-reading
+    loaders cannot open.
 
     Raises:
-        ValueError: The loader for ``dataset_type`` does not set ``reads_parquet``.
+        ValueError: The loader for ``dataset_type`` does not set ``reads_parquet``,
+            or the input is a directory and the loader reads only single files.
     """
     from aiperf.plugin import plugins
     from aiperf.plugin.enums import PluginType
@@ -163,6 +166,11 @@ def require_parquet_reader(dataset_type: object) -> None:
         raise ValueError(
             f"Dataset format '{dataset_type}' does not read parquet files; "
             "convert the data to JSONL or choose a format that reads parquet"
+        )
+    if is_directory and not getattr(LoaderClass, "reads_parquet_directories", True):
+        raise ValueError(
+            f"Dataset format '{dataset_type}' reads a single parquet or Arrow file, "
+            "not a directory of shards"
         )
 
 
