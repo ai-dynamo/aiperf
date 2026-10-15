@@ -17,6 +17,7 @@ from aiperf.common.models import (
     RequestInfo,
     RequestRecord,
     SSEMessage,
+    Text,
     TextResponseData,
     Turn,
 )
@@ -24,6 +25,8 @@ from aiperf.common.monotonic_clock import process_clock
 from aiperf.config.phases import ConcurrencyPhase
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.dataset.memory_map_utils import PayloadTurnData
+from aiperf.endpoints.openai_responses import ResponsesEndpoint
+from aiperf.plugin.enums import EndpointType
 from aiperf.workers.session_manager import UserSession
 from aiperf.workers.worker import (
     Worker,
@@ -34,6 +37,7 @@ from tests.harness.fake_communication import FakeCommunication as FakeCommunicat
 from tests.harness.fake_service_manager import FakeServiceManager as FakeServiceManager
 from tests.harness.fake_tokenizer import FakeTokenizer
 from tests.harness.fake_transport import FakeTransport as FakeTransport
+from tests.unit.endpoints.conftest import create_model_endpoint
 
 
 @pytest.mark.parametrize(
@@ -1186,6 +1190,79 @@ class TestFinalizeSessionResponseChaining:
         stored.assert_called_once_with(request_info)
         assert session.previous_response_id == "resp_new"
         assert session.system_prompt_in_stored_history is True
+
+    async def test_finalize_real_responses_endpoint_other_id_override_records_false(
+        self,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Real ``RequestInfo`` + real ``ResponsesEndpoint`` flag computation.
+
+        Storing the assistant turn appends to ``session.turn_list``. The sent
+        request must keep ending at the dispatch turn (``RequestInfo`` copies
+        the list), and an override chaining onto another response must record
+        the prompt as not stored, even though the session's own chain held it.
+        """
+        endpoint = ResponsesEndpoint(
+            model_endpoint=create_model_endpoint(
+                EndpointType.RESPONSES, extra=[("store", True)]
+            )
+        )
+        monkeypatch.setattr(mock_worker.inference_client, "endpoint", endpoint)
+        monkeypatch.setattr(
+            endpoint, "extract_response_id", Mock(return_value="resp_new")
+        )
+        assistant = Turn(role="assistant", texts=[Text(contents=["REPLY"])])
+        monkeypatch.setattr(
+            mock_worker,
+            "_process_responses_for_record",
+            Mock(return_value=([], assistant)),
+        )
+        monkeypatch.setattr(mock_worker, "_populate_response_metrics", Mock())
+
+        dispatch = Turn(
+            raw_messages=[{"role": "user", "content": "SECOND", "type": "message"}],
+            extra_body={"previous_response_id": "resp_elsewhere"},
+        )
+        conv = Conversation(
+            conversation_id="test-conv-override",
+            turns=[
+                Turn(
+                    raw_messages=[
+                        {"role": "system", "content": "DATASET POLICY"},
+                        {"role": "user", "content": "FIRST"},
+                    ]
+                ),
+                dispatch,
+            ],
+        )
+        session = UserSession(
+            x_correlation_id="test-corr",
+            num_turns=2,
+            conversation=conv,
+            context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+        )
+        session.advance_turn(0)
+        session.store_response_id("resp_first", system_prompt_in_history=True)
+        session.advance_turn(1)
+        request_info = mock_worker._create_request_info(
+            session=session,
+            credit_context=sample_credit_context,
+            x_request_id="x-req",
+            system_message="CLI POLICY",
+            user_context_message=None,
+        )
+        record = RequestRecord(timestamp_ns=1, start_perf_ns=1, end_perf_ns=2)
+
+        mock_worker._finalize_session_response(
+            session, sample_credit_context, record, request_info
+        )
+
+        assert session.turn_list[-1] is assistant
+        assert request_info.turns[-1] == dispatch
+        assert session.previous_response_id == "resp_new"
+        assert session.system_prompt_in_stored_history is False
 
     @pytest.mark.parametrize("last_good_flag", [param(True, id="flag_true"), param(False, id="flag_false")])  # fmt: skip
     async def test_finalize_session_response_error_keeps_last_good_system_prompt_flag(
