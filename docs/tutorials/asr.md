@@ -20,6 +20,11 @@ Five ASR datasets are built in:
 | AMI | `ami` | No | Meeting recordings with individual headset microphone audio |
 | SPGISpeech | `spgispeech` | Yes | Financial earnings call recordings (Kensho) |
 
+Audio rows can contain embedded audio bytes or a path to a local/cache file.
+Both forms are decoded to WAV for requests and checked against the duration limit.
+Path-backed files with unreadable duration metadata are skipped without loading
+their full contents.
+
 Clips longer than 30 seconds are automatically skipped to stay within typical ASR model context
 limits.
 
@@ -27,7 +32,7 @@ limits.
 
 ## Start a vLLM Server
 
-Launch vLLM with an audio-capable model such as Qwen2-Audio:
+Launch vLLM with an audio-capable model such as Qwen2.5-Omni:
 
 ```bash
 docker build -t vllm-audio - << 'EOF'
@@ -35,8 +40,9 @@ FROM vllm/vllm-openai:latest
 RUN pip install 'vllm[audio]'
 EOF
 
-docker run --gpus all -p 8000:8000 vllm-audio \
-  --model Qwen/Qwen2-Audio-7B-Instruct \
+docker run --gpus all -p 8000:8000 -e HF_TOKEN vllm-audio \
+  --model Qwen/Qwen2.5-Omni-3B \
+  --enforce-eager \
   --trust-remote-code
 ```
 
@@ -45,7 +51,7 @@ Verify the server is ready:
 ```bash
 curl -s localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"Qwen/Qwen2-Audio-7B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
+  -d '{"model":"Qwen/Qwen2.5-Omni-3B","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
 ```
 
 ---
@@ -116,7 +122,7 @@ VoxPopuli contains European Parliament recordings and requires no authentication
 
 ```bash
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -133,7 +139,7 @@ AMI contains meeting recordings with individual headset microphone audio and req
 
 ```bash
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -153,7 +159,7 @@ HuggingFace account and acceptance of the [dataset terms](https://huggingface.co
 uv run hf auth login
 
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -173,7 +179,7 @@ acceptance of the [dataset terms](https://huggingface.co/datasets/kensho/spgispe
 uv run hf auth login
 
 aiperf profile \
-    --model Qwen/Qwen2-Audio-7B-Instruct \
+    --model Qwen/Qwen2.5-Omni-3B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \

@@ -30,6 +30,12 @@ aiperf profile --model Qwen/Qwen3-0.6B \
 ```
 <!-- /aiperf-run-vllm-longrun-openai-endpoint-server -->
 
+Both commands above are sized to run quickly: `--num-requests` covers only a
+slice of each benchmark, so the reported accuracy is a smoke-test signal, not a
+score you should compare against published numbers. For a reportable run, drop
+`--num-requests` (or raise it to the full problem count -- 14042 for MMLU, 30
+for AIME) and use the model you actually care about.
+
 ## trt-llm reference alignment
 
 The `aime` benchmark is aligned with the trt-llm benchmark recipe's
