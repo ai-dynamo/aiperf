@@ -243,15 +243,20 @@ async def test_request_rate_update_wakes_pending_sleep() -> None:
 
 @pytest.mark.asyncio
 async def test_last_session_start_does_not_consume_look_ahead_sample() -> None:
+    """Starting the last session of a phase must not advance the shared sampler."""
+
     class FakeIntervalGenerator:
+        """Zero-interval generator so the loop issues credits immediately."""
+
         def __init__(self, config) -> None:
-            pass
+            """Ignore the config; the interval is always zero."""
 
         def next_interval(self) -> float:
+            """Return a zero interval."""
             return 0.0
 
         def set_rate(self, new_rate: float) -> None:
-            pass
+            """Ignore rate updates."""
 
     lifecycle = MagicMock()
     lifecycle.started_at_perf_ns = int(time.perf_counter() * NANOS_PER_SECOND)
