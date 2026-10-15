@@ -427,7 +427,9 @@ def _finalized_spec(spec: dict[str, Any]) -> dict[str, Any]:
     )
 
     validate_kubernetes_credential_transport(
-        validated.benchmark.endpoint, validated.pod_template.env
+        validated.benchmark.endpoint,
+        validated.pod_template.env,
+        datasets=validated.benchmark.datasets,
     )
     dumped = validated.model_dump(
         mode="json", by_alias=True, exclude_unset=True, exclude_none=True

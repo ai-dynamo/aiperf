@@ -24,8 +24,10 @@ if TYPE_CHECKING:
     from aiperf.config.user_files import RunMeta
     from aiperf.kubernetes.crd_models import AIPerfJobSpec, AIPerfSweepSpec
 
+from aiperf.common.endpoint_credentials import AIPERF_INJECTED_DATASET_URLS
 from aiperf.common.enums import AIPerfLogLevel, CommunicationType
 from aiperf.common.environment import Environment
+from aiperf.common.redact import REDACTED_VALUE, redact_url
 from aiperf.config import AIPerfConfig
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.dataset import FileDataset
@@ -228,7 +230,8 @@ def validate_remote_datasets_for_kubernetes(config: AIPerfConfig) -> None:
 
     Raises:
         ConfigurationError: A dataset carries the CLI-internal
-            ``remote_fixed_schedule_check`` marker.
+            ``remote_fixed_schedule_check`` marker, or a credential (a presigned
+            query or URL userinfo) in the resource itself.
     """
     for dataset in config.benchmark.datasets:
         if not isinstance(dataset, FileDataset) or not isinstance(
@@ -241,6 +244,16 @@ def validate_remote_datasets_for_kubernetes(config: AIPerfConfig) -> None:
                 "which only the AIPerf CLI may set; AIPerfJob and AIPerfSweep "
                 "resources cannot carry it. Remove it and choose the profiling "
                 "phase type explicitly."
+            )
+        if redact_url(dataset.path.ref) != dataset.path.ref:
+            raise ConfigurationError(
+                f"Dataset {dataset.path.display} carries a credential (a presigned "
+                "query or URL userinfo) in the resource itself, so the Kubernetes "
+                "API has already stored it; rotate it. Put the full URL in a "
+                "Secret, expose it to the pods as the Secret-backed "
+                f"{AIPERF_INJECTED_DATASET_URLS} env var (a JSON list of URLs), and "
+                f"write the dataset path with the credential values replaced by "
+                f"{REDACTED_VALUE}, as `aiperf kube generate --operator` does."
             )
 
 
