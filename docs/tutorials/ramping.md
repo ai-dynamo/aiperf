@@ -71,7 +71,7 @@ INFO     Starting AIPerf System
 INFO     Concurrency ramping from 1 to 100 over 30 seconds
 INFO     AIPerf System is PROFILING
 
-Profiling: 1000/1000 |████████████████████████| 100% [02:15<00:00]
+Profiling: 200/200 |████████████████████████| 100% [00:05<00:00]
 
 INFO     Benchmark completed successfully
 INFO     Results saved to: artifacts/your-model-chat-concurrency100/
@@ -83,11 +83,14 @@ INFO     Results saved to: artifacts/your-model-chat-concurrency100/
 │       Request Latency (ms) │ 234.56 │ 156.23 │ 387.45 │ 356.78 │ 228.90 │
 │   Time to First Token (ms) │  52.34 │  38.12 │  78.23 │  72.45 │  50.67 │
 │   Inter Token Latency (ms) │  12.45 │   9.12 │  19.34 │  17.89 │  12.01 │
-│ Request Throughput (req/s) │  12.45 │      - │      - │      - │      - │
+│ Request Throughput (req/s) │  39.94 │      - │      - │      - │      - │
 └────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
 
 JSON Export: artifacts/your-model-chat-concurrency100/profile_export_aiperf.json
 ```
+
+With only 200 requests the run finishes while concurrency is still climbing;
+raise `--request-count` to let the ramp reach its target before the run ends.
 
 **What happens:**
 ```

@@ -59,12 +59,12 @@ INFO     Starting AIPerf System
 INFO     Using Request_Rate strategy
 INFO     AIPerf System is WARMING UP
 
-Warming Up: 50/50 |████████████████████████| 100% [00:05<00:00]
+Warming Up: 20/20 |████████████████████████| 100% [00:02<00:00]
 
 INFO     Warmup completed, starting profiling phase
 INFO     AIPerf System is PROFILING
 
-Profiling: 500/500 |████████████████████████| 100% [00:50<00:00]
+Profiling: 100/100 |████████████████████████| 100% [00:10<00:00]
 
 INFO     Benchmark completed successfully
 INFO     Results saved to: artifacts/your-model-chat-rate10/
@@ -72,7 +72,7 @@ INFO     Results saved to: artifacts/your-model-chat-rate10/
 JSON Export: artifacts/your-model-chat-rate10/profile_export_aiperf.json
 ```
 
-This sends 50 warmup requests before the 500 profiling requests begin. Warmup metrics are discarded.
+This sends 20 warmup requests before the 100 profiling requests begin. Warmup metrics are discarded.
 
 ## Warmup Trigger Options
 
