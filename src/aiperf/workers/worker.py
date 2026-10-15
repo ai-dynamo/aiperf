@@ -1288,13 +1288,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         await self.publish(self.create_health_message(health))
 
     def create_health_message(self, health: ProcessHealth) -> WorkerHealthMessage:
-        self.task_stats.stream_chunks_received = (
-            self.inference_client.transport.stream_chunks_received
-        )
         return WorkerHealthMessage(
             service_id=self.service_id,
             health=health,
-            task_stats=self.task_stats,
+            task_stats=self.task_stats.model_copy(
+                update={
+                    "stream_chunks_received": (
+                        self.inference_client.transport.stream_chunks_received
+                    )
+                }
+            ),
             pod_index=self._pod_index,
         )
 

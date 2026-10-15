@@ -1261,3 +1261,6 @@ class TestHealthMessageStreamChunks:
         message = mock_worker.create_health_message(health)
 
         assert message.task_stats.stream_chunks_received == 17
+        assert mock_worker.task_stats.stream_chunks_received == 0, (
+            "building a health message must not mutate the worker's task stats"
+        )
