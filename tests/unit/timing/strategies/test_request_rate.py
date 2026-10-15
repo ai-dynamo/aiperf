@@ -290,7 +290,6 @@ async def test_last_session_start_does_not_consume_look_ahead_sample() -> None:
     await asyncio.wait_for(strategy.execute_phase(), timeout=1.0)
 
     credit_issuer.try_issue_credit.assert_awaited_once()
-    # Only the initial sample; a look-ahead would shift the shared sampler.
     conversation_source.next.assert_called_once()
 
 
