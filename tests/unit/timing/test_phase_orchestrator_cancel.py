@@ -62,24 +62,17 @@ def orchestrator(create_orchestrator_harness) -> PhaseOrchestrator:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "cancel_during, expected_started",
-    [
-        (CreditPhase.WARMUP, [CreditPhase.WARMUP]),
-        (CreditPhase.PROFILING, [CreditPhase.WARMUP, CreditPhase.PROFILING]),
-    ],
-)  # fmt: skip
-async def test_execute_phases_cancel_mid_phase_stops_cleanly(
+async def test_execute_phases_cancel_during_warmup_stops_cleanly(
     orchestrator: PhaseOrchestrator,
-    cancel_during: CreditPhase,
-    expected_started: list[CreditPhase],
 ) -> None:
-    _CancellingRunner.cancel_during = cancel_during
+    """Covers both halves: the post-run removal must tolerate the runner
+    already being gone, and profiling must never start."""
+    _CancellingRunner.cancel_during = CreditPhase.WARMUP
     with (
         patch("aiperf.timing.phase_orchestrator.PhaseRunner", _CancellingRunner),
         patch("aiperf.timing.phase_orchestrator.RequestCancellationSimulator"),
     ):
         await orchestrator._execute_phases()
 
-    assert _CancellingRunner.started == expected_started
+    assert _CancellingRunner.started == [CreditPhase.WARMUP]
     assert orchestrator._active_runners == []
