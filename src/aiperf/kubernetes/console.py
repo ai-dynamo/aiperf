@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 import orjson
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.markup import escape
 from rich.table import Table
 from rich.text import Text
 
@@ -544,7 +545,7 @@ def print_aiperfjob_table(
         if wide:
             row.append(job.model or "")
             row.append(job.endpoint or "")
-            row.append(job.error or "")
+            row.append(escape(job.error or ""))
         table.add_row(*row)
 
     console.print(table)
