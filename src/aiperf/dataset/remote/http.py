@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlsplit, urlunsplit
 import aiohttp
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.config.dataset.remote_ref import RemoteRef
 from aiperf.dataset.remote.cache import entry_dir
 from aiperf.dataset.remote.errors import (
@@ -87,9 +88,15 @@ def _still_pinned(meta: HttpMetadata, pinned: str) -> bool:
 
 
 def _filename_of(url: str) -> str:
-    """Cache file name for a URL; never a name that could leave the cache entry."""
+    """Cache file name for a URL; never a name that could leave the cache entry.
+
+    ``:`` is legal on POSIX, but on Windows a drive (``C:foo``) resets the joined
+    path and any other ``:`` names an NTFS alternate data stream.
+    """
     name = PurePosixPath(unquote(urlsplit(url).path)).name
     if name in ("", ".", "..") or "\\" in name or os.sep in name:
+        return _FALLBACK_FILENAME
+    if IS_WINDOWS and ":" in name:
         return _FALLBACK_FILENAME
     return name
 

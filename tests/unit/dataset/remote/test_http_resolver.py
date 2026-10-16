@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from pathlib import Path
+from unittest.mock import patch
 
 import orjson
 import pytest
@@ -247,3 +248,19 @@ async def test_weak_compare_still_detects_a_different_etag(http_server) -> None:
 )  # fmt: skip
 def test_filename_of_never_escapes_the_entry_dir(url: str, expected: str) -> None:
     assert _filename_of(url) == expected
+
+
+@pytest.mark.parametrize(
+    "url, on_posix, on_windows",
+    [
+        param("https://h/d/C%3Afoo.jsonl", "C:foo.jsonl", "download", id="drive-relative"),
+        param("https://h/d/x.jsonl%3Astream", "x.jsonl:stream", "download", id="alternate-data-stream"),
+        param("https://h/d/t.jsonl", "t.jsonl", "t.jsonl", id="plain"),
+    ],
+)  # fmt: skip
+@pytest.mark.parametrize("is_windows", [False, True])
+def test_filename_of_rejects_colons_only_on_windows(
+    url: str, on_posix: str, on_windows: str, is_windows: bool
+) -> None:
+    with patch("aiperf.dataset.remote.http.IS_WINDOWS", is_windows):
+        assert _filename_of(url) == (on_windows if is_windows else on_posix)
