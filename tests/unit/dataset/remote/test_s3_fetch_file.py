@@ -8,8 +8,10 @@ import hashlib
 import io
 from collections.abc import AsyncIterator
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pytest
 
 pytest.importorskip("botocore")
@@ -18,7 +20,7 @@ from botocore.response import StreamingBody  # noqa: E402
 from filelock import Timeout  # noqa: E402
 
 from aiperf.config.dataset.remote_ref import RemoteRef  # noqa: E402
-from aiperf.dataset.remote import s3  # noqa: E402
+from aiperf.dataset.remote import s3, service  # noqa: E402
 from aiperf.dataset.remote.cache import entry_dir  # noqa: E402
 from aiperf.dataset.remote.errors import (  # noqa: E402
     RemoteErrorKind,
@@ -30,6 +32,9 @@ from aiperf.dataset.remote.s3 import (  # noqa: E402
     S3SourceResolver,
     _listing_version,
     _Object,
+)
+from aiperf.dataset.remote.sniff import (  # noqa: E402
+    remote_first_record_has_timestamp,
 )
 
 SHARDS = {
@@ -44,10 +49,12 @@ def _body(data: bytes) -> StreamingBody:
     return StreamingBody(io.BytesIO(data), len(data))
 
 
-def _client(head_etags: dict[str, str] = ETAGS) -> MagicMock:
+def _client(
+    head_etags: dict[str, str] = ETAGS, bodies: dict[str, bytes] = SHARDS
+) -> MagicMock:
     client = MagicMock()
     client.head_object.side_effect = lambda **kw: {"ETag": head_etags[kw["Key"]]}
-    client.get_object.side_effect = lambda **kw: {"Body": _body(SHARDS[kw["Key"]])}
+    client.get_object.side_effect = lambda **kw: {"Body": _body(bodies[kw["Key"]])}
     client.get_paginator.return_value.paginate.return_value = [
         {"Contents": [{"Key": key, "ETag": ETAGS[key]} for key in SHARDS]}
     ]
@@ -96,11 +103,21 @@ async def test_s3_materialize_reuses_fetched_shard_when_etag_matches() -> None:
 @pytest.mark.asyncio
 async def test_s3_materialize_refetches_shard_whose_etag_changed() -> None:
     client = _client(head_etags={**ETAGS, FIRST: '"old"'})
+    gets = iter([b"stale-bytes"])
+    serve = client.get_object.side_effect
+    client.get_object.side_effect = lambda **kw: (
+        {"Body": _body(next(gets))} if kw["Key"] == FIRST and kw["IfMatch"] == '"old"' else serve(**kw)
+    )  # fmt: skip
     probe = _probe()
     resolver = S3SourceResolver(client=client)
-    await resolver.fetch_file(probe, FIRST)
-    await resolver.materialize(probe)
+    fetched = await resolver.fetch_file(probe, FIRST)
+    marker = s3._fetched_marker(entry_dir(probe.ref), FIRST)
+    assert marker.read_text(encoding="utf-8") == '"old"'
+    source = await resolver.materialize(probe)
     assert client.get_object.call_count == 3
+    assert not marker.exists()
+    assert fetched.read_bytes() == SHARDS[FIRST]
+    assert source.files[0].sha256 == hashlib.sha256(SHARDS[FIRST]).hexdigest()
 
 
 @pytest.mark.asyncio
@@ -177,3 +194,74 @@ async def test_s3_fetch_file_unwritable_cache_is_a_remote_error(
     with pytest.raises(RemoteSourceError, match="cannot be written") as exc:
         await S3SourceResolver(client=_client()).fetch_file(_probe(), FIRST)
     assert exc.value.stage == RemoteStage.ACCESS
+
+
+class _BrokenBody:
+    """A GetObject body whose connection drops after the first chunk."""
+
+    def iter_chunks(self, chunk_size: int):
+        yield b"PAR1"
+        raise OSError("connection reset")
+
+    def close(self) -> None:
+        pass
+
+
+@pytest.mark.asyncio
+async def test_s3_fetch_file_interrupted_download_leaves_no_marker() -> None:
+    probe = _probe()
+    dest = await S3SourceResolver(client=_client()).fetch_file(probe, FIRST)
+    marker = s3._fetched_marker(entry_dir(probe.ref), FIRST)
+    assert marker.exists()
+    client = _client(head_etags={**ETAGS, FIRST: '"e-new"'})
+    client.get_object.side_effect = lambda **kw: {"Body": _BrokenBody()}
+    with pytest.raises(RemoteSourceError):
+        await S3SourceResolver(client=client).fetch_file(probe, FIRST)
+    assert not marker.exists()
+    assert dest.read_bytes() == SHARDS[FIRST]
+    assert sorted(p.name for p in dest.parent.iterdir()) == [dest.name]
+
+
+def _parquet(rows: list[dict]) -> bytes:
+    buffer = io.BytesIO()
+    pq.write_table(pa.Table.from_pylist(rows), buffer)
+    return buffer.getvalue()
+
+
+async def _indexed(client: MagicMock, probe: ProbeResult) -> Path:
+    """Materialize and index ``probe``'s entry, then forget the calls that took."""
+    with patch.object(
+        service, "get_resolver", return_value=S3SourceResolver(client=client)
+    ):
+        await service.materialize_probe(probe)
+    client.reset_mock()
+    return entry_dir(probe.ref) / "traces" / "train-00000-of-00002.parquet"
+
+
+@pytest.mark.asyncio
+async def test_remote_sniff_indexed_parquet_folder_reads_cache_without_network() -> (
+    None
+):
+    bodies = {key: _parquet([{"timestamp": 0, "input_length": 4}]) for key in SHARDS}
+    client = _client(bodies=bodies)
+    probe = _probe()
+    shard = await _indexed(client, probe)
+    before = shard.stat().st_mtime_ns
+    with patch.object(
+        service, "get_resolver", return_value=S3SourceResolver(client=client)
+    ):
+        assert await remote_first_record_has_timestamp(probe) is True
+    client.head_object.assert_not_called()
+    client.get_object.assert_not_called()
+    assert shard.stat().st_mtime_ns == before
+
+
+@pytest.mark.asyncio
+async def test_s3_fetch_file_never_rewrites_an_indexed_entry() -> None:
+    client = _client()
+    probe = _probe()
+    shard = await _indexed(client, probe)
+    before = shard.stat().st_mtime_ns
+    assert await S3SourceResolver(client=client).fetch_file(probe, FIRST) == shard
+    client.get_object.assert_not_called()
+    assert shard.stat().st_mtime_ns == before
