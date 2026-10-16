@@ -825,7 +825,7 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 #### `--inter-turn-delay-cap-seconds` `<float>`
 
-Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
+Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader, Exgentic closed-loop replay, and baseten_trace closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
 #### `--max-idle-gap-cap-seconds` `<float>`
@@ -2460,7 +2460,7 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 #### `--inter-turn-delay-cap-seconds` `<float>`
 
-Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
+Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader, Exgentic closed-loop replay, and baseten_trace closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
 #### `--max-idle-gap-cap-seconds` `<float>`
@@ -4090,7 +4090,7 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 #### `--inter-turn-delay-cap-seconds` `<float>`
 
-Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
+Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader, Exgentic closed-loop replay, and baseten_trace closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
 #### `--max-idle-gap-cap-seconds` `<float>`
@@ -6227,7 +6227,7 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 #### `--inter-turn-delay-cap-seconds` `<float>`
 
-Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
+Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader, Exgentic closed-loop replay, and baseten_trace closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
 #### `--max-idle-gap-cap-seconds` `<float>`

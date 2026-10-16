@@ -16,6 +16,7 @@ from pydantic import ValidationError
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.common.models import Conversation, Turn
+from aiperf.dataset.loader._delay_cap import DelayCapTracker
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 from aiperf.dataset.loader.exgentic_filters import (
     V1_UNSUPPORTED_FILTER_PAIRS,
@@ -283,6 +284,17 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
                 f"{self.filters.source_model.value!r}; no harness supports it"
             )
         super().__init__(**kwargs)
+        dataset = self.run.cfg.get_default_dataset()
+        if getattr(dataset, "ignore_trace_delays", False):
+            raise DatasetLoaderError(
+                "Exgentic: --ignore-trace-delays is not supported; use "
+                "--inter-turn-delay-cap-seconds 0 for back-to-back turns"
+            )
+        if getattr(dataset, "use_think_time_only", False):
+            raise DatasetLoaderError("Exgentic: --use-think-time-only is not supported")
+        self._delay_cap_tracker = DelayCapTracker(
+            cap_seconds=getattr(dataset, "inter_turn_delay_cap_seconds", None)
+        )
         self._fixed_schedule = any(
             phase.type == PhaseType.FIXED_SCHEDULE
             for phase in self.run.cfg.get_profiling_phases()
@@ -368,15 +380,16 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
             ) from error
         return start_ms, span_index, end_ms, turn
 
-    @staticmethod
     def _build_turns(
-        spans: list[tuple[float, int, float, Turn]], stats: Counter[str]
+        self, spans: list[tuple[float, int, float, Turn]], stats: Counter[str]
     ) -> list[Turn]:
         previous_end_ms: float | None = None
         turns = []
         for start_ms, _, end_ms, turn in spans:
             if previous_end_ms is not None:
-                turn.delay = max(0.0, start_ms - previous_end_ms)
+                turn.delay = self._delay_cap_tracker.clamp(
+                    max(0.0, start_ms - previous_end_ms)
+                )
                 if start_ms < previous_end_ms:
                     stats["overlap"] += 1
             turns.append(turn)
@@ -456,6 +469,7 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
         ]
 
     def _convert_rows(self, rows: Iterable[dict[str, Any]]) -> list[Conversation]:
+        self._delay_cap_tracker.reset()
         conversations: list[Conversation] = []
         combinations: set[tuple[str, str]] = set()
         seen_sessions: set[str] = set()
@@ -492,4 +506,5 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
             f"non_llm={stats['non_llm']}, zero_token={stats['zero_token']}; "
             f"overlapping_calls={stats['overlap']}"
         )
+        self._delay_cap_tracker.log_summary(logger_name=self.__class__.__name__)
         return conversations

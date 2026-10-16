@@ -105,4 +105,6 @@ aiperf profile \
 
 Fixed-schedule mode emits each recorded call as an independently scheduled one-turn request using its start offset from the source session. Calls that overlapped in the trace therefore overlap during replay. Selected source sessions start together at offset zero. Without `--fixed-schedule`, each source session remains a closed-loop multi-turn conversation: AIPerf waits for one live response before applying the recorded residual delay and sending the next request.
 
+For closed-loop replay, `--inter-turn-delay-cap-seconds` limits each recorded residual delay; set it to `0` to send turns back to back. The loader reports how many delays it capped. Fixed-schedule timestamps are unchanged by this flag. Exgentic does not support `--ignore-trace-delays` or `--use-think-time-only`; use the delay cap instead of either flag.
+
 Size the target context window for the selected trace plus the target model's chat-template overhead. Recorded contexts reach about 178K tokens, and some Gemini tool-calling sessions exceed 64K before target formatting. `tool_calling_with_shortlisting` alternates a selector request containing the full tool catalog with executor requests containing a changing subset of schemas. Low executor prefix-cache reuse is expected for that harness and is not a loader error.

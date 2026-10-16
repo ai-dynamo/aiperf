@@ -237,6 +237,7 @@ async def test_fixed_schedule_preserves_overlapping_start_times() -> None:
             public_dataset=PublicDatasetType.EXGENTIC,
             conversation_num=1,
             fixed_schedule=True,
+            inter_turn_delay_cap_seconds=0.0,
         )
     )
     loader = ExgenticDatasetLoader(
@@ -261,6 +262,66 @@ async def test_fixed_schedule_preserves_overlapping_start_times() -> None:
     ]
     assert all(len(conversation.turns) == 1 for conversation in conversations)
     assert all(conversation.turns[0].delay is None for conversation in conversations)
+    assert loader._delay_cap_tracker.capped_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "dataset_type",
+    [PublicDatasetType.EXGENTIC, PublicDatasetType.EXGENTIC_V2],
+)  # fmt: skip
+@pytest.mark.parametrize("cap_seconds", [0.0, 5.0])
+async def test_closed_loop_caps_recorded_delays(
+    dataset_type: PublicDatasetType,
+    cap_seconds: float,
+) -> None:
+    messages = [{"role": "user", "parts": [{"type": "text", "content": "hi"}]}]
+    spans = [
+        _span("2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z", messages=messages),
+        _span("2026-01-01T00:10:01Z", "2026-01-01T00:10:02Z", messages=messages),
+    ]
+    run = make_run_from_cli(
+        CLIConfig(
+            model_names=["target-model"],
+            public_dataset=dataset_type,
+            conversation_num=1,
+            inter_turn_delay_cap_seconds=cap_seconds,
+        )
+    )
+    loader_class = (
+        ExgenticV2DatasetLoader
+        if dataset_type == PublicDatasetType.EXGENTIC_V2
+        else ExgenticDatasetLoader
+    )
+    loader = loader_class(run=run, hf_dataset_name="unused", streaming=True)
+
+    conversations = await loader.convert_to_conversations(
+        {"dataset": [_row("session-1", spans)]}
+    )
+
+    assert [turn.delay for turn in conversations[0].turns] == [
+        None,
+        cap_seconds * 1000,
+    ]
+    assert loader._delay_cap_tracker.capped_count == 1
+
+
+@pytest.mark.parametrize(
+    "flag",
+    ["ignore_trace_delays", "use_think_time_only"],
+)  # fmt: skip
+def test_exgentic_rejects_unsupported_delay_flags(flag: str) -> None:
+    run = make_run_from_cli(
+        CLIConfig(
+            model_names=["target-model"],
+            public_dataset=PublicDatasetType.EXGENTIC,
+            conversation_num=1,
+            **{flag: True},
+        )
+    )
+
+    with pytest.raises(DatasetLoaderError, match=f"--{flag.replace('_', '-')}"):
+        ExgenticDatasetLoader(run=run, hf_dataset_name="unused", streaming=True)
 
 
 @pytest.mark.asyncio

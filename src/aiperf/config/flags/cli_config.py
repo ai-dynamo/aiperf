@@ -1166,8 +1166,8 @@ class CLIConfig(BaseConfig):
             default=None,
             ge=0.0,
             description="Clamp per-turn replay delays to at most this many "
-            "seconds; ``None`` disables the cap. Honored by the DAG JSONL loader "
-            "and the baseten_trace loader's closed-loop think-times; the clamp "
+            "seconds; ``None`` disables the cap. Honored by the DAG JSONL loader, "
+            "Exgentic closed-loop replay, and baseten_trace closed-loop think-times; the clamp "
             "count is reported at end of load. Maps to FileDataset "
             "``inter_turn_delay_cap_seconds``.",
         ),
