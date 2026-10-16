@@ -6,8 +6,11 @@
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 import pytest
+from pytest import param
 
+from aiperf.cli_runner._multi_run import _run_multi_benchmark, _summarize_and_export
 from aiperf.cli_runner._sweep_aggregate import (
     _aggregate_group_to_stats,
     _build_per_combination_stats,
@@ -19,8 +22,11 @@ from aiperf.cli_runner._sweep_aggregate import (
 from aiperf.common.enums import SweepMode
 from aiperf.common.models.export_models import JsonMetricResult
 from aiperf.config import BenchmarkConfig, BenchmarkPlan
-from aiperf.config.sweep import GridSweep
+from aiperf.config.sweep import AdaptiveSearchSweep, GridSweep, Objective
+from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter
 from aiperf.orchestrator.models import RunResult
+from aiperf.orchestrator.strategies import FixedTrialsStrategy
+from aiperf.plugin.enums import UIType
 
 _MINIMAL_CONFIG = {
     "models": ["test-model"],
@@ -291,3 +297,161 @@ class TestSweepExportHelpers:
         assert aggregate_dir == tmp_path / "sweep_aggregate"
         mock_compute.assert_called_once()
         mock_export.assert_awaited_once()
+
+
+class TestSummarizeAndExport:
+    """A successful one-run execution must reach the existing aggregation path."""
+
+    @pytest.mark.parametrize(
+        "mode,through_cli",
+        [
+            param("single", False, id="single-config"),
+            param("grid", False, id="single-point-grid"),
+            param("search", False, id="one-point-search-with-no-feasible-point"),
+            param("search", True, id="one-point-search-cli-with-no-feasible-point"),
+        ],
+    )  # fmt: skip
+    def test_single_success_exports_and_returns_zero(
+        self, mode: str, through_cli: bool, tmp_path: Path
+    ) -> None:
+        """A single success exports aggregates with code zero, including the search CLI."""
+        sweep = None
+        if mode == "grid":
+            sweep = GridSweep(parameters={"phases.profiling.concurrency": [10]})
+        elif mode == "search":
+            sweep = AdaptiveSearchSweep(
+                search_space=[
+                    SearchSpaceDimension(
+                        path="phases.profiling.concurrency", lo=1, hi=100, kind="int"
+                    )
+                ],
+                objectives=[
+                    Objective(
+                        metric="request_throughput", stat="avg", direction="maximize"
+                    )
+                ],
+                max_iterations=30,
+                sla_filters=[
+                    SLAFilter(
+                        metric_tag="time_to_first_token",
+                        stat="avg",
+                        op="lt",
+                        threshold=1,
+                    )
+                ],
+            )
+        plan = BenchmarkPlan(
+            configs=[
+                BenchmarkConfig.model_validate(
+                    {**_MINIMAL_CONFIG, "runtime": {"ui": UIType.SIMPLE}}
+                )
+            ],
+            trials=1,
+            sweep=sweep,
+        )
+        result = _successful_result(label="c10_t0", concurrency=10, throughput=100.0)
+
+        if through_cli:
+            with (
+                patch("aiperf.common.logging.setup_rich_logging"),
+                patch(
+                    "aiperf.cli_runner._multi_run._estimate_and_log_duration",
+                    return_value=tmp_path,
+                ),
+                patch(
+                    "aiperf.cli_runner._multi_run._execute_multi_benchmark",
+                    return_value=[result],
+                ) as execute,
+                patch("aiperf.cli_runner._multi_run.os._exit") as exit_process,
+            ):
+                _run_multi_benchmark(plan)
+
+            execute.assert_called_once()
+            assert execute.call_args.args[:2] == (plan, tmp_path)
+            exit_process.assert_called_once_with(0)
+        else:
+            exit_code = _summarize_and_export(
+                plan,
+                [result],
+                total_runs=1,
+                strategy=FixedTrialsStrategy(num_trials=1),
+                base_dir=tmp_path,
+                logger=MagicMock(),
+            )
+            assert exit_code == 0
+        aggregates = list(tmp_path.rglob("profile_export_aiperf_aggregate.json"))
+        assert len(aggregates) == 1
+        aggregate = orjson.loads(aggregates[0].read_bytes())
+        assert aggregate["metadata"]["num_successful_runs"] == 1
+        assert aggregate["metadata"]["single_run"] is True
+        assert aggregates[0].with_suffix(".csv").is_file()
+        if mode == "search":
+            sweep_path = (
+                tmp_path / "sweep_aggregate" / "profile_export_aiperf_sweep.json"
+            )
+            summary = orjson.loads(sweep_path.read_bytes())
+            assert summary["num_successful_runs"] == 1
+            assert len(summary["per_combination_metrics"]) == 1
+            assert summary["metadata"]["sla_constraints"]["feasible_count"] == 0
+            assert summary["metadata"]["sla_constraints"]["infeasible_count"] == 1
+            assert sweep_path.with_suffix(".csv").is_file()
+
+    @pytest.mark.parametrize(
+        "successes,expected_exit,expected_aggregations",
+        [
+            param([False], 1, 0, id="all-failed"),
+            param([True, False], 1, 0, id="one-success-with-failure"),
+            param([True, True], 0, 1, id="two-successes"),
+            param([True, True, False], 0, 1, id="two-successes-with-failure"),
+        ],
+    )  # fmt: skip
+    def test_existing_failure_and_multi_run_behavior_is_preserved(
+        self,
+        successes: list[bool],
+        expected_exit: int,
+        expected_aggregations: int,
+        tmp_path: Path,
+    ) -> None:
+        """Failures and multiple successes retain their existing exit and export behavior."""
+        results = [
+            RunResult(label=f"run_{i}", success=success)
+            for i, success in enumerate(successes)
+        ]
+        with patch(
+            "aiperf.cli_runner._multi_run.aggregate_plan_results",
+            new_callable=AsyncMock,
+        ) as aggregate:
+            exit_code = _summarize_and_export(
+                _make_plan(),
+                results,
+                total_runs=len(results),
+                strategy=FixedTrialsStrategy(num_trials=1),
+                base_dir=tmp_path,
+                logger=MagicMock(),
+            )
+
+        assert exit_code == expected_exit
+        assert aggregate.await_count == expected_aggregations
+
+    @pytest.mark.parametrize("error_type", [ValueError, OSError])
+    def test_single_success_propagates_aggregation_or_export_errors(
+        self, error_type: type[Exception], tmp_path: Path
+    ) -> None:
+        """Aggregation and export errors propagate even when the single run succeeds."""
+        result = _successful_result(label="c10_t0", concurrency=10, throughput=100.0)
+        with (
+            patch(
+                "aiperf.cli_runner._multi_run.aggregate_plan_results",
+                new_callable=AsyncMock,
+                side_effect=error_type("aggregation/export failed"),
+            ),
+            pytest.raises(error_type, match="aggregation/export failed"),
+        ):
+            _summarize_and_export(
+                _make_plan(),
+                [result],
+                total_runs=1,
+                strategy=FixedTrialsStrategy(num_trials=1),
+                base_dir=tmp_path,
+                logger=MagicMock(),
+            )
