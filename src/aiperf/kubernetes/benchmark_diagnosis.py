@@ -310,17 +310,29 @@ def diagnose_job_failure(status: dict[str, Any]) -> list[BenchmarkFinding]:
     """Surface ``status.error`` and a ``DatasetReady=False`` condition as findings.
 
     A job that failed before it produced metrics trips none of the metric
-    detectors, so without these the report would show nothing about why.
+    detectors, so without these the report would show nothing about why. A
+    dataset failure sets both to the same text; it is then reported once, as
+    the dataset finding.
 
     Example:
         ```python
         findings = diagnose_job_failure(cr["status"])
-        # [BenchmarkFinding(id="job_error", ...), BenchmarkFinding(id="dataset_unavailable", ...)]
+        # [BenchmarkFinding(id="dataset_unavailable", ...)]
         ```
     """
+    conditions = status.get("conditions")
+    dataset_findings = [
+        finding
+        for condition in (conditions if isinstance(conditions, list) else [])
+        if (finding := _dataset_unavailable_finding(condition)) is not None
+    ]
     findings: list[BenchmarkFinding] = []
     error = status.get("error")
-    if isinstance(error, str) and error:
+    if (
+        isinstance(error, str)
+        and error
+        and all(finding.detail != error for finding in dataset_findings)
+    ):
         findings.append(
             BenchmarkFinding(
                 id="job_error",
@@ -331,9 +343,5 @@ def diagnose_job_failure(status: dict[str, Any]) -> list[BenchmarkFinding]:
                 suggested_fix="Fix the cause the message names, then submit the job again.",
             )
         )
-    conditions = status.get("conditions")
-    for condition in conditions if isinstance(conditions, list) else []:
-        finding = _dataset_unavailable_finding(condition)
-        if finding is not None:
-            findings.append(finding)
+    findings.extend(dataset_findings)
     return findings

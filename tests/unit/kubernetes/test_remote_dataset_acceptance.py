@@ -43,6 +43,7 @@ HF_REF = "hf://org/repo/t.jsonl"
 S3_REF = "s3://bucket/traces/t.jsonl"
 HTTPS_REF = "https://h.example/t.jsonl"
 _UNPINNED_WARNING = "the dataset-manager pod will pin it"
+_SWEEP_NOTE = "Each sweep child pins it separately"
 _CHECK_WARNING = "needs a Hugging Face token"
 
 _BENCHMARK: dict[str, object] = {
@@ -296,6 +297,7 @@ def test_pin_remote_datasets_for_kubernetes_unreadable_source_stays_unpinned_and
     message = warn.call_args.args[0]
     assert _UNPINNED_WARNING in message
     assert str(kind) in message
+    assert _SWEEP_NOTE not in message
 
 
 @pytest.mark.parametrize(
@@ -758,3 +760,103 @@ def test_pin_remote_datasets_for_kubernetes_refused_connection_on_real_http_path
         pin_remote_datasets_for_kubernetes(benchmark)
     assert benchmark.get_default_dataset().path.resolved_version is None
     assert _UNPINNED_WARNING in warn.call_args.args[0]
+
+
+_EXPIRED_RAW = (
+    "https://h.example/t.jsonl?X-Amz-Date=20200101T000000Z&X-Amz-Expires=60"
+    "&X-Amz-Signature=topsecret"
+)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        param(_EXPIRED_RAW, id="raw"),
+        param(_EXPIRED_RAW.replace("topsecret", REDACTED_VALUE), id="redacted"),
+    ],
+)  # fmt: skip
+def test_pin_remote_datasets_for_kubernetes_expired_presigned_url_fails_before_host_access(
+    url: str,
+) -> None:
+    """Without this, the host's fetch gets a bare 403 and the precise reason is lost."""
+    benchmark = _remote_benchmark(url, disable_auto_fixed_schedule=True)
+    with (
+        _host_denied(url) as probe,
+        pytest.raises(
+            ConfigurationError, match="expired at 2020-01-01T00:01:00Z"
+        ) as exc_info,
+    ):
+        pin_remote_datasets_for_kubernetes(benchmark)
+    probe.assert_not_awaited()
+    assert not isinstance(exc_info.value, RemoteSourceError)
+    assert "topsecret" not in str(exc_info.value)
+
+
+def test_pin_remote_datasets_for_kubernetes_unreadable_pinned_ref_keeps_version_and_says_so() -> (
+    None
+):
+    benchmark = BenchmarkConfig.model_validate(
+        _benchmark({"ref": HF_REF, "resolved_version": SHA})
+    )
+    with (
+        _host_cannot_read(),
+        patch("aiperf.kubernetes.console.print_warning") as warn,
+    ):
+        pin_remote_datasets_for_kubernetes(benchmark)
+    assert benchmark.get_default_dataset().path.resolved_version == SHA
+    message = warn.call_args.args[0]
+    assert "unpinned" not in message
+    assert f"pinned version {SHA}" in message
+
+
+@pytest.mark.parametrize(
+    "host_token,hinted",
+    [
+        param("hf_host", True, id="host-token"),
+        param(None, False, id="no-host-token"),
+    ],
+)  # fmt: skip
+def test_pin_remote_datasets_for_kubernetes_hf_not_found_hints_at_the_pods_token(
+    host_token: str | None, hinted: bool
+) -> None:
+    benchmark = _remote_benchmark(HF_REF, disable_auto_fixed_schedule=True)
+    with (
+        patch(
+            "aiperf.dataset.remote.service.probe_ref",
+            AsyncMock(side_effect=_access_error(RemoteErrorKind.NOT_FOUND)),
+        ),
+        patch("huggingface_hub.get_token", return_value=host_token),
+        pytest.raises(RemoteSourceError) as exc_info,
+    ):
+        pin_remote_datasets_for_kubernetes(benchmark)
+    assert exc_info.value.kind == RemoteErrorKind.NOT_FOUND
+    assert ("may differ from the pods' token" in str(exc_info.value)) is hinted
+
+
+def test_build_sweep_cr_dict_unreadable_source_warns_children_pin_separately(
+    tmp_path: Path,
+) -> None:
+    with _host_cannot_read(), patch("aiperf.kubernetes.console.print_warning") as warn:
+        sweep_cmd._build_sweep_cr_dict(
+            config_file=_write_sweep_yaml(tmp_path),
+            kube_options=_kube_options(),
+            multi_run_trials=None,
+            cooldown_seconds=0.0,
+            convergence_metric=None,
+            convergence_min_runs=3,
+            convergence_max_runs=10,
+            convergence_threshold=0.05,
+        )
+    message = warn.call_args_list[0].args[0]
+    assert _UNPINNED_WARNING in message
+    assert _SWEEP_NOTE in message
+
+
+def test_generate_sweep_config_unreadable_source_warns_children_pin_separately(
+    tmp_path: Path,
+) -> None:
+    with _host_cannot_read(), patch("aiperf.kubernetes.console.print_warning") as warn:
+        generate_cmd._resolve_spec_and_name(
+            CLIConfig(config_file=_write_sweep_yaml(tmp_path)), _kube_options()
+        )
+    assert _SWEEP_NOTE in warn.call_args_list[0].args[0]

@@ -1144,8 +1144,12 @@ def _script_entrypoint() -> int:
     ``if __name__ == "__main__":`` guard so it's directly unit-testable
     (module-level guards never execute under import/pytest).
     """
+    from aiperf.common.endpoint_credentials import drop_injected_dataset_urls
     from aiperf.common.event_loop import configure_event_loop_policy_for_platform
 
+    # The sweep-controller inherits spec.podTemplate.env but never downloads;
+    # only a child's dataset-manager may hold presigned dataset URLs.
+    drop_injected_dataset_urls()
     configure_event_loop_policy_for_platform()
     return asyncio.run(main())
 

@@ -271,7 +271,7 @@ def _normalized_config_parts(
         )
         config = apply_cli_overrides(config, cli_config, deferred_fields=deferred)
     # Pinned once here, every child AIPerfJob inherits the same version.
-    pin_remote_datasets_for_kubernetes(config.benchmark)
+    pin_remote_datasets_for_kubernetes(config.benchmark, sweep=True)
     rendered = config.model_dump(
         mode="json",
         by_alias=True,

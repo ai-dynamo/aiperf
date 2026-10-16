@@ -495,8 +495,8 @@ still run. See `OperatorPreflightChecker._resource_mode_skip`.
     expires within an hour; a Hugging Face repo that could not be checked.
   - `pass` — otherwise.
 - **Fix**: the hint names the `--env-from-secrets` line to add. Expiry is read from
-  `X-Amz-Date` + `X-Amz-Expires`, `X-Goog-Date` + `X-Goog-Expires`, or the Azure SAS `se`
-  field.
+  `X-Amz-Date` + `X-Amz-Expires`, `X-Goog-Date` + `X-Goog-Expires`, an epoch-seconds
+  `Expires` (CloudFront canned policy, S3 SigV2), or the Azure SAS `se` field.
 
 ### Image Reference (operator) / Image Pull (CLI)
 

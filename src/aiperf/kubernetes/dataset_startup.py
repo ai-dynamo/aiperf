@@ -87,11 +87,17 @@ def write_termination_message(
 
     ``path`` defaults to :data:`TERMINATION_LOG_PATH`, read at call time so tests
     can redirect it. A missing or read-only log (outside Kubernetes) is ignored:
-    the error still reaches stderr and the exit code.
+    the error still reaches stderr and the exit code. If building the message
+    fails, only the error's type is written, so the caller still re-raises the
+    original error rather than this one.
     """
     target = TERMINATION_LOG_PATH if path is None else path
+    try:
+        message = termination_message(error, secrets)
+    except Exception:
+        message = f"{POD_PREFIX} {type(error).__name__} (details withheld: redacting them failed)"
     with contextlib.suppress(OSError):
-        target.write_text(termination_message(error, secrets), encoding="utf-8")
+        target.write_text(message, encoding="utf-8")
 
 
 def prepare_dataset_manager_run(

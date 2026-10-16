@@ -157,8 +157,9 @@ def _resolve_spec_and_name(
         )
         from aiperf.kubernetes.sweep_routing import requires_sweep_controller
 
-        pin_remote_datasets_for_kubernetes(config.benchmark)
-        if requires_sweep_controller(config):
+        sweep = requires_sweep_controller(config)
+        pin_remote_datasets_for_kubernetes(config.benchmark, sweep=sweep)
+        if sweep:
             spec = _build_sweep_spec(config, kube_options)
         else:
             spec = kube_options.to_crd_spec(config)

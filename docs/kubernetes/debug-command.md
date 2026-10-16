@@ -134,8 +134,8 @@ published and only the rate survives.
 A job that failed before it produced metrics trips none of those detectors, so the
 section also lists the job's `status.error` (as `Job error (status.error)`) and a
 `DatasetReady=False` condition (`diagnose_job_failure` in the same module). A dataset that
-failed in the dataset-manager pod shows both, with the pod's reason after
-`[dataset-manager pod]`.
+failed in the dataset-manager pod sets both to the same text, so it shows once, as the
+`DatasetReady=False` finding, with the pod's reason after `[dataset-manager pod]`.
 
 The section is omitted entirely when nothing trips, and when no specific job is
 targeted (`-A` or a bare namespace), since the findings need one CR's status.
@@ -272,8 +272,8 @@ Symptom: `aiperf kube list` shows the job `Failed` shortly after its pods start.
 aiperf kube debug -j <job>
 ```
 
-In the report, **Benchmark Diagnostics** lists `Job error (status.error)` containing
-`[dataset-manager pod] Cannot use <reference>: ...` and `DatasetReady=False (DatasetUnavailable)`.
+In the report, **Benchmark Diagnostics** lists `DatasetReady=False (DatasetUnavailable)` with
+`[dataset-manager pod] Cannot use <reference>: ...` in its detail.
 Look up the message in the troubleshooting table of
 [Run a published trace](../tutorials/remote-datasets.md#troubleshooting).
 
