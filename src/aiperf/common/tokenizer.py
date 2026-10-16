@@ -680,6 +680,20 @@ class Tokenizer:
             if cached_alias is not None and cached_alias != name:
                 candidates.append(cached_alias)
 
+        # A local path short-circuits to the directory itself, bypassing
+        # snapshot_download (which validates its argument as an HF repo id and
+        # raises HFValidationError for absolute paths). Only explicitly local
+        # paths qualify; a bare HF ID (e.g. 'bert-base-uncased') must still
+        # route through the cache lookup even if a same-named directory exists
+        # in the CWD, otherwise the wrong tokenizer could load silently.
+        name_path = Path(name)
+        if name_path.is_dir() and (
+            name_path.is_absolute()
+            or name in {".", ".."}
+            or name.startswith(("./", "../", ".\\", "..\\"))
+        ):
+            return str(name_path)
+
         last_err: Exception | None = None
         for candidate in candidates:
             try:
