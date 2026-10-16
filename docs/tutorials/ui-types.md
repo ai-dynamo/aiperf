@@ -55,6 +55,7 @@ aiperf profile \
   --endpoint-type chat \
   --concurrency 10 \
   --request-count 100 \
+  --output-tokens-mean 128 \
   --streaming
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
@@ -79,6 +80,7 @@ aiperf profile \
   --endpoint-type chat \
   --concurrency 10 \
   --request-count 100 \
+  --output-tokens-mean 128 \
   --streaming \
   --ui-type simple
 ```
@@ -94,7 +96,7 @@ Profiling: 100/100 |████████████████████
 Processing Records: 100/100 |███████████████| 100% [00:01<00:00]
 
 INFO     Benchmark completed successfully
-INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency10/
 ```
 
 **When to use:**
@@ -114,6 +116,7 @@ aiperf profile \
   --endpoint-type chat \
   --concurrency 10 \
   --request-count 100 \
+  --output-tokens-mean 128 \
   --streaming \
   --ui-type none
 ```
@@ -129,7 +132,7 @@ aiperf profile \
 23:07:32.594891 INFO     AIPerf System is CONFIGURED
 23:07:32.597896 INFO     AIPerf System is PROFILING
 23:09:18.123456 INFO     Benchmark completed successfully
-23:09:18.234567 INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
+23:09:18.234567 INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency10/
 ```
 
 **When to use:**

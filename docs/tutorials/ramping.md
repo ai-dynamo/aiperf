@@ -74,7 +74,7 @@ INFO     AIPerf System is PROFILING
 Profiling: 200/200 |████████████████████████| 100% [00:05<00:00]
 
 INFO     Benchmark completed successfully
-INFO     Results saved to: artifacts/your-model-chat-concurrency100/
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency100/
 
             NVIDIA AIPerf | LLM Metrics
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┓
@@ -86,7 +86,7 @@ INFO     Results saved to: artifacts/your-model-chat-concurrency100/
 │ Request Throughput (req/s) │  39.94 │      - │      - │      - │      - │
 └────────────────────────────┴────────┴────────┴────────┴────────┴────────┘
 
-JSON Export: artifacts/your-model-chat-concurrency100/profile_export_aiperf.json
+JSON Export: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency100/profile_export_aiperf.json
 ```
 
 With only 200 requests the run finishes while concurrency is still climbing;

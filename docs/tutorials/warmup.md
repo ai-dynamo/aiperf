@@ -67,9 +67,9 @@ INFO     AIPerf System is PROFILING
 Profiling: 100/100 |████████████████████████| 100% [00:10<00:00]
 
 INFO     Benchmark completed successfully
-INFO     Results saved to: artifacts/your-model-chat-rate10/
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-openai-chat-rate10/
 
-JSON Export: artifacts/your-model-chat-rate10/profile_export_aiperf.json
+JSON Export: artifacts/Qwen_Qwen3-0.6B-openai-chat-rate10/profile_export_aiperf.json
 ```
 
 This sends 20 warmup requests before the 100 profiling requests begin. Warmup metrics are discarded.
