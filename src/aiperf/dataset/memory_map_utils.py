@@ -48,6 +48,7 @@ from aiperf.common.exceptions import (
     MemoryMapFileOperationError,
     MemoryMapSerializationError,
 )
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
@@ -187,8 +188,8 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             # Pre-encode each turn's raw_payload and write the bytes directly;
             # workers replay these verbatim with no deserialization. Persist
             # turn scalars in the index so metric enrichment can restore
-            # max_tokens / scheduled_send_ms / source_kind without the full
-            # Conversation.
+            # max_tokens / scheduled_send_ms / source_kind / audio_duration_seconds
+            # without the full Conversation.
             turn_offsets: list[PayloadOffset] = []
             for turn in conversation.turns:
                 payload_bytes = orjson.dumps(turn.raw_payload)
@@ -199,6 +200,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
                         max_tokens=_resolve_turn_max_tokens(turn),
                         timestamp=turn.timestamp,
                         source_kind=turn.source_kind,
+                        audio_duration_seconds=turn.audio_duration_seconds,
                     )
                 )
                 self._current_offset += len(payload_bytes)
@@ -524,6 +526,15 @@ class PayloadOffset(AIPerfBaseModel):
             "PAYLOAD_BYTES path."
         ),
     )
+    audio_duration_seconds: FiniteFloat | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Audio duration in seconds from Turn.audio_duration_seconds. "
+            "Restored onto reconstructed Turns so the audio-duration and "
+            "RTFx metrics stay live on the PAYLOAD_BYTES path."
+        ),
+    )
 
 
 # Wire-body keys that encode the same Turn.max_tokens scalar across endpoints.
@@ -542,6 +553,7 @@ class PayloadTurnData:
     max_tokens: int | None = None
     timestamp: int | float | None = None
     source_kind: str | None = None
+    audio_duration_seconds: float | None = None
 
 
 def max_tokens_from_wire_payload(payload: dict[str, Any] | None) -> int | None:
@@ -600,6 +612,7 @@ def turn_from_payload_turn(entry: PayloadTurnData) -> Turn:
         max_tokens=max_tokens,
         timestamp=entry.timestamp,
         source_kind=entry.source_kind,
+        audio_duration_seconds=entry.audio_duration_seconds,
     )
 
 
@@ -859,8 +872,9 @@ class MemoryMapDatasetClient:
     ) -> PayloadTurnData | None:
         """Get payload bytes plus turn scalars for a specific turn.
 
-        Scalars (``max_tokens``, ``timestamp``, ``source_kind``) are restored
-        from the index when present. When ``max_tokens`` is missing (legacy indexes or turns
+        Scalars (``max_tokens``, ``timestamp``, ``source_kind``,
+        ``audio_duration_seconds``) are restored from the index when present.
+        When ``max_tokens`` is missing (legacy indexes or turns
         that never set it on the Turn), it is recovered from wire JSON keys
         ``max_tokens`` / ``max_completion_tokens`` / ``max_output_tokens``.
 
@@ -895,6 +909,7 @@ class MemoryMapDatasetClient:
             max_tokens=max_tokens,
             timestamp=offset_info.timestamp,
             source_kind=offset_info.source_kind,
+            audio_duration_seconds=offset_info.audio_duration_seconds,
         )
 
     def close(self) -> None:

@@ -203,6 +203,27 @@ EOF
 
 The `extra` field also works per-turn in multi_turn datasets.
 
+### Per-Request Audio Duration (RTFx)
+
+For ASR/audio-transcription benchmarks (`--endpoint-type audio_transcription`), AIPerf computes the RTFx (Inverse Real-Time Factor) metric from each request's audio duration. Synthetic audio and HuggingFace ASR datasets (e.g. LibriSpeech) report this automatically, but custom audio files have no built-in way to know their duration. Self-report it with the `audio_duration_seconds` field:
+
+```bash
+cat > audio_with_duration.jsonl << 'EOF'
+{"audios": ["/path/to/call_30s.wav"], "audio_duration_seconds": 30.0}
+{"audios": ["/path/to/call_120s.wav"], "audio_duration_seconds": 120.0}
+EOF
+
+aiperf profile \
+    --model openai/whisper-large-v3 \
+    --endpoint-type audio_transcription \
+    --input-file audio_with_duration.jsonl \
+    --custom-dataset-type single_turn \
+    --url localhost:8000 \
+    --request-count 2
+```
+
+Without `audio_duration_seconds`, RTFx is omitted from the results for these requests. The value is self-reported and unvalidated against the actual audio content; it must be a finite value greater than 0 (`0`, negative, or infinite values are rejected when the dataset is loaded). It must also describe exactly one clip: the transcription endpoint only sends the first entry of `audios`, so pairing it with more than one audio is rejected at load time rather than silently computing RTFx against the wrong duration. Split multiple clips into one `SingleTurn` entry each.
+
 ---
 
 ## Multi-Turn Datasets
