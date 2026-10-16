@@ -445,16 +445,19 @@ mid-token.
 
 ## NaN/Inf Discipline Pattern
 
-NaN/+inf/-inf in metric data corrupts downstream artifacts in three ways:
-`orjson.dumps` (and Pydantic `model_dump_json`) silently coerce them to JSON
-`null`, which is indistinguishable from "metric was missing"; CSV writers
+Where non-finite metric values are invalid, `orjson.dumps` (and Pydantic
+`model_dump_json`) can hide them by coercing them to JSON `null`, which is
+indistinguishable from "metric was missing". Serializer coercion does not
+replace input validation. CSV writers
 emit literal `"nan"`/`"inf"` strings that pandas/duckdb parse
 inconsistently; and `np.mean`/`np.std`/`polyfit` poison downstream decision
 logic (Pareto fronts, BO acquisition maxima, plateau detectors) without
 raising.
 
 The `aiperf.common.finite` module centralizes the discipline as four
-primitives. Use them at every numeric boundary.
+primitives. Use them for input validation, numerical calculations, and
+export normalization. Only the shared JSONL and raw-record writers have
+the serialization exception described below.
 
 ### `FiniteFloat` for Pydantic metric fields
 
@@ -480,7 +483,7 @@ The `AfterValidator` rejects NaN/+inf/-inf at config-load and
 finite-or-explicitly-missing semantics, use `FiniteFloat | None` — the
 validator only fires when a non-None value is provided.
 
-### `scrub_non_finite` before every JSON exporter
+### `scrub_non_finite` for export values that need normalization
 
 ```python
 import orjson
@@ -497,18 +500,33 @@ alone and normalizes numpy scalars to the native Python type they actually
 mean — `numpy.int64(7)` becomes `7`, not `7.0`, and `numpy.bool_(True)`
 becomes `True`, not `1.0`.
 
-That normalization is load-bearing, not incidental: `orjson.dumps` **raises**
-`TypeError: Type is not JSON serializable: numpy.float64` rather than
-degrading, so a numpy scalar anywhere in a payload aborts the export and
-takes the run down with it. Any code that hands values to an exporter
+`orjson.dumps` **raises** `TypeError: Type is not JSON serializable: numpy.float64`
+for unsupported numpy scalars. This is a serialization failure; whether it
+is reported at finalization depends on the writer's error handling.
+Any code that hands values to an exporter
 (planners, scorers, analysis helpers) should still return native floats —
 `scrub_non_finite` is the backstop, not the excuse.
 
-Most exporters are shielded by accident: they call
-`scrub_non_finite(model.model_dump(mode="json"))`, and Pydantic's JSON-mode
-dump already coerces numpy. Payloads assembled as plain dicts from
-dataclasses (`search_history.json` is the live example) have no such step,
-so `scrub_non_finite` is their only guard.
+Only the shared JSONL writer (`BufferedJSONLWriterMixin`) and raw-record
+writer (`RawRecordWriterProcessor`) may omit the scrub when serializing
+`model.model_dump(mode="json")` directly with `orjson.dumps`. That dump
+converts supported model values to JSON-compatible types; unsupported
+values still fail serialization. `orjson` writes remaining NaN/+inf/-inf
+floats as JSON `null`, which preserves the output of a separate scrub
+without another recursive copy. The shared writer retains `exclude_none`
+and its field exclusions. The raw writer retains `exclude_none` and preserves
+request payload bytes through `orjson.Fragment`.
+
+This is not a general exemption for exporters that use JSON-mode dumps.
+Other exporters must still follow the
+[exporter invariant](./global-invariants.md#test_every_json_exporter_calls_scrub_non_finite).
+
+Payloads assembled as plain dicts from dataclasses (`search_history.json`
+is the live example) can still contain numpy scalars and need
+`scrub_non_finite`. Do not enable native numpy serialization as a general
+replacement: its float32 output can round differently from conversion to a
+Python float. Keep explicit normalization for non-JSON consumers and keep
+`FiniteFloat` validation where non-finite inputs must be rejected.
 
 ### `is_finite_value` for the canonical finiteness check
 
