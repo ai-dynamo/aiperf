@@ -20,6 +20,7 @@ from aiperf.common.endpoint_credentials import (
     AIPERF_INJECTED_DATASET_URLS,
     secret_env_names,
 )
+from aiperf.common.redact import REDACTED_VALUE
 from aiperf.config.dataset.remote_ref import carries_credential, remote_dataset_refs
 from aiperf.config.loader.errors import ConfigurationError
 from aiperf.dataset.remote.errors import RemoteErrorKind, RemoteSourceError
@@ -47,8 +48,10 @@ def pin_remote_datasets_for_kubernetes(benchmark: BenchmarkConfig) -> None:
     Mutates ``benchmark`` in place: remote references gain ``resolved_version``
     and manifest defaults, and deferred fixed-schedule promotion is settled. On
     an auth-class failure for an ``hf://`` or ``s3://`` reference, the reference
-    stays unpinned and a warning is printed. Calls ``asyncio.run``, so async
-    callers run it in a worker thread.
+    stays unpinned and a warning is printed. A reference whose credential is
+    already ``<redacted>`` (a resource written by ``aiperf kube generate``) is
+    not read here at all: only the pod holds its full URL. Calls
+    ``asyncio.run``, so async callers run it in a worker thread.
 
     Raises:
         RemoteSourceError: The source is unusable for a reason other than this
@@ -59,26 +62,49 @@ def pin_remote_datasets_for_kubernetes(benchmark: BenchmarkConfig) -> None:
     """
     from aiperf.dataset.remote.preflight import preflight_remote_access
 
+    ref = _default_remote_ref(benchmark)
+    if ref is None:
+        return
+    if REDACTED_VALUE in ref.ref:
+        _defer_to_pod(
+            benchmark,
+            f"This machine cannot read {ref.display} (its credential is redacted)",
+            warn=ref.resolved_version is None,
+        )
+        return
     try:
         preflight_remote_access([benchmark])
     except RemoteSourceError as e:
-        if not _pod_may_read(benchmark, e):
+        if not _pod_may_read(ref, e):
             raise
-        _require_settled_fixed_schedule(benchmark, e)
-        _warn_unpinned(e)
+        _defer_to_pod(benchmark, f"This machine cannot read {e.ref} ({e.kind})")
 
 
-def _pod_may_read(benchmark: BenchmarkConfig, error: RemoteSourceError) -> bool:
+def _default_remote_ref(benchmark: BenchmarkConfig) -> RemoteRef | None:
+    """The default dataset's remote reference; the access stage reads only that one."""
+    from aiperf.config.dataset.remote_ref import RemoteRef
+
+    path = getattr(benchmark.get_default_dataset(), "path", None)
+    return path if isinstance(path, RemoteRef) else None
+
+
+def _pod_may_read(ref: RemoteRef, error: RemoteSourceError) -> bool:
     """Whether the dataset-manager pod's credentials could succeed where this machine failed."""
     if error.kind not in HOST_UNREADABLE_KINDS:
         return False
-    # preflight_remote_access probes only the default dataset.
-    return benchmark.get_default_dataset().path.scheme in _POD_CREDENTIAL_SCHEMES
+    return ref.scheme in _POD_CREDENTIAL_SCHEMES
 
 
-def _require_settled_fixed_schedule(
-    benchmark: BenchmarkConfig, error: RemoteSourceError
+def _defer_to_pod(
+    benchmark: BenchmarkConfig, reason: str, *, warn: bool = True
 ) -> None:
+    """Leave the reference for the dataset-manager pod, or refuse when that is unsafe."""
+    _require_settled_fixed_schedule(benchmark, reason)
+    if warn:
+        _warn_unpinned(reason)
+
+
+def _require_settled_fixed_schedule(benchmark: BenchmarkConfig, reason: str) -> None:
     """Refuse a run whose phase type still depends on the unread first record.
 
     The dataset-manager pod could settle it, but only in its own copy of the
@@ -93,25 +119,23 @@ def _require_settled_fixed_schedule(
     ):
         return
     raise ConfigurationError(
-        f"This machine cannot read {error.ref} ({error.kind}), so AIPerf cannot tell "
-        "whether the trace has timestamps and should replay on its recorded "
-        "schedule. Pass --fixed-schedule to replay on its timestamps or "
-        "--no-fixed-schedule to keep the selected timing mode, or run from a "
-        "machine that can read the source."
+        f"{reason}, so AIPerf cannot tell whether the trace has timestamps and "
+        "should replay on its recorded schedule. Pass --fixed-schedule to replay "
+        "on its timestamps or --no-fixed-schedule to keep the selected timing "
+        "mode, or run from a machine that can read the source."
     )
 
 
-def _warn_unpinned(error: RemoteSourceError) -> None:
+def _warn_unpinned(reason: str) -> None:
     from rich.markup import escape
 
     from aiperf.kubernetes import console as kube_console
 
     kube_console.print_warning(
         escape(
-            f"This machine cannot read {error.ref} ({error.kind}), so it is "
-            "submitted unpinned; the dataset-manager pod will pin it with the "
-            "pod's own credentials. Pin it explicitly (@<commit> or ?versionId=) "
-            "to fix the version before the pod starts."
+            f"{reason}, so it is submitted unpinned; the dataset-manager pod will "
+            "pin it with the pod's own credentials. Pin it explicitly (@<commit> "
+            "or ?versionId=) to fix the version before the pod starts."
         )
     )
 
