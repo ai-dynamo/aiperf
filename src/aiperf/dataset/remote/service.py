@@ -121,6 +121,18 @@ def _usable_entry(ref: RemoteRef) -> ResolvedSource | None:
     return source
 
 
+def indexed_file(ref: RemoteRef, relpath: str) -> Path | None:
+    """Local path of ``relpath`` in the indexed, intact cache entry of ``ref``; None otherwise.
+
+    Reads only the local cache, and logs nothing on a miss: the caller fetches instead.
+    """
+    source = read_index(ref)
+    if source is None or not _intact(source):
+        return None
+    file = next((f for f in source.files if f.path == relpath), None)
+    return None if file is None else _disk_path(source, file)
+
+
 async def probe_ref(ref: RemoteRef) -> ProbeResult:
     """Check access and pin the version of ``ref`` (from the cache when offline)."""
     if is_remote_offline():
