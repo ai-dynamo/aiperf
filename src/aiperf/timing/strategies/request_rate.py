@@ -302,10 +302,13 @@ class RequestRateStrategy(AIPerfLoggerMixin):
                     )
                     match result:
                         case True:  # Successfully issued credit
-                            # Re-sample the next new turn for the next interval.
-                            next_new_session_turn = (
-                                self._conversation_source.next().build_first_turn()
-                            )
+                            # Re-sample the next new turn for the next interval, unless
+                            # no new session can start: an unused sample would still
+                            # advance the sampler shared with the next phase.
+                            if self._stop_checker.can_start_new_session():
+                                next_new_session_turn = (
+                                    self._conversation_source.next().build_first_turn()
+                                )
                         case False:  # Stop condition reached
                             self.debug(
                                 "Exiting: stop condition reached after try_issue_credit"
