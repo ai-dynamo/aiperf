@@ -739,7 +739,8 @@ async def test_get_metadata_raises_propagates_through_intercept():
 
 
 def test_sampled_session_spawn_child_routing_key_is_parent_correlation_id():
-    """SampledSession.routing_key returns parent_correlation_id whenever set, regardless of branch_mode (the router uses it only for a SPAWN child's first turn)."""
+    """The router follows this parent key for a SPAWN child only on its first
+    turn; later turns use the child's own sticky entry."""
     from aiperf.timing.conversation_source import SampledSession
 
     spawn = SampledSession(

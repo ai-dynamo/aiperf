@@ -1592,16 +1592,21 @@ class TestStickyCreditRouterDAGChildren:
     ) -> None:
         """Unregistering a worker drops the entries it owned. The child must take
         one least-loaded hop and mint a fresh entry there, not route
-        least-loaded on every remaining turn."""
-        two_worker_router._register_worker("worker-C")
+        least-loaded on every remaining turn. The final turn must then clear the
+        session from the new worker's counters, or least-loaded selection keeps
+        seeing a phantom session there."""
+        router = two_worker_router
+        router._register_worker("worker-C")
         kid_worker = await send("kid", 0, 4, parent="root")
-        two_worker_router._unregister_worker(kid_worker)
-        assert "kid" not in two_worker_router._sticky_sessions
+        router._unregister_worker(kid_worker)
+        assert "kid" not in router._sticky_sessions
         new_worker = await send("kid", 1, 4, parent="root")
         assert new_worker != kid_worker
+        assert router._workers[new_worker].active_sessions == 1
         assert await send("kid", 2, 4, parent="root") == new_worker
         await send("kid", 3, 4, parent="root")
-        assert _total_active(two_worker_router) == 0
+        assert all(w.active_sessions == 0 for w in router._workers.values())
+        assert all(not w.active_session_ids for w in router._workers.values())
 
     async def test_send_credit_single_turn_spawn_child_with_forks_hosts_fork_children(
         self, two_worker_router, send
@@ -1661,22 +1666,6 @@ class TestStickyCreditRouterDAGChildren:
         await send("pre", 1, 3, mode=spawn)
         await send("pre", 2, 3, mode=spawn)
         assert _total_active(two_worker_router) == 0
-
-    async def test_send_credit_spawn_child_final_turn_releases_pinned_worker(
-        self, two_worker_router, send
-    ) -> None:
-        """When the pinned worker died mid-child, the final turn decrements the
-        worker the session was last counted against, never below zero."""
-        two_worker_router._register_worker("worker-C")
-        kid_worker = await send("kid", 0, 3, parent="root")
-        two_worker_router._unregister_worker(kid_worker)
-        new_worker = await send("kid", 1, 3, parent="root")
-        assert two_worker_router._workers[new_worker].active_sessions == 1
-        await send("kid", 2, 3, parent="root")
-        assert all(w.active_sessions == 0 for w in two_worker_router._workers.values())
-        assert all(
-            not w.active_session_ids for w in two_worker_router._workers.values()
-        )
 
 
 class TestVirtualReturnFatalError:
