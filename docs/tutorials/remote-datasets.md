@@ -231,6 +231,15 @@ flowchart LR
   the reference is submitted unpinned with the same warning, whatever its scheme. An HTTP 429 or
   5xx answer is not a connection failure: the source answered, so `aiperf kube` retries and then
   fails.
+- A resource that already carries a pinned version keeps it when this machine cannot read the
+  source; the dataset-manager pod downloads that version.
+- A resource written by `aiperf kube generate --operator` can be passed back to
+  `aiperf kube profile -f` or `aiperf kube sweep -f`. A presigned path whose credential is
+  `<redacted>` is not read on this machine at all, since only the pods hold the full URL: its
+  pinned version is kept, or, if it has none, it is submitted unpinned with the same warning.
+- `aiperf kube sweep` (or any run with multi-run trials) that submits a reference unpinned
+  warns that each child pins it separately, so variations can see different versions if the
+  source changes meanwhile. Pin it explicitly (`@<commit>`, `?versionId=`) to avoid that.
 - A trace whose fixed-schedule promotion depends on its first record cannot be submitted
   unpinned. Pass `--fixed-schedule` or `--no-fixed-schedule`, or run `aiperf kube` from a
   machine that can read the source.
@@ -271,7 +280,8 @@ as `aiperf kube generate --operator` does, with the credential values replaced b
 `<redacted>`. `aiperf kube validate` catches a raw signature before you apply.
 
 Before submission, `aiperf kube` warns when a presigned URL expires within an hour (queueing,
-for example in Kueue, can delay the download) and fails when it has already expired. The
+for example in Kueue, can delay the download) and fails when it has already expired, before it
+tries to read the URL, so the error names the expiry instead of a bare access denial. The
 operator runs the same checks for resources applied with `kubectl`; see
 [Preflight](../kubernetes/preflight.md#remote-datasets-operator-and-cli).
 
@@ -308,7 +318,7 @@ in direct mode), so set them there, not in `spec.podTemplate.env`; see
 A dataset that fails in the pod stops the dataset-manager before the benchmark starts. The job
 fails with a `status.error` that contains `[dataset-manager pod] Cannot use <reference>: ...`,
 the `DatasetReady` condition turns `False` with reason `DatasetUnavailable`, and
-`aiperf kube debug --job-id <name>` shows both. Gated public datasets (`--public-dataset`)
+`aiperf kube debug --job-id <name>` shows that reason as a `DatasetReady=False` finding. Gated public datasets (`--public-dataset`)
 fail the same way.
 
 ---
@@ -326,6 +336,7 @@ in the table.
 | "has not accepted its terms" | A gated Hugging Face dataset | Accept the terms on the dataset page, then retry |
 | "has no revision" or "has no version" | The `@<rev>` or `?versionId=` does not exist | Check the branch, tag, commit, or version id |
 | "was not found, or your token can't access it", "S3 has no such bucket or key", or "the server has no such file" | Wrong repo, path, key, or URL | Check the reference |
+| "which may differ from the pods' token" (`aiperf kube`) | This machine's Hugging Face token cannot see the repo; the pods' token might | Run `aiperf kube` where no Hugging Face token is configured, so the dataset-manager pod pins it with its own token |
 | "offline mode is on and it is not in the local cache" | Offline mode with nothing downloaded for that reference | Run once with network access, or unset `AIPERF_DATASET_REMOTE_OFFLINE` / `HF_HUB_OFFLINE` |
 | "no `aiperf.json` describing it" or "no `aiperf.json` under it" | A repo, folder, or prefix without a manifest | Point at a data file, or ask the publisher to add `aiperf.json` |
 | "its manifest points at" ... "which does not exist", or "its manifest" ... "is invalid" | A malformed or stale manifest | Ask the publisher to fix `aiperf.json` |

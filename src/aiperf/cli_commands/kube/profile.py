@@ -118,12 +118,15 @@ def _build_cr_spec_and_config(
     from aiperf.config.flags.resolver import apply_cli_overrides, deep_merge
     from aiperf.kubernetes.remote_datasets import pin_remote_datasets_for_kubernetes
     from aiperf.kubernetes.spec_converter import extract_benchmark_config
+    from aiperf.kubernetes.sweep_routing import requires_sweep_controller
 
     spec = copy.deepcopy(dict(raw.get("spec", {})))
     config = extract_benchmark_config(spec)
     if cli_config is not None:
         config = apply_cli_overrides(config, cli_config)
-    pin_remote_datasets_for_kubernetes(config.benchmark)
+    pin_remote_datasets_for_kubernetes(
+        config.benchmark, sweep=requires_sweep_controller(config)
+    )
 
     # Replace every Config-v2 envelope field, not just benchmark. This keeps
     # variables/randomSeed/plot aliases canonical and ensures CLI envelope
@@ -198,6 +201,7 @@ def _resolve_spec_and_name(
     calls ``asyncio.run``, so the async command runs this in a worker thread.
     """
     from aiperf.kubernetes.remote_datasets import pin_remote_datasets_for_kubernetes
+    from aiperf.kubernetes.sweep_routing import requires_sweep_controller
 
     config_file = cli_config.config_file
     cr_raw = _try_load_aiperfjob_cr(config_file) if config_file is not None else None
@@ -209,7 +213,9 @@ def _resolve_spec_and_name(
         name = kube_options.name or cr_name or generate_benchmark_name(config)
     else:
         config = resolve_config(cli_config, config_file)
-        pin_remote_datasets_for_kubernetes(config.benchmark)
+        pin_remote_datasets_for_kubernetes(
+            config.benchmark, sweep=requires_sweep_controller(config)
+        )
         spec = kube_options.to_crd_spec(config)
         name = kube_options.name or generate_benchmark_name(config)
     from aiperf.kubernetes.remote_datasets import report_remote_dataset_checks

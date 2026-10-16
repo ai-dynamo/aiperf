@@ -60,6 +60,8 @@ def _benchmark(path: str) -> BenchmarkConfig:
         param("https://storage.googleapis.com/b/t.jsonl?X-Goog-Date=20261015T120000Z&X-Goog-Expires=60&X-Goog-Signature=<redacted>", NOW + timedelta(seconds=60), id="goog"),
         param("https://a.blob.core.windows.net/c/t.jsonl?sv=2022-11-02&se=2026-10-15T13:00:00Z&sig=<redacted>", NOW + timedelta(hours=1), id="azure"),
         param("https://a.blob.core.windows.net/c/t.jsonl?se=2026-10-16&sig=<redacted>", datetime(2026, 10, 16, tzinfo=UTC), id="azure-date-only"),
+        param(f"https://d.cloudfront.net/t.jsonl?Expires={int(NOW.timestamp()) + 3600}&Signature=<redacted>&Key-Pair-Id=K", NOW + timedelta(hours=1), id="cloudfront"),
+        param(f"https://bucket.s3.amazonaws.com/t.jsonl?AWSAccessKeyId=A&Expires={int(NOW.timestamp())}&Signature=<redacted>", NOW, id="s3-sigv2"),
         param("https://h.example/t.jsonl", None, id="plain"),
     ],
 )  # fmt: skip
@@ -76,6 +78,8 @@ def test_presigned_expiry_reads_each_provider(
         param("https://h/t.jsonl?X-Amz-Date=20261015T120000Z&X-Amz-Expires=soon&X-Amz-Signature=x", id="bad-lifetime"),
         param("https://h/t.jsonl?X-Amz-Date=20261015T120000Z&X-Amz-Expires=99999999999999999999&X-Amz-Signature=x", id="overflow"),
         param("https://h/t.jsonl?se=not-a-date&sig=x", id="bad-sas"),
+        param("https://h/t.jsonl?Expires=soon&Signature=x", id="bad-epoch"),
+        param("https://h/t.jsonl?Expires=99999999999999999999&Signature=x", id="epoch-overflow"),
     ],
 )  # fmt: skip
 def test_presigned_expiry_malformed_values_return_none(url: str) -> None:
@@ -213,3 +217,53 @@ def test_report_remote_dataset_checks_local_dataset_makes_no_probe() -> None:
     with patch("aiperf.dataset.remote.anonymous.anonymous_needs_auth", probe):
         report_remote_dataset_checks(_benchmark("t.jsonl"), {})
     probe.assert_not_awaited()
+
+
+_RAW_SIGNATURE = "rawsig0123456789"
+
+
+def _raw_amz(signed: datetime, seconds: int) -> str:
+    return _amz(signed, seconds).replace("<redacted>", _RAW_SIGNATURE)
+
+
+def _assert_no_signature(*texts: str) -> None:
+    for text in texts:
+        assert _RAW_SIGNATURE not in text
+
+
+@pytest.mark.parametrize(
+    "url,expected",
+    [
+        param(_raw_amz(NOW - timedelta(hours=2), 3600), CheckStatus.FAIL, id="expired"),
+        param(_raw_amz(NOW - timedelta(minutes=30), 3600), CheckStatus.WARN, id="under-an-hour"),
+        param(_raw_amz(NOW, 7200), CheckStatus.PASS, id="two-hours"),
+        param(f"https://h.example/t.jsonl?X-Amz-Signature={_RAW_SIGNATURE}", CheckStatus.PASS, id="no-stated-expiry"),
+    ],
+)  # fmt: skip
+def test_evaluate_remote_dataset_raw_presigned_url_never_echoes_the_signature(
+    url: str, expected: CheckStatus
+) -> None:
+    result = evaluate_remote_dataset(
+        RemoteRef(ref=url), True, PodTemplateConfig(), now=NOW
+    )
+    assert result.status is expected
+    _assert_no_signature(result.message, *result.hints)
+
+
+def test_report_remote_dataset_checks_raw_expired_url_error_never_echoes_the_signature() -> (
+    None
+):
+    url = _raw_amz(datetime.now(UTC) - timedelta(hours=2), 3600)
+    with pytest.raises(ConfigurationError, match="expired at") as exc_info:
+        report_remote_dataset_checks(_benchmark(url), {})
+    _assert_no_signature(str(exc_info.value))
+
+
+def test_report_remote_dataset_checks_raw_expiring_url_warning_never_echoes_the_signature() -> (
+    None
+):
+    url = _raw_amz(datetime.now(UTC) - timedelta(minutes=30), 3600)
+    with patch("aiperf.kubernetes.console.print_warning") as warn:
+        report_remote_dataset_checks(_benchmark(url), {})
+    assert "expires at" in warn.call_args.args[0]
+    _assert_no_signature(warn.call_args.args[0])

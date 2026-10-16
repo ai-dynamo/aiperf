@@ -55,10 +55,9 @@ class RemoteSourceError(ConfigurationError):
         self.connection_failed = connection_failed
         # ``what`` and ``hint`` often embed text from a library exception that
         # quotes the request URL, so every part of the message is redacted.
+        self.what = redact_text(what)
         self.hint = redact_text(hint)
-        super().__init__(
-            f"Cannot use {self.ref}: {redact_text(what)}. {self.hint}".rstrip()
-        )
+        super().__init__(f"Cannot use {self.ref}: {self.what}. {self.hint}".rstrip())
 
 
 def changed_after_pin(

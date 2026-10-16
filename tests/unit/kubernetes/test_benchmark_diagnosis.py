@@ -314,7 +314,9 @@ _DATASET_ERROR = (
 )
 
 
-def test_diagnose_job_failure_reports_error_and_dataset_condition() -> None:
+def test_diagnose_job_failure_dataset_condition_with_same_text_reports_it_once() -> (
+    None
+):
     status = {
         "phase": "Failed",
         "error": _DATASET_ERROR,
@@ -324,10 +326,24 @@ def test_diagnose_job_failure_reports_error_and_dataset_condition() -> None:
         ],
     }  # fmt: skip
     findings = diagnose_job_failure(status)
-    assert [f.id for f in findings] == ["job_error", "dataset_unavailable"]
+    assert [f.id for f in findings] == ["dataset_unavailable"]
+    assert "DatasetUnavailable" in findings[0].title
     assert findings[0].detail == _DATASET_ERROR
-    assert "DatasetUnavailable" in findings[1].title
-    assert findings[1].detail == _DATASET_ERROR
+
+
+def test_diagnose_job_failure_error_differing_from_dataset_condition_reports_both() -> (
+    None
+):
+    status = {
+        "phase": "Failed",
+        "error": "Job timed out after 3600s",
+        "conditions": [
+            {"type": "DatasetReady", "status": "False", "reason": "DatasetUnavailable", "message": _DATASET_ERROR},
+        ],
+    }  # fmt: skip
+    findings = diagnose_job_failure(status)
+    assert [f.id for f in findings] == ["job_error", "dataset_unavailable"]
+    assert findings[0].detail == "Job timed out after 3600s"
 
 
 def test_diagnose_job_failure_healthy_status_is_empty() -> None:

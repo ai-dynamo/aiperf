@@ -129,6 +129,10 @@ Commit the generated YAML and let ArgoCD, Flux, or your GitOps tool apply it.
 | Cancellation | `spec.cancel: true` | Delete the JobSet |
 | Conditions | Status conditions populated (`ConfigValid`, `EndpointReachable`, `PreflightPassed`, `ResourcesCreated`, `WorkersReady`, `BenchmarkRunning`, `DatasetReady`, `ResultsAvailable`, `IndexUpdated`, `PreflightHasWarnings`, `Complete`, `Failed`) | None |
 
+`DatasetReady` is only ever set to `False`, with reason `DatasetUnavailable`, when the
+dataset-manager pod fails to load the dataset. A job whose dataset loads never sets it, so
+its absence is not a failure.
+
 Operator mode also persists the active pod startup blocker in
 `status.startupIssue`. This keeps the first-observed timestamp across operator
 restarts and lets CI distinguish a retryable capacity delay from a stable
