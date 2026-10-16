@@ -464,9 +464,10 @@ class InferenceResultParser(CommunicationMixin):
                 _warn_once(
                     warned,
                     f"raised:{entry.name}",
-                    lambda name=entry.name,
-                    error=error: f"Spec-decode adapter {name!r} raised during "
-                    f"detection; skipping it: {error!r}",
+                    lambda name=entry.name, error=error: (
+                        f"Spec-decode adapter {name!r} raised during "
+                        f"detection; skipping it: {error!r}"
+                    ),
                 )
         if len(matches) > 1:
             # Always a bug in AIPerf's own signatures, not in the payload: two
@@ -475,8 +476,10 @@ class InferenceResultParser(CommunicationMixin):
             _warn_once(
                 warned,
                 f"ambiguous:{','.join(claimants)}",
-                lambda: f"Ambiguous spec-decode payload claimed by {claimants}; "
-                "dropping record",
+                lambda: (
+                    f"Ambiguous spec-decode payload claimed by {claimants}; "
+                    "dropping record"
+                ),
             )
             return None
         if not matches:
@@ -486,8 +489,10 @@ class InferenceResultParser(CommunicationMixin):
             # rather than warning: on an unsupported engine it would fire for
             # every record in the run.
             _logger.debug(
-                lambda: "Spec-decode payload present but claimed by no adapter: "
-                f"{with_stats[0].spec_decode_stats!r}"
+                lambda: (
+                    "Spec-decode payload present but claimed by no adapter: "
+                    f"{with_stats[0].spec_decode_stats!r}"
+                )
             )
             return None
         return matches[0].adapt(responses)

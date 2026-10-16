@@ -1260,8 +1260,8 @@ async def test_warmup_spreads_globally_aligned_on_t_star_by_default():
     issuer.issue_credit.side_effect = capture
     scheduled: list[tuple[float, object]] = []
     scheduler = MagicMock()
-    scheduler.schedule_later.side_effect = (
-        lambda delay, coro, **_kwargs: scheduled.append((delay, coro))
+    scheduler.schedule_later.side_effect = lambda delay, coro, **_kwargs: (
+        scheduled.append((delay, coro))
     )
     lifecycle = MagicMock()
     lifecycle.is_sending_complete = False
@@ -1600,8 +1600,8 @@ async def test_profiling_snapshot_dispatches_inflight_child_and_seeds_join():
     issuer.issue_credit.side_effect = capture
     issuer.dispatch_child_turn.side_effect = _issued_child(capture)
     scheduler = MagicMock()
-    scheduler.schedule_later.side_effect = (
-        lambda _delay, coro, **_kwargs: asyncio.create_task(coro)
+    scheduler.schedule_later.side_effect = lambda _delay, coro, **_kwargs: (
+        asyncio.create_task(coro)
     )
     branch_orchestrator = MagicMock()
 
@@ -1904,8 +1904,8 @@ async def test_profiling_global_anchor_preserves_subagent_spacing():
     issuer.dispatch_child_turn.side_effect = _issued_child(capture)
     scheduled: list[tuple[float, object]] = []
     scheduler = MagicMock()
-    scheduler.schedule_later.side_effect = (
-        lambda delay, coro, **_kwargs: scheduled.append((delay, coro))
+    scheduler.schedule_later.side_effect = lambda delay, coro, **_kwargs: (
+        scheduled.append((delay, coro))
     )
 
     cfg = MagicMock()
@@ -2025,8 +2025,8 @@ async def test_profiling_globally_anchors_earliest_request_preserving_spacing():
     issuer.issue_credit.side_effect = capture
     scheduled: list[tuple[float, object]] = []
     scheduler = MagicMock()
-    scheduler.schedule_later.side_effect = (
-        lambda delay, coro, **_kwargs: scheduled.append((delay, coro))
+    scheduler.schedule_later.side_effect = lambda delay, coro, **_kwargs: (
+        scheduled.append((delay, coro))
     )
 
     cfg = MagicMock()
