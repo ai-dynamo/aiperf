@@ -623,6 +623,7 @@ class AudioConfig(BaseConfig):
         list[float],
         Field(
             default_factory=lambda: [16.0],
+            min_length=1,
             description="List of audio sample rates in kHz to randomly select from. "
             "Common values: 8.0 (telephony), 16.0 (speech), 44.1 (CD quality), "
             "48.0 (professional). Specify multiple values for mixed-quality testing.",
@@ -633,6 +634,7 @@ class AudioConfig(BaseConfig):
         list[int],
         Field(
             default_factory=lambda: [16],
+            min_length=1,
             description="List of audio bit depths in bits to randomly select from. "
             "Each audio file is assigned a random depth from this list. "
             "Common values: 8 (low quality), 16 (CD quality), 24 (professional), "
