@@ -162,6 +162,7 @@ class HTTPSourceResolver:
                     stage=stage,
                     what=f"reading its {SIDECAR_SUFFIX} sidecar failed ({type(e).__name__}: {e})",
                     hint="Check network access and retry",
+                    connection_failed=True,
                 ) from e
         if len(raw) > _SIDECAR_MAX_BYTES:
             raise RemoteSourceError(

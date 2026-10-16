@@ -209,7 +209,7 @@ dataset-manager container downloads; workers receive the built dataset as before
 ```mermaid
 flowchart LR
   A["aiperf kube: access check on this machine"] -->|readable| B["resource carries ref + pinned version"]
-  A -->|"no credentials here"| C["resource carries the ref unpinned (warning)"]
+  A -->|"no credentials or no connection here"| C["resource carries the ref unpinned (warning)"]
   K["kubectl apply"] --> O
   B --> O["operator: validate, preflight (Remote Datasets check)"]
   C --> O
@@ -226,6 +226,11 @@ flowchart LR
   Identity, a token only the pods have), the reference is submitted unpinned with a warning,
   and the dataset-manager pod pins it when it starts. An `https://` source that refuses this
   machine fails instead, because the pod would fetch the same URL.
+- If this machine cannot connect to the source at all (a DNS failure, a refused connection, a
+  timeout), for example an object store or HTTP server that only the cluster's network reaches,
+  the reference is submitted unpinned with the same warning, whatever its scheme. An HTTP 429 or
+  5xx answer is not a connection failure: the source answered, so `aiperf kube` retries and then
+  fails.
 - A trace whose fixed-schedule promotion depends on its first record cannot be submitted
   unpinned. Pass `--fixed-schedule` or `--no-fixed-schedule`, or run `aiperf kube` from a
   machine that can read the source.

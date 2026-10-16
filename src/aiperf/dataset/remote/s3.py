@@ -82,11 +82,18 @@ class _Object(NamedTuple):
 
 
 def _error(
-    ref: RemoteRef, *, kind: RemoteErrorKind, stage: RemoteStage, what: str, hint: str
+    ref: RemoteRef,
+    *,
+    kind: RemoteErrorKind,
+    stage: RemoteStage,
+    what: str,
+    hint: str,
+    connection_failed: bool = False,
 ) -> RemoteSourceError:
     return RemoteSourceError(
-        ref=ref.display, kind=kind, stage=stage, what=what, hint=hint
-    )
+        ref=ref.display, kind=kind, stage=stage, what=what, hint=hint,
+        connection_failed=connection_failed,
+    )  # fmt: skip
 
 
 def _error_code(exc: BaseException) -> tuple[str, int | None]:
@@ -234,7 +241,7 @@ def _classify(
         return _error(
             ref, kind=RemoteErrorKind.TRANSIENT, stage=stage,
             what=f"the connection to S3 failed ({type(exc).__name__})",
-            hint="Check network access and retry",
+            hint="Check network access and retry", connection_failed=True,
         )  # fmt: skip
     if isinstance(exc, ClientError):
         return _classify_client_error(ref, exc, stage)
@@ -244,7 +251,7 @@ def _classify(
         return _error(
             ref, kind=RemoteErrorKind.TRANSIENT, stage=stage,
             what=f"the connection to S3 failed ({type(exc).__name__})",
-            hint="Check network access and retry",
+            hint="Check network access and retry", connection_failed=True,
         )  # fmt: skip
     if isinstance(exc, BotoCoreError):
         return _error(

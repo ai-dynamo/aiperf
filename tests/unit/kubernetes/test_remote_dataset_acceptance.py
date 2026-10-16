@@ -609,3 +609,152 @@ def test_pin_remote_datasets_for_kubernetes_redacted_ref_with_deferred_promotion
     ):
         pin_remote_datasets_for_kubernetes(benchmark)
     probe.assert_not_awaited()
+
+
+class TransportError(Exception):
+    """Stands in for httpx.TransportError, which the HF resolver matches by name."""
+
+
+class _HFConnectError(TransportError):
+    """Stands in for httpx.ConnectError (a DNS or connect failure)."""
+
+
+def _hf_failure(status: int | None) -> RemoteSourceError:
+    from huggingface_hub.errors import HfHubHTTPError
+
+    from aiperf.dataset.remote import hf
+
+    error = (
+        _HFConnectError("[Errno 8] nodename nor servname provided")
+        if status is None
+        else HfHubHTTPError(f"http {status}", response=MagicMock(status_code=status))
+    )
+    mapped = hf._translate(
+        RemoteRef(ref=HF_REF), error, RemoteStage.ACCESS, has_token=False
+    )
+    assert mapped is not None
+    return mapped
+
+
+def _s3_failure(status: int | None) -> RemoteSourceError:
+    from botocore.exceptions import ClientError, EndpointConnectionError
+
+    from aiperf.dataset.remote import s3
+
+    error = (
+        EndpointConnectionError(endpoint_url="https://bucket.s3.amazonaws.com")
+        if status is None
+        else ClientError(
+            {"Error": {"Code": "ServiceUnavailable"}, "ResponseMetadata": {"HTTPStatusCode": status}},
+            "HeadObject",
+        )
+    )  # fmt: skip
+    mapped = s3._classify(RemoteRef(ref=S3_REF), error, RemoteStage.ACCESS)
+    assert mapped is not None
+    return mapped
+
+
+def _url_failure(ref: str, status: int | None) -> RemoteSourceError:
+    from aiperf.dataset.remote import http_fetch
+
+    if status is None:
+        return http_fetch._transport_error(
+            TimeoutError("connect timed out"), ref_display=ref, stage=RemoteStage.ACCESS
+        )
+    mapped = http_fetch.status_error(status, ref_display=ref, stage=RemoteStage.ACCESS)
+    assert mapped is not None
+    return mapped
+
+
+_HTTP_REF = "http://h.example/t.jsonl"
+_HOST_FAILURES = [
+    param(HF_REF, lambda status: _hf_failure(status), id="hf"),
+    param(S3_REF, lambda status: _s3_failure(status), id="s3"),
+    param(HTTPS_REF, lambda status: _url_failure(HTTPS_REF, status), id="https"),
+    param(_HTTP_REF, lambda status: _url_failure(_HTTP_REF, status), id="http"),
+]
+
+
+@pytest.fixture
+def online(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reach the resolvers: tests/unit/conftest.py forces HF offline for the session."""
+    from aiperf.common.environment import Environment
+
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.setattr(Environment.DATASET, "REMOTE_OFFLINE", False)
+
+
+def _resolver_failing_with(
+    error: RemoteSourceError,
+) -> AbstractContextManager[MagicMock]:
+    resolver = MagicMock()
+    resolver.probe = AsyncMock(side_effect=error)
+    return patch("aiperf.dataset.remote.service.get_resolver", return_value=resolver)
+
+
+@pytest.mark.usefixtures("online")
+@pytest.mark.parametrize("ref,failure", _HOST_FAILURES)  # fmt: skip
+def test_pin_remote_datasets_for_kubernetes_connection_failure_stays_unpinned_and_warns(
+    ref: str, failure
+) -> None:
+    """This machine cannot reach the source; a cluster-only network may."""
+    from aiperf.dataset.remote.service import RETRY_ATTEMPTS
+
+    benchmark = _remote_benchmark(ref, disable_auto_fixed_schedule=True)
+    error = failure(None)
+    assert error.connection_failed
+    with (
+        _resolver_failing_with(error) as get_resolver,
+        patch("aiperf.kubernetes.console.print_warning") as warn,
+    ):
+        pin_remote_datasets_for_kubernetes(benchmark)
+    assert get_resolver.return_value.probe.await_count == RETRY_ATTEMPTS
+    assert benchmark.get_default_dataset().path.resolved_version is None
+    message = warn.call_args.args[0]
+    assert _UNPINNED_WARNING in message
+    assert "could not connect" in message
+
+
+@pytest.mark.usefixtures("online")
+@pytest.mark.parametrize("ref,failure", _HOST_FAILURES)  # fmt: skip
+def test_pin_remote_datasets_for_kubernetes_http_503_raises_after_retries(
+    ref: str, failure
+) -> None:
+    """The source answered and is struggling; the pod would get the same answer."""
+    from aiperf.dataset.remote.service import RETRY_ATTEMPTS
+
+    benchmark = _remote_benchmark(ref, disable_auto_fixed_schedule=True)
+    with (
+        _resolver_failing_with(failure(503)) as get_resolver,
+        patch("aiperf.kubernetes.console.print_warning") as warn,
+        pytest.raises(RemoteSourceError) as exc_info,
+    ):
+        pin_remote_datasets_for_kubernetes(benchmark)
+    assert exc_info.value.kind == RemoteErrorKind.TRANSIENT
+    assert get_resolver.return_value.probe.await_count == RETRY_ATTEMPTS
+    warn.assert_not_called()
+
+
+@pytest.mark.usefixtures("online")
+def test_pin_remote_datasets_for_kubernetes_connection_failure_with_deferred_promotion_raises() -> (
+    None
+):
+    benchmark = _remote_benchmark(S3_REF)
+    with (
+        _resolver_failing_with(_s3_failure(None)),
+        pytest.raises(ConfigurationError, match="--fixed-schedule"),
+    ):
+        pin_remote_datasets_for_kubernetes(benchmark)
+
+
+@pytest.mark.usefixtures("online")
+def test_pin_remote_datasets_for_kubernetes_refused_connection_on_real_http_path_warns() -> (
+    None
+):
+    """End to end through aiohttp: nothing listens on the discard port."""
+    ref = "http://127.0.0.1:9/t.jsonl"
+    benchmark = _remote_benchmark(ref, disable_auto_fixed_schedule=True)
+    with patch("aiperf.kubernetes.console.print_warning") as warn:
+        pin_remote_datasets_for_kubernetes(benchmark)
+    assert benchmark.get_default_dataset().path.resolved_version is None
+    assert _UNPINNED_WARNING in warn.call_args.args[0]
