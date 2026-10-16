@@ -427,8 +427,9 @@ spec:
         value: "120"
 ```
 
-Probe tunables such as `AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS` and
-`AIPERF_K8S_HEALTH_STARTUP_FAILURE_THRESHOLD` do not belong here. They are read
+Probe tunables such as `AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS`,
+`AIPERF_K8S_HEALTH_STARTUP_FAILURE_THRESHOLD` and
+`AIPERF_K8S_HEALTH_DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS` do not belong here. They are read
 by whichever process renders the JobSet -- the operator pod, or the CLI in
 direct mode -- and baked into the pod spec's probe fields before the benchmark
 container exists. Setting them under `spec.podTemplate.env` has no effect; set

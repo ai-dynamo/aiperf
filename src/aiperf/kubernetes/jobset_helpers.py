@@ -9,6 +9,7 @@ reused and tested without constructing a full JobSet spec.
 
 from __future__ import annotations
 
+import math
 from functools import lru_cache
 from typing import Any
 
@@ -130,6 +131,22 @@ def build_startup_probe(port: int, path: str = "/healthz") -> dict[str, Any]:
         "timeoutSeconds": health.TIMEOUT_SECONDS,
         "failureThreshold": health.STARTUP_FAILURE_THRESHOLD,
     }
+
+
+def dataset_download_startup_threshold() -> int:
+    """Startup-probe failure threshold that covers a remote dataset download.
+
+    The dataset-manager downloads before its health server starts, so its
+    startup probe fails for as long as the download runs.
+    """
+    health = K8sEnvironment.HEALTH
+    return max(
+        health.STARTUP_FAILURE_THRESHOLD,
+        math.ceil(
+            health.DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS
+            / health.STARTUP_PERIOD_SECONDS
+        ),
+    )
 
 
 def build_service_probes(
