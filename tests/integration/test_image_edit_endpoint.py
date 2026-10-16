@@ -51,6 +51,9 @@ class TestImageEditEndpoint:
 
         assert result.json.request_latency is not None
         assert result.json.request_throughput is not None
+        assert result.json.num_images["avg"] == 1
+        assert result.json.image_throughput is not None
+        assert result.json.image_latency is not None
 
     async def test_image_edit_extra_inputs_pass_through(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer

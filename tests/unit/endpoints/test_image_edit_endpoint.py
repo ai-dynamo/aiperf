@@ -7,6 +7,7 @@ import base64
 import orjson
 import pytest
 from pydantic import TypeAdapter
+from pytest import param
 
 from aiperf.common.models import Image, Text, Turn
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
@@ -48,6 +49,34 @@ class TestImageEditEndpoint:
         return create_endpoint_with_mock_transport(ImageEditEndpoint, model_endpoint)
 
     # ===== format_payload =====
+
+    @pytest.mark.parametrize(
+        "image_content",
+        [
+            param(_PNG_DATA_URL, id="data-url"),
+            param("https://example.com/source.png", id="remote-url"),
+        ],
+    )  # fmt: skip
+    def test_extract_payload_inputs_counts_reference_image(
+        self,
+        endpoint: ImageEditEndpoint,
+        model_endpoint: ModelEndpointInfo,
+        image_content: str,
+    ) -> None:
+        turn = Turn(
+            texts=[Text(contents=["Make the cat blue"])],
+            images=[Image(contents=[image_content])],
+            extra_body={"n": 2},
+        )
+        payload = endpoint.format_payload(
+            create_request_info(model_endpoint=model_endpoint, turns=[turn])
+        )
+
+        inputs = endpoint.extract_payload_inputs(orjson.loads(orjson.dumps(payload)))
+
+        assert inputs.image_count == 1
+        assert inputs.texts == ["Make the cat blue"]
+        assert inputs.num_choices == 2
 
     def test_format_payload_with_data_url_image(self, endpoint, model_endpoint) -> None:
         """Data URL image content keeps the base64 string in the payload."""
