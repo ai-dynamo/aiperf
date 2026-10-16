@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Agentic Coding Dataset
 
 An agentic coding workload trace that reflects a long-context, KV-reuse-heavy usage pattern across ~1000 multi-turn sessions with a maximum session ISL of ~200k tokens.

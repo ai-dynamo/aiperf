@@ -1,3 +1,8 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+
 # Effective vs Active Metrics in AIPerf
 
 *A short technical brief on time-weighted throughput, concurrency, and coordinated-omission-aware latency.*
