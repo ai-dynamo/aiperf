@@ -130,7 +130,8 @@ class TestStartPreSessionChild:
         assert child.conversation_id == "child-conv"
 
     def test_fresh_routing_key(self, src: ConversationSource):
-        """SPAWN pre-session: routing_key equals child's own x_correlation_id (pinned like a root)."""
+        """A pre-session SPAWN child has no parent to follow, so the router must
+        key it by its own id, exactly like a root."""
         child = src.start_pre_session_child(child_conversation_id="child-conv")
         assert child.parent_correlation_id is None
         assert child.routing_key == child.x_correlation_id

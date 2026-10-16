@@ -1561,7 +1561,10 @@ class TestStickyCreditRouterDAGChildren:
     async def test_send_credit_spawn_child_parent_resumes_elsewhere_keeps_worker(
         self, two_worker_router, send
     ) -> None:
-        """A SPAWN child keeps its own worker after the gated parent resumes elsewhere."""
+        """Join-gated root: the child's first turn dispatches before the root has
+        an entry, so the child must pin under its own id and not follow the
+        root once it starts on another worker. Every worker a child visits keeps
+        a decoded UserSession copy until process exit."""
         kid_worker = await send("kid", 0, 4, parent="root")
         root_worker = await send("root", 5, 9)  # gated parent resumes mid-child
         assert root_worker != kid_worker
@@ -1572,7 +1575,10 @@ class TestStickyCreditRouterDAGChildren:
     async def test_send_credit_spawn_child_outlives_parent_keeps_parent_worker(
         self, two_worker_router, send
     ) -> None:
-        """A SPAWN child that outlives its parent stays on the parent's worker."""
+        """Finished root: ``has_forks`` counts FORK branches only, so the root's
+        final turn pops its entry while SPAWN children are still running. The
+        child must keep routing via its own entry instead of going least-loaded
+        on every remaining turn."""
         parent_worker = await send("root", 0, 2)
         assert await send("kid", 0, 5, parent="root") == parent_worker
         await send("root", 1, 2)
@@ -1584,7 +1590,9 @@ class TestStickyCreditRouterDAGChildren:
     async def test_send_credit_spawn_child_worker_unregisters_repins_once(
         self, two_worker_router, send
     ) -> None:
-        """A pinned SPAWN child moves once when its worker leaves, then stays."""
+        """Unregistering a worker drops the entries it owned. The child must take
+        one least-loaded hop and mint a fresh entry there, not route
+        least-loaded on every remaining turn."""
         two_worker_router._register_worker("worker-C")
         kid_worker = await send("kid", 0, 4, parent="root")
         two_worker_router._unregister_worker(kid_worker)
@@ -1617,8 +1625,9 @@ class TestStickyCreditRouterDAGChildren:
     async def test_send_credit_nested_spawn_child_colocates_with_spawn_parent(
         self, two_worker_router, send
     ) -> None:
-        """A SPAWN grandchild starts on its SPAWN parent's worker and stays there
-        after that parent finishes."""
+        """A SPAWN child's own entry is what its SPAWN children follow on their
+        first turn, so nested subagents co-locate like a root and its children,
+        and the grandchild keeps that worker after the middle entry is popped."""
         kid_worker = await send("kid", 0, 2, parent="root")
         assert await send("gkid", 0, 2, parent="kid") == kid_worker
         await send("kid", 1, 2, parent="root")
@@ -1628,7 +1637,10 @@ class TestStickyCreditRouterDAGChildren:
     async def test_send_credit_single_turn_spawn_child_with_live_parent_leaves_parent_entry(
         self, two_worker_router, send
     ) -> None:
-        """A SPAWN child's final turn must never release its parent's entry."""
+        """Final-turn release now also runs for SPAWN children, but a one-turn
+        child routes via the parent's key and owns no entry. Releasing the
+        routed entry instead of the child's own would unpin a still-running
+        root and drop its active_sessions slot."""
         await send("root", 0, 3)
         await send("kid", 0, 1, parent="root")
         entry = two_worker_router._sticky_sessions["root"]
@@ -1639,8 +1651,9 @@ class TestStickyCreditRouterDAGChildren:
     async def test_send_credit_pre_session_spawn_child_counts_one_session(
         self, two_worker_router, send
     ) -> None:
-        """A pre-session SPAWN child (no parent id) is routed as a root and
-        counts as exactly one session."""
+        """Pre-session SPAWN children carry no parent id, so they take the root
+        path. Guards against the SPAWN-child branch also minting an entry and
+        counting the session twice in active_sessions."""
         spawn = ConversationBranchMode.SPAWN
         await send("pre", 0, 3, mode=spawn)
         assert list(two_worker_router._sticky_sessions) == ["pre"]
