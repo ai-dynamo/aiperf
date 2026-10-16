@@ -12,7 +12,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.endpoint_credentials import AIPERF_INJECTED_DATASET_URLS
-from aiperf.common.redact import REDACTED_VALUE
+from aiperf.common.redact import REDACTED_VALUE, redact_url
 from aiperf.config import BenchmarkConfig
 from aiperf.config.loader.errors import ConfigurationError
 from aiperf.config.resolution.plan import BenchmarkRun
@@ -193,6 +193,25 @@ def test_prepare_dataset_manager_run_scrubs_bare_signature_from_injected_url(
     monkeypatch.setenv(AIPERF_INJECTED_DATASET_URLS, orjson.dumps([RAW]).decode())
     run = _run(tmp_path, REDACTED)
     error = RuntimeError("<SignatureProvided>topsecret</SignatureProvided>")
+    with (
+        patch(
+            "aiperf.cli_runner._preflight.preflight_datasets_for_run", side_effect=error
+        ),
+        pytest.raises(RuntimeError),
+    ):
+        prepare_dataset_manager_run(run, endpoint_secrets=[])
+    message = termination_log.read_text(encoding="utf-8")
+    assert "topsecret" not in message
+    assert REDACTED_VALUE in message
+
+
+def test_prepare_dataset_manager_run_scrubs_bare_password_from_injected_userinfo_url(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, termination_log: Path
+) -> None:
+    raw = "https://user:topsecret@h.example/t.jsonl"
+    monkeypatch.setenv(AIPERF_INJECTED_DATASET_URLS, orjson.dumps([raw]).decode())
+    run = _run(tmp_path, redact_url(raw))
+    error = RuntimeError("login rejected for password topsecret")
     with (
         patch(
             "aiperf.cli_runner._preflight.preflight_datasets_for_run", side_effect=error
