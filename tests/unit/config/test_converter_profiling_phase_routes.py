@@ -962,14 +962,14 @@ class TestSearchSpacePhaseShapeInference:
 
     def test_rate_nan_lower_bound_raises_clear_error(self) -> None:
         """A NaN lower bound bypasses 'rate_lo <= 0' (NaN comparisons are
-        always False), so it must be explicitly rejected with
-        math.isfinite() rather than silently seeding prof["rate"] = nan."""
+        always False), so shared finite-bound validation must reject it
+        before it can seed prof["rate"] = nan."""
         loadgen = CLIConfig(
             search_space=["rate:nan,100:real"],
             request_count=10,
         )
         user = _make_user(loadgen=loadgen)
-        with pytest.raises(ValueError, match="must be > 0"):
+        with pytest.raises(ValueError, match="must be finite"):
             build_profiling(user)
 
     def test_users_nan_lower_bound_raises_clear_error(self) -> None:
@@ -979,7 +979,7 @@ class TestSearchSpacePhaseShapeInference:
             conversation_turn_mean=4,
         )
         user = _make_user(loadgen=loadgen)
-        with pytest.raises(ValueError, match="must be >= 1"):
+        with pytest.raises(ValueError, match="must be finite"):
             build_profiling(user)
 
     def test_smoothness_negative_lower_bound_raises_clear_error(self) -> None:
@@ -1057,22 +1057,11 @@ class TestSearchSpacePhaseShapeInference:
         assert prof["type"] == PhaseType.CONCURRENCY
         assert "rate" not in prof
 
-    def test_search_space_kind_with_leading_whitespace_ignored_for_shape_inference(
-        self,
-    ) -> None:
-        """'rate:1,100: int' (space before kind) is REJECTED by the real
-        parser (kind must be exactly 'int' or 'real'). This helper must
-        not silently normalize ' int' to 'int' and proceed as if the
-        dimension were well-formed -- skip it and let the real parser
-        report the actual grammar error."""
-        loadgen = CLIConfig(
-            search_space=["rate:1,100: int"],
-            request_count=10,
-        )
-        user = _make_user(loadgen=loadgen)
-        prof = build_profiling(user)
-        assert prof["type"] == PhaseType.CONCURRENCY
-        assert "rate" not in prof
+    def test_search_space_kind_with_leading_whitespace_raises(self) -> None:
+        """The shared parser rejects malformed grammar before shape inference."""
+        user = _make_user(loadgen=CLIConfig(search_space=["rate:1,100: int"]))
+        with pytest.raises(TypeError, match="kind must be 'int' or 'real'"):
+            build_profiling(user)
 
     def test_trace_auto_promote_conflict_message_mentions_search_space(
         self, tmp_path: Path
@@ -1316,27 +1305,11 @@ class TestSearchSpacePhaseShapeInference:
         assert prof["type"] == PhaseType.POISSON
         assert prof["rate"] == 10.0
 
-    def test_search_space_extra_kind_segment_is_skipped_not_misreported(
-        self,
-    ) -> None:
-        """'users:1,50:int:log' has an extra ':'-separated segment (a
-        malformed grammar the real parser will reject with its own error).
-        This lightweight helper must skip it rather than misparse
-        'int:log' as the kind and report the wrong complaint (e.g. telling
-        a user who wrote ':int' that they wrote ':real')."""
-        loadgen = CLIConfig(
-            search_space=["users:1,50:int:log"],
-            user_centric_rate=10.0,
-            conversation_turn_mean=4,
-        )
-        user = _make_user(loadgen=loadgen)
-        # The malformed dimension is invisible to shape inference (skipped),
-        # so with no other search-space field this falls through to
-        # whatever --user-centric-rate alone would produce: USER_CENTRIC
-        # type, but no 'users' seed and no ':int'-kind complaint about a
-        # dimension this helper never parsed.
-        prof = build_profiling(user)
-        assert prof["type"] == PhaseType.USER_CENTRIC
+    def test_search_space_extra_kind_segment_raises_grammar_error(self) -> None:
+        """An extra segment reports grammar rather than a misleading kind error."""
+        user = _make_user(loadgen=CLIConfig(search_space=["users:1,50:int:log"]))
+        with pytest.raises(TypeError, match="got 4 parts"):
+            build_profiling(user)
 
     def test_warmup_path_search_space_dimension_ignored_for_shape_inference(
         self,
