@@ -1047,6 +1047,21 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         self._fixed_schedule_start_offset = start_offset
         self._fixed_schedule_end_offset = end_offset
 
+        # ``ignore_trace_delays`` is documented as having no effect under fixed
+        # schedule -- timestamps drive that mode, so stripping them leaves the
+        # orchestrator with nothing to schedule on and it fails on the first
+        # turn. Honour that contract here rather than emitting None timestamps
+        # the phase cannot use.
+        from aiperf.plugin.enums import PhaseType
+
+        under_fixed_schedule = any(
+            phase.type == PhaseType.FIXED_SCHEDULE
+            for phase in cfg.get_profiling_phases()
+        )
+        self._ignore_trace_delays_effective = (
+            self._ignore_trace_delays and not under_fixed_schedule
+        )
+
         tok_name = tokenizer_cfg.name if tokenizer_cfg is not None else None
         if prompt_generator is not None:
             self._tokenizer_name = (
@@ -1719,7 +1734,7 @@ class WekaTraceLoader(HashIdsPromptSynthesisMixin, BaseFileLoader):
 
         import time as _time
 
-        ignore_delays = self._ignore_trace_delays
+        ignore_delays = self._ignore_trace_delays_effective
         think_time_only = self._use_think_time_only
         cap_seconds = self._inter_turn_delay_cap_seconds
         self._delay_cap_tracker.cap_seconds = cap_seconds
