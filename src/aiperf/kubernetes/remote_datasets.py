@@ -3,9 +3,10 @@
 """Remote dataset references in ``aiperf kube`` submissions.
 
 The CLI host pins each remote reference before it renders the workload CR, so
-every pod replays the same version. A host that cannot read an ``hf://`` or
-``s3://`` source submits the reference unpinned, and the dataset-manager pod
-pins it with the pod's own credentials.
+every pod replays the same version. A host that lacks credentials for an
+``hf://`` or ``s3://`` source, or cannot connect to a source of any scheme,
+submits the reference unpinned, and the dataset-manager pod pins it with the
+pod's own credentials and network.
 """
 
 from __future__ import annotations
@@ -47,8 +48,9 @@ def pin_remote_datasets_for_kubernetes(benchmark: BenchmarkConfig) -> None:
 
     Mutates ``benchmark`` in place: remote references gain ``resolved_version``
     and manifest defaults, and deferred fixed-schedule promotion is settled. On
-    an auth-class failure for an ``hf://`` or ``s3://`` reference, the reference
-    stays unpinned and a warning is printed. A reference whose credential is
+    an auth-class failure for an ``hf://`` or ``s3://`` reference, or a
+    connection failure (DNS, connect, timeout; not an HTTP 429/5xx) for any
+    scheme, the reference stays unpinned and a warning is printed. A reference whose credential is
     already ``<redacted>`` (a resource written by ``aiperf kube generate``) is
     not read here at all: only the pod holds its full URL. Calls
     ``asyncio.run``, so async callers run it in a worker thread.
@@ -77,7 +79,7 @@ def pin_remote_datasets_for_kubernetes(benchmark: BenchmarkConfig) -> None:
     except RemoteSourceError as e:
         if not _pod_may_read(ref, e):
             raise
-        _defer_to_pod(benchmark, f"This machine cannot read {e.ref} ({e.kind})")
+        _defer_to_pod(benchmark, _host_failure_reason(e))
 
 
 def _default_remote_ref(benchmark: BenchmarkConfig) -> RemoteRef | None:
@@ -89,10 +91,22 @@ def _default_remote_ref(benchmark: BenchmarkConfig) -> RemoteRef | None:
 
 
 def _pod_may_read(ref: RemoteRef, error: RemoteSourceError) -> bool:
-    """Whether the dataset-manager pod's credentials could succeed where this machine failed."""
+    """Whether the dataset-manager pod could succeed where this machine failed.
+
+    A source that only the cluster's network reaches (a private endpoint, an
+    in-cluster object store) fails here before any HTTP answer, for every scheme.
+    """
+    if error.connection_failed:
+        return True
     if error.kind not in HOST_UNREADABLE_KINDS:
         return False
     return ref.scheme in _POD_CREDENTIAL_SCHEMES
+
+
+def _host_failure_reason(error: RemoteSourceError) -> str:
+    if error.connection_failed:
+        return f"This machine could not connect to {error.ref} ({error.kind})"
+    return f"This machine cannot read {error.ref} ({error.kind})"
 
 
 def _defer_to_pod(

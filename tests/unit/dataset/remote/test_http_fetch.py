@@ -123,6 +123,7 @@ async def test_status_mapping(http_server, status: int, kind: RemoteErrorKind) -
         with pytest.raises(RemoteSourceError) as exc:
             await http_fetch.fetch_metadata(s, url, headers={}, ref_display=url)
     assert exc.value.kind == kind
+    assert exc.value.connection_failed is False
 
 
 @pytest.mark.asyncio
@@ -146,6 +147,7 @@ async def test_connection_refused_is_transient() -> None:
         with pytest.raises(RemoteSourceError) as exc:
             await http_fetch.fetch_metadata(s, url, headers={}, ref_display=url)
     assert exc.value.kind == RemoteErrorKind.TRANSIENT
+    assert exc.value.connection_failed is True
 
 
 @pytest.mark.asyncio
