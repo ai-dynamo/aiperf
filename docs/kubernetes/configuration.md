@@ -724,6 +724,7 @@ Every control-plane container, the event-bus proxy sidecar, the results sidecar,
 |---|---|---|
 | `AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS` | `5` | Startup probe interval. |
 | `AIPERF_K8S_HEALTH_STARTUP_FAILURE_THRESHOLD` | `30` | Consecutive failures before the container is killed during startup. Raise for slow-starting workloads (large tokenizers, cold container images). |
+| `AIPERF_K8S_HEALTH_DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS` | `3600` | Startup time the dataset-manager container gets when the run reads a remote dataset, which it downloads before its health server starts. Its failure threshold becomes this budget divided by the startup period, rounded up. Other containers and local-dataset runs are unaffected. |
 | Other `AIPERF_K8S_HEALTH_*` | see code | Liveness/readiness intervals, timeouts, thresholds. |
 
 ### Ports

@@ -40,6 +40,7 @@ from aiperf.kubernetes.jobset_helpers import (
     build_shared_volumes,
     build_startup_probe,
     build_volume_mounts,
+    dataset_download_startup_threshold,
 )
 from aiperf.kubernetes.jobset_specs import AIPerfContainerSpec, AIPerfReplicatedJobSpec
 from aiperf.kubernetes.utils import parse_cpu, parse_memory_mib
@@ -401,6 +402,12 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
         default=True,
         description="Whether to include the server metrics manager container.",
     )
+    remote_dataset: bool = Field(
+        default=False,
+        description="Whether the run reads a remote dataset. The dataset-manager then "
+        "downloads before its health server starts, so its startup probe allows "
+        "AIPERF_K8S_HEALTH_DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS.",
+    )
 
     # Optional metadata for discovery
     name_label: str | None = Field(
@@ -724,19 +731,7 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
                 ],
                 extra_volume_mounts=cache_mounts,
             ),
-            self._create_container(
-                name=Containers.DATASET_MANAGER,
-                service_type="dataset_manager",
-                health_port=ports.DATASET_MANAGER_HEALTH,
-                resources=self._resolve_pod_resources("DATASET_MANAGER"),
-                service_id="dataset_manager",
-                include_pod_index=False,
-                controller_pod=True,
-                extra_env=cache_env,
-                extra_volume_mounts=cache_mounts,
-                # Crashes that never reach the startup handler still surface.
-                termination_message_policy="FallbackToLogsOnError",
-            ),
+            self._create_dataset_manager_container(cache_env, cache_mounts),
             self._create_container(
                 name=Containers.TIMING_MANAGER,
                 service_type="timing_manager",
@@ -774,6 +769,29 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
                 controller_pod=True,
             ),
         ]
+
+    def _create_dataset_manager_container(
+        self, cache_env: list[dict[str, Any]], cache_mounts: list[dict[str, Any]]
+    ) -> AIPerfContainerSpec:
+        """The dataset-manager, with a startup probe that outlasts a remote download."""
+        container = self._create_container(
+            name=Containers.DATASET_MANAGER,
+            service_type="dataset_manager",
+            health_port=K8sEnvironment.PORTS.DATASET_MANAGER_HEALTH,
+            resources=self._resolve_pod_resources("DATASET_MANAGER"),
+            service_id="dataset_manager",
+            include_pod_index=False,
+            controller_pod=True,
+            extra_env=cache_env,
+            extra_volume_mounts=cache_mounts,
+            # Crashes that never reach the startup handler still surface.
+            termination_message_policy="FallbackToLogsOnError",
+        )
+        if self.remote_dataset and container.startup_probe is not None:
+            container.startup_probe["failureThreshold"] = (
+                dataset_download_startup_threshold()
+            )
+        return container
 
     def _create_optional_manager_containers(self) -> list[AIPerfContainerSpec]:
         """Build GPU telemetry + server metrics containers when enabled."""

@@ -319,17 +319,19 @@ operator runs the same checks for resources applied with `kubectl`; see
 ### Large datasets and the startup probe
 
 The dataset-manager downloads before its health server starts, so its startup probe fails for
-as long as the download runs. With the defaults the probe allows about 150 seconds
-(`AIPERF_K8S_HEALTH_STARTUP_FAILURE_THRESHOLD=30` checks, one every
-`AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS=5`), after which the kubelet kills the container,
-possibly in the middle of a multi-GB download and before AIPerf can write its termination
-message. The job then fails without the `[dataset-manager pod]` line or the `DatasetReady`
-condition described below.
+as long as the download runs. When the run reads a remote dataset, the dataset-manager
+container (and only that container) gets a startup probe that allows
+`AIPERF_K8S_HEALTH_DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS` (default 3600, one hour): its
+failure threshold becomes that budget divided by `AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS`,
+rounded up. A download that runs longer is killed by the kubelet, possibly in the middle of the
+transfer and before AIPerf can write its termination message; the job then fails without the
+`[dataset-manager pod]` line or the `DatasetReady` condition described below.
 
-For large datasets, raise `AIPERF_K8S_HEALTH_STARTUP_FAILURE_THRESHOLD` (at most 120), or
-pre-populate a PVC-backed cache (see Storage) so the pod finds the files already downloaded.
-These variables are read by the process that renders the JobSet, so set them on the operator
-Deployment, not in `spec.podTemplate.env`; see
+For a dataset that takes longer than the budget to download, raise
+`AIPERF_K8S_HEALTH_DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS` (at most 86400), or pre-populate a
+PVC-backed cache (see Storage) so the pod finds the files already downloaded. The probe
+variables are read by the process that renders the JobSet (the operator Deployment, or the CLI
+in direct mode), so set them there, not in `spec.podTemplate.env`; see
 [Kubernetes configuration](../kubernetes/configuration.md#health-probes).
 
 ### When the pod fails

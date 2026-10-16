@@ -30,6 +30,7 @@ from aiperf.kubernetes.dataset_startup import (
     termination_message,
     write_termination_message,
 )
+from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import AIPerfJobSetSpec
 
 RAW = "https://bucket.s3.amazonaws.com/t.jsonl?X-Amz-Signature=topsecret"
@@ -244,3 +245,73 @@ def test_dataset_manager_container_falls_back_to_logs_for_termination_message() 
         == "FallbackToLogsOnError"
     )
     assert "terminationMessagePolicy" not in containers[Containers.CONTROL_PLANE]
+
+
+def _controller_containers(**spec_fields: object) -> dict[str, dict]:
+    spec = AIPerfJobSetSpec(
+        name="ts", namespace="ns", job_id="ts-1", image="aiperf:ci", **spec_fields
+    )
+    job = next(
+        j
+        for j in spec.to_k8s_manifest()["spec"]["replicatedJobs"]
+        if j["name"] == "controller"
+    )
+    return {
+        c["name"]: c for c in job["template"]["spec"]["template"]["spec"]["containers"]
+    }
+
+
+@pytest.mark.parametrize(
+    "budget,period,expected",
+    [
+        param(3600, 5, 720, id="default-budget"),
+        param(601, 5, 121, id="rounds-up"),
+        param(60, 5, 30, id="never-below-the-normal-threshold"),
+    ],
+)  # fmt: skip
+def test_dataset_manager_startup_probe_remote_dataset_covers_download_budget(
+    monkeypatch: pytest.MonkeyPatch, budget: int, period: int, expected: int
+) -> None:
+    health = K8sEnvironment.HEALTH
+    monkeypatch.setattr(health, "DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS", budget)
+    monkeypatch.setattr(health, "STARTUP_PERIOD_SECONDS", period)
+    monkeypatch.setattr(health, "STARTUP_FAILURE_THRESHOLD", 30)
+    containers = _controller_containers(remote_dataset=True)
+    probe = containers[Containers.DATASET_MANAGER]["startupProbe"]
+    assert probe["failureThreshold"] == expected
+    assert probe["periodSeconds"] == period
+    for name, container in containers.items():
+        if name != Containers.DATASET_MANAGER and "startupProbe" in container:
+            assert container["startupProbe"]["failureThreshold"] == 30, name
+
+
+def test_dataset_manager_startup_probe_local_dataset_keeps_default_threshold() -> None:
+    containers = _controller_containers()
+    assert (
+        containers[Containers.DATASET_MANAGER]["startupProbe"]["failureThreshold"]
+        == K8sEnvironment.HEALTH.STARTUP_FAILURE_THRESHOLD
+    )
+
+
+@pytest.mark.parametrize(
+    "path,expected",
+    [
+        param("hf://org/repo/t.jsonl", True, id="remote"),
+        param("t.jsonl", False, id="local"),
+    ],
+)  # fmt: skip
+def test_kubernetes_deployment_jobset_spec_flags_remote_dataset(
+    path: str, expected: bool
+) -> None:
+    from aiperf.config import AIPerfConfig
+    from aiperf.config.deployment import DeploymentConfig
+    from aiperf.kubernetes.resources import KubernetesDeployment
+
+    benchmark = _run(Path("/tmp"), path).cfg.model_dump(mode="json", exclude_unset=True)
+    deployment = KubernetesDeployment(
+        job_id="job",
+        namespace="ns",
+        config=AIPerfConfig(benchmark=benchmark),
+        deployment=DeploymentConfig(),
+    )
+    assert deployment.get_jobset_spec().remote_dataset is expected

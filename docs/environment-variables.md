@@ -331,6 +331,7 @@ Health probe configuration for all containers.
 | `AIPERF_K8S_HEALTH_SUCCESS_THRESHOLD` | `1` | ≥ 1, ≤ 10 | Consecutive successes before container is marked healthy |
 | `AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS` | `5` | ≥ 1, ≤ 30 | Interval between startup probe checks |
 | `AIPERF_K8S_HEALTH_STARTUP_FAILURE_THRESHOLD` | `30` | ≥ 1, ≤ 120 | Consecutive startup probe failures before pod is killed. Total startup time = STARTUP_PERIOD_SECONDS * STARTUP_FAILURE_THRESHOLD |
+| `AIPERF_K8S_HEALTH_DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS` | `3600` | ≥ 60, ≤ 86400 | Startup time in seconds the dataset-manager container gets when the run reads a remote dataset (hf://, s3://, http(s)://): it downloads before its health server starts. Its startup probe failure threshold becomes ceil(budget / STARTUP_PERIOD_SECONDS), never below STARTUP_FAILURE_THRESHOLD. Read by the process that renders the JobSet (the operator, or the CLI in direct mode) |
 
 ## K8SJOBSET
 
