@@ -71,12 +71,7 @@ cat > custom_trace.jsonl << 'EOF'
 {"timestamp": 105, "input_length": 1800, "output_length": 26, "hash_ids": [0, 3, 4, 5]}
 {"timestamp": 274, "input_length": 1300, "output_length": 52, "hash_ids": [1, 4, 6]}
 EOF
-```
-<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
-Run AIPerf with the trace file:
 
-<!-- aiperf-run-vllm-default-openai-endpoint-server -->
-```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \

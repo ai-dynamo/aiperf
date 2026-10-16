@@ -6,27 +6,35 @@ Run accuracy evaluation alongside performance profiling using the `--accuracy-be
 
 ```bash
 # MMLU benchmark with 5-shot prompting (chat endpoint, aligned with lighteval)
-aiperf profile Qwen/Qwen2.5-1.5B-Instruct \
+aiperf profile --model Qwen/Qwen3-0.6B \
   --url http://localhost:8000 \
   --endpoint-type chat \
   --accuracy-benchmark mmlu \
   --accuracy-n-shots 5 \
-  --num-requests 15000 \
+  --num-requests 50 \
   --concurrency 10 \
   --extra-inputs '{"temperature": 0, "stop": ["\n"]}'
 ```
 
+<!-- aiperf-run-vllm-longrun-openai-endpoint-server weight=3600 timeout=5400 -->
 ```bash
 # AIME competition math — defaults match the trt-llm benchmark recipe
 # (8-shot, chain-of-thought on, sympy-backed math grader)
-aiperf profile Qwen/Qwen2.5-7B-Instruct \
+aiperf profile --model Qwen/Qwen3-0.6B \
   --url http://localhost:8000 \
   --endpoint-type chat \
   --accuracy-benchmark aime \
-  --num-requests 30 \
-  --concurrency 10 \
+  --num-requests 4 \
+  --concurrency 4 \
   --extra-inputs '{"temperature": 0}'
 ```
+<!-- /aiperf-run-vllm-longrun-openai-endpoint-server -->
+
+Both commands above are sized to run quickly: `--num-requests` covers only a
+slice of each benchmark, so the reported accuracy is a smoke-test signal, not a
+score you should compare against published numbers. For a reportable run, drop
+`--num-requests` (or raise it to the full problem count -- 14042 for MMLU, 30
+for AIME) and use the model you actually care about.
 
 ## trt-llm reference alignment
 
@@ -143,7 +151,7 @@ The `mmlu` benchmark has two prompting modes, selected by
   the trailing letter.
 
   ```bash
-  aiperf profile my-model --url http://localhost:8000 \
+  aiperf profile --model my-model --url http://localhost:8000 \
     --endpoint-type chat \
     --accuracy-benchmark mmlu \
     --accuracy-enable-cot \
@@ -160,7 +168,7 @@ benchmark maps into the turn `max_tokens`), so the model can finish its
 reasoning:
 
 ```bash
-aiperf profile my-model --url http://localhost:8000 \
+aiperf profile --model my-model --url http://localhost:8000 \
   --endpoint-type chat \
   --accuracy-benchmark mmlu \
   --accuracy-enable-cot \
@@ -255,7 +263,7 @@ When `--endpoint-type chat` is used, MMLU few-shot examples are structured as se
 
 ```bash
 # Single subject, quick test
-aiperf profile my-model --url http://localhost:8000 \
+aiperf profile --model my-model --url http://localhost:8000 \
   --endpoint-type chat \
   --accuracy-benchmark mmlu \
   --accuracy-n-shots 5 \
@@ -265,7 +273,7 @@ aiperf profile my-model --url http://localhost:8000 \
   --extra-inputs '{"temperature": 0, "stop": ["\n"]}'
 
 # Full MMLU (57 subjects, 14042 problems)
-aiperf profile my-model --url http://localhost:8000 \
+aiperf profile --model my-model --url http://localhost:8000 \
   --endpoint-type chat \
   --accuracy-benchmark mmlu \
   --accuracy-n-shots 5 \
@@ -274,7 +282,7 @@ aiperf profile my-model --url http://localhost:8000 \
   --extra-inputs '{"temperature": 0, "stop": ["\n"]}'
 
 # Completions endpoint (traditional flat-text format)
-aiperf profile my-model --url http://localhost:8000 \
+aiperf profile --model my-model --url http://localhost:8000 \
   --endpoint-type completions \
   --accuracy-benchmark mmlu \
   --accuracy-n-shots 5 \
@@ -283,7 +291,7 @@ aiperf profile my-model --url http://localhost:8000 \
   --extra-inputs '{"temperature": 0, "stop": ["\n"]}'
 
 # AIME with explicit math grader and few-shot priming
-aiperf profile my-model --url http://localhost:8000 \
+aiperf profile --model my-model --url http://localhost:8000 \
   --endpoint-type chat \
   --accuracy-benchmark aime \
   --accuracy-grader math \

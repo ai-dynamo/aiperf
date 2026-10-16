@@ -47,6 +47,7 @@ The full-featured TUI provides:
 - Worker status monitoring
 - Interactive display with multiple tabs
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
@@ -54,8 +55,10 @@ aiperf profile \
   --endpoint-type chat \
   --concurrency 10 \
   --request-count 100 \
+  --output-tokens-mean 128 \
   --streaming
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **When to use:**
 - Monitoring benchmarks interactively
@@ -69,6 +72,7 @@ aiperf profile \
 
 Lightweight progress bars using TQDM:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
@@ -76,9 +80,11 @@ aiperf profile \
   --endpoint-type chat \
   --concurrency 10 \
   --request-count 100 \
+  --output-tokens-mean 128 \
   --streaming \
   --ui-type simple
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```
@@ -90,7 +96,7 @@ Profiling: 100/100 |████████████████████
 Processing Records: 100/100 |███████████████| 100% [00:01<00:00]
 
 INFO     Benchmark completed successfully
-INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
+INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency10/
 ```
 
 **When to use:**
@@ -102,6 +108,7 @@ INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
 
 Shows application logs only, no progress UI. This is the automatic default when output is piped or redirected:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
 aiperf profile \
   --model Qwen/Qwen3-0.6B \
@@ -109,9 +116,11 @@ aiperf profile \
   --endpoint-type chat \
   --concurrency 10 \
   --request-count 100 \
+  --output-tokens-mean 128 \
   --streaming \
   --ui-type none
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```
@@ -123,7 +132,7 @@ aiperf profile \
 23:07:32.594891 INFO     AIPerf System is CONFIGURED
 23:07:32.597896 INFO     AIPerf System is PROFILING
 23:09:18.123456 INFO     Benchmark completed successfully
-23:09:18.234567 INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-chat-concurrency10/
+23:09:18.234567 INFO     Results saved to: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency10/
 ```
 
 **When to use:**

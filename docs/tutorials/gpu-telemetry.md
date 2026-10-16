@@ -146,6 +146,7 @@ echo "DCGM GPU metrics are now available"
 
 ## Run AIPerf Benchmark
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=120 -->
 ```bash
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
@@ -166,6 +167,7 @@ aiperf profile \
     --random-seed 100 \
     --gpu-telemetry
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```

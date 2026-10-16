@@ -24,31 +24,33 @@ Your goal is operational: find the single concurrency value that maximizes `outp
 
 ## The first run
 
+<!-- aiperf-run-vllm-longrun-openai-endpoint-server weight=1200 timeout=5400 -->
 ```bash
 aiperf profile \
-    --model meta-llama/Llama-3.1-8B-Instruct \
-    --url http://vllm.internal:8000 \
-    --search-space "concurrency:1,1000:int" \
+    --model Qwen/Qwen3-0.6B \
+    --url http://localhost:8000 \
+    --search-space "concurrency:1,64:int" \
     --search-metric output_token_throughput \
     --search-direction maximize \
-    --search-max-iterations 25 \
-    --search-initial-points 5 \
+    --search-max-iterations 6 \
+    --search-initial-points 3 \
     --search-random-seed 42 \
-    --num-profile-runs 3 \
-    --request-count 1000 \
-    --warmup-request-count 50
+    --num-profile-runs 1 \
+    --request-count 20 \
+    --warmup-request-count 5
 ```
+<!-- /aiperf-run-vllm-longrun-openai-endpoint-server -->
 
 Flag-by-flag for this scenario (general semantics live in the [BO reference](../sweeping/bayesian-optimization.md#flag-reference)):
 
-- `--search-space "concurrency:1,1000:int"` — `concurrency` is bare-name sugar for `phases.profiling.concurrency` (the same dotted path a YAML grid sweep would use; see [Bare-Name Aliases](sweeps.md#bare-name-aliases-for-common-phase-fields)); `:int` makes the planner round to integers so we never propose `concurrency=472.6`.
-- `--search-max-iterations 25` — upper bound on outer iterations. Convergence may stop earlier (improvement-patience or plateau-CV; see [Convergence detection](../sweeping/bayesian-optimization.md#convergence-detection)).
-- `--search-initial-points 5` — the first 5 iterations are random Sobol draws (no GP yet); iterations 6–25 are GP-driven. With a one-dimensional search 5 is plenty; raise it for higher-dimensional spaces.
+- `--search-space "concurrency:1,64:int"` — `concurrency` is bare-name sugar for `phases.profiling.concurrency` (the same dotted path a YAML grid sweep would use; see [Bare-Name Aliases](sweeps.md#bare-name-aliases-for-common-phase-fields)); `:int` makes the planner round to integers so we never propose `concurrency=472.6`.
+- `--search-max-iterations 6` — upper bound on outer iterations. Production searches run far more; this is sized to finish quickly. Convergence may stop earlier (improvement-patience or plateau-CV; see [Convergence detection](../sweeping/bayesian-optimization.md#convergence-detection)).
+- `--search-initial-points 3` — the first 3 iterations are random Sobol draws (no GP yet); the rest are GP-driven. It must stay below `--search-max-iterations`, or the GP never fits and the run is rejected at config validation. With a one-dimensional search a handful is plenty; raise it for higher-dimensional spaces.
 - `--search-random-seed 42` — same seed, same trajectory. Drop it for production search; keep it while you are tuning the *recipe* itself.
-- `--num-profile-runs 3` — three benchmarks per proposed point. The planner records one aggregate vector per point: by default each objective is the mean of finite trial values, or the pooled percentile when percentile pooling is configured. The GP/Optuna planner sees one observation per point, not three separate per-trial observations. See [Objective semantics](../sweeping/bayesian-optimization.md#objective-semantics).
-- `--warmup-request-count 50` — 50 warmup requests before each timed run, so cold-cache effects don't poison early observations the GP is fitting on.
+- `--num-profile-runs 1` — one benchmark per proposed point; raise it to average out noise. The planner records one aggregate vector per point: by default each objective is the mean of finite trial values, or the pooled percentile when percentile pooling is configured. The GP/Optuna planner sees one observation per point; with `--num-profile-runs 3` it would still see one observation, not three separate per-trial observations. See [Objective semantics](../sweeping/bayesian-optimization.md#objective-semantics).
+- `--warmup-request-count 5` — warmup requests before each timed run, so cold-cache effects don't poison early observations the GP is fitting on.
 
-The total timed work here is `25 iterations × 3 trials = 75` benchmarks (capped — the loop may exit earlier on improvement-patience).
+The total timed work here is `6 iterations × 1 trial = 6` benchmarks (capped — the loop may exit earlier on improvement-patience). A production search widens the space and raises both numbers.
 
 You did not specify `--search-stat`, so the converter defaults it to `avg`. You did not specify a goodput SLO yet — see [Common follow-ups](#common-follow-ups) below for the percentile-objective variant.
 
@@ -56,12 +58,12 @@ You did not specify `--search-stat`, so the converter defaults it to `avg`. You 
 
 The orchestrator logs an opening line on entry to the adaptive loop, then one log line per iteration as it proposes a point, then a single termination line on exit. Roughly:
 
-- Startup, from `execute_adaptive_search`: `Starting adaptive outer-loop benchmark (bayes, max_iterations=25, trials per point=3)`.
+- Startup, from `execute_adaptive_search`: `Starting adaptive outer-loop benchmark (bayes, max_iterations=6, trials per point=1)`.
 - Per iteration, before the cell runs: `[search iter <N>] proposing {'phases.profiling.concurrency': <value>}`. (The prefix is planner-agnostic — the same line shape is emitted regardless of whether the active planner is the bayesian preset, the optuna expert mode, smooth-isotonic, or monotonic-SLA.)
-- Per iteration, after the trials: the standard per-run profile-export logs from each of the 3 trials — same output you would see from a non-adaptive `aiperf profile`.
+- Per iteration, after the trial: the standard per-run profile-export logs — same output you would see from a non-adaptive `aiperf profile`. With `--num-profile-runs > 1` you get one such block per trial.
 - On exit (whichever convergence signal fired): `Adaptive outer loop terminated after <N> iterations (reason=<convergence_reason>)`. The reason string is one of `max_iterations`, `improvement_patience`, `plateau_cv` (and, for the Optuna planner, additionally `posterior_regret_bound` or `emmr`); `unknown` appears only when the planner ran out of proposals without recording a reason. Cancelled-mid-run leaves whatever `convergence_reason` the last completed iteration wrote (typically `null`), since the cancel branch returns before the terminal `search_history.json` write.
 
-The first 5 iterations sample the space coarsely (Sobol). After that the GP starts steering toward the high-throughput region; do not be alarmed if iterations 6–10 cluster within a narrow concurrency band.
+The first 3 iterations sample the space coarsely (Sobol). After that the GP starts steering toward the high-throughput region; do not be alarmed if the remaining iterations cluster within a narrow concurrency band.
 
 ## Reading the artifacts
 
@@ -69,7 +71,7 @@ The artifact tree under `<artifact_dir>/` has three things to look at, in roughl
 
 ### `search_history.json` — the trajectory
 
-This is the file that tells you *what BO actually did*. It is rewritten after every iteration, so even a crashed or cancelled run leaves the partial trajectory:
+This is the file that tells you *what BO actually did*. It is rewritten after every iteration, so even a crashed or cancelled run leaves the partial trajectory. The excerpt below comes from a wider production search (`concurrency:1,1000:int`, `--search-max-iterations 25`) rather than the quick run above, so the trajectory has something to show:
 
 ```json
 {
@@ -126,9 +128,9 @@ Schema reference: [Output schema](../sweeping/bayesian-optimization.md#output-sc
 
 ### `search_iter_NNNN/profile_runs/run_NNNN/profile_export_aiperf.json` — per-trial detail
 
-Each iteration writes its 3 trials under `search_iter_NNNN/profile_runs/run_NNNN/`. These are *the same per-run JSONs that a normal `aiperf profile` produces* — you can open `profile_export_aiperf.json` for any single trial and inspect the full metric table, percentiles, error counts, etc.
+Each iteration writes one directory per trial under `search_iter_NNNN/profile_runs/run_NNNN/` — a single `run_0000/` at `--num-profile-runs 1`. These are *the same per-run JSONs that a normal `aiperf profile` produces* — you can open `profile_export_aiperf.json` for any single trial and inspect the full metric table, percentiles, error counts, etc.
 
-You will want these when an iteration looks like a noise spike (a clearly out-of-trend point) and you want to confirm whether one of the three trials had elevated errors or a tail-latency event. The per-trial files let you inspect the spread behind the single aggregate objective that the planner observed for this point.
+You will want these when an iteration looks like a noise spike (a clearly out-of-trend point) and you want to confirm whether a trial had elevated errors or a tail-latency event. At `--num-profile-runs > 1` the per-trial files also let you inspect the spread behind the single aggregate objective that the planner observed for this point.
 
 ### `sweep_aggregate/profile_export_aiperf_sweep.{json,csv}` — combination summary
 
@@ -143,7 +145,7 @@ Two caveats worth being honest about for both shapes:
 1. The loop may have early-stopped on `improvement_patience` (no improvement over the running best for 10 consecutive iterations; for multi-objective, no hypervolume gain) or `plateau_cv` (objective values plateaued in CV terms). When that happens, the true argmax — or a better Pareto trade-off — could be at an unvisited point. Improvement-patience as a stopping rule embodies a simple intuition: when you have stopped finding better points, further iterations have diminishing returns. See [Convergence detection](../sweeping/bayesian-optimization.md#convergence-detection).
 2. Each `objective_values[i]` is a noisy estimate at the proposed point, with `--num-profile-runs` samples behind it. The GP knows this and shrinks confidence in noisy regions; treat the per-objective values in `best_trials` as point estimates, not as guarantees of future production performance.
 
-A practical sanity check: re-run with `--search-random-seed` *unset* (or a different seed). If the chosen `concurrency` (or, in multi-objective, the front shape) is consistent within +/- 10% across seeds, the result is robust. If seeds disagree wildly, your search space is probably too wide or your objective is too noisy for `--num-profile-runs 3` — bump it to 5.
+A practical sanity check: re-run with `--search-random-seed` *unset* (or a different seed). If the chosen `concurrency` (or, in multi-objective, the front shape) is consistent within +/- 10% across seeds, the result is robust. If seeds disagree wildly, your search space is probably too wide or your objective is too noisy at the `--num-profile-runs` you used — bump it to 5.
 
 ## When to use a grid sweep instead
 
