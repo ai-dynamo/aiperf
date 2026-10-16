@@ -143,7 +143,10 @@ async def test_sleep_think_ms_woken_but_still_sendable_keeps_think_time():
         await asyncio.sleep(0)
     assert not task.done()
     await asyncio.wait_for(task, timeout=1.0)
-    assert loop.time() - start >= 0.19
+    # loop.time() is a 15.625 ms tick on Windows and the loop may fire a timer
+    # one tick early, so a truthful 200 ms wait measures as 0.1875 there. The
+    # claim under test is that the think-time was kept, not dropped (~0).
+    assert loop.time() - start >= 0.15
 
 
 @pytest.mark.asyncio

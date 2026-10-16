@@ -516,7 +516,10 @@ async def test_think_time_kept_when_join_still_sendable_at_cutoff():
     issuer.dispatch_join_turn.assert_not_awaited()
 
     await asyncio.wait_for(release, timeout=1.0)
-    assert loop.time() - start >= 0.19
+    # loop.time() is a 15.625 ms tick on Windows and the loop may fire a timer
+    # one tick early, so a truthful 200 ms wait measures as 0.1875 there. The
+    # claim under test is that the think-time was kept, not dropped (~0).
+    assert loop.time() - start >= 0.15
     issuer.dispatch_join_turn.assert_awaited_once()
     issuer.can_dispatch_join.assert_called_with(0)
     assert orch.stats.parents_resumed == 1
