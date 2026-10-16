@@ -43,43 +43,48 @@ Secret, IRSA, Pod Identity). An ``http(s)://`` pod fetches the same URL with the
 same query string, so it cannot succeed where this machine failed."""
 
 
-def pin_remote_datasets_for_kubernetes(benchmark: BenchmarkConfig) -> None:
+def pin_remote_datasets_for_kubernetes(
+    benchmark: BenchmarkConfig, *, sweep: bool = False
+) -> None:
     """Run the remote access stage on the CLI host before the CR is rendered.
 
     Mutates ``benchmark`` in place: remote references gain ``resolved_version``
-    and manifest defaults, and deferred fixed-schedule promotion is settled. On
-    an auth-class failure for an ``hf://`` or ``s3://`` reference, or a
-    connection failure (DNS, connect, timeout; not an HTTP 429/5xx) for any
-    scheme, the reference stays unpinned and a warning is printed. A reference whose credential is
-    already ``<redacted>`` (a resource written by ``aiperf kube generate``) is
-    not read here at all: only the pod holds its full URL. Calls
-    ``asyncio.run``, so async callers run it in a worker thread.
+    and manifest defaults, and deferred fixed-schedule promotion is settled.
+    The reference is left for the dataset-manager pod, with a warning, when
+    this machine lacks credentials for an ``hf://`` or ``s3://`` source, cannot
+    connect to a source of any scheme (DNS, connect, timeout; not an HTTP
+    429/5xx), or holds only a ``<redacted>`` credential (a resource written by
+    ``aiperf kube generate``; only the pod holds the full URL). ``sweep`` marks
+    an AIPerfSweep, whose children each pin an unpinned reference separately.
+    Calls ``asyncio.run``, so async callers run it in a worker thread.
 
     Raises:
         RemoteSourceError: The source is unusable for a reason other than this
-            machine's credentials, or an ``http(s)://`` source refused this
-            machine.
-        ConfigurationError: This machine cannot read the source, and the CLI
-            deferred fixed-schedule promotion until the first record is known.
+            machine's credentials or network, or an ``http(s)://`` source
+            refused this machine.
+        ConfigurationError: A presigned URL has expired, or the pod would have
+            to read the source while fixed-schedule promotion still depends on
+            its first record.
     """
     from aiperf.dataset.remote.preflight import preflight_remote_access
 
+    _require_unexpired_presigned_urls(benchmark)
     ref = _default_remote_ref(benchmark)
     if ref is None:
         return
     if REDACTED_VALUE in ref.ref:
-        _defer_to_pod(
-            benchmark,
-            f"This machine cannot read {ref.display} (its credential is redacted)",
-            warn=ref.resolved_version is None,
-        )
+        reason = f"This machine cannot read {ref.display} (its credential is redacted)"
+        _defer_to_pod(benchmark, reason, sweep=sweep, quiet_when_pinned=True)
         return
     try:
         preflight_remote_access([benchmark])
     except RemoteSourceError as e:
         if not _pod_may_read(ref, e):
-            raise
-        _defer_to_pod(benchmark, _host_failure_reason(e))
+            hinted = _with_host_token_hint(ref, e)
+            if hinted is None:
+                raise
+            raise hinted from e
+        _defer_to_pod(benchmark, _host_failure_reason(e), sweep=sweep)
 
 
 def _default_remote_ref(benchmark: BenchmarkConfig) -> RemoteRef | None:
@@ -88,6 +93,17 @@ def _default_remote_ref(benchmark: BenchmarkConfig) -> RemoteRef | None:
 
     path = getattr(benchmark.get_default_dataset(), "path", None)
     return path if isinstance(path, RemoteRef) else None
+
+
+def _require_unexpired_presigned_urls(benchmark: BenchmarkConfig) -> None:
+    """Fail on an expired presigned URL before the host's fetch turns it into a bare 403."""
+    now = datetime.now(UTC)
+    for ref in remote_dataset_refs(benchmark.datasets):
+        if ref.scheme not in ("http", "https"):
+            continue
+        result = _evaluate_url(ref, now)
+        if result.status == CheckStatus.FAIL:
+            raise ConfigurationError(" ".join([f"{result.message}.", *result.hints]))
 
 
 def _pod_may_read(ref: RemoteRef, error: RemoteSourceError) -> bool:
@@ -109,13 +125,50 @@ def _host_failure_reason(error: RemoteSourceError) -> str:
     return f"This machine cannot read {error.ref} ({error.kind})"
 
 
+def _host_has_hf_token() -> bool:
+    from huggingface_hub import get_token
+
+    return get_token() is not None
+
+
+def _with_host_token_hint(
+    ref: RemoteRef, error: RemoteSourceError
+) -> RemoteSourceError | None:
+    """``error`` with a hint that the pods may hold a different Hugging Face token.
+
+    Hugging Face answers a private repo the token cannot see as not found. The
+    run still fails: AIPerf cannot tell that repo from a missing one. None when
+    the hint does not apply.
+    """
+    if ref.scheme != "hf" or error.kind != RemoteErrorKind.NOT_FOUND:
+        return None
+    if not _host_has_hf_token():
+        return None
+    return RemoteSourceError(
+        ref=error.ref,
+        kind=error.kind,
+        stage=error.stage,
+        what=error.what,
+        hint=f"{error.hint}. AIPerf checked with this machine's Hugging Face token, "
+        "which may differ from the pods' token; if only the pods' token can read "
+        "the repo, run aiperf kube where no Hugging Face token is configured, and "
+        "the dataset-manager pod pins it",
+    )
+
+
 def _defer_to_pod(
-    benchmark: BenchmarkConfig, reason: str, *, warn: bool = True
+    benchmark: BenchmarkConfig,
+    reason: str,
+    *,
+    sweep: bool,
+    quiet_when_pinned: bool = False,
 ) -> None:
     """Leave the reference for the dataset-manager pod, or refuse when that is unsafe."""
     _require_settled_fixed_schedule(benchmark, reason)
-    if warn:
-        _warn_unpinned(reason)
+    ref = _default_remote_ref(benchmark)
+    if ref is None or (quiet_when_pinned and ref.resolved_version is not None):
+        return
+    _warn_pod_reads(ref, reason, sweep=sweep)
 
 
 def _require_settled_fixed_schedule(benchmark: BenchmarkConfig, reason: str) -> None:
@@ -140,18 +193,49 @@ def _require_settled_fixed_schedule(benchmark: BenchmarkConfig, reason: str) -> 
     )
 
 
-def _warn_unpinned(reason: str) -> None:
+def _explicit_pin(scheme: str) -> str | None:
+    """How a reference names its own version, for schemes that can."""
+    if scheme == "hf":
+        return "@<commit>"
+    if scheme == "s3":
+        return "?versionId="
+    return None
+
+
+def _unpinned_advice(ref: RemoteRef, *, sweep: bool) -> str:
+    pin = _explicit_pin(ref.scheme)
+    if sweep:
+        advice = (
+            " Each sweep child pins it separately, so variations may see different "
+            "versions if the source changes meanwhile"
+        )
+        return (
+            f"{advice}; pin it explicitly ({pin}) to avoid that."
+            if pin
+            else f"{advice}."
+        )
+    if pin:
+        return f" Pin it explicitly ({pin}) to fix the version before the pod starts."
+    return ""
+
+
+def _warn_pod_reads(ref: RemoteRef, reason: str, *, sweep: bool) -> None:
     from rich.markup import escape
 
     from aiperf.kubernetes import console as kube_console
 
-    kube_console.print_warning(
-        escape(
-            f"{reason}, so it is submitted unpinned; the dataset-manager pod will "
-            "pin it with the pod's own credentials. Pin it explicitly (@<commit> "
-            "or ?versionId=) to fix the version before the pod starts."
+    if ref.resolved_version is not None:
+        text = (
+            f"{reason}, so it is submitted at its pinned version "
+            f"{ref.resolved_version}; the dataset-manager pod will download that "
+            "version with the pod's own credentials."
         )
-    )
+    else:
+        text = (
+            f"{reason}, so it is submitted unpinned; the dataset-manager pod will "
+            "pin it when it starts." + _unpinned_advice(ref, sweep=sweep)
+        )
+    kube_console.print_warning(escape(text))
 
 
 CHECK_NAME = "Remote Datasets"
@@ -163,8 +247,9 @@ def presigned_expiry(url: str) -> datetime | None:
     """When a presigned URL stops working, read from its own query parameters.
 
     Reads ``X-Amz-Date`` + ``X-Amz-Expires`` (S3 SigV4), ``X-Goog-Date`` +
-    ``X-Goog-Expires`` (GCS V4) and the Azure SAS ``se`` field. Returns None
-    when the URL states no expiry or states it in a form AIPerf cannot parse.
+    ``X-Goog-Expires`` (GCS V4), ``Expires`` in epoch seconds (CloudFront
+    canned policy, S3 SigV2) and the Azure SAS ``se`` field. Returns None when
+    the URL states no expiry or states it in a form AIPerf cannot parse.
     """
     params = {
         name.lower(): value
@@ -174,6 +259,8 @@ def presigned_expiry(url: str) -> datetime | None:
         signed, lifetime = params.get(f"{prefix}date"), params.get(f"{prefix}expires")
         if signed and lifetime:
             return _signed_expiry(signed, lifetime)
+    if (epoch := params.get("expires")) is not None:
+        return _epoch_expiry(epoch)
     if sas_expiry := params.get("se"):
         return _sas_expiry(sas_expiry)
     return None
@@ -184,6 +271,13 @@ def _signed_expiry(signed: str, lifetime: str) -> datetime | None:
         start = datetime.strptime(signed, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
         return start + timedelta(seconds=int(lifetime))
     except (ValueError, OverflowError):
+        return None
+
+
+def _epoch_expiry(value: str) -> datetime | None:
+    try:
+        return datetime.fromtimestamp(int(value), UTC)
+    except (ValueError, OverflowError, OSError):
         return None
 
 

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Anonymous needs-auth probe for remote dataset references."""
 
+import threading
+import time
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
@@ -128,3 +130,31 @@ async def test_anonymous_needs_auth_offline_is_unknown_without_network(
             await anonymous.anonymous_needs_auth(RemoteRef(ref="hf://org/repo")) is None
         )
     dataset_info.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ref,probe_name,expected",
+    [
+        param("hf://org/repo", "_hf_needs_auth", None, id="hf-unknown"),
+        param("s3://bucket/t.jsonl", "_s3_needs_auth", True, id="s3-assumes-auth"),
+    ],
+)  # fmt: skip
+async def test_anonymous_needs_auth_probe_timeout_answers_within_budget(
+    monkeypatch: pytest.MonkeyPatch, ref: str, probe_name: str, expected: bool | None
+) -> None:
+    release = threading.Event()
+
+    def hang(_ref: RemoteRef) -> bool:
+        release.wait(5)
+        return False
+
+    monkeypatch.setattr(anonymous, "PROBE_TIMEOUT_S", 0.05)
+    monkeypatch.setattr(anonymous, probe_name, hang)
+    monkeypatch.setattr(anonymous.service, "remote_offline", lambda: False)
+    start = time.monotonic()
+    try:
+        assert await anonymous.anonymous_needs_auth(RemoteRef(ref=ref)) is expected
+        assert time.monotonic() - start < 2
+    finally:
+        release.set()

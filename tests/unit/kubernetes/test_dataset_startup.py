@@ -315,3 +315,28 @@ def test_kubernetes_deployment_jobset_spec_flags_remote_dataset(
         deployment=DeploymentConfig(),
     )
     assert deployment.get_jobset_spec().remote_dataset is expected
+
+
+def test_prepare_dataset_manager_run_redaction_failure_keeps_the_original_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, termination_log: Path
+) -> None:
+    monkeypatch.delenv(AIPERF_INJECTED_DATASET_URLS, raising=False)
+    run = _run(tmp_path, "hf://org/repo/t.jsonl")
+    original = RuntimeError("download failed")
+    with (
+        patch(
+            "aiperf.cli_runner._preflight.preflight_datasets_for_run",
+            side_effect=original,
+        ),
+        patch.object(
+            dataset_startup,
+            "termination_message",
+            side_effect=ValueError("redactor broke"),
+        ),
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        prepare_dataset_manager_run(run, endpoint_secrets=[])
+    assert exc_info.value is original
+    message = termination_log.read_text(encoding="utf-8")
+    assert message.startswith(f"{POD_PREFIX} RuntimeError")
+    assert "download failed" not in message
