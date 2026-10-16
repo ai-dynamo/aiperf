@@ -1170,7 +1170,6 @@ def two_worker_router(benchmark_run) -> StickyCreditRouter:
 
 @pytest.fixture
 def send(two_worker_router: StickyCreditRouter) -> SendFn:
-    """Send one credit and return the worker it was routed to."""
     ids = itertools.count()
 
     async def _send(
