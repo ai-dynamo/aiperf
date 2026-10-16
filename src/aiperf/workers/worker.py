@@ -1306,10 +1306,17 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         await self.publish(self.create_health_message(health))
 
     def create_health_message(self, health: ProcessHealth) -> WorkerHealthMessage:
+        # getattr: plugin transports written before this counter existed may
+        # lack it, and a raise here would stop health reports for the run.
+        stream_chunks = getattr(
+            self.inference_client.transport, "stream_chunks_received", 0
+        )
         return WorkerHealthMessage(
             service_id=self.service_id,
             health=health,
-            task_stats=self.task_stats,
+            task_stats=self.task_stats.model_copy(
+                update={"stream_chunks_received": stream_chunks}
+            ),
             pod_index=self._pod_index,
         )
 
