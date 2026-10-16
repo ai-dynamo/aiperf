@@ -133,7 +133,7 @@ Commit the generated YAML and let ArgoCD, Flux, or your GitOps tool apply it.
 | Monitoring | Operator tracks phase/progress | Manual pod watching |
 | Results | Stored on operator PVC | Must retrieve before TTL |
 | Cancellation | `spec.cancel: true` | Delete the JobSet |
-| Conditions | Status conditions populated (`ConfigValid`, `EndpointReachable`, `PreflightPassed`, `ResourcesCreated`, `WorkersReady`, `BenchmarkRunning`, `ResultsAvailable`, `IndexUpdated`, `PreflightHasWarnings`, `Complete`, `Failed`) | None |
+| Conditions | Status conditions populated (`ConfigValid`, `EndpointReachable`, `PreflightPassed`, `ResourcesCreated`, `WorkersReady`, `BenchmarkRunning`, `DatasetReady`, `ResultsAvailable`, `IndexUpdated`, `PreflightHasWarnings`, `Complete`, `Failed`) | None |
 
 Operator mode also persists the active pod startup blocker in
 `status.startupIssue`. This keeps the first-observed timestamp across operator
@@ -249,6 +249,7 @@ variables at startup. A credentialed endpoint without the matching
 | `endpoint.apiKey` | `AIPERF_INJECTED_API_KEY` or `OPENAI_API_KEY` |
 | Sensitive headers such as `Authorization` or `X-API-Key` | `AIPERF_INJECTED_HEADERS` containing a JSON object of header strings |
 | URL userinfo such as `https://user:password@host` | `AIPERF_INJECTED_ENDPOINT_URLS` containing a JSON list of full URL strings |
+| A presigned dataset URL (`--input-file 'https://...?X-Amz-Signature=...'`) | `AIPERF_INJECTED_DATASET_URLS` containing a JSON list of full URL strings; see [Run a published trace](../tutorials/remote-datasets.md#kubernetes) |
 
 Do not use `--env-vars` for these values: literal pod environment values are
 not Secret-backed and fail the credential transport check.

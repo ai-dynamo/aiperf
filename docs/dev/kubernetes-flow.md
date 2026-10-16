@@ -382,6 +382,36 @@ access.
 └── index.dat         # Decompressed index
 ```
 
+### Remote Dataset Sources
+
+`hf://`, `s3://` and `https://` dataset paths (`FileDataset.path` as a `RemoteRef`) are
+resolved before the dataset-manager composes, never by workers.
+
+| Stage | Where | Code |
+|---|---|---|
+| Pin (access stage) | `aiperf kube profile/generate/sweep`, on the CLI host, before the CR is rendered | `aiperf.kubernetes.remote_datasets.pin_remote_datasets_for_kubernetes` (runs `preflight_remote_access`; auth-class failures on `hf://` and `s3://` leave the ref unpinned) |
+| Pod-credential check | CLI host before submission; operator workload preflight | `check_remote_datasets`, with needs-auth from `aiperf.dataset.remote.anonymous` |
+| CR validation | `prepare_workload_spec` | `validate_remote_datasets_for_kubernetes` rejects the CLI-only `remoteFixedScheduleCheck` marker and unredacted credentials |
+| Rehydrate presigned URLs | dataset-manager container, after endpoint credentials | `apply_injected_dataset_urls` (Secret-backed `AIPERF_INJECTED_DATASET_URLS`, matched by `RemoteRef.canonical`); every other container pops the variable |
+| Pin if unpinned, download | dataset-manager container, before `bootstrap_and_run_service` | `preflight_datasets_for_run` |
+| Report a failure | dataset-manager container | `aiperf.kubernetes.dataset_startup.write_termination_message` writes `/dev/termination-log` (`[dataset-manager pod] ...`, at most 4 KiB); the container sets `terminationMessagePolicy: FallbackToLogsOnError` |
+| Surface a failure | operator | `_get_terminated_controller_info` appends `terminated.message`; `_fail_unrecoverable_controller` sets `status.error` and, for a message with the `[dataset-manager pod]` prefix, `DatasetReady=False` (`DatasetUnavailable`) |
+
+The dataset-manager's startup order is endpoint credentials, then dataset URL rehydration,
+then `preflight_datasets_for_run`, then bootstrap (`aiperf.cli_commands.service`). The health
+server starts in bootstrap, so a long download runs while the startup probe is failing; see
+[Large datasets and the startup probe](../tutorials/remote-datasets.md#large-datasets-and-the-startup-probe).
+
+The pin rides inside the CR as `path: {ref, resolved_version}`, so the serialized run stays
+the single source of truth. When the dataset-manager pod pins an unpinned ref, the version
+and any manifest defaults exist only in that container's copy of the run; this is the
+documented gap for `kubectl`-applied resources and for CLI hosts without read access. The
+dataset-manager and control-plane containers mount the `remote-cache` emptyDir at
+`/aiperf/remote-cache` (`AIPERF_DATASET_REMOTE_CACHE_DIR`), so the control-plane's exporter
+can read the cache index for provenance. `redact_endpoint_spec` redacts dataset paths in every
+spec the operator persists or serves. `aiperf kube debug` reads `status.error` and the
+`DatasetReady` condition through `diagnose_job_failure`.
+
 ## 6. Benchmark Execution Flow
 
 ```mermaid
@@ -929,7 +959,8 @@ Sensitive endpoint fields never rely on the ConfigMap copy. JSON
 serialization redacts them, and `aiperf service --benchmark-run` restores them
 from the Secret-backed `AIPERF_INJECTED_API_KEY`/`OPENAI_API_KEY`,
 `AIPERF_INJECTED_HEADERS`, and `AIPERF_INJECTED_ENDPOINT_URLS` environment
-variables. Generation and operator reconciliation fail closed when the
+variables. Presigned dataset URLs travel the same way, through
+`AIPERF_INJECTED_DATASET_URLS`. Generation and operator reconciliation fail closed when the
 corresponding `valueFrom.secretKeyRef` mapping is absent.
 `aiperf service` requires `--benchmark-run` and never resolves per-container
 benchmark flags.
