@@ -934,13 +934,14 @@ if TYPE_CHECKING:
     from aiperf.controller.protocols import ServiceManagerProtocol
     from aiperf.dataset.composer.base import BaseDatasetComposer
     from aiperf.dataset.protocols import CustomDatasetLoaderProtocol, DatasetBackingStoreProtocol, DatasetClientStoreProtocol, DatasetSamplingStrategyProtocol, PublicDatasetLoaderProtocol
+    from aiperf.dataset.remote.protocols import SourceResolverProtocol
     from aiperf.endpoints.protocols import EndpointProtocol
     from aiperf.exporters.protocols import ConsoleExporterProtocol, DataExporterProtocol
     from aiperf.gpu_telemetry.protocols import GPUTelemetryCollectorProtocol
     from aiperf.orchestrator.convergence.base import ConvergenceCriterion
     from aiperf.orchestrator.search_planner.base import SearchPlanner
     from aiperf.plot.core.plot_type_handlers import PlotTypeHandlerProtocol
-    from aiperf.plugin.enums import APIRouterType, AccumulatorType, AccuracyBenchmarkType, AccuracyGraderType, AnalyzerType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, ConvergenceCriterionType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, PublicDatasetType, RampType, RecordObserverType, RecordProcessorType, RequestSignerType, SearchPlannerType, SearchRecipePostProcessType, SearchRecipeType, ServiceRunType, ServiceType, SpecDecodeAdapterType, StreamExporterType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
+    from aiperf.plugin.enums import APIRouterType, AccumulatorType, AccuracyBenchmarkType, AccuracyGraderType, AnalyzerType, ArrivalPattern, CommClientType, CommunicationBackend, ComposerType, ConsoleExporterType, ConvergenceCriterionType, CustomDatasetType, DataExporterType, DatasetBackingStoreType, DatasetClientStoreType, DatasetSamplingStrategy, DatasetSourceScheme, EndpointType, GPUTelemetryCollectorType, PlotType, PluginType, PluginTypeStr, PublicDatasetType, RampType, RecordObserverType, RecordProcessorType, RequestSignerType, SearchPlannerType, SearchRecipePostProcessType, SearchRecipeType, ServiceRunType, ServiceType, SpecDecodeAdapterType, StreamExporterType, TimingMode, TransportType, UIType, URLSelectionStrategy, ZMQProxyType
     from aiperf.post_processors.protocols import RecordObserverProtocol, RecordProcessorProtocol
     from aiperf.search_recipes._base import SearchRecipe
     from aiperf.search_recipes.post_process import PostProcessHandler
@@ -995,6 +996,10 @@ if TYPE_CHECKING:
     def get_class(category: Literal[PluginType.PUBLIC_DATASET_LOADER, "public_dataset_loader"], name_or_class_path: PublicDatasetType | str) -> type[PublicDatasetLoaderProtocol]: ...
     @overload
     def iter_all(category: Literal[PluginType.PUBLIC_DATASET_LOADER, "public_dataset_loader"]) -> Iterator[tuple[PluginEntry, type[PublicDatasetLoaderProtocol]]]: ...
+    @overload
+    def get_class(category: Literal[PluginType.DATASET_SOURCE_RESOLVER, "dataset_source_resolver"], name_or_class_path: DatasetSourceScheme | str) -> type[SourceResolverProtocol]: ...
+    @overload
+    def iter_all(category: Literal[PluginType.DATASET_SOURCE_RESOLVER, "dataset_source_resolver"]) -> Iterator[tuple[PluginEntry, type[SourceResolverProtocol]]]: ...
     @overload
     def get_class(category: Literal[PluginType.ENDPOINT, "endpoint"], name_or_class_path: EndpointType | str) -> type[EndpointProtocol]: ...
     @overload

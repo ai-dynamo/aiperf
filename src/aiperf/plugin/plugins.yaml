@@ -2785,6 +2785,30 @@ public_dataset_loader:
       hf_split: train
       is_trace: true
 
+dataset_source_resolver:
+  hf:
+    class: aiperf.dataset.remote.hf:HFSourceResolver
+    description: |
+      Resolves hf://[datasets/]<org>/<repo>[@<rev>][/<path>] to a Hugging Face dataset repo.
+      A file path downloads that file (optional <file>.aiperf.json sidecar); a repo or folder
+      requires an aiperf.json manifest. Pins the commit SHA; files live in the HF cache.
+  https:
+    class: aiperf.dataset.remote.http:HTTPSourceResolver
+    description: |
+      Downloads a single dataset file from an https:// URL (including presigned S3/GCS
+      URLs). Redirects are followed with per-hop origin checks; the cache is keyed by ETag
+      or Last-Modified.
+  http:
+    class: aiperf.dataset.remote.http:HTTPSourceResolver
+    description: |
+      Same as https, for plain http:// URLs (internal mirrors).
+  s3:
+    class: aiperf.dataset.remote.s3:S3SourceResolver
+    description: |
+      Resolves s3://<bucket>/<key>[?versionId=<id>] with botocore's default credential chain
+      (env vars, ~/.aws, SSO, IRSA/pod identity, instance role). AWS_ENDPOINT_URL_S3 targets
+      S3-compatible stores (MinIO, Ceph, R2). Requires the aiperf[aws] extra.
+
 # =============================================================================
 # ZMQ Proxies
 # =============================================================================

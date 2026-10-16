@@ -53,6 +53,9 @@ async def test_aggregate_export_propagates_runtime_invalid_reasons(
     monkeypatch.setattr(
         "aiperf.dataset.provenance.public_dataset_provenance", lambda _c: None
     )
+    monkeypatch.setattr(
+        "aiperf.dataset.provenance.remote_dataset_provenance", lambda _c: None
+    )
     monkeypatch.setattr("aiperf.cli_runner._make_benchmark_run", lambda _c: clean_run)
     monkeypatch.setattr("aiperf.common.scenario.apply_scenario", lambda _r: None)
 

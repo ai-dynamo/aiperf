@@ -19,7 +19,10 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, Any
 
-from aiperf.config.flags._converter_dataset import build_dataset
+from aiperf.config.flags._converter_dataset import (
+    build_dataset,
+    reject_parquet_without_reader,
+)
 from aiperf.config.flags._converter_endpoint import build_endpoint, build_models
 from aiperf.config.flags._converter_optionals import (
     build_accuracy,
@@ -29,7 +32,10 @@ from aiperf.config.flags._converter_optionals import (
     expand_search_recipe,
     resolve_auto_plot,
 )
-from aiperf.config.flags._converter_profiling import build_profiling
+from aiperf.config.flags._converter_profiling import (
+    REMOTE_FIXED_SCHEDULE_CHECK_KEY,
+    build_profiling,
+)
 from aiperf.config.flags._converter_runtime import (
     build_artifacts,
     build_logging_runtime,
@@ -523,9 +529,12 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     re-assemble per-variant dicts without re-validating against
     ``AIPerfConfig``.
     """
+    reject_parquet_without_reader(cli)
     endpoint = build_endpoint(cli)
     models = build_models(cli)
     prof = build_profiling(cli)
+    # The profiling builder decides promotion, but the marker belongs to the dataset.
+    remote_fixed_schedule_check = prof.pop(REMOTE_FIXED_SCHEDULE_CHECK_KEY, None)
 
     phases: list[dict[str, Any]] = []
     if (warmup := build_warmup(cli)) is not None:
@@ -533,6 +542,8 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     phases.append({"name": "profiling", "kind": "profiling", **prof})
 
     ds = build_dataset(cli)
+    if remote_fixed_schedule_check is not None:
+        ds["remote_fixed_schedule_check"] = remote_fixed_schedule_check
 
     _init_random_seed(cli)
     artifacts = build_artifacts(cli)

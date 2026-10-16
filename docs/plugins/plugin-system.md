@@ -100,7 +100,7 @@ for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
 
 ## Plugin Categories
 
-AIPerf supports 34 plugin categories organized by function, including `api_router` and `public_dataset_loader`:
+AIPerf's plugin categories are organized by function; the groups below include `api_router` and `public_dataset_loader`. `aiperf plugins --all` lists every category:
 
 ### Timing Categories
 
@@ -120,6 +120,7 @@ AIPerf supports 34 plugin categories organized by function, including `api_route
 | `dataset_composer` | `ComposerType` | Dataset generation (synthetic, custom, rankings) |
 | `custom_dataset_loader` | `CustomDatasetType` | JSONL format loaders |
 | `public_dataset_loader` | `PublicDatasetType` | Shared benchmark dataset fetchers (HTTP, HuggingFace) |
+| `dataset_source_resolver` | `DatasetSourceScheme` | Fetch remote `--input-file` references (hf, s3, https) into a local cache |
 
 ### Endpoint and Transport Categories
 

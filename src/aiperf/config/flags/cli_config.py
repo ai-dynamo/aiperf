@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, TypeAlias
 
 from cyclopts import Parameter
-from pydantic import AfterValidator, BeforeValidator, Field
+from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field
 
 from aiperf.common.constants import DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS
 from aiperf.common.enums import (
@@ -106,6 +106,9 @@ class CLIConfig(BaseConfig):
     CLIConfig is a flat DTO; no nested-class forward refs remain. Validators
     are forbidden on this class - AIPerfConfig is the single validation gate.
     """
+
+    # ``input_file`` may hold a presigned URL; ValidationError text would echo it.
+    model_config = ConfigDict(hide_input_in_errors=True)
 
     ##############################################################################
     # Endpoint
@@ -702,7 +705,9 @@ class CLIConfig(BaseConfig):
     input_file: Annotated[
         Any,
         Field(
-            description="Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. "
+            description="Path to file or directory containing benchmark dataset, or a remote "
+            "reference (`hf://<org>/<repo>[@<rev>][/<path>]`, `s3://<bucket>/<key>`, `https://...`) "
+            "downloaded into a local cache before the run. Required when using `--custom-dataset-type`. "
             "Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), "
             "Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
         ),

@@ -28,8 +28,11 @@ from aiperf.common.enums import AIPerfLogLevel, CommunicationType
 from aiperf.common.environment import Environment
 from aiperf.config import AIPerfConfig
 from aiperf.config.config import BenchmarkConfig
+from aiperf.config.dataset import FileDataset
+from aiperf.config.dataset.remote_ref import RemoteRef
 from aiperf.config.deployment import DeploymentConfig
 from aiperf.config.loader import (
+    ConfigurationError,
     assert_config_depth_and_cycles,
     expand_config_dict,
     load_config_from_mapping,
@@ -217,6 +220,25 @@ def restore_sweep_parameter_dataset_names(
                 break
 
 
+def reject_remote_datasets_for_kubernetes(config: AIPerfConfig) -> None:
+    """Fail before scheduling: pods cannot resolve remote dataset references yet.
+
+    Without this, the job is scheduled and the dataset-manager pod later fails
+    with an internal error, because the dataset preflight runs only locally.
+
+    Raises:
+        ConfigurationError: A dataset path is an ``hf://``, ``s3://`` or ``https://``
+            reference.
+    """
+    for dataset in config.benchmark.datasets:
+        if isinstance(dataset, FileDataset) and isinstance(dataset.path, RemoteRef):
+            raise ConfigurationError(
+                "Remote dataset references (hf://, s3://, https://) are not yet "
+                f"supported for Kubernetes runs: {dataset.path.display}. Download "
+                "the file and use a local path."
+            )
+
+
 def prepare_workload_spec(
     spec: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -235,6 +257,7 @@ def prepare_workload_spec(
         A rendered workload spec and its post-environment, pre-Jinja envelope.
     """
     config = load_config_from_mapping(build_config_envelope(spec))
+    reject_remote_datasets_for_kubernetes(config)
     envelope_keys = set(AIPerfConfig.model_fields)
     envelope_keys.update(
         model_field.alias

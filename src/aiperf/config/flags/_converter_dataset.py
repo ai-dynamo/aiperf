@@ -809,7 +809,7 @@ def _raise_file_dataset_violation(
         and attr in _RANDOM_POOL_BATCH_SIZE_FLAGS
         and getattr(cli, attr) != 1
     ]
-    if set_batch_flags and cli.input_file is not None and Path(cli.input_file).is_dir():
+    if set_batch_flags and isinstance(cli.input_file, Path) and cli.input_file.is_dir():
         raise ValueError(
             f"{', '.join(set_batch_flags)} is not supported when --input-file is a "
             "directory: each file forms a separately named pool, and batching "
@@ -1488,6 +1488,27 @@ def _seed_declared_identity(
         # types legitimately support.
         for key in _SYNTHETIC_ONLY_SUBTABLES:
             d.pop(key, None)
+
+
+def reject_parquet_without_reader(cli: CLIConfig) -> None:
+    """Fail early when a local parquet input is paired with a format that cannot read it.
+
+    The profiling builder runs format-specific readers (dag root counting,
+    trace sniffing) that open the input as text, so this runs before them
+    rather than letting a parquet file die in a ``UnicodeDecodeError``. A remote
+    reference is not a local path; the access preflight checks it after download.
+    """
+    from aiperf.common.record_files import is_parquet_input, require_parquet_reader
+
+    if (
+        not isinstance(cli.input_file, Path)
+        or cli.custom_dataset_type is None
+        or not is_parquet_input(cli.input_file)
+    ):
+        return
+    require_parquet_reader(
+        cli.custom_dataset_type, is_directory=cli.input_file.is_dir()
+    )
 
 
 def build_dataset(

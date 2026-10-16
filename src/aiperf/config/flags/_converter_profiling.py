@@ -20,6 +20,36 @@ if TYPE_CHECKING:
     from aiperf.config.flags import CLIConfig
 
 
+REMOTE_FIXED_SCHEDULE_CHECK_KEY = "_remote_fixed_schedule_check"
+_STOP_CONDITION_KEYS = ("requests", "duration", "sessions")
+_FIXED_SCHEDULE_CONFLICT_KEYS = ("rate", "users", "smoothness")
+
+
+def auto_promote_conflict_message(conflicts: list[str]) -> str:
+    return (
+        "Trace dataset has per-record timestamps and would be "
+        "auto-promoted to fixed_schedule, but the following flags or "
+        f"--search-space dimensions are incompatible with "
+        f"fixed_schedule mode: {conflicts}. Either drop the "
+        "conflicting flags/dimensions to enable auto-fixed-schedule, "
+        "or pass --no-fixed-schedule to keep your user-selected timing "
+        "mode and ignore trace timestamps."
+    )
+
+
+def fixed_schedule_sweep_message(param_name: str, param_values: list) -> str:
+    joined = ",".join(map(str, param_values))
+    return (
+        f"Parameter sweeps (e.g., --{param_name} {joined}) cannot be "
+        "used with --fixed-schedule mode (including the auto-promotion "
+        "of trace datasets with per-record timestamps). Fixed schedule "
+        "replays exact timing patterns from the trace, which is "
+        "incompatible with varying parameter values. Use a single "
+        "parameter value, or pass --no-fixed-schedule to keep your "
+        "rate/concurrency mode and ignore the trace timestamps."
+    )
+
+
 _PROF_FIELD_ROUTES: tuple[tuple[str, str], ...] = (
     ("duration", "benchmark_duration"),
     ("grace_period", "benchmark_grace_period"),
@@ -538,7 +568,7 @@ def _detect_cli_magic_sweep(cli: CLIConfig) -> tuple[str, list] | None:
 
 
 def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
-    from aiperf.config.phases import PhaseType
+    from aiperf.config.phases import DEFAULT_UNBOUNDED_REQUESTS, PhaseType
 
     # `--conversation-turn-mean` may be a list when used as a magic-list
     # sweep. User-centric mode requires every variation to satisfy
@@ -562,41 +592,32 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
     sweep = _detect_cli_magic_sweep(cli)
     if sweep is not None and prof["type"] == PhaseType.FIXED_SCHEDULE:
         param_name, param_values = sweep
-        joined = ",".join(map(str, param_values))
-        raise ValueError(
-            f"Parameter sweeps (e.g., --{param_name} {joined}) cannot be "
-            "used with --fixed-schedule mode (including the auto-promotion "
-            "of trace datasets with per-record timestamps). Fixed schedule "
-            "replays exact timing patterns from the trace, which is "
-            "incompatible with varying parameter values. Use a single "
-            "parameter value, or pass --no-fixed-schedule to keep your "
-            "rate/concurrency mode and ignore the trace timestamps."
-        )
+        raise ValueError(fixed_schedule_sweep_message(param_name, param_values))
 
-    if (
-        not any(k in prof for k in ("requests", "duration", "sessions"))
-        and prof["type"] != PhaseType.FIXED_SCHEDULE
-    ):
+    if not _has_stop_condition(prof) and prof["type"] != PhaseType.FIXED_SCHEDULE:
         # Why: when no bound is given for an unbounded run, default to
         # 10 requests so the run terminates in a reasonable time.
         # Deliberate override of the PhaseConfig default (which would
         # leave it unbounded).
-        prof.setdefault("requests", 10)
+        prof.setdefault("requests", DEFAULT_UNBOUNDED_REQUESTS)
     apply_cancellation(prof, cli)
 
 
-def _maybe_auto_promote_trace(
-    prof: dict[str, Any], cli: CLIConfig, file_path: Path | None
-) -> None:
-    """Flip phase.type to FIXED_SCHEDULE if a trace dataset has timestamps."""
+def _has_stop_condition(prof: dict[str, Any]) -> bool:
+    return any(k in prof for k in _STOP_CONDITION_KEYS)
+
+
+def _auto_promotion_may_apply(prof: dict[str, Any], cli: CLIConfig) -> bool:
+    """Guards shared by the local and remote trace auto-promotion paths.
+
+    An unset --custom-dataset-type passes here; each caller decides what that means.
+    """
     from aiperf.config.phases import PhaseType
     from aiperf.plugin import plugins
 
     dataset_type = cli.custom_dataset_type
-    if (
-        dataset_type is None
-        or file_path is None
-        or cli.disable_auto_fixed_schedule
+    return not (
+        cli.disable_auto_fixed_schedule
         # A --scenario locks its own timing_mode (e.g. agentic_replay), which
         # would immediately conflict with an auto-promoted FIXED_SCHEDULE
         # phase in the scenario validator. v1 parity: only an EXPLICIT
@@ -604,46 +625,109 @@ def _maybe_auto_promote_trace(
         # promotion is simply skipped so the phase keeps its default shape.
         or cli.scenario is not None
         or prof["type"] == PhaseType.FIXED_SCHEDULE
-        or not plugins.is_trace_dataset(str(dataset_type))
-        or not _first_record_has_timestamp(file_path)
+        or (
+            dataset_type is not None and not plugins.is_trace_dataset(str(dataset_type))
+        )
+    )
+
+
+def _fixed_schedule_conflicts(prof: dict[str, Any]) -> list[str]:
+    """Profiling keys FixedSchedulePhase rejects.
+
+    `prof` may hold these because of an explicit CLI flag OR because
+    _apply_search_space_shape_seeds seeded them from a --search-space
+    dimension, so the error names both sources.
+    """
+    return [k for k in _FIXED_SCHEDULE_CONFLICT_KEYS if k in prof]
+
+
+def _remote_fixed_schedule_conflicts(prof: dict[str, Any], cli: CLIConfig) -> list[str]:
+    """_fixed_schedule_conflicts plus the dataset options a fixed_schedule phase rejects.
+
+    For a local file these surface after promotion, from BenchmarkConfig's
+    phase/dataset compatibility check. A remote phase is validated before its
+    first record is known, so they must keep it from being promoted optimistically.
+    """
+    from aiperf.plugin.enums import DatasetSamplingStrategy
+
+    conflicts = _fixed_schedule_conflicts(prof)
+    sampling = cli.dataset_sampling_strategy
+    if sampling is not None and sampling != DatasetSamplingStrategy.SEQUENTIAL:
+        conflicts.append(f"--dataset-sampling-strategy {sampling}")
+    return conflicts
+
+
+def _maybe_auto_promote_trace(
+    prof: dict[str, Any], cli: CLIConfig, file_path: Path | None
+) -> None:
+    """Flip phase.type to FIXED_SCHEDULE if a trace dataset has timestamps."""
+    from aiperf.config.phases import PhaseType
+    from aiperf.dataset.trace_timestamps import first_record_has_timestamp
+
+    if (
+        cli.custom_dataset_type is None
+        or file_path is None
+        or not _auto_promotion_may_apply(prof, cli)
+        or not first_record_has_timestamp(file_path)
     ):
         return
 
-    # FixedSchedulePhase doesn't accept rate/users/smoothness. If the user
-    # explicitly opted into a rate-controlled mode against a timestamped
-    # trace, refuse the combo loudly rather than silently dropping their
-    # flag — they almost certainly want one or the other, not both. `prof`
-    # may hold these because of an explicit CLI flag OR because
-    # _apply_search_space_shape_seeds seeded them from a --search-space
-    # dimension -- "flags" alone would be unactionable in the latter case
-    # (there's no flag to drop), so name both sources.
-    conflicts = [k for k in ("rate", "users", "smoothness") if k in prof]
-    if conflicts:
-        raise ValueError(
-            "Trace dataset has per-record timestamps and would be "
-            "auto-promoted to fixed_schedule, but the following flags or "
-            f"--search-space dimensions are incompatible with "
-            f"fixed_schedule mode: {conflicts}. Either drop the "
-            "conflicting flags/dimensions to enable auto-fixed-schedule, "
-            "or pass --no-fixed-schedule to keep your user-selected timing "
-            "mode and ignore trace timestamps."
-        )
+    # If the user explicitly opted into a rate-controlled mode against a
+    # timestamped trace, refuse the combo loudly rather than silently dropping
+    # their flag — they almost certainly want one or the other, not both.
+    if conflicts := _fixed_schedule_conflicts(prof):
+        raise ValueError(auto_promote_conflict_message(conflicts))
     prof["type"] = PhaseType.FIXED_SCHEDULE
+
+
+def _defer_remote_auto_promotion(prof: dict[str, Any], cli: CLIConfig) -> None:
+    """Mirror _maybe_auto_promote_trace for a remote file whose first record is unknown.
+
+    Promotes optimistically (a promoted phase needs no stop condition, exactly like the
+    local path) and records how the access preflight must finish the decision. An
+    untyped remote is promoted too, since its manifest may still declare a trace format.
+    """
+    from aiperf.config.phases import PhaseType
+
+    if not _auto_promotion_may_apply(prof, cli):
+        return
+    conflicts = _remote_fixed_schedule_conflicts(prof, cli)
+    # A rate-shaped phase without a conflict key (--request-rate-series) cannot be
+    # built as fixed_schedule either; name its type so the error stays actionable.
+    if conflicts or prof["type"] != PhaseType.CONCURRENCY:
+        prof[REMOTE_FIXED_SCHEDULE_CHECK_KEY] = {
+            "promoted": False,
+            "conflict_error": auto_promote_conflict_message(
+                conflicts or [str(prof["type"])]
+            ),
+        }
+        return
+    if (sweep := _detect_cli_magic_sweep(cli)) is not None:
+        prof[REMOTE_FIXED_SCHEDULE_CHECK_KEY] = {
+            "promoted": False,
+            "conflict_error": fixed_schedule_sweep_message(*sweep),
+        }
+        return
+    prof["type"] = PhaseType.FIXED_SCHEDULE
+    prof[REMOTE_FIXED_SCHEDULE_CHECK_KEY] = {"promoted": True, "conflict_error": None}
+
+
+def _is_dag_without_stop_condition(prof: dict[str, Any], cli: CLIConfig) -> bool:
+    from aiperf.plugin.enums import CustomDatasetType
+
+    dataset_type = cli.custom_dataset_type
+    return (
+        dataset_type is not None
+        and str(dataset_type) == str(CustomDatasetType.DAG_JSONL)
+        and not _has_stop_condition(prof)
+    )
 
 
 def _maybe_set_dag_root_sessions(
     prof: dict[str, Any], cli: CLIConfig, file_path: Path | None
 ) -> None:
     """For dag_jsonl with no stop condition, set ``sessions`` from root count."""
-    from aiperf.plugin.enums import CustomDatasetType
-
-    dataset_type = cli.custom_dataset_type
-    is_dag = dataset_type is not None and str(dataset_type) == str(
-        CustomDatasetType.DAG_JSONL
-    )
-    if not is_dag or file_path is None:
-        return
-    if any(k in prof for k in ("requests", "duration", "sessions")):
+    if file_path is None or not _is_dag_without_stop_condition(prof, cli):
         return
 
     from aiperf.config.dataset.resolver import _collect_dag_session_and_fork_ids
@@ -660,7 +744,15 @@ def _maybe_set_dag_root_sessions(
 def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> None:
     """Apply dataset-sensitive CLI defaults for trace/fixed/dag datasets."""
 
+    from aiperf.config.dataset.remote_ref import RemoteRef
     from aiperf.config.phases import PhaseType
+
+    if isinstance(cli.input_file, RemoteRef):
+        # The file does not exist locally yet; the access preflight finishes these
+        # decisions after it can read the first record (see dataset/remote/preflight.py).
+        _reject_remote_dag_without_stop_condition(prof, cli)
+        _defer_remote_auto_promotion(prof, cli)
+        return
 
     file_path: Path | None = cli.input_file if cli.input_file is not None else None
 
@@ -679,95 +771,39 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
     _maybe_set_dag_root_sessions(prof, cli, file_path)
 
 
-def _columnar_file_has_timestamp(path: Path) -> bool | None:
-    """Probe known columnar formats, or return None for another format."""
-    suffix = path.suffix.lower()
-    if suffix == ".parquet":
-        try:
-            import pyarrow as pa
-            import pyarrow.parquet as pq
-        except ImportError:
-            return False
-
-        try:
-            return "timestamp_start_unix_ms" in set(pq.read_schema(path).names)
-        except (OSError, pa.ArrowException):
-            return False
-    if suffix in {".arrow", ".ipc"}:
-        from aiperf.dataset.loader.baseten_trace import BasetenTraceDatasetLoader
-
-        return BasetenTraceDatasetLoader.can_load(filename=path)
-    return None
-
-
-def _has_timing_events_timestamp(data: dict) -> bool:
-    events = data.get("timing_events")
-    return bool(
-        events
-        and isinstance(events, list)
-        and isinstance(events[0], dict)
-        and events[0].get("timestamp") is not None
+def _reject_remote_dag_without_stop_condition(
+    prof: dict[str, Any], cli: CLIConfig
+) -> None:
+    """A remote dag_jsonl cannot be counted before download, so require a bound."""
+    if not _is_dag_without_stop_condition(prof, cli):
+        return
+    raise ValueError(
+        "--input-file is a remote reference, so AIPerf cannot count the DAG root "
+        "sessions before the run. Pass --conversation-num, --request-count, or "
+        "--benchmark-duration explicitly."
     )
-
-
-def _first_record_has_timestamp(file_path: object) -> bool:
-    """Return True when a trace file carries timestamp data."""
-    from pathlib import Path
-
-    from aiperf.common.utils import load_json_str, open_text_maybe_gzip
-
-    path = Path(file_path)
-    if not path.is_file():
-        return False
-    if (columnar_result := _columnar_file_has_timestamp(path)) is not None:
-        return columnar_result
-    try:
-        with open_text_maybe_gzip(path) as f:
-            for line in f:
-                if not (stripped := line.strip()):
-                    continue
-                try:
-                    data = load_json_str(stripped)
-                except (ValueError, TypeError):
-                    return False
-                if not isinstance(data, dict):
-                    return False
-                return data.get(
-                    "timestamp"
-                ) is not None or _has_timing_events_timestamp(data)
-    except (EOFError, gzip.BadGzipFile, zlib.error) as e:
-        _logger.warning(f"Truncated or corrupt gzip in '{file_path}': {e}")
-        return False
-    except (OSError, UnicodeDecodeError):
-        return False
-    return False
 
 
 def _count_dataset_records(file_path: object) -> int:
     """Count records across JSONL, Parquet, or Arrow IPC input."""
     from pathlib import Path
 
+    from aiperf.common.record_files import count_parquet_rows, is_parquet_input
     from aiperf.common.utils import open_text_maybe_gzip
 
     path = Path(file_path)
     try:
+        if is_parquet_input(path):
+            try:
+                return count_parquet_rows(path)
+            except ValueError:
+                return 0
         if path.is_dir():
             total = 0
             for jsonl in path.rglob("*.jsonl"):
                 with open(jsonl, encoding="utf-8") as f:
                     total += sum(1 for line in f if line.strip())
             return total
-        if path.suffix.lower() == ".parquet" and path.is_file():
-            try:
-                import pyarrow as pa
-                import pyarrow.parquet as pq
-            except ImportError:
-                return 0
-
-            try:
-                return pq.ParquetFile(path).metadata.num_rows
-            except (OSError, pa.ArrowException):
-                return 0
         if path.suffix.lower() in {".arrow", ".ipc"} and path.is_file():
             from aiperf.dataset.loader.baseten_trace import (
                 count_baseten_records,

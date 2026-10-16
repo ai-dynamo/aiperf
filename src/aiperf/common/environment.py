@@ -425,6 +425,19 @@ class _DatasetSettings(BaseSettings):
         "AIPERF_DATASET_MMAP_CACHE_ENABLED=false, point this variable at a fresh directory, "
         "or delete the cache directory.",
     )
+    REMOTE_CACHE_DIR: Path | None = Field(
+        default=None,
+        description="Directory for `s3://` and `https://` dataset downloads and the "
+        "remote-dataset index. If None, defaults to ~/.cache/aiperf/remote. `hf://` "
+        "files live in the standard Hugging Face cache (HF_HOME). No automatic "
+        "eviction is implemented -- delete the directory to reclaim disk.",
+    )
+    REMOTE_OFFLINE: bool = Field(
+        default=False,
+        description="If True, remote `--input-file` references (hf://, s3://, https://) "
+        "are served only from the local cache, with no network calls. "
+        "HF_HUB_OFFLINE=1 has the same effect.",
+    )
     MMAP_PREFAULT: bool = Field(
         default=True,
         description="If True, each memory-mapped dataset client walks every page of the "

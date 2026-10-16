@@ -924,7 +924,11 @@ def compute_cache_key_from_run(run: BenchmarkRun) -> str | None:
     input_file: Path | None = None
     path = getattr(dataset, "path", None)
     if path is not None:
-        candidate = Path(path)
+        # Hash the cached file's content, not the (possibly redacted) remote URL, so
+        # two versions of one remote ref never share an entry.
+        from aiperf.dataset.remote.service import local_path_for
+
+        candidate = local_path_for(path)
         if candidate.is_file() or candidate.is_dir():
             input_file = candidate
     custom_dataset_type = (
