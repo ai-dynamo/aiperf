@@ -78,6 +78,10 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v28: a forked weka child's first turn now keeps the parent's message layout
+    # (AIPERF_DATASET_WEKA_FORK_PARENT_MESSAGES, default on), so its raw_messages
+    # decode differently for the same trace. The flag is in the key payload, but
+    # the content changed, so bump per this file's contract.
     # v27: streaming chat/completions payloads now always carry
     # stream_options.include_usage, not just when use_server_token_count is set
     # (vLLM only emits the trailing usage chunk -- which carries per-request
@@ -181,7 +185,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    27
+    28
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
@@ -868,6 +872,8 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         "weka_aux_reduction_ratio": Environment.DATASET.WEKA_AUX_REDUCTION_RATIO,
         "weka_worker_group_min": Environment.DATASET.WEKA_WORKER_GROUP_MIN,
         "weka_tool_shaped_messages": (Environment.DATASET.WEKA_TOOL_SHAPED_MESSAGES),
+        # Changes a forked child's turn-0 messages baked into the cached mmap.
+        "weka_fork_parent_messages": (Environment.DATASET.WEKA_FORK_PARENT_MESSAGES),
         # Join-seam stitching knobs: gate whether a far-future continuation is
         # stitched onto an existing LCP chain vs spawned as a new conversation
         # (weka_trace.py -> detect_agent_chains), so they change session
