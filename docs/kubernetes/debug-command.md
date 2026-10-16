@@ -131,8 +131,14 @@ counts valid requests only and is never the denominator. The finding's detail
 line omits the `(errors/total)` counts on an all-error run, where no counter is
 published and only the rate survives.
 
+A job that failed before it produced metrics trips none of those detectors, so the
+section also lists the job's `status.error` (as `Job error (status.error)`) and a
+`DatasetReady=False` condition (`diagnose_job_failure` in the same module). A dataset that
+failed in the dataset-manager pod shows both, with the pod's reason after
+`[dataset-manager pod]`.
+
 The section is omitted entirely when nothing trips, and when no specific job is
-targeted (`-A` or a bare namespace), since the detectors need one CR's status.
+targeted (`-A` or a bare namespace), since the findings need one CR's status.
 
 #### Worker-state source
 
@@ -181,7 +187,7 @@ When `-v` is passed, `debug` calls `read_namespaced_pod_log` on every container 
 1. `Diagnostic Report: <namespace>` header
 2. Pod overview table (`POD`, `STATUS`, `RESTARTS`, `NODE`, `ISSUES`), or a `No pods found` warning
 3. `Problems Found` list (or a `Problems` header with `No problems detected` on a clean namespace)
-4. `Benchmark Diagnostics` list (only when a specific job was targeted and at least one detector tripped)
+4. `Benchmark Diagnostics` list (only when a specific job was targeted and it has a `status.error`, a `DatasetReady=False` condition, or a tripped detector)
 5. `Warning Events` table (or `Recent Events` table under `-v`). Without `-v` and with no warning events, `No warning events found` is printed instead; under `-v` with no events at all the section is omitted
 6. `Node Resources` table (omitted when no nodes could be listed)
 7. `Problem Pod Logs` sections (only under `-v`, only for pods with problems)
@@ -257,6 +263,23 @@ In the report:
 - **Problem Pod Logs** — the tail almost always contains the Python traceback. Common causes: bad dataset URL, missing tokenizer HF token, invalid endpoint URL.
 
 Fix the config and redeploy. If the traceback mentions an AIPerf subsystem, cross-reference it against [ai-debugging-guide.md](./ai-debugging-guide.md).
+
+### Remote dataset failed in the dataset-manager pod
+
+Symptom: `aiperf kube list` shows the job `Failed` shortly after its pods start.
+
+```bash
+aiperf kube debug -j <job>
+```
+
+In the report, **Benchmark Diagnostics** lists `Job error (status.error)` containing
+`[dataset-manager pod] Cannot use <reference>: ...` and `DatasetReady=False (DatasetUnavailable)`.
+Look up the message in the troubleshooting table of
+[Run a published trace](../tutorials/remote-datasets.md#troubleshooting).
+
+If the job fails with neither, and the pod's events show the dataset-manager's startup probe
+failing before it was killed, the download outlasted the startup probe; see
+[Large datasets and the startup probe](../tutorials/remote-datasets.md#large-datasets-and-the-startup-probe).
 
 ### Zero pods scheduled
 

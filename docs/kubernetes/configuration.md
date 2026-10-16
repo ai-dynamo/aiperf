@@ -240,6 +240,45 @@ For clusters using [Kueue](https://kueue.sigs.k8s.io/) for resource management:
 | `queueName` | string | Kueue LocalQueue name for gang-scheduling |
 | `priorityClass` | string | Kueue WorkloadPriorityClass for scheduling priority |
 
+### Remote Datasets
+
+`spec.benchmark.datasets[].path` accepts `hf://`, `s3://` and `https://` references; see
+[Run a published trace](../tutorials/remote-datasets.md#kubernetes) for pinning, credentials
+and presigned URLs. The dataset-manager container downloads into:
+
+| Source | Location in the pod | Override with |
+|---|---|---|
+| `hf://` | `/aiperf/hf_home` (`HF_HOME` is forced; shared `tokenizer-cache` emptyDir) | `HF_HUB_CACHE` |
+| `s3://`, `https://` | `/aiperf/remote-cache` (`remote-cache` emptyDir) | `AIPERF_DATASET_REMOTE_CACHE_DIR` |
+
+Both emptyDirs use the node's ephemeral storage and disappear with the pod. To reuse downloads
+across jobs, or for datasets larger than the node's ephemeral storage, mount a PVC:
+
+```yaml
+spec:
+  podTemplate:
+    volumes:
+      - name: dataset-cache
+        persistentVolumeClaim:
+          claimName: aiperf-dataset-cache
+    volumeMounts:
+      - name: dataset-cache
+        mountPath: /cache
+    env:
+      - name: HF_HUB_CACHE
+        value: /cache/hf
+      - name: AIPERF_DATASET_REMOTE_CACHE_DIR
+        value: /cache/remote
+```
+
+`podTemplate.volumeMounts` reach every container in the controller and worker pods, so use a
+`ReadWriteMany` claim when worker pods can land on other nodes. A value you set for
+`AIPERF_DATASET_REMOTE_CACHE_DIR` wins over AIPerf's, and a mount of yours at
+`/aiperf/remote-cache` replaces AIPerf's emptyDir there.
+
+A large download can outlast the dataset-manager's startup probe (about 150 s by default); see
+[Large datasets and the startup probe](../tutorials/remote-datasets.md#large-datasets-and-the-startup-probe).
+
 ---
 
 ## CLI Flags
