@@ -42,7 +42,11 @@ of the metrics reference.
 - A server running **speculative decoding** with **per-request metrics enabled**. Either:
   - **vLLM** with `--per-request-spec-decode-metrics summary` (or `detailed`). The field
     shape tracks vLLM [PR #48915](https://github.com/vllm-project/vllm/pull/48915) --
-    confirm your vLLM build includes it.
+    confirm your vLLM build includes it. For `--endpoint-type responses`
+    (`/v1/responses`), the build must also include
+    [PR #58656](https://github.com/vllm-project/vllm/pull/58656) (pending at the time of
+    writing); earlier versions return `metrics.speculative_decoding: null` on
+    `/v1/responses`, and AIPerf reports no acceptance metrics.
   - **TensorRT-LLM** with `per_request_spec_decode_stats: true` in the YAML passed to
     `--extra_llm_api_options`. PyTorch backend only.
 
@@ -51,9 +55,11 @@ of the metrics reference.
 - **Direct to the engine.** Behind Dynamo the custom stats field is currently stripped, so
   the per-request path is unavailable there (use the server-scrape path instead).
 - Streaming works out of the box, though the two engines place the payload differently:
-  vLLM sends it on the trailing usage chunk -- so AIPerf requests
-  `stream_options.include_usage` on every streaming run -- while TensorRT-LLM attaches it
-  to the terminal chunk's choice. No extra flag is needed for either.
+  on chat and completions, vLLM sends it on the trailing usage chunk -- so AIPerf requests
+  `stream_options.include_usage` on every streaming chat/completions run -- while
+  TensorRT-LLM attaches it to the terminal chunk's choice. On the Responses API, vLLM puts
+  it on the `response.completed` event's `response` object. No extra flag is needed for
+  any of them.
 
 ---
 
