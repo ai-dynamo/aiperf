@@ -14,6 +14,7 @@ from aiperf.common.models import (
     Conversation,
     ErrorDetails,
     ParsedResponse,
+    ProcessHealth,
     RequestRecord,
     SSEMessage,
     TextResponseData,
@@ -1240,3 +1241,45 @@ class TestNoRequestCredit:
         assert credit_return.error is None
         assert credit_return.first_token_sent is False
         assert credit_return.credit.id == 42
+
+
+class TestHealthMessageStreamChunks:
+    """Health reports carry the transport's streamed-chunk count to the watchdog."""
+
+    async def test_create_health_message_reports_transport_stream_chunks(
+        self, mock_worker, monkeypatch
+    ):
+        monkeypatch.setattr(
+            mock_worker.inference_client,
+            "transport",
+            SimpleNamespace(stream_chunks_received=17),
+        )
+        health = ProcessHealth(
+            pid=1, create_time=0.0, uptime=0.0, cpu_usage=0.0, memory_usage=0
+        )
+
+        message = mock_worker.create_health_message(health)
+
+        assert message.task_stats.stream_chunks_received == 17
+        assert mock_worker.task_stats.stream_chunks_received == 0, (
+            "building a health message must not mutate the worker's task stats"
+        )
+
+    async def test_create_health_message_tolerates_transport_without_counter(
+        self, mock_worker, monkeypatch
+    ):
+        """A plugin transport written before the counter existed reports 0.
+
+        TransportProtocol is structural, and the health task logs and retries
+        on error, so a missing attribute would silently stop health reports.
+        """
+        monkeypatch.setattr(
+            mock_worker.inference_client, "transport", SimpleNamespace()
+        )
+        health = ProcessHealth(
+            pid=1, create_time=0.0, uptime=0.0, cpu_usage=0.0, memory_usage=0
+        )
+
+        message = mock_worker.create_health_message(health)
+
+        assert message.task_stats.stream_chunks_received == 0
