@@ -122,8 +122,14 @@ async def _downloaded_first_record_has_timestamp(probe: ProbeResult) -> bool:
 
 
 async def _first_shard_has_timestamp(probe: ProbeResult, shard: str) -> bool:
-    resolver = service.get_resolver(probe.ref.scheme)
-    path = await service.with_transient_retry(lambda: resolver.fetch_file(probe, shard))
+    # An already downloaded entry is read in place: no network call, and no write
+    # into an entry the index vouches for.
+    path = await asyncio.to_thread(service.indexed_file, probe.ref, shard)
+    if path is None:
+        resolver = service.get_resolver(probe.ref.scheme)
+        path = await service.with_transient_retry(
+            lambda: resolver.fetch_file(probe, shard)
+        )
     return await asyncio.to_thread(first_record_has_timestamp, path)
 
 
@@ -131,8 +137,8 @@ async def remote_first_record_has_timestamp(probe: ProbeResult) -> bool:
     """first_record_has_timestamp for a probed remote file, read from the fewest bytes.
 
     A parquet folder (a Hugging Face layout or a manifest folder) is sniffed from
-    its first listed shard alone, fetched into the cache the later download
-    reuses. Other files escalate prefix reads through PREFIX_STEPS. Offline mode
+    its first listed shard alone: read in place from an indexed download, or else
+    fetched into the cache the later download reuses. Other files escalate prefix reads through PREFIX_STEPS. Offline mode
     (which allows no network reads), single columnar files (whose schema sits in
     the footer), and a first record the sniff leaves undecided (longer than the
     last step, or past MAX_FIRST_LINE_BYTES once inflated) read the cached

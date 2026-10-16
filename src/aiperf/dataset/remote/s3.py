@@ -51,6 +51,7 @@ from aiperf.dataset.remote.manifest import (
     parse_manifest,
 )
 from aiperf.dataset.remote.models import ProbeResult, RemoteFile, ResolvedSource
+from aiperf.dataset.remote.service import indexed_file
 
 T = TypeVar("T")
 _logger = AIPerfLogger(__name__)
@@ -386,13 +387,22 @@ def _folder_shards(
 
 
 def _object_dest(entry: Path, probe: ProbeResult, key: str) -> Path:
-    """Where the object at ``key`` lives in the cache entry of ``probe``."""
+    """Where the object at ``key`` lives in the cache entry of ``probe``.
+
+    Raises ValueError when ``key`` is neither the probed object nor a file under
+    the probed folder that maps to a local path.
+    """
+    data_key = probe.data_relpath or ""
     local = entry / probe.filename
     if not probe.data_is_dir:
+        if key != data_key:
+            raise ValueError(f"{key!r} is not the probed object {data_key!r}")
         return local
-    data_key = probe.data_relpath or ""
     prefix = f"{data_key}/" if data_key else ""
-    return local.joinpath(*key[len(prefix) :].split("/"))
+    rel = key[len(prefix) :]
+    if not (key.startswith(prefix) and _is_safe_relpath(rel)):
+        raise ValueError(f"{key!r} is not a file under the probed folder {data_key!r}")
+    return local.joinpath(*rel.split("/"))
 
 
 async def _checked_dest(
@@ -459,25 +469,14 @@ def _reuse_fetched(entry: Path, obj: _Object, dest: Path) -> RemoteFile | None:
     """
     marker = _fetched_marker(entry, obj.key)
     if _fetched_matches(marker, obj.etag, dest):
-        try:
+        with contextlib.suppress(OSError):
             return RemoteFile(
                 path=obj.key,
                 sha256=hash_file_bytes(dest),
                 size_bytes=dest.stat().st_size,
             )
-        except OSError:
-            pass
     marker.unlink(missing_ok=True)
     return None
-
-
-def _require_folder_file(probe: ProbeResult, key: str) -> None:
-    """Raise ValueError unless ``key`` names a file under the probed folder."""
-    data_key = probe.data_relpath or ""
-    prefix = f"{data_key}/" if data_key else ""
-    rel = key[len(prefix) :]
-    if not (probe.data_is_dir and key.startswith(prefix) and _is_safe_relpath(rel)):
-        raise ValueError(f"{key!r} is not a file under the probed folder {data_key!r}")
 
 
 class S3SourceResolver:
@@ -725,11 +724,15 @@ class S3SourceResolver:
         Writes under the same ``entry_lock`` as ``materialize``, since concurrent
         runs share the cache. The object's ETag is recorded beside the entry so
         ``materialize`` (and a later ``fetch_file``) reuse this copy instead of
-        downloading it again.
+        downloading it again. An entry already in the index is never rewritten:
+        its copy is returned as is.
         """
-        _require_folder_file(probe, relpath)
         ref = probe.ref
+        if not probe.data_is_dir:
+            raise ValueError(f"{ref.display} is a single object, not a folder")
+        entry = entry_dir(ref)
         stage = RemoteStage.ACCESS
+        dest = await _checked_dest(entry, probe, relpath, stage=stage)
         bucket = ref.parsed.location
         head = await self._head(ref, {"Bucket": bucket, "Key": relpath}, stage)
         if head is None:
@@ -738,10 +741,11 @@ class S3SourceResolver:
         params = {"Bucket": bucket, "Key": relpath, "IfMatch": etag}
         if (version_id := _version_id(head)) is not None:
             params["VersionId"] = version_id
-        entry = entry_dir(ref)
-        dest = await _checked_dest(entry, probe, relpath, stage=stage)
         marker = _fetched_marker(entry, relpath)
         async with _entry_locked(ref, entry, stage):
+            # Rechecked under the lock: another run may have finished materializing.
+            if indexed := await asyncio.to_thread(indexed_file, ref, relpath):
+                return indexed
             if await asyncio.to_thread(_fetched_matches, marker, etag, dest):
                 return dest
             await _call(
