@@ -174,10 +174,10 @@ def _parse_sequence_as_tuple_list(input: Any) -> list[tuple[str, Any]]:
     """Parse a list/tuple/set into a list of (key, value) tuples."""
     output: list[tuple[str, Any]] = []
     for item in input:
-        # If item is already a 2-element sequence (key-value pair), convert directly to tuple
+        # A parsed pair already carries its intended value type.
         if isinstance(item, (list, tuple)) and len(item) == 2:
             key, value = item
-            output.append((str(key), coerce_value(value)))
+            output.append((str(key), value))
         else:
             res = parse_str_or_dict_as_tuple_list(item)
             if res is not None:
@@ -215,7 +215,7 @@ def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] 
         - If the string starts with a '{', it is parsed as a JSON string.
         - Otherwise, it splits the string by commas and then for each item, it splits the item by colons
         into key and value, trims any whitespace, and coerces the value to the correct type.
-    - If the input is a dictionary, it is converted to a list of tuples by key and value pairs.
+    - If the input is a dictionary, its value types are preserved in the resulting pairs.
     - If the input is a list, it recursively calls this function on each item, and aggregates the results.
         - If the item is already a 2-element sequence (key-value pair), it is converted directly to a tuple.
     - Otherwise, a ValueError is raised.
@@ -232,7 +232,7 @@ def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] 
     if isinstance(input, (list, tuple, set)):
         return _parse_sequence_as_tuple_list(input)
     if isinstance(input, dict):
-        return [(key, coerce_value(value)) for key, value in input.items()]
+        return list(input.items())
     if isinstance(input, str):
         return _parse_str_as_tuple_list(input)
 
