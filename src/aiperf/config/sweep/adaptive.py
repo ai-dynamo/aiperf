@@ -136,7 +136,38 @@ class SearchSpaceDimension(BaseConfig):
                 f"search-space dim {self.path!r}: prior='log-uniform' requires "
                 f"lo > 0, got lo={self.lo}."
             )
+        self._check_field_bounds()
         return self
+
+    def _check_field_bounds(self) -> None:
+        """Apply field constraints independently of the phase selector or input source."""
+        segments = self.path.split(".")
+        field = segments[-1]
+        if field == "rate_series":
+            raise ValueError(
+                f"search-space dim {self.path!r}: rate_series is a piecewise-linear "
+                "rate schedule, not a valid adaptive-search dimension. "
+                "Supply a fixed rate_series instead, or search rate/rate_ramp."
+            )
+        if field == "users":
+            if self.kind != "int":
+                raise ValueError(
+                    f"search-space dim {self.path!r}: 'users' must use ':int' kind."
+                )
+            if self.lo < 1:
+                raise ValueError(
+                    f"search-space dim {self.path!r}: lower bound must be >= 1."
+                )
+        # Cancellation rate is a percentage that allows zero, unlike request rate.
+        if field == "rate" and segments[-2:-1] == ["cancellation"]:
+            return
+        is_rate_ramp_duration = segments[-2:] == ["rate_ramp", "duration"]
+        if (
+            field in {"rate", "smoothness", "rate_ramp"} or is_rate_ramp_duration
+        ) and self.lo <= 0:
+            raise ValueError(
+                f"search-space dim {self.path!r}: lower bound must be > 0."
+            )
 
 
 class SLOTier(BaseConfig):
