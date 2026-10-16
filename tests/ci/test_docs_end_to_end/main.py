@@ -123,11 +123,16 @@ def main():
         shard_bins: list[list] = [[] for _ in range(args.shard_total)]
         shard_load: list[int] = [0] * args.shard_total
         # Tuple key: heaviest first, then (file_path, start_line) for a
-        # stable, OS-independent secondary sort. ``Path.rglob`` returns
-        # files in filesystem-dependent order (macOS vs Linux differ), so
-        # without the tuple tie-break the same code would assign tests to
-        # different shards locally vs in CI — a real bug we hit on the
-        # 2026-05-19 rebalance pass.
+        # stable, OS-independent secondary sort. ``Path.rglob`` returns files
+        # in filesystem-dependent order (macOS vs Linux differ), so without
+        # the tie-break the same code would assign tests to different shards
+        # locally vs in CI.
+        #
+        # Packing individual commands is safe only while a tagged block that
+        # writes a file also runs against it in the same block; nothing
+        # currently reads a file another block created. That invariant is
+        # upheld by convention here -- a guard test arrives with the guides
+        # that first depend on it.
         sorted_cmds = sorted(
             server.aiperf_commands,
             key=lambda c: (-c.weight, c.file_path, c.start_line),
