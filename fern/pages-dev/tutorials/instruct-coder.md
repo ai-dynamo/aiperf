@@ -47,12 +47,15 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --public-dataset instruct_coder \
+    --output-tokens-mean 1024 \
     --request-count 10 \
     --concurrency 4
 ```
 {/* /aiperf-run-vllm-default-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
+
+This sample was captured without `--output-tokens-mean`, so its output sequence lengths can exceed the 1024-token mean set above.
 
 ```
 

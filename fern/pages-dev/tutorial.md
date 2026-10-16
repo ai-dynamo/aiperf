@@ -39,6 +39,7 @@ aiperf profile \
     --streaming \
     --request-rate 32 \
     --request-count 64 \
+    --output-tokens-mean 256 \
     --url localhost:8000
 ```
 {/* /aiperf-run-vllm-default-openai-endpoint-server */}

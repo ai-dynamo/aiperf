@@ -47,12 +47,15 @@ aiperf profile \
     --streaming \
     --url localhost:8000 \
     --public-dataset mmstar \
+    --output-tokens-mean 100 \
     --request-count 10 \
     --concurrency 4
 ```
 {/* /aiperf-run-vllm-vision-openai-endpoint-server */}
 
 **Sample Output (Successful Run):**
+
+This sample was captured without `--output-tokens-mean`, so its output sequence lengths can exceed the 100-token mean set above.
 
 ```
                                         NVIDIA AIPerf | LLM Metrics
