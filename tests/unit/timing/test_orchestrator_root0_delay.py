@@ -11,6 +11,7 @@ delay would otherwise be dropped (observed: 250 ms authored, ~2.5 ms applied).
 from __future__ import annotations
 
 import asyncio
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -134,8 +135,7 @@ async def test_sleep_think_ms_woken_but_still_sendable_keeps_think_time():
     """A wake at the sending cutoff must not shorten the think-time of a turn
     that will still be sent (nested spine after --num-conversations)."""
     orch = _bare_sleeper()
-    loop = asyncio.get_running_loop()
-    start = loop.time()
+    start = time.perf_counter()
     task = asyncio.create_task(orch._sleep_think_ms(0.2, lambda: True))
     await asyncio.sleep(0)
     orch._wake_think_time_sleepers()
@@ -143,10 +143,13 @@ async def test_sleep_think_ms_woken_but_still_sendable_keeps_think_time():
         await asyncio.sleep(0)
     assert not task.done()
     await asyncio.wait_for(task, timeout=1.0)
-    # loop.time() is a 15.625 ms tick on Windows and the loop may fire a timer
-    # one tick early, so a truthful 200 ms wait measures as 0.1875 there. The
-    # claim under test is that the think-time was kept, not dropped (~0).
-    assert loop.time() - start >= 0.15
+    # perf_counter, not loop.time(): before 3.13 loop.time() is GetTickCount64
+    # on Windows, which advances one 15.625 ms tick at a time and under-reports
+    # a truthful 200 ms wait as 187.5 ms. The margin below the nominal 200 ms is
+    # for asyncio itself, which may end a timer up to one loop._clock_resolution
+    # (that same 15.625 ms) early; the claim under test is that the think-time
+    # was kept, not dropped (~0).
+    assert time.perf_counter() - start >= 0.18
 
 
 @pytest.mark.asyncio
