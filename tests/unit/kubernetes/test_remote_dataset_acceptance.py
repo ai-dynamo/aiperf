@@ -528,3 +528,84 @@ def test_resolve_spec_and_name_presigned_input_file_without_secret_env_is_reject
     with pytest.raises(ValueError, match="AIPERF_INJECTED_DATASET_URLS") as exc_info:
         resolve(cli_config, _kube_options())
     assert "topsecret" not in str(exc_info.value)
+
+
+_REDACTED_NO_EXPIRY = _PRESIGNED_NO_EXPIRY.replace("topsecret", REDACTED_VALUE)
+_URLS_SECRET = {"AIPERF_INJECTED_DATASET_URLS": "dataset-urls/urls"}
+
+
+def _write_job_cr(tmp_path: Path, spec: dict[str, object]) -> Path:
+    cr = {
+        "apiVersion": "aiperf.nvidia.com/v1alpha1",
+        "kind": "AIPerfJob",
+        "metadata": {"name": "remote-job"},
+        "spec": spec,
+    }
+    config_file = tmp_path / "job.yaml"
+    config_file.write_text(yaml.safe_dump(cr, sort_keys=False))
+    return config_file
+
+
+def _host_denied(ref: str) -> AbstractContextManager[AsyncMock]:
+    """This machine is refused, as S3 refuses a URL whose signature is ``<redacted>``."""
+    return patch(
+        "aiperf.dataset.remote.service.probe_ref",
+        AsyncMock(side_effect=_access_error(RemoteErrorKind.AUTH_DENIED, ref)),
+    )
+
+
+def test_resolve_spec_and_name_generated_cr_with_redacted_presigned_ref_resubmits_without_network(
+    remote_access: AsyncMock, tmp_path: Path
+) -> None:
+    cli_config = CLIConfig(
+        model_names=["m"],
+        urls=["http://localhost:8000"],
+        input_file=_PRESIGNED_NO_EXPIRY,
+        custom_dataset_type="mooncake_trace",
+    )
+    kube_options = _kube_options(env_from_secrets=_URLS_SECRET)
+    generated, _, _ = generate_cmd._resolve_spec_and_name(cli_config, kube_options)
+    config_file = _write_job_cr(tmp_path, generated)
+    with (
+        _host_denied(_REDACTED_NO_EXPIRY) as probe,
+        patch("aiperf.kubernetes.console.print_warning") as warn,
+    ):
+        spec, _, _ = profile_cmd._resolve_spec_and_name(
+            CLIConfig(config_file=config_file), kube_options
+        )
+    probe.assert_not_awaited()
+    warn.assert_not_called()
+    assert spec["benchmark"]["datasets"][0]["path"] == {
+        "ref": _REDACTED_NO_EXPIRY,
+        "resolved_version": SHA,
+    }
+
+
+def test_resolve_spec_and_name_unpinned_redacted_cr_warns_and_submits_unpinned(
+    tmp_path: Path,
+) -> None:
+    config_file = _write_job_cr(tmp_path, _job_spec(_REDACTED_NO_EXPIRY))
+    with (
+        _host_denied(_REDACTED_NO_EXPIRY) as probe,
+        patch("aiperf.kubernetes.console.print_warning") as warn,
+    ):
+        spec, _, _ = profile_cmd._resolve_spec_and_name(
+            CLIConfig(config_file=config_file),
+            _kube_options(env_from_secrets=_URLS_SECRET),
+        )
+    probe.assert_not_awaited()
+    assert spec["benchmark"]["datasets"][0]["path"] == _REDACTED_NO_EXPIRY
+    assert _UNPINNED_WARNING in warn.call_args_list[0].args[0]
+
+
+def test_pin_remote_datasets_for_kubernetes_redacted_ref_with_deferred_promotion_raises() -> (
+    None
+):
+    benchmark = _remote_benchmark(_REDACTED_NO_EXPIRY)
+    assert benchmark.get_default_dataset().remote_fixed_schedule_check is not None
+    with (
+        _host_denied(_REDACTED_NO_EXPIRY) as probe,
+        pytest.raises(ConfigurationError, match="--fixed-schedule"),
+    ):
+        pin_remote_datasets_for_kubernetes(benchmark)
+    probe.assert_not_awaited()
