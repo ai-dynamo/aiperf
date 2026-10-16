@@ -2413,6 +2413,21 @@ public_dataset_loader:
       default_block_size: 64
       default_prompt_corpus: coding
 
+  mooncake_hf:
+    class: aiperf.dataset.loader.hf_mooncake_trace:HFMooncakeTraceDatasetLoader
+    description: |
+      Generic HuggingFace-backed Mooncake trajectory dataset loader. Use this for
+      compatible trajectory corpora without adding a pinned alias for each
+      dataset. Selected automatically when you pass --hf-mooncake-dataset
+      (which supplies the HuggingFace dataset repo name); passing
+      --public-dataset mooncake_hf explicitly is equivalent.
+      Use --mooncake-trace-to-hf-mapping to map source columns to Mooncake fields.
+      Usage: --hf-mooncake-dataset org/trajectory-dataset
+    metadata:
+      hf_split: test
+      streaming: true
+      is_trace: true
+
   # ---------------------------------------------------------------------------
   # SPEED-Bench. Prompt text for rows whose source datasets forbid
   # redistribution is resolved on first use via the vendored upstream prepare
