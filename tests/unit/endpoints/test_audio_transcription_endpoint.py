@@ -7,8 +7,9 @@ import base64
 import orjson
 import pytest
 from pydantic import TypeAdapter
+from pytest import param
 
-from aiperf.common.models import Audio, Text, Turn
+from aiperf.common.models import Audio, Text, TextResponse, Turn
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.endpoints.openai_audio_transcription import (
     AudioTranscriptionEndpoint,
@@ -175,6 +176,56 @@ class TestAudioTranscriptionEndpoint:
         result = endpoint.parse_response(response)
         assert result is not None
         assert result.usage is None
+
+    @pytest.mark.parametrize(
+        ("transcript", "content_type"),
+        [
+            param('42', "text/plain", id="json-number"),
+            param('{"text":"hello"}', "Text/Plain; charset=utf-8", id="json-object-charset"),
+        ],
+    )  # fmt: skip
+    def test_parse_response_plain_text_preserves_json_looking_transcript(
+        self,
+        endpoint: AudioTranscriptionEndpoint,
+        transcript: str,
+        content_type: str,
+    ) -> None:
+        response = TextResponse(perf_ns=123, text=transcript, content_type=content_type)
+
+        result = endpoint.parse_response(response)
+
+        assert result is not None
+        assert result.data.get_text() == transcript
+        assert result.usage is None
+        assert result.perf_ns == response.perf_ns
+
+    def test_parse_response_json_text_response(
+        self, endpoint: AudioTranscriptionEndpoint
+    ) -> None:
+        response = TextResponse(
+            perf_ns=123,
+            text='{"text":"hello","usage":{"prompt_tokens":10}}',
+            content_type="application/json",
+        )
+
+        result = endpoint.parse_response(response)
+
+        assert result is not None
+        assert result.data.get_text() == "hello"
+        assert result.usage == {"prompt_tokens": 10}
+
+    @pytest.mark.parametrize(
+        "body",
+        [
+            param('[{"error":"backend overloaded"}]', id="array"),
+            param("null", id="null"),
+        ],
+    )  # fmt: skip
+    def test_parse_response_non_object_json_returns_none(
+        self, endpoint: AudioTranscriptionEndpoint, body: str
+    ) -> None:
+        response = TextResponse(perf_ns=123, text=body, content_type="application/json")
+        assert endpoint.parse_response(response) is None
 
     def test_parse_response_empty_body_returns_none(
         self, endpoint: AudioTranscriptionEndpoint
