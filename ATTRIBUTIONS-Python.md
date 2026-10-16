@@ -8041,7 +8041,7 @@ third-party archives.
   - `repository`: https://github.com/pandas-dev/pandas
 
 
-## pillow (12.2.0)
+## pillow (12.3.0)
 
 ### Licenses
 License: `MIT-CMU`
