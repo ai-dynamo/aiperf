@@ -1166,6 +1166,12 @@ class RequestInfo(RecordContext):
         description="Response ID from the previous turn (e.g. 'resp_<hash>') "
         "used for stateful chaining in the Responses API.",
     )
+    system_prompt_in_stored_history: bool = Field(
+        default=False,
+        description="Whether the stored server-side history behind "
+        "previous_response_id already contains the system prompt as an input "
+        "item. Only meaningful when previous_response_id is set.",
+    )
 
 
 def _wall_ns_at_start_perf(data: dict[str, Any]) -> int:
