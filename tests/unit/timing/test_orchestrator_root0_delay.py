@@ -11,6 +11,7 @@ delay would otherwise be dropped (observed: 250 ms authored, ~2.5 ms applied).
 from __future__ import annotations
 
 import asyncio
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -143,7 +144,8 @@ async def test_sleep_think_ms_woken_but_still_sendable_keeps_think_time():
         await asyncio.sleep(0)
     assert not task.done()
     await asyncio.wait_for(task, timeout=1.0)
-    assert loop.time() - start >= 0.19
+    # asyncio fires timers up to one clock tick early (15.625 ms on Windows).
+    assert loop.time() - start >= 0.19 - time.get_clock_info("monotonic").resolution
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,7 @@ Covers the delayed-join semantics:
 from __future__ import annotations
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -516,7 +517,8 @@ async def test_think_time_kept_when_join_still_sendable_at_cutoff():
     issuer.dispatch_join_turn.assert_not_awaited()
 
     await asyncio.wait_for(release, timeout=1.0)
-    assert loop.time() - start >= 0.19
+    # asyncio fires timers up to one clock tick early (15.625 ms on Windows).
+    assert loop.time() - start >= 0.19 - time.get_clock_info("monotonic").resolution
     issuer.dispatch_join_turn.assert_awaited_once()
     issuer.can_dispatch_join.assert_called_with(0)
     assert orch.stats.parents_resumed == 1
