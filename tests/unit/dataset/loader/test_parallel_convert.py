@@ -82,7 +82,7 @@ def test_parallel_convert_matches_in_process(real_prompt_generator):
     pg._hash_id_corpus_rng.set_trace_id(trace_id)
     pg._cache.clear()
 
-    # Mixed layout: one exact-tile (8/4) and one last-partial (6 = 4 + 2).
+    # Mixed layout: exact-tile (8/4) and last-partial (6 = 4 + 2).
     traces = [
         {
             "hash_ids": [11, 22],
@@ -101,6 +101,7 @@ def test_parallel_convert_matches_in_process(real_prompt_generator):
     ]
 
     in_process_prompts: list[str] = []
+    joined_block_prompts: list[str] = []
     for tr in traces:
         tokens = pg._build_token_sequence(
             tr["input_length"], tr["hash_ids"], block_size
@@ -108,6 +109,17 @@ def test_parallel_convert_matches_in_process(real_prompt_generator):
         in_process_prompts.append(
             pg.tokenizer.decode(tokens, skip_special_tokens=False)
         )
+        joined_block_prompts.append(
+            "".join(
+                pg.tokenizer.decode(pg._cache[hid], skip_special_tokens=False)
+                for hid in tr["hash_ids"]
+            )
+        )
+
+    assert in_process_prompts[0] != joined_block_prompts[0], (
+        "oracle is degenerate: decode(full sequence) accidentally equals "
+        "joined per-block strings"
+    )
 
     # Reset PG state so the worker sees a fresh trace_id scope.
     pg._cache.clear()
@@ -205,3 +217,32 @@ def test_parallel_convert_prefix_only_token_count(real_prompt_generator):
     prompt = results[0][1][0][2]
     token_count = len(pg.tokenizer.encode(prompt, add_special_tokens=False))
     assert token_count == input_length
+
+
+def test_parallel_convert_prefix_tail_matches_cold_and_warm_cache(
+    real_prompt_generator,
+):
+    """Unhashed tail must not change when the final hash_id is already cached.
+
+    A same-hash exact block before prefix_tail leaves RNG in the same
+    post-block state as a cold miss, so it would not catch a skip-reseed
+    bug. Two prefix_tail rows in one batch does: the second hit happens
+    after the first tail has already advanced ``hash_rng``.
+    """
+    pg = real_prompt_generator
+    block_size = 4
+    prefix_tail = {
+        "hash_ids": [101],
+        "input_length": 6,
+        "output_length": 4,
+        "timestamp": 2.0,
+        "delay": None,
+    }
+    duplicate = _drive_worker_inproc(
+        pg,
+        [("s1", [prefix_tail, dict(prefix_tail)])],
+        "warm_cache_tail_trace",
+        block_size,
+    )
+    first_dup, second_dup = duplicate[0][1][0][2], duplicate[0][1][1][2]
+    assert first_dup == second_dup

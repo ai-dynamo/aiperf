@@ -16,6 +16,9 @@ by ``BaseTraceDatasetLoader.convert_to_conversations``. Both paths reseed
 ``HashIdRandomGenerator`` identically per ``(seed, trace_id, hash_id)`` so the
 two paths produce byte-identical output for the exact-tile and
 last-block-partial input layouts emitted by Mooncake/Bailian/BurstGPT loaders.
+Block token IDs are cached per worker. Decode runs on unique blocks plus
+one-token-overlap continuations so shared prefixes are not re-decoded, and
+stitched text matches ``decode(full sequence)``.
 """
 
 from __future__ import annotations
@@ -34,6 +37,11 @@ from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
 from aiperf.common.models import Conversation, Text, Turn
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.dataset._mp_context import get_loader_mp_context
+from aiperf.dataset.loader.hash_ids_synthesis import (
+    OverlapIntern,
+    overlap_decode_recipe,
+    stitch_overlap_decoded,
+)
 
 
 @dataclass(slots=True)
@@ -120,6 +128,59 @@ def _init_worker(args: _WorkerInitArgs) -> None:
     )
 
 
+def _assemble_hash_id_tokens(
+    *,
+    hash_ids: list[int],
+    input_length: int,
+    block_size: int,
+    get_block_tokens: Callable[[int, int], list[int]],
+    sample_tokens: Callable[..., list[int]],
+    corpus: np.ndarray,
+    hash_rng: HashIdRandomGenerator,
+) -> list[list[int]]:
+    m = len(hash_ids)
+    total_hashed = m * block_size
+    final_block_size = input_length - (m - 1) * block_size
+
+    if total_hashed > input_length and (
+        final_block_size <= 0 or final_block_size > block_size
+    ):
+        raise ConfigurationError(
+            f"Input length: {input_length}, Hash IDs: {hash_ids}, "
+            f"Block size: {block_size} are not compatible. The final "
+            f"hash block size: {final_block_size} must be greater than "
+            f"0 and less than or equal to {block_size}."
+        )
+
+    pieces: list[list[int]] = []
+    if total_hashed > input_length:
+        for i, hid in enumerate(hash_ids):
+            size = final_block_size if i == m - 1 else block_size
+            pieces.append(get_block_tokens(hid, size))
+        return pieces
+
+    hashed_len = 0
+    for hid in hash_ids:
+        block = get_block_tokens(hid, block_size)
+        pieces.append(block)
+        hashed_len += len(block)
+    tail = input_length - hashed_len
+    if tail > 0:
+        pieces.append(sample_tokens(corpus, tail, hash_rng, None))
+    return pieces
+
+
+def _fill_decoded_texts(
+    decode: Callable[..., str],
+    unique_sequences: list[list[int]],
+    decoded_texts: list[str],
+) -> None:
+    while len(decoded_texts) < len(unique_sequences):
+        decoded_texts.append(
+            decode(unique_sequences[len(decoded_texts)], skip_special_tokens=False)
+        )
+
+
 def _process_batch(
     batch: list[tuple[str, list[dict]]],
 ) -> list[tuple[str, list[tuple]]]:
@@ -136,14 +197,12 @@ def _process_batch(
     decode = _worker_state.tokenizer.decode
     sample_tokens = _worker_state.sample_tokens
     block_cache = _worker_state.block_cache
+    intern = OverlapIntern()
+    decoded_texts: list[str] = []
 
     def get_block_tokens(hash_id: int, size: int) -> list[int]:
         cached = block_cache.get(hash_id)
-        if cached is None:
-            hash_rng.reseed_for_hash_id(hash_id)
-            cached = sample_tokens(corpus, size, hash_rng, sep_token)
-            block_cache[hash_id] = cached
-        elif len(cached) != size:
+        if cached is not None and len(cached) != size:
             # A hash_id identifies a fixed block of content, so it can only ever
             # have one size. The same id at two sizes means a corrupt trace or a
             # block_size that disagrees with the recorded blocks.
@@ -153,6 +212,15 @@ def _process_batch(
                 f"single fixed block size; inconsistent sizes indicate a corrupt "
                 f"trace or a --isl-block-size that disagrees with the recorded blocks."
             )
+        # Always reseed + sample so hash_rng ends in the same post-block state
+        # as a cache miss. Prefix-only tails call sample_tokens on this RNG;
+        # skipping the draw on a hit would make the tail depend on earlier
+        # worker work.
+        hash_rng.reseed_for_hash_id(hash_id)
+        sampled = sample_tokens(corpus, size, hash_rng, sep_token)
+        if cached is None:
+            block_cache[hash_id] = sampled
+            return sampled
         return cached
 
     results = []
@@ -169,26 +237,21 @@ def _process_batch(
                 # overshoot input_length the implied final partial block goes
                 # non-positive, which serial rejects -- raise the same error
                 # here instead of silently emitting a short/empty block.
-                hash_ids = trace["hash_ids"]
-                input_length = trace["input_length"]
-                m = len(hash_ids)
-                final_block_size = input_length - (m - 1) * block_size
-
-                if m * block_size > input_length and (
-                    final_block_size <= 0 or final_block_size > block_size
-                ):
-                    raise ConfigurationError(
-                        f"Input length: {input_length}, Hash IDs: {hash_ids}, "
-                        f"Block size: {block_size} are not compatible. The final "
-                        f"hash block size: {final_block_size} must be greater than "
-                        f"0 and less than or equal to {block_size}."
-                    )
-
-                tokens: list[int] = []
-                for i, hid in enumerate(hash_ids):
-                    size = final_block_size if i == m - 1 else block_size
-                    tokens.extend(get_block_tokens(hid, size))
-                prompt = decode(tokens, skip_special_tokens=False)
+                pieces = _assemble_hash_id_tokens(
+                    hash_ids=trace["hash_ids"],
+                    input_length=trace["input_length"],
+                    block_size=block_size,
+                    get_block_tokens=get_block_tokens,
+                    sample_tokens=sample_tokens,
+                    corpus=corpus,
+                    hash_rng=hash_rng,
+                )
+                keys: list[int | None] = list(trace["hash_ids"])
+                if len(pieces) > len(keys):
+                    keys.append(None)
+                recipe = overlap_decode_recipe(pieces, keys, intern)
+                _fill_decoded_texts(decode, intern.sequences, decoded_texts)
+                prompt = stitch_overlap_decoded(decoded_texts, recipe)
             else:
                 prompt = ""
 
