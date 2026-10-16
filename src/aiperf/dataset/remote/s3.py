@@ -5,12 +5,15 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import threading
-from collections.abc import Awaitable, Callable, Iterable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Iterator
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Literal, NamedTuple, NoReturn, TypeVar
 from urllib.parse import quote
+
+from filelock import Timeout
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.constants import IS_WINDOWS
@@ -25,10 +28,13 @@ from aiperf.common.record_files import (
     shard_splits,
 )
 from aiperf.config.dataset.remote_ref import RemoteRef
+from aiperf.dataset.mmap_cache import hash_file_bytes
 from aiperf.dataset.remote.cache import (
     digest,
     entry_dir,
+    entry_lock,
     local_fs_error,
+    lock_timeout_error,
     write_atomically,
 )
 from aiperf.dataset.remote.errors import (
@@ -392,6 +398,101 @@ def _folder_shards(
     return [prefix + n for n in chosen]
 
 
+def _object_dest(entry: Path, probe: ProbeResult, key: str) -> Path:
+    """Where the object at ``key`` lives in the cache entry of ``probe``."""
+    local = entry / probe.filename
+    if not probe.data_is_dir:
+        return local
+    data_key = probe.data_relpath or ""
+    prefix = f"{data_key}/" if data_key else ""
+    return local.joinpath(*key[len(prefix) :].split("/"))
+
+
+async def _checked_dest(
+    entry: Path, probe: ProbeResult, key: str, *, stage: RemoteStage
+) -> Path:
+    """``_object_dest``, refusing a path that resolves outside the cache entry."""
+    dest = _object_dest(entry, probe, key)
+    if not await asyncio.to_thread(_is_within, dest, entry):
+        raise _error(
+            probe.ref, kind=RemoteErrorKind.MANIFEST_INVALID, stage=stage,
+            what=f"S3 key {key!r} would be stored outside the cache entry",
+            hint="Ask the publisher to rename that object",
+        )  # fmt: skip
+    return dest
+
+
+@contextlib.asynccontextmanager
+async def _entry_locked(
+    ref: RemoteRef, entry: Path, stage: RemoteStage
+) -> AsyncIterator[None]:
+    """``entry_lock``, with a lock timeout or unwritable cache reported as a RemoteSourceError."""
+    async with contextlib.AsyncExitStack() as stack:
+        try:
+            await stack.enter_async_context(entry_lock(entry))
+        except Timeout as e:
+            raise lock_timeout_error(entry, ref_display=ref.display, stage=stage) from e
+        except OSError as e:
+            if (
+                local := local_fs_error(e, ref_display=ref.display, stage=stage)
+            ) is None:
+                raise
+            raise local from e
+        yield
+
+
+def _fetched_marker(entry: Path, key: str) -> Path:
+    """Where ``fetch_file`` records the ETag of an object it downloaded early.
+
+    Kept beside the version directory rather than inside it, so it never mixes
+    with the data a reader walks. A marker exists only while the file at the
+    object's destination holds that ETag's bytes: it is removed before any
+    write to that file and written after the download completes, all under
+    the entry lock.
+    """
+    return entry.parent / f"{entry.name}.fetched" / digest(key, 32)
+
+
+def _write_marker(marker: Path, etag: str) -> None:
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(etag, encoding="utf-8")
+
+
+def _fetched_matches(marker: Path, etag: str, dest: Path) -> bool:
+    try:
+        return marker.read_text(encoding="utf-8") == etag and dest.is_file()
+    except OSError:
+        return False
+
+
+def _reuse_fetched(entry: Path, obj: _Object, dest: Path) -> RemoteFile | None:
+    """The copy ``fetch_file`` left at ``dest``, if its ETag is still the listed one.
+
+    Otherwise drops the marker, since the caller is about to overwrite ``dest``.
+    """
+    marker = _fetched_marker(entry, obj.key)
+    if _fetched_matches(marker, obj.etag, dest):
+        try:
+            return RemoteFile(
+                path=obj.key,
+                sha256=hash_file_bytes(dest),
+                size_bytes=dest.stat().st_size,
+            )
+        except OSError:
+            pass
+    marker.unlink(missing_ok=True)
+    return None
+
+
+def _require_folder_file(probe: ProbeResult, key: str) -> None:
+    """Raise ValueError unless ``key`` names a file under the probed folder."""
+    data_key = probe.data_relpath or ""
+    prefix = f"{data_key}/" if data_key else ""
+    rel = key[len(prefix) :]
+    if not (probe.data_is_dir and key.startswith(prefix) and _is_safe_relpath(rel)):
+        raise ValueError(f"{key!r} is not a file under the probed folder {data_key!r}")
+
+
 class S3SourceResolver:
     """Resolve s3:// references."""
 
@@ -620,7 +721,12 @@ class S3SourceResolver:
         return await _call(ref, asyncio.to_thread(fetch), stage=RemoteStage.ACCESS)
 
     async def _download(
-        self, ref: RemoteRef, params: dict[str, str], dest: Path
+        self,
+        ref: RemoteRef,
+        params: dict[str, str],
+        dest: Path,
+        *,
+        stage: RemoteStage = RemoteStage.MATERIALIZE,
     ) -> RemoteFile:
         client = await self._s3(ref)
         sha, size = await _call(
@@ -628,9 +734,43 @@ class S3SourceResolver:
             _in_stoppable_thread(
                 lambda stop: _download_object(client, params, dest, stop)
             ),
-            stage=RemoteStage.MATERIALIZE,
+            stage=stage,
         )
         return RemoteFile(path=params["Key"], sha256=sha, size_bytes=size)
+
+    async def fetch_file(self, probe: ProbeResult, relpath: str) -> Path:
+        """Download one object under the probed prefix into the cache entry.
+
+        Writes under the same ``entry_lock`` as ``materialize``, since concurrent
+        runs share the cache. The object's ETag is recorded beside the entry so
+        ``materialize`` (and a later ``fetch_file``) reuse this copy instead of
+        downloading it again.
+        """
+        _require_folder_file(probe, relpath)
+        ref = probe.ref
+        stage = RemoteStage.ACCESS
+        bucket = ref.parsed.location
+        head = await self._head(ref, {"Bucket": bucket, "Key": relpath}, stage)
+        if head is None:
+            raise changed_after_pin(ref.display, stage, "the data")
+        etag = head["ETag"]
+        params = {"Bucket": bucket, "Key": relpath, "IfMatch": etag}
+        if (version_id := _version_id(head)) is not None:
+            params["VersionId"] = version_id
+        entry = entry_dir(ref)
+        dest = await _checked_dest(entry, probe, relpath, stage=stage)
+        marker = _fetched_marker(entry, relpath)
+        async with _entry_locked(ref, entry, stage):
+            if await asyncio.to_thread(_fetched_matches, marker, etag, dest):
+                return dest
+            await _call(
+                ref, asyncio.to_thread(marker.unlink, missing_ok=True), stage=stage
+            )
+            await self._download(ref, params, dest, stage=stage)
+            await _call(
+                ref, asyncio.to_thread(_write_marker, marker, etag), stage=stage
+            )
+        return dest
 
     async def materialize(self, probe: ProbeResult) -> ResolvedSource:
         ref = probe.ref
@@ -661,20 +801,13 @@ class S3SourceResolver:
         )
         if _listing_version(probe.manifest_sha256, objects) != version:
             raise changed_after_pin(ref.display, stage, "the data")
-        local = entry / probe.filename
-        prefix = f"{data_key}/" if data_key else ""
         files: list[RemoteFile] = []
         for obj in objects:
-            dest = (
-                local.joinpath(*obj.key[len(prefix) :].split("/"))
-                if probe.data_is_dir
-                else local
+            dest = await _checked_dest(entry, probe, obj.key, stage=stage)
+            reused = await asyncio.to_thread(_reuse_fetched, entry, obj, dest)
+            files.append(
+                reused or await self._download(ref, _object_params(bucket, obj), dest)
             )
-            if not await asyncio.to_thread(_is_within, dest, entry):
-                raise _error(
-                    ref, kind=RemoteErrorKind.MANIFEST_INVALID, stage=stage,
-                    what=f"S3 key {obj.key!r} would be stored outside the cache entry",
-                    hint="Ask the publisher to rename that object",
-                )  # fmt: skip
-            files.append(await self._download(ref, _object_params(bucket, obj), dest))
-        return ResolvedSource(probe=probe, local_path=local, files=files)
+        return ResolvedSource(
+            probe=probe, local_path=entry / probe.filename, files=files
+        )

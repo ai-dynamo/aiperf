@@ -153,15 +153,18 @@ see [Publishing traces](publishing-traces.md#publishing-with-datasetspush_to_hub
    satisfied. It pins the exact version here (Hugging Face commit SHA, S3 object version or
    ETag, HTTP `ETag` or, without one, `Last-Modified` and length). Problems fail at this step, before anything is downloaded, including a
    parquet source whose declared format does not read parquet. The one exception is a parquet
-   file or folder that needs the first-record check (a trace format declared by flag or
-   manifest, and neither `--fixed-schedule` nor `--no-fixed-schedule`): it is downloaded here
-   so that its first row can be read (step 2).
+   source that needs the first-record check (a trace format declared by flag or manifest, and
+   neither `--fixed-schedule` nor `--no-fixed-schedule`): a single parquet file is downloaded
+   here, and a parquet folder has its first shard downloaded, so that its first row can be
+   read (step 2).
 2. **First-record check.** For trace formats, AIPerf reads the first record. If it has
    timestamps, the run replays on the recorded schedule (`--no-fixed-schedule` opts out), just
    like a local trace. To decide this it reads only the leading bytes of the file, in steps of
    64 KiB, 1 MiB, and 8 MiB, and downloads the whole file only when the first record is longer
-   than that. Columnar files (Parquet, Arrow) are always read from the downloaded copy. A
-   `weka_trace` needs no check: it replays on its recorded schedule unless you pass
+   than that. A single columnar file (Parquet, Arrow) is read from the downloaded copy, since
+   its schema sits at the end of the file. A parquet folder is read from its first shard only,
+   fetched into the cache so the full download in step 3 reuses it.
+   A `weka_trace` needs no check: it replays on its recorded schedule unless you pass
    `--ignore-trace-delays` or `--use-think-time-only`, as for a local Weka trace.
 3. **Download** into the cache, verified against the manifest's `sha256` when present. A
    cache hit rehashes the cached file whenever the manifest declares a `sha256`. The
