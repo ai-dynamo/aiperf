@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 import aiohttp
@@ -195,6 +195,13 @@ class HTTPSourceResolver:
                 headers={},
                 ref_display=probe.ref.display,
             )
+
+    async def fetch_file(self, probe: ProbeResult, relpath: str) -> Path:
+        """Not supported: an http(s) reference is always one file, never a folder."""
+        raise NotImplementedError(
+            f"{probe.ref.display} is a single file; fetch_file only applies to "
+            f"folders (asked for {relpath!r})"
+        )
 
     async def materialize(self, probe: ProbeResult) -> ResolvedSource:
         dest = entry_dir(probe.ref) / probe.filename

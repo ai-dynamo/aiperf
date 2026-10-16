@@ -583,6 +583,23 @@ class HFSourceResolver:
                 ref_display=probe.ref.display,
             )
 
+    async def fetch_file(self, probe: ProbeResult, relpath: str) -> Path:
+        """Download one repo file at the pinned commit into the shared HF cache.
+
+        The later ``snapshot_download`` of the folder finds it there and skips it.
+        """
+        from huggingface_hub import hf_hub_download
+
+        ref = probe.ref
+        repo, sha = ref.parsed.location, ref.resolved_version
+        local = await _hf_call(
+            ref,
+            lambda: hf_hub_download(
+                repo_id=repo, filename=relpath, repo_type="dataset", revision=sha
+            ),
+        )
+        return Path(str(local))
+
     async def materialize(self, probe: ProbeResult) -> ResolvedSource:
         from huggingface_hub import hf_hub_download, snapshot_download
 
