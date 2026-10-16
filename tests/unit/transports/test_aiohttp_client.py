@@ -121,6 +121,26 @@ class TestAioHttpClient:
             )
 
     @pytest.mark.asyncio
+    async def test_sse_stream_counts_chunks_across_requests(
+        self, aiohttp_client: AioHttpClient, mock_sse_response: Mock
+    ) -> None:
+        """Every streamed chunk advances the client-wide counter the watchdog reads."""
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+            for chunks in (
+                [b"data: a\n\n", b"data: b\n\n", b"data: c\n\n"],
+                [b"data: d\n\n", b"data: e\n\n"],
+            ):
+                mock_sse_response.content = MockStreamReader(chunks)
+                await aiohttp_client.post_request(
+                    "http://test.com/stream",
+                    '{"stream": true}',
+                    {"Accept": "text/event-stream"},
+                )
+
+        assert aiohttp_client.stream_chunks_received == 5
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "comment_value,expected_error_text",
         [
