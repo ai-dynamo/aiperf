@@ -16,6 +16,7 @@ import pytest
 
 pytest.importorskip("botocore")
 
+from botocore.exceptions import ClientError  # noqa: E402
 from botocore.response import StreamingBody  # noqa: E402
 from filelock import Timeout  # noqa: E402
 
@@ -86,6 +87,42 @@ async def test_s3_fetch_file_downloads_one_object_into_the_cache_entry() -> None
         "Key": FIRST,
         "IfMatch": ETAGS[FIRST],
     }
+
+
+@pytest.mark.asyncio
+async def test_s3_fetch_file_versioned_bucket_pins_the_get_to_the_version_id() -> None:
+    client = _client()
+    client.head_object.side_effect = lambda **kw: {
+        "ETag": ETAGS[kw["Key"]],
+        "VersionId": "v-123",
+    }
+    await S3SourceResolver(client=client).fetch_file(_probe(), FIRST)
+    assert client.get_object.call_args.kwargs == {
+        "Bucket": "bucket",
+        "Key": FIRST,
+        "IfMatch": ETAGS[FIRST],
+        "VersionId": "v-123",
+    }
+
+
+@pytest.mark.asyncio
+async def test_s3_fetch_file_object_deleted_after_pin_raises_changed_error() -> None:
+    client = _client()
+    client.head_object.side_effect = ClientError(
+        {"Error": {"Code": "404"}, "ResponseMetadata": {"HTTPStatusCode": 404}},
+        "HeadObject",
+    )
+    with pytest.raises(RemoteSourceError, match="changed after AIPerf pinned") as exc:
+        await S3SourceResolver(client=client).fetch_file(_probe(), FIRST)
+    assert exc.value.kind == RemoteErrorKind.NOT_FOUND
+    client.get_object.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_s3_fetch_file_single_object_probe_raises_value_error() -> None:
+    probe = _probe().model_copy(update={"data_is_dir": False})
+    with pytest.raises(ValueError, match="is a single object, not a folder"):
+        await S3SourceResolver(client=_client()).fetch_file(probe, FIRST)
 
 
 @pytest.mark.asyncio
