@@ -121,22 +121,33 @@ async def _downloaded_first_record_has_timestamp(probe: ProbeResult) -> bool:
     return await asyncio.to_thread(first_record_has_timestamp, source.local_path)
 
 
+async def _first_shard_has_timestamp(probe: ProbeResult, shard: str) -> bool:
+    resolver = service.get_resolver(probe.ref.scheme)
+    path = await service.with_transient_retry(lambda: resolver.fetch_file(probe, shard))
+    return await asyncio.to_thread(first_record_has_timestamp, path)
+
+
 async def remote_first_record_has_timestamp(probe: ProbeResult) -> bool:
     """first_record_has_timestamp for a probed remote file, read from the fewest bytes.
 
-    Prefix reads escalate through PREFIX_STEPS. Offline mode (which allows no network
-    reads), columnar files (whose schema sits in the footer), a Hugging Face parquet
-    layout (whose split is downloaded whole), and a first record the sniff leaves
-    undecided (longer than the last step, or past MAX_FIRST_LINE_BYTES once inflated)
-    read the cached download instead.
+    A parquet folder (a Hugging Face layout or a manifest folder) is sniffed from
+    its first listed shard alone, fetched into the cache the later download
+    reuses. Other files escalate prefix reads through PREFIX_STEPS. Offline mode
+    (which allows no network reads), single columnar files (whose schema sits in
+    the footer), and a first record the sniff leaves undecided (longer than the
+    last step, or past MAX_FIRST_LINE_BYTES once inflated) read the cached
+    download instead.
     """
     if probe.data_is_dir and probe.data_files is None:
         # A folder with no parquet shards (e.g. Weka per-conversation JSON) reads
         # as a directory locally, which never promotes; skip the download.
         return False
+    if service.remote_offline():
+        return await _downloaded_first_record_has_timestamp(probe)
+    if probe.data_files:
+        return await _first_shard_has_timestamp(probe, probe.data_files[0])
     if (
         probe.data_files is not None
-        or service.remote_offline()
         or PurePosixPath(probe.filename).suffix.lower() in COLUMNAR_SUFFIXES
     ):
         return await _downloaded_first_record_has_timestamp(probe)

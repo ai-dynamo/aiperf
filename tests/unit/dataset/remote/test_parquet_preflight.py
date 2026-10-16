@@ -3,7 +3,7 @@
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -60,20 +60,30 @@ def _source(local: Path, probe: ProbeResult) -> ResolvedSource:
     )  # fmt: skip
 
 
+def _shard_resolver(path: Path) -> MagicMock:
+    resolver = MagicMock()
+    resolver.fetch_file = AsyncMock(return_value=path)
+    return resolver
+
+
 @pytest.mark.asyncio
-async def test_remote_sniff_parquet_layout_reads_download(tmp_path: Path) -> None:
+async def test_remote_sniff_parquet_layout_reads_first_shard(tmp_path: Path) -> None:
     probe = _probe(data_files=["d/train-00000-of-00001.parquet"])
-    source = _source(_shards(tmp_path / "d", ROWS), probe)
-    with patch(
-        "aiperf.dataset.remote.service.materialize_probe",
-        AsyncMock(return_value=source),
-    ) as materialize:
+    shard = _shards(tmp_path / "d", ROWS) / "train-00000-of-00001.parquet"
+    resolver = _shard_resolver(shard)
+    with (
+        patch("aiperf.dataset.remote.service.get_resolver", return_value=resolver),
+        patch("aiperf.dataset.remote.service.materialize_probe", AsyncMock()) as materialize,
+    ):  # fmt: skip
         assert await remote_first_record_has_timestamp(probe)
-    materialize.assert_awaited_once()
+    resolver.fetch_file.assert_awaited_once_with(
+        probe, "d/train-00000-of-00001.parquet"
+    )
+    materialize.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_remote_sniff_manifest_parquet_folder_reads_download(
+async def test_remote_sniff_manifest_parquet_folder_reads_first_shard(
     tmp_path: Path,
 ) -> None:
     manifest = parse_manifest(
@@ -81,10 +91,10 @@ async def test_remote_sniff_manifest_parquet_folder_reads_download(
         ref_display=REF.display, kind="root",
     )  # fmt: skip
     probe = _probe(data_files=["d/train-00000-of-00001.parquet"], manifest=manifest)
-    source = _source(_shards(tmp_path / "d", ROWS), probe)
+    shard = _shards(tmp_path / "d", ROWS) / "train-00000-of-00001.parquet"
     with patch(
-        "aiperf.dataset.remote.service.materialize_probe",
-        AsyncMock(return_value=source),
+        "aiperf.dataset.remote.service.get_resolver",
+        return_value=_shard_resolver(shard),
     ):
         assert await remote_first_record_has_timestamp(probe)
 
