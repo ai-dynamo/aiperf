@@ -15,6 +15,7 @@ from pydantic import Field, field_validator
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.common.redact import redact_url
 from aiperf.config import AIPerfConfig
+from aiperf.config.dataset.remote_ref import remote_dataset_refs
 from aiperf.config.deployment import DeploymentConfig
 from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.kubernetes.constants import (
@@ -437,6 +438,7 @@ class KubernetesDeployment(AIPerfBaseModel):
             scheduling=self.deployment.scheduling,
             gpu_telemetry_enabled=self.run.cfg.gpu_telemetry.enabled,
             server_metrics_enabled=self.run.cfg.server_metrics.enabled,
+            remote_dataset=bool(remote_dataset_refs(self.run.cfg.datasets)),
             name_label=self.name,
             extra_annotations=extra_annotations,
         )
