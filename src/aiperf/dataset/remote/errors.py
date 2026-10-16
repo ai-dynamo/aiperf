@@ -44,10 +44,15 @@ class RemoteSourceError(ConfigurationError):
         stage: RemoteStage,
         what: str,
         hint: str,
+        connection_failed: bool = False,
     ) -> None:
         self.ref = redact_url(ref)
         self.kind = kind
         self.stage = stage
+        # A TRANSIENT failure with no HTTP answer (DNS, connect, TLS, timeout,
+        # reset). Another network, such as a cluster's, may still reach it;
+        # an HTTP 429/5xx means the source itself answered and is struggling.
+        self.connection_failed = connection_failed
         # ``what`` and ``hint`` often embed text from a library exception that
         # quotes the request URL, so every part of the message is redacted.
         self.hint = redact_text(hint)
