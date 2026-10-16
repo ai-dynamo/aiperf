@@ -414,10 +414,18 @@ For reference, AIPerf processes these Responses API streaming events:
 | `response.created` | Server-generated response ID (`resp_<hash>`) for stateful session chaining |
 | `response.output_text.delta` | Text content delta |
 | `response.reasoning_text.delta` | Reasoning content delta |
+| `response.reasoning_summary_text.delta` | Reasoning summary delta |
 | `response.function_call_arguments.delta` | Tool call arguments delta |
 | `response.output_text.done` | Final text (fallback for providers that emit text only in done events) |
 | `response.completed` | Usage statistics and response ID |
 | All other events | Skipped |
 
 This enables accurate measurement of TTFT, ITL, and token throughput metrics when streaming is enabled.
+
+Reasoning summary deltas contribute to client-side reasoning token counts.
+Their `response.reasoning_summary_text.done` event repeats the full summary
+and is skipped so the summary is counted once.
+If an output item also streams `response.reasoning_text.delta`, AIPerf counts
+that item's raw reasoning instead of its summary, regardless of event order.
+Summary-only items continue to contribute their own reasoning token counts.
 
