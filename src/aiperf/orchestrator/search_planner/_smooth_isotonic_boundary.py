@@ -89,7 +89,7 @@ def _infeasible_min_block(
 
 
 def _latest_iteration_at(
-    planner: SmoothIsotonicSLAPlanner, value: int, *, feasible: bool
+    planner: SmoothIsotonicSLAPlanner, value: int | float, *, feasible: bool
 ) -> SearchIteration | None:
     for iteration in reversed(planner._history):
         if iteration.variation_values.get(planner._dim.path) != value:
