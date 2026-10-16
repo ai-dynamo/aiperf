@@ -15,6 +15,7 @@ from unittest.mock import patch
 import orjson
 import pytest
 from pytest import param
+from rich.console import Console
 
 from aiperf.common.redact import REDACTED_VALUE
 from aiperf.kubernetes.console import (
@@ -549,6 +550,18 @@ class TestPrintAIPerfJobTable:
             table = mock_console.print.call_args[0][0]
             col_names = [c.header for c in table.columns]
             assert "ERROR" in col_names
+
+    def test_print_aiperfjob_table_wide_error_keeps_bracketed_prefix(self) -> None:
+        """status.error starts with "[dataset-manager pod]", which Rich would eat as markup."""
+        error = "Error (container dataset-manager): [dataset-manager pod] Cannot use x"
+        job = _make_aiperfjob_info(phase="Failed", error=error)
+        recorder = Console(record=True, width=400, color_system=None)
+        with (
+            patch("aiperf.kubernetes.console.console", recorder),
+            patch("aiperf.kubernetes.console.format_age", return_value="10m"),
+        ):
+            print_aiperfjob_table([job], wide=True)
+        assert "[dataset-manager pod] Cannot use x" in recorder.export_text()
 
 
 # ============================================================

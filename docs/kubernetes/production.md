@@ -127,7 +127,11 @@ Commit the generated YAML and let ArgoCD, Flux, or your GitOps tool apply it.
 | Monitoring | Operator tracks phase/progress | Manual pod watching |
 | Results | Stored on operator PVC | Must retrieve before TTL |
 | Cancellation | `spec.cancel: true` | Delete the JobSet |
-| Conditions | Status conditions populated (`ConfigValid`, `EndpointReachable`, `PreflightPassed`, `ResourcesCreated`, `WorkersReady`, `BenchmarkRunning`, `ResultsAvailable`, `IndexUpdated`, `PreflightHasWarnings`, `Complete`, `Failed`) | None |
+| Conditions | Status conditions populated (`ConfigValid`, `EndpointReachable`, `PreflightPassed`, `ResourcesCreated`, `WorkersReady`, `BenchmarkRunning`, `DatasetReady`, `ResultsAvailable`, `IndexUpdated`, `PreflightHasWarnings`, `Complete`, `Failed`) | None |
+
+`DatasetReady` is only ever set to `False`, with reason `DatasetUnavailable`, when the
+dataset-manager pod fails to load the dataset. A job whose dataset loads never sets it, so
+its absence is not a failure.
 
 Operator mode also persists the active pod startup blocker in
 `status.startupIssue`. This keeps the first-observed timestamp across operator
@@ -243,6 +247,7 @@ variables at startup. A credentialed endpoint without the matching
 | `endpoint.apiKey` | `AIPERF_INJECTED_API_KEY` or `OPENAI_API_KEY` |
 | Sensitive headers such as `Authorization` or `X-API-Key` | `AIPERF_INJECTED_HEADERS` containing a JSON object of header strings |
 | URL userinfo such as `https://user:password@host` | `AIPERF_INJECTED_ENDPOINT_URLS` containing a JSON list of full URL strings |
+| A presigned dataset URL (`--input-file 'https://...?X-Amz-Signature=...'`) | `AIPERF_INJECTED_DATASET_URLS` containing a JSON list of full URL strings; see [Run a published trace](../tutorials/remote-datasets.md#kubernetes) |
 
 Do not use `--env-vars` for these values: literal pod environment values are
 not Secret-backed and fail the credential transport check.
@@ -420,8 +425,9 @@ spec:
         value: "120"
 ```
 
-Probe tunables such as `AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS` and
-`AIPERF_K8S_HEALTH_STARTUP_FAILURE_THRESHOLD` do not belong here. They are read
+Probe tunables such as `AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS`,
+`AIPERF_K8S_HEALTH_STARTUP_FAILURE_THRESHOLD` and
+`AIPERF_K8S_HEALTH_DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS` do not belong here. They are read
 by whichever process renders the JobSet -- the operator pod, or the CLI in
 direct mode -- and baked into the pod spec's probe fields before the benchmark
 container exists. Setting them under `spec.podTemplate.env` has no effect; set

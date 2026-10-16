@@ -1659,3 +1659,72 @@ class TestQuotaSpecHardFallback:
         with _patch_core_v1(mock_core):
             result = await checker._check_resource_quotas()
         assert result.status == CheckStatus.PASS
+
+
+# =============================================================================
+# Remote datasets
+# =============================================================================
+
+
+def _remote_config(path: str) -> AIPerfConfig:
+    return AIPerfConfig(
+        benchmark={
+            "models": ["test-model"],
+            "endpoint": {"urls": ["http://localhost:8000/v1/chat/completions"]},
+            "datasets": [
+                {"name": "main", "type": "file", "path": path, "format": "mooncake_trace"}
+            ],
+            "phases": [
+                {"name": "profiling", "type": "concurrency", "requests": 10, "concurrency": 1}
+            ],
+        }
+    )  # fmt: skip
+
+
+class TestRemoteDatasetsCheck:
+    @pytest.mark.asyncio
+    async def test_check_remote_datasets_private_hf_without_token_fails(self) -> None:
+        checker = _make_checker(config=_remote_config("hf://org/private"))
+        with patch(
+            "aiperf.dataset.remote.anonymous.anonymous_needs_auth",
+            AsyncMock(return_value=True),
+        ):
+            result = await checker._check_remote_datasets()
+        assert result.status is CheckStatus.FAIL
+        assert result.name == "Remote Datasets"
+
+    @pytest.mark.asyncio
+    async def test_check_remote_datasets_synthetic_dataset_skips(self) -> None:
+        result = await _make_checker()._check_remote_datasets()
+        assert result.status is CheckStatus.SKIP
+
+    @pytest.mark.asyncio
+    async def test_run_all_includes_remote_datasets_check(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        checker = _make_checker(config=_remote_config("hf://org/public"))
+
+        def _instant(name: str):
+            async def _check() -> CheckResult:
+                return CheckResult(name=name, status=CheckStatus.PASS, message="ok")
+
+            return _check
+
+        for attr in (
+            "_check_kubernetes_version", "_check_jobset_crd", "_check_rbac_permissions",
+            "_check_jobset_controller", "_check_service_account", "_check_node_resources",
+            "_check_node_selector_match", "_check_per_node_schedulability",
+            "_check_resource_quotas", "_check_memory_estimation", "_check_secrets",
+            "_check_image_reference", "_check_dns", "_check_network_policies",
+            "_check_kueue_queue", "_check_configmap_size", "_check_dry_run",
+            "_check_pod_security_admission", "_check_tolerations",
+        ):  # fmt: skip
+            monkeypatch.setattr(checker, attr, _instant(attr))
+        with patch(
+            "aiperf.dataset.remote.anonymous.anonymous_needs_auth",
+            AsyncMock(return_value=False),
+        ):
+            results = await checker.run_all(timeout=5.0)
+        remote = [c for c in results.checks if c.name == "Remote Datasets"]
+        assert len(remote) == 1
+        assert remote[0].status is CheckStatus.PASS

@@ -1360,3 +1360,23 @@ async def test_open_readonly_concurrent_callers_wait_for_shared_connection(
         assert runs_index.is_open()
     finally:
         await runs_index.close()
+
+
+@pytest.mark.asyncio
+async def test_upsert_run_created_redacts_presigned_dataset_path(index_path) -> None:
+    spec = {
+        "benchmark": {
+            "datasets": [
+                {"name": "main", "path": "https://h/t.jsonl?X-Amz-Signature=topsecret"}
+            ]
+        }
+    }
+
+    await runs_index.upsert_run_created("ns", "job-d", "1714069323", spec=spec)
+
+    stored = await runs_index.get_run_spec("ns", "job-d", "1714069323")
+    assert stored is not None
+    assert "topsecret" not in orjson.dumps(stored).decode()
+    assert stored["benchmark"]["datasets"][0]["path"] == (
+        f"https://h/t.jsonl?X-Amz-Signature={REDACTED_VALUE}"
+    )

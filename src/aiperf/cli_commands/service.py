@@ -78,6 +78,8 @@ def service(
         from aiperf.common.endpoint_credentials import (
             apply_endpoint_credentials,
             consume_endpoint_credentials,
+            credential_values,
+            drop_injected_dataset_urls,
         )
         from aiperf.common.environment import Environment
         from aiperf.config.resolution.plan import BenchmarkRun
@@ -85,6 +87,10 @@ def service(
         from aiperf.kubernetes.user_files import (
             materialize_serialized_run_user_files,
         )
+
+        # Only dataset-manager downloads, so only it may hold presigned URLs.
+        if service_type != ServiceType.DATASET_MANAGER:
+            drop_injected_dataset_urls()
 
         # The launcher resolves and freezes one BenchmarkRun for the whole
         # deployment. Re-resolving flags independently in every service can
@@ -112,11 +118,14 @@ def service(
         # rejection or a multi-GB resolution download has to happen before the
         # handshake, exactly as run_benchmark does it for the CLI path.
         if service_type == ServiceType.DATASET_MANAGER:
-            from aiperf.cli_runner._preflight import (
-                preflight_public_datasets_for_run,
-            )
+            from aiperf.kubernetes.dataset_startup import prepare_dataset_manager_run
 
-            preflight_public_datasets_for_run(run)
+            prepare_dataset_manager_run(
+                run,
+                endpoint_secrets=credential_values(
+                    credentials=credentials, endpoint=run.cfg.endpoint
+                ),
+            )
 
         if health_host is not None:
             # CLI argument takes precedence over environment variable

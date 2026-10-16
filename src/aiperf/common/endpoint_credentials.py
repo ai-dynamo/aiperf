@@ -19,13 +19,22 @@ from aiperf.common.redact import (
 )
 
 if TYPE_CHECKING:
+    from aiperf.config.dataset.remote_ref import RemoteRef
     from aiperf.config.endpoint import EndpointConfig
     from aiperf.config.resolution.plan import BenchmarkRun
 
 AIPERF_INJECTED_API_KEY = "AIPERF_INJECTED_API_KEY"
 AIPERF_INJECTED_HEADERS = "AIPERF_INJECTED_HEADERS"
 AIPERF_INJECTED_ENDPOINT_URLS = "AIPERF_INJECTED_ENDPOINT_URLS"
+AIPERF_INJECTED_DATASET_URLS = "AIPERF_INJECTED_DATASET_URLS"
 OPENAI_API_KEY = "OPENAI_API_KEY"
+
+_DATASET_URLS_SECRET_HINT = (
+    "Store the full dataset URL(s) in a Secret and pass it to the pods, e.g.\n"
+    "  kubectl create secret generic aiperf-dataset-urls "
+    "--from-literal=urls='[\"<full presigned URL>\"]'\n"
+    f"  --env-from-secrets {AIPERF_INJECTED_DATASET_URLS}=aiperf-dataset-urls/urls"
+)
 
 _SWEEP_CREDENTIAL_PATH_SEGMENTS = frozenset(
     {
@@ -395,6 +404,93 @@ def apply_endpoint_credentials(
         )
 
 
+def consume_injected_dataset_urls() -> list[str] | None:
+    """Pop and decode ``AIPERF_INJECTED_DATASET_URLS`` (a JSON list of full URLs).
+
+    Popped, not read, so presigned URLs never reach a child process environment.
+    """
+    return parse_injected_str_list(
+        AIPERF_INJECTED_DATASET_URLS,
+        os.environ.pop(AIPERF_INJECTED_DATASET_URLS, None),
+    )
+
+
+def drop_injected_dataset_urls() -> None:
+    """Remove ``AIPERF_INJECTED_DATASET_URLS`` from this process's environment.
+
+    Every container in a pod receives the full pod-template env, but only
+    dataset-manager downloads; no other process may hold presigned URLs.
+    """
+    os.environ.pop(AIPERF_INJECTED_DATASET_URLS, None)
+
+
+def _injected_refs_by_canonical(urls: list[str]) -> dict[str, RemoteRef]:
+    """Parse injected URLs, keyed by canonical reference.
+
+    A malformed entry is named only by its position: it may be a bare token, so
+    even a redacted echo could leak it.
+    """
+    from aiperf.config.dataset.remote_ref import RemoteRef
+
+    by_canonical: dict[str, RemoteRef] = {}
+    for index, url in enumerate(urls):
+        try:
+            ref = RemoteRef(ref=url)
+            canonical = ref.canonical
+        except ValueError:
+            raise ValueError(
+                f"{AIPERF_INJECTED_DATASET_URLS} entry {index} (counting from 0) "
+                "is not a dataset reference. Each entry must be a full hf://, "
+                "s3://, https:// or http:// URL."
+            ) from None
+        by_canonical[canonical] = ref
+    return by_canonical
+
+
+def apply_injected_dataset_urls(run: BenchmarkRun, urls: list[str] | None) -> None:
+    """Swap each redacted remote dataset reference in ``run`` for its full URL.
+
+    A URL is matched to the dataset whose canonical reference equals the URL's.
+    The canonical form drops signing parameters and userinfo, so the redacted
+    reference in the serialized run and the full URL in the Secret name the same
+    object. The pinned ``resolved_version`` is kept.
+
+    Raises:
+        ValueError: A dataset carries a credential and no URL matches it, an
+            injected URL matches no dataset, or an entry is not a reference.
+    """
+    from aiperf.config.dataset import FileDataset
+    from aiperf.config.dataset.remote_ref import RemoteRef, carries_credential
+
+    by_canonical = _injected_refs_by_canonical(urls or [])
+    matched: set[str] = set()
+    for index, dataset in enumerate(run.cfg.datasets):
+        if not isinstance(dataset, FileDataset) or not isinstance(
+            dataset.path, RemoteRef
+        ):
+            continue
+        ref = dataset.path
+        injected = by_canonical.get(ref.canonical)
+        if injected is None:
+            if carries_credential(ref.ref):
+                raise ValueError(
+                    f"Dataset {ref.display} is a presigned or credentialed URL, but "
+                    f"{AIPERF_INJECTED_DATASET_URLS} has no URL for it. Add the full "
+                    f"URL to the Secret behind {AIPERF_INJECTED_DATASET_URLS}."
+                )
+            continue
+        matched.add(ref.canonical)
+        full = injected.model_copy(update={"resolved_version": ref.resolved_version})
+        run.cfg.datasets[index] = dataset.model_copy(update={"path": full})
+    unmatched = [ref for key, ref in by_canonical.items() if key not in matched]
+    if unmatched:
+        raise ValueError(
+            f"{AIPERF_INJECTED_DATASET_URLS} holds {unmatched[0].display}, which "
+            "matches no dataset in this run. Remove it from the Secret, or fix the "
+            "dataset path so both name the same object."
+        )
+
+
 _MIN_REDACTABLE_SECRET_LENGTH = 4
 
 
@@ -450,17 +546,12 @@ def credential_values(
     return [value for value in values if value and value != REDACTED_VALUE]
 
 
-def redact_credential_text(text: str, secrets: Iterable[str]) -> str:
-    """Scrub known credential values out of arbitrary text.
+def replace_secret_values(text: str, secrets: Iterable[str]) -> str:
+    """Replace each known credential value in ``text`` with the redaction placeholder.
 
-    Exact-value replacement runs first because an exception message or
-    traceback frame can embed a raw key with none of the ``api_key=`` /
-    ``Authorization:`` context that pattern-based redaction keys off. The
-    generic string and URL redactors then run as a fallback for credentials
-    this process never held. Values shorter than
-    ``_MIN_REDACTABLE_SECRET_LENGTH`` are skipped: a one- or two-character
-    "credential" would shred every unrelated word in a traceback while
-    protecting nothing real.
+    Values shorter than ``_MIN_REDACTABLE_SECRET_LENGTH`` are skipped: a one- or
+    two-character "credential" would shred every unrelated word in a traceback
+    while protecting nothing real.
     """
     unique = {
         secret
@@ -471,41 +562,86 @@ def redact_credential_text(text: str, secrets: Iterable[str]) -> str:
     # password inside it) is replaced whole rather than left partially intact.
     for secret in sorted(unique, key=len, reverse=True):
         text = text.replace(secret, REDACTED_VALUE)
-    return redact_url(redact_string(text))
+    return text
+
+
+def redact_credential_text(text: str, secrets: Iterable[str]) -> str:
+    """Scrub known credential values out of arbitrary text.
+
+    Exact-value replacement (:func:`replace_secret_values`) runs first because
+    an exception message or traceback frame can embed a raw key with none of
+    the ``api_key=`` / ``Authorization:`` context that pattern-based redaction
+    keys off. The generic string and URL redactors then run as a fallback for
+    credentials this process never held.
+    """
+    return redact_url(redact_string(replace_secret_values(text, secrets)))
+
+
+def secret_env_names(pod_env: Iterable[object]) -> set[str]:
+    """Names of pod env vars whose value comes from a Secret (``secretKeyRef``).
+
+    A literal ``value`` does not count: the resource itself would store it.
+    """
+    return {
+        item["name"]
+        for item in pod_env
+        if isinstance(item, dict)
+        and isinstance(item.get("name"), str)
+        and isinstance(item.get("valueFrom"), dict)
+        and isinstance(item["valueFrom"].get("secretKeyRef"), dict)
+    }
+
+
+def _missing_endpoint_transport(
+    endpoint: EndpointConfig, secret_names: set[str]
+) -> list[str]:
+    """Injected env names an endpoint's credentials need but the pods lack."""
+    missing: list[str] = []
+    if endpoint.api_key is not None and not (
+        {AIPERF_INJECTED_API_KEY, OPENAI_API_KEY} & secret_names
+    ):
+        missing.append(f"{AIPERF_INJECTED_API_KEY} (or {OPENAI_API_KEY})")
+    if (
+        extract_sensitive_headers(endpoint.headers)
+        and AIPERF_INJECTED_HEADERS not in secret_names
+    ):
+        missing.append(AIPERF_INJECTED_HEADERS)
+    if (
+        any(REDACTED_VALUE in url or redact_url(url) != url for url in endpoint.urls)
+        and AIPERF_INJECTED_ENDPOINT_URLS not in secret_names
+    ):
+        missing.append(AIPERF_INJECTED_ENDPOINT_URLS)
+    return missing
 
 
 def validate_kubernetes_credential_transport(
     endpoint: EndpointConfig,
     pod_env: list[dict[str, object]],
+    *,
+    datasets: Iterable[object],
 ) -> None:
-    """Reject credentialed runs without matching Secret-backed pod env vars."""
-    secret_env_names = {
-        item.get("name")
-        for item in pod_env
-        if isinstance(item, dict)
-        and isinstance(item.get("valueFrom"), dict)
-        and isinstance(item["valueFrom"].get("secretKeyRef"), dict)
-    }
-    missing: list[str] = []
-    if endpoint.api_key is not None and not (
-        {AIPERF_INJECTED_API_KEY, OPENAI_API_KEY} & secret_env_names
-    ):
-        missing.append(f"{AIPERF_INJECTED_API_KEY} (or {OPENAI_API_KEY})")
-    if (
-        extract_sensitive_headers(endpoint.headers)
-        and AIPERF_INJECTED_HEADERS not in secret_env_names
-    ):
-        missing.append(AIPERF_INJECTED_HEADERS)
-    from aiperf.common.redact import redact_url
+    """Reject credentialed runs without matching Secret-backed pod env vars.
 
-    if (
-        any(REDACTED_VALUE in url or redact_url(url) != url for url in endpoint.urls)
-        and AIPERF_INJECTED_ENDPOINT_URLS not in secret_env_names
-    ):
-        missing.append(AIPERF_INJECTED_ENDPOINT_URLS)
+    ``datasets`` are the run's dataset configs. A remote reference that carries a
+    credential (a presigned query or URL userinfo, raw or already redacted) needs
+    ``AIPERF_INJECTED_DATASET_URLS``; the error then prints the commands to add it.
+    """
+    from aiperf.config.dataset.remote_ref import (
+        carries_credential,
+        remote_dataset_refs,
+    )
+
+    secret_names = secret_env_names(pod_env)
+    missing = _missing_endpoint_transport(endpoint, secret_names)
+    needs_dataset_urls = AIPERF_INJECTED_DATASET_URLS not in secret_names and any(
+        carries_credential(ref.ref) for ref in remote_dataset_refs(datasets)
+    )
+    if needs_dataset_urls:
+        missing.append(AIPERF_INJECTED_DATASET_URLS)
     if missing:
         names = ", ".join(missing)
+        hint = f"\n{_DATASET_URLS_SECRET_HINT}" if needs_dataset_urls else ""
         raise ValueError(
-            "Kubernetes endpoint credentials must come from Secret-backed pod "
-            f"environment variables. Configure --env-from-secrets for: {names}"
+            "Kubernetes credentials must come from Secret-backed pod environment "
+            f"variables. Configure --env-from-secrets for: {names}{hint}"
         )
