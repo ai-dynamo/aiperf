@@ -401,8 +401,9 @@ class TestCheckKubernetesVersion:
     @pytest.mark.parametrize(
         "major,minor,expected_status",
         [
-            ("1", "28", CheckStatus.PASS),
-            ("1", "24", CheckStatus.PASS),
+            ("1", "28", CheckStatus.WARN),
+            ("1", "24", CheckStatus.WARN),
+            ("1", "29", CheckStatus.PASS),
             ("2", "0", CheckStatus.PASS),
             ("1", "23", CheckStatus.FAIL),
             ("0", "99", CheckStatus.FAIL),
@@ -443,7 +444,7 @@ class TestCheckKubernetesVersion:
         with _patch_version(version):
             result = await checker._check_kubernetes_version()
 
-        assert result.status == CheckStatus.PASS
+        assert result.status == CheckStatus.WARN
 
     @pytest.mark.asyncio
     async def test_version_api_error_returns_warn(self) -> None:

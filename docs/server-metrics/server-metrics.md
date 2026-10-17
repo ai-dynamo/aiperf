@@ -8,6 +8,38 @@ sidebar-title: Server Metrics Collection
 
 AIPerf automatically collects metrics from Prometheus-compatible endpoints exposed by LLM inference servers and serving frontends (vLLM, SGLang, TRT-LLM, Dynamo, Triton, etc.).
 
+## Long runs and collection failures
+
+Numeric sample histories, including scrape timestamps and histogram buckets, are
+stored in an anonymous file on the artifact filesystem. All samples remain
+available for exact aggregation and Parquet export; collection does not retain
+the complete numeric history in resident memory. Use disk-backed artifact
+storage rather than a memory-backed `emptyDir` or tmpfs for long runs.
+
+`AIPERF_SERVER_METRICS_STORAGE_MAX_BYTES` limits the backing file, including
+array-growth allocations (default 16 GiB).
+`AIPERF_SERVER_METRICS_STORAGE_FLUSH_BYTES` controls flush and page-cache release
+frequency (default 8 MiB). `AIPERF_SERVER_METRICS_MAX_SERIES` limits distinct
+endpoint/name/label combinations (default 20,000), including changing labels.
+Slow endpoints have at most one periodic scrape in flight; busy ticks are
+skipped. Phase-boundary scrapes can still overlap a periodic scrape.
+
+Exceeding a storage or series budget stops server-metrics collection and reports
+an explicit error. Already collected samples are exported where possible, while
+inference request processing and final client-metric exports continue. Terminal
+resource failures report a degraded run after export; recoverable scrape errors
+remain advisory. The
+primary `profile_export_aiperf.json` includes `server_metrics_error_summary` so
+missing telemetry cannot be mistaken for a complete server-metrics history.
+Aggregation and disk writes run outside the service heartbeat event loop.
+
+On Kubernetes, the optional metrics process runs as a restartable native
+sidecar. Its OOM kill or liveness restart does not terminate the controller job.
+A restarted process cannot recover its predecessor's anonymous sample store;
+the controller releases that result producer, reports incomplete telemetry,
+and exports the inference results with a degraded run status. Native sidecars
+require Kubernetes 1.29+; disable server metrics on older supported clusters.
+
 ## Quick Reference
 
 | Feature | Description | Default |

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -19,8 +20,10 @@ from aiperf.common.enums import (
     PrometheusMetricType,
     ServerMetricsFormat,
 )
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
 from aiperf.common.growable_array import GrowableArray
+from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.models import ErrorDetailsCount, MetricResult
 from aiperf.common.models.server_metrics_models import (
     CounterMetricData,
@@ -37,6 +40,7 @@ from aiperf.common.models.server_metrics_models import (
 from aiperf.common.types import PhaseKind
 from aiperf.exporters.utils import normalize_endpoint_display
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
+from aiperf.server_metrics.array_store import ServerMetricsArrayStore, run_history_io
 from aiperf.server_metrics.export_stats import compute_stats
 from aiperf.server_metrics.parquet_exporter import ServerMetricsParquetExporter
 from aiperf.server_metrics.storage import (
@@ -129,6 +133,13 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
         super().__init__(run=run, **kwargs)
 
+        self._array_store = ServerMetricsArrayStore(
+            self.run.cfg.artifacts.dir,
+            max_bytes=Environment.SERVER_METRICS.STORAGE_MAX_BYTES,
+            flush_bytes=Environment.SERVER_METRICS.STORAGE_FLUSH_BYTES,
+        )
+        self._storage_init_lock = asyncio.Lock()
+
         self._server_metrics_hierarchy = ServerMetricsHierarchy()
         # Use slice_duration from config for windowed stats
         self._slice_duration: float | None = self.run.cfg.artifacts.slice_duration
@@ -149,6 +160,33 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         # (phase_instance_id, phase_name) -> synthesized negative index.
         self._synthetic_phase_indices: dict[tuple[int, str], int] = {}
 
+    @on_init
+    async def _initialize_storage(self) -> None:
+        """Use the artifact disk for all numeric histories, including fetch metadata."""
+        async with self._storage_init_lock:
+            if self._array_store.initialized:
+                return
+            await run_history_io(self._open_storage)
+
+    def _open_storage(self) -> None:
+        """Initialize the mapping and its views as one cancellation-safe operation."""
+        self._array_store.open()
+        self._server_metrics_hierarchy = ServerMetricsHierarchy(
+            array_factory=self._array_store.allocate,
+            max_series=Environment.SERVER_METRICS.MAX_SERIES,
+        )
+        self._timestamps_ns = GrowableArray(
+            initial_capacity=1024,
+            dtype=np.int64,
+            array_factory=self._array_store.allocate,
+        )
+
+    @on_stop
+    async def _close_storage(self) -> None:
+        """Release the anonymous backing file after collection and export finish."""
+        async with self._storage_init_lock:
+            await run_history_io(self._array_store.close)
+
     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
         """Get server metrics hierarchy for export purposes.
 
@@ -166,6 +204,12 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         Args:
             record: ServerMetricsRecord containing Prometheus metrics and metadata
         """
+        await self._initialize_storage()
+        async with self._storage_init_lock:
+            await run_history_io(self._append_server_metrics_record, record)
+
+    def _append_server_metrics_record(self, record: ServerMetricsRecord) -> None:
+        """Append and flush histories in the I/O worker, away from heartbeats."""
         self._timestamps_ns.append(record.timestamp_ns)
         if (
             record.phase_kind == "warmup"
@@ -208,6 +252,16 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             record,
             storage_phase_index=storage_phase_index,
         )
+        self._array_store.note_write(
+            64
+            + sum(
+                32 + 8 * len(sample.buckets or {})
+                for family in record.metrics.values()
+                for sample in family.samples
+            )
+        )
+        if self._array_store.dirty_bytes >= self._array_store.flush_bytes:
+            self._array_store.flush()
 
     def _resolve_sample_phase_index(
         self,
@@ -283,6 +337,14 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         return (ts >= start_ns) & (ts < end_ns)
 
     async def export_results(self, ctx: ExportContext) -> ServerMetricsResults | None:
+        """Aggregate exact disk-backed histories without starving service heartbeats."""
+        async with self._storage_init_lock:
+            results = await run_history_io(self._build_export_results, ctx)
+            if results is not None and ctx.phase_index is None:
+                await self._export_parquet_widened(ctx.start_ns or 0, ctx.end_ns or 0)
+            return results
+
+    def _build_export_results(self, ctx: ExportContext) -> ServerMetricsResults | None:
         """Export accumulated server metrics as results for final reporting.
 
         Called at the end of profiling to generate the final ServerMetricsResults
@@ -375,13 +437,6 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             warmup_end_ns=warmup_summary_end_ns,
             phase_results=phase_results,
         )
-
-        # Export Parquet file directly from accumulator if format is enabled.
-        # The Parquet is a single whole-run artifact: skip phase-scoped exports
-        # (phase_index set) so per-phase windows don't overwrite it in a
-        # multi-phase run. Mirrors the multi-phase guard from main (#1150).
-        if ctx.phase_index is None:
-            await self._export_parquet_widened(start_ns, end_ns)
 
         return results
 

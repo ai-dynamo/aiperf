@@ -133,6 +133,15 @@ async def check_kubernetes_version(api: ApiClient) -> CheckResult:
         minor = int(minor_str) if minor_str else 0
         git_version = version.git_version or "unknown"
 
+        if major == 1 and 24 <= minor < 29:
+            return CheckResult(
+                name="Kubernetes Version",
+                status=CheckStatus.WARN,
+                message=f"Kubernetes {git_version} supports runs with server metrics disabled; server metrics failure isolation requires Kubernetes 1.29+.",
+                hints=[
+                    "Upgrade to Kubernetes 1.29+ or set serverMetrics.enabled=false"
+                ],
+            )
         if major > 1 or (major == 1 and minor >= 24):
             return CheckResult(
                 name="Kubernetes Version",

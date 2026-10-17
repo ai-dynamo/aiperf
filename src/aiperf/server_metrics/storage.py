@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import NamedTuple, Self
 
@@ -10,12 +11,14 @@ from numpy.typing import NDArray
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase, PrometheusMetricType
+from aiperf.common.growable_array import ArrayFactory, GrowableArray
 from aiperf.common.models import (
     MetricFamily,
     MetricSample,
     ServerMetricsRecord,
     TimeRangeFilter,
 )
+from aiperf.server_metrics.array_store import ServerMetricsStorageError
 
 # =============================================================================
 # Aggregation (Multi-metric time series container)
@@ -63,22 +66,35 @@ class ServerMetricsTimeSeries:
         1
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, array_factory: ArrayFactory = np.empty) -> None:
+        self._array_factory = array_factory
         self.metrics: dict[ServerMetricKey, ServerMetricEntry] = {}
         # Timestamps for unique updates only (when metrics changed)
         self.first_update_ns: int = 0
         self.last_update_ns: int = 0
         self._unique_update_count: int = 0
-        self._unique_update_timestamps: list[
-            int
-        ] = []  # All unique update timestamps (for interval calc)
+        self._unique_update_timestamps = GrowableArray(
+            dtype=np.int64, array_factory=array_factory
+        )
         # Timestamps for all fetches (including duplicates)
         self.first_fetch_ns: int = 0
         self.last_fetch_ns: int = 0
         self._total_fetch_count: int = 0
-        self._fetch_timestamps_ns: list[int] = []
-        self._fetch_latencies_ns: list[int] = []
-        self._fetch_latency_records_ns: list[tuple[int, int]] = []
+        self._fetch_timestamps_ns = GrowableArray(
+            dtype=np.int64, array_factory=array_factory
+        )
+        self._fetch_latencies_ns = GrowableArray(
+            dtype=np.int64, array_factory=array_factory
+        )
+        self._fetch_latency_timestamps_ns = GrowableArray(
+            dtype=np.int64, array_factory=array_factory
+        )
+
+    @property
+    def _fetch_latency_records_ns(self) -> Iterator[tuple[int, int]]:
+        return zip(
+            self._fetch_latency_timestamps_ns, self._fetch_latencies_ns, strict=True
+        )
 
     @property
     def _update_intervals_ns(self) -> list[int]:
@@ -143,9 +159,7 @@ class ServerMetricsTimeSeries:
         self._fetch_timestamps_ns.append(timestamp_ns)
         if record.endpoint_latency_ns is not None:
             self._fetch_latencies_ns.append(record.endpoint_latency_ns)
-            self._fetch_latency_records_ns.append(
-                (timestamp_ns, record.endpoint_latency_ns)
-            )
+            self._fetch_latency_timestamps_ns.append(timestamp_ns)
 
         # Track unique updates (only for non-duplicates) for metadata/statistics
         # But store ALL samples (including duplicates) for consistent timeslice boundaries
@@ -170,7 +184,7 @@ class ServerMetricsTimeSeries:
 
                 if key not in self.metrics:
                     self.metrics[key] = ServerMetricEntry.from_metric_family(
-                        metric_family
+                        metric_family, array_factory=self._array_factory
                     )
                 self.metrics[key].data.append(
                     timestamp_ns,
@@ -227,7 +241,12 @@ class ServerMetricsHierarchy:
         2
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self, *, array_factory: ArrayFactory = np.empty, max_series: int | None = None
+    ) -> None:
+        self._array_factory = array_factory
+        self._max_series = max_series
+        self._series_count = 0
         self.endpoints: dict[str, ServerMetricsTimeSeries] = {}
 
     def add_record(
@@ -243,8 +262,30 @@ class ServerMetricsHierarchy:
         """
         url = record.endpoint_url
 
+        if self._max_series is not None:
+            existing = self.endpoints.get(url)
+            keys = {
+                ServerMetricKey.from_name_and_labels(name, sample.labels)
+                for name, family in record.metrics.items()
+                for sample in family.samples
+            }
+            added = (
+                len(keys - existing.metrics.keys())
+                if existing is not None
+                else len(keys)
+            )
+            if self._series_count + added > self._max_series:
+                raise ServerMetricsStorageError(
+                    f"Server metrics exceeded the {self._max_series}-series limit; "
+                    "increase AIPERF_SERVER_METRICS_MAX_SERIES. Server metrics "
+                    "collection is incomplete; inference results are retained."
+                )
+            self._series_count += added
+
         if url not in self.endpoints:
-            self.endpoints[url] = ServerMetricsTimeSeries()
+            self.endpoints[url] = ServerMetricsTimeSeries(
+                array_factory=self._array_factory
+            )
 
         self.endpoints[url].append_snapshot(
             record,
@@ -307,11 +348,12 @@ class ScalarTimeSeries:
         array([42.5, 43.1, 41.8])
     """
 
-    def __init__(self) -> None:
-        self._timestamps: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int64)
-        self._values: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.float64)
-        self._phase_codes: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int8)
-        self._phase_indices: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int32)
+    def __init__(self, *, array_factory: ArrayFactory = np.empty) -> None:
+        self._array_factory = array_factory
+        self._timestamps: np.ndarray = array_factory(_INITIAL_CAPACITY, np.int64)
+        self._values: np.ndarray = array_factory(_INITIAL_CAPACITY, np.float64)
+        self._phase_codes: np.ndarray = array_factory(_INITIAL_CAPACITY, np.int8)
+        self._phase_indices: np.ndarray = array_factory(_INITIAL_CAPACITY, np.int32)
         self._size: int = 0
 
     def append(
@@ -350,10 +392,10 @@ class ScalarTimeSeries:
         # Ensure capacity
         if self._size >= len(self._values):
             new_cap = len(self._values) * 2
-            new_ts = np.empty(new_cap, dtype=np.int64)
-            new_val = np.empty(new_cap, dtype=np.float64)
-            new_phase_codes = np.empty(new_cap, dtype=np.int8)
-            new_phase_indices = np.empty(new_cap, dtype=np.int32)
+            new_ts = self._array_factory(new_cap, np.int64)
+            new_val = self._array_factory(new_cap, np.float64)
+            new_phase_codes = self._array_factory(new_cap, np.int8)
+            new_phase_indices = self._array_factory(new_cap, np.int32)
             new_ts[: self._size] = self._timestamps[: self._size]
             new_val[: self._size] = self._values[: self._size]
             new_phase_codes[: self._size] = self._phase_codes[: self._size]
@@ -569,12 +611,13 @@ class HistogramTimeSeries:
         100.0
     """
 
-    def __init__(self) -> None:
-        self._timestamps: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int64)
-        self._sums: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.float64)
-        self._counts: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.float64)
-        self._phase_codes: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int8)
-        self._phase_indices: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int32)
+    def __init__(self, *, array_factory: ArrayFactory = np.empty) -> None:
+        self._array_factory = array_factory
+        self._timestamps: np.ndarray = array_factory(_INITIAL_CAPACITY, np.int64)
+        self._sums: np.ndarray = array_factory(_INITIAL_CAPACITY, np.float64)
+        self._counts: np.ndarray = array_factory(_INITIAL_CAPACITY, np.float64)
+        self._phase_codes: np.ndarray = array_factory(_INITIAL_CAPACITY, np.int8)
+        self._phase_indices: np.ndarray = array_factory(_INITIAL_CAPACITY, np.int32)
         self._size: int = 0
         self._bucket_les: tuple[str, ...] | None = None
         self._bucket_counts: np.ndarray | None = None
@@ -620,8 +663,8 @@ class HistogramTimeSeries:
                 sorted(sample.buckets.keys(), key=_bucket_sort_key)
             )
             n_buckets = len(self._bucket_les)
-            self._bucket_counts = np.empty(
-                (_INITIAL_CAPACITY, n_buckets), dtype=np.float64
+            self._bucket_counts = self._array_factory(
+                (_INITIAL_CAPACITY, n_buckets), np.float64
             )
 
         # Validate bucket schema consistency
@@ -639,12 +682,14 @@ class HistogramTimeSeries:
         # Ensure capacity for all arrays
         if self._size >= len(self._timestamps):
             new_cap = len(self._timestamps) * 2
-            new_ts = np.empty(new_cap, dtype=np.int64)
-            new_sums = np.empty(new_cap, dtype=np.float64)
-            new_counts = np.empty(new_cap, dtype=np.float64)
-            new_phase_codes = np.empty(new_cap, dtype=np.int8)
-            new_phase_indices = np.empty(new_cap, dtype=np.int32)
-            new_buckets = np.empty((new_cap, len(self._bucket_les)), dtype=np.float64)
+            new_ts = self._array_factory(new_cap, np.int64)
+            new_sums = self._array_factory(new_cap, np.float64)
+            new_counts = self._array_factory(new_cap, np.float64)
+            new_phase_codes = self._array_factory(new_cap, np.int8)
+            new_phase_indices = self._array_factory(new_cap, np.int32)
+            new_buckets = self._array_factory(
+                (new_cap, len(self._bucket_les)), np.float64
+            )
             new_ts[: self._size] = self._timestamps[: self._size]
             new_sums[: self._size] = self._sums[: self._size]
             new_counts[: self._size] = self._counts[: self._size]
@@ -1012,7 +1057,9 @@ class ServerMetricEntry:
     data: ScalarTimeSeries | HistogramTimeSeries
 
     @classmethod
-    def from_metric_family(cls, metric_family: MetricFamily) -> Self:
+    def from_metric_family(
+        cls, metric_family: MetricFamily, *, array_factory: ArrayFactory = np.empty
+    ) -> Self:
         """Create a ServerMetricEntry from a MetricFamily.
 
         Factory method that automatically selects the appropriate time series
@@ -1029,7 +1076,7 @@ class ServerMetricEntry:
         return cls(
             metric_type=metric_family.type,
             description=metric_family.description,
-            data=HistogramTimeSeries()
+            data=HistogramTimeSeries(array_factory=array_factory)
             if metric_family.type == PrometheusMetricType.HISTOGRAM
-            else ScalarTimeSeries(),
+            else ScalarTimeSeries(array_factory=array_factory),
         )

@@ -1,5 +1,12 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+Server-metrics collection uses a restartable native sidecar and requires
+Kubernetes 1.29+. Keep the results volume disk-backed for its bounded numeric
+history store. Collection failure preserves inference export and appears in
+`server_metrics_error_summary`; inspect this field when assessing a degraded
+run. See [storage and isolation configuration](configuration.md#server-metrics-isolation-and-storage).
+
 # SPDX-License-Identifier: Apache-2.0
 sidebar-title: Production Deployments
 ---

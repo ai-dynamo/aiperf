@@ -4,12 +4,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import overload
 
 import numpy as np
 from numpy.typing import DTypeLike, NDArray
 
 __all__ = ["GrowableArray", "Growable2DArray"]
+
+ArrayFactory = Callable[[int | tuple[int, ...], DTypeLike], NDArray]
 
 
 class GrowableArray:
@@ -27,13 +30,14 @@ class GrowableArray:
         (10, 16)
     """
 
-    __slots__ = ("_data", "_size", "_sum")
+    __slots__ = ("_data", "_size", "_sum", "_array_factory")
 
     def __init__(
         self,
         initial_capacity: int = 256,
         dtype: DTypeLike = np.float64,
         track_sum: bool = False,
+        array_factory: ArrayFactory | None = None,
     ) -> None:
         """Initialize with pre-allocated capacity.
 
@@ -41,10 +45,12 @@ class GrowableArray:
             initial_capacity: Initial array capacity. Must be positive.
             dtype: NumPy dtype for the array.
             track_sum: If True, maintain a running sum for O(1) mean calculation.
+            array_factory: Optional allocator for disk-backed numeric histories.
         """
         if initial_capacity <= 0:
             raise ValueError("initial_capacity must be positive")
-        self._data: NDArray = np.empty(initial_capacity, dtype=dtype)
+        self._array_factory = array_factory or np.empty
+        self._data: NDArray = self._array_factory(initial_capacity, dtype)
         self._size: int = 0
         self._sum: float | None = 0.0 if track_sum else None
 
@@ -116,7 +122,7 @@ class GrowableArray:
         Args:
             new_capacity: New array capacity (must be >= current size)
         """
-        new_data = np.empty(new_capacity, dtype=self._data.dtype)
+        new_data = self._array_factory(new_capacity, self._data.dtype)
         new_data[: self._size] = self._data[: self._size]
         self._data = new_data
 

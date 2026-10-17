@@ -30,8 +30,8 @@ JSON_CONTENT_TYPE_PREFIX = "application/json"
 OPENMETRICS_CONTENT_TYPE_PREFIX = "application/openmetrics-text"
 
 # A stalling endpoint (headers sent, then no chunk delivery) is bounded by
-# `sock_read` rather than the collection cadence, so scrapes can pile up
-# in-flight when the read timeout dwarfs the interval between them. This
+# `sock_read` rather than the collection cadence, so a periodic scrape can
+# block later ticks when the read timeout dwarfs the interval between them. This
 # multiplier only flags configurations far outside that relationship -
 # it stays above the built-in defaults' own ratio (~90x) so it doesn't
 # fire on an unmodified install.
@@ -275,6 +275,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         # (see IncompatibleMetricsEndpointError). Subsequent collection cycles
         # short-circuit so we don't spam parse failures at the scrape interval.
         self._endpoint_disabled: bool = False
+        self._collection_task: asyncio.Task | None = None
         super().__init__(**kwargs)
 
     @property
@@ -510,18 +511,19 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         collection every collection_interval seconds. The @background_task decorator
         handles automatic lifecycle management and cancellation on stop.
 
-        Uses execute_async (fire-and-forget) rather than await so the next
-        scrape starts on schedule rather than after the previous one
-        completes; a slow scrape doesn't delay subsequent ones. When
-        ``collection_interval`` is shorter than scrape latency, multiple
-        scrapes can be in flight simultaneously — see the
-        ``IncompatibleMetricsEndpointError`` handler for the dedup +
-        last-response-hash invariant that keeps that case correct.
-
-        This pattern is critical for accurate rate measurements on fast-changing
-        metrics where scrape timing jitter would introduce measurement error.
+        Cadence remains fixed, but a tick is skipped while the preceding
+        scrape is still fetching or processing. Slow endpoints and disk writes
+        therefore cannot accumulate an unbounded queue of response payloads.
         """
-        self.execute_async(self.collect_and_process_metrics())
+        if self._endpoint_disabled or (
+            self._collection_task is not None and not self._collection_task.done()
+        ):
+            return
+        self._collection_task = self.execute_async(self.collect_and_process_metrics())
+
+    def disable(self) -> None:
+        """Stop scheduling scrapes after a terminal collection-resource failure."""
+        self._endpoint_disabled = True
 
     async def collect_and_process_metrics(self) -> None:
         """Collect metrics from endpoint with error handling.
