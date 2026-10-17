@@ -81,7 +81,6 @@ class SystemControllerDispatchMixin:
         return None
 
     def _on_registration(self, message: Registration) -> RegistrationAck:
-        """Register a process instance and its pending result domains, then ack."""
         self.debug(
             lambda: f"Processing registration from {message.stype} with ID: {message.sid}"
         )

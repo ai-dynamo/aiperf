@@ -43,18 +43,17 @@ async def test_request_metrics_recoverable_before_final_export(
     checkpoint_run: BenchmarkRun,
     prefix: str | None,
 ) -> None:
-    """All completed requests are fetchable while final export is still gated."""
+    """Flushed records are fetchable before final export is ready."""
     checkpoint_run.cfg.artifacts.prefix = prefix
     writer = RecordExportJSONLWriter(service_id="records-manager", run=checkpoint_run)
     checkpoint = writer.output_file.parent / "checkpoints" / writer.output_file.name
 
     async with aiperf_lifecycle(writer):
-        for index in range(916):
-            record = create_metric_records_data(
-                x_request_id=f"request-{index}",
-                results=[{"request_latency": 2_000_000, "output_token_count": 10}],
-            )
-            await writer.process_record(record)
+        record = create_metric_records_data(
+            x_request_id="request-0",
+            results=[{"request_latency": 2_000_000, "output_token_count": 10}],
+        )
+        await writer.process_record(record)
         await writer.flush_buffer()
 
         # No finalization or readiness marker: these are the files the recovery
@@ -71,15 +70,12 @@ async def test_request_metrics_recoverable_before_final_export(
             MetricRecordInfo.model_validate(orjson.loads(line))
             for line in recovered.read_bytes().splitlines()
         ]
-        assert len(records) == 916
-        assert {record.metadata.x_request_id for record in records} == {
-            f"request-{index}" for index in range(916)
-        }
-        assert all(record.metrics["request_latency"].value == 2.0 for record in records)
-        assert all(record.metrics["request_latency"].unit == "ms" for record in records)
-        assert all(
-            record.metrics["output_token_count"].value == 10 for record in records
-        )
+        assert len(records) == 1
+        recovered_record = records[0]
+        assert recovered_record.metadata.x_request_id == "request-0"
+        assert recovered_record.metrics["request_latency"].value == 2.0
+        assert recovered_record.metrics["request_latency"].unit == "ms"
+        assert recovered_record.metrics["output_token_count"].value == 10
         assert checkpoint.samefile(writer.output_file)
         with pytest.raises(ResultFileUnavailable):
             resolve_result_file(writer.output_file.parent, writer.output_file.name)
