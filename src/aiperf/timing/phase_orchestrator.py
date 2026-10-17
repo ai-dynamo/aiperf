@@ -311,6 +311,8 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         # First fatal failure surfaced by a seamless phase's detached return-wait
         # task; re-raised by _execute_phases so the run fails (not reports success).
         self._seamless_phase_error: BaseException | None = None
+        # Set by cancel(); stops _execute_phases from starting any later phase.
+        self._cancelled = False
 
     def _record_control_fatal_error(self, error: BaseException) -> None:
         """Record a fatal request-free control-node failure.
@@ -383,6 +385,8 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             sends).
         """
         for i, phase_config in enumerate(self._ordered_phase_configs):
+            if self._cancelled:
+                break
             is_final_phase = i == len(self._ordered_phase_configs) - 1
             seamless_to_next = (
                 not is_final_phase and self._ordered_phase_configs[i + 1].seamless
@@ -473,8 +477,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 raise e
 
             # Remove from active runners when fully complete
-            # For seamless phases, this happens after returns complete (background task)
-            if not seamless_to_next:
+            # For seamless phases, this happens after returns complete (background task).
+            # cancel() may already have cleared the list while run() was awaited.
+            if not seamless_to_next and runner in self._active_runners:
                 self._active_runners.remove(runner)
 
         # Barrier: a seamless phase's return-wait runs detached and
@@ -625,6 +630,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         Called when user requests cancellation (e.g., Ctrl+C).
         """
         self.warning("Cancelling phase orchestrator")
+        self._cancelled = True
 
         # Cancel all in-flight credits first
         await self._credit_router.cancel_all_credits()
