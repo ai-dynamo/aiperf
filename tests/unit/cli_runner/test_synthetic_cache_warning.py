@@ -131,18 +131,53 @@ def test_fixed_seed_warns_even_when_pool_covers_requests(
     assert "--reset-kv-cache" in caplog.text
 
 
-@pytest.mark.parametrize("requests", [50, 100])
 def test_random_sampling_warns_before_pool_exhaustion(
-    requests: int, caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Sampling with replacement risks duplicates without exhausting entries."""
     _preflight_synthetic_prompt_reuse(
-        _plan(request_count=requests, dataset_sampling_strategy="random")
+        _plan(request_count=50, dataset_sampling_strategy="random")
     )
 
     assert "samples with replacement" in caplog.text
     assert "before the pool is exhausted" in caplog.text
     assert "sequential or shuffle" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "overrides, expects_warning",
+    [
+        param({}, False, id="serial-partial-session"),
+        param({"request_count": 3}, False, id="serial-complete-session"),
+        param({"request_count": 4}, True, id="serial-second-session"),
+        param({"concurrency": [2]}, True, id="concurrent-sessions"),
+        param({"request_count": 1, "concurrency": [2]}, False, id="one-request"),
+        param({"request_count": None, "conversation_num": 1}, False, id="one-session"),
+        param({"request_count": None, "conversation_num": 2}, True, id="two-sessions"),
+        param({"request_count": None, "benchmark_duration": 1}, True, id="duration-only"),
+        param({"conversation_turn_stddev": 1}, True, id="variable-turns"),
+        param({"warmup_request_count": 1}, True, id="warmup-and-profiling"),
+        param({"request_rate": 10}, True, id="unbounded-rate-concurrency"),
+    ],
+)  # fmt: skip
+def test_multi_turn_random_sampling_warning_respects_session_limits(
+    overrides: dict[str, object],
+    expects_warning: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Random draws happen at session starts, while turns retain the same slot."""
+    plan = _plan(
+        **{
+            "request_count": 2,
+            "conversation_turn_mean": 3,
+            "dataset_sampling_strategy": "random",
+            **overrides,
+        }
+    )
+
+    _preflight_synthetic_prompt_reuse(plan)
+
+    assert ("samples with replacement" in caplog.text) is expects_warning
 
 
 @pytest.mark.parametrize("target", ["first_turn_prefix", "system_prefix"])

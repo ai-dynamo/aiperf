@@ -323,9 +323,11 @@ def _synthetic_prompt_reuse_warnings(
             "--cache-bust first_turn_prefix."
         )
 
-    requests, has_uncounted_phase = _synthetic_request_budget(config)
+    session_starts, has_uncounted_phase = _synthetic_session_budget(
+        config, dataset=dataset
+    )
     if dataset.sampling == DatasetSamplingStrategy.RANDOM and (
-        requests > 1 or has_uncounted_phase
+        session_starts > 1 or has_uncounted_phase
     ):
         messages.append(
             f"Synthetic dataset '{dataset.name}' samples with replacement "
@@ -336,20 +338,38 @@ def _synthetic_prompt_reuse_warnings(
             "--cache-bust first_turn_prefix."
         )
 
-    if pool_warning := _synthetic_pool_reuse_warning(dataset, requests=requests):
+    if pool_warning := _synthetic_pool_reuse_warning(dataset, requests=session_starts):
         messages.append(pool_warning)
     return messages
 
 
-def _synthetic_request_budget(config: BenchmarkConfig) -> tuple[int, bool]:
-    """Sum known session-start bounds and flag phases without a count bound."""
-    requests = 0
+def _synthetic_session_budget(
+    config: BenchmarkConfig, *, dataset: SyntheticDataset
+) -> tuple[int, bool]:
+    """Bound session starts, retaining a concurrency slot across fixed turns.
+
+    Each initial slot can start one session; replacing it takes a full
+    conversation's requests. Variable turns and adaptive or unbounded
+    concurrency retain conservative request-count bounds.
+    """
+    turns = 1
+    if dataset.turns is not None and int(getattr(dataset.turns, "stddev", 0)) == 0:
+        turns = max(1, int(dataset.turns.expected_value))
+
+    session_starts = 0
     has_uncounted_phase = False
     for phase in config.phases:
-        limits = [n for n in (phase.requests, phase.sessions) if n is not None]
-        requests += min(limits, default=0)
+        limits = [phase.sessions] if phase.sessions is not None else []
+        if phase.requests is not None:
+            slots = (
+                phase.requests
+                if phase.adaptive_scale
+                else min(phase.requests, phase.concurrency or phase.requests)
+            )
+            limits.append(slots + (phase.requests - slots) // turns)
+        session_starts += min(limits, default=0)
         has_uncounted_phase = has_uncounted_phase or not limits
-    return requests, has_uncounted_phase
+    return session_starts, has_uncounted_phase
 
 
 def _synthetic_pool_reuse_warning(

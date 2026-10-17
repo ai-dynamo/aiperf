@@ -67,6 +67,9 @@ otherwise 100. A YAML synthetic dataset defaults to `entries: 100`.
 
 Sequential and shuffle sampling reuse entries after the pool is exhausted.
 Random sampling uses replacement and can repeat entries before exhaustion.
+It selects a conversation when a session starts, rather than drawing again for
+each turn. For fixed turn counts, preflight uses request and session limits
+plus session concurrency to bound the number of draws.
 Warmup uses the same dataset as profiling, so it can populate the server's
 prefix cache before measurement starts. For synthetic text runs, CLI preflight
 warns independently about:
