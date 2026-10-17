@@ -23,7 +23,7 @@ DAG mode exposes one primitive with two flavors, selected by a shorthand key on 
 | Mode | Shorthand on parent turn | What the child sees | Routing | Parent fate |
 |---|---|---|---|---|
 | **FORK** | `"forks": [...]` | Inherits the parent's full conversation history, including the captured model response. | Pinned to the same worker as the parent (locality). | Bare-string entries terminate; `{"child": ..., "background": true}` keeps the parent running. |
-| **SPAWN** | `"spawns": [...]` | Starts from an empty history. Only the child's own messages go on the wire. | Co-locates on the parent's client worker while that sticky entry is live (no sticky refcount bump); least-loaded once the parent entry is gone. | Continues; suspends only at an explicit `join_at` (or the next-turn auto-join). |
+| **SPAWN** | `"spawns": [...]` | Starts from an empty history. Only the child's own messages go on the wire. | First turn co-locates on the parent's client worker if that sticky entry is live (otherwise least-loaded); the child then pins to that worker under its own id until its final turn (no parent refcount bump). | Continues; suspends only at an explicit `join_at` (or the next-turn auto-join). |
 
 Both keys can appear on the same turn — the scheduler treats them independently, so one turn can both fork continuations and spawn fresh sub-agents.
 
@@ -250,7 +250,7 @@ For agentic patterns where the parent eventually needs the child's result before
 `spawns: [session_id, ...]` desugars into SPAWN-mode branches. When the parent turn completes, each listed child session:
 
 - Starts with an **empty** accumulator — only its own `messages` go on the wire.
-- Still carries `parent_correlation_id`, so the sticky router co-locates it on the parent's client worker while that sticky entry is live. Unlike FORK, the orchestrator does **not** bump sticky refcounts for SPAWN. Once the parent sticky entry is gone, SPAWN children route least-loaded.
+- Still carries `parent_correlation_id`, so its first turn co-locates on the parent's client worker when that sticky entry is live (otherwise least-loaded). Unlike FORK, the orchestrator does **not** bump the parent's sticky refcount; instead the child pins under its own `x_correlation_id` and keeps that worker for every later turn, even after the parent finishes. The entry is released on the child's final turn (kept if that turn forks, as for roots; the orchestrator does not release such entries yet); a child that stops early keeps it until run end, as roots do. FORK children of a SPAWN child route via the SPAWN child's own entry, so they co-locate with it. A SPAWN child of a FORK child follows the FORK child's alias of its ancestor's entry when `register_child_routing` recorded it; otherwise its first turn goes least-loaded.
 
 SPAWN targets may be referenced from multiple parents — the child conversation is effectively a fresh-context template. Use SPAWN when you're benchmarking agent-tree shapes where each sub-agent is semantically independent, not a continuation of the parent.
 
@@ -313,10 +313,10 @@ If you need each phase to wrap the previous response with a new "system-like" fr
 
 ## Reference: routing and `agent_depth`
 
-Every AIPerf session has its own `x_correlation_id` that pins it to a specific worker via sticky routing. In a DAG, FORK children inherit their parent's routing key: the router keys on the parent's correlation id, not each child's. Ordinary SPAWN children also carry `parent_correlation_id`, so they co-locate on the same client worker while the parent sticky entry is still live (without bumping sticky refcounts). That means:
+Every AIPerf session has its own `x_correlation_id` that pins it to a specific worker via sticky routing. In a DAG, FORK children inherit their parent's routing key: the router keys on the parent's correlation id, not each child's. Ordinary SPAWN children also carry `parent_correlation_id`, so their first turn co-locates on the parent's client worker while the parent sticky entry is live; after that they pin under their own correlation id (without bumping the parent's refcount). That means:
 
 - All siblings in a fork hit the **same worker** as the parent.
-- SPAWN children also land on the parent's worker while that sticky entry exists; after it is gone they fall back to least-loaded.
+- SPAWN children start on the parent's worker when that sticky entry exists (least-loaded otherwise) and send every later turn to that same worker, even after the parent finishes; if that worker leaves the run, the child re-pins to another one.
 - FORK siblings send the same root prefix, so the worker (and its server) see a clean prefix-cache hit pattern across sibling pairs.
 
 This is what makes FORK mode useful for exercising prefix-cache and KV-aware routing — without sticky routing across the fork, siblings would scatter across workers and the prefix-share benefit would be invisible on the server.
@@ -324,7 +324,7 @@ This is what makes FORK mode useful for exercising prefix-cache and KV-aware rou
 Every credit and request record is tagged with two DAG-aware fields:
 
 - **`agent_depth`** (`int`) — `0` for root sessions, `1` for direct children, `2` for grandchildren, etc. Roots flowing through a non-DAG dataset all carry `agent_depth=0`, so post-hoc analysis can filter on this field to compare root-only vs full-tree throughput without re-running the benchmark.
-- **`parent_correlation_id`** (`str | None`) — the correlation id of the immediate parent session, or `None` for roots and pre-session SPAWN children. FORK and ordinary (post-turn) SPAWN children both carry the spawning parent's correlation id so the sticky router can co-locate them while that entry is live. Discriminate FORK vs SPAWN with `branch_mode`, not this field alone.
+- **`parent_correlation_id`** (`str | None`) — the correlation id of the immediate parent session, or `None` for roots and pre-session SPAWN children. FORK and ordinary (post-turn) SPAWN children both carry the spawning parent's correlation id so the sticky router can co-locate them while that entry is live (SPAWN: first turn only; later turns follow the child's own entry). Discriminate FORK vs SPAWN with `branch_mode`, not this field alone.
 
 ## Reference: concurrency (fanout exceeds session slots)
 
