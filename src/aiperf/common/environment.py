@@ -1375,6 +1375,31 @@ class _ServerMetricsSettings(BaseSettings):
         env_parse_enums=True,
     )
 
+    STORAGE_MAX_BYTES: int = Field(
+        default=16 * 1024**3,
+        ge=1024 * 1024,
+        description="Maximum backing-file size in bytes for disk-backed "
+        "server-metrics histories, including array-growth allocations. Disk blocks "
+        "are consumed only as samples arrive. Exhaustion stops server metrics "
+        "with an explicit collection error while inference results still export.",
+    )
+    STORAGE_FLUSH_BYTES: int = Field(
+        default=8 * 1024**2,
+        ge=4096,
+        description="Bytes of server-metrics writes between disk flushes and "
+        "page-cache releases. Numeric histories use the artifact filesystem, "
+        "limiting the resident write working set instead of retaining all "
+        "numeric history in memory.",
+    )
+    MAX_SERIES: int = Field(
+        default=20_000,
+        ge=1,
+        description="Maximum distinct endpoint/name/label server-metrics series "
+        "per run. Bounds in-memory series metadata, including dynamically changing "
+        "labels. Exceeding the limit stops collection with an explicit error "
+        "while inference results still export.",
+    )
+
     COLLECTION_FLUSH_PERIOD: float = Field(
         ge=0.0,
         le=30.0,

@@ -419,12 +419,21 @@ class TestJobSetSpec:
             "records-manager",
             "api",
             "gpu-telemetry-manager",
-            "server-metrics-manager",
             "results-sidecar",
         }
         # Event-bus proxy sidecar must be first so the kubelet begins pulling
         # and starting it before anything publishes on its pub/sub sockets.
         assert container_names[0] == "event-bus-proxy"
+        pod_spec = controller_job["template"]["spec"]["template"]["spec"]
+        server_metrics = next(
+            c
+            for c in pod_spec["initContainers"]
+            if c["name"] == "server-metrics-manager"
+        )
+        assert server_metrics["restartPolicy"] == "Always"
+        assert "startupProbe" not in server_metrics
+        assert "readinessProbe" not in server_metrics
+        assert server_metrics["livenessProbe"]["httpGet"]["path"] == "/healthz"
 
     def test_to_k8s_manifest_worker_containers(
         self, basic_jobset_spec: AIPerfJobSetSpec

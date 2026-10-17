@@ -33,6 +33,11 @@ If you're benchmarking against an inference server running on **AMD ROCm GPUs** 
 
 AIPerf provides GPU telemetry collection with the `--gpu-telemetry` flag. Here's how it works:
 
+DCGM collection runs on a fixed interval. If the previous scrape is still
+fetching or processing, the collector skips that tick instead of queuing another
+scrape. Slow endpoints can therefore produce fewer samples than the configured
+interval would suggest.
+
 ### How the `--gpu-telemetry` Flag Works
 
 | Usage | Command | What Gets Collected (If Available) | Console Display | Dashboard View | CSV/JSON Export |
