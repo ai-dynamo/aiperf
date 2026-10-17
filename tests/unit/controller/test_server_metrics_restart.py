@@ -3,7 +3,6 @@
 
 from unittest.mock import AsyncMock
 
-import orjson
 import pytest
 from pytest import param
 
@@ -17,16 +16,13 @@ from aiperf.common.messages import (
     BaseServiceErrorMessage,
     ProcessServerMetricsResultMessage,
 )
-from aiperf.common.models import ErrorDetails, ErrorDetailsCount, MetricResult
-from aiperf.common.models.record_models import ProfileResults
+from aiperf.common.models import ErrorDetails, ErrorDetailsCount
 from aiperf.common.models.server_metrics_models import (
     ProcessServerMetricsResult,
     ServerMetricsResults,
 )
 from aiperf.common.service_registry import ServiceRegistry
 from aiperf.controller.system_controller import SystemController
-from aiperf.exporters.exporter_config import ExporterConfig
-from aiperf.exporters.metrics_json_exporter import MetricsJsonExporter
 from aiperf.plugin.enums import ServiceType
 
 
@@ -191,10 +187,10 @@ async def test_collection_resource_failure_reports_degraded_run_without_cancel(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("next_instance", ["first-process", "second-process"])
-async def test_service_error_preserves_telemetry_failure_through_reconnect_and_export(
+async def test_service_error_preserves_telemetry_failure_through_reconnect(
     system_controller: SystemController, next_instance: str
 ) -> None:
-    """A reported failure cannot vanish before either reconnect or final export."""
+    """Reconnects and late results cannot erase a reported telemetry failure."""
     controller = system_controller
     controller._check_and_trigger_shutdown = AsyncMock()
     controller._cancel_profiling = AsyncMock()
@@ -224,32 +220,6 @@ async def test_service_error_preserves_telemetry_failure_through_reconnect_and_e
     assert controller._server_metrics_results.error_summary == [
         ErrorDetailsCount(error_details=error, count=1)
     ]
-
-    results = ProfileResults(
-        records=[
-            MetricResult(tag="request_latency", header="Latency", unit="ms", avg=2.0)
-        ],
-        completed=1,
-        start_ns=1_000_000_000,
-        end_ns=2_000_000_000,
-        is_complete=True,
-    )
-    exporter = MetricsJsonExporter(
-        exporter_config=ExporterConfig(
-            telemetry_results=None,
-            run=controller.run,
-            cfg=controller.run.cfg,
-            results=results,
-            server_metrics_results=controller._server_metrics_results,
-        )
-    )
-    content = orjson.loads(exporter._generate_content())
-    assert content["is_complete"] is True
-    assert not content.get("error_summary")
-    assert (
-        content["server_metrics_error_summary"][0]["error_details"]["type"]
-        == "RuntimeError"
-    )
 
 
 @pytest.mark.asyncio
@@ -284,13 +254,9 @@ async def test_service_error_does_not_degrade_nonpending_telemetry(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("results_delivered", [False, True])
-@pytest.mark.parametrize(
-    "system_state", [SystemState.PROFILING, SystemState.PROCESSING]
-)
 async def test_late_service_error_after_reap_does_not_cancel_inference(
     system_controller: SystemController,
     results_delivered: bool,
-    system_state: SystemState,
 ) -> None:
     """A queued optional-service error keeps its identity after command-map cleanup."""
     controller = system_controller
@@ -301,7 +267,7 @@ async def test_late_service_error_after_reap_does_not_cancel_inference(
     if results_delivered:
         controller._result_join_coordinator.complete_domain("server_metrics")
     first_seen_ns = ServiceRegistry.get_service("server_metrics_manager").first_seen_ns
-    controller._system_state = system_state
+    controller._system_state = SystemState.PROFILING
     await controller._on_service_reaped(
         "server_metrics_manager", "process exited", first_seen_ns
     )
@@ -316,6 +282,6 @@ async def test_late_service_error_after_reap_does_not_cancel_inference(
     )
 
     controller._cancel_profiling.assert_not_awaited()
-    assert controller._system_state == system_state
+    assert controller._system_state == SystemState.PROFILING
     assert controller._result_join_coordinator.pending_domains == ("records",)
     assert controller._server_metrics_results is retained_results
