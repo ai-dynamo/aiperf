@@ -54,6 +54,10 @@ if TYPE_CHECKING:
     from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
     from aiperf.config.resolution.plan import BenchmarkRun
 
+_ESTIMATED_SNAPSHOT_METADATA_BYTES = 64
+_ESTIMATED_SAMPLE_BYTES = 32
+_ESTIMATED_HISTOGRAM_BUCKET_BYTES = 8
+
 _METRIC_DATA_CLASSES: dict[
     PrometheusMetricType,
     type[GaugeMetricData | CounterMetricData | HistogramMetricData | UnknownMetricData],
@@ -138,7 +142,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             max_bytes=Environment.SERVER_METRICS.STORAGE_MAX_BYTES,
             flush_bytes=Environment.SERVER_METRICS.STORAGE_FLUSH_BYTES,
         )
-        self._storage_init_lock = asyncio.Lock()
+        self._history_lock = asyncio.Lock()
 
         self._server_metrics_hierarchy = ServerMetricsHierarchy()
         # Use slice_duration from config for windowed stats
@@ -163,7 +167,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
     @on_init
     async def _initialize_storage(self) -> None:
         """Use the artifact disk for all numeric histories, including fetch metadata."""
-        async with self._storage_init_lock:
+        async with self._history_lock:
             if self._array_store.initialized:
                 return
             await run_history_io(self._open_storage)
@@ -184,7 +188,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
     @on_stop
     async def _close_storage(self) -> None:
         """Release the anonymous backing file after collection and export finish."""
-        async with self._storage_init_lock:
+        async with self._history_lock:
             await run_history_io(self._array_store.close)
 
     def get_hierarchy_for_export(self) -> ServerMetricsHierarchy:
@@ -205,7 +209,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             record: ServerMetricsRecord containing Prometheus metrics and metadata
         """
         await self._initialize_storage()
-        async with self._storage_init_lock:
+        async with self._history_lock:
             await run_history_io(self._append_server_metrics_record, record)
 
     def _append_server_metrics_record(self, record: ServerMetricsRecord) -> None:
@@ -253,9 +257,10 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
             storage_phase_index=storage_phase_index,
         )
         self._array_store.note_write(
-            64
+            _ESTIMATED_SNAPSHOT_METADATA_BYTES
             + sum(
-                32 + 8 * len(sample.buckets or {})
+                _ESTIMATED_SAMPLE_BYTES
+                + _ESTIMATED_HISTOGRAM_BUCKET_BYTES * len(sample.buckets or {})
                 for family in record.metrics.values()
                 for sample in family.samples
             )
@@ -338,7 +343,7 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
     async def export_results(self, ctx: ExportContext) -> ServerMetricsResults | None:
         """Aggregate exact disk-backed histories without starving service heartbeats."""
-        async with self._storage_init_lock:
+        async with self._history_lock:
             results = await run_history_io(self._build_export_results, ctx)
             if results is not None and ctx.phase_index is None:
                 await self._export_parquet_widened(ctx.start_ns or 0, ctx.end_ns or 0)
@@ -803,30 +808,32 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         time_series: ServerMetricsTimeSeries,
         time_filter: TimeRangeFilter | None,
     ) -> ServerMetricsEndpointInfo:
-        if time_filter is None:
-            fetch_timestamps = list(time_series._fetch_timestamps_ns)
-            fetch_latencies_ns = list(time_series._fetch_latencies_ns)
-            update_timestamps = sorted(time_series._unique_update_timestamps)
-        else:
-            fetch_timestamps = [
-                timestamp_ns
-                for timestamp_ns in time_series._fetch_timestamps_ns
-                if time_filter.includes(timestamp_ns)
-            ]
-            fetch_latencies_ns = [
-                latency_ns
-                for timestamp_ns, latency_ns in time_series._fetch_latency_records_ns
-                if time_filter.includes(timestamp_ns)
-            ]
-            update_timestamps = sorted(
-                timestamp_ns
-                for timestamp_ns in time_series._unique_update_timestamps
-                if time_filter.includes(timestamp_ns)
+        fetch_timestamps = time_series._fetch_timestamps_ns.data
+        fetch_latencies_ns = time_series._fetch_latencies_ns.data
+        update_timestamps = time_series._unique_update_timestamps.data
+        if time_filter is not None:
+            bounds = np.iinfo(np.int64)
+            start_ns = (
+                time_filter.start_ns if time_filter.start_ns is not None else bounds.min
             )
+            end_ns = (
+                time_filter.end_ns if time_filter.end_ns is not None else bounds.max
+            )
+            fetch_timestamps = fetch_timestamps[
+                (fetch_timestamps >= start_ns) & (fetch_timestamps <= end_ns)
+            ]
+            latency_timestamps = time_series._fetch_latency_timestamps_ns.data
+            fetch_latencies_ns = fetch_latencies_ns[
+                (latency_timestamps >= start_ns) & (latency_timestamps <= end_ns)
+            ]
+            update_timestamps = update_timestamps[
+                (update_timestamps >= start_ns) & (update_timestamps <= end_ns)
+            ]
+        update_timestamps = np.sort(update_timestamps)
 
         unique_count = len(update_timestamps)
-        first_update_ns = update_timestamps[0] if update_timestamps else 0
-        last_update_ns = update_timestamps[-1] if update_timestamps else 0
+        first_update_ns = int(update_timestamps[0]) if unique_count else 0
+        last_update_ns = int(update_timestamps[-1]) if unique_count else 0
         duration_seconds = (
             (last_update_ns - first_update_ns) / NANOS_PER_SECOND
             if unique_count > 0
@@ -840,21 +847,21 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
 
         median_update_interval_ms: float | None = None
         if unique_count > 1:
-            intervals_ns = np.diff(np.array(update_timestamps, dtype=np.int64))
+            intervals_ns = np.diff(update_timestamps)
             median_update_interval_ms = (
                 float(np.median(intervals_ns)) / NANOS_PER_MILLIS
             )
 
         avg_fetch_latency_ms = (
-            sum(fetch_latencies_ns) / len(fetch_latencies_ns) / NANOS_PER_MILLIS
-            if fetch_latencies_ns
+            float(np.mean(fetch_latencies_ns)) / NANOS_PER_MILLIS
+            if len(fetch_latencies_ns)
             else 0.0
         )
 
         return ServerMetricsEndpointInfo(
             total_fetches=len(fetch_timestamps),
-            first_fetch_ns=min(fetch_timestamps) if fetch_timestamps else 0,
-            last_fetch_ns=max(fetch_timestamps) if fetch_timestamps else 0,
+            first_fetch_ns=int(fetch_timestamps.min()) if len(fetch_timestamps) else 0,
+            last_fetch_ns=int(fetch_timestamps.max()) if len(fetch_timestamps) else 0,
             avg_fetch_latency_ms=avg_fetch_latency_ms,
             unique_updates=unique_count,
             first_update_ns=first_update_ns,

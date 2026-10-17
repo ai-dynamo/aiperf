@@ -19,6 +19,7 @@ from aiperf.common.models import (
     MetricFamily,
     MetricSample,
     ServerMetricsRecord,
+    TimeRangeFilter,
 )
 from aiperf.config import BenchmarkRun
 from aiperf.server_metrics.accumulator import ServerMetricsAccumulator
@@ -29,6 +30,7 @@ from aiperf.server_metrics.array_store import (
 )
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
 from aiperf.server_metrics.manager import ServerMetricsManager
+from aiperf.server_metrics.storage import ServerMetricsTimeSeries
 
 
 def metric_record(index: int, name: str = "gauge") -> ServerMetricsRecord:
@@ -337,3 +339,37 @@ async def test_fetch_metadata_budget_failure_preserves_retained_export(
         )
     finally:
         await manager._accumulator._close_storage()
+
+
+@pytest.mark.parametrize(
+    "time_filter,fetch_count,update_count,latency_ms,median_ms",
+    [
+        param(None, 5, 3, 0.001002, 1.5, id="all-samples"),
+        param(TimeRangeFilter(), 5, 3, 0.001002, 1.5, id="unbounded"),
+        param(TimeRangeFilter(1_001_000_000, 1_003_000_000), 3, 2, 0.001002, 1.0, id="inclusive-bounds"),
+        param(TimeRangeFilter(start_ns=1_003_000_000), 2, 1, 0.0010035, None, id="start-only"),
+        param(TimeRangeFilter(end_ns=1_001_000_000), 2, 1, 0.0010005, None, id="end-only"),
+        param(TimeRangeFilter(start_ns=1_010_000_000), 0, 0, 0.0, None, id="empty-window"),
+        param(TimeRangeFilter(1_001_500_000, 1_002_500_000), 1, 1, 0.0, None, id="missing-latency"),
+    ],
+)  # fmt: skip
+def test_endpoint_metadata_filters_out_of_order_fetches_and_optional_latencies(
+    time_filter: TimeRangeFilter | None,
+    fetch_count: int,
+    update_count: int,
+    latency_ms: float,
+    median_ms: float | None,
+) -> None:
+    """Vectorized metadata preserves inclusive windows and separate latency timestamps."""
+    series = ServerMetricsTimeSeries()
+    for index in (3, 0, 2, 1, 4):
+        record = metric_record(index)
+        if index == 2:
+            record.endpoint_latency_ns = None
+        series.append_snapshot(record)
+
+    info = ServerMetricsAccumulator._compute_endpoint_info(series, time_filter)
+    assert info.total_fetches == fetch_count
+    assert info.unique_updates == update_count
+    assert info.avg_fetch_latency_ms == pytest.approx(latency_ms)
+    assert info.median_update_interval_ms == median_ms

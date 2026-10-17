@@ -3,6 +3,7 @@
 
 from unittest.mock import AsyncMock
 
+import orjson
 import pytest
 from pytest import param
 
@@ -12,14 +13,20 @@ from aiperf.common.enums import (
     SystemState,
     make_result_producer_capability,
 )
-from aiperf.common.messages import ProcessServerMetricsResultMessage
-from aiperf.common.models import ErrorDetails, ErrorDetailsCount
+from aiperf.common.messages import (
+    BaseServiceErrorMessage,
+    ProcessServerMetricsResultMessage,
+)
+from aiperf.common.models import ErrorDetails, ErrorDetailsCount, MetricResult
+from aiperf.common.models.record_models import ProfileResults
 from aiperf.common.models.server_metrics_models import (
     ProcessServerMetricsResult,
     ServerMetricsResults,
 )
 from aiperf.common.service_registry import ServiceRegistry
 from aiperf.controller.system_controller import SystemController
+from aiperf.exporters.exporter_config import ExporterConfig
+from aiperf.exporters.metrics_json_exporter import MetricsJsonExporter
 from aiperf.plugin.enums import ServiceType
 
 
@@ -180,3 +187,96 @@ async def test_collection_resource_failure_reports_degraded_run_without_cancel(
     assert len(controller._exit_errors) == exit_error_count
     controller._cancel_profiling.assert_not_awaited()
     assert controller._system_state == SystemState.PROFILING
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("next_instance", ["first-process", "second-process"])
+async def test_service_error_preserves_telemetry_failure_through_reconnect_and_export(
+    system_controller: SystemController, next_instance: str
+) -> None:
+    """A reported failure cannot vanish before either reconnect or final export."""
+    controller = system_controller
+    controller._check_and_trigger_shutdown = AsyncMock()
+    controller._cancel_profiling = AsyncMock()
+    controller._on_registration(registration("first-process"))
+    controller._result_join_coordinator.register("records", "records-manager")
+    controller._system_state = SystemState.PROFILING
+    error = ErrorDetails(type="RuntimeError", message="Metrics process failed")
+    message = BaseServiceErrorMessage(service_id="server_metrics_manager", error=error)
+
+    await controller._process_service_error_message(message)
+    assert controller._server_metrics_results is not None
+    assert controller._server_metrics_result_arrived.is_set()
+    assert controller._result_join_coordinator.pending_domains == ("records",)
+    controller._cancel_profiling.assert_not_awaited()
+    assert controller._system_state == SystemState.PROFILING
+
+    await controller._process_service_error_message(message)
+    controller._on_registration(registration(next_instance))
+    await controller.wait_for_tasks()
+    await controller._on_process_server_metrics_result_message(
+        ProcessServerMetricsResultMessage(
+            service_id="server_metrics_manager",
+            server_metrics_result=ProcessServerMetricsResult(results=None),
+        )
+    )
+    assert controller._result_join_coordinator.pending_domains == ("records",)
+    assert controller._server_metrics_results.error_summary == [
+        ErrorDetailsCount(error_details=error, count=1)
+    ]
+
+    results = ProfileResults(
+        records=[
+            MetricResult(tag="request_latency", header="Latency", unit="ms", avg=2.0)
+        ],
+        completed=1,
+        start_ns=1_000_000_000,
+        end_ns=2_000_000_000,
+        is_complete=True,
+    )
+    exporter = MetricsJsonExporter(
+        exporter_config=ExporterConfig(
+            telemetry_results=None,
+            run=controller.run,
+            cfg=controller.run.cfg,
+            results=results,
+            server_metrics_results=controller._server_metrics_results,
+        )
+    )
+    content = orjson.loads(exporter._generate_content())
+    assert content["is_complete"] is True
+    assert not content.get("error_summary")
+    assert (
+        content["server_metrics_error_summary"][0]["error_details"]["type"]
+        == "RuntimeError"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("producer_state", ["disabled", "complete"])
+async def test_service_error_does_not_degrade_nonpending_telemetry(
+    system_controller: SystemController, producer_state: str
+) -> None:
+    """Disabled or already-delivered telemetry is not missing after an error."""
+    controller = system_controller
+    controller._check_and_trigger_shutdown = AsyncMock()
+    controller._cancel_profiling = AsyncMock()
+    controller._on_registration(registration("first-process"))
+    if producer_state == "disabled":
+        controller._result_join_coordinator.unregister(
+            "server_metrics", "server_metrics_manager"
+        )
+    else:
+        controller._result_join_coordinator.complete_domain("server_metrics")
+    controller._system_state = SystemState.PROFILING
+    original_results = controller._server_metrics_results
+
+    await controller._process_service_error_message(
+        BaseServiceErrorMessage(
+            service_id="server_metrics_manager",
+            error=ErrorDetails(type="RuntimeError", message="Metrics process failed"),
+        )
+    )
+    assert controller._server_metrics_results is original_results
+    assert not controller._result_join_coordinator.evicted
+    controller._cancel_profiling.assert_not_awaited()

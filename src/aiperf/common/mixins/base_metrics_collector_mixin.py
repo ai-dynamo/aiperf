@@ -551,12 +551,9 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         try:
             await self._collect_and_process_metrics()
         except IncompatibleMetricsEndpointError as e:
-            # `_collect_metrics_loop` fires `execute_async` every interval
-            # without awaiting prior cycles; under TRT-LLM /metrics latency
-            # several scrape coroutines can be in flight when the first one
-            # raises, all reaching this except block. Synchronously
-            # check-and-set the flag (no awaits before the set) so only the
-            # first arrival logs and notifies — the rest short-circuit.
+            # Baseline and phase-boundary calls bypass the periodic single-flight
+            # guard and can overlap a scrape. Set the flag before awaiting so
+            # only the first failure logs and notifies.
             if self._endpoint_disabled:
                 return
             self._endpoint_disabled = True

@@ -92,6 +92,7 @@ from aiperf.exporters.exporter_manager import ExporterFailure, ExporterManager
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType, UIType
 from aiperf.records.records_manager import ERROR_FATAL_DETAIL_KEY
+from aiperf.server_metrics.constants import SERVER_METRICS_COLLECTION_STOPPED
 from aiperf.ui.protocols import AIPerfUIProtocol
 from aiperf.zmq.streaming_router_client import PEER_GONE_ERRNOS
 
@@ -904,7 +905,22 @@ class SystemController(
         )
         # A dead producer can no longer join its result domain; drop it from the
         # barrier so shutdown isn't blocked forever, then re-check readiness.
-        self._result_join_coordinator.unregister_service(message.service_id)
+        service_info = self.service_manager.service_id_map.get(message.service_id)
+        if (
+            service_info is not None
+            and service_info.service_type == ServiceType.SERVER_METRICS_MANAGER
+        ):
+            self._result_join_coordinator.evict_service(
+                message.service_id, "service error"
+            )
+            if (
+                message.service_id in self._result_join_coordinator.evicted
+                and message.service_id not in self._retired_result_producer_ids
+            ):
+                self._record_missing_server_metrics(message.error)
+            self._retired_result_producer_ids.add(message.service_id)
+        else:
+            self._result_join_coordinator.unregister_service(message.service_id)
         if self._is_required_service(message.service_id) and (
             self._system_state not in {SystemState.STOPPING, SystemState.SHUTDOWN}
         ):
@@ -1706,7 +1722,7 @@ class SystemController(
             self._server_metrics_results = server_metrics_results
             if server_metrics_results is not None:
                 for error in server_metrics_results.error_summary:
-                    if error.error_details.type == "ServerMetricsCollectionStopped":
+                    if error.error_details.type == SERVER_METRICS_COLLECTION_STOPPED:
                         self._exit_errors.append(
                             ExitErrorInfo(
                                 error_details=error.error_details,

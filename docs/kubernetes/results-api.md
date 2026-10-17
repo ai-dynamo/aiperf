@@ -534,6 +534,11 @@ Stream the whole run epoch as a zip bundle, `Content-Disposition`-named after th
 
 Quick-export alias for that run's summary JSON, so a caller does not need to know whether the artifact prefix changed the filename. Takes one query parameter, `format`, constrained to `json` (it exists so csv/parquet shortcuts can be added without a new route).
 
+The primary `profile_export_aiperf.json` includes `server_metrics_error_summary`
+when collection reports errors or its optional producer dies. A run can retain
+all measured inference requests while losing server telemetry; this field makes
+that distinction machine-readable. See [long-run collection and failure handling](../server-metrics/server-metrics.md#long-runs-and-collection-failures).
+
 ---
 
 ## Analytics (runs-index backed)
@@ -763,9 +768,3 @@ Read-only results-server routes do not authenticate individual HTTP requests. Mu
 - **Path traversal.** File-serving endpoints resolve every `{namespace}/{job_id}/{filename}` under the results directory and reject resolved paths that escape the base (`404`). Callers cannot read files outside the PVC.
 
 Do **not** expose the results server directly to the public internet without a proxy that enforces authentication in front of the read-only routes too.
-
-
-The primary `profile_export_aiperf.json` includes `server_metrics_error_summary`
-when collection reports errors or its optional producer dies. A run can retain
-all measured inference requests while losing server telemetry; this field makes
-that distinction machine-readable. See [long-run collection and failure handling](../server-metrics/server-metrics.md#long-runs-and-collection-failures).

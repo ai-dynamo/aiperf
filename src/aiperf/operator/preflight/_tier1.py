@@ -10,7 +10,10 @@ import aiohttp
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
 
-from aiperf.kubernetes.constants import JOBSET_INSTALL_HINT
+from aiperf.kubernetes.constants import (
+    JOBSET_INSTALL_HINT,
+    NATIVE_SIDECAR_MIN_K8S_MINOR,
+)
 from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
 from aiperf.kubernetes.preflight import CheckResult, CheckStatus
 from aiperf.kubernetes.preflight_utils import check_rbac_access
@@ -33,7 +36,9 @@ class _Tier1ChecksMixin:
         minor = int(minor_str) if minor_str else 0
         git_version = vinfo.git_version or "unknown"
         minimum_minor = (
-            29 if self.config.benchmark.server_metrics.enabled else MIN_K8S_MINOR
+            NATIVE_SIDECAR_MIN_K8S_MINOR
+            if self.config.benchmark.server_metrics.enabled
+            else MIN_K8S_MINOR
         )
 
         if major > MIN_K8S_MAJOR or (major == MIN_K8S_MAJOR and minor >= minimum_minor):
@@ -51,7 +56,7 @@ class _Tier1ChecksMixin:
                 f"Upgrade your cluster to {MIN_K8S_MAJOR}.{minimum_minor}+"
                 + (
                     " or set serverMetrics.enabled=false to run without native server-metrics sidecars."
-                    if minimum_minor == 29
+                    if self.config.benchmark.server_metrics.enabled
                     else "."
                 )
             ),

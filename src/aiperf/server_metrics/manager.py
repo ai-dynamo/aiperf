@@ -49,6 +49,7 @@ from aiperf.credit.messages import (
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import AccumulatorType, PluginType, ServiceRunType
 from aiperf.server_metrics.array_store import ServerMetricsStorageError, run_history_io
+from aiperf.server_metrics.constants import SERVER_METRICS_COLLECTION_STOPPED
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
 from aiperf.server_metrics.discovery import is_running_in_kubernetes
 from aiperf.server_metrics.protocols import ServerMetricsAccumulatorProtocol
@@ -58,6 +59,7 @@ if TYPE_CHECKING:
 
 
 _SERVER_METRICS_RECORD_TYPE = "server_metrics"
+_MAX_DISTINCT_COLLECTION_ERRORS = 100
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -122,9 +124,9 @@ class _ErrorState:
     def record(self, error: ErrorDetails) -> None:
         """Increment the count for one error shape."""
         if (
-            error.type != "ServerMetricsCollectionStopped"
+            error.type != SERVER_METRICS_COLLECTION_STOPPED
             and error not in self.error_counts
-            and len(self.error_counts) >= 100
+            and len(self.error_counts) >= _MAX_DISTINCT_COLLECTION_ERRORS
         ):
             error = ErrorDetails(
                 type="AdditionalServerMetricsErrors",
@@ -1067,7 +1069,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                     result, (ServerMetricsStorageError, OSError, MemoryError)
                 ):
                     self._collection_failure = ErrorDetails(
-                        type="ServerMetricsCollectionStopped",
+                        type=SERVER_METRICS_COLLECTION_STOPPED,
                         message=f"Server metrics collection stopped after a resource failure: {result}. Inference request processing and export continue; server metrics are incomplete.",
                     )
                     self._error_state.record(self._collection_failure)

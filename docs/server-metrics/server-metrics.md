@@ -31,6 +31,8 @@ resource failures report a degraded run after export; recoverable scrape errors
 remain advisory. The
 primary `profile_export_aiperf.json` includes `server_metrics_error_summary` so
 missing telemetry cannot be mistaken for a complete server-metrics history.
+Fatal collector failures remain in this export even if the collector later
+reconnects or restarts.
 Aggregation and disk writes run outside the service heartbeat event loop.
 
 On Kubernetes, the optional metrics process runs as a restartable native
