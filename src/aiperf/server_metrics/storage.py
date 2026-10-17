@@ -11,7 +11,11 @@ from numpy.typing import NDArray
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase, PrometheusMetricType
-from aiperf.common.growable_array import ArrayFactory, GrowableArray
+from aiperf.common.growable_array import (
+    ArrayAccessCallback,
+    ArrayFactory,
+    GrowableArray,
+)
 from aiperf.common.models import (
     MetricFamily,
     MetricSample,
@@ -66,28 +70,34 @@ class ServerMetricsTimeSeries:
         1
     """
 
-    def __init__(self, *, array_factory: ArrayFactory = np.empty) -> None:
+    def __init__(
+        self,
+        *,
+        array_factory: ArrayFactory = np.empty,
+        on_access: ArrayAccessCallback | None = None,
+    ) -> None:
         self._array_factory = array_factory
+        self._on_access = on_access
         self.metrics: dict[ServerMetricKey, ServerMetricEntry] = {}
         # Timestamps for unique updates only (when metrics changed)
         self.first_update_ns: int = 0
         self.last_update_ns: int = 0
         self._unique_update_count: int = 0
         self._unique_update_timestamps = GrowableArray(
-            dtype=np.int64, array_factory=array_factory
+            dtype=np.int64, array_factory=array_factory, on_access=on_access
         )
         # Timestamps for all fetches (including duplicates)
         self.first_fetch_ns: int = 0
         self.last_fetch_ns: int = 0
         self._total_fetch_count: int = 0
         self._fetch_timestamps_ns = GrowableArray(
-            dtype=np.int64, array_factory=array_factory
+            dtype=np.int64, array_factory=array_factory, on_access=on_access
         )
         self._fetch_latencies_ns = GrowableArray(
-            dtype=np.int64, array_factory=array_factory
+            dtype=np.int64, array_factory=array_factory, on_access=on_access
         )
         self._fetch_latency_timestamps_ns = GrowableArray(
-            dtype=np.int64, array_factory=array_factory
+            dtype=np.int64, array_factory=array_factory, on_access=on_access
         )
 
     @property
@@ -186,7 +196,9 @@ class ServerMetricsTimeSeries:
 
                 if key not in self.metrics:
                     self.metrics[key] = ServerMetricEntry.from_metric_family(
-                        metric_family, array_factory=self._array_factory
+                        metric_family,
+                        array_factory=self._array_factory,
+                        on_access=self._on_access,
                     )
                 self.metrics[key].data.append(
                     timestamp_ns,
@@ -254,9 +266,14 @@ class ServerMetricsHierarchy:
     """
 
     def __init__(
-        self, *, array_factory: ArrayFactory = np.empty, max_series: int | None = None
+        self,
+        *,
+        array_factory: ArrayFactory = np.empty,
+        max_series: int | None = None,
+        on_access: ArrayAccessCallback | None = None,
     ) -> None:
         self._array_factory = array_factory
+        self._on_access = on_access
         self._max_series = max_series
         self._series_count = 0
         self.endpoints: dict[str, ServerMetricsTimeSeries] = {}
@@ -296,7 +313,7 @@ class ServerMetricsHierarchy:
 
         if url not in self.endpoints:
             self.endpoints[url] = ServerMetricsTimeSeries(
-                array_factory=self._array_factory
+                array_factory=self._array_factory, on_access=self._on_access
             )
 
         self.endpoints[url].append_snapshot(
@@ -360,8 +377,14 @@ class ScalarTimeSeries:
         array([42.5, 43.1, 41.8])
     """
 
-    def __init__(self, *, array_factory: ArrayFactory = np.empty) -> None:
+    def __init__(
+        self,
+        *,
+        array_factory: ArrayFactory = np.empty,
+        on_access: ArrayAccessCallback | None = None,
+    ) -> None:
         self._array_factory = array_factory
+        self._on_access = on_access
         self._timestamps: np.ndarray = array_factory(_INITIAL_CAPACITY, np.int64)
         self._values: np.ndarray = array_factory(_INITIAL_CAPACITY, np.float64)
         self._phase_codes: np.ndarray = array_factory(_INITIAL_CAPACITY, np.int8)
@@ -408,6 +431,7 @@ class ScalarTimeSeries:
             new_val = self._array_factory(new_cap, np.float64)
             new_phase_codes = self._array_factory(new_cap, np.int8)
             new_phase_indices = self._array_factory(new_cap, np.int32)
+            self._note_access(0, self._size)
             new_ts[: self._size] = self._timestamps[: self._size]
             new_val[: self._size] = self._values[: self._size]
             new_phase_codes[: self._size] = self._phase_codes[: self._size]
@@ -418,6 +442,7 @@ class ScalarTimeSeries:
                 new_phase_codes,
                 new_phase_indices,
             )
+            self._note_access(0, self._size)
 
         phase_code = _phase_code(phase)
         concrete_phase_index = (
@@ -430,6 +455,7 @@ class ScalarTimeSeries:
             self._values[self._size] = sample.value
             self._phase_codes[self._size] = phase_code
             self._phase_indices[self._size] = concrete_phase_index
+            self._note_access(max(0, self._size - 1), self._size + 1)
             self._size += 1
             return
 
@@ -454,7 +480,19 @@ class ScalarTimeSeries:
         self._values[idx] = sample.value
         self._phase_codes[idx] = phase_code
         self._phase_indices[idx] = concrete_phase_index
+        self._note_access(max(0, idx - 1), self._size + 1)
         self._size += 1
+
+    def _note_access(self, start: int, stop: int) -> None:
+        """Report compared, appended, shifted, or copied rows to the backing store."""
+        if self._on_access is not None:
+            for array in (
+                self._timestamps,
+                self._values,
+                self._phase_codes,
+                self._phase_indices,
+            ):
+                self._on_access(array[start:stop])
 
     @property
     def timestamps(self) -> NDArray[np.int64]:
@@ -623,8 +661,14 @@ class HistogramTimeSeries:
         100.0
     """
 
-    def __init__(self, *, array_factory: ArrayFactory = np.empty) -> None:
+    def __init__(
+        self,
+        *,
+        array_factory: ArrayFactory = np.empty,
+        on_access: ArrayAccessCallback | None = None,
+    ) -> None:
         self._array_factory = array_factory
+        self._on_access = on_access
         self._timestamps: np.ndarray = array_factory(_INITIAL_CAPACITY, np.int64)
         self._sums: np.ndarray = array_factory(_INITIAL_CAPACITY, np.float64)
         self._counts: np.ndarray = array_factory(_INITIAL_CAPACITY, np.float64)
@@ -702,6 +746,7 @@ class HistogramTimeSeries:
             new_buckets = self._array_factory(
                 (new_cap, len(self._bucket_les)), np.float64
             )
+            self._note_access(0, self._size)
             new_ts[: self._size] = self._timestamps[: self._size]
             new_sums[: self._size] = self._sums[: self._size]
             new_counts[: self._size] = self._counts[: self._size]
@@ -714,6 +759,7 @@ class HistogramTimeSeries:
             self._phase_codes = new_phase_codes
             self._phase_indices = new_phase_indices
             self._bucket_counts = new_buckets
+            self._note_access(0, self._size)
 
         phase_code = _phase_code(phase)
         concrete_phase_index = (
@@ -728,6 +774,7 @@ class HistogramTimeSeries:
             self._phase_codes[self._size] = phase_code
             self._phase_indices[self._size] = concrete_phase_index
             self._bucket_counts[self._size] = bucket_row
+            self._note_access(max(0, self._size - 1), self._size + 1)
             self._size += 1
             return
 
@@ -757,7 +804,21 @@ class HistogramTimeSeries:
         self._phase_codes[idx] = phase_code
         self._phase_indices[idx] = concrete_phase_index
         self._bucket_counts[idx] = bucket_row
+        self._note_access(max(0, idx - 1), self._size + 1)
         self._size += 1
+
+    def _note_access(self, start: int, stop: int) -> None:
+        """Report compared, appended, shifted, or copied rows to the backing store."""
+        if self._on_access is not None:
+            for array in (
+                self._timestamps,
+                self._sums,
+                self._counts,
+                self._phase_codes,
+                self._phase_indices,
+                self._bucket_counts,
+            ):
+                self._on_access(array[start:stop])
 
     def _warn_on_bucket_schema_mismatch(
         self, sample_bucket_keys: set[str], expected_bucket_keys: set[str]
@@ -1070,7 +1131,11 @@ class ServerMetricEntry:
 
     @classmethod
     def from_metric_family(
-        cls, metric_family: MetricFamily, *, array_factory: ArrayFactory = np.empty
+        cls,
+        metric_family: MetricFamily,
+        *,
+        array_factory: ArrayFactory = np.empty,
+        on_access: ArrayAccessCallback | None = None,
     ) -> Self:
         """Create a ServerMetricEntry from a MetricFamily.
 
@@ -1088,7 +1153,7 @@ class ServerMetricEntry:
         return cls(
             metric_type=metric_family.type,
             description=metric_family.description,
-            data=HistogramTimeSeries(array_factory=array_factory)
+            data=HistogramTimeSeries(array_factory=array_factory, on_access=on_access)
             if metric_family.type == PrometheusMetricType.HISTOGRAM
-            else ScalarTimeSeries(array_factory=array_factory),
+            else ScalarTimeSeries(array_factory=array_factory, on_access=on_access),
         )

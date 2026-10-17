@@ -13,6 +13,7 @@ from numpy.typing import DTypeLike, NDArray
 __all__ = ["GrowableArray", "Growable2DArray"]
 
 ArrayFactory = Callable[[int | tuple[int, ...], DTypeLike], NDArray]
+ArrayAccessCallback = Callable[[NDArray], None]
 
 
 class GrowableArray:
@@ -30,7 +31,7 @@ class GrowableArray:
         (10, 16)
     """
 
-    __slots__ = ("_data", "_size", "_sum", "_array_factory")
+    __slots__ = ("_data", "_size", "_sum", "_array_factory", "_on_access")
 
     def __init__(
         self,
@@ -38,6 +39,8 @@ class GrowableArray:
         dtype: DTypeLike = np.float64,
         track_sum: bool = False,
         array_factory: ArrayFactory | None = None,
+        *,
+        on_access: ArrayAccessCallback | None = None,
     ) -> None:
         """Initialize with pre-allocated capacity.
 
@@ -46,10 +49,12 @@ class GrowableArray:
             dtype: NumPy dtype for the array.
             track_sum: If True, maintain a running sum for O(1) mean calculation.
             array_factory: Optional allocator for disk-backed numeric histories.
+            on_access: Optional notification of written views and growth-copy sources.
         """
         if initial_capacity <= 0:
             raise ValueError("initial_capacity must be positive")
         self._array_factory = array_factory or np.empty
+        self._on_access = on_access
         self._data: NDArray = self._array_factory(initial_capacity, dtype)
         self._size: int = 0
         self._sum: float | None = 0.0 if track_sum else None
@@ -66,6 +71,8 @@ class GrowableArray:
         if self._size >= len(self._data):
             self._grow()
         self._data[self._size] = value
+        if self._on_access is not None:
+            self._on_access(self._data[self._size : self._size + 1])
         self._size += 1
         if self._sum is not None:
             self._sum += value
@@ -85,6 +92,8 @@ class GrowableArray:
             return
         self.reserve(n)
         self._data[self._size : self._size + n] = values
+        if self._on_access is not None:
+            self._on_access(self._data[self._size : self._size + n])
         self._size += n
         if self._sum is not None:
             self._sum += float(values.sum())
@@ -124,6 +133,9 @@ class GrowableArray:
         """
         new_data = self._array_factory(new_capacity, self._data.dtype)
         new_data[: self._size] = self._data[: self._size]
+        if self._on_access is not None:
+            self._on_access(self._data[: self._size])
+            self._on_access(new_data[: self._size])
         self._data = new_data
 
     @property
@@ -234,6 +246,8 @@ class GrowableArray:
             self._sum -= self._data[index]
             self._sum += value
         self._data[index] = value
+        if self._on_access is not None:
+            self._on_access(self._data[index : index + 1])
 
 
 class Growable2DArray:

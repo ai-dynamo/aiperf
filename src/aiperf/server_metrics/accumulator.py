@@ -54,9 +54,6 @@ if TYPE_CHECKING:
     from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
     from aiperf.config.resolution.plan import BenchmarkRun
 
-_ESTIMATED_SNAPSHOT_METADATA_BYTES = 64
-_ESTIMATED_SAMPLE_BYTES = 32
-_ESTIMATED_HISTOGRAM_BUCKET_BYTES = 8
 
 _METRIC_DATA_CLASSES: dict[
     PrometheusMetricType,
@@ -177,12 +174,14 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         self._array_store.open()
         self._server_metrics_hierarchy = ServerMetricsHierarchy(
             array_factory=self._array_store.allocate,
+            on_access=self._array_store.note_write,
             max_series=Environment.SERVER_METRICS.MAX_SERIES,
         )
         self._timestamps_ns = GrowableArray(
             initial_capacity=1024,
             dtype=np.int64,
             array_factory=self._array_store.allocate,
+            on_access=self._array_store.note_write,
         )
 
     @on_stop
@@ -255,15 +254,6 @@ class ServerMetricsAccumulator(BaseMetricsProcessor):
         self._server_metrics_hierarchy.add_record(
             record,
             storage_phase_index=storage_phase_index,
-        )
-        self._array_store.note_write(
-            _ESTIMATED_SNAPSHOT_METADATA_BYTES
-            + sum(
-                _ESTIMATED_SAMPLE_BYTES
-                + _ESTIMATED_HISTOGRAM_BUCKET_BYTES * len(sample.buckets or {})
-                for family in record.metrics.values()
-                for sample in family.samples
-            )
         )
         if self._array_store.dirty_bytes >= self._array_store.flush_bytes:
             self._array_store.flush()

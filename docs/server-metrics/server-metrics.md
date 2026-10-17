@@ -15,6 +15,12 @@ stored in an anonymous file on the artifact filesystem. All samples remain
 available for exact aggregation and Parquet export; collection does not retain
 the complete numeric history in resident memory. Use disk-backed artifact
 storage rather than a memory-backed `emptyDir` or tmpfs for long runs.
+Backing-file growth reserves disk space before exposing writable mappings.
+If reservation fails because the volume is full, collection stops with an
+explicit error and retains previously collected samples for export. Periodic
+flushes synchronize and release only recently accessed page ranges, including
+array-growth copies and out-of-order inserts, rather than scanning the full
+retained history.
 
 `AIPERF_SERVER_METRICS_STORAGE_MAX_BYTES` limits the backing file, including
 array-growth allocations (default 16 GiB).

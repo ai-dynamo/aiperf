@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import errno
 import mmap
+import os
 import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -22,6 +24,7 @@ from aiperf.common.models import (
     TimeRangeFilter,
 )
 from aiperf.config import BenchmarkRun
+from aiperf.server_metrics import array_store
 from aiperf.server_metrics.accumulator import ServerMetricsAccumulator
 from aiperf.server_metrics.array_store import (
     ServerMetricsArrayStore,
@@ -30,7 +33,11 @@ from aiperf.server_metrics.array_store import (
 )
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
 from aiperf.server_metrics.manager import ServerMetricsManager
-from aiperf.server_metrics.storage import ServerMetricsTimeSeries
+from aiperf.server_metrics.storage import (
+    HistogramTimeSeries,
+    ScalarTimeSeries,
+    ServerMetricsTimeSeries,
+)
 
 
 def metric_record(index: int, name: str = "gauge") -> ServerMetricsRecord:
@@ -373,3 +380,130 @@ def test_endpoint_metadata_filters_out_of_order_fetches_and_optional_latencies(
     assert info.unique_updates == update_count
     assert info.avg_fetch_latency_ms == pytest.approx(latency_ms)
     assert info.median_update_interval_ms == median_ms
+
+
+@pytest.mark.parametrize("during_growth", [False, True])
+def test_filesystem_allocation_failure_preserves_existing_views(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, during_growth: bool
+) -> None:
+    """ENOSPC must be caught before a writable sparse extent reaches NumPy."""
+    native_linux = array_store.IS_LINUX
+    store = ServerMetricsArrayStore(tmp_path, max_bytes=1024**2, flush_bytes=4096)
+    first = None
+    if during_growth:
+        store.open()
+        first = store.allocate(512, np.int64)
+        first[:] = 42
+    allocated = store.allocated_bytes
+    monkeypatch.setattr(array_store, "IS_LINUX", True)
+    reserve = MagicMock(side_effect=OSError(errno.ENOSPC, "No space left on device"))
+    monkeypatch.setattr(os, "posix_fallocate", reserve, raising=False)
+    try:
+        with pytest.raises(ServerMetricsStorageError, match="No space left"):
+            if during_growth:
+                store.allocate(1024, np.int64)
+            else:
+                store.open()
+        reserve.assert_called_once()
+        assert store.allocated_bytes == allocated
+        if first is not None:
+            np.testing.assert_array_equal(first, np.full(512, 42))
+        else:
+            assert not store.initialized
+    finally:
+        monkeypatch.setattr(array_store, "IS_LINUX", native_linux)
+        store.close()
+
+
+def test_flush_visits_only_recently_written_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tiny write must not scan the retained multi-mapping history."""
+    flushed: list[tuple[int, tuple[int, ...]]] = []
+    advised: list[tuple[int, tuple[int, ...]]] = []
+
+    class RecordingMapping(mmap.mmap):
+        def flush(self, *args: int) -> None:
+            flushed.append((len(self), args))
+            return super().flush(*args)
+
+        def madvise(self, option: int, *args: int) -> None:
+            advised.append((len(self), args))
+            return super().madvise(option, *args)
+
+    monkeypatch.setattr(mmap, "mmap", RecordingMapping)
+    store = ServerMetricsArrayStore(tmp_path, max_bytes=1024**2, flush_bytes=4096)
+    store.open()
+    try:
+        first = store.allocate(4096, np.uint8)
+        first[:] = 1
+        later = store.allocate(128 * 1024, np.uint8)
+        later[:] = 2
+        store.flush()
+        flushed.clear()
+        advised.clear()
+        later[-1] = 3
+        store.note_write(later[-1:])
+        store.flush()
+        assert len(flushed) == 1
+        length, (offset, size) = flushed[0]
+        assert size <= mmap.ALLOCATIONGRANULARITY
+        assert offset > 0
+        assert offset + size <= length
+        if array_store.IS_LINUX:
+            assert advised == flushed
+        flushed.clear()
+        advised.clear()
+        store.flush()
+        assert not flushed
+        assert not advised
+        np.testing.assert_array_equal(first, np.ones(4096, dtype=np.uint8))
+        assert later[-1] == 3
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("unsupported_fallocate", [False, True])
+def test_extent_reservation_fallback_writes_before_mapping(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, unsupported_fallocate: bool
+) -> None:
+    """Platforms or filesystems without fallocate still allocate initialized bytes."""
+    native_linux = array_store.IS_LINUX
+    monkeypatch.setattr(array_store, "IS_LINUX", unsupported_fallocate)
+    reserve = MagicMock(side_effect=OSError(errno.EOPNOTSUPP, "Not supported"))
+    monkeypatch.setattr(os, "posix_fallocate", reserve, raising=False)
+    store = ServerMetricsArrayStore(tmp_path, max_bytes=4 * 1024**2, flush_bytes=4096)
+    store.open()
+    try:
+        first = store.allocate(512, np.int64)
+        first[:] = 42
+        later = store.allocate(2 * 1024**2, np.uint8)
+        assert not later.any()
+        np.testing.assert_array_equal(first, np.full(512, 42))
+        if unsupported_fallocate:
+            assert reserve.call_count == 2
+        else:
+            reserve.assert_not_called()
+    finally:
+        monkeypatch.setattr(array_store, "IS_LINUX", native_linux)
+        store.close()
+
+
+@pytest.mark.parametrize("series_type", [ScalarTimeSeries, HistogramTimeSeries])
+def test_in_order_append_tracks_previous_timestamp_read(
+    series_type: type[ScalarTimeSeries] | type[HistogramTimeSeries],
+) -> None:
+    """The comparison row may occupy a different page from the appended row."""
+    accessed: list[np.ndarray] = []
+    series = series_type(on_access=accessed.append)
+    sample = (
+        MetricSample(value=1.0)
+        if series_type is ScalarTimeSeries
+        else MetricSample(buckets={"1": 1}, sum=1.0, count=1)
+    )
+    series.append(1, sample)
+    accessed.clear()
+
+    series.append(2, sample)
+
+    assert any(np.shares_memory(view, series._timestamps[:1]) for view in accessed)
