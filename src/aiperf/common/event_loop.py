@@ -21,6 +21,10 @@ from aiperf.common.constants import IS_WINDOWS
 # in 15.625 ms ticks regardless of timeBeginPeriod (gh-88494).
 _MONOTONIC_IS_COARSE_ON_WINDOWS = sys.version_info < (3, 13)
 
+# Bound at import so a test patching time.perf_counter globally (with a short
+# side_effect list, say) cannot drive or exhaust the event loop's clock.
+_perf_counter = time.perf_counter
+
 
 class PerfCounterSelectorEventLoop(asyncio.SelectorEventLoop):
     """A ``SelectorEventLoop`` whose clock is ``time.perf_counter()``.
@@ -37,7 +41,7 @@ class PerfCounterSelectorEventLoop(asyncio.SelectorEventLoop):
         self._clock_resolution = time.get_clock_info("perf_counter").resolution
 
     def time(self) -> float:
-        return time.perf_counter()
+        return _perf_counter()
 
 
 class PerfCounterSelectorEventLoopPolicy(asyncio.DefaultEventLoopPolicy):

@@ -106,6 +106,19 @@ class TestPerfCounterSelectorEventLoop:
                 loop.close()
         assert before <= now <= after
 
+    def test_loop_time_ignores_a_patched_global_perf_counter(self) -> None:
+        """Tests patch time.perf_counter globally with short side_effect lists
+        (e.g. via ``aiperf.dataset.dataset_manager.time.perf_counter``). The
+        loop must keep reading the real clock rather than drain those values."""
+        loop = PerfCounterSelectorEventLoop()
+        try:
+            with patch("time.perf_counter", side_effect=[0.0]):
+                first = loop.time()
+                second = loop.time()
+        finally:
+            loop.close()
+        assert 0.0 < first <= second
+
     def test_timers_never_fire_early_when_monotonic_is_coarse(self) -> None:
         """Simulate Windows < 3.13: monotonic() advances in 15.625 ms ticks
         and reports that as its resolution. On a busy loop (aiperf's always
@@ -167,6 +180,7 @@ async def test_pytest_asyncio_runs_tests_on_the_aiperf_policy_loop() -> None:
     else:
         expected_loop = expected.new_event_loop()
         try:
-            assert type(loop) is type(expected_loop)
+            # Plugins such as looptime wrap the loop class in a subclass.
+            assert isinstance(loop, type(expected_loop))
         finally:
             expected_loop.close()
