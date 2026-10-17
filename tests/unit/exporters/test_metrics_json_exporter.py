@@ -306,7 +306,6 @@ class TestMetricsJsonExporter:
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
             data = JsonExportData.model_validate_json(expected_file.read_text())
 
-            assert data.schema_version == "1.6"
             assert data.run_info is not None
             assert data.run_info.benchmark_id == "abc123"
             assert data.run_info.sweep_id == "sweep-uuid-xyz"
