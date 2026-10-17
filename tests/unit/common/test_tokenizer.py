@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -70,10 +71,39 @@ class TestBuiltinTokenizer:
     def test_eos_token_id_is_set(self, tokenizer: Tokenizer) -> None:
         assert isinstance(tokenizer.eos_token_id, int)
 
-    def test_block_separation_token_id_falls_back_to_eos(
+    def test_block_separation_token_id_uses_ordinary_newline(
         self, tokenizer: Tokenizer
     ) -> None:
-        assert tokenizer.block_separation_token_id == tokenizer.eos_token_id
+        token_id = tokenizer.block_separation_token_id
+        assert token_id not in tokenizer.all_special_ids
+        assert tokenizer.decode([token_id]) == "\n\n"
+
+    @pytest.mark.parametrize(
+        "double_newline, single_newline, decoded, special_ids, expected",
+        [
+            param([10, 10], [10], "\n", [], 10, id="single-newline-fallback"),
+            param([10], [10], "\n", [10], None, id="no-special-token-fallback"),
+            param([10], [10], " ", [], None, id="lossy-decode"),
+            param([10, 10], [10, 10], "\n", [], None, id="no-single-token-newline"),
+        ],
+    )  # fmt: skip
+    def test_block_separation_token_id_unusable_candidates_fall_back(
+        self,
+        double_newline: list[int],
+        single_newline: list[int],
+        decoded: str,
+        special_ids: list[int],
+        expected: int | None,
+    ) -> None:
+        tokenizer = Tokenizer()
+        tokenizer._tokenizer = SimpleNamespace(all_special_ids=special_ids)
+        with (
+            patch.object(
+                tokenizer, "encode", side_effect=[double_newline, single_newline]
+            ),
+            patch.object(tokenizer, "decode", return_value=decoded),
+        ):
+            assert tokenizer.block_separation_token_id == expected
 
     def test_num_prompt_special_tokens_returns_zero_when_no_bos(
         self, tokenizer: Tokenizer

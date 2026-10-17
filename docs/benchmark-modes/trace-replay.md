@@ -60,6 +60,16 @@ Example entry:
 {"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [0, 1, 2]}
 ```
 
+Synthesized hash blocks use ordinary newline separators, counted within each
+block's token budget, rather than BOS/EOS markers whose literal spellings may
+expand when encoded as chat content. If the tokenizer has no single-token
+newline separator, no separator is inserted. This changes synthesized text;
+use the same AIPerf version and tokenizer when comparing runs.
+
+`--synthesis-max-isl` filters the trace's declared `input_length`. It does not
+reserve tokens for the server's chat template, conversation history, or output.
+Leave room for those when selecting a trace length limit for a chat endpoint.
+
 ## Profile using a Custom Trace File
 
 Create a trace file with timing information:
