@@ -1058,11 +1058,15 @@ class SystemController(
     def _is_required_service(self, service_id: str) -> bool:
         """Whether losing this service invalidates the run.
 
+        Reaped services retain their type in the registry after command-map
+        cleanup, so queued errors must still recognize optional collectors.
         Unknown senders count as required: an unidentifiable failure is more
         likely a control-plane service that died before or after its registry
         entry existed than an optional collector.
         """
-        info = self.service_manager.service_id_map.get(service_id)
+        info = self.service_manager.service_id_map.get(
+            service_id
+        ) or ServiceRegistry.get_service(service_id)
         if info is None:
             return True
         return info.service_type in self.required_services

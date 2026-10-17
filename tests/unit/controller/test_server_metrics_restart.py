@@ -280,3 +280,42 @@ async def test_service_error_does_not_degrade_nonpending_telemetry(
     assert controller._server_metrics_results is original_results
     assert not controller._result_join_coordinator.evicted
     controller._cancel_profiling.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("results_delivered", [False, True])
+@pytest.mark.parametrize(
+    "system_state", [SystemState.PROFILING, SystemState.PROCESSING]
+)
+async def test_late_service_error_after_reap_does_not_cancel_inference(
+    system_controller: SystemController,
+    results_delivered: bool,
+    system_state: SystemState,
+) -> None:
+    """A queued optional-service error keeps its identity after command-map cleanup."""
+    controller = system_controller
+    controller._check_and_trigger_shutdown = AsyncMock()
+    controller._cancel_profiling = AsyncMock()
+    controller._on_registration(registration("first-process"))
+    controller._result_join_coordinator.register("records", "records-manager")
+    if results_delivered:
+        controller._result_join_coordinator.complete_domain("server_metrics")
+    first_seen_ns = ServiceRegistry.get_service("server_metrics_manager").first_seen_ns
+    controller._system_state = system_state
+    await controller._on_service_reaped(
+        "server_metrics_manager", "process exited", first_seen_ns
+    )
+    assert "server_metrics_manager" not in controller.service_manager.service_id_map
+    retained_results = controller._server_metrics_results
+
+    await controller._process_service_error_message(
+        BaseServiceErrorMessage(
+            service_id="server_metrics_manager",
+            error=ErrorDetails(message="Queued metrics process error"),
+        )
+    )
+
+    controller._cancel_profiling.assert_not_awaited()
+    assert controller._system_state == system_state
+    assert controller._result_join_coordinator.pending_domains == ("records",)
+    assert controller._server_metrics_results is retained_results
