@@ -11,6 +11,7 @@ import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -459,9 +460,7 @@ class Tokenizer:
         self._resolved_name: str | None = None
         self._call_args = {"add_special_tokens": False}
         self._encode_args = {"add_special_tokens": False}
-        # Prompt generation inserts BOS/EOS tokens as block separators
-        # (see PromptGenerator._build_token_sequence). Skipping special tokens
-        # during decode would silently strip those separators.
+        # Preserve special tokens when decoding caller-provided token IDs.
         self._decode_args = {"skip_special_tokens": False}
 
     def _require_init(self) -> None:
@@ -833,17 +832,24 @@ class Tokenizer:
         self._require_init()
         return self._tokenizer.eos_token_id
 
-    @property
+    @cached_property
     def block_separation_token_id(self) -> int | None:
-        """
-        Returns BOS, EOS, or None if none are available.
+        """Return a single ordinary newline token, or None if unavailable.
+
+        BOS/EOS spellings can expand into multiple tokens when a server encodes
+        them as ordinary chat content rather than recognizing special tokens.
         """
         self._require_init()
 
-        if self.bos_token_id is not None:
-            return self.bos_token_id
-        if self.eos_token_id is not None:
-            return self.eos_token_id
+        special_ids = self.all_special_ids
+        for text in ("\n\n", "\n"):
+            tokens = self.encode(text)
+            if (
+                len(tokens) == 1
+                and tokens[0] not in special_ids
+                and self.decode(tokens) == text
+            ):
+                return tokens[0]
         return None
 
     @property
