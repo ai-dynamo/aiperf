@@ -85,3 +85,30 @@ def test_pareto_sweep_export_raises_on_empty() -> None:
 
     with pytest.raises(ValueError, match="no rows"):
         ParetoSweepExport().process({"per_combination_metrics": []}, _params())
+
+
+def test_pareto_sweep_export_reads_the_requested_stat_from_a_single_trial_row() -> None:
+    """A single trial keeps each metric's stats in one block, whose mean is the
+    average. The frontier has to be drawn on the p95 the recipe asked for."""
+    from aiperf.search_recipes.post_process import ParetoSweepExport
+
+    def row(conc: int, avg: float, p95: float) -> dict[str, Any]:
+        return {
+            "parameters": {"isl": 128, "osl": 128, "concurrency": conc},
+            "metrics": {
+                "request_latency": {"mean": avg, "avg": avg, "p95": p95},
+                "output_token_throughput": {"mean": 100.0, "avg": 100.0},
+            },
+        }
+
+    agg = {
+        "per_combination_metrics": [
+            row(1, avg=5.0, p95=40.0),
+            row(2, avg=10.0, p95=20.0),
+        ]
+    }
+    cells = ParetoSweepExport().process(agg, _params())["cells"]
+    assert [(c["concurrency"], c["x"], c["pareto_optimal"]) for c in cells] == [
+        (1, 40.0, False),
+        (2, 20.0, True),
+    ]
