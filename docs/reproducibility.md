@@ -96,6 +96,14 @@ aiperf profile [options...]
 
 Same seed + same config = identical dataset content. Performance metrics always vary.
 
+> [!WARNING]
+> Identical synthetic prompts can hit the prefix cache on a long-lived inference
+> server. Back-to-back runs with the same seed may therefore measure warm-cache
+> TTFT and throughput, including when the synthetic pool covers every request.
+> For cold-cache comparisons, disable prefix caching or reset it between runs,
+> and account for prompt reuse during warmup and profiling. See
+> [Prompt reuse and server prefix caching](tutorials/synthetic-dataset.md#prompt-reuse-and-server-prefix-caching).
+
 ### Use Cases
 
 **Debugging:** Reproduce exact prompts across runs to isolate prompt-related vs. network/timing issues

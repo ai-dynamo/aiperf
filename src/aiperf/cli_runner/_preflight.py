@@ -271,6 +271,59 @@ def _preflight_dataset_access(plan: BenchmarkPlan) -> None:
         _call_optional_hook(LoaderClass, "preflight_access", kwargs)
 
 
+def _preflight_synthetic_prompt_reuse(plan: BenchmarkPlan) -> None:
+    """Warn when single-turn request budgets can exhaust a synthetic text pool.
+
+    Counts warmup and profiling together. Budgets are upper bounds: duration
+    limits, failures, and early stopping can reduce the requests actually sent.
+    Multi-turn request counts do not measure conversation-pool consumption.
+    """
+    from aiperf.common.aiperf_logger import AIPerfLogger
+    from aiperf.common.enums import CacheBustTarget
+    from aiperf.common.logging import install_preflight_handler
+    from aiperf.config.dataset import SyntheticDataset
+
+    messages: list[str] = []
+    for config in plan.configs:
+        dataset = config.get_default_dataset()
+        if not isinstance(dataset, SyntheticDataset) or dataset.prompts is None:
+            continue
+        if dataset.prompts.isl is None or dataset.prompts.isl.expected_value <= 0:
+            continue
+        if dataset.turns is not None and (
+            dataset.turns.expected_value != 1
+            or getattr(dataset.turns, "stddev", 0) != 0
+        ):
+            continue
+        if config.get_cache_bust_target() in (
+            CacheBustTarget.SYSTEM_PREFIX,
+            CacheBustTarget.FIRST_TURN_PREFIX,
+        ):
+            continue
+
+        requests = 0
+        for phase in config.phases:
+            limits = [n for n in (phase.requests, phase.sessions) if n is not None]
+            requests += min(limits, default=0)
+        if requests <= dataset.entries:
+            continue
+
+        messages.append(
+            f"Synthetic dataset '{dataset.name}' has {dataset.entries} entries "
+            f"for up to {requests} configured single-turn requests across warmup "
+            "and profiling. Repeated prompts can hit the server's prefix cache "
+            "and affect TTFT and throughput. Increase --num-dataset-entries "
+            "to cover warmup and profiling, or use --cache-bust first_turn_prefix. "
+            "Reusing --random-seed across runs also regenerates identical prompts."
+        )
+
+    if messages:
+        install_preflight_handler()
+        logger = AIPerfLogger(__name__)
+        for message in dict.fromkeys(messages):
+            logger.warning(message)
+
+
 def _preflight_dataset_materialize(plan: BenchmarkPlan) -> None:
     """Fetch and cache public datasets that need resolution before services start.
 

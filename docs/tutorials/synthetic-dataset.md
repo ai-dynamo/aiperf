@@ -58,6 +58,40 @@ aiperf profile \
 - `--seq-dist`: Distribution of (ISL, OSL) pairs for mixed workload simulation (default: None). See [Sequence Length Distributions](sequence-distributions.md) for format details.
 - `--random-seed`: Seed for reproducible prompt generation (default: None)
 
+### Prompt reuse and server prefix caching
+
+Synthetic prompts are generated once, then sampled from a finite pool.
+`--num-dataset-entries` sets the pool size explicitly. When omitted in a CLI-only
+run, AIPerf uses `--num-conversations` if set, otherwise `--request-count` if set,
+otherwise 100. A YAML synthetic dataset defaults to `entries: 100`.
+
+Sequential and shuffle sampling reuse entries after the pool is exhausted.
+Random sampling uses replacement and can repeat entries before exhaustion.
+Warmup uses the same dataset as profiling, so it can populate the server's
+prefix cache before measurement starts. For single-turn synthetic text runs,
+CLI preflight warns when the combined configured request budgets exceed the
+pool size, unless a per-session prefix cache-bust marker is enabled. This is a
+budget check, not a measurement of cache hits: duration limits or early stopping
+can reduce the actual request count. Multi-turn and duration-only workloads are
+not covered by this check.
+
+> [!WARNING]
+> Reusing `--random-seed` with the same prompt settings regenerates identical
+> synthetic prompts across runs. On a long-lived server with prefix caching,
+> repeated prompts can reuse cached prefill, affecting TTFT and throughput.
+> A large pool alone does not prevent this cross-run effect, and different
+> seeds can still produce overlapping corpus segments or shared prefixes.
+
+For uncached-prefill measurements, disable server prefix caching or reset the
+cache between runs using the server's supported
+[KV-cache reset hook](benchmark-control-hooks.md). A reset before a run does
+not prevent reuse during warmup or profiling. Size the pool to cover both
+phases, use sequential or shuffle sampling, and use distinct seeds across
+separate runs to reduce accidental reuse. These steps do not guarantee zero
+cache hits, especially with shared system prompts or prefix pools. To make
+repeated sessions distinct at the user prompt's start, use
+`--cache-bust first_turn_prefix`; a shared system prompt can still be cached.
+
 ### Advanced: Prefix Synthesis
 
 For shared-prefix benchmarking (e.g., RAG scenarios):
