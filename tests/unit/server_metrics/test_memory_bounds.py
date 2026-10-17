@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import numpy as np
 import pytest
+from pytest import param
 
 from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.enums import CreditPhase, PrometheusMetricType
@@ -257,5 +258,82 @@ async def test_disk_budget_exhaustion_exports_retained_samples_with_failure(
             for error in result.error_summary
         )
         assert manager._accumulator._array_store.allocated_bytes <= 1024**2
+    finally:
+        await manager._accumulator._close_storage()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failed_reservation",
+    [
+        param(1, id="fetch-timestamps"),
+        param(2, id="fetch-latencies"),
+        param(3, id="latency-timestamps"),
+        param(4, id="unique-update-timestamps"),
+    ],
+)  # fmt: skip
+async def test_fetch_metadata_budget_failure_preserves_retained_export(
+    benchmark_run: BenchmarkRun,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_reservation: int,
+) -> None:
+    """Failure growing any fetch buffer must leave metadata and prior samples valid."""
+    benchmark_run.cfg.artifacts.dir = tmp_path
+    monkeypatch.setattr(Environment.SERVER_METRICS, "STORAGE_MAX_BYTES", 1024**2)
+    manager = ServerMetricsManager(run=benchmark_run)
+    manager.publish = AsyncMock()
+    try:
+        for index in range(256):
+            record = metric_record(index)
+            record.is_duplicate = False
+            record.benchmark_phase = CreditPhase.PROFILING
+            await manager._on_server_metrics_records([record], "collector")
+        store = manager._accumulator._array_store
+        endpoint = manager._accumulator.get_hierarchy_for_export().endpoints[
+            record.endpoint_url
+        ]
+        metadata = (
+            endpoint._fetch_timestamps_ns,
+            endpoint._fetch_latencies_ns,
+            endpoint._fetch_latency_timestamps_ns,
+            endpoint._unique_update_timestamps,
+        )
+        before = [array.data.copy() for array in metadata]
+        # Each full int64 metadata array grows from 256 to 512 entries.
+        # Leave room for exactly the reservations preceding the failing one.
+        padding = (
+            store.max_bytes - store.allocated_bytes - 4096 * (failed_reservation - 1)
+        )
+        await run_history_io(store.allocate, padding, np.uint8)
+
+        rejected = metric_record(256)
+        rejected.is_duplicate = False
+        rejected.benchmark_phase = CreditPhase.PROFILING
+        await manager._on_server_metrics_records([rejected], "collector")
+        assert manager._collection_failure is not None
+        await manager.wait_for_tasks()
+        await manager._publish_server_metrics_result(
+            start_ns=1_000_000_000,
+            end_ns=rejected.timestamp_ns,
+            warmup_start_ns=None,
+            warmup_end_ns=None,
+        )
+        result = manager.publish.await_args.args[0].server_metrics_result.results
+        assert result.endpoint_summaries
+        summary = next(iter(result.endpoint_summaries.values()))
+        assert summary.metrics["gauge"].series[0].stats.avg == 127.5
+        assert endpoint._total_fetch_count == 256
+        assert endpoint._unique_update_count == 256
+        assert endpoint.first_fetch_ns == endpoint.first_update_ns == 1_000_000_000
+        assert endpoint.last_fetch_ns == endpoint.last_update_ns == record.timestamp_ns
+        for array, expected in zip(metadata, before, strict=True):
+            np.testing.assert_array_equal(array.data, expected)
+        assert len(list(endpoint._fetch_latency_records_ns)) == 256
+        assert all(len(entry.data) == 256 for entry in endpoint.metrics.values())
+        assert any(
+            error.error_details.type == "ServerMetricsCollectionStopped"
+            for error in result.error_summary
+        )
     finally:
         await manager._accumulator._close_storage()

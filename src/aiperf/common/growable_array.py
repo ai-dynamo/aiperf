@@ -83,14 +83,14 @@ class GrowableArray:
         n = len(values)
         if n == 0:
             return
-        self._ensure_capacity(n)
+        self.reserve(n)
         self._data[self._size : self._size + n] = values
         self._size += n
         if self._sum is not None:
             self._sum += float(values.sum())
 
-    def _ensure_capacity(self, additional: int) -> None:
-        """Ensure capacity for `additional` more elements.
+    def reserve(self, additional: int) -> None:
+        """Reserve room for `additional` more elements without changing stored data.
 
         Grows capacity by doubling repeatedly until sufficient space available.
         More efficient than doubling incrementally when bulk inserting.
@@ -117,7 +117,7 @@ class GrowableArray:
         """Grow to a specific capacity.
 
         Allocates new array and copies existing data. Used by both _grow()
-        and _ensure_capacity() to avoid code duplication.
+        and reserve() to avoid code duplication.
 
         Args:
             new_capacity: New array capacity (must be >= current size)

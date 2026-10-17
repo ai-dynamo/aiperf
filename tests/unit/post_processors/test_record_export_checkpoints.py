@@ -133,6 +133,51 @@ async def test_request_checkpoint_replaces_previous_run(
         assert b"new-run" in checkpoint.read_bytes()
 
 
+@pytest.mark.parametrize("interval", [0, 30])
+def test_previous_checkpoint_removed_before_startup(
+    checkpoint_run: BenchmarkRun,
+    monkeypatch: pytest.MonkeyPatch,
+    interval: int,
+) -> None:
+    """A run that never reaches on_start cannot expose its predecessor's data."""
+    monkeypatch.setattr(Environment.RECORD, "CHECKPOINT_INTERVAL", interval)
+    checkpoint_run.cfg.artifacts.prefix = "reused_profile"
+    output = checkpoint_run.cfg.artifacts.profile_export_jsonl_file
+    output.write_bytes(b'{"previous_run": true}\n')
+    checkpoint = output.parent / "checkpoints" / output.name
+    checkpoint.parent.mkdir()
+    checkpoint.hardlink_to(output)
+
+    RecordExportJSONLWriter(service_id="records-manager", run=checkpoint_run)
+
+    assert not checkpoint.exists()
+    assert collect_ready_artifacts(output.parent, recursive=True) == []
+
+
+def test_previous_checkpoint_removed_before_output_reset_failure(
+    checkpoint_run: BenchmarkRun,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failure resetting the output must not leave a stale recovery alias behind."""
+    output = checkpoint_run.cfg.artifacts.profile_export_jsonl_file
+    output.write_bytes(b'{"previous_run": true}\n')
+    checkpoint = output.parent / "checkpoints" / output.name
+    checkpoint.parent.mkdir()
+    checkpoint.hardlink_to(output)
+    unlink = Path.unlink
+
+    def fail_output_reset(path: Path, *, missing_ok: bool = False) -> None:
+        if path == output:
+            raise OSError("simulated output reset failure")
+        unlink(path, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", fail_output_reset)
+    with pytest.raises(OSError, match="output reset failure"):
+        RecordExportJSONLWriter(service_id="records-manager", run=checkpoint_run)
+    assert not checkpoint.exists()
+    assert output.read_bytes() == b'{"previous_run": true}\n'
+
+
 @pytest.mark.asyncio
 async def test_checkpoint_link_failure_does_not_abort_export(
     checkpoint_run: BenchmarkRun,

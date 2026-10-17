@@ -49,6 +49,8 @@ class RecordExportJSONLWriter(
 
         output_file = run.cfg.artifacts.profile_export_jsonl_file
         output_file.parent.mkdir(parents=True, exist_ok=True)
+        checkpoint = output_file.parent / CHECKPOINTS_DIR_NAME / output_file.name
+        checkpoint.unlink(missing_ok=True)
         output_file.unlink(missing_ok=True)
 
         super().__init__(

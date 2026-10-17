@@ -84,6 +84,19 @@ class TestGrowableArray:
         assert len(arr) == 100
         assert arr.capacity == 128
 
+    def test_reserve_preserves_values_length_and_sum(self) -> None:
+        arr = GrowableArray(initial_capacity=2, dtype=np.int64, track_sum=True)
+        arr.extend(np.array([1, 2], dtype=np.int64))
+        arr.reserve(3)
+        assert arr.capacity >= 5
+        assert len(arr) == 2
+        assert arr.sum == 3
+        assert arr.data.dtype == np.int64
+        np.testing.assert_array_equal(arr.data, [1, 2])
+        arr.append(3)
+        assert arr.sum == 6
+        np.testing.assert_array_equal(arr.data, [1, 2, 3])
+
     def test_data_returns_view(self) -> None:
         arr = GrowableArray(initial_capacity=4)
         arr.append(1.0)

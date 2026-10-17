@@ -150,6 +150,8 @@ class ServerMetricsTimeSeries:
         if not record.metrics:
             return
 
+        self._reserve_snapshot_metadata(record)
+
         # Always track fetch timestamps and latencies
         if self._total_fetch_count == 0 or timestamp_ns < self.first_fetch_ns:
             self.first_fetch_ns = timestamp_ns
@@ -196,6 +198,16 @@ class ServerMetricsTimeSeries:
                         else storage_phase_index
                     ),
                 )
+
+    def _reserve_snapshot_metadata(self, record: ServerMetricsRecord) -> None:
+        """Keep paired histories aligned if any later reservation exhausts the budget."""
+        arrays = [self._fetch_timestamps_ns]
+        if record.endpoint_latency_ns is not None:
+            arrays.extend((self._fetch_latencies_ns, self._fetch_latency_timestamps_ns))
+        if not record.is_duplicate:
+            arrays.append(self._unique_update_timestamps)
+        for array in arrays:
+            array.reserve(1)
 
     def __len__(self) -> int:
         """Number of unique metric updates (excluding duplicates).
