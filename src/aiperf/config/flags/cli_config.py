@@ -888,7 +888,8 @@ class CLIConfig(BaseConfig):
             ge=0,
             description="Random seed for deterministic data generation. When set, makes synthetic prompts, sampling, delays, and other "
             "random operations reproducible across runs. Essential for A/B testing and debugging. Uses system entropy if not specified. "
-            "Initialized globally at config creation.",
+            "Initialized globally at config creation. Reusing the same seed regenerates identical synthetic prompts; "
+            "a long-lived server with prefix caching may serve later runs from cache.",
         ),
         CLIParameter(
             name=("--random-seed",),
@@ -1060,7 +1061,9 @@ class CLIConfig(BaseConfig):
             ge=1,
             description="Total number of unique entries to generate for the dataset. Each entry represents one user message that can be "
             "used as a turn in conversations. Entries are reused across conversations and turns according to `--dataset-sampling-strategy`. "
-            "Higher values provide more diversity.",
+            "Higher values provide more diversity. Repeated prompts can hit the server's prefix cache and affect TTFT and throughput. "
+            "Size the pool to cover profiling and warmup requests when measuring uncached prefill. "
+            "Without --config, an omitted synthetic pool size uses --num-conversations, then --request-count when set, otherwise 100.",
         ),
         CLIParameter(
             name=(
