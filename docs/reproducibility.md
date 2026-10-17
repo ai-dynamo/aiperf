@@ -104,6 +104,11 @@ Same seed + same config = identical dataset content. Performance metrics always 
 > and account for prompt reuse during warmup and profiling. See
 > [Prompt reuse and server prefix caching](tutorials/synthetic-dataset.md#prompt-reuse-and-server-prefix-caching).
 
+CLI preflight warns about this cross-run risk for seeded synthetic text runs,
+independently of pool size or sampling strategy. A configured KV-cache reset
+hook or a per-session prefix cache-bust marker suppresses this warning;
+within-run reuse is checked separately.
+
 ### Use Cases
 
 **Debugging:** Reproduce exact prompts across runs to isolate prompt-related vs. network/timing issues

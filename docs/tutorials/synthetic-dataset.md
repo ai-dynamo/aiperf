@@ -68,12 +68,23 @@ otherwise 100. A YAML synthetic dataset defaults to `entries: 100`.
 Sequential and shuffle sampling reuse entries after the pool is exhausted.
 Random sampling uses replacement and can repeat entries before exhaustion.
 Warmup uses the same dataset as profiling, so it can populate the server's
-prefix cache before measurement starts. For single-turn synthetic text runs,
-CLI preflight warns when the combined configured request budgets exceed the
-pool size, unless a per-session prefix cache-bust marker is enabled. This is a
-budget check, not a measurement of cache hits: duration limits or early stopping
-can reduce the actual request count. Multi-turn and duration-only workloads are
-not covered by this check.
+prefix cache before measurement starts. For synthetic text runs, CLI preflight
+warns independently about:
+
+- Fixed seeds that can replay identical prompts across runs, even when the pool
+  covers the request count. A configured KV-cache reset hook suppresses this
+  cross-run warning.
+- Random sampling with replacement when more than one session can be started,
+  including duration-only workloads. Repeats can occur before pool exhaustion;
+  use sequential or shuffle sampling to avoid selection with replacement.
+- Combined configured request budgets exceeding the pool size for single-turn
+  workloads. Multi-turn and duration-only workloads are excluded from this
+  budget comparison.
+
+A per-session prefix cache-bust marker suppresses these warnings. A cache reset
+before a run does not suppress warnings about reuse within that run. These are
+configuration checks, not measurements of cache hits: duration limits and early
+stopping can reduce the actual request count.
 
 > [!WARNING]
 > Reusing `--random-seed` with the same prompt settings regenerates identical

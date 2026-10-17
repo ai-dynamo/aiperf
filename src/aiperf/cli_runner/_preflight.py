@@ -19,7 +19,8 @@ from typing import TYPE_CHECKING
 from aiperf.common.endpoint_auth import auth_headers_for_endpoint
 
 if TYPE_CHECKING:
-    from aiperf.config import BenchmarkPlan
+    from aiperf.config import BenchmarkConfig, BenchmarkPlan
+    from aiperf.config.dataset import SyntheticDataset
 
 # Re-export for callers still importing the private name; prefer
 # ``auth_headers_for_endpoint`` from ``aiperf.common.endpoint_auth``.
@@ -272,56 +273,106 @@ def _preflight_dataset_access(plan: BenchmarkPlan) -> None:
 
 
 def _preflight_synthetic_prompt_reuse(plan: BenchmarkPlan) -> None:
-    """Warn when single-turn request budgets can exhaust a synthetic text pool.
-
-    Counts warmup and profiling together. Budgets are upper bounds: duration
-    limits, failures, and early stopping can reduce the requests actually sent.
-    Multi-turn request counts do not measure conversation-pool consumption.
-    """
+    """Surface synthetic prefix-cache risks before services start, once per message."""
     from aiperf.common.aiperf_logger import AIPerfLogger
-    from aiperf.common.enums import CacheBustTarget
     from aiperf.common.logging import install_preflight_handler
-    from aiperf.config.dataset import SyntheticDataset
 
     messages: list[str] = []
-    for config in plan.configs:
-        dataset = config.get_default_dataset()
-        if not isinstance(dataset, SyntheticDataset) or dataset.prompts is None:
-            continue
-        if dataset.prompts.isl is None or dataset.prompts.isl.expected_value <= 0:
-            continue
-        if dataset.turns is not None and (
-            dataset.turns.expected_value != 1
-            or getattr(dataset.turns, "stddev", 0) != 0
-        ):
-            continue
-        if config.get_cache_bust_target() in (
-            CacheBustTarget.SYSTEM_PREFIX,
-            CacheBustTarget.FIRST_TURN_PREFIX,
-        ):
-            continue
-
-        requests = 0
-        for phase in config.phases:
-            limits = [n for n in (phase.requests, phase.sessions) if n is not None]
-            requests += min(limits, default=0)
-        if requests <= dataset.entries:
-            continue
-
-        messages.append(
-            f"Synthetic dataset '{dataset.name}' has {dataset.entries} entries "
-            f"for up to {requests} configured single-turn requests across warmup "
-            "and profiling. Repeated prompts can hit the server's prefix cache "
-            "and affect TTFT and throughput. Increase --num-dataset-entries "
-            "to cover warmup and profiling, or use --cache-bust first_turn_prefix. "
-            "Reusing --random-seed across runs also regenerates identical prompts."
+    for index, config in enumerate(plan.configs):
+        seed = (
+            plan.variation_seeds[index]
+            if index < len(plan.variation_seeds)
+            else plan.random_seed
         )
+        messages.extend(_synthetic_prompt_reuse_warnings(config, random_seed=seed))
 
     if messages:
         install_preflight_handler()
         logger = AIPerfLogger(__name__)
         for message in dict.fromkeys(messages):
             logger.warning(message)
+
+
+def _synthetic_prompt_reuse_warnings(
+    config: BenchmarkConfig, *, random_seed: int | None
+) -> list[str]:
+    """Keep cross-run replay, random replacement, and pool exhaustion independent."""
+    from aiperf.common.enums import CacheBustTarget
+    from aiperf.config.dataset import SyntheticDataset
+    from aiperf.plugin.enums import DatasetSamplingStrategy
+
+    dataset = config.get_default_dataset()
+    if not isinstance(dataset, SyntheticDataset) or dataset.prompts is None:
+        return []
+    if dataset.prompts.isl is None or dataset.prompts.isl.expected_value <= 0:
+        return []
+    if config.get_cache_bust_target() in (
+        CacheBustTarget.SYSTEM_PREFIX,
+        CacheBustTarget.FIRST_TURN_PREFIX,
+    ):
+        return []
+
+    messages: list[str] = []
+    if random_seed is not None and config.endpoint.reset_kv_cache is None:
+        messages.append(
+            f"Synthetic dataset '{dataset.name}' uses a fixed random seed. "
+            "Reusing this seed with the same generation settings regenerates "
+            "identical prompts across runs. A long-lived server's prefix cache "
+            "can affect TTFT and throughput. Use a distinct --random-seed per run, "
+            "configure --reset-kv-cache for a supported server, or use "
+            "--cache-bust first_turn_prefix."
+        )
+
+    requests, has_uncounted_phase = _synthetic_request_budget(config)
+    if dataset.sampling == DatasetSamplingStrategy.RANDOM and (
+        requests > 1 or has_uncounted_phase
+    ):
+        messages.append(
+            f"Synthetic dataset '{dataset.name}' samples with replacement "
+            "(--dataset-sampling-strategy random), so prompts can repeat before "
+            "the pool is exhausted even when --num-dataset-entries covers the "
+            "request count. Repeats can hit the server's prefix cache and affect "
+            "TTFT and throughput. Use sequential or shuffle sampling, or "
+            "--cache-bust first_turn_prefix."
+        )
+
+    if pool_warning := _synthetic_pool_reuse_warning(dataset, requests=requests):
+        messages.append(pool_warning)
+    return messages
+
+
+def _synthetic_request_budget(config: BenchmarkConfig) -> tuple[int, bool]:
+    """Sum known session-start bounds and flag phases without a count bound."""
+    requests = 0
+    has_uncounted_phase = False
+    for phase in config.phases:
+        limits = [n for n in (phase.requests, phase.sessions) if n is not None]
+        requests += min(limits, default=0)
+        has_uncounted_phase = has_uncounted_phase or not limits
+    return requests, has_uncounted_phase
+
+
+def _synthetic_pool_reuse_warning(
+    dataset: SyntheticDataset, *, requests: int
+) -> str | None:
+    """Only compare request and entry counts when each conversation has one turn.
+
+    Count budgets include warmup and profiling; duration limits and early
+    stopping can reduce the requests actually sent.
+    """
+    if dataset.turns is not None and (
+        dataset.turns.expected_value != 1 or getattr(dataset.turns, "stddev", 0) != 0
+    ):
+        return None
+    if requests <= dataset.entries:
+        return None
+    return (
+        f"Synthetic dataset '{dataset.name}' has {dataset.entries} entries, "
+        "but known single-turn request budgets across warmup and profiling "
+        f"total {requests}. Repeated prompts can hit the server's prefix cache "
+        "and affect TTFT and throughput. Increase --num-dataset-entries "
+        "to cover warmup and profiling, or use --cache-bust first_turn_prefix."
+    )
 
 
 def _preflight_dataset_materialize(plan: BenchmarkPlan) -> None:

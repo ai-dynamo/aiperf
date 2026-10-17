@@ -113,6 +113,132 @@ def test_default_cli_pool_already_matches_request_count(
     assert "prefix cache" not in caplog.text
 
 
+@pytest.mark.parametrize("seed", [0, 42])
+def test_fixed_seed_warns_even_when_pool_covers_requests(
+    seed: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    _preflight_synthetic_prompt_reuse(_plan(request_count=100, random_seed=seed))
+
+    assert "fixed random seed" in caplog.text
+    assert "across runs" in caplog.text
+    assert "--reset-kv-cache" in caplog.text
+
+
+@pytest.mark.parametrize("requests", [50, 100])
+def test_random_sampling_warns_before_pool_exhaustion(
+    requests: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    _preflight_synthetic_prompt_reuse(
+        _plan(request_count=requests, dataset_sampling_strategy="random")
+    )
+
+    assert "samples with replacement" in caplog.text
+    assert "before the pool is exhausted" in caplog.text
+    assert "sequential or shuffle" in caplog.text
+
+
+@pytest.mark.parametrize("target", ["first_turn_prefix", "system_prefix"])
+def test_prefix_cache_bust_suppresses_seed_and_random_warnings(
+    target: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    _preflight_synthetic_prompt_reuse(
+        _plan(random_seed=42, dataset_sampling_strategy="random", cache_bust=target)
+    )
+
+    assert "prefix cache" not in caplog.text
+
+
+def test_cache_reset_suppresses_cross_run_warning_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _preflight_synthetic_prompt_reuse(
+        _plan(random_seed=42, reset_kv_cache=True, dataset_sampling_strategy="random")
+    )
+
+    assert "fixed random seed" not in caplog.text
+    assert "samples with replacement" in caplog.text
+    assert "128" in caplog.text
+
+
+def test_one_random_request_without_seed_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _preflight_synthetic_prompt_reuse(
+        _plan(request_count=1, dataset_sampling_strategy="random")
+    )
+
+    assert "prefix cache" not in caplog.text
+
+
+def test_random_duration_run_warns_without_a_request_budget(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _preflight_synthetic_prompt_reuse(
+        _plan(
+            request_count=None, benchmark_duration=1, dataset_sampling_strategy="random"
+        )
+    )
+
+    assert "samples with replacement" in caplog.text
+
+
+def test_cache_reset_with_adequate_sequential_pool_does_not_warn(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _preflight_synthetic_prompt_reuse(
+        _plan(
+            request_count=100,
+            random_seed=42,
+            reset_kv_cache=True,
+            dataset_sampling_strategy="sequential",
+        )
+    )
+
+    assert "prefix cache" not in caplog.text
+
+
+def test_effective_variation_seed_takes_precedence_over_plan_seed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    plan = _plan(request_count=100, random_seed=42)
+    plan.variation_seeds = [None]
+
+    _preflight_synthetic_prompt_reuse(plan)
+
+    assert "fixed random seed" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        param({"conversation_turn_mean": 3}, id="multi-turn"),
+        param({"request_count": None, "benchmark_duration": 1}, id="duration-only"),
+    ],
+)  # fmt: skip
+def test_fixed_seed_warning_is_independent_of_single_turn_budget(
+    overrides: dict[str, object], caplog: pytest.LogCaptureFixture
+) -> None:
+    _preflight_synthetic_prompt_reuse(_plan(random_seed=42, **overrides))
+
+    assert "fixed random seed" in caplog.text
+
+
+def test_duplicate_seed_and_random_warnings_are_deduplicated_across_sweep(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    _preflight_synthetic_prompt_reuse(
+        _plan(
+            request_count=100,
+            concurrency=[1, 2, 4],
+            random_seed=42,
+            dataset_sampling_strategy="random",
+        )
+    )
+
+    assert sum("fixed random seed" in r.message for r in caplog.records) == 1
+    assert sum("samples with replacement" in r.message for r in caplog.records) == 1
+
+
 def test_yaml_pool_reuse_warns(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -151,14 +277,14 @@ def test_file_datasets_do_not_warn(caplog: pytest.LogCaptureFixture) -> None:
     assert "prefix cache" not in caplog.text
 
 
-def test_repeated_sweep_configurations_warn_once(
+def test_repeated_sweep_pool_warnings_are_deduplicated(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     plan = _plan(concurrency=[1, 2, 4])
 
     _preflight_synthetic_prompt_reuse(plan)
 
-    assert sum("prefix cache" in record.message for record in caplog.records) == 1
+    assert sum("request budgets" in record.message for record in caplog.records) == 1
 
 
 def test_cli_preflight_warns_before_service_bootstrap(
