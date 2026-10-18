@@ -47,12 +47,6 @@ is omitted if the tokenizer cannot represent it as a lossless, non-special singl
 token. Synthesized text can change between versions; use the same AIPerf version
 and tokenizer when comparing runs.
 
-When a newline separator is available, hash blocks larger than one token are
-sampled at stable corpus boundaries and checked for a lossless token round trip
-before caching. Sampling stops with an error if no suitable slice is found in
-100 attempts. This avoids repairing the assembled prompt, which could change
-the shared prefixes represented by the hash IDs.
-
 ## Defaults
 
 When omitted, the active loader's ``default_prompt_corpus`` from the plugin
@@ -115,7 +109,7 @@ All template blocks are shuffled with a seeded RNG at init time, joined with
 `"\n\n"`, and tokenized once to produce the pool. At request time sampling is
 identical to `sonnet` — a contiguous window with wraparound.
 
-For prompts without hash IDs, the `coding` path does **not** run a BPE fixup loop.
+Unlike `sonnet`, the `coding` path does **not** run a BPE fixup loop.
 `generate_prompt` decodes the sampled window and returns it directly. This
 means the actual ISL may differ slightly from the target for corpora with
 high BPE merge/split rates, but keeps latency low for large ISLs.

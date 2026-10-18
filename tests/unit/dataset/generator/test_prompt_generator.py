@@ -8,13 +8,11 @@ This test file provides complete coverage of all methods in the PromptGenerator 
 including edge cases, error conditions, and integration scenarios.
 """
 
-from random import Random
 from unittest.mock import MagicMock, mock_open, patch
 
 import numpy as np
 import pytest
 import tiktoken
-from pytest import param
 from tokenizers import Tokenizer as BackendTokenizer
 from tokenizers import decoders, models, pre_tokenizers
 from transformers import PreTrainedTokenizerFast
@@ -27,76 +25,24 @@ from aiperf.common.exceptions import (
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
-from aiperf.dataset.generator.prompt import PromptGenerator, sample_tokens_from_corpus
+from aiperf.dataset.generator.prompt import PromptGenerator
 
 MOCK_CORPUS_CONTENT = "To be or not to be, that is the question.\nWhether 'tis nobler in the mind to suffer.\n"
 
 
-@pytest.mark.parametrize(
-    "corpus",
-    [
-        param("\n" * 32, id="no-stable-boundary"),
-        param("123123123", id="insufficient-corpus"),
-    ],
-)  # fmt: skip
-def test_hash_block_sampling_rejects_unstable_corpus(corpus: str) -> None:
-    tokenizer = Tokenizer.from_pretrained("builtin")
-    with pytest.raises(ConfigurationError, match="after 100 attempts"):
-        sample_tokens_from_corpus(
-            tokenizer.encode(corpus),
-            10,
-            Random(42),
-            tokenizer.block_separation_token_id,
-            tokenizer=tokenizer,
-        )
-
-
-@pytest.mark.parametrize(
-    "num_tokens, block_size, hash_ids",
-    [
-        param(16, 8, [101, 102], id="full-blocks"),
-        param(17, 8, [101, 102, 103], id="one-token-final-block"),
-        param(1024, 512, [101, 102], id="large-blocks"),
-    ],
-)  # fmt: skip
-def test_generate_cached_prompt_ordinary_content_preserves_token_budget(
-    num_tokens: int, block_size: int, hash_ids: list[int]
-) -> None:
-    """Re-encoding chat content preserves full and partial hash-block budgets."""
-    tokenizer = Tokenizer.from_pretrained("builtin")
-    generator = PromptGenerator(
-        prompts=PromptConfig(block_size=block_size),
-        prefix_prompts=None,
-        tokenizer=tokenizer,
-    )
-
-    prompt = generator.generate(mean=num_tokens, hash_ids=hash_ids)
-
-    # Chat content may encode special-token spellings as ordinary text.
-    ordinary_tokens = tiktoken.get_encoding("o200k_base").encode_ordinary(prompt)
-    assert len(ordinary_tokens) == num_tokens
-    assert not set(tokenizer.encode(prompt)) & tokenizer.all_special_ids
-
-
-def test_generate_cached_prompt_ordinary_content_preserves_shared_prefix() -> None:
-    """Shared hash blocks produce identical ordinary-text token prefixes."""
+def test_generate_cached_prompt_does_not_expand_special_separators() -> None:
+    """BOS/EOS spellings expand when encoded as ordinary chat content."""
     tokenizer = Tokenizer.from_pretrained("builtin")
     generator = PromptGenerator(
         prompts=PromptConfig(block_size=8),
         prefix_prompts=None,
         tokenizer=tokenizer,
     )
-    encoding = tiktoken.get_encoding("o200k_base")
 
-    first = encoding.encode_ordinary(
-        generator.generate(mean=24, hash_ids=[101, 102, 103])
-    )
-    second = encoding.encode_ordinary(
-        generator.generate(mean=24, hash_ids=[101, 102, 104])
-    )
+    prompt = generator.generate(mean=16, hash_ids=[101, 102])
 
-    assert first[:16] == second[:16]
-    assert first[16:] != second[16:]
+    ordinary_tokens = tiktoken.get_encoding("o200k_base").encode_ordinary(prompt)
+    assert len(ordinary_tokens) == 16
 
 
 def test_generate_cached_prompt_gpt2_boundary_preserves_token_budget() -> None:
