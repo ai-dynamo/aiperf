@@ -141,7 +141,9 @@ def _process_batch(
         cached = block_cache.get(hash_id)
         if cached is None:
             hash_rng.reseed_for_hash_id(hash_id)
-            cached = sample_tokens(corpus, size, hash_rng, sep_token)
+            cached = sample_tokens(
+                corpus, size, hash_rng, sep_token, tokenizer=_worker_state.tokenizer
+            )
             block_cache[hash_id] = cached
         elif len(cached) != size:
             # A hash_id identifies a fixed block of content, so it can only ever

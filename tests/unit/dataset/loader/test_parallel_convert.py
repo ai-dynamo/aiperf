@@ -11,13 +11,16 @@ from unittest.mock import mock_open, patch
 import numpy as np
 import pytest
 import tiktoken
+from pytest import param
 
+from aiperf.common.enums import PromptCorpus
 from aiperf.common.exceptions import ConfigurationError
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import (
     PrefixPromptConfig,
     PromptConfig,
 )
+from aiperf.dataset.generator.coding_content import CodingContentGenerator
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader import parallel_convert as pc
 
@@ -134,13 +137,20 @@ def test_parallel_convert_matches_in_process(real_prompt_generator):
     )
 
 
-def test_parallel_convert_ordinary_content_matches_serial_token_budget() -> None:
+@pytest.mark.parametrize(
+    "corpus",
+    [param(PromptCorpus.SONNET, id="sonnet"), param(PromptCorpus.CODING, id="coding")],
+)  # fmt: skip
+def test_parallel_convert_ordinary_content_matches_serial_token_budget(
+    corpus: PromptCorpus,
+) -> None:
     """Worker conversion preserves serial prompt text and its token budget."""
     tokenizer = Tokenizer.from_pretrained("builtin")
-    generator = PromptGenerator(
-        prompts=PromptConfig(block_size=8),
-        prefix_prompts=None,
-        tokenizer=tokenizer,
+    config = PromptConfig(block_size=8)
+    generator = (
+        CodingContentGenerator(config, tokenizer)
+        if corpus == PromptCorpus.CODING
+        else PromptGenerator(prompts=config, prefix_prompts=None, tokenizer=tokenizer)
     )
     trace_id = "ordinary-content"
     generator._hash_id_corpus_rng.set_trace_id(trace_id)

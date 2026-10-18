@@ -2,8 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from random import Random
+
+import numpy as np
 
 from aiperf.common import random_generator as rng
 from aiperf.common.enums import PromptCorpus, RandomCorpusStyle
@@ -22,10 +26,12 @@ DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"
 
 
 def sample_tokens_from_corpus(
-    corpus,
+    corpus: Sequence[int] | np.ndarray,
     num_tokens: int,
-    rng_to_use,
+    rng_to_use: Random | rng.RandomGenerator,
     sep_token: int | None = None,
+    *,
+    tokenizer: Tokenizer | None = None,
 ) -> list[int]:
     """Sample ``num_tokens`` tokens from ``corpus`` using ``rng_to_use``.
 
@@ -40,27 +46,44 @@ def sample_tokens_from_corpus(
         rng_to_use: Random generator with a ``randrange(n)`` method.
         sep_token: Optional block-separation token prepended at index 0
             (consumes one slot of ``num_tokens``).
+        tokenizer: When provided with a separator, select corpus boundaries
+            that preserve the block's tokens through decoding and re-encoding.
 
     Returns:
         List of sampled token IDs of length ``num_tokens``.
     """
     corpus_len = len(corpus)
-    tokens: list[int] = []
+    body_size = num_tokens - (sep_token is not None)
+    for _ in range(100):
+        tokens: list[int] = [] if sep_token is None else [sep_token]
+        start = rng_to_use.randrange(corpus_len)
+        end = start + body_size
+        if end <= corpus_len:
+            tokens.extend(corpus[start:end])
+        else:
+            tokens.extend(corpus[start:])
+            tokens.extend(corpus[: end - corpus_len])
 
-    if sep_token is not None:
-        tokens.append(sep_token)
-        num_tokens -= 1
+        if tokenizer is None or sep_token is None or body_size == 0:
+            return tokens
 
-    start = rng_to_use.randrange(corpus_len)
-    end = start + num_tokens
+        # Whitespace at either side can merge with the neighboring newline;
+        # punctuation can also absorb it. Token slices can split UTF-8 or BPE
+        # units, so verify the whole block before assigning it to a hash ID.
+        text = tokenizer.decode(tokens)
+        if (
+            len(tokens) == num_tokens
+            and len(text) > 1
+            and not text[1].isspace()
+            and text[-1].isalnum()
+            and tokenizer.encode(text) == tokens
+        ):
+            return tokens
 
-    if end <= corpus_len:
-        tokens.extend(corpus[start:end])
-    else:
-        tokens.extend(corpus[start:])
-        tokens.extend(corpus[: end - corpus_len])
-
-    return tokens
+    raise ConfigurationError(
+        f"Could not sample a round-trip-stable {num_tokens}-token hash block "
+        "after 100 attempts."
+    )
 
 
 class PromptGenerator(BaseGenerator):
@@ -655,6 +678,7 @@ class PromptGenerator(BaseGenerator):
                     current_block_size,
                     self._hash_id_corpus_rng,
                     self.tokenizer.block_separation_token_id,
+                    tokenizer=self.tokenizer,
                 )
                 self._cache[hash_id] = cached
             elif len(cached) != current_block_size:
