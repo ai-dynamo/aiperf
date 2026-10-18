@@ -125,7 +125,7 @@ test = [
   "jsonschema>=4.0.0",
   "looptime>=0.5",
   "pytest>=7.0.0",
-  "pytest-asyncio",
+  "pytest-asyncio>=1.4.0",
   "pytest-cov",
   "pytest-rerunfailures>=15.0",
   "pytest-timeout>=2.0.0",

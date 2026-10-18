@@ -16,6 +16,7 @@ Covers the delayed-join semantics:
 from __future__ import annotations
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -501,10 +502,9 @@ async def test_think_time_kept_when_join_still_sendable_at_cutoff():
     shorten the think-time before the next round."""
     orch, issuer, _ = _spine_gate_harness(think_ms=200.0, with_scheduler=False)
     issuer.dispatch_join_turn = AsyncMock(return_value=ChildDispatchResult.ISSUED)
-    loop = asyncio.get_running_loop()
     await _suspend_parent_at_gate(orch)
     await orch.on_child_leaf_reached("corr-c0")
-    start = loop.time()
+    start = time.perf_counter()
     release = asyncio.create_task(orch.on_child_leaf_reached("corr-c1"))
     for _ in range(5):
         await asyncio.sleep(0)
@@ -516,7 +516,10 @@ async def test_think_time_kept_when_join_still_sendable_at_cutoff():
     issuer.dispatch_join_turn.assert_not_awaited()
 
     await asyncio.wait_for(release, timeout=1.0)
-    assert loop.time() - start >= 0.19
+    # The full think-time must elapse. asyncio may fire a timer up to one
+    # loop-clock resolution early, under 1 us on every supported loop
+    # (Windows < 3.13 included, via PerfCounterSelectorEventLoop).
+    assert time.perf_counter() - start >= 0.2 - 1e-6
     issuer.dispatch_join_turn.assert_awaited_once()
     issuer.can_dispatch_join.assert_called_with(0)
     assert orch.stats.parents_resumed == 1
