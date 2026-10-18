@@ -412,7 +412,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10.0,<3.0.0" },
     { name = "pydantic-settings", specifier = ">=2.10.0,<3.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'test'" },
+    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.4.0" },
     { name = "pytest-cov", marker = "extra == 'test'" },
     { name = "pytest-rerunfailures", marker = "extra == 'test'", specifier = ">=15.0" },
     { name = "pytest-timeout", marker = "extra == 'test'", specifier = ">=2.0.0" },

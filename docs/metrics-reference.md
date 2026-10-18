@@ -58,6 +58,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Overall Draft Acceptance Rate](#overall-draft-acceptance-rate)
     - [Accepted per Verified](#accepted-per-verified)
     - [Spec Decode Steps](#spec-decode-steps)
+    - [Zero-Step Requests](#zero-step-requests)
     - [Accepted / Draft Token Counts](#accepted--draft-token-counts)
     - [Pooled Acceptance Histogram](#pooled-acceptance-histogram)
   - [Usage Field Metrics](#usage-field-metrics)
@@ -838,7 +839,9 @@ total_reasoning_tokens = sum(r.reasoning_token_count for r in records if r.valid
 > each record. They are fully engine-agnostic: any engine whose adapter fills the
 > record lights them up unchanged, and none of them branch on the engine. When
 > spec decode is off (or a request had no verify steps) the record is absent and
-> every metric here drops out cleanly -- nothing is shown or exported.
+> every metric here drops out cleanly -- nothing is shown or exported. The one
+> exception is [Zero-Step Requests](#zero-step-requests), which counts the
+> requests that reported stats but never ran a verify step.
 
 <!-- -->
 
@@ -930,6 +933,24 @@ spec_decode_accepted_per_verified = (num_accepted_draft_tokens + num_spec_steps)
 **Type:** [Record Metric](#record-metrics) · **Unit:** count
 
 Per-request number of speculative verification steps (`num_spec_steps`). Equals the sum of the request's acceptance-histogram counts. The run-level `total_spec_decode_steps` is its sum across requests.
+
+---
+
+### Zero-Step Requests
+
+**Type:** [Aggregate Metric](#aggregate-metrics) · **Unit:** requests
+
+The number of requests whose engine reported spec-decode stats but that ran no verify step (`num_spec_steps == 0`), e.g. `max_tokens: 1`, EOS as the first token, or an NGram drafter that never matched. These requests have no acceptance record, so none of the per-request metrics above include them; this count says how many were excluded.
+
+**Formula:**
+```python
+spec_decode_zero_step_requests = sum(1 for r in records if r.spec_decode_zero_step)
+```
+
+**Notes:**
+- Absent when no request was zero-step. A Spec Decode section showing only this row means speculation never fired, as opposed to spec decode being off, which shows no section at all.
+- Only vLLM reports zero-step requests; TensorRT-LLM omits the payload for them, so they are indistinguishable from spec decode being off.
+- Aggregate only (`NO_INDIVIDUAL_RECORDS`): not written to the per-record JSONL.
 
 ---
 
