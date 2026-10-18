@@ -311,16 +311,24 @@ def test_duplicate_seed_and_random_warnings_are_deduplicated_across_sweep(
     assert sum("samples with replacement" in r.message for r in caplog.records) == 1
 
 
+@pytest.mark.parametrize(
+    "turns",
+    [
+        param("1", id="integer-turns"),
+        param("{mean: 1, stddev: 0.5}", id="fractional-stddev"),
+        param("{mean: 1.5, stddev: 0}", id="fractional-mean"),
+    ],
+)  # fmt: skip
 def test_yaml_pool_reuse_warns(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
+    turns: str, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """YAML request and pool limits reach the same preflight as CLI flags."""
+    """Warnings follow generated integer turns, including fractional YAML values."""
     config_file = tmp_path / "benchmark.yaml"
     config_file.write_text(
         "benchmark:\n"
         "  model: test-model\n"
         "  endpoint: {type: chat, url: 'http://localhost:8000'}\n"
-        "  dataset: {type: synthetic, entries: 100, isl: 1024}\n"
+        f"  dataset: {{type: synthetic, entries: 100, isl: 1024, turns: {turns}}}\n"
         "  profiling: {type: concurrency, concurrency: 1, requests: 128}\n"
     )
     plan = build_benchmark_plan(resolve_config(CLIConfig(config_file=config_file)))

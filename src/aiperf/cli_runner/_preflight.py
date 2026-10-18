@@ -343,6 +343,15 @@ def _synthetic_prompt_reuse_warnings(
     return messages
 
 
+def _synthetic_fixed_turn_count(dataset: SyntheticDataset) -> int | None:
+    """Return the composer's fixed integer turn count, or None for varying turns."""
+    if dataset.turns is None:
+        return 1
+    if int(getattr(dataset.turns, "stddev", 0) or 0) != 0:
+        return None
+    return max(1, int(dataset.turns.expected_value))
+
+
 def _synthetic_session_budget(
     config: BenchmarkConfig, *, dataset: SyntheticDataset
 ) -> tuple[int, bool]:
@@ -352,9 +361,7 @@ def _synthetic_session_budget(
     conversation's requests. Variable turns and adaptive or unbounded
     concurrency retain conservative request-count bounds.
     """
-    turns = 1
-    if dataset.turns is not None and int(getattr(dataset.turns, "stddev", 0)) == 0:
-        turns = max(1, int(dataset.turns.expected_value))
+    turns = _synthetic_fixed_turn_count(dataset) or 1
 
     session_starts = 0
     has_uncounted_phase = False
@@ -380,9 +387,7 @@ def _synthetic_pool_reuse_warning(
     Count budgets include warmup and profiling; duration limits and early
     stopping can reduce the requests actually sent.
     """
-    if dataset.turns is not None and (
-        dataset.turns.expected_value != 1 or getattr(dataset.turns, "stddev", 0) != 0
-    ):
+    if _synthetic_fixed_turn_count(dataset) != 1:
         return None
     if requests <= dataset.entries:
         return None
