@@ -74,7 +74,6 @@ class TestBuiltinTokenizer:
     def test_block_separation_token_id_uses_ordinary_newline(
         self, tokenizer: Tokenizer
     ) -> None:
-        """The separator is a single ordinary newline, not a special token."""
         token_id = tokenizer.block_separation_token_id
         assert token_id not in tokenizer.all_special_ids
         assert tokenizer.decode([token_id]) == "\n"
@@ -94,7 +93,6 @@ class TestBuiltinTokenizer:
         decoded: str,
         special_ids: list[int],
     ) -> None:
-        """An unusable single newline must not fall back to another separator."""
         tokenizer = Tokenizer()
         tokenizer._tokenizer = SimpleNamespace(all_special_ids=special_ids)
         with (

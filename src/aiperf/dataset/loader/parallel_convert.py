@@ -128,6 +128,8 @@ def _process_batch(
     Each trace dict must have ``input_length``, ``output_length``,
     ``timestamp``, ``delay``, and optionally ``hash_ids`` and ``text_input``.
     """
+    from aiperf.dataset.generator.prompt import reject_separator_only_blocks
+
     assert _worker_state is not None
     hash_rng = _worker_state.hash_rng
     corpus = _worker_state.corpus
@@ -138,6 +140,7 @@ def _process_batch(
     block_cache = _worker_state.block_cache
 
     def get_block_tokens(hash_id: int, size: int) -> list[int]:
+        reject_separator_only_blocks(block_size, sep_token)
         cached = block_cache.get(hash_id)
         if cached is None:
             hash_rng.reseed_for_hash_id(hash_id)

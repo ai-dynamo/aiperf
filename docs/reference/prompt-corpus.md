@@ -46,6 +46,8 @@ single-newline separators counted within each block's token budget. The separato
 is omitted if the tokenizer cannot represent it as a lossless, non-special single
 token. Synthesized text can change between versions; use the same AIPerf version
 and tokenizer when comparing runs.
+Newline-separated hash blocks require a block size of at least 2; one-token final
+partial blocks are still supported.
 
 ## Defaults
 
