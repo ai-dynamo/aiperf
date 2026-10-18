@@ -41,6 +41,12 @@ Honored only where content is **synthesized**:
 
 Verbatim formats (`single_turn`, `multi_turn`, `baseten_trace`, …) ignore it.
 
+Hash-based prompts, including those using the `coding` corpus, use ordinary
+single-newline separators counted within each block's token budget. The separator
+is omitted if the tokenizer cannot represent it as a lossless, non-special single
+token. Synthesized text can change between versions; use the same AIPerf version
+and tokenizer when comparing runs.
+
 ## Defaults
 
 When omitted, the active loader's ``default_prompt_corpus`` from the plugin

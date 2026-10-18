@@ -135,6 +135,7 @@ def test_parallel_convert_matches_in_process(real_prompt_generator):
 
 
 def test_parallel_convert_ordinary_content_matches_serial_token_budget() -> None:
+    """Worker conversion preserves serial prompt text and its token budget."""
     tokenizer = Tokenizer.from_pretrained("builtin")
     generator = PromptGenerator(
         prompts=PromptConfig(block_size=8),
