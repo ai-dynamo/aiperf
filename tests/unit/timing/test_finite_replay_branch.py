@@ -59,7 +59,7 @@ async def test_equal_timestamp_child_is_spawned_once_across_transport_and_return
 
     await orchestrator.on_transport_dispatched(credit)
     await orchestrator.intercept(credit)
-    await asyncio.gather(*tuple(orchestrator._delayed_dispatch_tasks))
+    await asyncio.gather(*tuple(orchestrator._finite_dispatch_tasks))
 
     assert source.start_branch_child.call_count == 1
     assert issuer.dispatch_first_turn.await_count == 1

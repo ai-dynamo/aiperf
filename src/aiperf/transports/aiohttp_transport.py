@@ -292,6 +292,12 @@ class AioHttpTransport(BaseTransport):
         self.aiohttp_client: AioHttpClient | None = None
         self.lease_manager: ConnectionLeaseManager | None = None
 
+    @property
+    def stream_chunks_received(self) -> int:
+        if self.aiohttp_client is None:
+            return 0
+        return self.aiohttp_client.stream_chunks_received
+
     @on_init
     async def _init_aiohttp_client(self) -> None:
         """Initialize the AioHttpClient and lease manager if sticky-user-sessions strategy is used."""
