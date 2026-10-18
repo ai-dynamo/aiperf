@@ -143,9 +143,10 @@ async def test_sleep_think_ms_woken_but_still_sendable_keeps_think_time():
         await asyncio.sleep(0)
     assert not task.done()
     await asyncio.wait_for(task, timeout=1.0)
-    # Windows before 3.13 has a 15.625 ms loop-clock tick, and the deadline and
-    # timer fire can each land one tick early: the claim is kept, not dropped (~0).
-    assert time.perf_counter() - start >= 0.15
+    # The full think-time must elapse. asyncio may fire a timer up to one
+    # loop-clock resolution early, under 1 us on every supported loop
+    # (Windows < 3.13 included, via PerfCounterSelectorEventLoop).
+    assert time.perf_counter() - start >= 0.2 - 1e-6
 
 
 @pytest.mark.asyncio
