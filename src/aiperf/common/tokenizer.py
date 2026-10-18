@@ -465,7 +465,6 @@ class Tokenizer:
         self._resolved_name: str | None = None
         self._call_args = {"add_special_tokens": False}
         self._encode_args = {"add_special_tokens": False}
-        # Preserve special tokens when decoding caller-provided token IDs.
         self._decode_args = {"skip_special_tokens": False}
 
     def _require_init(self) -> None:
