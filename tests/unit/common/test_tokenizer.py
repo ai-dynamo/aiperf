@@ -74,36 +74,35 @@ class TestBuiltinTokenizer:
     def test_block_separation_token_id_uses_ordinary_newline(
         self, tokenizer: Tokenizer
     ) -> None:
+        """The separator is a single ordinary newline, not a special token."""
         token_id = tokenizer.block_separation_token_id
         assert token_id not in tokenizer.all_special_ids
-        assert tokenizer.decode([token_id]) == "\n\n"
+        assert tokenizer.decode([token_id]) == "\n"
 
     @pytest.mark.parametrize(
-        "double_newline, single_newline, decoded, special_ids, expected",
+        "tokens, decoded, special_ids",
         [
-            param([10, 10], [10], "\n", [], 10, id="single-newline-fallback"),
-            param([10], [10], "\n", [10], None, id="no-special-token-fallback"),
-            param([10], [10], " ", [], None, id="lossy-decode"),
-            param([10, 10], [10, 10], "\n", [], None, id="no-single-token-newline"),
+            param([10], "\n", [10], id="special-token"),
+            param([10], " ", [], id="lossy-decode"),
+            param([10, 10], "\n", [], id="multiple-tokens"),
+            param([], "", [], id="empty-encoding"),
         ],
     )  # fmt: skip
-    def test_block_separation_token_id_unusable_candidates_fall_back(
+    def test_block_separation_token_id_rejects_unusable_newline(
         self,
-        double_newline: list[int],
-        single_newline: list[int],
+        tokens: list[int],
         decoded: str,
         special_ids: list[int],
-        expected: int | None,
     ) -> None:
+        """An unusable single newline must not fall back to another separator."""
         tokenizer = Tokenizer()
         tokenizer._tokenizer = SimpleNamespace(all_special_ids=special_ids)
         with (
-            patch.object(
-                tokenizer, "encode", side_effect=[double_newline, single_newline]
-            ),
+            patch.object(tokenizer, "encode", return_value=tokens) as encode,
             patch.object(tokenizer, "decode", return_value=decoded),
         ):
-            assert tokenizer.block_separation_token_id == expected
+            assert tokenizer.block_separation_token_id is None
+            encode.assert_called_once_with("\n")
 
     def test_num_prompt_special_tokens_returns_zero_when_no_bos(
         self, tokenizer: Tokenizer

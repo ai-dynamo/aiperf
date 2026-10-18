@@ -14,6 +14,9 @@ import numpy as np
 import pytest
 import tiktoken
 from pytest import param
+from tokenizers import Tokenizer as BackendTokenizer
+from tokenizers import decoders, models, pre_tokenizers
+from transformers import PreTrainedTokenizerFast
 
 from aiperf.common.enums import PromptCorpus
 from aiperf.common.exceptions import (
@@ -39,6 +42,7 @@ MOCK_CORPUS_CONTENT = "To be or not to be, that is the question.\nWhether 'tis n
 def test_generate_cached_prompt_ordinary_content_preserves_token_budget(
     num_tokens: int, block_size: int, hash_ids: list[int]
 ) -> None:
+    """Re-encoding chat content preserves full and partial hash-block budgets."""
     tokenizer = Tokenizer.from_pretrained("builtin")
     generator = PromptGenerator(
         prompts=PromptConfig(block_size=block_size),
@@ -55,6 +59,7 @@ def test_generate_cached_prompt_ordinary_content_preserves_token_budget(
 
 
 def test_generate_cached_prompt_ordinary_content_preserves_shared_prefix() -> None:
+    """Shared hash blocks produce identical ordinary-text token prefixes."""
     tokenizer = Tokenizer.from_pretrained("builtin")
     generator = PromptGenerator(
         prompts=PromptConfig(block_size=8),
@@ -72,6 +77,31 @@ def test_generate_cached_prompt_ordinary_content_preserves_shared_prefix() -> No
 
     assert first[:16] == second[:16]
     assert first[16:] != second[16:]
+
+
+def test_generate_cached_prompt_gpt2_boundary_preserves_token_budget() -> None:
+    """GPT-2 pretokenization splits a double newline before following text."""
+    backend = BackendTokenizer(
+        models.BPE({"a": 0, "Ċ": 1, "ĊĊ": 2, "Ġ": 3}, [("Ċ", "Ċ")])
+    )
+    backend.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+    backend.decoder = decoders.ByteLevel()
+    tokenizer = Tokenizer()
+    tokenizer._tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend)
+
+    assert tokenizer.encode("\n\n") == [2]
+    assert tokenizer.encode("\n\na") == [1, 1, 0]
+
+    with patch("builtins.open", mock_open(read_data="a" * 1024)):
+        generator = PromptGenerator(
+            prompts=PromptConfig(block_size=512),
+            prefix_prompts=None,
+            tokenizer=tokenizer,
+        )
+
+    prompt = generator.generate(mean=1024, hash_ids=[0, 1])
+
+    assert len(tokenizer.encode(prompt)) == 1024
 
 
 def _make_generator(

@@ -854,18 +854,17 @@ class Tokenizer:
 
         BOS/EOS spellings can expand into multiple tokens when a server encodes
         them as ordinary chat content rather than recognizing special tokens.
+        Double-newline tokens can split when followed by text.
         """
         self._require_init()
 
-        special_ids = self.all_special_ids
-        for text in ("\n\n", "\n"):
-            tokens = self.encode(text)
-            if (
-                len(tokens) == 1
-                and tokens[0] not in special_ids
-                and self.decode(tokens) == text
-            ):
-                return tokens[0]
+        tokens = self.encode("\n")
+        if (
+            len(tokens) == 1
+            and tokens[0] not in self.all_special_ids
+            and self.decode(tokens) == "\n"
+        ):
+            return tokens[0]
         return None
 
     @property

@@ -60,9 +60,9 @@ Example entry:
 {"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [0, 1, 2]}
 ```
 
-Synthesized hash blocks use ordinary newline separators, counted within each
-block's token budget, rather than BOS/EOS markers whose literal spellings may
-expand when encoded as chat content. If the tokenizer has no single-token
+Synthesized hash blocks use ordinary single-newline (`"\n"`) separators, counted
+within each block's token budget, rather than BOS/EOS markers whose literal
+spellings may expand when encoded as chat content. If the tokenizer has no single-token
 newline separator, no separator is inserted. This changes synthesized text;
 use the same AIPerf version and tokenizer when comparing runs.
 
