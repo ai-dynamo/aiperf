@@ -390,7 +390,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
 
     def _has_fatal_error(self) -> bool:
-        """True when the phase has encountered a fatal phase error."""
         fatal = self._progress.fatal_error if self._progress is not None else None
         return isinstance(fatal, BaseException)
 
@@ -461,7 +460,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             self._setup_profiling_phase()
 
     def _setup_profiling_phase(self) -> None:
-        """Initialize credit issuer and trajectory structures for PROFILING."""
+        """Activate replay gates; configure finite drain hooks or seed replay prefixes."""
         self.credit_issuer.replay_gate.activate()
         if self.config.finite_replay:
             self.scheduler.set_drain_observer(self._schedule_finite_finish_check)

@@ -281,9 +281,6 @@ class AioHttpClient(AIPerfLoggerMixin):
                                 record.responses.append(message)
                         if transport_eof_callback is not None:
                             if not response.content.at_eof():
-                                async for _ in tracked_content_stream():
-                                    pass
-                            if not response.content.at_eof():
                                 raise SSEResponseError(
                                     "Successful SSE response did not reach body EOF"
                                 )

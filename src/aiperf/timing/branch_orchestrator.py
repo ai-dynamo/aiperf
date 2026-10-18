@@ -1416,22 +1416,14 @@ class BranchOrchestrator:
         task.add_done_callback(self._delayed_dispatch_tasks.discard)
 
     async def _dispatch_finite_first_turn(self, child, parent_corr: str) -> None:
+        async def rollback() -> None:
+            async with self._parent_locks[parent_corr]:
+                self._rollback_failed_first_turn(child, False, parent_corr)
+                await self._finalize_failed_dispatches(parent_corr)
+
         try:
-
-            async def issue() -> bool:
-                async with self._parent_locks[parent_corr]:
-                    return bool(
-                        await self._issuer.dispatch_first_turn(
-                            child, on_refused=rollback
-                        )
-                    )
-
-            async def rollback() -> None:
-                async with self._parent_locks[parent_corr]:
-                    self._rollback_failed_first_turn(child, False, parent_corr)
-                    await self._finalize_failed_dispatches(parent_corr)
-
-            await issue()
+            async with self._parent_locks[parent_corr]:
+                await self._issuer.dispatch_first_turn(child, on_refused=rollback)
         except Exception as exc:
             self._issuer.replay_gate.fail_finite(exc)
             async with self._parent_locks[parent_corr]:

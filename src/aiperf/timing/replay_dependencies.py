@@ -230,9 +230,12 @@ class ReplayBarrierCoordinator:
         self._root_idle_seconds_skipped = 0.0
 
     def _root_state(self, root_id: str) -> _RootBarrierState:
-        return self._roots.setdefault(
-            root_id, _RootBarrierState(completed=set(), pending={})
-        )
+        state = self._roots.get(root_id)
+        if state is None:
+            state = self._roots[root_id] = _RootBarrierState(
+                completed=set(), pending={}
+            )
+        return state
 
     def observe_issued(self, credit: Credit) -> None:
         """Track one request reaching the wire and cancel its idle watchdog."""
@@ -753,7 +756,7 @@ class ReplayBarrierCoordinator:
         if root_id in self._closed_roots:
             _logger.warning("Dropping late finite dispatch for closed root %s", root_id)
             return
-        state = self._roots.setdefault(root_id, _RootBarrierState(set(), {}))
+        state = self._root_state(root_id)
         key = ReplayTurnKey(credit.conversation_id, credit.turn_index)
         if self._remember_first(state.dispatch_events, key, perf_ns):
             self._finite_clock_spread_max_ns = max(
@@ -777,7 +780,7 @@ class ReplayBarrierCoordinator:
                 "Dropping late finite completion for closed root %s", root_id
             )
             return
-        state = self._roots.setdefault(root_id, _RootBarrierState(set(), {}))
+        state = self._root_state(root_id)
         key = ReplayTurnKey(credit.conversation_id, credit.turn_index)
         if not credit.no_request and key not in state.dispatch_events:
             raise RuntimeError(f"Finite replay transport start missing for {key!r}")
