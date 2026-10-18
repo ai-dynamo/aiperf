@@ -273,7 +273,6 @@ def _preflight_dataset_access(plan: BenchmarkPlan) -> None:
 
 
 def _preflight_synthetic_prompt_reuse(plan: BenchmarkPlan) -> None:
-    """Surface synthetic prefix-cache risks before services start, once per message."""
     from aiperf.common.aiperf_logger import AIPerfLogger
     from aiperf.common.logging import install_preflight_handler
 
