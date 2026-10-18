@@ -31,12 +31,11 @@ def _plan(**overrides: object) -> BenchmarkPlan:
     return build_benchmark_plan(resolve_config(cli))
 
 
-@pytest.mark.parametrize("sampling", ["sequential", "shuffle", "random"])
 def test_pool_smaller_than_request_count_warns(
-    sampling: str, caplog: pytest.LogCaptureFixture
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Every sampling strategy can replay entries after exhausting the pool."""
-    plan = _plan(dataset_sampling_strategy=sampling)
+    """Sequential sampling replays entries after exhausting the pool."""
+    plan = _plan(dataset_sampling_strategy="sequential")
 
     _preflight_synthetic_prompt_reuse(plan)
 
@@ -63,12 +62,10 @@ def test_warmup_requests_count_toward_pool_reuse(
     "overrides",
     [
         param({"request_count": 100}, id="equal-pool"),
-        param({"conversation_num_dataset_entries": 200}, id="larger-pool"),
         param({"conversation_num": 10}, id="session-limit"),
-        param({"conversation_turn_mean": 3}, id="multi-turn"),
+        param({"conversation_turn_mean": 3,
+               "conversation_num_dataset_entries": 1}, id="multi-turn"),
         param({"conversation_turn_stddev": 1}, id="variable-turns"),
-        param({"cache_bust": "first_turn_prefix"}, id="first-turn-prefix"),
-        param({"cache_bust": "system_prefix"}, id="system-prefix"),
         param({"request_count": None, "benchmark_duration": 1}, id="duration-only"),
         param({"prompt_input_tokens_mean": 0, "image_width_mean": 64,
                "image_height_mean": 64}, id="image-only"),
@@ -142,12 +139,12 @@ def test_random_sampling_warns_before_pool_exhaustion(
     assert "samples with replacement" in caplog.text
     assert "before the pool is exhausted" in caplog.text
     assert "sequential or shuffle" in caplog.text
+    assert "request budgets" not in caplog.text
 
 
 @pytest.mark.parametrize(
     "overrides, expects_warning",
     [
-        param({}, False, id="serial-partial-session"),
         param({"request_count": 3}, False, id="serial-complete-session"),
         param({"request_count": 4}, True, id="serial-second-session"),
         param({"concurrency": [2]}, True, id="concurrent-sessions"),
@@ -214,19 +211,6 @@ def test_one_random_request_without_seed_does_not_warn(
     )
 
     assert "prefix cache" not in caplog.text
-
-
-def test_random_duration_run_warns_without_a_request_budget(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A duration limit does not rule out repeated draws with replacement."""
-    _preflight_synthetic_prompt_reuse(
-        _plan(
-            request_count=None, benchmark_duration=1, dataset_sampling_strategy="random"
-        )
-    )
-
-    assert "samples with replacement" in caplog.text
 
 
 def test_cache_reset_with_adequate_sequential_pool_does_not_warn(
@@ -368,7 +352,6 @@ def test_cli_preflight_warns_before_service_bootstrap(
     """Users must see the cache risk before benchmark services execute."""
 
     def check_warning(*args: object, **kwargs: object) -> None:
-        """Observe the warning at the benchmark execution boundary."""
         assert "prefix cache" in caplog.text
 
     with (

@@ -344,7 +344,6 @@ def _synthetic_prompt_reuse_warnings(
 
 
 def _synthetic_fixed_turn_count(dataset: SyntheticDataset) -> int | None:
-    """Return the composer's fixed integer turn count, or None for varying turns."""
     if dataset.turns is None:
         return 1
     if int(getattr(dataset.turns, "stddev", 0) or 0) != 0:
