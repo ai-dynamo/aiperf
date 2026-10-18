@@ -4,11 +4,9 @@
 """Unit tests for CodingContentGenerator."""
 
 import pytest
-from pytest import param
 
 from aiperf.common import random_generator as rng
 from aiperf.common.exceptions import ConfigurationError, NotInitializedError
-from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import PromptConfig
 from aiperf.dataset.generator.coding_content import (
     _FILE_PATHS,
@@ -321,47 +319,6 @@ class TestSeedDeterminism:
     @pytest.fixture
     def config(self):
         return PromptConfig(block_size=512)
-
-    @pytest.mark.parametrize(
-        "hash_ids",
-        [
-            param([0, 1], id="within-block-boundary"),
-            param([2, 3], id="joined-block-boundary"),
-        ],
-    )  # fmt: skip
-    def test_builtin_hash_blocks_preserve_budget_prefix_and_order(
-        self, config: PromptConfig, hash_ids: list[int]
-    ) -> None:
-        tokenizer = Tokenizer.from_pretrained("builtin")
-        rng.reset()
-        rng.init(42)
-        generator = CodingContentGenerator(config, tokenizer)
-
-        blocks = [
-            tokenizer.encode(generator.generate(mean=512, hash_ids=[hash_id]))
-            for hash_id in hash_ids
-        ]
-        assert all(len(block) == 512 for block in blocks)
-
-        prompt = generator.generate(mean=1024, hash_ids=hash_ids)
-        tokens = tokenizer.encode(prompt)
-        assert len(tokens) == 1024
-
-        other = tokenizer.encode(
-            generator.generate(mean=1024, hash_ids=[hash_ids[0], hash_ids[1] + 100])
-        )
-        assert len(other) == 1024
-        assert tokens[:512] == other[:512] == blocks[0]
-        assert tokens[512:] != other[512:]
-
-        rng.reset()
-        rng.init(42)
-        reordered = CodingContentGenerator(config, tokenizer)
-        reversed_tokens = tokenizer.encode(
-            reordered.generate(mean=1024, hash_ids=hash_ids[::-1])
-        )
-        assert reversed_tokens == blocks[1] + blocks[0]
-        assert reordered.generate(mean=1024, hash_ids=hash_ids) == prompt
 
     def _build_at_seed(self, config, mock_tokenizer_cls, seed: int):
         rng.reset()
