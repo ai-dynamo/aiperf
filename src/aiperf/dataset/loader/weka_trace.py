@@ -779,9 +779,8 @@ def _assign_fork_sources(
     same parent chain; this is safe, because the child inherits only the
     segments inside the hash prefix it shares with that request. A subagent's
     main chain forks from the root turn that spawns it. Every source is
-    reconstructed before its child (root first, then children in time order),
-    so its segments are captured when the child's turn 0 is built. A child with
-    no source keeps the flat turn-0 split.
+    reconstructed before its child, so its segments are captured when the
+    child's turn 0 is built. A child with no source keeps the flat turn-0 split.
     """
     by_outer = {outer: (plan.trace_id, k) for k, (outer, _) in enumerate(plan.normals)}
     for fp in flat_plans:
