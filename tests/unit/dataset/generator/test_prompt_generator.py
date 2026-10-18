@@ -8,6 +8,7 @@ This test file provides complete coverage of all methods in the PromptGenerator 
 including edge cases, error conditions, and integration scenarios.
 """
 
+from random import Random
 from unittest.mock import MagicMock, mock_open, patch
 
 import numpy as np
@@ -26,9 +27,28 @@ from aiperf.common.exceptions import (
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
-from aiperf.dataset.generator.prompt import PromptGenerator
+from aiperf.dataset.generator.prompt import PromptGenerator, sample_tokens_from_corpus
 
 MOCK_CORPUS_CONTENT = "To be or not to be, that is the question.\nWhether 'tis nobler in the mind to suffer.\n"
+
+
+@pytest.mark.parametrize(
+    "corpus",
+    [
+        param("\n" * 32, id="no-stable-boundary"),
+        param("123123123", id="insufficient-corpus"),
+    ],
+)  # fmt: skip
+def test_hash_block_sampling_rejects_unstable_corpus(corpus: str) -> None:
+    tokenizer = Tokenizer.from_pretrained("builtin")
+    with pytest.raises(ConfigurationError, match="after 100 attempts"):
+        sample_tokens_from_corpus(
+            tokenizer.encode(corpus),
+            10,
+            Random(42),
+            tokenizer.block_separation_token_id,
+            tokenizer=tokenizer,
+        )
 
 
 @pytest.mark.parametrize(

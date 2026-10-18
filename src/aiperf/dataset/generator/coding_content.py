@@ -995,6 +995,7 @@ class CodingContentGenerator(BaseGenerator):
                     current_block_size,
                     self._hash_id_corpus_rng,
                     self.tokenizer.block_separation_token_id,
+                    tokenizer=self.tokenizer,
                 )
                 self._cache[hash_id] = cached
             elif len(cached) != current_block_size:
