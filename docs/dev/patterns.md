@@ -397,6 +397,17 @@ Canonical examples:
 
 For tests that exercise both branches from non-target hosts, patch the constant at its consumer site (not at the source) — see `tests/unit/common/test_bootstrap_windows.py` for the pattern.
 
+### Windows Event Loop
+
+Every process entrypoint calls `configure_event_loop_policy_for_platform()` (`src/aiperf/common/event_loop.py`) before its first loop exists. On Windows it selects a `SelectorEventLoop`, since pyzmq needs `add_reader()`, which `ProactorEventLoop` lacks. Windows timer precision has two halves, and aiperf fixes both:
+
+| Half | Problem on Windows | Fix |
+|---|---|---|
+| Waking up | Waits round to the 15.625 ms system timer interrupt | `timeBeginPeriod(1)` in `bootstrap.py` (services) |
+| Reading the clock | Before Python 3.13, `time.monotonic()` (the stock loop's clock) is `GetTickCount64()`, 15.625 ms ticks that `timeBeginPeriod` does not refine; asyncio fires timers due within one tick early | `PerfCounterSelectorEventLoop`: `loop.time()` reads `perf_counter()` (1 us), selected only on Python < 3.13 |
+
+Tests never go through an entrypoint, so `tests/conftest.py` implements pytest-asyncio's `pytest_asyncio_loop_factories` hook on Windows to run async tests on the same loop. Use that hook rather than overriding the `event_loop_policy` fixture, which pytest-asyncio deprecates.
+
 ## Logging Pattern
 
 Use lambda for expensive log messages:
