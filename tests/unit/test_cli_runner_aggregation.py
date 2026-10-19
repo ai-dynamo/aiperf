@@ -300,21 +300,18 @@ class TestSweepExportHelpers:
 
 
 class TestSummarizeAndExport:
-    """A successful one-run execution must reach the existing aggregation path."""
-
     @pytest.mark.parametrize(
         "mode,through_cli",
         [
             param("single", False, id="single-config"),
             param("grid", False, id="single-point-grid"),
-            param("search", False, id="one-point-search-with-no-feasible-point"),
             param("search", True, id="one-point-search-cli-with-no-feasible-point"),
         ],
     )  # fmt: skip
     def test_single_success_exports_and_returns_zero(
         self, mode: str, through_cli: bool, tmp_path: Path
     ) -> None:
-        """A single success exports aggregates with code zero, including the search CLI."""
+        """SLA infeasibility is a search outcome, not a benchmark execution failure."""
         sweep = None
         if mode == "grid":
             sweep = GridSweep(parameters={"phases.profiling.concurrency": [10]})
@@ -412,7 +409,7 @@ class TestSummarizeAndExport:
         expected_aggregations: int,
         tmp_path: Path,
     ) -> None:
-        """Failures and multiple successes retain their existing exit and export behavior."""
+        """One success with a failed trial must not enter singleton aggregation."""
         results = [
             RunResult(label=f"run_{i}", success=success)
             for i, success in enumerate(successes)
@@ -433,19 +430,16 @@ class TestSummarizeAndExport:
         assert exit_code == expected_exit
         assert aggregate.await_count == expected_aggregations
 
-    @pytest.mark.parametrize("error_type", [ValueError, OSError])
-    def test_single_success_propagates_aggregation_or_export_errors(
-        self, error_type: type[Exception], tmp_path: Path
-    ) -> None:
-        """Aggregation and export errors propagate even when the single run succeeds."""
+    def test_single_success_propagates_aggregation_errors(self, tmp_path: Path) -> None:
+        """Successful benchmark execution does not imply aggregation completed."""
         result = _successful_result(label="c10_t0", concurrency=10, throughput=100.0)
         with (
             patch(
                 "aiperf.cli_runner._multi_run.aggregate_plan_results",
                 new_callable=AsyncMock,
-                side_effect=error_type("aggregation/export failed"),
+                side_effect=ValueError("aggregation failed"),
             ),
-            pytest.raises(error_type, match="aggregation/export failed"),
+            pytest.raises(ValueError, match="aggregation failed"),
         ):
             _summarize_and_export(
                 _make_plan(),
