@@ -1,0 +1,92 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+name: "Publish Helm Chart"
+
+# Publishes the aiperf-operator chart as an OCI artifact to
+# ghcr.io/<owner>/charts/aiperf-operator and attaches the packaged chart plus
+# standalone CRDs to the GitHub Release, so users can `helm install` without
+# cloning the repository. workflow_dispatch backfills an existing release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to publish the chart for (e.g., v0.13.0)'
+        required: true
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.release.tag_name || inputs.tag }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      # The release tag is the source of truth for the chart version so a
+      # missed Chart.yaml bump cannot ship a chart whose default operator image
+      # (nvcr.io/nvidia/aiperf:<appVersion>) points at the previous release.
+      - name: Resolve chart version
+        run: |
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$TAG' is not vX.Y.Z[-prerelease]; Helm requires SemVer 2 chart versions."
+            exit 1
+          fi
+          version="${TAG#v}"
+          chart_version="$(sed -n 's/^version:[[:space:]]*//p' deploy/helm/aiperf-operator/Chart.yaml)"
+          if [[ "$chart_version" != "$version" ]]; then
+            echo "::warning::Chart.yaml version '$chart_version' does not match tag '$TAG'; packaging as $version."
+          fi
+          # A suffixed tag such as v0.6.0-post.1 is a SemVer prerelease to Helm,
+          # so an unpinned install keeps resolving the previous X.Y.Z even when
+          # the GitHub release itself is not marked as a prerelease.
+          if [[ "$version" == *-* ]] && \
+             [[ "$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease)" == "false" ]]; then
+            echo "::warning::Chart $version is a SemVer prerelease; helm install without --version $version will not select it."
+          fi
+          echo "CHART_VERSION=$version" >> "$GITHUB_ENV"
+
+      # Plain helm sets tag-derived version/appVersion and renders from the
+      # package; the Makefile targets use committed metadata and source templates.
+      - name: Package chart and render CRDs
+        run: |
+          chart=deploy/helm/aiperf-operator
+          helm lint "$chart"
+          helm package "$chart" --destination dist \
+            --version "$CHART_VERSION" --app-version "$CHART_VERSION"
+          # Render from the package so the CRD image default carries the
+          # tag-derived appVersion, not the one committed in Chart.yaml.
+          for crd in aiperfjob aiperfsweep; do
+            helm template aiperf-operator "dist/aiperf-operator-${CHART_VERSION}.tgz" \
+              --show-only "templates/crd-${crd}.yaml" > "dist/${crd}-crd.yaml"
+          done
+
+      - name: Push chart to GHCR
+        run: |
+          registry="oci://ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/charts"
+          echo "$GH_TOKEN" | helm registry login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          helm push "dist/aiperf-operator-${CHART_VERSION}.tgz" "$registry"
+          echo "Published ${registry}/aiperf-operator:${CHART_VERSION}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach chart and CRDs to the release
+        run: |
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber \
+            "dist/aiperf-operator-${CHART_VERSION}.tgz" \
+            dist/aiperfjob-crd.yaml \
+            dist/aiperfsweep-crd.yaml

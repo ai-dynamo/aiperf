@@ -61,6 +61,7 @@ _AGENTIC_REPLAY_ROUTES: tuple[str, ...] = (
     "burst_phase_starts",
     "system_idle_gap_cap_seconds",
     "agentic_cache_warmup_duration",
+    "warmup_requests_per_lane",
     "agentic_warmup_grace_period",
 )
 
@@ -817,10 +818,19 @@ def build_profiling(cli: CLIConfig) -> dict[str, Any]:
     # loudly instead of silently dropping, so users discover the mismatch at
     # config time rather than wondering why their cooldown didn't apply.
     if "grace_period" in prof and prof.get("duration") is None:
+        # A scenario's auto-filled duration is applied after conversion, so it
+        # cannot satisfy this check; tell scenario users how to tune grace.
+        scenario_hint = (
+            f" Under --scenario {cli.scenario}, pass --benchmark-duration "
+            "explicitly (at least the scenario's minimum) to tune the grace period."
+            if cli.scenario is not None
+            else ""
+        )
         raise ValueError(
             "--benchmark-grace-period requires --benchmark-duration to be set. "
             "Grace period only applies after a duration-bounded run; drop "
             "--benchmark-grace-period or pass --benchmark-duration as well."
+            + scenario_hint
         )
 
     _validate_profiling(prof, cli)

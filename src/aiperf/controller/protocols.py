@@ -66,6 +66,28 @@ class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
         """Begin failing services that stop heartbeating."""
         ...
 
+    def get_service_liveness(self, service_id: str) -> bool | None:
+        """Authoritative liveness for a service, or None when unknown."""
+        ...
+
+    def get_service_exit_code(self, service_id: str) -> int | None:
+        """Exit code of a spawned service process, or None when unknown."""
+        ...
+
+    def spawned_worker_ids(self) -> frozenset[str]:
+        """IDs of workers this manager spawned as local processes.
+
+        Empty for managers that do not spawn workers themselves.
+        """
+        ...
+
+    def live_worker_ids(self) -> frozenset[str]:
+        """IDs of locally spawned workers whose process is alive.
+
+        Empty for managers that do not spawn workers themselves.
+        """
+        ...
+
 
 @runtime_checkable
 class LocalProcessServiceManagerProtocol(ServiceManagerProtocol, Protocol):

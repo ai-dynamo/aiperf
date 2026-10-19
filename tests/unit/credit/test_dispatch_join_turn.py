@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from aiperf.common.enums import CreditPhase
+from aiperf.credit.dispatch import ChildDispatchResult
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
 from aiperf.timing.branch_orchestrator import PendingBranchJoin
@@ -16,6 +17,7 @@ def _make_issuer() -> CreditIssuer:
     issuer._phase = CreditPhase.PROFILING
     issuer._phase_index = 0
     issuer._issuing_stopped = False
+    issuer._turn_admission = None
     issuer._concurrency_manager = MagicMock()
     issuer._stop_checker = MagicMock()
     issuer._stop_checker.can_send_any_turn.return_value = True
@@ -41,7 +43,7 @@ async def test_dispatch_join_turn_reuses_session_slot():
         gated_turn_index=2,
     )
     result = await issuer.dispatch_join_turn(pending)
-    assert result is True
+    assert result is ChildDispatchResult.ISSUED
     # Session slot NOT acquired (turn_index > 0 and agent_depth == 0 means
     # is_session_start is False -> needs_session_slot is False).
     issuer._concurrency_manager.acquire_session_slot.assert_not_called()
@@ -67,7 +69,7 @@ async def test_dispatch_join_turn_suppresses_on_stop():
         gated_turn_index=2,
     )
     result = await issuer.dispatch_join_turn(pending)
-    assert result is False
+    assert result is ChildDispatchResult.REJECTED
     issuer._issue_credit_internal.assert_not_called()
 
 
@@ -82,6 +84,6 @@ async def test_dispatch_join_turn_blocks_on_prefill_saturation():
         gated_turn_index=2,
     )
     result = await issuer.dispatch_join_turn(pending)
-    assert result is True
+    assert result is ChildDispatchResult.ISSUED
     issuer._concurrency_manager.acquire_prefill_slot.assert_awaited_once()
     issuer._issue_credit_internal.assert_awaited_once()

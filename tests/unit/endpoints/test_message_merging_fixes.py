@@ -8,8 +8,11 @@ a single, named test failure rather than a generic e2e drift.
 
 from __future__ import annotations
 
+import logging
+
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.models import (
     RequestRecord,
@@ -377,6 +380,38 @@ class TestChatDeDupsLeadingSystem:
         assert len(systems) == 1
         assert systems[0]["content"] == "authored system"
 
+    def test_authored_leading_system_list_content_keeps_separator(self, chat_endpoint):
+        """The list branch must join with the same separator as the string one.
+
+        Servers that concatenate content parts would otherwise see
+        ``request_info systemauthored system`` -- a different prefix
+        tokenization for a semantically identical dataset.
+        """
+        authored = [
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": "authored system"}],
+            },
+            {"role": "user", "content": "hi"},
+        ]
+        turn = Turn(role="user", raw_messages=authored)
+        request_info = create_request_info(
+            model_endpoint=chat_endpoint.model_endpoint,
+            turns=[turn],
+            system_message="request_info system",
+        )
+        payload = chat_endpoint.format_payload(request_info)
+        systems = [m for m in payload["messages"] if m["role"] == "system"]
+        assert len(systems) == 1
+        assert systems[0]["content"] == [
+            {"type": "text", "text": "request_info system\n\n"},
+            {"type": "text", "text": "authored system"},
+        ]
+        # Concatenating the parts must match what the string branch produces.
+        assert "".join(p["text"] for p in systems[0]["content"]) == (
+            "request_info system\n\nauthored system"
+        )
+
     def test_authored_leading_system_not_restacked_across_calls(self, chat_endpoint):
         """Formatting twice must not stack the prefix onto shared turn state.
 
@@ -398,6 +433,53 @@ class TestChatDeDupsLeadingSystem:
         systems = [m for m in payload["messages"] if m["role"] == "system"]
         assert systems[0]["content"] == "request_info system\n\nauthored system"
         assert authored[0]["content"] == "authored system"
+
+
+class TestPrependSystemTextShapes:
+    """Every shape the helper accepts must either be preserved or warned about."""
+
+    def test_dict_content_is_treated_as_a_one_part_list(self, chat_endpoint) -> None:
+        part = {"type": "text", "text": "authored"}
+
+        out = chat_endpoint._prepend_system_text("prefix", part)
+
+        assert out == [{"type": "text", "text": "prefix\n\n"}, part]
+
+    def test_empty_string_content_yields_bare_prefix_without_warning(
+        self, chat_endpoint, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING):
+            out = chat_endpoint._prepend_system_text("prefix", "")
+
+        assert out == "prefix"
+        assert "Dropping authored system content" not in caplog.text
+
+    def test_none_content_yields_bare_prefix_without_warning(
+        self, chat_endpoint, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level(logging.WARNING):
+            out = chat_endpoint._prepend_system_text("prefix", None)
+
+        assert out == "prefix"
+        assert "Dropping authored system content" not in caplog.text
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            param(42, id="int"),
+            param(1.5, id="float"),
+            param(True, id="bool"),
+        ],
+    )  # fmt: skip
+    def test_unsupported_content_is_dropped_with_warning(
+        self, chat_endpoint, caplog: pytest.LogCaptureFixture, content: object
+    ) -> None:
+        with caplog.at_level(logging.WARNING):
+            out = chat_endpoint._prepend_system_text("prefix", content)
+
+        assert out == "prefix"
+        assert "Dropping authored system content" in caplog.text
+        assert type(content).__name__ in caplog.text
 
 
 # ---------------------------------------------------------------------------

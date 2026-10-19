@@ -7,6 +7,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+from aiperf.common.constants import SYSTEM_PROMPT_JOIN_SEP
 from aiperf.common.enums import MediaType
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
@@ -115,22 +116,47 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
 
     @staticmethod
     def extract_spec_decode_stats(json_obj: dict[str, Any]) -> dict[str, Any] | None:
-        """Capture the raw speculative-decoding payload from the response root.
+        """Capture the raw speculative-decoding payload, wherever the engine put it.
 
-        vLLM nests it at ``metrics.speculative_decoding`` -- on the response body
-        non-streaming, or on the trailing usage chunk (empty ``choices``)
-        streaming -- when the server runs with ``--per-request-spec-decode-metrics``.
-        Captured verbatim and uninterpreted so a ``SpecDecodeAdapterProtocol``
-        owns the engine-specific interpretation downstream; None when absent.
+        Two placements are recognized, because the engines genuinely differ:
 
-        vLLM populates it only for single-sequence requests (``n == 1``), leaving
-        it ``null`` otherwise, so no client-side ``n > 1`` suppression is needed:
-        a mixed per-request record can never arise here.
+        - **Response root** ``metrics.speculative_decoding`` (vLLM), on the body
+          non-streaming or on the trailing usage chunk (empty ``choices``)
+          streaming, when the server runs with
+          ``--per-request-spec-decode-metrics``.
+        - **Per choice** ``choices[0].speculative_decoding`` (TensorRT-LLM), on
+          the body non-streaming or on the terminal chunk's choice (the one
+          carrying ``finish_reason``) streaming, when the server sets
+          ``per_request_spec_decode_stats``.
+
+        Root wins when both somehow appear. Captured verbatim and uninterpreted
+        so a ``SpecDecodeAdapterProtocol`` owns the engine-specific
+        interpretation downstream; None when absent.
+
+        A response with more than one choice is an ``n > 1`` non-streaming
+        request; its per-choice payload is suppressed because a single
+        per-request record cannot attribute request-level usage to one sequence
+        -- reporting one choice's acceptance alongside all choices' token count
+        would be a mixed, misleading record. (``n > 1`` streaming is suppressed
+        in the parser from the request's own ``n``, since each sequence's stats
+        arrive on separate chunks and a sequence that never drafted sends none.)
+        The root placement needs no such guard: vLLM populates it only for
+        single-sequence requests, leaving it ``null`` otherwise.
         """
         metrics = json_obj.get("metrics")
-        if not isinstance(metrics, dict):
+        if isinstance(metrics, dict):
+            stats = metrics.get("speculative_decoding")
+            if isinstance(stats, dict):
+                return stats
+
+        choices = json_obj.get("choices")
+        if (
+            not isinstance(choices, list)
+            or len(choices) != 1
+            or not isinstance(choices[0], dict)
+        ):
             return None
-        stats = metrics.get("speculative_decoding")
+        stats = choices[0].get("speculative_decoding")
         return stats if isinstance(stats, dict) else None
 
     def build_assistant_turn(self, record: RequestRecord) -> Turn | None:
@@ -355,6 +381,48 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
                 if not content:
                     continue
                 parts.append(render_fn(content))
+
+    def _prepend_system_text(self, prefix: str, content: Any) -> Any:
+        """Return ``content`` with ``prefix`` prepended, preserving its shape.
+
+        System-message content is normally a plain string, but the chat and
+        Responses schemas also permit a list of content parts; a raw-payload
+        dataset may author either. Both branches join with
+        ``SYSTEM_PROMPT_JOIN_SEP`` so the two shapes tokenize identically --
+        servers that concatenate content parts would otherwise see the verbatim
+        prompt run into the dataset's own text with no separator.
+
+        The list branch renders through ``_render_text_part`` so each caller
+        contributes its own part shape (``text`` for chat, ``input_text`` for
+        Responses) without a shape table here. A single dict is treated as a
+        one-part list. ``MessagesEndpoint`` does not use this helper: Anthropic's
+        ``system`` is already a block list, so it prepends the prompt as its
+        own block with no separator.
+
+        Content of any other shape (a number, a nested structure the schema
+        does not allow) cannot be preserved; it is dropped with a warning so a
+        malformed dataset is visible rather than silently rewritten. Empty
+        string content carries nothing to preserve and is not warned about.
+
+        Returns a new object in both cases -- callers pass content that aliases
+        reusable turn state.
+        """
+        if isinstance(content, dict):
+            content = [content]
+        if isinstance(content, list):
+            return [
+                self._render_text_part(prefix + SYSTEM_PROMPT_JOIN_SEP),
+                *content,
+            ]
+        if isinstance(content, str):
+            return f"{prefix}{SYSTEM_PROMPT_JOIN_SEP}{content}" if content else prefix
+        if content is not None:
+            self.warning(
+                f"Dropping authored system content of unsupported type "
+                f"{type(content).__name__} while merging the verbatim system "
+                "prompt; expected str, dict, or list of content parts."
+            )
+        return prefix
 
     # --- Content-part hooks: override per endpoint to change type names ------
 

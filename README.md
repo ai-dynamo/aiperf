@@ -44,15 +44,23 @@ pip install aiperf
 ```
 
 > [!NOTE]
-> On Linux **aarch64** (`arm64`), one of AIPerf's dependencies (`crick`)
-> ships only an sdist and needs a C compiler at install time. Install
-> the system build toolchain before `pip install aiperf` —
-> `sudo apt install build-essential` (Debian/Ubuntu),
-> `sudo yum groupinstall "Development Tools"` (RHEL/CentOS), or
-> equivalent. Linux x86_64, macOS, and Windows install from pre-built
-> wheels and need no toolchain.
+> The optional `crick` dependency has no prebuilt wheel for some platforms,
+> including Linux **aarch64** (`arm64`), and falls back to an sdist that needs
+> a C compiler at install time. `crick` backs the non-default `tdigest`
+> list-metric backend, so a plain `pip install aiperf` does not pull it and
+> needs no toolchain. If you want that backend
+> (`AIPERF_METRICS_LIST_BACKEND=tdigest`) on a platform that builds it from
+> source, install the system build tools first: `sudo apt install
+> build-essential` (Debian/Ubuntu), `sudo yum groupinstall "Development Tools"`
+> (RHEL/CentOS), or equivalent. Everywhere a wheel exists, `pip install
+> "aiperf[tdigest]"` is all you need.
+>
+> `crick` 0.0.8 publishes wheels for Linux `x86_64` and `i686`, macOS
+> `arm64`, and Windows `win32` and `win_amd64`. Everything else builds from
+> source, which includes Linux `aarch64`, Intel macOS, and Windows on Arm.
 
 Optional integrations:
+- `pip install "aiperf[tdigest]"` enables the bounded-memory t-digest list-metric backend
 - `pip install "aiperf[mlflow]"` enables MLflow uploads and live telemetry streaming
 - `pip install "aiperf[otel]"` enables OpenTelemetry metric streaming
 - `pip install "aiperf[wandb]"` enables Weights & Biases result uploads
@@ -140,6 +148,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Hugging Face TGI](docs/tutorials/huggingface-tgi.md) - Profile Hugging Face TGI models
 - [OpenAI Text Endpoints](docs/tutorials/openai-text-endpoints.md) - Profile OpenAI-compatible text APIs
 - [AWS SigV4 Authentication](docs/tutorials/aws-sigv4-auth.md) - Benchmark AWS endpoints (API Gateway, SageMaker, Bedrock) protected by IAM auth
+- [AWS SageMaker](docs/tutorials/aws-sagemaker.md) - Benchmark a model hosted behind a SageMaker Runtime endpoint, with no translation shim
 
 ### Load Control and Timing
 - [Request Rate with Max Concurrency](docs/tutorials/request-rate-concurrency.md) - Dual request control
@@ -179,6 +188,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Agentic Code Generator](docs/tutorials/agentic-code-generator.md) - Generate multi-turn coding-agent traces for KV cache benchmarking
 - [Weka Traces](docs/tutorials/weka-trace.md) - Replay real agentic coding sessions with KV-cache-aware Weka traces
 - [TraceLab Traces](docs/tutorials/tracelab-trace.md) - Replay the public TraceLab corpus of real agentic coding sessions
+- [H CUA Perf Traces](docs/tutorials/h-cua-perf.md) - Replay H Company's computer-use agent traces (tool calling, screenshots, recorded think time) from HuggingFace
 - [InferenceX AgentX MVP](docs/tutorials/agentx-mvp.md) - SemiAnalysis AgentX-MVP submission benchmark (`--scenario inferencex-agentx-mvp`)
 - [Fixed Schedule](docs/tutorials/fixed-schedule.md) - Precise timestamp-based execution
 - [Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md) - Duration-based testing
