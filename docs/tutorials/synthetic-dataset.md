@@ -110,6 +110,7 @@ aiperf profile \
   --image-format png \
   --image-batch-size 2 \
   --synthetic-input-tokens-mean 100 \
+  --output-tokens-mean 100 \
   --request-count 5
 ```
 <!-- /aiperf-run-vllm-vision-openai-endpoint-server -->

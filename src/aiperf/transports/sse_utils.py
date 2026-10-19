@@ -20,6 +20,8 @@ _SSE_EVENT_FIELD_NAME = "event"
 _SSE_ERROR_EVENT_VALUES = frozenset(
     {_SSE_ERROR_EVENT_VALUE, _RESPONSES_FAILED_EVENT_VALUE}
 )
+# Bytes-level, so non-ASCII separators and \x0b-\x0c survive into the parser.
+_SSE_MESSAGE_PADDING = b" \t\r\n"
 
 
 def _raise_for_data_error(data_content: str) -> None:
@@ -240,8 +242,8 @@ class AsyncSSEStreamReader:
 
                 raw_message = (
                     buffer[consumed:delimiter_index]
+                    .strip(_SSE_MESSAGE_PADDING)
                     .decode("utf-8", errors="replace")
-                    .strip()
                 )
                 consumed = delimiter_index + delimiter_length
                 search_offset = consumed
@@ -266,7 +268,7 @@ class AsyncSSEStreamReader:
 
         # Handle any remaining data in buffer after stream ends
         # Some servers don't send final delimiter
-        remaining = buffer[consumed:].strip()
+        remaining = buffer[consumed:].strip(_SSE_MESSAGE_PADDING)
         if remaining:
             final_perf_ns = time.perf_counter_ns()
             raw_message = remaining.decode("utf-8", errors="replace")

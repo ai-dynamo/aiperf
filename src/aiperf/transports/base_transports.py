@@ -73,6 +73,9 @@ class TransportProtocol(AIPerfLifecycleProtocol, Protocol):
 
     def get_url(self, request_info: RequestInfo) -> str: ...
 
+    @property
+    def stream_chunks_received(self) -> int: ...
+
     async def send_request(
         self, request_info: RequestInfo, payload: RequestInputT
     ) -> RequestRecord: ...
@@ -124,6 +127,16 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
             Dictionary of transport-specific HTTP headers
         """
         return {}
+
+    @property
+    def stream_chunks_received(self) -> int:
+        """Running count of streamed response chunks received by this transport.
+
+        Reported in worker health so the progress-stall watchdog can tell a
+        request that is still streaming from one that is stuck. Transports that
+        do not stream report 0, which leaves the watchdog on completions alone.
+        """
+        return 0
 
     def build_headers(self, request_info: RequestInfo) -> dict[str, str]:
         """Compose final headers from universal, endpoint, and transport sources.

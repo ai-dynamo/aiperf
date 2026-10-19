@@ -10,6 +10,7 @@ from aiperf.common.environment import (
     _APIServerSettings,
     _CompressionSettings,
     _Environment,
+    _HTTPSettings,
     _SearchPlannerSettings,
     _ServerMetricsSettings,
     _ServiceSettings,
@@ -17,6 +18,29 @@ from aiperf.common.environment import (
     _WorkerSettings,
     _ZMQSettings,
 )
+
+
+@pytest.mark.parametrize("value,expected", [param(None, 5), param("0", 0), param("1", 1), param("100", 100)])  # fmt: skip
+def test_video_download_redirect_setting(
+    monkeypatch: pytest.MonkeyPatch, value: str | None, expected: int
+) -> None:
+    key = "AIPERF_HTTP_VIDEO_DOWNLOAD_MAX_REDIRECTS"
+    monkeypatch.delenv(key, raising=False)
+    if value is not None:
+        monkeypatch.setenv(key, value)
+    assert expected == _HTTPSettings().VIDEO_DOWNLOAD_MAX_REDIRECTS
+
+
+@pytest.mark.parametrize("value", [param("-1"), param("101"), param("1.5"), param("invalid")])  # fmt: skip
+def test_video_download_redirect_setting_invalid(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("AIPERF_HTTP_VIDEO_DOWNLOAD_MAX_REDIRECTS", value)
+    with pytest.raises(ValidationError):
+        _HTTPSettings()
+
 
 _RUNTIME_SETTING_CASES = [
     param(

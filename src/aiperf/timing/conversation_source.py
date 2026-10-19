@@ -84,9 +84,10 @@ class SampledSession:
     def routing_key(self) -> str:
         """Sticky-routing key.
 
-        Returns the parent's correlation_id when set (so FORK children share
-        a worker with the parent), otherwise this session's own
-        x_correlation_id.
+        Returns the parent's correlation_id when set, otherwise this
+        session's own x_correlation_id. The router computes its own key; a
+        SPAWN child follows this only on its first turn, then pins under its
+        own x_correlation_id.
         """
         return self.parent_correlation_id or self.x_correlation_id
 
