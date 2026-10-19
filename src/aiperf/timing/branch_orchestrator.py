@@ -36,9 +36,9 @@ from the parent session with no cross-process plumbing. The orchestrator
 bumps the parent's sticky refcount via
 ``StickyCreditRouter.register_child_routing`` before dispatching FORK-mode
 children and releases it via ``release_child_routing`` when each child
-terminates. SPAWN-mode children still carry ``parent_correlation_id`` so
-they co-locate on the parent's worker while that sticky entry is live,
-but they do not bump sticky refcounts (no ``register_child_routing``).
+terminates. SPAWN-mode children bump no parent refcount: their first turn
+lands on the parent's worker when its sticky entry is live, then the router
+pins them under their own correlation id until their final turn.
 
 Credit return flow
 ------------------
@@ -654,8 +654,8 @@ class BranchOrchestrator:
 
         FORK children sticky-route to the parent's worker; the refcount is
         balanced by ``_handle_child_done``'s ``release_child_routing`` on leaf.
-        SPAWN children also sticky-hit via ``parent_correlation_id`` while the
-        parent entry is live, but register no refcount.
+        SPAWN children register no refcount; the router pins them under their
+        own id instead.
         """
         if mode == ConversationBranchMode.FORK and self._sticky_router is not None:
             # Pass the child's own id so its descendants resolve to the same
@@ -887,9 +887,8 @@ class BranchOrchestrator:
         FORK-mode children are routed to the parent's worker via sticky routing
         (``parent_correlation_id`` keying); the worker seeds each child's
         ``UserSession.turn_list`` from the parent's local session.
-        SPAWN-mode children also sticky-hit via ``parent_correlation_id`` while
-        the parent entry is live (no refcount bump); they route least-loaded
-        only after that entry is gone.
+        SPAWN-mode children start on the parent's worker when its entry is
+        live, then stay pinned under their own correlation id.
         """
         if self._cleaning_up:
             return False
