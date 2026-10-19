@@ -147,6 +147,24 @@ def setup_integration_tokenizer():
     os.environ.pop("TRANSFORMERS_OFFLINE", None)
 
 
+def _apply_ci_shard(config, items):
+    """Keep only this CI shard's tests when AIPERF_SHARD_TOTAL > 1 (no-op when unset).
+
+    Round-robin over the deterministic collection order, so every xdist worker
+    computes the same subset.
+    """
+    total = int(os.environ.get("AIPERF_SHARD_TOTAL", "1") or 1)
+    if total <= 1:
+        return
+    index = int(os.environ.get("AIPERF_SHARD_INDEX", "0") or 0)
+    keep, drop = [], []
+    for i, item in enumerate(items):
+        (keep if i % total == index else drop).append(item)
+    if drop:
+        config.hook.pytest_deselected(items=drop)
+        items[:] = keep
+
+
 def pytest_collection_modifyitems(config, items):
     """Auto-retry integration tests on Windows to absorb parallel-race flakes.
 
@@ -158,6 +176,7 @@ def pytest_collection_modifyitems(config, items):
     fail only in parallel. Retry up to 2 times to mask that residual
     contention. Linux runs are unaffected (no marker added there).
     """
+    _apply_ci_shard(config, items)
     if sys.platform != "win32":
         return
     flaky = pytest.mark.flaky(reruns=2, reruns_delay=5)

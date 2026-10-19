@@ -8,6 +8,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   integration-tests:
     runs-on: ${{ matrix.os }}
@@ -16,6 +20,10 @@ jobs:
       matrix:
         os: ["ubuntu-latest"]
         python-version: ["3.11", "3.12", "3.13"]
+        shard: [0, 1, 2, 3]
+    env:
+      AIPERF_SHARD_INDEX: ${{ matrix.shard }}
+      AIPERF_SHARD_TOTAL: 4
 
     steps:
     - uses: actions/checkout@v6
