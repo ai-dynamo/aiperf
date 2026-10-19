@@ -111,10 +111,10 @@ def test_job_and_sweep_diagnostics_use_different_api_roots() -> None:
         in api_src
     )
     assert (
-        "`${BASE}/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/logs?${params}`"
+        "`${API_BASE}/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/logs?${params}`"
         in api_src
     )
     assert (
-        "`${BASE}/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/logs?${params}`"
+        "`${API_BASE}/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/logs?${params}`"
         in api_src
     )
