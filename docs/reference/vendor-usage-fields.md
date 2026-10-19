@@ -81,7 +81,7 @@ All field names match AIPerf's modelled synonyms. `cached_tokens` is read-only o
 
 ### vLLM
 
-**Verified against:** [`vllm` / `vllm/entrypoints/openai/engine/protocol.py`](https://github.com/vllm-project/vllm/blob/main/vllm/entrypoints/openai/engine/protocol.py).
+**Verified against:** [`vllm` / `vllm/entrypoints/serve/engine/protocol.py`](https://github.com/vllm-project/vllm/blob/main/vllm/entrypoints/serve/engine/protocol.py).
 
 ```python
 class UsageInfo(OpenAIBaseModel):
