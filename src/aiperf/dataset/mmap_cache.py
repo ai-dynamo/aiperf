@@ -78,6 +78,10 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v29: a weka request's hashed partial last block now holds its own hash
+    # content instead of sampled filler, and a later turn that reuses that
+    # hash keeps the earlier messages. raw_messages decode differently for
+    # the same trace, so bump per this file's contract.
     # v28: a forked weka child's first turn now keeps the parent's message layout
     # (AIPERF_DATASET_WEKA_FORK_PARENT_MESSAGES, default on), so its raw_messages
     # decode differently for the same trace. The flag is in the key payload, but
@@ -185,7 +189,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    28
+    29
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"

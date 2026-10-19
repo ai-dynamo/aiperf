@@ -262,12 +262,12 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         Turns carrying ``raw_messages`` extend the array verbatim; turns
         with ``raw_messages=None`` render through ``_render_turn_message``.
         An explicit ``raw_messages=[]`` contributes nothing: it is the
-        zero-new-message delta that delta-encoded trace sources emit when a
-        turn adds no new context (weka's block-aligned pull-back), and
-        synthesising a message for it would put ``content: []`` on the wire,
-        which servers reject. The result is ``payload["messages"]`` for chat
-        endpoints, ``payload["input"]`` for the Responses API, and any
-        similar shape for plugins.
+        zero-new-message delta that a delta-encoded trace source can emit
+        when a turn adds no new context, and synthesising a message for it
+        would put ``content: []`` on the wire, which servers reject. The
+        result is ``payload["messages"]`` for chat endpoints,
+        ``payload["input"]`` for the Responses API, and any similar shape for
+        plugins.
 
         When a turn sets ``reset_context=True``, any messages already
         accumulated from prior turns in this call are discarded before
