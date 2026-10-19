@@ -8,6 +8,7 @@ import math
 from unittest.mock import Mock, patch
 
 import numpy as np
+import orjson
 import pytest
 
 from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
@@ -22,6 +23,7 @@ from aiperf.metrics.accumulator import (
 )
 from aiperf.metrics.column_store import ColumnStore
 from aiperf.metrics.metric_dicts import MetricResultsDict, metric_result_from_array
+from aiperf.metrics.ragged_series import RaggedSeries
 from aiperf.metrics.types.inter_chunk_latency_metric import InterChunkLatencyMetric
 from aiperf.metrics.types.max_response_metric import MaxResponseTimestampMetric
 from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
@@ -1112,6 +1114,85 @@ class TestTimesliceSummarize:
         assert ts1.end_ns == int(1.7 * NANOS_PER_SECOND)
         # Critically, the partial duration is shorter than slice_duration.
         assert ts1.end_ns - ts1.start_ns < NANOS_PER_SECOND
+
+
+class TestTimesliceRaggedIndex:
+    """Timeslices gather ragged values through a per-slice index built once per
+    export; it must reproduce the per-slice ``get_values_for_mask`` path exactly."""
+
+    @staticmethod
+    async def _ingest(accumulator: MetricsAccumulator) -> None:
+        rng = np.random.default_rng(7)
+        n_records = 400
+        starts = rng.uniform(0.0, 20.0, n_records)
+        starts[:5] = [0.0, 1.0, 1.0, 7.0 - 1e-9, 19.999]  # slice edges and ties
+        for i in rng.permutation(n_records):
+            start_ns = int(starts[i] * NANOS_PER_SECOND)
+            n_chunks = int(rng.integers(0, 40))
+            results: dict = {
+                RequestLatencyMetric.tag: float(rng.uniform(1e6, 5e8)),
+                InterChunkLatencyMetric.tag: rng.uniform(1e5, 5e7, n_chunks).tolist(),
+            }
+            if n_chunks == 0:
+                del results[InterChunkLatencyMetric.tag]
+            await accumulator.process_record(
+                create_metric_records_data(
+                    x_request_id=f"r{i}",
+                    session_num=int(i),
+                    request_start_ns=start_ns,
+                    request_end_ns=start_ns + int(rng.uniform(1e6, 3e9)),
+                    benchmark_phase=(
+                        CreditPhase.WARMUP if i % 9 == 0 else CreditPhase.PROFILING
+                    ),
+                    results=[results],
+                )
+            )
+
+    @staticmethod
+    def _dump(summary: AccumulatorMetricsSummary) -> bytes:
+        return orjson.dumps(
+            {
+                "results": {
+                    k: v.model_dump(mode="json") for k, v in summary.results.items()
+                },
+                "timeslices": [
+                    t.model_dump(mode="json") for t in summary.timeslices or []
+                ],
+            },
+            option=orjson.OPT_SORT_KEYS,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "ctx", [ExportContext(), ExportContext(phase=CreditPhase.PROFILING)]
+    )
+    async def test_indexed_timeslices_match_per_slice_mask_path(
+        self, mock_run, ctx: ExportContext
+    ) -> None:
+        mock_run.cfg.artifacts.slice_duration = 1.0
+        accumulator = MetricsAccumulator(mock_run)
+        await self._ingest(accumulator)
+
+        with patch.object(
+            RaggedSeries,
+            "get_values_for_mask",
+            autospec=True,
+            side_effect=RaggedSeries.get_values_for_mask,
+        ) as mask_path:
+            indexed = await accumulator.export_results(ctx)
+        # At most the overall (non-timeslice) summary takes the mask path.
+        assert mask_path.call_count <= 1
+
+        with patch.object(
+            MetricsAccumulator, "_build_slice_ragged_index", return_value={}
+        ):
+            reference = await accumulator.export_results(ctx)
+
+        assert indexed.timeslices
+        assert any(
+            InterChunkLatencyMetric.tag in t.metric_results for t in indexed.timeslices
+        )
+        assert self._dump(indexed) == self._dump(reference)
 
 
 class TestMetricsSummary:

@@ -64,6 +64,8 @@ if TYPE_CHECKING:
 
 FloatArray: TypeAlias = NDArray[np.float64]
 BoolArray: TypeAlias = NDArray[np.bool_]
+# (value order, per-slice start, per-slice end) of one ragged column's values sorted by slice
+SliceIndex: TypeAlias = tuple[NDArray[np.int64], NDArray[np.int64], NDArray[np.int64]]
 
 
 _AGGREGATE_FUNCS: dict[AggregationKind, Callable[[np.ndarray], float]] = {
@@ -172,6 +174,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
         self._slice_duration_ns: int | None = (
             int(slice_dur * NANOS_PER_SECOND) if slice_dur else None
         )
+        # Set only while _compute_timeslices runs.
+        self._slice_ragged_index: dict[MetricTagT, SliceIndex] | None = None
+        self._active_slice_bin: int | None = None
 
     @property
     def column_store(self) -> ColumnStore:
@@ -545,11 +550,23 @@ class MetricsAccumulator(BaseMetricsProcessor):
             # a view into the ragged buffer that compute_sweep_curves reads later
             # (against unsorted offsets/record_indices), so the full-dataset branch
             # must copy. get_values_for_mask already returns a fresh masked copy.
-            filtered = (
-                backend.values.copy()
-                if full_dataset
-                else backend.get_values_for_mask(mask)
+            slice_index = (
+                self._slice_ragged_index.get(tag)
+                if self._slice_ragged_index is not None
+                and self._active_slice_bin is not None
+                else None
             )
+            if full_dataset:
+                filtered = backend.values.copy()
+            elif slice_index is not None:
+                # The same values in the same (storage) order as
+                # get_values_for_mask(mask) for this slice's mask, without a
+                # pass over every stored value.
+                order, starts, ends = slice_index
+                b = self._active_slice_bin
+                filtered = backend.values[order[starts[b] : ends[b]]]
+            else:
+                filtered = backend.get_values_for_mask(mask)
             if len(filtered) == 0:
                 return
             s = float(np.sum(filtered))
@@ -871,9 +888,67 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # Assign each record to a bin — O(n) total via digitize
         bins = np.digitize(filled_ts, edges) - 1
 
-        timeslices: list[TimesliceResult] = []
         filled_indices = np.where(filled)[0]
 
+        n_bins = len(edges) - 1
+        record_bin = np.full(n, -1, dtype=np.int64)
+        record_bin[filled_indices] = bins
+        self._slice_ragged_index = self._build_slice_ragged_index(record_bin, n_bins)
+        try:
+            return self._compute_timeslice_bins(
+                sweeps,
+                edges=edges,
+                bins=bins,
+                filled_indices=filled_indices,
+                n=n,
+                max_ts=max_ts,
+                adjusted_arrays=adjusted_arrays,
+            )
+        finally:
+            self._slice_ragged_index = None
+            self._active_slice_bin = None
+
+    def _build_slice_ragged_index(
+        self, record_bin: NDArray[np.int64], n_bins: int
+    ) -> dict[MetricTagT, SliceIndex]:
+        """Bucket every replay-capable ragged value by its record's slice, once.
+
+        ``record_bin`` maps each record to its slice (-1 for none). A stable sort
+        keeps storage order inside each slice, so ``values[order[starts[b]:ends[b]]]``
+        equals ``get_values_for_mask`` for slice ``b``'s mask element for element,
+        at O(values in the slice) per slice instead of O(all values).
+        """
+        bin_ids = np.arange(n_bins, dtype=np.int64)
+        index: dict[MetricTagT, SliceIndex] = {}
+        for tag in self._column_store.ragged_tags():
+            backend = self._column_store.ragged(tag)
+            if not getattr(backend, "SUPPORTS_PER_RECORD_REPLAY", False):
+                continue
+            if len(backend.record_indices) == 0:
+                continue
+            value_bin = record_bin[backend.record_indices]
+            order = np.argsort(value_bin, kind="stable")
+            sorted_bin = value_bin[order]
+            index[tag] = (
+                order,
+                np.searchsorted(sorted_bin, bin_ids, side="left"),
+                np.searchsorted(sorted_bin, bin_ids, side="right"),
+            )
+        return index
+
+    def _compute_timeslice_bins(
+        self,
+        sweeps: Any,
+        *,
+        edges: NDArray[np.float64],
+        bins: NDArray[np.intp],
+        filled_indices: NDArray[np.intp],
+        n: int,
+        max_ts: float,
+        adjusted_arrays: dict[str, FloatArray] | None,
+    ) -> list[TimesliceResult]:
+        """Per-slice results for ``_compute_timeslices`` (see its docstring)."""
+        timeslices: list[TimesliceResult] = []
         for bin_idx in range(len(edges) - 1):
             bin_mask_local = bins == bin_idx
             if not bin_mask_local.any():
@@ -890,12 +965,14 @@ class MetricsAccumulator(BaseMetricsProcessor):
             is_complete = raw_window_end <= max_ts
             window_end = raw_window_end if is_complete else max_ts
 
+            self._active_slice_bin = bin_idx
             results = self._compute_results(
                 full_mask,
                 window_start_ns=int(window_start),
                 window_end_ns=int(window_end),
                 is_timeslice=True,
             )
+            self._active_slice_bin = None
             if len(results) == 0:
                 continue
             results.update(sweeps.compute_metrics(window_start, window_end))
