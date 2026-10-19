@@ -546,15 +546,11 @@ class ConversationReconstructor:
             # window (post-context-loss heads, missing assistant, assistant
             # emitted in an earlier delta), so the shape a turn is first sent
             # with is the shape every reset re-emission reproduces.
+            tool_turn = (
+                self._turn_index + self._tool_turn_offset if is_tool_result else None
+            )
             self._segments.append(
-                self._segment(
-                    "user",
-                    cut + asst_n,
-                    region[asst_n:],
-                    self._turn_index + self._tool_turn_offset
-                    if is_tool_result
-                    else None,
-                )
+                self._segment("user", cut + asst_n, region[asst_n:], tool_turn)
             )
 
         self._assert_trailing_user()

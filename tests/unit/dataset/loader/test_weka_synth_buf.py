@@ -748,8 +748,7 @@ def test_prefix_stability_pattern_c_deep_pull_back():
         seed="t:1",
     )
     _assert_prefix_stable(snapshot, r)
-    # Mid-segment cut at LCP=3 lands inside the single turn-0 user segment
-    # Cut at token 192, strict prefix.
+    # LCP=3 cuts at token 192, inside the single turn-0 user segment.
     old_user_tokens = snapshot[0][2]
     assert len(r._segments[0].tokens) == 192
     assert r._segments[0].tokens == old_user_tokens[:192]
@@ -1259,6 +1258,22 @@ def test_compute_caps_partial_last_hashed_block_uses_covered_budget():
         64,
     )
     assert caps == [None, None]
+
+
+def test_compute_caps_pullback_inside_a_block_caps_the_owner():
+    """A zero-growth pull-back that cuts inside a block caps the assistant before it."""
+    # bs=4: turn 1 ends at token 8; turn 2 cuts at token 2, inside block 0.
+    caps = compute_asst_block_caps([([1], 1), ([1, 2], 8), ([1], 2)], 4)
+    assert caps == [None, 0, None]
+
+
+def test_compute_caps_records_a_pullback_to_the_turn_0_end():
+    """A pull-back to the end of turn 0 is recorded in ``turn_0_pullbacks``."""
+    pullbacks: set[int] = set()
+    compute_asst_block_caps(
+        [([1, 2], 8), ([1, 2, 3, 4], 16), ([1, 2], 8)], 4, pullbacks
+    )
+    assert pullbacks == {8}
 
 
 def _run_canonical_three_turns(caps):
