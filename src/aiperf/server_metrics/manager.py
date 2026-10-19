@@ -224,6 +224,10 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         # deadline. Track them so the warmup boundary can drain before
         # profiling credits start (see #1435 follow-up).
         self._in_flight_scrapes: set[asyncio.Task] = set()
+        # Subset of ``_in_flight_scrapes`` started by the collector loop. Only
+        # these are safe to cancel when the drain times out: a manager-initiated
+        # scrape runs inside a command handler task that must not be cancelled.
+        self._periodic_in_flight_scrapes: set[asyncio.Task] = set()
         self._periodic_scrapes_suspended = False
 
     def _load_server_metrics_processors(self) -> None:
@@ -714,15 +718,40 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         still be in flight when the flush deadline elapses. Draining those
         tasks before the final warmup scrape (and before publishing boundary
         ready) keeps their observations out of the profiling window.
+
+        The wait is bounded by ``SCRAPE_TIMEOUT`` because periodic scrapes have
+        no total timeout of their own and ``PhaseRunner`` budgets this drain at
+        one scrape timeout. Periodic scrapes still running after the bound are
+        cancelled so a straggler cannot record warmup-tagged observations once
+        profiling starts. Never raises.
         """
-        pending = [task for task in self._in_flight_scrapes if not task.done()]
+        current = asyncio.current_task()
+        pending = [
+            task
+            for task in self._in_flight_scrapes
+            if not task.done() and task is not current
+        ]
         if not pending:
             return
         self.info(
             f"Server Metrics: Draining {len(pending)} in-flight scrape(s) "
             "before warmup boundary..."
         )
-        await asyncio.gather(*pending, return_exceptions=True)
+        _, still_pending = await asyncio.wait(pending, timeout=self._scrape_timeout)
+        if not still_pending:
+            return
+        to_cancel = [
+            task for task in still_pending if task in self._periodic_in_flight_scrapes
+        ]
+        self.warning(
+            f"Server Metrics: {len(still_pending)} in-flight scrape(s) did not "
+            f"finish within {self._scrape_timeout}s; cancelling {len(to_cancel)} "
+            "periodic scrape(s) before warmup boundary"
+        )
+        for task in to_cancel:
+            task.cancel()
+        if to_cancel:
+            await asyncio.wait(to_cancel, timeout=self._scrape_timeout)
 
     async def _publish_warmup_boundary_ready(self, phase_name: str | None) -> None:
         """Tell TimingManager the warmup server-metrics boundary is settled."""
@@ -1028,6 +1057,8 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             task = asyncio.current_task()
             if task is not None:
                 self._in_flight_scrapes.add(task)
+                if not manager_initiated:
+                    self._periodic_in_flight_scrapes.add(task)
             try:
                 if manager_initiated:
                     await original_collect()
@@ -1041,6 +1072,7 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             finally:
                 if task is not None:
                     self._in_flight_scrapes.discard(task)
+                    self._periodic_in_flight_scrapes.discard(task)
 
         collector.collect_and_process_metrics = collect_with_phase_snapshot
 

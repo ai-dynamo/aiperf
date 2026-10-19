@@ -1747,6 +1747,83 @@ class TestWarmupPhaseCompleteScrape:
         assert manager._periodic_scrapes_suspended is False
 
     @pytest.mark.asyncio
+    async def test_warmup_complete_bounds_drain_of_hung_scrape(
+        self,
+        cfg_with_endpoint: CLIConfig,
+    ):
+        """A hung in-flight scrape must not block boundary ready past SCRAPE_TIMEOUT.
+
+        The hung periodic scrape is cancelled so it cannot record warmup-tagged
+        observations after profiling starts. A hung manager-initiated scrape is
+        waited on for the same bound but left running, since it lives inside a
+        command handler task.
+        """
+        manager = self._make_manager(cfg_with_endpoint)
+        manager._scrape_timeout = 0.05
+        events: list[str] = []
+        never = asyncio.Event()
+
+        async def hung_scrape() -> None:
+            await never.wait()
+
+        async def record_final_scrape(*args, **kwargs) -> None:
+            events.append("final_scrape")
+
+        async def record_ready(phase_name: str | None) -> None:
+            events.append("boundary_ready")
+
+        hung_periodic = asyncio.create_task(hung_scrape())
+        hung_manager_initiated = asyncio.create_task(hung_scrape())
+        manager._in_flight_scrapes.update({hung_periodic, hung_manager_initiated})
+        manager._periodic_in_flight_scrapes.add(hung_periodic)
+        collector = MagicMock()
+        manager._collectors = {"http://localhost:8000/metrics": collector}
+        manager._active_phase = _ServerMetricsPhaseIdentity(
+            phase=CreditPhase.WARMUP, phase_name="warmup", phase_kind="warmup"
+        )
+
+        original_flush = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
+        Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = 0.0
+        try:
+            with (
+                patch.object(
+                    manager,
+                    "_collect_and_process_metrics_for_phase",
+                    side_effect=record_final_scrape,
+                ),
+                patch.object(
+                    manager,
+                    "_publish_warmup_boundary_ready",
+                    side_effect=record_ready,
+                ),
+                patch.object(manager, "warning") as warning,
+            ):
+                await asyncio.wait_for(
+                    manager._on_credit_phase_complete(
+                        self._phase_complete(CreditPhase.WARMUP)
+                    ),
+                    timeout=5.0,
+                )
+            assert hung_periodic.cancelled()
+            assert not hung_manager_initiated.done()
+            assert any(
+                "did not finish within" in str(call.args[0])
+                for call in warning.call_args_list
+            )
+        finally:
+            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush
+            for task in (hung_periodic, hung_manager_initiated):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(
+                hung_periodic, hung_manager_initiated, return_exceptions=True
+            )
+
+        assert events == ["final_scrape", "boundary_ready"]
+        assert manager._active_phase is None
+        assert manager._periodic_scrapes_suspended is False
+
+    @pytest.mark.asyncio
     async def test_suspended_periodic_scrapes_skip_during_warmup_boundary(
         self,
         cfg_with_endpoint: CLIConfig,
