@@ -2,9 +2,18 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for ChatEmbeddingsEndpoint."""
 
+import orjson
 import pytest
+from pytest import param
 
-from aiperf.common.models import Image, Text, Turn
+from aiperf.common.models import (
+    Image,
+    ParsedResponseRecord,
+    RequestRecord,
+    Text,
+    TextResponse,
+    Turn,
+)
 from aiperf.common.models.record_models import EmbeddingResponseData
 from aiperf.endpoints.chat_embeddings import ChatEmbeddingsEndpoint
 from aiperf.plugin.enums import EndpointType
@@ -175,3 +184,86 @@ class TestChatEmbeddingsEndpoint:
 
         assert parsed is not None
         assert len(parsed.data.embeddings[0]) == 1536
+
+    def test_parse_response_usage_reaches_response_record(
+        self, endpoint: ChatEmbeddingsEndpoint
+    ) -> None:
+        usage = {"prompt_tokens": 8, "total_tokens": 8}
+        response = TextResponse(
+            perf_ns=2,
+            content_type="application/json",
+            text=orjson.dumps(
+                {
+                    "data": [{"object": "embedding", "embedding": [0.1, 0.2]}],
+                    "usage": usage,
+                }
+            ).decode(),
+        )
+        request = RequestRecord(
+            responses=[response], status=200, start_perf_ns=1, end_perf_ns=3
+        )
+
+        responses = endpoint.extract_response_data(request)
+        record = ParsedResponseRecord(request=request, responses=responses)
+
+        assert record.final_usage == usage
+
+    @pytest.mark.parametrize(
+        "usage",
+        [
+            param(None, id="missing-usage"),
+            param({"prompt_tokens": 8, "total_tokens": 8}, id="reported-usage"),
+        ],
+    )  # fmt: skip
+    def test_process_responses_preserves_embedding(
+        self, endpoint: ChatEmbeddingsEndpoint, usage: dict[str, int] | None
+    ) -> None:
+        response = TextResponse(
+            perf_ns=2,
+            content_type="application/json",
+            text=orjson.dumps(
+                {
+                    "object": "list",
+                    "data": [{"object": "embedding", "embedding": [0.1, 0.2]}],
+                    "usage": usage,
+                }
+            ).decode(),
+        )
+        request = RequestRecord(
+            responses=[response], status=200, start_perf_ns=1, end_perf_ns=3
+        )
+
+        responses, assistant_turn = endpoint.process_responses(
+            request, capture_assistant_turn=False
+        )
+
+        assert len(responses) == 1
+        assert isinstance(responses[0].data, EmbeddingResponseData)
+        assert responses[0].data.embeddings == [[0.1, 0.2]]
+        assert responses[0].usage == usage
+        assert assistant_turn is None
+        assert endpoint.extract_response_data(request) is responses
+
+    @pytest.mark.parametrize(
+        "usage",
+        [
+            param(None, id="missing-usage"),
+            param({}, id="empty-usage"),
+            param("unexpected", id="malformed-usage"),
+        ],
+    )  # fmt: skip
+    def test_parse_response_unusable_usage_preserves_embedding(
+        self, endpoint: ChatEmbeddingsEndpoint, usage: object
+    ) -> None:
+        response = create_mock_response(
+            json_data={
+                "data": [{"object": "embedding", "embedding": [0.1, 0.2]}],
+                "usage": usage,
+            }
+        )
+
+        parsed = endpoint.parse_response(response)
+
+        assert parsed is not None
+        assert parsed.data.embeddings == [[0.1, 0.2]]
+        assert parsed.usage is None

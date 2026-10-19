@@ -3,10 +3,8 @@
 
 from __future__ import annotations
 
-from aiperf.common.models import (
-    InferenceServerResponse,
-    ParsedResponse,
-)
+from aiperf.common.models import ParsedResponse
+from aiperf.common.types import JsonObject
 from aiperf.endpoints.openai_chat import ChatEndpoint
 
 
@@ -17,22 +15,16 @@ class ChatEmbeddingsEndpoint(ChatEndpoint):
     Uses chat messages format for requests but parses embeddings responses.
     """
 
-    def parse_response(
-        self, response: InferenceServerResponse
+    def _parse_json_response(
+        self, perf_ns: int, json_obj: JsonObject
     ) -> ParsedResponse | None:
-        """Parse OpenAI Embeddings response from chat-style request.
-
-        Args:
-            response: Raw response from inference server
-
-        Returns:
-            Parsed response with extracted embeddings
-        """
-        json_obj = response.get_json()
-        if not json_obj:
-            return None
-
+        """Parse embeddings through the shared single-response and worker paths."""
         data = self.try_extract_embeddings(json_obj)
         if data:
-            return ParsedResponse(perf_ns=response.perf_ns, data=data)
+            usage = json_obj.get("usage")
+            return ParsedResponse(
+                perf_ns=perf_ns,
+                data=data,
+                usage=(usage or None) if isinstance(usage, dict) else None,
+            )
         return None
