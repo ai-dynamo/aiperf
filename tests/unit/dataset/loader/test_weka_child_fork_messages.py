@@ -164,21 +164,20 @@ def test_init_turn_0_parent_prefix_keeps_parent_messages_then_one_user():
 
 
 def test_init_turn_0_parent_prefix_keeps_layout_after_a_shared_partial_block():
-    """The parent's first message holds 2 blocks and a tail, and the next
-    starts inside block 2; the child splits at block 3 and fills it with its
-    own hash content."""
+    """The parent's first message holds 2 blocks and the start of block 2,
+    and the next starts inside block 2; the child splits at the same token."""
     parent = _parent(**_GAP)
     assert [s.start for s in parent._segments] == [0, 2 * _BS + 2, 4 * _BS]
     child = _fork(parent, [1, 2, 3, 4, 5, 6, 90], 7 * _BS)
 
     assert _layout(child) == [
-        ("user", 0, 3 * _BS),
-        ("assistant", 3 * _BS, _BS),
+        ("user", 0, 2 * _BS + 2),
+        ("assistant", 2 * _BS + 2, _BS + 2),
         ("user", 4 * _BS, 2 * _BS),
         ("user", 6 * _BS, _BS),
     ]
-    assert child._segments[0].tokens == _decode_blocks([1, 2, 3])
-    assert child.turn_delta().delta_messages[2] == parent.snapshot_messages()[2]
+    assert child._segments[0].tokens == _decode_blocks([1, 2, 3])[: 2 * _BS + 2]
+    assert child.turn_delta().delta_messages[:3] == parent.snapshot_messages()
 
 
 def test_init_turn_0_parent_prefix_drops_synthesized_missing_blocks():
@@ -257,8 +256,8 @@ def test_parent_prefix_is_a_layout_copy():
     layout = parent.parent_prefix(parent.t1_hash_ids)
     expected = (
         LayoutSegment("user", 0),
-        LayoutSegment("assistant", 2),
-        LayoutSegment("user", 3),
+        LayoutSegment("assistant", 2 * _BS),
+        LayoutSegment("user", 3 * _BS),
     )
     assert layout.segments == expected
     _advance(parent, (parent.t1_hash_ids, 5 * _BS), ([1, 2, 3], 3 * _BS))
@@ -266,7 +265,7 @@ def test_parent_prefix_is_a_layout_copy():
 
 
 def test_init_turn_0_parent_prefix_with_empty_parent_falls_back():
-    empty = ParentPrefix(hash_ids=(), segments=(), next_tool_turn=1)
+    empty = ParentPrefix(hash_ids=(), in_tokens=0, segments=(), next_tool_turn=1)
     assert empty.spans() == []
     child = _recon()
     child.init_turn_0(
@@ -298,22 +297,24 @@ def test_forked_child_later_turn_appends_delta_with_fresh_tool_call_ids():
 
 
 @pytest.mark.parametrize(
-    "parent_kwargs, first, later_hash_ids, forks",
+    "parent_kwargs, first, later, forks",
     [
-        param({}, [1, 2, 3, 4, 5, 90], [1, 2, 3], False, id="cut-to-end-of-assistant"),
-        param({}, [1, 2, 3, 4, 5, 90], [1, 2, 3, 4], True, id="cut-inside-user"),
-        param(_GAP, [1, 2, 3, 4, 5, 6, 90], [1, 2, 3], True, id="gap-cut-into-gap-segment"),
-        param(_GAP, [1, 2, 3, 4, 5, 6, 90], [1, 2, 3, 4, 5, 6], True, id="gap-cut-to-end"),
+        param({}, [1, 2, 3, 4, 5, 90], ([1, 2, 3], 3 * _BS), False, id="cut-to-end-of-assistant"),
+        param({}, [1, 2, 3, 4, 5, 90], ([1, 2, 3, 4], 4 * _BS), True, id="cut-inside-user"),
+        param(_GAP, [1, 2, 3, 4, 5, 6, 90], ([1, 2], 2 * _BS), True, id="gap-cut-inside-first-message"),
+        param(_GAP, [1, 2, 3, 4, 5, 6, 90], ([1, 2, 3], 2 * _BS + 2), True, id="gap-cut-to-end-of-first-message"),
+        param(_GAP, [1, 2, 3, 4, 5, 6, 90], ([1, 2, 3], 3 * _BS), False, id="gap-cut-inside-assistant"),
+        param(_GAP, [1, 2, 3, 4, 5, 6, 90], ([1, 2, 3, 4], 3 * _BS + 4), False, id="gap-cut-to-end-of-assistant"),
+        param(_GAP, [1, 2, 3, 4, 5, 6, 90], ([1, 2, 3, 4, 5, 6], 6 * _BS), True, id="gap-cut-to-end"),
     ],
 )  # fmt: skip
 def test_forked_child_later_pullback_never_ends_on_assistant(
-    parent_kwargs, first: list[int], later_hash_ids: list[int], forks: bool
+    parent_kwargs, first: list[int], later: tuple[list[int], int], forks: bool
 ):
-    """A later block-aligned pull-back must cut at the positions the inherited
-    segments occupy and must not leave an inherited assistant last."""
+    """A later pull-back must cut at the positions the inherited segments
+    occupy and must not leave an inherited assistant last."""
     parent = _parent(**parent_kwargs)
     first_turn = (first, len(first) * _BS)
-    later = (later_hash_ids, len(later_hash_ids) * _BS)
     child = _fork(parent, *first_turn, later=[later])
     assert (len(child.turn_delta().delta_messages) > 1) is forks
     _advance(child, first_turn, later)
@@ -322,8 +323,12 @@ def test_forked_child_later_pullback_never_ends_on_assistant(
     assert messages[-1]["role"] == "user"
     assert child._trailing_non_user_turns == []
     if forks:
+        # Whole parent messages, then the parent's last one up to the cut.
         expected = parent.snapshot_messages()[: len(messages)]
-        assert [m["role"] for m in messages] == [m["role"] for m in expected]
+        assert messages[:-1] == expected[:-1]
+        assert messages[-1]["role"] == expected[-1]["role"]
+        last = _tokens(messages[-1:])
+        assert _tokens(expected[-1:])[: len(last)] == last
 
 
 def test_init_turn_0_parent_prefix_keeps_declared_system_message():
@@ -496,35 +501,31 @@ def flat_children(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "trace_fn, child_sid, parent_sid, parent_turn, whole_blocks",
+    "trace_fn, child_sid, parent_sid, parent_turn",
     [
-        param(_flat_fork_trace, "fork::fa:000", "fork", 1, True, id="flat-chain"),
-        param(_subagent_fork_trace, "safork::sa:a1", "safork", 1, True, id="subagent"),
+        param(_flat_fork_trace, "fork::fa:000", "fork", 1, id="flat-chain"),
+        param(_subagent_fork_trace, "safork::sa:a1", "safork", 1, id="subagent"),
         param(
-            _subagent_fork_trace, "safork::sa:a1:fa:000", "safork::sa:a1", 1, True,
+            _subagent_fork_trace, "safork::sa:a1:fa:000", "safork::sa:a1", 1,
             id="subagent-inner-chain",
         ),
-        param(_chained_fork_trace, "chain::fa:000", "chain", 1, False, id="partial-blocks"),
-        param(_chained_fork_trace, "chain::fa:001", "chain::fa:000", 0, False, id="chain-to-chain"),
+        param(_chained_fork_trace, "chain::fa:000", "chain", 1, id="partial-blocks"),
+        param(_chained_fork_trace, "chain::fa:001", "chain::fa:000", 0, id="chain-to-chain"),
     ],
 )  # fmt: skip
 def test_child_turn_0_follows_parent_layout(
-    trace_fn, child_sid: str, parent_sid: str, parent_turn: int, whole_blocks: bool
+    trace_fn, child_sid: str, parent_sid: str, parent_turn: int
 ):
-    """The child sends the parent's roles; the content matches too when the
-    parent's messages hold whole blocks (a partial tail is the parent's own)."""
+    """The child sends the parent's messages, also when they end inside a
+    block, then its own user message."""
     convs = _convert(trace_fn())
     parent_messages = _messages_at(convs[parent_sid], parent_turn)
     child_messages = _turn_0(convs[child_sid])
 
     assert len(parent_messages) > 1
-    assert [m["role"] for m in child_messages[:-1]] == [
-        m["role"] for m in parent_messages
-    ]
+    assert child_messages[:-1] == parent_messages
     assert child_messages[-1]["role"] == "user"
-    if whole_blocks:
-        assert child_messages[:-1] == parent_messages
-        assert _render(child_messages).startswith(_render(parent_messages))
+    assert _render(child_messages).startswith(_render(parent_messages))
 
 
 @pytest.mark.parametrize(

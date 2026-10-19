@@ -79,9 +79,10 @@ _logger = AIPerfLogger(__name__)
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
     # v29: a weka request's hashed partial last block now holds its own hash
-    # content instead of sampled filler, and a later turn that reuses that
-    # hash keeps the earlier messages. raw_messages decode differently for
-    # the same trace, so bump per this file's contract.
+    # content instead of sampled filler, a later turn that reuses that hash
+    # keeps the earlier messages, and a forked child splits its first turn at
+    # the parent's token positions. raw_messages decode differently for the
+    # same trace, so bump per this file's contract.
     # v28: a forked weka child's first turn now keeps the parent's message layout
     # (AIPERF_DATASET_WEKA_FORK_PARENT_MESSAGES, default on), so its raw_messages
     # decode differently for the same trace. The flag is in the key payload, but

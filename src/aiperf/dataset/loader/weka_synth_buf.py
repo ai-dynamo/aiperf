@@ -86,7 +86,8 @@ class RoleSegment:
 @dataclass(frozen=True, slots=True)
 class LayoutSegment:
     role: _Role
-    block_start: int
+    start: int
+    """Token position of the message's first token."""
     tool_result_turn: int | None = None
 
 
@@ -94,21 +95,22 @@ class LayoutSegment:
 class ParentPrefix:
     """One parent turn's message layout, for a child's turn 0.
 
-    A segment ends where the next one starts: after a shared partial block,
-    the next segment starts one block later.
+    A segment ends where the next one starts, which may be inside a block.
     """
 
     hash_ids: tuple[int, ...]
+    in_tokens: int
+    """The parent request's token count."""
     segments: tuple[LayoutSegment, ...]
     next_tool_turn: int
     """First tool-call id number past the parent's, so child ids never collide."""
 
     def spans(self) -> list[tuple[LayoutSegment, int]]:
-        """Each segment with the hash index where it ends (the next
-        segment's ``block_start``, or the end of ``hash_ids``)."""
+        """Each segment with the token position where it ends (the next
+        segment's ``start``, or ``in_tokens``)."""
         if not self.segments:
             return []
-        ends = [seg.block_start for seg in self.segments[1:]] + [len(self.hash_ids)]
+        ends = [seg.start for seg in self.segments[1:]] + [self.in_tokens]
         return list(zip(self.segments, ends, strict=True))
 
 
@@ -315,20 +317,21 @@ class ConversationReconstructor:
           message and add nothing (``turn_0_pullbacks``).
         A request cannot end with an assistant message.
         """
-        bs = self.block_size
-        shared = min(
-            longest_common_prefix(list(parent.hash_ids), hash_ids),
-            in_tokens // bs,
-            len(hash_ids),
+        # The shared prefix is the cut a turn from the parent request to this
+        # one would make, so it may end inside a block.
+        shared = turn_cut(
+            list(parent.hash_ids),
+            parent.in_tokens,
+            hash_ids,
+            in_tokens,
+            block_size=self.block_size,
         )
         tool_turn = None
         if self.tool_shaped_messages:
             # Keep the assistant only if the child adds a tail and no later
             # turn cuts back to its end.
             answers_call = (
-                is_tool_result
-                and in_tokens > shared * bs
-                and shared * bs not in turn_0_pullbacks
+                is_tool_result and in_tokens > shared and shared not in turn_0_pullbacks
             )
             shared, tool_turn = _shared_without_split_tool_pair(
                 parent, shared, answers_call
@@ -336,19 +339,17 @@ class ConversationReconstructor:
         if shared <= _first_message_end(parent):
             return False
         if any(
-            0 < target <= shared * bs and _role_at(parent, (target - 1) // bs) != "user"
+            0 < target <= shared and _role_at(parent, target - 1) != "user"
             for target in turn_0_pullbacks
         ):
             return False
 
         segs = self._inherited_segments(parent, tokens, shared)
-        if in_tokens == shared * bs and segs[-1].role != "user":
+        if in_tokens == shared and segs[-1].role != "user":
             return False
 
-        if in_tokens > shared * bs:
-            segs.append(
-                self._segment("user", shared * bs, tokens[shared * bs :], tool_turn)
-            )
+        if in_tokens > shared:
+            segs.append(self._segment("user", shared, tokens[shared:], tool_turn))
         self._segments = segs
         self._turn_index = 0
         self._tool_turn_offset = parent.next_tool_turn
@@ -359,9 +360,8 @@ class ConversationReconstructor:
     def _inherited_segments(
         self, parent: ParentPrefix, tokens: list[int], shared: int
     ) -> list[RoleSegment]:
-        """Segments with the parent's roles that tile blocks ``[0, shared)``,
-        holding this request's ``tokens``."""
-        bs = self.block_size
+        """Segments with the parent's roles that tile token positions
+        ``[0, shared)``, holding this request's ``tokens``."""
         segs: list[RoleSegment] = []
         cursor = 0
         for seg, end in parent.spans():
@@ -372,10 +372,7 @@ class ConversationReconstructor:
                 continue
             segs.append(
                 self._segment(
-                    seg.role,
-                    cursor * bs,
-                    tokens[cursor * bs : stop * bs],
-                    seg.tool_result_turn,
+                    seg.role, cursor, tokens[cursor:stop], seg.tool_result_turn
                 )
             )
             cursor = stop
@@ -432,10 +429,9 @@ class ConversationReconstructor:
         """
         return ParentPrefix(
             hash_ids=tuple(hash_ids),
+            in_tokens=self._segments[-1].end if self._segments else 0,
             segments=tuple(
-                LayoutSegment(
-                    seg.role, -(-seg.start // self.block_size), seg.tool_result_turn
-                )
+                LayoutSegment(seg.role, seg.start, seg.tool_result_turn)
                 for seg in self._segments
             ),
             next_tool_turn=self._turn_index + self._tool_turn_offset + 1,
@@ -662,7 +658,7 @@ def _first_message_end(parent: ParentPrefix) -> int:
     for seg, end in parent.spans():
         if seg.role != "system":
             return end
-    return len(parent.hash_ids)
+    return parent.in_tokens
 
 
 def _shared_without_split_tool_pair(
@@ -673,7 +669,7 @@ def _shared_without_split_tool_pair(
 
     The parent sent that assistant with ``tool_calls`` because the tool result
     followed it. Without the tool result, the child would send the assistant
-    without ``tool_calls``, a message the parent never sent. Its blocks go to
+    without ``tool_calls``, a message the parent never sent. Its tokens go to
     the child's new user message instead.
 
     When ``answers_call`` and ``shared`` ends exactly at the assistant, the
@@ -682,19 +678,19 @@ def _shared_without_split_tool_pair(
     """
     spans = parent.spans()
     for (seg, end), (nxt, _) in zip(spans, spans[1:], strict=False):
-        if seg.block_start < shared <= end:
+        if seg.start < shared <= end:
             if seg.role == "assistant" and nxt.tool_result_turn is not None:
                 if answers_call and shared == end:
                     return shared, nxt.tool_result_turn
-                return seg.block_start, None
+                return seg.start, None
             break
     return shared, None
 
 
-def _role_at(parent: ParentPrefix, block: int) -> _Role:
-    """Defaults to user when no parent segment covers ``block``."""
+def _role_at(parent: ParentPrefix, position: int) -> _Role:
+    """Defaults to user when no parent segment covers token ``position``."""
     for seg, end in parent.spans():
-        if seg.block_start <= block < end:
+        if seg.start <= position < end:
             return seg.role
     return "user"
 
