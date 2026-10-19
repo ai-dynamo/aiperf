@@ -280,6 +280,9 @@ class BranchOrchestrator:
         # prefix-cache domain; None when no ledger is wired (e.g. unit tests with
         # cache-bust disabled).
         self._marker_ledger = cache_bust_ledger
+        # Set by PhaseRunner only for fixed schedule; see
+        # set_schedule_target_resolver.
+        self._schedule_target_perf_sec: Callable[[float], float] | None = None
         # Per-tree session-slot ledger (agentic replay only; None otherwise).
         # Every descendant this orchestrator spawns or snapshot-seeds is
         # registered against its tree's root_correlation_id so the tree's
@@ -320,6 +323,13 @@ class BranchOrchestrator:
         # keeps its authored pacing (e.g. a nested spine still running its rounds
         # after --num-conversations stops root sending).
         self._think_time_wake: asyncio.Event = asyncio.Event()
+        # Latched once the run stops wanting a recorded-timestamp hold: at the
+        # sending cutoff (expire_replay_deadlines) or at teardown (cleanup).
+        # A latch rather than a pulse because, unlike think-time, the hold it
+        # guards can never become legal again -- the issuer refuses the turn
+        # past that boundary, so waiting on would only stretch the measured
+        # window.
+        self._schedule_stopped: asyncio.Event = asyncio.Event()
         # SPAWN children whose recorded first request starts after the branch
         # spawn dispatch through the shared replay scheduler (see
         # _start_delayed_first_turn), so the system-idle cap can advance those
@@ -1584,21 +1594,43 @@ class BranchOrchestrator:
         # mandatory, so this cannot release a parent ahead of its subagents.
         if self._accelerated_warmup_started:
             delay_ms = 0.0
-        if delay_ms <= 0.0 or self._scheduler is None:
+
+        # Under fixed schedule the deadline is an instant on the recorded
+        # timeline, not a stopwatch started here. ``delay_ms`` is an
+        # end-to-start delta, so arming relative to now inherits however late
+        # the previous turn's response landed, and the error tracks server
+        # latency -- the replay stretches the very trace it exists to
+        # reproduce. The lower-bound wait in ``_await_recorded_join_target``
+        # cannot pull that back; it only ever delays further. Child completion
+        # remains the other prerequisite, so this still cannot release a parent
+        # ahead of its subagents.
+        target = self._recorded_join_target_perf_sec(pending)
+        on_recorded_timeline = (
+            target is not None and not self._accelerated_warmup_started
+        )
+        delay_sec = (
+            max(0.0, target - time.perf_counter())
+            if on_recorded_timeline
+            else delay_ms / 1000.0
+        )
+
+        if delay_sec <= 0.0 or self._scheduler is None:
             pending.replay_deadline_elapsed = True
             return
         pending.replay_deadline_armed = True
         pending.replay_deadline_elapsed = False
-        self._scheduler.schedule_later(
-            delay_ms / 1000.0,
-            self._on_join_replay_deadline(
-                pending.parent_x_correlation_id,
-                pending.gated_turn_index,
-            ),
-            group_id=(
-                pending.parent_root_correlation_id or pending.parent_x_correlation_id
-            ),
+        deadline = self._on_join_replay_deadline(
+            pending.parent_x_correlation_id,
+            pending.gated_turn_index,
         )
+        group_id = pending.parent_root_correlation_id or pending.parent_x_correlation_id
+        # The recorded instant is handed over as-is: re-deriving a relative
+        # delay here would resample ``perf_counter`` a second time and give
+        # back the drift the absolute target exists to remove.
+        if on_recorded_timeline:
+            self._scheduler.schedule_at_perf_sec(target, deadline, group_id=group_id)
+        else:
+            self._scheduler.schedule_later(delay_sec, deadline, group_id=group_id)
 
     async def _on_join_replay_deadline(
         self, parent_corr: str, gated_idx: int | None
@@ -1688,6 +1720,7 @@ class BranchOrchestrator:
         woken before any join is released here; each returns at once if its
         gated turn would now be refused and otherwise keeps its think-time.
         """
+        self._schedule_stopped.set()
         self._wake_think_time_sleepers()
         await self._abandon_cancelled_child_dispatches()
         releasable: list[PendingBranchJoin] = []
@@ -1872,6 +1905,99 @@ class BranchOrchestrator:
             except TimeoutError:
                 return
 
+    def set_schedule_target_resolver(
+        self, resolver: Callable[[float], float] | None
+    ) -> None:
+        """Teach the orchestrator when a gated turn is *scheduled* to fire.
+
+        Only fixed schedule supplies one. Every other timing mode leaves it
+        None and joins stay purely reactive, which is their documented
+        behaviour.
+        """
+        self._schedule_target_perf_sec = resolver
+
+    async def _await_recorded_join_target(self, pending: PendingBranchJoin) -> None:
+        """Hold a fixed-schedule join until its recorded timestamp as well.
+
+        A gated parent has two independent constraints: its children must
+        finish, and -- under fixed schedule -- its own recorded timestamp must
+        arrive. Releasing on the children alone makes the turn fire early, so
+        every turn after a subagent lands sooner than it was recorded and the
+        replay silently compresses the trace it exists to reproduce.
+
+        Waits for whichever is later. A target already in the past (children
+        overran their recorded window) dispatches immediately: the recorded
+        time cannot be honoured any more, and delaying further would only
+        compound the drift.
+        """
+        target = self._recorded_join_target_perf_sec(pending)
+        if target is None or self._schedule_stopped.is_set():
+            return
+
+        remaining = target - time.perf_counter()
+        if remaining > 0:
+            await self._interruptible_sleep(
+                remaining,
+                lambda: self._issuer.can_dispatch_join(pending.parent_agent_depth),
+            )
+
+    def _recorded_join_target_perf_sec(
+        self, pending: PendingBranchJoin
+    ) -> float | None:
+        """When the gated turn was recorded to fire, as a perf-counter instant.
+
+        ``None`` outside fixed schedule, or when the turn carries no recorded
+        timestamp -- those joins stay purely reactive, which is their
+        documented behaviour.
+        """
+        resolver = self._schedule_target_perf_sec
+        if resolver is None or pending.gated_turn_index is None:
+            return None
+        try:
+            meta = self._cs.get_metadata(pending.parent_conversation_id)
+        except (AttributeError, KeyError):
+            return None
+        turns = getattr(meta, "turns", None) or []
+        if pending.gated_turn_index >= len(turns):
+            return None
+        timestamp_ms = getattr(turns[pending.gated_turn_index], "timestamp_ms", None)
+        if timestamp_ms is None:
+            return None
+        return resolver(timestamp_ms)
+
+    async def _interruptible_sleep(
+        self, seconds: float, still_sendable: Callable[[], bool]
+    ) -> None:
+        """Hold for ``seconds``, or until the run stops wanting the hold.
+
+        Returns early once the phase stops scheduling, cleanup fires, or the
+        held turn would now be refused. Past any of those boundaries the
+        issuer refuses the turn anyway, so continuing to wait cannot produce a
+        legal replay -- it only keeps the run alive, and the stalled span is
+        the window throughput gets divided by. A parent recorded at t=20s
+        under ``--benchmark-duration 4`` would otherwise hold to t=20s and
+        report its requests over that window.
+
+        Unlike ``_sleep_think_ms``, a sleeper here does *not* keep waiting
+        just because its turn is still sendable: the instant it holds for is a
+        point on the recorded timeline, which stops meaning anything once the
+        phase stops replaying it. Both cutoff setters pulse
+        ``_think_time_wake``, which is what wakes this loop to re-check.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + seconds
+        while (
+            not self._cleaning_up
+            and not self._schedule_stopped.is_set()
+            and still_sendable()
+        ):
+            try:
+                await asyncio.wait_for(
+                    self._think_time_wake.wait(), timeout=deadline - loop.time()
+                )
+            except TimeoutError:
+                return
+
     async def _release_blocked_join(self, pending: PendingBranchJoin) -> None:
         """Dispatch the parent's gated turn and update stats."""
         assert pending.gated_turn_index is not None, (
@@ -1885,6 +2011,7 @@ class BranchOrchestrator:
                 think_ms / 1000.0,
                 lambda: self._issuer.can_dispatch_join(pending.parent_agent_depth),
             )
+        await self._await_recorded_join_target(pending)
         result = ChildDispatchResult.normalize(
             await self._issuer.dispatch_join_turn(pending)
         )
