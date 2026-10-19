@@ -147,16 +147,18 @@ def setup_integration_tokenizer():
     os.environ.pop("TRANSFORMERS_OFFLINE", None)
 
 
-def _apply_ci_shard(config, items):
+def _apply_ci_shard(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Keep only this CI shard's tests when AIPERF_SHARD_TOTAL > 1 (no-op when unset).
 
-    Round-robin over the deterministic collection order, so every xdist worker
-    computes the same subset.
+    Round-robin over the deterministic collection order (before marker
+    deselection), so every xdist worker computes the same subset.
     """
     total = int(os.environ.get("AIPERF_SHARD_TOTAL", "1") or 1)
     if total <= 1:
         return
     index = int(os.environ.get("AIPERF_SHARD_INDEX", "0") or 0)
+    if not 0 <= index < total:
+        raise pytest.UsageError(f"AIPERF_SHARD_INDEX={index} must be in [0, {total})")
     keep, drop = [], []
     for i, item in enumerate(items):
         (keep if i % total == index else drop).append(item)
