@@ -90,10 +90,15 @@ class MetricsJsonExporter(MetricsBaseExporter):
             warmup_metrics=prepared_warmup_metrics or None,
         )
 
-        from aiperf.dataset.provenance import public_dataset_provenance
+        from aiperf.dataset.provenance import (
+            public_dataset_provenance,
+            remote_dataset_provenance,
+        )
 
         run_metadata: dict[str, object] = {}
-        dataset = public_dataset_provenance(self._cfg)
+        dataset = public_dataset_provenance(self._cfg) or remote_dataset_provenance(
+            self._cfg
+        )
         if dataset is not None:
             run_metadata["dataset"] = dataset
         metric_duration_coverage = getattr(

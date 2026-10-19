@@ -83,6 +83,8 @@ The Dataset Manager handles all aspects of input data management during benchmar
 - Supporting custom dataset types, such as MoonCake traces, for advanced benchmarking scenarios
 - Managing the lifecycle of datasets, including initialization, iteration, and cleanup
 
+**Remote `--input-file` references.** A `--input-file` of the form `hf://...`, `s3://...`, or `https://...` is parsed into a `RemoteRef` and resolved by the `dataset_source_resolver` plugin registered for its scheme. Resolution runs in two dataset preflight stages: the access stage probes the source, pins one exact version, applies the publisher's `aiperf.json` manifest, and settles fixed-schedule auto-promotion from the first record; the materialize stage, after the endpoint probe, downloads the pinned version into a version-keyed local cache. `DatasetManager` and the composers only ever see a cached local path, so a remote dataset replays exactly like the same file on disk. See [Run a Published Trace](tutorials/remote-datasets.md).
+
 ### Timing Manager
 
 The Timing Manager controls and coordinates the timing of requests during benchmarking runs through a credit-based system.
