@@ -1349,6 +1349,22 @@ class CLIConfig(BaseConfig):
         ),
     ] = CacheBustTarget.NONE
 
+    cache_bust_media_uuids: Annotated[
+        bool,
+        Field(
+            description=(
+                "Append the trajectory's RID digest to every media `uuid`, so a replay "
+                "cannot hit vLLM's multimodal cache entries from an earlier play. "
+                "Requires a RID --cache-bust target and --endpoint-type chat. "
+                "See [cache-bust.md](reference/cache-bust.md)."
+            ),
+        ),
+        CLIParameter(
+            name=("--cache-bust-media-uuids",),
+            group=Groups.CACHE_BUST,
+        ),
+    ] = False
+
     ##############################################################################
     # Prefix Prompt
     ##############################################################################

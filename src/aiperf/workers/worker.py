@@ -55,6 +55,7 @@ from aiperf.common.models import (
     DatasetMetadata,
     ErrorDetails,
     ExitErrorInfo,
+    Image,
     MemoryMapClientMetadata,
     ModelEndpointInfo,
     ParsedResponse,
@@ -106,6 +107,7 @@ from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType
 from aiperf.records.payload_retention import resolve_strip_record_payload_bytes
+from aiperf.timing.strategies.cache_bust import rid_digest
 from aiperf.workers.clock_offset_tracker import ClockOffsetTracker
 from aiperf.workers.inference_client import InferenceClient
 from aiperf.workers.return_channel_probe import probe_return_channel
@@ -422,17 +424,81 @@ def _inject_marker_at_first_user(
         _inject_marker_into_first_user_text(user_turn, marker, is_prefix=is_prefix)
 
 
+def _suffix_media_uuids(turn_list: list[Turn], digest: str) -> None:
+    """Append ``-<digest>`` to every media ``uuid`` in ``turn_list``.
+
+    vLLM keys its multimodal processor and encoder caches (and the media part
+    of its prefix-cache block hashes) on a content part's ``uuid`` when the
+    request carries one, so the text marker alone leaves a replayed trajectory
+    free to reuse the media entries its earlier play filled. The digest is
+    constant per trajectory, so all of a session's turns send the same uuid for
+    the same media and keep reusing each other's entries. Covers OpenAI content
+    parts in ``raw_messages`` (any role, any media type) and ``Image.uuids``.
+
+    Message, part and ``Image`` objects are replaced, never edited, like the
+    marker injection helpers. A turn's list is rewritten only when one of its
+    items changes, so turns that already carry the suffix (the parent turns a
+    FORK child inherits) are not written to. Idempotent.
+    """
+    suffix = f"-{digest}"
+    for turn in turn_list:
+        if turn.raw_messages:
+            messages = [_suffix_message_uuids(m, suffix) for m in turn.raw_messages]
+            if _any_replaced(messages, turn.raw_messages):
+                turn.raw_messages[:] = messages
+        if turn.images:
+            images = [_suffix_image_uuids(image, suffix) for image in turn.images]
+            if _any_replaced(images, turn.images):
+                turn.images[:] = images
+
+
+def _any_replaced(new: list, old: list) -> bool:
+    """Whether any item of ``new`` is a different object from its counterpart in ``old``."""
+    return any(item is not before for item, before in zip(new, old, strict=True))
+
+
+def _suffix_message_uuids(message: dict, suffix: str) -> dict:
+    """Return ``message`` with its content parts' uuids suffixed, or the same object when none changes."""
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return message
+    parts = [_suffix_part_uuid(part, suffix) for part in content]
+    if not _any_replaced(parts, content):
+        return message
+    return {**message, "content": parts}
+
+
+def _suffix_part_uuid(part: object, suffix: str) -> object:
+    """Return ``part`` with its ``uuid`` suffixed, or the same object when it has none or is already suffixed."""
+    uuid = part.get("uuid") if isinstance(part, dict) else None
+    if not isinstance(uuid, str) or not uuid or uuid.endswith(suffix):
+        return part
+    return {**part, "uuid": uuid + suffix}
+
+
+def _suffix_image_uuids(image: Image, suffix: str) -> Image:
+    """Return ``image`` with its cache uuids suffixed, or the same object when none changes."""
+    if all(uuid.endswith(suffix) for uuid in image.uuids):
+        return image
+    uuids = [uuid if uuid.endswith(suffix) else uuid + suffix for uuid in image.uuids]
+    return image.model_copy(update={"uuids": uuids})
+
+
 def _apply_cache_bust(
     session: UserSession,
     credit: Credit,
     system_message: str | None,
+    *,
+    media_uuids: bool = False,
 ) -> str | None:
     """Dispatch cache-bust marker injection for a single credit.
 
     Mutates the appropriate turn's ``raw_messages`` (or ``texts``) in-place
     when the marker attaches to the trace's pre-rendered messages. Returns
     the (possibly modified) ``system_message`` string for the caller to
-    forward into request building.
+    forward into request building. With ``media_uuids``, also suffixes the
+    media uuids of the wire prefix with the marker's digest
+    (:func:`_suffix_media_uuids`).
 
     The system / first-user lookups walk ``turn_list`` forward rather than
     indexing ``[-1]``, so this works under both ``MESSAGE_ARRAY_WITH_RESPONSES``
@@ -457,13 +523,21 @@ def _apply_cache_bust(
     if not marker or target == CacheBustTarget.NONE:
         return system_message
 
+    prefix_turns = _effective_prefix_turns(session)
+    # Before the FORK return below: the marker belongs to the trajectory tree,
+    # so a FORK child suffixes with its parent's digest. The inherited parent
+    # turns already carry it and are left as they are; media in the child's
+    # own turns gets it too.
+    if media_uuids and (digest := rid_digest(marker)):
+        _suffix_media_uuids(prefix_turns, digest)
+
     # FORK children share the parent's KV cache by design: they seed turn_list
     # from the parent (the SAME Turn objects) and must send the parent's exact
     # prefix to hit its cache. The parent already injected its marker into those
     # shared turns, so the child inherits it for free — re-busting here would
     # diverge the child's prefix from the parent's (cache miss) AND mutate the
-    # parent's shared, read-only Turn objects (stacking markers). So cache-bust
-    # is a no-op for FORK children. SPAWN children start fresh (no shared turns)
+    # parent's shared, read-only Turn objects (stacking markers). So the marker
+    # is not injected for FORK children. SPAWN children start fresh (no shared turns)
     # and root sessions own their prefix, so both are busted normally.
     if (
         session.parent_correlation_id is not None
@@ -477,7 +551,6 @@ def _apply_cache_bust(
         CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
         CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
     )
-    prefix_turns = _effective_prefix_turns(session)
 
     if target in (
         CacheBustTarget.SYSTEM_PREFIX,
@@ -801,6 +874,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # One-shot warning gate so cache-bust diagnostics don't spam logs at
         # high concurrency — the misconfiguration is the same for every credit.
         self._cache_bust_warning_shown: bool = False
+        self._cache_bust_media_uuids: bool = self.run.cfg.get_cache_bust_media_uuids()
 
         # Only used as a fallback when dataset client is not initialized
         # or was not available when the credit was dropped. Must be created here
@@ -1689,6 +1763,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             session,
             credit,
             session.conversation.system_message,
+            media_uuids=self._cache_bust_media_uuids,
         )
         self._maybe_warn_cache_bust_silent_drop(session, credit)
 
