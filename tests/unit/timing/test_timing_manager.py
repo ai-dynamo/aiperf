@@ -213,6 +213,7 @@ class TestTimingManagerStartProfilingAndInitialization:
 
         mock_orchestrator.start = mock_start
         mgr._phase_orchestrator = mock_orchestrator
+        mgr._server_metrics_status_received.set()
 
         await mgr._on_start_profiling(Command(cid="c-1", cmd=CommandType.SHUTDOWN))
         await asyncio.sleep(0.05)  # Allow execute_async to run
@@ -451,3 +452,49 @@ class TestTimingManagerServerMetricsStatus:
         )
         assert mgr.phase_publisher.server_metrics_runtime_active is False
         assert mgr.phase_publisher.server_metrics_collector_count == 0
+
+
+class TestTimingManagerStartWaitsForServerMetricsStatus:
+    async def test_start_waits_for_status_before_phases(
+        self, create_manager, cli_config
+    ) -> None:
+        mgr = create_manager(cli_config)
+        start_called = asyncio.Event()
+
+        async def mock_start():
+            assert mgr.phase_publisher.server_metrics_runtime_active is True
+            start_called.set()
+
+        mgr._phase_orchestrator = MagicMock()
+        mgr._phase_orchestrator.start = mock_start
+
+        await mgr._on_start_profiling(Command(cid="c-1", cmd=CommandType.SHUTDOWN))
+        await asyncio.sleep(0.05)
+        assert not start_called.is_set()
+
+        await mgr._on_server_metrics_status(
+            ServerMetricsStatusMessage(
+                service_id="server-metrics",
+                enabled=True,
+                endpoints_configured=["http://localhost:8000/metrics"],
+                endpoints_reachable=["http://localhost:8000/metrics"],
+            )
+        )
+        await asyncio.wait_for(start_called.wait(), timeout=1.0)
+
+    async def test_start_falls_back_when_status_never_arrives(
+        self, create_manager, cli_config, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(Environment.SERVER_METRICS, "SCRAPE_TIMEOUT", 0.05)
+        mgr = create_manager(cli_config)
+        start_called = asyncio.Event()
+
+        async def mock_start():
+            start_called.set()
+
+        mgr._phase_orchestrator = MagicMock()
+        mgr._phase_orchestrator.start = mock_start
+
+        await mgr._on_start_profiling(Command(cid="c-1", cmd=CommandType.SHUTDOWN))
+        await asyncio.wait_for(start_called.wait(), timeout=1.0)
+        assert mgr.phase_publisher.server_metrics_runtime_active is False

@@ -71,6 +71,7 @@ class TimingManager(BaseComponentService):
         self.config = TimingConfig.from_run(self.run)
 
         self._server_metrics_warmup_boundary_ready = asyncio.Event()
+        self._server_metrics_status_received = asyncio.Event()
         self.phase_publisher = PhasePublisher(
             pub_client=self.pub_client,
             service_id=self.service_id,
@@ -132,6 +133,7 @@ class TimingManager(BaseComponentService):
             enabled=message.enabled,
             endpoints_reachable=message.endpoints_reachable,
         )
+        self._server_metrics_status_received.set()
 
     @on_message(MessageType.SERVER_METRICS_WARMUP_BOUNDARY_READY)
     async def _on_server_metrics_warmup_boundary_ready(
@@ -284,8 +286,33 @@ class TimingManager(BaseComponentService):
         self._worker_floor_abort_started = False
 
         self.debug("Starting profiling")
-        task = self.execute_async(self._phase_orchestrator.start())
+        task = self.execute_async(self._start_phase_orchestrator())
         task.add_done_callback(self._on_phase_orchestrator_done)
+
+    async def _start_phase_orchestrator(self) -> None:
+        """Start phases once server metrics status has been applied.
+
+        PROFILE_START and SERVER_METRICS_STATUS travel on different channels,
+        so the command can win the race. Without the status, PhaseRunner sees
+        collection as inactive and skips the warmup barrier while warmup tagged
+        scrapes are still running. Wait a bounded time for the status when
+        server metrics are enabled; on timeout fall back to the inactive path.
+        """
+        if (
+            self.run.cfg.server_metrics.enabled
+            and not self._server_metrics_status_received.is_set()
+        ):
+            timeout = min(Environment.SERVER_METRICS.SCRAPE_TIMEOUT, 5.0)
+            try:
+                await asyncio.wait_for(
+                    self._server_metrics_status_received.wait(), timeout=timeout
+                )
+            except TimeoutError:
+                self.warning(
+                    f"No server metrics status after {timeout:.1f}s; "
+                    "starting phases with the warmup barrier disabled"
+                )
+        await self._phase_orchestrator.start()
 
     def _on_phase_orchestrator_done(self, task: asyncio.Task) -> None:
         """Surface phase-orchestrator failures to the SystemController.
