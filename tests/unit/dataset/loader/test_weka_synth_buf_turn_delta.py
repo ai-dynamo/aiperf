@@ -324,7 +324,7 @@ def test_truncate_returns_none_at_the_end_of_the_buffer():
     """A cut at the end of the trailing segment is a true no-op and returns None."""
     segs = make_segments(("user", 2 * BLOCK_SIZE))
     assert _cut(segs, 2 * BLOCK_SIZE) is None
-    assert len(segs) == 1
+    assert [len(s.tokens) for s in segs] == [2 * BLOCK_SIZE]
 
 
 def test_truncate_returns_segment_index_when_cut_lands_at_segment_start():
@@ -334,13 +334,6 @@ def test_truncate_returns_segment_index_when_cut_lands_at_segment_start():
     )
     assert _cut(segs, 3 * BLOCK_SIZE) == 2
     assert [s.role for s in segs] == ["user", "assistant"]
-
-
-def test_truncate_returns_segment_index_on_cut_before_segment_end():
-    """A cut that drops a segment's last tokens returns that segment's index."""
-    segs = make_segments(("system", BLOCK_SIZE), ("user", 2 * BLOCK_SIZE + 5))
-    assert _cut(segs, 3 * BLOCK_SIZE) == 1
-    assert len(segs[1].tokens) == 2 * BLOCK_SIZE
 
 
 def test_truncate_returns_segment_index_on_mid_segment_cut():

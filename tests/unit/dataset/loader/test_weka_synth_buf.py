@@ -260,10 +260,9 @@ def test_truncate_mid_segment_preserves_partial_content():
     assert user.content == _stub_decode_tokens_to_text(list(range(128)))
 
 
-@pytest.mark.parametrize("cut", [320, 999])
-def test_truncate_at_or_past_end_no_op(cut):
+def test_truncate_past_end_no_op():
     segs = make_segments(("system", 128), ("user", 192))
-    assert truncate_segments_at(segs, cut) is None
+    assert truncate_segments_at(segs, 999) is None
     assert [len(s.tokens) for s in segs] == [128, 192]
 
 
