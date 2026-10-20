@@ -24,7 +24,7 @@ _SSE_ERROR_EVENT_VALUES = frozenset(
 _SSE_MESSAGE_PADDING = b" \t\r\n"
 
 
-def _raise_for_data_error(data_content: str) -> None:
+def _raise_for_data_error(data_content: str, *, error_event: str | None = None) -> None:
     """Raise when a candidate SSE data payload contains a structured error."""
     try:
         payload = orjson.loads(data_content)
@@ -35,7 +35,10 @@ def _raise_for_data_error(data_content: str) -> None:
         return
 
     error = payload.get("error")
-    if payload.get("type") == _RESPONSES_FAILED_EVENT_VALUE:
+    if (
+        error_event == _RESPONSES_FAILED_EVENT_VALUE
+        or payload.get("type") == _RESPONSES_FAILED_EVENT_VALUE
+    ):
         response = payload.get("response")
         nested_error = response.get("error") if isinstance(response, dict) else None
         error = error or nested_error or "Response failed"
@@ -168,7 +171,9 @@ class AsyncSSEStreamReader:
         error_event, has_data_error_candidate = _classify_message_fields(message)
 
         if error_event == _RESPONSES_FAILED_EVENT_VALUE:
-            _raise_for_data_error(message.extract_data_content())
+            _raise_for_data_error(
+                message.extract_data_content(), error_event=error_event
+            )
 
         if error_event:
             error_message = None
