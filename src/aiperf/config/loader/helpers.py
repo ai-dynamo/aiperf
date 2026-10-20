@@ -100,7 +100,6 @@ class BenchmarkHelpersMixin:
         return cache_bust is not None and cache_bust.media_uuids
 
     def _get_cache_bust_config(self) -> CacheBustConfig | None:
-        """Resolve the active dataset's ``CacheBustConfig``: ``prompts.cache_bust``, else ``cache_bust``."""
         dataset = self.get_default_dataset()
         prompts = getattr(dataset, "prompts", None)
         if prompts is not None:

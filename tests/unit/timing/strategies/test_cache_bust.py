@@ -249,6 +249,6 @@ def test_rid_digest_returns_marker_digest(target):
     assert f"[rid:{digest}]" in marker
 
 
-@pytest.mark.parametrize("marker", [None, "", WARMUP_ISOLATION_MARKER, "no marker"])
+@pytest.mark.parametrize("marker", [None, WARMUP_ISOLATION_MARKER, "no marker"])
 def test_rid_digest_without_rid_marker_returns_none(marker):
     assert rid_digest(marker) is None

@@ -31,7 +31,6 @@ def _image_part(url: str, uuid: str) -> dict:
 
 
 def _agent_messages() -> list[dict]:
-    """One recorded agent request: a screenshot in a user and in a tool message, each with its cache uuid."""
     return [
         {"role": "system", "content": "You are a computer-use agent."},
         {
@@ -94,7 +93,6 @@ def _apply(
 
 
 def _uuids_by_url(session: UserSession) -> dict[str, set[str]]:
-    """Every uuid the session sends, grouped by the media it names."""
     by_url: dict[str, set[str]] = {}
     for turn in session.turn_list:
         for message in turn.raw_messages or []:
@@ -240,7 +238,6 @@ def test_apply_cache_bust_media_uuids_fork_child_suffixes_own_media():
     ],
 )  # fmt: skip
 def cli_config(request: pytest.FixtureRequest) -> CLIConfig:
-    """``--cache-bust system_suffix``, with ``--cache-bust-media-uuids`` on and off."""
     return CLIConfig(
         model_names=["test-model"],
         endpoint_type="chat",
