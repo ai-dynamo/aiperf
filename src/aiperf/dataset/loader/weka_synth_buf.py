@@ -800,6 +800,9 @@ def truncate_segments_at(
 ) -> int | None:
     """Truncate ``segments`` in place so they hold token positions ``[0, cut)``.
 
+    ``segments`` must tile positions from 0 with no gaps, as
+    :class:`RoleSegment` requires.
+
     A cut inside a segment slices its tokens. When ``decode_tokens_to_text``
     is provided, ``content`` is re-derived from the surviving tokens to keep
     the (tokens, content) invariant.
@@ -810,14 +813,13 @@ def truncate_segments_at(
     compares the index against the emitted count: disturbing a
     previously-emitted segment forces a context reset on the next emission.
     """
+    if cut <= 0:
+        had_segments = bool(segments)
+        segments.clear()
+        return 0 if had_segments else None
     for i, seg in enumerate(segments):
         if seg.end < cut:
             continue
-        if seg.start >= cut:
-            # Only at cut == 0: a later cut at a segment start ends the
-            # previous segment and returns there.
-            del segments[i:]
-            return i
         if seg.end > cut:
             seg.tokens = seg.tokens[: cut - seg.start]
             if decode_tokens_to_text is not None:
