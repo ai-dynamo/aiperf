@@ -598,7 +598,7 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 "sets supports_cache_bust=true"
             )
         if (
-            self.get_cache_bust_media_uuids()
+            self.is_cache_bust_media_uuids_enabled()
             and self.endpoint.type != EndpointType.CHAT
         ):
             raise ValueError(

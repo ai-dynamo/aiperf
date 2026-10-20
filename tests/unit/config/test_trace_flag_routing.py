@@ -195,7 +195,8 @@ class TestCacheBustRouting:
             "target": "system_suffix",
             "media_uuids": True,
         }
-        assert convert_cli_to_aiperf(cli).benchmark.get_cache_bust_media_uuids()
+        benchmark = convert_cli_to_aiperf(cli).benchmark
+        assert benchmark.is_cache_bust_media_uuids_enabled()
 
     def test_media_uuids_routes_onto_synthetic_prompts(self) -> None:
         cli = CLIConfig(
@@ -208,11 +209,13 @@ class TestCacheBustRouting:
             "target": "first_turn_prefix",
             "media_uuids": True,
         }
-        assert convert_cli_to_aiperf(cli).benchmark.get_cache_bust_media_uuids()
+        benchmark = convert_cli_to_aiperf(cli).benchmark
+        assert benchmark.is_cache_bust_media_uuids_enabled()
 
     def test_media_uuids_defaults_off(self, trace_jsonl: Path) -> None:
         cli = _file_cli(trace_jsonl, cache_bust="system_suffix")
-        assert not convert_cli_to_aiperf(cli).benchmark.get_cache_bust_media_uuids()
+        benchmark = convert_cli_to_aiperf(cli).benchmark
+        assert not benchmark.is_cache_bust_media_uuids_enabled()
 
     @pytest.mark.parametrize(
         "target",

@@ -94,7 +94,7 @@ class BenchmarkHelpersMixin:
         cache_bust = self._get_cache_bust_config()
         return cache_bust.target if cache_bust is not None else CacheBustTarget.NONE
 
-    def get_cache_bust_media_uuids(self) -> bool:
+    def is_cache_bust_media_uuids_enabled(self) -> bool:
         """Resolve the active dataset's ``cache_bust.media_uuids`` (False without a ``cache_bust`` block)."""
         cache_bust = self._get_cache_bust_config()
         return cache_bust is not None and cache_bust.media_uuids

@@ -874,7 +874,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # One-shot warning gate so cache-bust diagnostics don't spam logs at
         # high concurrency — the misconfiguration is the same for every credit.
         self._cache_bust_warning_shown: bool = False
-        self._cache_bust_media_uuids: bool = self.run.cfg.get_cache_bust_media_uuids()
+        self._cache_bust_media_uuids_enabled: bool = (
+            self.run.cfg.is_cache_bust_media_uuids_enabled()
+        )
 
         # Only used as a fallback when dataset client is not initialized
         # or was not available when the credit was dropped. Must be created here
@@ -1763,7 +1765,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             session,
             credit,
             session.conversation.system_message,
-            media_uuids=self._cache_bust_media_uuids,
+            media_uuids=self._cache_bust_media_uuids_enabled,
         )
         self._maybe_warn_cache_bust_silent_drop(session, credit)
 
