@@ -8,6 +8,8 @@ from copy import deepcopy
 from typing import Any
 from urllib.parse import unquote_plus
 
+import orjson
+
 REDACTED_VALUE = "<redacted>"
 
 # Header names (case-insensitive) whose values carry credentials.
@@ -345,16 +347,63 @@ _CLI_COMMAND_SENSITIVE_TOKENS = (
 )  # fmt: skip
 
 
+# ``--header``/``-H`` is ``consume_multiple=True`` (see ``cli_config.py``), so
+# every token up to the next flag is another header value.
+_CLI_HEADER_FLAGS: frozenset[str] = frozenset({"--header", "-H"})
+
+
+def _redact_cli_header_value(value: Any) -> Any:
+    """Redact one ``--header`` value through :func:`is_sensitive_header_name`.
+
+    Accepts the same shapes as ``parse_str_or_dict_as_tuple_list``: a JSON
+    object or comma-separated ``Name:Value`` pairs. Only the values of
+    sensitive names are replaced, so benign headers stay readable.
+    """
+    if not isinstance(value, str):
+        return value
+    if value.startswith("{"):
+        try:
+            parsed = orjson.loads(value)
+        except orjson.JSONDecodeError:
+            return REDACTED_VALUE
+        if not isinstance(parsed, dict):
+            return REDACTED_VALUE
+        return orjson.dumps(
+            {
+                name: REDACTED_VALUE if is_sensitive_header_name(name) else v
+                for name, v in parsed.items()
+            }
+        ).decode()
+    items = []
+    for item in value.split(","):
+        name, sep, _ = item.partition(":")
+        if sep and is_sensitive_header_name(name.strip()):
+            item = f"{name}:{REDACTED_VALUE}"
+        items.append(item)
+    return ",".join(items)
+
+
 def _redact_cli_args(args: list) -> list:
-    """Token-wise redaction for --api-key-shaped flags. Helper for build_cli_command."""
+    """Token-wise redaction for --api-key-shaped flags and --header/-H values.
+
+    Helper for build_cli_command. Header values go through the same
+    ``is_sensitive_header_name`` gate as ``redact_headers``, so custom names
+    like ``X-Acme-Token`` and the 2nd+ value after ``-H`` are covered too.
+    """
     out: list = []
     redact_next = False
+    in_header_window = False
     for arg in args:
         if redact_next:
             out.append(REDACTED_VALUE)
             redact_next = False
             continue
         if isinstance(arg, str) and arg.startswith("-"):
+            flag, eq, inline = arg.partition("=")
+            in_header_window = flag in _CLI_HEADER_FLAGS
+            if in_header_window:
+                out.append(f"{flag}={_redact_cli_header_value(inline)}" if eq else arg)
+                continue
             name = arg.lstrip("-").lower()
             key, _, inline = name.partition("=")
             if any(tok in key for tok in _CLI_COMMAND_SENSITIVE_TOKENS):
@@ -364,6 +413,9 @@ def _redact_cli_args(args: list) -> list:
                     out.append(arg)
                     redact_next = True
                 continue
+        elif in_header_window:
+            out.append(_redact_cli_header_value(arg))
+            continue
         out.append(arg)
     return out
 
@@ -374,10 +426,10 @@ def build_cli_command() -> str:
     Used as `default_factory` for `BenchmarkRun.cli_command` so that runs auto-
     capture the launching command (for reproducibility in
     `profile_export_aiperf.json`). `_redact_cli_args` handles --api-key-shaped
-    flags token-wise; `redact_cli_command` then catches sensitive
-    --header/-H values (Authorization, X-API-Key, etc.) at the assembled-string
-    level so the canonical cli_command stored in JSON exports is never the
-    source of a credential leak.
+    flags and every --header/-H value token-wise; `redact_cli_command` then
+    runs its string-level patterns over the assembled command so the
+    canonical cli_command stored in JSON exports is never the source of a
+    credential leak.
     """
     import sys
 
