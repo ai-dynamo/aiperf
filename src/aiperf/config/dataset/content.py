@@ -122,7 +122,6 @@ class CacheBustConfig(BaseConfig):
 
     @model_validator(mode="after")
     def _media_uuids_need_rid_target(self) -> Self:
-        """Reject ``media_uuids`` without a per-trajectory digest to suffix with."""
         if self.media_uuids and self.target not in RID_TARGETS:
             raise ValueError(
                 "--cache-bust-media-uuids requires a RID --cache-bust target "

@@ -437,8 +437,7 @@ def _suffix_media_uuids(turn_list: list[Turn], digest: str) -> None:
 
     Message, part and ``Image`` objects are replaced, never edited, like the
     marker injection helpers. A turn's list is rewritten only when one of its
-    items changes, so turns that already carry the suffix (the parent turns a
-    FORK child inherits) are not written to. Idempotent.
+    items changes, so already-suffixed turns are not written to. Idempotent.
     """
     suffix = f"-{digest}"
     for turn in turn_list:
@@ -453,12 +452,10 @@ def _suffix_media_uuids(turn_list: list[Turn], digest: str) -> None:
 
 
 def _any_replaced(new: list, old: list) -> bool:
-    """Whether any item of ``new`` is a different object from its counterpart in ``old``."""
     return any(item is not before for item, before in zip(new, old, strict=True))
 
 
 def _suffix_message_uuids(message: dict, suffix: str) -> dict:
-    """Return ``message`` with its content parts' uuids suffixed, or the same object when none changes."""
     content = message.get("content") if isinstance(message, dict) else None
     if not isinstance(content, list):
         return message
@@ -469,7 +466,6 @@ def _suffix_message_uuids(message: dict, suffix: str) -> dict:
 
 
 def _suffix_part_uuid(part: object, suffix: str) -> object:
-    """Return ``part`` with its ``uuid`` suffixed, or the same object when it has none or is already suffixed."""
     uuid = part.get("uuid") if isinstance(part, dict) else None
     if not isinstance(uuid, str) or not uuid or uuid.endswith(suffix):
         return part
@@ -477,7 +473,6 @@ def _suffix_part_uuid(part: object, suffix: str) -> object:
 
 
 def _suffix_image_uuids(image: Image, suffix: str) -> Image:
-    """Return ``image`` with its cache uuids suffixed, or the same object when none changes."""
     if all(uuid.endswith(suffix) for uuid in image.uuids):
         return image
     uuids = [uuid if uuid.endswith(suffix) else uuid + suffix for uuid in image.uuids]
