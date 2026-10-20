@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import base64
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -837,6 +838,10 @@ class TestConvertMediaUrlsToInline:
 
         contents = dataset_manager.dataset["s1"].turns[0].images[0].contents
         assert contents[0].startswith("data:image/jpeg;base64,")
+        encoded = base64.b64decode(contents[0].split(",", 1)[1])
+        with PILImage.open(BytesIO(encoded)) as inlined:
+            assert inlined.format == "JPEG"
+            assert getattr(inlined, "n_frames", 1) == 1
 
     @pytest.mark.asyncio
     async def test_skips_already_encoded_data_urls(self, dataset_manager):
