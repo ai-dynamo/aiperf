@@ -1223,6 +1223,41 @@ class TestTimesliceRaggedIndex:
             t.model_dump(mode="json") for t in reference.timeslices or []
         ]
 
+    @pytest.mark.asyncio
+    async def test_summary_overlapping_timeslice_export_keeps_its_own_values(
+        self, mock_run
+    ) -> None:
+        mock_run.cfg.artifacts.slice_duration = 1.0
+        accumulator = MetricsAccumulator(mock_run)
+        await self._ingest(accumulator)
+        warmup = ExportContext(phase=CreditPhase.WARMUP)
+        profiling = ExportContext(phase=CreditPhase.PROFILING)
+        expected_warmup = self._dump(await accumulator.export_results(warmup))
+        expected_profiling = self._dump(await accumulator.export_results(profiling))
+
+        compute_results = MetricsAccumulator._compute_results
+        pending = [profiling]
+        overlapped: list[AccumulatorMetricsSummary] = []
+
+        def summarize_mid_slice(self, *args, **kwargs):
+            # The realtime summary runs on the event loop while the export's
+            # slice loop runs in a worker thread.
+            if kwargs.get("is_timeslice") and pending:
+                overlapped.append(self._summarize_for_export_context(pending.pop()))
+            return compute_results(self, *args, **kwargs)
+
+        with patch.object(
+            MetricsAccumulator,
+            "_compute_results",
+            autospec=True,
+            side_effect=summarize_mid_slice,
+        ):
+            exported = await accumulator.export_results(warmup)
+
+        assert overlapped
+        assert self._dump(exported) == expected_warmup
+        assert self._dump(overlapped[0]) == expected_profiling
+
 
 class TestMetricsSummary:
     def test_to_json(self) -> None:
