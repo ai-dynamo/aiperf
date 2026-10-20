@@ -496,6 +496,42 @@ async def test_repeated_mode_passes_growing_prior_results_to_strategy(
     assert by_var[1] == [0, 1, 2]
 
 
+async def test_multi_run_without_sweep_stops_once_the_strategy_has_converged(
+    tmp_path, monkeypatch
+):
+    plan = _make_plan(num_variations=1, trials=5).model_copy(update={"sweep": None})
+
+    class _ConvergedAfterTwo:
+        def validate_config(self, cfg) -> None:
+            pass
+
+        def get_next_config(self, cfg, prior):
+            return cfg
+
+        def get_run_label(self, trial):
+            return f"run_{trial + 1:04d}"
+
+        def get_run_path(self, base, trial):
+            return Path(base) / "profile_runs" / f"run_{trial + 1:04d}"
+
+        def get_cooldown_seconds(self):
+            return 0.0
+
+        def should_continue(self, results):
+            return len(results) < 2
+
+    import aiperf.cli_runner._strategy as strategy_mod
+
+    monkeypatch.setattr(
+        strategy_mod, "build_strategy", lambda plan, logger: _ConvergedAfterTwo()
+    )
+
+    executor = FakeExecutor()
+    await MultiRunOrchestrator(base_dir=tmp_path).execute(plan, executor)
+
+    assert [trial for _, trial, _ in executor.calls] == [0, 1]
+
+
 # ---------------------------------------------------------------------------
 # Per-mode completion logging: sweeps emit "{mode} mode complete: N/M",
 # non-sweeps emit the generic "All runs complete: N/M".
