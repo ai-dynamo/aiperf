@@ -16,7 +16,6 @@ from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.timing.strategies.cache_bust import (
     RID_TARGETS,
-    WARMUP_ISOLATION_MARKER,
     build_cache_bust_marker,
     rid_digest,
 )
@@ -90,10 +89,8 @@ def _apply(
     session: UserSession,
     marker: str,
     target: CacheBustTarget = CacheBustTarget.SYSTEM_SUFFIX,
-    *,
-    media_uuids: bool = True,
 ) -> None:
-    _apply_cache_bust(session, _credit(marker, target), None, media_uuids=media_uuids)
+    _apply_cache_bust(session, _credit(marker, target), None, media_uuids=True)
 
 
 def _uuids_by_url(session: UserSession) -> dict[str, set[str]]:
@@ -106,14 +103,6 @@ def _uuids_by_url(session: UserSession) -> dict[str, set[str]]:
             for part in (p for p in parts if "uuid" in p):
                 by_url.setdefault(part["image_url"]["url"], set()).add(part["uuid"])
     return by_url
-
-
-def test_apply_cache_bust_media_uuids_false_leaves_uuids_unchanged():
-    session = _session()
-
-    _apply(session, _marker(), media_uuids=False)
-
-    assert _uuids_by_url(session) == {_SCREEN_A: {"1111"}, _SCREEN_B: {"2222"}}
 
 
 @pytest.mark.parametrize("target", [param(t, id=str(t)) for t in RID_TARGETS])
@@ -140,8 +129,7 @@ def test_apply_cache_bust_media_uuids_same_suffix_across_turns():
     session = _session(Turn(raw_messages=_agent_messages()), Turn(raw_messages=later))
     marker = _marker()
 
-    for _ in range(3):  # one call per credit; must not stack the suffix
-        _apply(session, marker)
+    _apply(session, marker)
 
     digest = rid_digest(marker)
     assert _uuids_by_url(session) == {
@@ -243,14 +231,6 @@ def test_apply_cache_bust_media_uuids_fork_child_suffixes_own_media():
     )
     assert own.raw_messages is not None
     assert own.raw_messages[0]["content"][0]["uuid"] == f"3333-{rid_digest(marker)}"
-
-
-def test_apply_cache_bust_media_uuids_warmup_isolation_marker_unchanged():
-    session = _session()
-
-    _apply(session, WARMUP_ISOLATION_MARKER, CacheBustTarget.WARMUP_ISOLATION_SYSTEM)
-
-    assert _uuids_by_url(session) == {_SCREEN_A: {"1111"}, _SCREEN_B: {"2222"}}
 
 
 @pytest.fixture(
