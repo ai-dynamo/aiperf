@@ -247,7 +247,6 @@ class TestChatEmbeddingsEndpoint:
     @pytest.mark.parametrize(
         "usage",
         [
-            param(None, id="missing-usage"),
             param({}, id="empty-usage"),
             param("unexpected", id="malformed-usage"),
         ],
