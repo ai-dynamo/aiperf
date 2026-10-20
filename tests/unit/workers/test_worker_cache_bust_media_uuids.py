@@ -4,12 +4,16 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, Mock
+
 import pytest
 from pytest import param
 
 from aiperf.common.enums import CacheBustTarget, ConversationBranchMode, CreditPhase
+from aiperf.common.models import RequestRecord
 from aiperf.common.models.dataset_models import Conversation, Image, Turn
-from aiperf.credit.structs import Credit
+from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.credit.structs import Credit, CreditContext
 from aiperf.timing.strategies.cache_bust import (
     RID_TARGETS,
     WARMUP_ISOLATION_MARKER,
@@ -17,7 +21,7 @@ from aiperf.timing.strategies.cache_bust import (
     rid_digest,
 )
 from aiperf.workers.session_manager import UserSession
-from aiperf.workers.worker import _apply_cache_bust, _suffix_media_uuids
+from aiperf.workers.worker import Worker, _apply_cache_bust, _suffix_media_uuids
 
 _SCREEN_A = "data:image/png;base64,QUFB"
 _SCREEN_B = "data:image/png;base64,QkJC"
@@ -247,3 +251,65 @@ def test_apply_cache_bust_media_uuids_warmup_isolation_marker_unchanged():
     _apply(session, WARMUP_ISOLATION_MARKER, CacheBustTarget.WARMUP_ISOLATION_SYSTEM)
 
     assert _uuids_by_url(session) == {_SCREEN_A: {"1111"}, _SCREEN_B: {"2222"}}
+
+
+@pytest.fixture(
+    params=[
+        param(True, id="on"),
+        param(False, id="off"),
+    ],
+)  # fmt: skip
+def cli_config(request: pytest.FixtureRequest) -> CLIConfig:
+    """``--cache-bust system_suffix``, with ``--cache-bust-media-uuids`` on and off."""
+    return CLIConfig(
+        model_names=["test-model"],
+        endpoint_type="chat",
+        cache_bust="system_suffix",
+        cache_bust_media_uuids=request.param,
+    )
+
+
+@pytest.fixture
+async def mock_worker(benchmark_run, fake_tokenizer, skip_service_registration):
+    """A started Worker built from ``cli_config``, with no SystemController behind it."""
+    worker = Worker(run=benchmark_run, service_id="media-uuids-worker")
+    await worker.initialize()
+    await worker.start()
+    yield worker
+    await worker.stop()
+
+
+@pytest.mark.asyncio
+async def test_process_credit_with_session_media_uuids_config_reaches_request(
+    mock_worker: Worker, cli_config: CLIConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``_apply_cache_bust`` defaults ``media_uuids`` to off, so only a Worker-level test catches the config not reaching it."""
+    session = UserSession(
+        x_correlation_id="xcorr",
+        num_turns=1,
+        conversation=Conversation(
+            session_id="traj-0", turns=[Turn(raw_messages=_agent_messages())]
+        ),
+    )
+    monkeypatch.setattr(mock_worker.session_manager, "get", Mock(return_value=session))
+    record = RequestRecord(timestamp_ns=1, start_perf_ns=1, end_perf_ns=2)
+    execute = AsyncMock(return_value=record)
+    monkeypatch.setattr(mock_worker, "_execute_request", execute)
+    monkeypatch.setattr(mock_worker, "_finalize_session_response", Mock())
+    marker = _marker()
+    context = CreditContext(
+        credit=_credit(marker, CacheBustTarget.SYSTEM_SUFFIX), drop_perf_ns=0
+    )
+
+    await mock_worker._process_credit_with_session(context, "x-req", "xcorr", None)
+
+    sent = execute.await_args.args[1]
+    suffix = f"-{rid_digest(marker)}" if cli_config.cache_bust_media_uuids else ""
+    assert {
+        part["uuid"]
+        for turn in sent.turns
+        for message in turn.raw_messages or []
+        if isinstance(message.get("content"), list)
+        for part in message["content"]
+        if "uuid" in part
+    } == {f"1111{suffix}", f"2222{suffix}"}
