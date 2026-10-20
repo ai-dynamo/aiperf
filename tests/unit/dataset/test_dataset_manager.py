@@ -1,10 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from PIL import Image as PILImage
 from pydantic import ValidationError
 
 from aiperf.common.control_structs import Command
@@ -797,6 +799,44 @@ class TestConvertMediaUrlsToInline:
         contents = dataset_manager.dataset["s1"].turns[0].images[0].contents
         assert len(contents) == 1
         assert contents[0].startswith("data:image/png;base64,")
+
+    @pytest.mark.asyncio
+    async def test_converts_multi_picture_jpeg_url(self, dataset_manager):
+        """A JPEG with an MPF secondary image is inlined as image/jpeg."""
+        buffer = BytesIO()
+        PILImage.new("RGB", (64, 48), color="red").save(
+            buffer,
+            format="MPO",
+            save_all=True,
+            append_images=[PILImage.new("RGB", (32, 24), color="blue")],
+        )
+        url = "https://example.com/photo.jpg"
+        dataset_manager.dataset = {
+            "s1": Conversation(
+                session_id="s1",
+                turns=[Turn(images=[Image(contents=[url])], model="test-model")],
+            )
+        }
+
+        with patch(
+            "aiperf.dataset.dataset_manager.aiohttp.ClientSession"
+        ) as mock_session_cls:
+            mock_resp = AsyncMock()
+            mock_resp.status = 200
+            mock_resp.read = AsyncMock(return_value=buffer.getvalue())
+            mock_resp.__aenter__ = AsyncMock(return_value=mock_resp)
+            mock_resp.__aexit__ = AsyncMock(return_value=False)
+
+            mock_session = AsyncMock()
+            mock_session.get = MagicMock(return_value=mock_resp)
+            mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session.__aexit__ = AsyncMock(return_value=False)
+            mock_session_cls.return_value = mock_session
+
+            await dataset_manager._convert_media_urls_to_inline()
+
+        contents = dataset_manager.dataset["s1"].turns[0].images[0].contents
+        assert contents[0].startswith("data:image/jpeg;base64,")
 
     @pytest.mark.asyncio
     async def test_skips_already_encoded_data_urls(self, dataset_manager):
