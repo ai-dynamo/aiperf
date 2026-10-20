@@ -924,9 +924,15 @@ class MetricsAccumulator(BaseMetricsProcessor):
             backend = self._column_store.ragged(tag)
             if not getattr(backend, "SUPPORTS_PER_RECORD_REPLAY", False):
                 continue
-            if len(backend.record_indices) == 0:
+            rec_idx = backend.record_indices
+            if len(rec_idx) == 0:
                 continue
-            value_bin = record_bin[backend.record_indices]
+            # Records ingested after ``record_bin`` was sized fall in no slice,
+            # as in get_values_for_mask.
+            in_bounds = rec_idx < len(record_bin)
+            value_bin = np.where(
+                in_bounds, record_bin[np.where(in_bounds, rec_idx, 0)], -1
+            )
             order = np.argsort(value_bin, kind="stable")
             sorted_bin = value_bin[order]
             index[tag] = (
@@ -947,7 +953,6 @@ class MetricsAccumulator(BaseMetricsProcessor):
         max_ts: float,
         adjusted_arrays: dict[str, FloatArray] | None,
     ) -> list[TimesliceResult]:
-        """Per-slice results for ``_compute_timeslices`` (see its docstring)."""
         timeslices: list[TimesliceResult] = []
         for bin_idx in range(len(edges) - 1):
             bin_mask_local = bins == bin_idx
