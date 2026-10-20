@@ -12,12 +12,10 @@ reads as healthy. Every wait must gate with ``|| { ...; exit 1; }`` instead.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-
-# Directories the harness never ships but a developer checkout may contain.
-_SKIP = {"node_modules", "__pycache__", "site-packages"}
 
 _OPEN = re.compile(r"<!--\s*health-check-(\S+?)-endpoint-server")
 _CLOSE = re.compile(r"<!--\s*/health-check-")
@@ -26,17 +24,19 @@ _CLOSE = re.compile(r"<!--\s*/health-check-")
 def _markdown_files() -> list[Path]:
     """Every markdown file the docs-e2e parser would read.
 
-    The parser is handed the repository root, not ``docs/``: ``README.md`` is
-    tagged too, so a guard that walked only ``docs/`` would miss it.
+    Scoped to ``git ls-files`` rather than ``rglob``: the parser is handed the
+    repository root, not ``docs/`` (``README.md`` is tagged too), and a
+    developer checkout routinely holds untracked virtualenvs and sibling
+    clones whose markdown is not ours to police.
     """
-    return sorted(
-        path
-        for path in REPO.rglob("*.md")
-        if not any(
-            part in _SKIP or part.startswith(".")
-            for part in path.relative_to(REPO).parts
-        )
+    tracked = subprocess.run(
+        ["git", "ls-files", "--", "*.md"],
+        capture_output=True,
+        check=True,
+        cwd=REPO,
+        text=True,
     )
+    return sorted(REPO / line for line in tracked.stdout.splitlines())
 
 
 def _health_blocks() -> list[tuple[str, str, list[str]]]:

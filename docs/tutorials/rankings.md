@@ -88,7 +88,6 @@ JSON Export: artifacts/BAAI_bge-reranker-base-rankings/profile_export_aiperf.jso
 
 Create a file named rankings.jsonl where each line represents a ranking request with a query and one or more passages.
 
-
 Run AIPerf using the following command:
 <!-- aiperf-run-tei-rankings-endpoint-server weight=60 -->
 ```bash

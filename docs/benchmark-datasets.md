@@ -91,7 +91,7 @@ The Exgentic loaders stream recorded agent sessions directly from Hugging Face. 
 
 Provide a finite materialization bound through `--num-conversations`, `--num-dataset-entries`, or `--request-count`. `--benchmark-duration` limits request issuance, not dataset setup.
 
-Select a source harness and source model independently from the target model served by the endpoint:
+Select a source harness and source model independently from the target model served by the endpoint.
 
 Replaying an agent corpus means the server has to accept `tools` in the
 request. vLLM only does that when tool calling is switched on explicitly:
