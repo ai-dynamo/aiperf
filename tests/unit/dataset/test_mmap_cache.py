@@ -382,6 +382,7 @@ class TestComputeCacheKey:
             "weka_aux_reduction_ratio",
             "weka_worker_group_min",
             "weka_tool_shaped_messages",
+            "weka_fork_parent_messages",
             "weka_seam_max_gap_seconds",
             "weka_seam_min_overlap_ratio",
             "block_size",
@@ -656,7 +657,7 @@ class TestLookupAndPopulate:
         raw["version"] = 22
         manifest_path.write_bytes(orjson.dumps(raw))
 
-        assert mmap_cache.MANIFEST_VERSION == 27
+        assert mmap_cache.MANIFEST_VERSION == 28
         assert mmap_cache.lookup("pre-overlap-frontier", compressed=False) is None
 
     def test_lookup_compressed_mismatch_returns_none(self, tmp_path: Path) -> None:
@@ -1244,6 +1245,20 @@ class TestSettingsPayloadFromRun:
             )
         )
         assert mmap_cache._public_dataset_source_from_run(run) is None
+
+    def test_weka_fork_parent_messages_keys_payload(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The fork flag changes cached child turns, so it must change the key."""
+        from aiperf.common.environment import Environment
+
+        run = make_run_from_cli(CLIConfig(model_names=["test-model"]))
+        monkeypatch.setattr(Environment.DATASET, "WEKA_FORK_PARENT_MESSAGES", True)
+        on = mmap_cache._settings_payload_from_run(run)
+        monkeypatch.setattr(Environment.DATASET, "WEKA_FORK_PARENT_MESSAGES", False)
+        off = mmap_cache._settings_payload_from_run(run)
+        assert on["weka_fork_parent_messages"] is True
+        assert off["weka_fork_parent_messages"] is False
 
 
 class TestAcquireCacheLockBypassAndFallback:

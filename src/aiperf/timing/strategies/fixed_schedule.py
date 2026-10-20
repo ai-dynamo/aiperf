@@ -64,10 +64,15 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         self._absolute_schedule: list[ScheduleEntry] = []
         self._schedule_zero_ms: float = 0.0
 
-    def _timestamp_to_perf_sec(self, timestamp_ms: int | float) -> float:
+    def schedule_target_perf_sec(self, timestamp_ms: int | float) -> float:
         """Convert trace timestamp in milliseconds to perf counter seconds.
 
-        Uses the offset from the schedule zero to calculate the target performance seconds.
+        Uses the offset from the schedule zero to calculate the target
+        performance seconds.
+
+        Public because ``PhaseRunner`` hands this to the ``BranchOrchestrator``
+        so SPAWN_JOIN-gated turns fire at their recorded time rather than as
+        soon as their children finish.
         """
         target_offset_sec = (timestamp_ms - self._schedule_zero_ms) / MILLIS_PER_SECOND
         return self._lifecycle.started_at_perf_sec + target_offset_sec
@@ -83,6 +88,17 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
         # Validate and build schedule
         for conv in self._conversation_source.dataset_metadata.conversations:
             if not conv.turns:
+                continue
+
+            # DAG children belong to their root's session and are dispatched by
+            # the BranchOrchestrator when the parent's SPAWN branch fires.
+            # Scheduling them here too dispatches every child request twice,
+            # and the duplicates consume the phase's credit budget, so the
+            # parent's join turn is later refused by the stop check and every
+            # parent turn after the spawn is silently dropped. Mirrors the same
+            # filter in ``PhaseOrchestrator`` -- on ``is_root`` rather than
+            # ``agent_depth``, since SPAWN children keep ``agent_depth == 0``.
+            if not getattr(conv, "is_root", True):
                 continue
 
             # Validate first turn has timestamp (required for fixed schedule mode)
@@ -105,6 +121,19 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
             )
 
         if not self._absolute_schedule:
+            # Distinguish the two causes: a dataset of only DAG children would
+            # otherwise be reported as a timestamp problem, sending whoever
+            # hits it looking in the wrong place entirely.
+            if any(
+                not getattr(conv, "is_root", True)
+                for conv in self._conversation_source.dataset_metadata.conversations
+            ):
+                raise ValueError(
+                    "No root conversations to schedule: every conversation in "
+                    "this dataset is a DAG child, which the BranchOrchestrator "
+                    "dispatches from its parent's SPAWN branch rather than the "
+                    "schedule"
+                )
             raise ValueError("No conversations with valid first-turn timestamps found")
 
         self._absolute_schedule.sort(key=lambda x: x.timestamp_ms)
@@ -135,7 +164,7 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
 
         for entry in self._absolute_schedule:
             self._scheduler.schedule_at_perf_sec(
-                self._timestamp_to_perf_sec(entry.timestamp_ms),
+                self.schedule_target_perf_sec(entry.timestamp_ms),
                 self._credit_issuer.issue_credit(entry.turn),
             )
 
@@ -164,7 +193,7 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
 
         if next_meta.timestamp_ms is not None:
             self._scheduler.schedule_at_perf_sec(
-                self._timestamp_to_perf_sec(next_meta.timestamp_ms),
+                self.schedule_target_perf_sec(next_meta.timestamp_ms),
                 self._credit_issuer.issue_credit(turn),
             )
         elif next_meta.delay_ms is not None:
