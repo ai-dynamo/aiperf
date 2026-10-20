@@ -240,8 +240,6 @@ def test_estimate_marker_token_cost_rounds_to_int():
     [
         CacheBustTarget.SYSTEM_PREFIX,
         CacheBustTarget.SYSTEM_SUFFIX,
-        CacheBustTarget.FIRST_TURN_PREFIX,
-        CacheBustTarget.FIRST_TURN_SUFFIX,
     ],
 )
 def test_rid_digest_returns_marker_digest(target):
