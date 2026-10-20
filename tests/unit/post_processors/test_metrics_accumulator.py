@@ -1194,6 +1194,35 @@ class TestTimesliceRaggedIndex:
         )
         assert self._dump(indexed) == self._dump(reference)
 
+    @pytest.mark.asyncio
+    async def test_ragged_values_ingested_after_snapshot_are_excluded(
+        self, mock_run
+    ) -> None:
+        mock_run.cfg.artifacts.slice_duration = 1.0
+        accumulator = MetricsAccumulator(mock_run)
+        await self._ingest(accumulator)
+        reference = await accumulator.export_results(ExportContext())
+
+        backend = accumulator._column_store.ragged(InterChunkLatencyMetric.tag)
+        build_index = MetricsAccumulator._build_slice_ragged_index
+
+        def build_index_after_late_ingest(self, record_bin, n_bins):
+            backend.extend(len(record_bin) + 3, [1e9, 2e9])
+            return build_index(self, record_bin, n_bins)
+
+        with patch.object(
+            MetricsAccumulator,
+            "_build_slice_ragged_index",
+            autospec=True,
+            side_effect=build_index_after_late_ingest,
+        ):
+            indexed = await accumulator.export_results(ExportContext())
+
+        assert indexed.timeslices
+        assert [t.model_dump(mode="json") for t in indexed.timeslices] == [
+            t.model_dump(mode="json") for t in reference.timeslices or []
+        ]
+
 
 class TestMetricsSummary:
     def test_to_json(self) -> None:
