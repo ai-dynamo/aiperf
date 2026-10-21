@@ -95,8 +95,22 @@ These metrics help you understand how much prefix caching could benefit your wor
 
 ## Step 2: Run Benchmarks with Synthesis Parameters
 
+A mooncake trace is JSONL, one request per line. `hash_ids` name the KV blocks a
+request touches, so repeated ids across lines are the shared prefixes synthesis
+rescales:
+
+<!-- setup-file-vllm-default-openai-endpoint-server path=traces/production.jsonl -->
+```jsonl
+{"timestamp": 0, "input_length": 1200, "output_length": 52, "hash_ids": [0, 1, 2]}
+{"timestamp": 105, "input_length": 1800, "output_length": 26, "hash_ids": [0, 3, 4, 5]}
+{"timestamp": 274, "input_length": 1300, "output_length": 52, "hash_ids": [1, 4, 6]}
+{"timestamp": 388, "input_length": 1100, "output_length": 40, "hash_ids": [0, 1, 7]}
+```
+<!-- /setup-file-vllm-default-openai-endpoint-server -->
+
 Synthesis happens automatically when you run `aiperf profile` with mooncake traces and synthesis parameters. The trace is transformed in-memory before benchmarking:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=60 -->
 ```bash
 aiperf profile \
     --input-file traces/production.jsonl \
@@ -109,6 +123,7 @@ aiperf profile \
     --synthesis-prompt-len-multiplier 1.0 \
     --synthesis-output-len-multiplier 1.0
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 This runs a benchmark using the original trace characteristics. Adjust the multipliers to scale different aspects.
 

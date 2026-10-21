@@ -88,9 +88,12 @@ export ENDPOINT_URL=localhost:8000
 
 ### Command
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=600 timeout=1800 -->
 ```bash
+export ENDPOINT_URL=${ENDPOINT_URL:-localhost:8000}
+
 aiperf profile \
-  --model qwen3-0.6b \
+  --model Qwen/Qwen3-0.6B \
   --url $ENDPOINT_URL \
   --endpoint-type chat \
   --streaming \
@@ -100,6 +103,7 @@ aiperf profile \
   --osl 500 \
   --tokenizer Qwen/Qwen3-0.6B
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 ### Parameters Explained
 

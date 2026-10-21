@@ -12,9 +12,16 @@ into the profiling phase.
 ## Configuration
 
 **CLI:**
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=40 -->
 ```bash
-aiperf profile --cache-bust warmup_isolation_first_turn ...
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --url localhost:8000 \
+    --endpoint-type chat \
+    --request-count 20 \
+    --cache-bust warmup_isolation_first_turn
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **YAML (`cache_bust.target` inside a dataset's `prompts` block):**
 ```yaml

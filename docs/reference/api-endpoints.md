@@ -41,16 +41,28 @@ The router classes that back these routes live under [`src/aiperf/api/routers/`]
 
 ## Example
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=40 -->
 ```bash
-aiperf profile --model my-model --url http://localhost:8000 \
+aiperf profile --model Qwen/Qwen3-0.6B --url http://localhost:8000 \
     --api-key sk-secret-12345 --api-port 9097 --request-count 1000 &
+AIPERF_PID=$!
+
+# The API server binds a few seconds after launch; /readyz returns 200 only
+# once the run is RUNNING, so poll it before querying anything else.
+for _ in $(seq 60); do
+  curl -sf http://127.0.0.1:9097/readyz >/dev/null && break
+  sleep 1
+done
 
 # Inspect the redacted launch command
 curl -s http://127.0.0.1:9097/api/run | jq .cli_command
-# "aiperf profile --model 'my-model' --url 'http://localhost:8000' \
+# "aiperf profile --model 'Qwen/Qwen3-0.6B' --url 'http://localhost:8000' \
 #  --api-key '<redacted>' --api-port 9097 --request-count 1000"
 
 # Liveness probe
 curl -s http://127.0.0.1:9097/healthz
 # ok
+
+kill $AIPERF_PID
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
