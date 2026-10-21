@@ -23,6 +23,7 @@ from aiperf_mock_server import MockServerConfig
 from aiperf_mock_server import serve as aiperf_mock_server_serve
 
 from aiperf.common.logging import AIPerfLogger
+from tests.harness.ci_shard import ci_shard_from_env, select_ci_shard
 from tests.harness.subprocess import _new_process_group_kwargs
 from tests.harness.utils import (
     AIPerfCLI,
@@ -147,21 +148,26 @@ def setup_integration_tokenizer():
     os.environ.pop("TRANSFORMERS_OFFLINE", None)
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    """Validate the CI shard settings before any test is collected.
+
+    This runs in the xdist controller before workers start, so a bad
+    AIPERF_SHARD_INDEX / AIPERF_SHARD_TOTAL fails with a clear usage error
+    (raised inside a worker it only surfaces as an xdist INTERNALERROR).
+    """
+    ci_shard_from_env(os.environ)
+
+
 def _apply_ci_shard(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Keep only this CI shard's tests when AIPERF_SHARD_TOTAL > 1 (no-op when unset).
 
     Round-robin over the deterministic collection order (before marker
     deselection), so every xdist worker computes the same subset.
     """
-    total = int(os.environ.get("AIPERF_SHARD_TOTAL", "1") or 1)
+    index, total = ci_shard_from_env(os.environ)
     if total <= 1:
         return
-    index = int(os.environ.get("AIPERF_SHARD_INDEX", "0") or 0)
-    if not 0 <= index < total:
-        raise pytest.UsageError(f"AIPERF_SHARD_INDEX={index} must be in [0, {total})")
-    keep, drop = [], []
-    for i, item in enumerate(items):
-        (keep if i % total == index else drop).append(item)
+    keep, drop = select_ci_shard(items, index, total)
     if drop:
         config.hook.pytest_deselected(items=drop)
         items[:] = keep
