@@ -528,7 +528,7 @@ class PayloadOffset(AIPerfBaseModel):
     )
     audio_duration_seconds: FiniteFloat | None = Field(
         default=None,
-        ge=0,
+        gt=0,
         description=(
             "Audio duration in seconds from Turn.audio_duration_seconds. "
             "Restored onto reconstructed Turns so the audio-duration and "

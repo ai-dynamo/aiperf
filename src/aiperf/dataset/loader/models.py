@@ -176,22 +176,26 @@ class SingleTurn(AIPerfBaseModel):
     def validate_audio_duration_describes_one_audio(self) -> "SingleTurn":
         """Ensure audio_duration_seconds unambiguously describes a single clip.
 
-        The transcription endpoint only ever sends the first entry of `audios`,
-        so a duration paired with more than one audio would not describe what
-        is actually transmitted and would silently skew RTFx.
+        The transcription endpoint only ever sends the first clip, so a duration
+        paired with more than one clip would not describe what is actually
+        transmitted and would silently skew RTFx. Clips are counted across both
+        the `audios` list and each `Audio` object's `contents` batch.
         """
         if self.audio_duration_seconds is None:
             return self
-        if self.audios is not None and len(self.audios) > 1:
-            raise ValueError(
-                f"audio_duration_seconds describes a single audio, but "
-                f"{len(self.audios)} were given. Only the first is sent, so the "
-                f"duration would not match the request. Split these into one "
-                f"entry per audio."
-            )
-        if not self.audio and not self.audios:
+        clip_count = 1 if self.audio else 0
+        for audio in self.audios or []:
+            clip_count += 1 if isinstance(audio, str) else len(audio.contents)
+        if clip_count == 0:
             raise ValueError(
                 "audio_duration_seconds requires audio or audios to be set"
+            )
+        if clip_count > 1:
+            raise ValueError(
+                f"audio_duration_seconds describes a single audio clip, but "
+                f"{clip_count} were given. Only the first is sent, so the "
+                f"duration would not match the request. Split these into one "
+                f"entry per clip."
             )
         return self
 

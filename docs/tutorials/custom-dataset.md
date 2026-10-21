@@ -222,7 +222,15 @@ aiperf profile \
     --request-count 2
 ```
 
-Without `audio_duration_seconds`, RTFx is omitted from the results for these requests. The value is self-reported and unvalidated against the actual audio content; it must be a finite value greater than 0 (`0`, negative, or infinite values are rejected when the dataset is loaded). It must also describe exactly one clip: the transcription endpoint only sends the first entry of `audios`, so pairing it with more than one audio is rejected at load time rather than silently computing RTFx against the wrong duration. Split multiple clips into one `SingleTurn` entry each.
+Without `audio_duration_seconds`, RTFx is omitted from the results for these requests. The value is self-reported and unvalidated against the actual audio content; it must be a finite value greater than 0 (`0`, negative, or infinite values are rejected when the dataset is loaded). It must also describe exactly one clip: the transcription endpoint only sends the first clip, so pairing it with more than one clip (several `audios` entries, or one `audios` object with several `contents`) is rejected at load time rather than silently computing RTFx against the wrong duration. Use one JSONL line per clip.
+
+The field is supported in `single_turn` and `multi_turn` datasets. In a `multi_turn` conversation, set it on each turn that carries audio; every turn is dispatched as its own request and reports RTFx against its own duration:
+
+```json
+{"session_id": "call_1", "turns": [{"audios": ["/path/to/part1_30s.wav"], "audio_duration_seconds": 30.0}, {"audios": ["/path/to/part2_45s.wav"], "audio_duration_seconds": 45.0}]}
+```
+
+The `random_pool` dataset type does not support `audio_duration_seconds`: the field is ignored there and RTFx is not reported.
 
 ---
 
@@ -308,7 +316,7 @@ Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 - Each turn includes full conversation history
 - Turns execute sequentially within each conversation
 - Multiple conversations run concurrently (up to `--concurrency`)
-- Each turn supports `output_length` and `extra` (same semantics as single_turn — vendor extras shallow-merged into the top of the wire body, latest turn wins for chat-style endpoints)
+- Each turn supports `output_length`, `audio_duration_seconds`, and `extra` (same semantics as single_turn — vendor extras shallow-merged into the top of the wire body, latest turn wins for chat-style endpoints; see [Per-Request Audio Duration](#per-request-audio-duration-rtfx))
 
 ### Inline alternative
 

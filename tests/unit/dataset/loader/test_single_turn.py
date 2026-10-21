@@ -139,6 +139,40 @@ class TestSingleTurn:
 
         assert data.audio_duration_seconds == 30.0
 
+    def test_create_with_audio_duration_seconds_audio_object_one_content_allowed(self):
+        data = SingleTurn(
+            audios=[{"name": "clip", "contents": ["https://example.com/a.wav"]}],
+            audio_duration_seconds=30.0,
+        )
+
+        assert data.audio_duration_seconds == 30.0
+
+    def test_create_with_audio_duration_seconds_audio_object_batched_contents_raises(
+        self,
+    ):
+        with pytest.raises(ValueError, match="2 were given"):
+            SingleTurn(
+                audios=[
+                    {
+                        "name": "batch",
+                        "contents": [
+                            "https://example.com/a.wav",
+                            "https://example.com/b.wav",
+                        ],
+                    }
+                ],
+                audio_duration_seconds=45.0,
+            )
+
+    def test_create_with_audio_duration_seconds_audio_object_empty_contents_raises(
+        self,
+    ):
+        with pytest.raises(ValueError, match="requires audio or audios"):
+            SingleTurn(
+                audios=[{"name": "empty", "contents": []}],
+                audio_duration_seconds=30.0,
+            )
+
     def test_create_with_audio_duration_seconds_without_audio_raises(self):
         """audio_duration_seconds requires audio or audios to be set."""
         with pytest.raises(ValueError):

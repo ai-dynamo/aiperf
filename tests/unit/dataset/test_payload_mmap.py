@@ -409,3 +409,13 @@ async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
 
     client.close()
     await store.stop()
+
+
+@pytest.mark.parametrize("value", [0.0, -1.0, float("inf"), float("nan")])
+def test_payload_offset_audio_duration_seconds_rejects_non_positive_or_non_finite(
+    value,
+):
+    from aiperf.dataset.memory_map_utils import PayloadOffset
+
+    with pytest.raises(ValueError):
+        PayloadOffset(offset=0, size=0, audio_duration_seconds=value)
