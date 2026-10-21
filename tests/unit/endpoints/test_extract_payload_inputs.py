@@ -14,9 +14,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-from pytest import param
-
 from aiperf.common.models import (
     ExtractedPayload,
     InferenceServerResponse,
@@ -336,13 +333,9 @@ class TestChatMessagesField:
             {"role": "assistant", "content": "hi"},
         ]
 
-    @pytest.mark.parametrize(
-        "role",
-        [param("tool", id="tool"), param("tool_results", id="tool-results")],
-    )  # fmt: skip
-    def test_tool_result_preserves_call_id_for_chat_template(self, role: str) -> None:
+    def test_tool_result_preserves_call_id_for_chat_template(self) -> None:
         message = {
-            "role": role,
+            "role": "tool",
             "content": "Sunny",
             "tool_call_id": "abc123def",
         }

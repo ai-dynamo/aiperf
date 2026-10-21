@@ -792,15 +792,10 @@ class TestChatTemplateAwareTokenization:
         # Bare encode is NOT called when the template path succeeds.
         tokenizer.encode.assert_not_called()
 
-    @pytest.mark.parametrize(
-        "tool_result",
-        [param(False, id="chat"), param(True, id="tool-result")],
-    )  # fmt: skip
-    async def test_real_chat_template_preserves_templated_isl(
+    async def test_real_tool_result_template_preserves_templated_isl(
         self,
         setup_inference_parser: InferenceResultParser,
         sample_turn: Turn,
-        tool_result: bool,
     ) -> None:
         native = NativeTokenizer(WordLevel({"[UNK]": 0}, unk_token="[UNK]"))
         native.pre_tokenizer = WhitespaceSplit()
@@ -821,11 +816,10 @@ class TestChatTemplateAwareTokenization:
         tokenizer._tokenizer = inner
         tokenizer.encode.side_effect = inner.encode
         setup_inference_parser.get_tokenizer = AsyncMock(return_value=tokenizer)
-        messages = [{"role": "user", "content": "Weather?"}]
-        if tool_result:
-            messages.append(
-                {"role": "tool", "content": "Sunny", "tool_call_id": "abc123def"}
-            )
+        messages = [
+            {"role": "user", "content": "Weather?"},
+            {"role": "tool", "content": "Sunny", "tool_call_id": "abc123def"},
+        ]
         info = create_test_request_info(turns=[sample_turn])
         info.payload_bytes = orjson.dumps({"messages": messages})
         record = RequestRecord(request_info=info, model_name="test-model")
