@@ -18,8 +18,8 @@ SHARD_TOTAL_ENV = "AIPERF_SHARD_TOTAL"
 def ci_shard_from_env(environ: Mapping[str, str]) -> tuple[int, int]:
     """Return ``(index, total)``; ``(0, 1)`` (no sharding) when unset.
 
-    Raises ``pytest.UsageError`` for a non-integer value or an index outside
-    ``[0, total)``.
+    Raises ``pytest.UsageError`` for a non-integer value, a total below 1, or an
+    index outside ``[0, total)``.
     """
     try:
         total = int(environ.get(SHARD_TOTAL_ENV, "1") or 1)
@@ -28,7 +28,9 @@ def ci_shard_from_env(environ: Mapping[str, str]) -> tuple[int, int]:
         raise pytest.UsageError(
             f"{SHARD_INDEX_ENV} and {SHARD_TOTAL_ENV} must be integers: {e}"
         ) from e
-    if total <= 1:
+    if total < 1:
+        raise pytest.UsageError(f"{SHARD_TOTAL_ENV}={total} must be >= 1")
+    if total == 1:
         return 0, 1
     if not 0 <= index < total:
         raise pytest.UsageError(f"{SHARD_INDEX_ENV}={index} must be in [0, {total})")

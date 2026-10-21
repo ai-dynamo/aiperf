@@ -61,6 +61,8 @@ def test_ci_shard_from_env_valid_values_returns_index_and_total(
     [
         param({"AIPERF_SHARD_TOTAL": "4", "AIPERF_SHARD_INDEX": "4"}, r"must be in \[0, 4\)", id="index-too-high"),
         param({"AIPERF_SHARD_TOTAL": "4", "AIPERF_SHARD_INDEX": "-1"}, r"must be in \[0, 4\)", id="negative"),
+        param({"AIPERF_SHARD_TOTAL": "0"}, r"must be >= 1", id="zero-total"),
+        param({"AIPERF_SHARD_TOTAL": "-2"}, r"must be >= 1", id="negative-total"),
         param({"AIPERF_SHARD_TOTAL": "four"}, "must be integers", id="non-integer"),
     ],
 )  # fmt: skip
