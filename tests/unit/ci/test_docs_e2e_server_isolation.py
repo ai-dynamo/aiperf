@@ -70,3 +70,43 @@ def test_a_fully_valid_set_reports_nothing_invalid() -> None:
     servers = {"a": _server("a"), "b": _server("b")}
 
     assert EndToEndTestRunner()._validate_servers(servers) == []
+
+
+def test_a_rejected_command_fails_the_run_without_skipping_the_server(
+    monkeypatch,
+) -> None:
+    """A complete server that lost one command to a parse error still runs.
+
+    Validation deliberately does not reject it -- the remaining commands are
+    real coverage and should execute. But the run as a whole must fail, or a
+    documented command silently stops being tested.
+    """
+    degraded = _server("degraded")
+    degraded.parse_errors.append("dropped the command at doc.md:1")
+    servers = {"good": _server("good"), "degraded": degraded}
+
+    runner = EndToEndTestRunner()
+    tested: list[str] = []
+    monkeypatch.setattr(runner, "_cleanup_all_containers", lambda: None)
+    monkeypatch.setattr(runner, "_cleanup", lambda: None)
+    monkeypatch.setattr(runner, "_build_aiperf_container", lambda: True)
+    monkeypatch.setattr(
+        runner, "_test_server", lambda server: tested.append(server.name) or True
+    )
+
+    assert runner.run_tests(servers) is False, (
+        "a command the parser rejected must not report a pass"
+    )
+    assert sorted(tested) == ["degraded", "good"], (
+        "the surviving commands are real coverage and must still execute"
+    )
+
+
+def test_a_clean_set_still_passes(monkeypatch) -> None:
+    runner = EndToEndTestRunner()
+    monkeypatch.setattr(runner, "_cleanup_all_containers", lambda: None)
+    monkeypatch.setattr(runner, "_cleanup", lambda: None)
+    monkeypatch.setattr(runner, "_build_aiperf_container", lambda: True)
+    monkeypatch.setattr(runner, "_test_server", lambda server: True)
+
+    assert runner.run_tests({"a": _server("a"), "b": _server("b")}) is True

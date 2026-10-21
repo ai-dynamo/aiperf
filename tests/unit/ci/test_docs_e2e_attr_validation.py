@@ -74,6 +74,24 @@ def test_malformed_attribute_drops_only_its_own_command(tmp_path, attr) -> None:
     assert [c.command.strip() for c in commands] == ["aiperf profile --model m"]
 
 
+def test_the_dropped_command_is_recorded_on_its_server(tmp_path) -> None:
+    """Dropping the command must not also drop the fact that it was dropped.
+
+    The sharper half of the bug: the server still has one valid run command,
+    so it validates, executes that one, and reports a pass while the rejected
+    command never ran and nothing in the result says so.
+    """
+    servers = _parse(tmp_path, GOOD, BAD_TEMPLATE.format(attr="timeout=abc"))
+
+    errors = servers["demo"].parse_errors
+    assert len(errors) == 1, "the rejected command left no trace in the result"
+    assert "doc1.md:1" in errors[0]
+
+
+def test_a_clean_parse_records_no_errors(tmp_path) -> None:
+    assert _parse(tmp_path, GOOD)["demo"].parse_errors == []
+
+
 def test_valid_attributes_are_applied(tmp_path) -> None:
     servers = _parse(
         tmp_path,

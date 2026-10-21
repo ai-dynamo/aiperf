@@ -148,8 +148,8 @@ def is_unsafe_fixture_path(path: str) -> bool:
 
     `path=` is ordinary documentation text that reaches a shell, so it is
     checked twice: once up front, where an invalid guide is rejected before
-    anything is built or booted, and again at write time, which is the call
-    that actually depends on it. Shared so the two cannot disagree.
+    any server is booted, and again at write time, which is the call that
+    actually depends on it. Shared so the two cannot disagree.
     """
     target = PurePosixPath(path)
     return target.is_absolute() or ".." in target.parts
@@ -277,10 +277,26 @@ class EndToEndTestRunner:
                 logger.error("No runnable servers - stopping all tests")
                 return False
 
+            # Step 2b: A command the parser rejected is a documented command
+            # that will not run. Its server is otherwise complete, so nothing
+            # below would notice -- it would execute its remaining commands and
+            # report a pass. Fail the run here, but keep running: the point of
+            # dropping the command rather than aborting discovery is that every
+            # other result still gets reported.
+            degraded = sorted(n for n, s in servers.items() if s.parse_errors)
+            for server_name in degraded:
+                for problem in servers[server_name].parse_errors:
+                    logger.error(f"Server '{server_name}': {problem}")
+            if degraded:
+                logger.error(
+                    f"Servers with commands the parser rejected: {degraded}; "
+                    f"running the rest and failing the run"
+                )
+
             # Step 3: Run tests for each server. An invalid server already
             # failed the run; the rest still execute so one broken guide does
             # not hide every other guide's result.
-            all_passed = not invalid
+            all_passed = not invalid and not degraded
             for server_name, server in servers.items():
                 logger.info(f"Testing server: {server_name}")
 

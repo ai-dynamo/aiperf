@@ -65,3 +65,9 @@ class Server:
     # earlier and the first guide would benchmark the wrong file while still
     # reporting a pass. Recorded here so validation rejects the server.
     fixture_conflicts: list[str] = field(default_factory=list)
+    # Commands the parser rejected and dropped (a malformed ``weight=`` or
+    # ``timeout=``). The server itself stays runnable -- one typo must not take
+    # every other guide down -- but a documented command was not executed, so
+    # the run must not report a pass. Recorded here rather than globally so the
+    # ``--server`` filter scopes the failure the same way it scopes commands.
+    parse_errors: list[str] = field(default_factory=list)

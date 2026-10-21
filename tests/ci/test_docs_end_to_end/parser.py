@@ -129,6 +129,11 @@ class MarkdownParser:
                             if (weight_str is not None and weight is None) or (
                                 timeout_str is not None and timeout is None
                             ):
+                                self._record_parse_error(
+                                    tag_name,
+                                    f"dropped the command at {file_path}:{i + 1} "
+                                    f"over an invalid tag attribute",
+                                )
                                 i += 1
                                 continue
                             if weight is not None:
@@ -206,6 +211,49 @@ class MarkdownParser:
             return None
         return value
 
+    @staticmethod
+    def _server_name_for_tag(tag_name: str) -> str | None:
+        """The server a tag belongs to, or None if it names no server.
+
+        ``setup-file-`` is tried before ``setup-``: it is a longer prefix of
+        the same namespace, so the shorter one would strip it to ``file-...``.
+        """
+        for prefix, prefix_len in (
+            (SETUP_FILE_TAG_PREFIX, SETUP_FILE_TAG_PREFIX_LEN),
+            (SETUP_TAG_PREFIX, SETUP_TAG_PREFIX_LEN),
+            (HEALTH_CHECK_TAG_PREFIX, HEALTH_CHECK_TAG_PREFIX_LEN),
+            (AIPERF_RUN_TAG_PREFIX, AIPERF_RUN_TAG_PREFIX_LEN),
+        ):
+            if tag_name.startswith(prefix):
+                return tag_name[prefix_len:-TAG_SUFFIX_LEN].rstrip("-")
+        return None
+
+    def _ensure_server(self, server_name: str) -> Server:
+        """The named server, created empty if this is its first tag."""
+        server = self.servers.get(server_name)
+        if server is None:
+            server = Server(
+                name=server_name,
+                setup_command=None,
+                health_check_command=None,
+                aiperf_commands=[],
+            )
+            self.servers[server_name] = server
+        return server
+
+    def _record_parse_error(self, tag_name: str, problem: str) -> None:
+        """Keep a rejected command visible in the run's final result.
+
+        Dropping the command is right -- one typo must not abort discovery for
+        every guide. Dropping it *silently* is not: a server whose remaining
+        commands are intact still validates, runs them, and reports a pass
+        while a documented command was never executed at all.
+        """
+        server_name = self._server_name_for_tag(tag_name)
+        if server_name is None:
+            return
+        self._ensure_server(server_name).parse_errors.append(problem)
+
     def _is_file_tag(self, tag_name: str) -> bool:
         """Whether this tag declares a file to materialize before the run."""
         return (
@@ -244,15 +292,7 @@ class MarkdownParser:
         self, tag_name: str, path: str, content: str, file_path: str, line_no: int
     ) -> None:
         server_name = tag_name[SETUP_FILE_TAG_PREFIX_LEN:-TAG_SUFFIX_LEN].rstrip("-")
-        server = self.servers.get(server_name)
-        if server is None:
-            server = Server(
-                name=server_name,
-                setup_command=None,
-                health_check_command=None,
-                aiperf_commands=[],
-            )
-            self.servers[server_name] = server
+        server = self._ensure_server(server_name)
         # Compare destinations, not spellings: ``config.yaml`` and
         # ``./config.yaml`` are written to the same file by
         # ``_materialize_files``, so a raw string compare would miss the
@@ -329,13 +369,7 @@ class MarkdownParser:
                 "-"
             )  # Remove prefix, suffix, and trailing dash
 
-            if server_name not in self.servers:
-                self.servers[server_name] = Server(
-                    name=server_name,
-                    setup_command=None,
-                    health_check_command=None,
-                    aiperf_commands=[],
-                )
+            self._ensure_server(server_name)
 
             if self.servers[server_name].setup_command is not None:
                 logger.error(f"DUPLICATE SETUP COMMAND for server '{server_name}'")
@@ -353,13 +387,7 @@ class MarkdownParser:
                 "-"
             )  # Remove prefix, suffix, and trailing dash
 
-            if server_name not in self.servers:
-                self.servers[server_name] = Server(
-                    name=server_name,
-                    setup_command=None,
-                    health_check_command=None,
-                    aiperf_commands=[],
-                )
+            self._ensure_server(server_name)
 
             if self.servers[server_name].health_check_command is not None:
                 logger.error(
@@ -379,12 +407,6 @@ class MarkdownParser:
                 "-"
             )  # Remove prefix, suffix, and trailing dash
 
-            if server_name not in self.servers:
-                self.servers[server_name] = Server(
-                    name=server_name,
-                    setup_command=None,
-                    health_check_command=None,
-                    aiperf_commands=[],
-                )
+            self._ensure_server(server_name)
 
             self.servers[server_name].aiperf_commands.append(command)
