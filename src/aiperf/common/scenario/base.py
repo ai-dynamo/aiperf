@@ -17,6 +17,14 @@ class ScenarioSpec(AIPerfBaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid", frozen=True)
 
     name: str = Field(description="Scenario identifier, e.g. 'inferencex-agentx-mvp'.")
+    cli_defaults: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Defaults for omitted CLI flags, applied before config conversion.",
+    )
+    environment_defaults: dict[str, dict[str, str | int | float | bool]] = Field(
+        default_factory=dict,
+        description="Runtime defaults grouped by Environment subsystem; explicit settings win.",
+    )
     timing_mode: TimingMode = Field(
         description="Required timing mode for this scenario."
     )
