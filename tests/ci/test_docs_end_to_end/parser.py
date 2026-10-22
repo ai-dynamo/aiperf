@@ -8,19 +8,21 @@ import logging
 import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from constants import (
     AIPERF_RUN_TAG_PREFIX,
     AIPERF_RUN_TAG_PREFIX_LEN,
     HEALTH_CHECK_TAG_PREFIX,
     HEALTH_CHECK_TAG_PREFIX_LEN,
+    SETUP_FILE_TAG_PREFIX,
+    SETUP_FILE_TAG_PREFIX_LEN,
     SETUP_TAG_PREFIX,
     SETUP_TAG_PREFIX_LEN,
     TAG_SUFFIX,
     TAG_SUFFIX_LEN,
 )
-from data_types import Command, Server
+from data_types import Command, FileFixture, Server
 
 logger = logging.getLogger(__name__)
 
@@ -74,20 +76,57 @@ class MarkdownParser:
             return
 
         i = 0
+        # Tags inside a fenced block are documentation *about* the tag syntax,
+        # not tags. Without this, any page that spells a tag out to explain it
+        # would have its own examples registered as real commands against real
+        # server groups -- see this harness's README, which documents the tags
+        # only in placeholder form for exactly that reason.
+        fence: tuple[str, int] | None = None
         while i < len(lines):
             line = lines[i].strip()
 
+            fence = self._next_fence_state(fence, lines[i])
+            if fence is not None:
+                i += 1
+                continue
+
             # Look for HTML comment tags. Two forms:
             #   <!-- tag-name -->
-            #   <!-- tag-name weight=<int> -->  (optional runtime hint, seconds)
-            # The weight hint is only meaningful on opening aiperf-run tags;
-            # it's silently ignored on closing tags (which the categorizer
+            #   <!-- tag-name attr=<value> ... -->
+            # Attributes parse generically; the ones read today are
+            # weight=<int> (runtime hint, seconds), timeout=<int> (per-command
+            # override) and path=<relative path> (on setup-file- tags). weight
+            # and timeout are only meaningful on opening aiperf-run tags; they
+            # are silently ignored on closing tags (which the categorizer
             # filters out anyway).
             if line.startswith("<!--") and line.endswith("-->"):
-                tag_match = re.match(r"<!--\s*(\S+)(?:\s+weight=(\d+))?\s*-->", line)
+                tag_match = re.match(r"<!--\s*(\S+)((?:\s+\w+=\S+)*)\s*-->", line)
                 if tag_match:
                     tag_name = tag_match.group(1).strip()
-                    weight_str = tag_match.group(2)
+                    attrs = dict(re.findall(r"(\w+)=(\S+)", tag_match.group(2) or ""))
+                    weight_str = attrs.get("weight")
+
+                    # setup-file- must be checked before setup-: it is a
+                    # longer prefix of the same namespace, and the block it
+                    # introduces is yaml/json/jsonl rather than bash.
+                    if self._is_file_tag(tag_name):
+                        path_attr = attrs.get("path")
+                        if not path_attr:
+                            logger.error(
+                                f"{tag_name} at {file_path}:{i + 1} has no path= attribute; skipping"
+                            )
+                        else:
+                            content = self._extract_fenced_block(lines, i + 1)
+                            if content is None:
+                                logger.warning(
+                                    f"No fenced block found after tag {tag_name}"
+                                )
+                            else:
+                                self._add_file_fixture(
+                                    tag_name, path_attr, content, file_path, i + 1
+                                )
+                        i += 1
+                        continue
 
                     # Check for setup or aiperf-run tags ending with endpoint-server
                     if self._is_target_tag(tag_name):
@@ -104,14 +143,206 @@ class MarkdownParser:
                                 start_line=i + 1,
                                 end_line=i + len(bash_content.split("\n")) + 2,
                             )
-                            if weight_str is not None:
-                                command_kwargs["weight"] = int(weight_str)
+                            timeout_str = attrs.get("timeout")
+                            weight = self._positive_int(
+                                weight_str, "weight", tag_name, file_path, i + 1
+                            )
+                            timeout = self._positive_int(
+                                timeout_str, "timeout", tag_name, file_path, i + 1
+                            )
+                            if (weight_str is not None and weight is None) or (
+                                timeout_str is not None and timeout is None
+                            ):
+                                self._record_parse_error(
+                                    tag_name,
+                                    f"dropped the command at {file_path}:{i + 1} "
+                                    f"over an invalid tag attribute",
+                                )
+                                i += 1
+                                continue
+                            if weight is not None:
+                                command_kwargs["weight"] = weight
+                            if timeout is not None:
+                                command_kwargs["timeout"] = timeout
                             command = Command(**command_kwargs)
 
                             self._categorize_command(command)
                         else:
                             logger.warning(f"No bash block found after tag {tag_name}")
             i += 1
+
+    @staticmethod
+    def _next_fence_state(
+        fence: tuple[str, int] | None, raw_line: str
+    ) -> tuple[str, int] | None:
+        """Advance CommonMark fence state by one line.
+
+        Returns the open fence as ``(char, length)``, or None outside one. A
+        closer must use the same character and be at least as long as its
+        opener, so a four-backtick block may quote a three-backtick block.
+
+        Takes the *unstripped* line: CommonMark allows a fence marker at most
+        three spaces of indentation, and at four it is an indented code block
+        rather than a boundary. Stripping first would let a deeper-indented
+        marker inside an example close the fence early, after which the
+        following example tags parse as real commands.
+        """
+        match = re.match(r"( {0,3})(`{3,}|~{3,})(.*)$", raw_line)
+        if fence is None:
+            return (match.group(2)[0], len(match.group(2))) if match else None
+        char, length = fence
+        if (
+            match
+            and match.group(2)[0] == char
+            and len(match.group(2)) >= length
+            and not match.group(3).strip()
+        ):
+            return None
+        return fence
+
+    @staticmethod
+    def _positive_int(
+        raw: str | None,
+        attr: str,
+        tag_name: str,
+        file_path: str,
+        line: int,
+    ) -> int | None:
+        """Parse a positive-integer tag attribute, or None if absent or invalid.
+
+        An invalid value isolates to its own command rather than aborting
+        discovery for every document: one typo in one guide must not silently
+        drop the whole docs-e2e suite. Zero and negatives are rejected because
+        both are quietly destructive -- ``timeout=0`` falls through to the
+        global default and ``timeout=-1`` kills the command the moment it
+        starts.
+        """
+        if raw is None:
+            return None
+        try:
+            value = int(raw)
+        except ValueError:
+            logger.error(
+                f"Ignoring command with non-integer {attr}={raw!r} in tag "
+                f"{tag_name} ({file_path}:{line})"
+            )
+            return None
+        if value <= 0:
+            logger.error(
+                f"Ignoring command with non-positive {attr}={value} in tag "
+                f"{tag_name} ({file_path}:{line})"
+            )
+            return None
+        return value
+
+    @staticmethod
+    def _server_name_for_tag(tag_name: str) -> str | None:
+        """The server a tag belongs to, or None if it names no server.
+
+        ``setup-file-`` is tried before ``setup-``: it is a longer prefix of
+        the same namespace, so the shorter one would strip it to ``file-...``.
+        """
+        for prefix, prefix_len in (
+            (SETUP_FILE_TAG_PREFIX, SETUP_FILE_TAG_PREFIX_LEN),
+            (SETUP_TAG_PREFIX, SETUP_TAG_PREFIX_LEN),
+            (HEALTH_CHECK_TAG_PREFIX, HEALTH_CHECK_TAG_PREFIX_LEN),
+            (AIPERF_RUN_TAG_PREFIX, AIPERF_RUN_TAG_PREFIX_LEN),
+        ):
+            if tag_name.startswith(prefix):
+                return tag_name[prefix_len:-TAG_SUFFIX_LEN].rstrip("-")
+        return None
+
+    def _ensure_server(self, server_name: str) -> Server:
+        """The named server, created empty if this is its first tag."""
+        server = self.servers.get(server_name)
+        if server is None:
+            server = Server(
+                name=server_name,
+                setup_command=None,
+                health_check_command=None,
+                aiperf_commands=[],
+            )
+            self.servers[server_name] = server
+        return server
+
+    def _record_parse_error(self, tag_name: str, problem: str) -> None:
+        """Keep a rejected command visible in the run's final result.
+
+        Dropping the command is right -- one typo must not abort discovery for
+        every guide. Dropping it *silently* is not: a server whose remaining
+        commands are intact still validates, runs them, and reports a pass
+        while a documented command was never executed at all.
+        """
+        server_name = self._server_name_for_tag(tag_name)
+        if server_name is None:
+            return
+        self._ensure_server(server_name).parse_errors.append(problem)
+
+    def _is_file_tag(self, tag_name: str) -> bool:
+        """Whether this tag declares a file to materialize before the run."""
+        return (
+            tag_name.startswith(SETUP_FILE_TAG_PREFIX)
+            and tag_name.endswith(TAG_SUFFIX)
+            and not tag_name.startswith("/")
+        )
+
+    def _extract_fenced_block(self, lines: list[str], start_idx: int) -> str | None:
+        """Extract the next fenced block regardless of its language.
+
+        ``_extract_bash_block`` deliberately only accepts ```bash; a config
+        fixture is yaml/json/jsonl, so it needs its own reader.
+        """
+        i = start_idx
+        while i < len(lines):
+            line = lines[i].strip()
+            if line.startswith("```"):
+                break
+            if line and not line.startswith("#"):
+                return None
+            i += 1
+        else:
+            return None
+
+        body: list[str] = []
+        i += 1
+        while i < len(lines):
+            if lines[i].strip() == "```":
+                return "".join(body)
+            body.append(lines[i])
+            i += 1
+        return None
+
+    def _add_file_fixture(
+        self, tag_name: str, path: str, content: str, file_path: str, line_no: int
+    ) -> None:
+        server_name = tag_name[SETUP_FILE_TAG_PREFIX_LEN:-TAG_SUFFIX_LEN].rstrip("-")
+        server = self._ensure_server(server_name)
+        # Compare destinations, not spellings: ``config.yaml`` and
+        # ``./config.yaml`` are written to the same file by
+        # ``_materialize_files``, so a raw string compare would miss the
+        # collision and let the second guide silently overwrite the first.
+        destination = PurePosixPath(path)
+        existing = next(
+            (f for f in server.files if PurePosixPath(f.path) == destination), None
+        )
+        if existing is not None:
+            if existing.content == content:
+                # The same file documented twice: harmless, write it once.
+                return
+            logger.error(
+                f"{file_path}:{line_no}: fixture '{path}' for server "
+                f"'{server_name}' conflicts with {existing.file_path}:"
+                f"{existing.start_line}. Both are written before any command "
+                f"runs, so one guide would silently benchmark the other's file."
+            )
+            server.fixture_conflicts.append(path)
+            return
+        server.files.append(
+            FileFixture(
+                path=path, content=content, file_path=file_path, start_line=line_no
+            )
+        )
+        logger.info(f"Registered file fixture {path} for server {server_name}")
 
     def _is_target_tag(self, tag_name: str) -> bool:
         """Check if tag is a setup, health-check, or aiperf-run command for endpoint servers"""
@@ -162,13 +393,7 @@ class MarkdownParser:
                 "-"
             )  # Remove prefix, suffix, and trailing dash
 
-            if server_name not in self.servers:
-                self.servers[server_name] = Server(
-                    name=server_name,
-                    setup_command=None,
-                    health_check_command=None,
-                    aiperf_commands=[],
-                )
+            self._ensure_server(server_name)
 
             if self.servers[server_name].setup_command is not None:
                 logger.error(f"DUPLICATE SETUP COMMAND for server '{server_name}'")
@@ -186,13 +411,7 @@ class MarkdownParser:
                 "-"
             )  # Remove prefix, suffix, and trailing dash
 
-            if server_name not in self.servers:
-                self.servers[server_name] = Server(
-                    name=server_name,
-                    setup_command=None,
-                    health_check_command=None,
-                    aiperf_commands=[],
-                )
+            self._ensure_server(server_name)
 
             if self.servers[server_name].health_check_command is not None:
                 logger.error(
@@ -212,12 +431,6 @@ class MarkdownParser:
                 "-"
             )  # Remove prefix, suffix, and trailing dash
 
-            if server_name not in self.servers:
-                self.servers[server_name] = Server(
-                    name=server_name,
-                    setup_command=None,
-                    health_check_command=None,
-                    aiperf_commands=[],
-                )
+            self._ensure_server(server_name)
 
             self.servers[server_name].aiperf_commands.append(command)
