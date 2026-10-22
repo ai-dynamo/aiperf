@@ -118,6 +118,22 @@ Workers are the processes that send HTTP requests to the inference server and me
 - No coordination between workers
 - Adding more workers increases load capacity and request rates
 
+Workers announce connectivity before dataset initialization. They enter the
+credit routing pool only after their dataset opens, in both local and Kubernetes
+modes. Until then, the router excludes them from stale-worker eviction. Dataset
+opening and page preloading run in a background thread so that initialization
+does not occupy the worker event loop. Existing startup timeouts still bound
+initialization, and heartbeat eviction still applies to dispatchable workers.
+Local workers use the existing dataset status query to recover a notification
+that arrived before they subscribed. They retry after a timeout or an
+unconfigured response until the dataset opens or the worker stops.
+
+Dataset saving streams `inputs.json` and verbatim turn payloads in bounded JSON
+chunks. String escaping also uses bounded chunks, so a single large turn does
+not require a document-sized `orjson.dumps` call that holds Python's global
+interpreter lock. Output formatting, conversation order, and byte offsets stay
+the same.
+
 ### Record Processor
 
 The Record Processor processes and interprets the responses received from the inference server during benchmarking.
