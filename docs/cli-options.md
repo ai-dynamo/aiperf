@@ -719,7 +719,7 @@ Strip per-turn timestamps and inter-turn delays from trace datasets at load time
 
 #### `--use-think-time-only`
 
-For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.
+For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders. Under fixed-schedule replay the recorded timestamps drive dispatch, so this flag has no effect there; for weka_trace it therefore suppresses fixed-schedule auto-promotion, and passing an explicit --fixed-schedule alongside it wins and the flag is ignored.
 <br/>_Flag (no value required)_
 
 #### `--max-context-length` `<int>`
@@ -759,7 +759,7 @@ Run requests according to timestamps specified in the input dataset. When enable
 
 #### `--no-fixed-schedule`
 
-Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
+Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule; weka_trace is promoted by type instead, since its timing is nested per request and its input is usually a directory. --ignore-trace-delays and --use-think-time-only also suppress promotion, because both say the recorded timeline should not be replayed. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
 
 #### `--fixed-schedule-auto-offset`
 
@@ -2354,7 +2354,7 @@ Strip per-turn timestamps and inter-turn delays from trace datasets at load time
 
 #### `--use-think-time-only`
 
-For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.
+For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders. Under fixed-schedule replay the recorded timestamps drive dispatch, so this flag has no effect there; for weka_trace it therefore suppresses fixed-schedule auto-promotion, and passing an explicit --fixed-schedule alongside it wins and the flag is ignored.
 <br/>_Flag (no value required)_
 
 #### `--max-context-length` `<int>`
@@ -2394,7 +2394,7 @@ Run requests according to timestamps specified in the input dataset. When enable
 
 #### `--no-fixed-schedule`
 
-Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
+Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule; weka_trace is promoted by type instead, since its timing is nested per request and its input is usually a directory. --ignore-trace-delays and --use-think-time-only also suppress promotion, because both say the recorded timeline should not be replayed. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
 
 #### `--fixed-schedule-auto-offset`
 
@@ -3984,7 +3984,7 @@ Strip per-turn timestamps and inter-turn delays from trace datasets at load time
 
 #### `--use-think-time-only`
 
-For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.
+For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders. Under fixed-schedule replay the recorded timestamps drive dispatch, so this flag has no effect there; for weka_trace it therefore suppresses fixed-schedule auto-promotion, and passing an explicit --fixed-schedule alongside it wins and the flag is ignored.
 <br/>_Flag (no value required)_
 
 #### `--max-context-length` `<int>`
@@ -4024,7 +4024,7 @@ Run requests according to timestamps specified in the input dataset. When enable
 
 #### `--no-fixed-schedule`
 
-Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
+Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule; weka_trace is promoted by type instead, since its timing is nested per request and its input is usually a directory. --ignore-trace-delays and --use-think-time-only also suppress promotion, because both say the recorded timeline should not be replayed. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
 
 #### `--fixed-schedule-auto-offset`
 
@@ -6121,7 +6121,7 @@ Strip per-turn timestamps and inter-turn delays from trace datasets at load time
 
 #### `--use-think-time-only`
 
-For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.
+For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders. Under fixed-schedule replay the recorded timestamps drive dispatch, so this flag has no effect there; for weka_trace it therefore suppresses fixed-schedule auto-promotion, and passing an explicit --fixed-schedule alongside it wins and the flag is ignored.
 <br/>_Flag (no value required)_
 
 #### `--max-context-length` `<int>`
@@ -6161,7 +6161,7 @@ Run requests according to timestamps specified in the input dataset. When enable
 
 #### `--no-fixed-schedule`
 
-Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
+Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule; weka_trace is promoted by type instead, since its timing is nested per request and its input is usually a directory. --ignore-trace-delays and --use-think-time-only also suppress promotion, because both say the recorded timeline should not be replayed. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
 
 #### `--fixed-schedule-auto-offset`
 
