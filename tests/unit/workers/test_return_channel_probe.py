@@ -199,6 +199,8 @@ class TestWorkerReadinessGate:
             _publish_startup_state=_publish_startup_state,
             warning=lambda msg: events.append("warning"),
             _probe_result=probe_result,
+            _finite_replay_enabled=False,
+            _tracks_clock_offset=False,
         )
         # Bind the real methods so the production ordering is what is exercised.
         stub._await_return_channel_ready = lambda: Worker._await_return_channel_ready(

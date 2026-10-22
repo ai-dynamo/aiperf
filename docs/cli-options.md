@@ -1327,6 +1327,12 @@ AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches in
 Hard ceiling (seconds) for observed runtime idle time within each AgentX trajectory tree. The idle clock covers initial future work and restarts when the final in-flight request across the root and all descendant streams completes. If no request from that tree reaches the wire before the cap, AIPerf uniformly advances only that tree's pending replay timers. Dataset timestamps are unchanged, and request order, spawn/join dependencies, and replay barriers remain authoritative. Defaults to None (no per-trace runtime idle cap).
 <br/>_Constraints: ≥ 0.0_
 
+#### `--agentic-replay-lifecycle` `<str>`
+
+Agentic replay admission: recycle traces or replay each root once.
+<br/>_Choices: [`steady-state`, `finite`]_
+<br/>_Default: `steady-state`_
+
 #### `--system-idle-gap-cap-seconds` `<float>`
 
 AGENTIC_REPLAY only: maximum time in seconds the replay may remain globally idle while future requests are scheduled. When no requests are in flight or ready, all pending request timers shift earlier uniformly so the next request arrives within this limit. Per-trace timing is otherwise preserved. None disables the cap.
@@ -2962,6 +2968,12 @@ AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches in
 Hard ceiling (seconds) for observed runtime idle time within each AgentX trajectory tree. The idle clock covers initial future work and restarts when the final in-flight request across the root and all descendant streams completes. If no request from that tree reaches the wire before the cap, AIPerf uniformly advances only that tree's pending replay timers. Dataset timestamps are unchanged, and request order, spawn/join dependencies, and replay barriers remain authoritative. Defaults to None (no per-trace runtime idle cap).
 <br/>_Constraints: ≥ 0.0_
 
+#### `--agentic-replay-lifecycle` `<str>`
+
+Agentic replay admission: recycle traces or replay each root once.
+<br/>_Choices: [`steady-state`, `finite`]_
+<br/>_Default: `steady-state`_
+
 #### `--system-idle-gap-cap-seconds` `<float>`
 
 AGENTIC_REPLAY only: maximum time in seconds the replay may remain globally idle while future requests are scheduled. When no requests are in flight or ready, all pending request timers shift earlier uniformly so the next request arrives within this limit. Per-trace timing is otherwise preserved. None disables the cap.
@@ -4591,6 +4603,12 @@ AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches in
 
 Hard ceiling (seconds) for observed runtime idle time within each AgentX trajectory tree. The idle clock covers initial future work and restarts when the final in-flight request across the root and all descendant streams completes. If no request from that tree reaches the wire before the cap, AIPerf uniformly advances only that tree's pending replay timers. Dataset timestamps are unchanged, and request order, spawn/join dependencies, and replay barriers remain authoritative. Defaults to None (no per-trace runtime idle cap).
 <br/>_Constraints: ≥ 0.0_
+
+#### `--agentic-replay-lifecycle` `<str>`
+
+Agentic replay admission: recycle traces or replay each root once.
+<br/>_Choices: [`steady-state`, `finite`]_
+<br/>_Default: `steady-state`_
 
 #### `--system-idle-gap-cap-seconds` `<float>`
 
@@ -6728,6 +6746,12 @@ AGENTIC_REPLAY only: collapse the WARMUP-start and PROFILING-start dispatches in
 
 Hard ceiling (seconds) for observed runtime idle time within each AgentX trajectory tree. The idle clock covers initial future work and restarts when the final in-flight request across the root and all descendant streams completes. If no request from that tree reaches the wire before the cap, AIPerf uniformly advances only that tree's pending replay timers. Dataset timestamps are unchanged, and request order, spawn/join dependencies, and replay barriers remain authoritative. Defaults to None (no per-trace runtime idle cap).
 <br/>_Constraints: ≥ 0.0_
+
+#### `--agentic-replay-lifecycle` `<str>`
+
+Agentic replay admission: recycle traces or replay each root once.
+<br/>_Choices: [`steady-state`, `finite`]_
+<br/>_Default: `steady-state`_
 
 #### `--system-idle-gap-cap-seconds` `<float>`
 
