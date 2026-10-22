@@ -222,10 +222,10 @@ def is_trace_or_verbatim_dataset(
     custom_dataset_type: object | None,
     public_dataset: object | None,
 ) -> bool:
-    """Whether a dataset is a trace / verbatim / weka type.
+    """Whether a dataset is a trace or verbatim type.
 
     True for the custom-dataset types in ``TRACE_VERBATIM_DATASET_TYPES`` and for
-    the HF-hosted weka public datasets (``weka_hf`` and the
+    the HF-hosted trace datasets (``mooncake_hf``, ``weka_hf``, and the
     ``semianalysis_cc_traces_weka*`` family). These are the datasets that use the
     mmap cache and skip inputs.json; everything else is treated as a cheap
     non-trace dataset that is never cached and always emits inputs.json.
@@ -237,7 +237,9 @@ def is_trace_or_verbatim_dataset(
         return True
     if public_dataset is not None:
         name = str(public_dataset)
-        if name == "weka_hf" or name.startswith("semianalysis_cc_traces_weka"):
+        if name in {"weka_hf", "mooncake_hf"} or name.startswith(
+            "semianalysis_cc_traces_weka"
+        ):
             return True
     return False
 
@@ -720,8 +722,10 @@ def _public_dataset_source_from_run(run: BenchmarkRun) -> dict[str, object] | No
 
     public_dataset = str(public_dataset_type)
     metadata = plugins.get_public_dataset_loader_metadata(public_dataset)
-    hf_dataset_name = getattr(dataset, "hf_weka_dataset", None) or (
-        metadata.hf_dataset_name
+    hf_dataset_name = (
+        getattr(dataset, "hf_mooncake_dataset", None)
+        or getattr(dataset, "hf_weka_dataset", None)
+        or metadata.hf_dataset_name
     )
     if hf_dataset_name is None:
         return {"plugin": public_dataset}
@@ -733,8 +737,19 @@ def _public_dataset_source_from_run(run: BenchmarkRun) -> dict[str, object] | No
     )
     source = metadata.model_dump(mode="json", exclude_none=True)
     source["hf_dataset_name"] = hf_dataset_name
-    source["hf_split"] = metadata.hf_split
+    source["hf_split"] = dataset.hf_mooncake_split or metadata.hf_split
     source["hf_subset"] = hf_subset
+    if mapping := dataset.mooncake_trace_to_hf_mapping:
+        source["mooncake_trace_to_hf_mapping"] = mapping
+    if public_dataset == "mooncake_hf":
+        source["max_profiling_requests"] = max(
+            (
+                phase.requests
+                for phase in run.cfg.get_profiling_phases()
+                if getattr(phase, "requests", None) is not None
+            ),
+            default=None,
+        )
     return source
 
 

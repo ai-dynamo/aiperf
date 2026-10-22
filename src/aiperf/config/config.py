@@ -556,6 +556,30 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
+    def validate_hf_mooncake_replay(self) -> Self:
+        from aiperf.plugin.enums import EndpointType, PhaseType, PublicDatasetType
+
+        if (
+            getattr(self.get_default_dataset(), "dataset", None)
+            != PublicDatasetType.MOONCAKE_HF
+        ):
+            return self
+        if self.endpoint.type != EndpointType.CHAT:
+            raise ValueError("mooncake_hf requires --endpoint-type chat")
+        if any(p.type == PhaseType.FIXED_SCHEDULE for p in self.phases):
+            raise ValueError(
+                "mooncake_hf has no recorded timing; use concurrency or request-rate, "
+                "not --fixed-schedule"
+            )
+        if keys := {"messages", "input", "model", "tools"}.intersection(
+            self.endpoint.extra
+        ):
+            raise ValueError(
+                f"mooncake_hf: --extra-inputs must not override {sorted(keys)}"
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_phase_dataset_compatibility(self) -> Self:
         """Validate that each phase is compatible with the dataset.
 
