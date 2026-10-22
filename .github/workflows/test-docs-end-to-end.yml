@@ -28,7 +28,7 @@ on:
 jobs:
   detect-changes:
     name: Detect Changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       run_test: ${{ steps.compare.outputs.run_test }}
     steps:

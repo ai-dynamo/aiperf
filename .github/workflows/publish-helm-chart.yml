@@ -25,7 +25,7 @@ permissions:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
       TAG: ${{ github.event.release.tag_name || inputs.tag }}
