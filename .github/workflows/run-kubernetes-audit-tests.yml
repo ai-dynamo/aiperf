@@ -27,6 +27,9 @@ jobs:
     env:
       K8S_TEST_CLUSTER: aiperf-audit-${{ github.run_id }}-${{ github.run_attempt }}
       KUBECONFIG: /tmp/aiperf-audit-kubeconfig-${{ github.run_id }}-${{ github.run_attempt }}
+      # The pytest session fixture must not delete the Kind cluster: the
+      # diagnostics step below reads it, and the always() teardown deletes it.
+      K8S_TEST_KEEP_CLUSTER: "true"
 
     steps:
       - name: Free disk space
