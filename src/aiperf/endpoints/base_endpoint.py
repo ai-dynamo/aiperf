@@ -123,7 +123,9 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         - **Response root** ``metrics.speculative_decoding`` (vLLM), on the body
           non-streaming or on the trailing usage chunk (empty ``choices``)
           streaming, when the server runs with
-          ``--per-request-spec-decode-metrics``.
+          ``--per-request-spec-decode-metrics``. For ``/v1/responses`` the
+          caller passes the response object non-streaming, or the ``response``
+          nested under the ``response.completed`` event streaming.
         - **Per choice** ``choices[0].speculative_decoding`` (TensorRT-LLM), on
           the body non-streaming or on the terminal chunk's choice (the one
           carrying ``finish_reason``) streaming, when the server sets
