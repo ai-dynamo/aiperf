@@ -199,6 +199,31 @@ class TestScheduleLater:
         assert after_b == before_b
         scheduler.cancel_all_pending()
 
+    async def test_pending_count_for_group_counts_only_unfired_group_timers(
+        self, scheduler: LoopScheduler
+    ):
+        """The idle-cap diagnostics report only timers still waiting to fire."""
+        fired = asyncio.Event()
+
+        async def mark_fired():
+            fired.set()
+
+        async def noop():
+            pass
+
+        scheduler.schedule_later(0.01, mark_fired(), group_id="root-a")
+        scheduler.schedule_later(5.0, noop(), group_id="root-a")
+        scheduler.schedule_later(5.0, noop(), group_id="root-b")
+        assert scheduler.pending_count_for_group("root-a") == 2
+
+        await asyncio.wait_for(fired.wait(), timeout=1.0)
+
+        assert scheduler.pending_count_for_group("root-a") == 1
+        assert scheduler.pending_count_for_group("root-b") == 1
+        assert scheduler.pending_count_for_group("missing") == 0
+        scheduler.cancel_all_pending()
+        assert scheduler.pending_count_for_group("root-a") == 0
+
     async def test_global_cap_preserves_group_ownership(self, scheduler: LoopScheduler):
         """A global idle jump cannot erase later per-trace cap ownership."""
 

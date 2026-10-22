@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -501,3 +502,112 @@ async def test_resumed_prefix_is_exact_and_submission_order_independent(
 async def _record_issue(issued: list[str], name: str) -> bool:
     issued.append(name)
     return True
+
+
+def _watchdog_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Idle watchdog root=")
+    ]
+
+
+def _watchdog_coordinator(
+    scheduler: LoopScheduler | MagicMock,
+) -> ReplayBarrierCoordinator:
+    coordinator = ReplayBarrierCoordinator(
+        _metadata(), scheduler=scheduler, root_idle_gap_cap_seconds=0.05
+    )
+    coordinator.activate()
+    return coordinator
+
+
+@pytest.mark.asyncio
+async def test_idle_watchdog_debug_logs_arm_and_cancel(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A CI gap failure needs the watchdog's arm/cancel history per root."""
+    caplog.set_level(logging.DEBUG, logger=replay_dependencies.__name__)
+    coordinator = _watchdog_coordinator(MagicMock())
+
+    coordinator.observe_issued(_credit("a"))
+    coordinator.complete(_credit("a"))
+    coordinator.observe_issued(_credit("b"))
+
+    assert _watchdog_lines(caplog) == [
+        "Idle watchdog root=root: armed for 0.050s, in_flight=0",
+        "Idle watchdog root=root: cancelled by b#0 issue, in_flight=1",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_idle_watchdog_debug_logs_completion_with_requests_in_flight(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A stuck in-flight count is visible instead of silently skipping the cap."""
+    caplog.set_level(logging.DEBUG, logger=replay_dependencies.__name__)
+    coordinator = _watchdog_coordinator(MagicMock())
+
+    coordinator.observe_issued(_credit("a"))
+    coordinator.observe_issued(_credit("b"))
+    coordinator.complete(_credit("a"))
+
+    assert _watchdog_lines(caplog) == [
+        "Idle watchdog root=root: not armed after a#0 completed, in_flight=1",
+    ]
+    assert coordinator._roots["root"].idle_watchdog is None
+
+
+@pytest.mark.asyncio
+async def test_idle_watchdog_debug_logs_already_armed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger=replay_dependencies.__name__)
+    coordinator = _watchdog_coordinator(MagicMock())
+
+    coordinator.observe_idle_root("root")
+    coordinator.observe_idle_root("root")
+
+    assert _watchdog_lines(caplog) == [
+        "Idle watchdog root=root: armed for 0.050s, in_flight=0",
+        "Idle watchdog root=root: already armed, not re-armed",
+    ]
+    await coordinator.cancel_pending(notify_refused=False)
+
+
+@pytest.mark.asyncio
+async def test_idle_watchdog_debug_logs_fire_with_requests_in_flight(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger=replay_dependencies.__name__)
+    scheduler = MagicMock()
+    coordinator = _watchdog_coordinator(scheduler)
+    coordinator.observe_idle_root("root")
+    coordinator._roots["root"].in_flight = 1
+
+    coordinator._enforce_root_idle_cap("root")
+
+    assert _watchdog_lines(caplog)[-1] == (
+        "Idle watchdog root=root: fired with in_flight=1, nothing advanced"
+    )
+    scheduler.cap_pending_delay_for_group.assert_not_called()
+    await coordinator.cancel_pending(notify_refused=False)
+
+
+@pytest.mark.asyncio
+async def test_idle_watchdog_debug_logs_fire_that_advances_nothing(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The cap lapsing with no timer to move is reported with the pending count."""
+    caplog.set_level(logging.DEBUG, logger=replay_dependencies.__name__)
+    scheduler = LoopScheduler()
+    coordinator = _watchdog_coordinator(scheduler)
+    coordinator.observe_idle_root("root")
+
+    coordinator._enforce_root_idle_cap("root")
+
+    assert _watchdog_lines(caplog)[-1] == (
+        "Idle watchdog root=root: fired but advanced nothing, pending_timers=0"
+    )
+    assert coordinator._roots["root"].idle_cap_expired is True
+    await coordinator.cancel_pending(notify_refused=False)

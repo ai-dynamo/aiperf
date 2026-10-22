@@ -399,6 +399,10 @@ class LoopScheduler:
             self._track_handle_and_return_id(replacement, coro, group_id=group_id)
         return shift_sec
 
+    def pending_count_for_group(self, group_id: str) -> int:
+        """Scheduled timers tagged with ``group_id`` that have not fired yet."""
+        return sum(1 for group in self._handle_groups.values() if group == group_id)
+
     def cap_pending_delay_for_group(self, group_id: str, max_delay_sec: float) -> float:
         """Uniformly advance one logical group's pending replay timers.
 
