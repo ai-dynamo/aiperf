@@ -6,6 +6,7 @@ import pytest
 
 from aiperf.common.endpoint_credentials import (
     AIPERF_INJECTED_API_KEY,
+    AIPERF_INJECTED_SERVER_METRICS_HEADERS,
     OPENAI_API_KEY,
     EndpointCredentialInjection,
     apply_endpoint_credentials,
@@ -55,6 +56,7 @@ def _benchmark_run(tmp_path, api_key: str | None) -> BenchmarkRun:
 @pytest.fixture(autouse=True)
 def _clean_credential_env(monkeypatch):
     monkeypatch.delenv(AIPERF_INJECTED_API_KEY, raising=False)
+    monkeypatch.delenv(AIPERF_INJECTED_SERVER_METRICS_HEADERS, raising=False)
     monkeypatch.delenv(OPENAI_API_KEY, raising=False)
 
 
@@ -79,6 +81,23 @@ class TestConsumeEndpointCredentials:
 
         assert credentials.api_key == _INJECTED_KEY
         assert credentials.api_key_from_alias is False
+
+    def test_consume_pops_server_metrics_headers(self, monkeypatch):
+        import os
+
+        import orjson
+
+        monkeypatch.setenv(
+            AIPERF_INJECTED_SERVER_METRICS_HEADERS,
+            orjson.dumps({"Authorization": "Bearer metrics-secret"}).decode(),
+        )
+
+        credentials = consume_endpoint_credentials()
+
+        assert AIPERF_INJECTED_SERVER_METRICS_HEADERS not in os.environ
+        assert credentials.server_metrics_headers == {
+            "Authorization": "Bearer metrics-secret"
+        }
 
 
 class TestApplyEndpointCredentials:

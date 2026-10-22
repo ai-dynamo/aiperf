@@ -148,7 +148,9 @@ async def handle(
     try:
         validated = validate_sweep_spec(spec)
         validate_kubernetes_credential_transport(
-            validated.benchmark.endpoint, validated.pod_template.env
+            validated.benchmark.endpoint,
+            validated.pod_template.env,
+            validated.benchmark.server_metrics,
         )
         validate_kubernetes_sweep_credential_axes(validated.sweep)
     except (ConfigurationError, ValidationError, ValueError) as e:
