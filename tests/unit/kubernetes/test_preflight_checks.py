@@ -226,8 +226,9 @@ class TestCheckKubernetesVersionFreeFn:
     @pytest.mark.parametrize(
         "major,minor,expected",
         [
-            param("1", "24", CheckStatus.PASS, id="min-supported"),
-            param("1", "28", CheckStatus.PASS, id="recent"),
+            param("1", "24", CheckStatus.WARN, id="supported-without-server-metrics"),
+            param("1", "28", CheckStatus.WARN, id="missing-native-sidecars"),
+            param("1", "29", CheckStatus.PASS, id="native-sidecars-supported"),
             param("2", "0", CheckStatus.PASS, id="future-major"),
             param("1", "23", CheckStatus.FAIL, id="just-below"),
             param("1", "20", CheckStatus.FAIL, id="old"),
@@ -244,13 +245,13 @@ class TestCheckKubernetesVersionFreeFn:
 
     @pytest.mark.asyncio
     async def test_non_numeric_minor_is_sanitized(self) -> None:
-        """'28+' from managed-k8s strips to '28' and passes."""
+        """'28+' parses as 28 and warns about the optional sidecar requirement."""
         vi = _make_version("1", "28+")
         version = MagicMock(spec=VersionApi)
         version.get_code = AsyncMock(return_value=vi)
         with _patch_version(version):
             result = await check_kubernetes_version(_mock_api())
-        assert result.status == CheckStatus.PASS
+        assert result.status == CheckStatus.WARN
 
 
 # =============================================================================

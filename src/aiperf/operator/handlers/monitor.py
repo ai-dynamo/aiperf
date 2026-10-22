@@ -315,6 +315,14 @@ def _container_startup_issues(pod: Any) -> list[PodStartupIssue]:
     pod_status = _resource_field(pod, "status")
     metadata = _resource_field(pod, "metadata")
     pod_name = _resource_field(metadata, "name", default="") or "unknown"
+    pod_spec = _resource_field(pod, "spec")
+    restartable_metrics = any(
+        _resource_field(container, "name") == Containers.SERVER_METRICS_MANAGER
+        and _resource_field(container, "restartPolicy", "restart_policy") == "Always"
+        for container in (
+            _resource_field(pod_spec, "initContainers", "init_containers") or []
+        )
+    )
     statuses = [
         *(
             _resource_field(
@@ -336,6 +344,12 @@ def _container_startup_issues(pod: Any) -> list[PodStartupIssue]:
             category = "ContainerConfig"
             terminal = True
         elif reason in CRASH_LOOP_WAITING_REASONS:
+            if (
+                restartable_metrics
+                and _resource_field(container_status, "name")
+                == Containers.SERVER_METRICS_MANAGER
+            ):
+                continue
             category = "CrashLoop"
             restarts = int(
                 _resource_field(container_status, "restartCount", "restart_count", 0)
