@@ -333,6 +333,18 @@ class TestChatMessagesField:
             {"role": "assistant", "content": "hi"},
         ]
 
+    def test_tool_result_preserves_call_id_for_chat_template(self) -> None:
+        message = {
+            "role": "tool",
+            "content": "Sunny",
+            "tool_call_id": "abc123def",
+        }
+
+        result = _chat().extract_payload_inputs({"messages": [message]})
+
+        assert result.messages == [message]
+        assert result.texts == ["Sunny"]
+
     def test_chat_mixed_content_concatenates_text_parts(self):
         payload = {
             "messages": [

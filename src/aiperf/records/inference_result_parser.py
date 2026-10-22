@@ -611,6 +611,7 @@ class InferenceResultParser(CommunicationMixin):
                 messages,
                 tokenize=True,
                 add_generation_prompt=True,
+                return_dict=False,
             )
         except Exception as exc:  # noqa: BLE001 - best-effort; fall back to bare encode
             self.debug(

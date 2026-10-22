@@ -7,6 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import orjson
 import pytest
 from pytest import param
+from tokenizers import Tokenizer as NativeTokenizer
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import WhitespaceSplit
+from transformers import PreTrainedTokenizerFast
 
 from aiperf.common.models import (
     ErrorDetails,
@@ -15,10 +19,12 @@ from aiperf.common.models import (
     SpecDecodeAcceptanceRecord,
     TextResponse,
     TextResponseData,
+    Turn,
     Usage,
 )
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import PluginType
+from aiperf.records.inference_result_parser import InferenceResultParser
 from tests.harness import mock_plugin
 from tests.unit.records.conftest import (
     create_invalid_record,
@@ -784,6 +790,46 @@ class TestChatTemplateAwareTokenization:
         assert kwargs["tokenize"] is True
         assert kwargs["add_generation_prompt"] is True
         # Bare encode is NOT called when the template path succeeds.
+        tokenizer.encode.assert_not_called()
+
+    async def test_real_tool_result_template_preserves_templated_isl(
+        self,
+        setup_inference_parser: InferenceResultParser,
+        sample_turn: Turn,
+    ) -> None:
+        native = NativeTokenizer(WordLevel({"[UNK]": 0}, unk_token="[UNK]"))
+        native.pre_tokenizer = WhitespaceSplit()
+        inner = PreTrainedTokenizerFast(
+            tokenizer_object=native,
+            unk_token="[UNK]",
+            chat_template=(
+                "{% for message in messages %}"
+                "{% if message.role == 'tool' %}"
+                "{% if message.tool_call_id is not defined %}"
+                "{{ raise_exception('Tool results require tool_call_id') }}"
+                "{% endif %}{{ message.tool_call_id }} "
+                "{% endif %}{{ message.role }} {{ message.content }} "
+                "{% endfor %}assistant"
+            ),
+        )
+        tokenizer = MagicMock()
+        tokenizer._tokenizer = inner
+        tokenizer.encode.side_effect = inner.encode
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=tokenizer)
+        messages = [
+            {"role": "user", "content": "Weather?"},
+            {"role": "tool", "content": "Sunny", "tool_call_id": "abc123def"},
+        ]
+        info = create_test_request_info(turns=[sample_turn])
+        info.payload_bytes = orjson.dumps({"messages": messages})
+        record = RequestRecord(request_info=info, model_name="test-model")
+
+        result = await setup_inference_parser.compute_input_token_count(record)
+
+        expected = inner.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=True, return_dict=False
+        )
+        assert result == len(expected)
         tokenizer.encode.assert_not_called()
 
     async def test_chat_template_messages_passed_with_role_and_content(
