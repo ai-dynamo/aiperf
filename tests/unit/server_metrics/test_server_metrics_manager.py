@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.control_structs import Command
 from aiperf.common.enums import BaselineKind, CommandType, CreditPhase
@@ -1594,6 +1595,48 @@ class TestWarmupPhaseCompleteScrape:
 
 class TestKubernetesDiscoveryIntegration:
     """Manager discovery honors mode, timeout, merge, and dedup semantics."""
+
+    @pytest.mark.parametrize(
+        "configured_selector",
+        [
+            param(None, id="environment-fallback"),
+            param("", id="explicit-empty"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.asyncio
+    async def test_discovery_label_selector_precedence(
+        self,
+        cfg_with_endpoint: CLIConfig,
+        monkeypatch: pytest.MonkeyPatch,
+        configured_selector: str | None,
+    ) -> None:
+        """Use the environment selector only when configuration omits it."""
+        environment_selector = "environment-selector"
+        monkeypatch.setattr(
+            Environment.SERVER_METRICS,
+            "DISCOVERY_LABEL_SELECTOR",
+            environment_selector,
+        )
+        manager = ServerMetricsManager(run=make_run_from_cli(cfg_with_endpoint))
+        manager.run.cfg.server_metrics.discovery.mode = "kubernetes"
+        manager.run.cfg.server_metrics.discovery.label_selector = configured_selector
+        with (
+            patch(
+                "aiperf.server_metrics.manager.is_running_in_kubernetes",
+                return_value=True,
+            ),
+            patch(
+                "aiperf.server_metrics.discovery.kubernetes.discover_kubernetes_endpoints",
+                new_callable=AsyncMock,
+                return_value=[],
+            ) as discover,
+        ):
+            await manager._run_metrics_discovery()
+
+        expected = (
+            environment_selector if configured_selector is None else configured_selector
+        )
+        assert discover.await_args.kwargs["label_selector"] == expected
 
     @pytest.mark.asyncio
     async def test_forced_discovery_preserves_custom_path_and_deduplicates(
