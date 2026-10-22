@@ -511,6 +511,26 @@ class TestWekaHfFailFast:
 class TestMooncakeHFFailFast:
     """Mooncake HF repositories and mappings are validated at config-load time."""
 
+    @pytest.mark.parametrize("flags,error", [
+        param({"endpoint_type": "completions"}, "requires --endpoint-type chat", id="endpoint"),
+        param({"fixed_schedule": True}, "no recorded timing", id="timing"),
+        param({"extra_inputs": {"messages": []}}, "must not override.*messages", id="messages"),
+        param({"extra_inputs": {"input": "other"}}, "must not override.*input", id="input"),
+        param({"extra_inputs": {"model": "other"}}, "must not override.*model", id="model"),
+        param({"extra_inputs": {"tools": []}}, "must not override.*tools", id="tools"),
+    ])  # fmt: skip
+    def test_incompatible_replay_config_raises(
+        self, flags: dict[str, object], error: str
+    ) -> None:
+        with pytest.raises(ValueError, match=error):
+            convert_cli_to_aiperf(
+                CLIConfig(
+                    model_names=["target"],
+                    hf_mooncake_dataset="example/trajectories",
+                    **flags,
+                )
+            )
+
     @pytest.mark.parametrize("repo", [None, "   "])
     def test_missing_or_empty_repo_raises(self, repo: str | None) -> None:
         with pytest.raises(ValueError, match="non-empty"):

@@ -4,6 +4,7 @@
 """Tests for ``HFMooncakeTraceDatasetLoader`` and recorded trajectory conversion."""
 
 from copy import deepcopy
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, Mock
@@ -14,6 +15,7 @@ from pytest import param
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.exceptions import DatasetLoaderError
+from aiperf.config.dataset import PublicDataset
 from aiperf.config.flags import CLIConfig
 from aiperf.config.resolution.plan import BenchmarkRun
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
@@ -116,32 +118,6 @@ class TestConfiguration:
         )
         assert loader.hf_subset == "custom-config"
 
-    @pytest.mark.parametrize("flags,error", [
-        param({"endpoint_type": "completions"}, "chat", id="endpoint"),
-        param({"fixed_schedule": True}, "no recorded timing", id="timing"),
-        param({"extra_inputs": {"messages": []}}, "override", id="messages"),
-        param({"extra_inputs": {"model": "other"}}, "override", id="model"),
-    ])  # fmt: skip
-    def test_incompatible_config_raises(
-        self,
-        mock_prompt_generator: Mock,
-        flags: dict[str, Any],
-        error: str,
-    ) -> None:
-        benchmark_run = make_run_from_cli(
-            CLIConfig(
-                model_names=["target"],
-                hf_mooncake_dataset="example/trajectories",
-                **flags,
-            )
-        )
-        with pytest.raises(DatasetLoaderError, match=error):
-            HFMooncakeTraceDatasetLoader(
-                run=benchmark_run,
-                hf_dataset_name="example/trajectories",
-                prompt_generator=mock_prompt_generator,
-            )
-
 
 @pytest.mark.asyncio
 class TestLoadDatasetRowValidation:
@@ -215,15 +191,17 @@ class TestLoadDatasetRowValidation:
         param(42, "42", 43, id="integer"),
         param(1.5, "1.5", 2.5, id="float"),
         param("true", "true", "True", id="string"),
+        param(Decimal("2.00"), "2.00", Decimal("1.50"), id="decimal"),
+        param(b"match", "b'match'", b"other", id="binary"),
     ])  # fmt: skip
     async def test_scalar_filter_selects_matching_rows(
         self,
         loader: HFMooncakeTraceDatasetLoader,
         mock_hf_dataset: AsyncMock,
         row: dict[str, Any],
-        value: bool | str | int | float | None,
+        value: bool | str | int | float | Decimal | bytes | None,
         spelling: str,
-        other: bool | str | int | float,
+        other: bool | str | int | float | Decimal | bytes,
     ) -> None:
         loader.filters = {"success": spelling}
         mock_hf_dataset.return_value = {
@@ -393,6 +371,28 @@ class TestLoadDatasetRowValidation:
 
 
 class TestFieldMapping:
+    @pytest.mark.parametrize("present", [False, True])
+    def test_whitespace_column_name_is_literal(
+        self,
+        loader: HFMooncakeTraceDatasetLoader,
+        row: dict[str, Any],
+        present: bool,
+    ) -> None:
+        dataset = PublicDataset(
+            name="default",
+            type="public",
+            dataset=PublicDatasetType.MOONCAKE_HF,
+            hf_mooncake_dataset="example/trajectories",
+            mooncake_trace_to_hf_mapping={"messages": "nested.   "},
+        )
+        loader.field_mapping = dataset.mooncake_trace_to_hf_mapping
+        source = row | {"nested": {"   ": row["messages"]} if present else {}}
+        if present:
+            assert list(loader._rows_to_traces([source])) == [row["session_id"]]
+        else:
+            with pytest.raises(DatasetLoaderError, match="source path.*does not exist"):
+                loader._rows_to_traces([source])
+
     @pytest.mark.parametrize("session_id", [0, 123])
     def test_integer_session_id_mapping_normalizes_to_string(
         self,
@@ -401,7 +401,7 @@ class TestFieldMapping:
         session_id: int,
     ) -> None:
         loader.field_mapping = {"session_id": "question_id"}
-        traces = loader._validate_rows([row | {"question_id": session_id}])
+        traces = loader._rows_to_traces([row | {"question_id": session_id}])
         assert list(traces) == [str(session_id)]
         assert all(
             trace.session_id == str(session_id) for trace in traces[str(session_id)]
@@ -446,8 +446,8 @@ class TestFieldMapping:
                 "extra.temperature": "extras.temperature",
                 "extra.top_p": "extras.top_p",
             },
-        )._validate_rows([source])
-        assert mapped == loader._validate_rows([row])
+        )._rows_to_traces([source])
+        assert mapped == loader._rows_to_traces([row])
         assert source == before
 
     @pytest.mark.parametrize("mapping,error", [
@@ -468,7 +468,7 @@ class TestFieldMapping:
                 hf_dataset_name="example/trajectories",
                 prompt_generator=mock_prompt_generator,
                 field_mapping=mapping,
-            )._validate_rows([row])
+            )._rows_to_traces([row])
 
 
 class TestTrajectoryConversion:

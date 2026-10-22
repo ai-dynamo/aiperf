@@ -10,6 +10,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from aiperf.common.environment import Environment
 from tests.component_integration.conftest import (
     ComponentIntegrationTestDefaults as defaults,
 )
@@ -135,3 +136,47 @@ def test_trajectory_dispatch_preserves_recorded_history(
     assert sorted(sorted(turns) for turns in session_turns.values()) == (
         [[0], [0, 1, 2]] if request_limit else [[0, 1], [0, 1, 2]]
     )
+
+
+@pytest.mark.component_integration
+def test_protected_extras_rejected_before_and_after_cache_population(
+    cli: AIPerfCLI,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(Environment.DATASET, "MMAP_CACHE_ENABLED", True)
+    monkeypatch.setattr(Environment.DATASET, "MMAP_CACHE_DIR", tmp_path / "cache")
+    dataset_dir = tmp_path / "trajectories"
+    dataset_dir.mkdir()
+    pq.write_table(
+        pa.Table.from_pylist(
+            [
+                {
+                    "messages": [
+                        {"role": "user", "content": "Hello"},
+                        {"role": "assistant", "content": "Recorded answer"},
+                    ]
+                },
+            ]
+        ),
+        dataset_dir / "test.parquet",
+    )
+    command = f"""aiperf profile
+        --model {defaults.model} --endpoint-type chat
+        --hf-mooncake-dataset "{dataset_dir}"
+        --request-count 1 --concurrency 1 --random-seed 42
+        --workers-max 1 --ui {defaults.ui}
+    """
+    for warm_cache in (False, True):
+        if warm_cache:
+            cli.run_sync(command, timeout=60.0)
+            cached = cli.run_sync(command, timeout=60.0)
+            assert "dataset cache HIT" in cached.log
+        for extra in ("model:other-model", '{"tools": []}'):
+            result = cli.run_sync(
+                f"{command} --extra-inputs '{extra}'",
+                timeout=60.0,
+                assert_success=False,
+            )
+            assert result.exit_code != 0
+            assert "must not override" in result.stdout + result.stderr

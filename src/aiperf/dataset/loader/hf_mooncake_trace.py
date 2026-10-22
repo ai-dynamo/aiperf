@@ -17,7 +17,6 @@ from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader.base_hf_dataset import BaseHFDatasetLoader
 from aiperf.dataset.loader.models import MooncakeTrace
 from aiperf.dataset.loader.mooncake_trace import MooncakeTraceDatasetLoader
-from aiperf.plugin.enums import EndpointType, PhaseType
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -52,29 +51,15 @@ class HFMooncakeTraceDatasetLoader(BaseHFDatasetLoader):
             hf_subset=hf_subset,
             **kwargs,
         )
-        if self.run.cfg.endpoint.type != EndpointType.CHAT:
-            raise DatasetLoaderError("mooncake_hf requires --endpoint-type chat")
-        if any(p.type == PhaseType.FIXED_SCHEDULE for p in self.run.cfg.phases):
-            raise DatasetLoaderError(
-                "mooncake_hf has no recorded timing; use concurrency or request-rate, "
-                "not --fixed-schedule"
-            )
-        if keys := {"messages", "input", "model"}.intersection(
-            self.run.cfg.endpoint.extra
-        ):
-            raise DatasetLoaderError(
-                f"mooncake_hf: --extra-inputs must not override {sorted(keys)}"
-            )
-
         self._mooncake = MooncakeTraceDatasetLoader(
             run=self.run, prompt_generator=prompt_generator, inline_records=[]
         )
 
     async def load_dataset(self) -> dict[str, list[MooncakeTrace]]:
         raw = await super().load_dataset()
-        return await asyncio.to_thread(self._validate_rows, raw["dataset"])
+        return await asyncio.to_thread(self._rows_to_traces, raw["dataset"])
 
-    def _validate_rows(
+    def _rows_to_traces(
         self, rows: Iterable[dict[str, Any]]
     ) -> dict[str, list[MooncakeTrace]]:
         records: list[dict[str, Any]] = []
@@ -134,7 +119,10 @@ def _drop_null_fields(value: Any) -> Any:
 
 
 def _matches_filter(value: Any, expected: str) -> bool:
-    return str(value) == expected or orjson.dumps(value).decode() == expected
+    try:
+        return str(value) == expected or orjson.dumps(value).decode() == expected
+    except orjson.JSONEncodeError:
+        return False
 
 
 def _messages(value: Any) -> list[dict[str, Any]]:
