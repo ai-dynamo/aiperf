@@ -83,6 +83,8 @@ def _build_prompts(cli: CLIConfig) -> dict[str, Any]:
         prompts["batch_size"] = cli.prompt_batch_size
     if "cache_bust" in s:
         prompts["cache_bust"] = {"target": cli.cache_bust}
+    if "cache_bust_media_uuids" in s:
+        prompts.setdefault("cache_bust", {})["media_uuids"] = cli.cache_bust_media_uuids
     if "prompt_corpus" in s and cli.prompt_corpus is not None:
         prompts["corpus"] = cli.prompt_corpus
     return prompts
@@ -1624,3 +1626,5 @@ def _apply_corpus_and_cache_bust(d: dict[str, Any], cli: CLIConfig) -> None:
         prompts["corpus"] = cli.prompt_corpus
     if "cache_bust" in s:
         d["cache_bust"] = {"target": cli.cache_bust}
+    if "cache_bust_media_uuids" in s:
+        d.setdefault("cache_bust", {})["media_uuids"] = cli.cache_bust_media_uuids
