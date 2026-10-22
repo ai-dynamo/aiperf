@@ -13,6 +13,7 @@ from typing import Any, TypeVar
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models.model_endpoint_info import (
@@ -26,6 +27,7 @@ from aiperf.endpoints.base_endpoint import BaseEndpoint
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.plugin.enums import EndpointType
+from tests.unit.spec_decode.test_sglang_adapter import SUMMARY_PAYLOAD
 
 STATS = {
     "mean_acceptance_length": 1.5,
@@ -268,3 +270,40 @@ class TestPerChoiceCapture:
         parsed = chat_endpoint.parse_response(_mock_response(json_obj))
         assert parsed is not None
         assert parsed.spec_decode_stats is None
+
+
+@pytest.mark.parametrize(
+    "endpoint_name, body",
+    [
+        param("chat_endpoint", {"object": "chat.completion", "choices": [{"message": {"role": "assistant", "content": "hi"}}]}, id="chat"),
+        param("chat_endpoint", {"object": "chat.completion.chunk", "choices": []}, id="streaming_chat"),
+        param("completions_endpoint", {"object": "text_completion", "choices": [{"text": "hi"}]}, id="completions"),
+        param("completions_endpoint", {"object": "text_completion", "choices": []}, id="streaming_completions"),
+    ],
+)  # fmt: skip
+def test_sglang_capture(
+    request: pytest.FixtureRequest, endpoint_name: str, body: dict[str, Any]
+) -> None:
+    endpoint = request.getfixturevalue(endpoint_name)
+    body = {**body, "sglext": {"spec_tokens_details": SUMMARY_PAYLOAD}}
+    parsed = endpoint.parse_response(_mock_response(body))
+    assert parsed is not None
+    assert parsed.spec_decode_stats == SUMMARY_PAYLOAD
+
+
+@pytest.mark.parametrize(
+    "extension",
+    [
+        param(None, id="null"),
+        param([], id="list"),
+        param("bad", id="string"),
+        param({}, id="empty"),
+        param({"spec_tokens_details": None}, id="null_details"),
+        param({"spec_tokens_details": []}, id="empty_details"),
+        param({"spec_tokens_details": [SUMMARY_PAYLOAD]}, id="multi_sequence_details"),
+    ],
+)  # fmt: skip
+def test_sglang_malformed_or_multi_sequence_extension_is_ignored(
+    extension: Any,
+) -> None:
+    assert BaseEndpoint.extract_spec_decode_stats({"sglext": extension}) is None
