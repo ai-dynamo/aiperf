@@ -28,10 +28,12 @@ class _MismatchWarningTracker:
             return
         self._warned.add(metric_tag)
         _logger.warning(
-            lambda: f"{metric_tag}: server-reported first content chunk "
-            f"token count ({first_chunk_tokens}) is inconsistent with output "
-            f"sequence length ({osl}); falling back to (OSL - 1). Check "
-            f"--per-chunk-usage server support."
+            lambda: (
+                f"{metric_tag}: server-reported first content chunk "
+                f"token count ({first_chunk_tokens}) is inconsistent with output "
+                f"sequence length ({osl}); falling back to (OSL - 1). Check "
+                f"--per-chunk-usage server support."
+            )
         )
 
 
