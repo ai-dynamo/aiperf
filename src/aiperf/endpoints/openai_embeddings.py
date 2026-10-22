@@ -124,9 +124,11 @@ class EmbeddingsEndpoint(BaseEndpoint):
             ]
             if not embeddings:
                 return None
+            usage = json_obj.get("usage")
             return ParsedResponse(
                 perf_ns=response.perf_ns,
                 data=EmbeddingResponseData(embeddings=embeddings),
+                usage=(usage or None) if isinstance(usage, dict) else None,
             )
 
         else:
