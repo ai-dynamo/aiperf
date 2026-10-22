@@ -224,6 +224,40 @@ class TestScheduleLater:
         scheduler.cancel_all_pending()
         assert scheduler.pending_count_for_group("root-a") == 0
 
+    async def test_group_task_observer_reports_completed_grouped_timers_only(
+        self, scheduler: LoopScheduler
+    ):
+        """The idle cap re-checks a tree only after its grouped timer returns."""
+        seen: list[str] = []
+        scheduler.set_group_task_observer(seen.append)
+        done = asyncio.Event()
+        started = asyncio.Event()
+
+        async def noop():
+            pass
+
+        async def blocked():
+            started.set()
+            await asyncio.Event().wait()
+
+        async def last():
+            done.set()
+
+        scheduler.schedule_later(0.01, blocked(), group_id="root-c")
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        await asyncio.gather(*scheduler.cancel_all_running(), return_exceptions=True)
+
+        scheduler.schedule_later(0.01, noop(), group_id="root-a")
+        scheduler.schedule_later(0.01, noop())
+        cancelled = scheduler.schedule_later(0.01, noop(), group_id="root-b")
+        scheduler.cancel_handle_id(cancelled)
+        scheduler.schedule_later(0.02, last())
+
+        await asyncio.wait_for(done.wait(), timeout=1.0)
+        await asyncio.sleep(0)
+
+        assert seen == ["root-a"]
+
     async def test_global_cap_preserves_group_ownership(self, scheduler: LoopScheduler):
         """A global idle jump cannot erase later per-trace cap ownership."""
 

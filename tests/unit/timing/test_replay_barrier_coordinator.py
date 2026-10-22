@@ -6,6 +6,7 @@ import logging
 from unittest.mock import MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.loop_scheduler import LoopScheduler
@@ -611,3 +612,103 @@ async def test_idle_watchdog_debug_logs_fire_that_advances_nothing(
     )
     assert coordinator._roots["root"].idle_cap_expired is True
     await coordinator.cancel_pending(notify_refused=False)
+
+
+async def _control_timer() -> None:
+    """A grouped timer that issues no request, like an unsatisfied join deadline."""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "control_delay_sec",
+    [
+        param(-0.001, id="control-timer-already-due"),
+        param(0.001, id="control-timer-due-1ms-later"),
+    ],
+)  # fmt: skip
+async def test_idle_cap_advances_request_past_control_timer_that_issues_nothing(
+    control_delay_sec: float,
+) -> None:
+    """A due control timer must not absorb an expired idle cap.
+
+    When the watchdog fires, the earliest group timer is a control timer due
+    now (or ~1 ms later), so the uniform shift is ~0 and the real next
+    request stays seconds away. Once the control timer runs without issuing,
+    the cap must still pull the request in.
+    """
+    scheduler = LoopScheduler()
+    coordinator = _watchdog_coordinator(scheduler)
+    loop = asyncio.get_running_loop()
+    request_fired = asyncio.Event()
+
+    async def request_timer() -> None:
+        request_fired.set()
+
+    scheduler.schedule_at(
+        loop.time() + control_delay_sec, _control_timer(), group_id="root"
+    )
+    scheduler.schedule_later(5.0, request_timer(), group_id="root")
+    coordinator._root_state("root")
+
+    coordinator._enforce_root_idle_cap("root")
+    await asyncio.wait_for(request_fired.wait(), timeout=0.5)
+
+    assert scheduler.pending_count_for_group("root") == 0
+    scheduler.cancel_all()
+
+
+@pytest.mark.asyncio
+async def test_idle_cap_does_not_advance_past_timer_that_issued_a_request() -> None:
+    """Re-enforcing must stop once the advanced timer puts work on the wire."""
+    scheduler = LoopScheduler()
+    coordinator = _watchdog_coordinator(scheduler)
+    loop = asyncio.get_running_loop()
+    issued = asyncio.Event()
+
+    async def issuing_timer() -> None:
+        coordinator.observe_issued(_credit("a"))
+        issued.set()
+
+    async def later_request() -> None:
+        pass
+
+    scheduler.schedule_at(loop.time() - 0.001, issuing_timer(), group_id="root")
+    later_handle = scheduler.schedule_later(5.0, later_request(), group_id="root")
+    later_when = scheduler._handles[later_handle][0].when()
+    coordinator._root_state("root")
+
+    coordinator._enforce_root_idle_cap("root")
+    await asyncio.wait_for(issued.wait(), timeout=0.5)
+    await asyncio.sleep(0)
+
+    assert scheduler.pending_count_for_group("root") == 1
+    [(handle, _)] = scheduler._handles.values()
+    assert handle.when() == pytest.approx(later_when)
+    scheduler.cancel_all()
+
+
+@pytest.mark.asyncio
+async def test_timer_issuing_nothing_before_cap_expires_keeps_replay_spacing() -> None:
+    """A control timer inside the cap budget must not pull later requests in."""
+    scheduler = LoopScheduler()
+    coordinator = _watchdog_coordinator(scheduler)
+    loop = asyncio.get_running_loop()
+    control_done = asyncio.Event()
+
+    async def control_timer() -> None:
+        control_done.set()
+
+    async def later_request() -> None:
+        pass
+
+    scheduler.schedule_at(loop.time() - 0.001, control_timer(), group_id="root")
+    later_handle = scheduler.schedule_later(5.0, later_request(), group_id="root")
+    later_when = scheduler._handles[later_handle][0].when()
+    coordinator._root_state("root")
+
+    await asyncio.wait_for(control_done.wait(), timeout=0.5)
+    await asyncio.sleep(0)
+
+    [(handle, _)] = scheduler._handles.values()
+    assert handle.when() == pytest.approx(later_when)
+    scheduler.cancel_all()

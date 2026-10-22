@@ -73,6 +73,7 @@ class LoopScheduler:
             exception_handler
         )
         self._drain_observer: Callable[[], None] | None = None
+        self._group_task_observer: Callable[[str], None] | None = None
 
     def set_exception_handler(self, handler: Callable[[asyncio.Task], None]) -> None:
         """Set callback for unhandled task exceptions."""
@@ -81,6 +82,29 @@ class LoopScheduler:
     def set_drain_observer(self, observer: Callable[[], None] | None) -> None:
         """Observe transitions from running work to no running work."""
         self._drain_observer = observer
+
+    def set_group_task_observer(self, observer: Callable[[str], None] | None) -> None:
+        """Observe each grouped timer's coroutine finishing (not when cancelled).
+
+        The observer receives the timer's ``group_id``. It runs after the
+        coroutine has returned, so anything the coroutine issued is already
+        visible to the observer.
+        """
+        self._group_task_observer = observer
+
+    def _notify_group_task_done(self, group_id: str, task: asyncio.Task) -> None:
+        if task.cancelled() or self._group_task_observer is None:
+            return
+        try:
+            self._group_task_observer(group_id)
+        except Exception as exc:  # noqa: BLE001
+            self._loop.call_exception_handler(
+                {
+                    "message": "LoopScheduler group task observer failed",
+                    "exception": exc,
+                    "task": task,
+                }
+            )
 
     def _done_callback(self, task: asyncio.Task) -> None:
         """Remove completed task from tracking; invoke exception handler if failed."""
@@ -118,13 +142,20 @@ class LoopScheduler:
         but the handle doesn't exist until call_later() returns. We pass a
         mutable list, then populate it after call_later() returns.
         """
+        group_id = None
         if handle_container[0] is not None:
             handle_id = id(handle_container[0])
             self._handles.pop(handle_id, None)
-            self._handle_groups.pop(handle_id, None)
+            group_id = self._handle_groups.pop(handle_id, None)
         task = self._loop.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._done_callback)
+        if group_id is not None:
+            task.add_done_callback(
+                lambda done, group_id=group_id: self._notify_group_task_done(
+                    group_id, done
+                )
+            )
 
     def _track_handle_and_return_id(
         self,

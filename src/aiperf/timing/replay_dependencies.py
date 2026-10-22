@@ -187,6 +187,33 @@ class ReplayBarrierCoordinator:
         self._root_idle_gap_cap_seconds = root_idle_gap_cap_seconds
         self._root_idle_jumps = 0
         self._root_idle_seconds_skipped = 0.0
+        if scheduler is not None and root_idle_gap_cap_seconds is not None:
+            scheduler.set_group_task_observer(self._on_root_timer_done)
+
+    def _on_root_timer_done(self, root_id: str) -> None:
+        """Keep enforcing an expired idle cap past timers that issued nothing.
+
+        The cap advances a tree's timers relative to its earliest pending
+        one, assuming that timer ends the idle gap. Control timers (a gated
+        parent's join replay deadline) can run without issuing a request,
+        leaving the tree idle with its real next request still far away.
+        Re-enforcing once such a timer's coroutine returns closes that gap;
+        a timer that did issue a request cleared ``idle_cap_expired`` in
+        ``observe_issued``, so the cap stays out of a busy tree.
+        """
+        state = self._roots.get(root_id)
+        if (
+            state is None
+            or not self._active
+            or not state.idle_cap_expired
+            or state.idle_watchdog is not None
+        ):
+            return
+        _logger.debug(
+            lambda: f"Idle watchdog root={root_id}: re-enforcing after a timer "
+            "ran without issuing a request"
+        )
+        self._enforce_root_idle_cap(root_id)
 
     def _root_state(self, root_id: str) -> _RootBarrierState:
         return self._roots.setdefault(
