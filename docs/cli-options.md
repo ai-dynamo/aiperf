@@ -738,7 +738,7 @@ Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurr
 
 #### `--random-seed` `<int>`
 
-Random seed for deterministic data generation. When set, makes synthetic prompts, sampling, delays, and other random operations reproducible across runs. Essential for A/B testing and debugging. Uses system entropy if not specified. Initialized globally at config creation.
+Random seed for deterministic data generation. When set, makes synthetic prompts, sampling, delays, and other random operations reproducible across runs. Essential for A/B testing and debugging. Uses system entropy if not specified. Initialized globally at config creation. Reusing the same seed regenerates identical synthetic prompts; a long-lived server with prefix caching may serve later runs from cache.
 <br/>_Constraints: ≥ 0_
 
 #### `--trace-session-sample-ratio` `<float>`
@@ -790,7 +790,7 @@ The total number of unique conversations to generate. Each conversation represen
 
 #### `--num-dataset-entries`, `--num-prompts` `<int>`
 
-Total number of unique entries to generate for the dataset. Each entry represents one user message that can be used as a turn in conversations. Entries are reused across conversations and turns according to `--dataset-sampling-strategy`. Higher values provide more diversity.
+Total number of unique entries to generate for the dataset. Each entry represents one user message that can be used as a turn in conversations. Entries are reused across conversations and turns according to `--dataset-sampling-strategy`. Higher values provide more diversity. Repeated prompts can hit the server's prefix cache and affect TTFT and throughput. Size the pool to cover profiling and warmup requests when measuring uncached prefill. Without --config, an omitted synthetic pool size uses --num-conversations, then --request-count when set, otherwise 100.
 <br/>_Constraints: ≥ 1_
 <br/>_Default: `100`_
 
@@ -2373,7 +2373,7 @@ Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurr
 
 #### `--random-seed` `<int>`
 
-Random seed for deterministic data generation. When set, makes synthetic prompts, sampling, delays, and other random operations reproducible across runs. Essential for A/B testing and debugging. Uses system entropy if not specified. Initialized globally at config creation.
+Random seed for deterministic data generation. When set, makes synthetic prompts, sampling, delays, and other random operations reproducible across runs. Essential for A/B testing and debugging. Uses system entropy if not specified. Initialized globally at config creation. Reusing the same seed regenerates identical synthetic prompts; a long-lived server with prefix caching may serve later runs from cache.
 <br/>_Constraints: ≥ 0_
 
 #### `--trace-session-sample-ratio` `<float>`
@@ -2425,7 +2425,7 @@ The total number of unique conversations to generate. Each conversation represen
 
 #### `--num-dataset-entries`, `--num-prompts` `<int>`
 
-Total number of unique entries to generate for the dataset. Each entry represents one user message that can be used as a turn in conversations. Entries are reused across conversations and turns according to `--dataset-sampling-strategy`. Higher values provide more diversity.
+Total number of unique entries to generate for the dataset. Each entry represents one user message that can be used as a turn in conversations. Entries are reused across conversations and turns according to `--dataset-sampling-strategy`. Higher values provide more diversity. Repeated prompts can hit the server's prefix cache and affect TTFT and throughput. Size the pool to cover profiling and warmup requests when measuring uncached prefill. Without --config, an omitted synthetic pool size uses --num-conversations, then --request-count when set, otherwise 100.
 <br/>_Constraints: ≥ 1_
 <br/>_Default: `100`_
 
@@ -4003,7 +4003,7 @@ Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurr
 
 #### `--random-seed` `<int>`
 
-Random seed for deterministic data generation. When set, makes synthetic prompts, sampling, delays, and other random operations reproducible across runs. Essential for A/B testing and debugging. Uses system entropy if not specified. Initialized globally at config creation.
+Random seed for deterministic data generation. When set, makes synthetic prompts, sampling, delays, and other random operations reproducible across runs. Essential for A/B testing and debugging. Uses system entropy if not specified. Initialized globally at config creation. Reusing the same seed regenerates identical synthetic prompts; a long-lived server with prefix caching may serve later runs from cache.
 <br/>_Constraints: ≥ 0_
 
 #### `--trace-session-sample-ratio` `<float>`
@@ -4055,7 +4055,7 @@ The total number of unique conversations to generate. Each conversation represen
 
 #### `--num-dataset-entries`, `--num-prompts` `<int>`
 
-Total number of unique entries to generate for the dataset. Each entry represents one user message that can be used as a turn in conversations. Entries are reused across conversations and turns according to `--dataset-sampling-strategy`. Higher values provide more diversity.
+Total number of unique entries to generate for the dataset. Each entry represents one user message that can be used as a turn in conversations. Entries are reused across conversations and turns according to `--dataset-sampling-strategy`. Higher values provide more diversity. Repeated prompts can hit the server's prefix cache and affect TTFT and throughput. Size the pool to cover profiling and warmup requests when measuring uncached prefill. Without --config, an omitted synthetic pool size uses --num-conversations, then --request-count when set, otherwise 100.
 <br/>_Constraints: ≥ 1_
 <br/>_Default: `100`_
 
@@ -6140,7 +6140,7 @@ Allow weka/agentic replay to wrap (reuse distinct eligible traces across concurr
 
 #### `--random-seed` `<int>`
 
-Random seed for deterministic data generation. When set, makes synthetic prompts, sampling, delays, and other random operations reproducible across runs. Essential for A/B testing and debugging. Uses system entropy if not specified. Initialized globally at config creation.
+Random seed for deterministic data generation. When set, makes synthetic prompts, sampling, delays, and other random operations reproducible across runs. Essential for A/B testing and debugging. Uses system entropy if not specified. Initialized globally at config creation. Reusing the same seed regenerates identical synthetic prompts; a long-lived server with prefix caching may serve later runs from cache.
 <br/>_Constraints: ≥ 0_
 
 #### `--trace-session-sample-ratio` `<float>`
@@ -6192,7 +6192,7 @@ The total number of unique conversations to generate. Each conversation represen
 
 #### `--num-dataset-entries`, `--num-prompts` `<int>`
 
-Total number of unique entries to generate for the dataset. Each entry represents one user message that can be used as a turn in conversations. Entries are reused across conversations and turns according to `--dataset-sampling-strategy`. Higher values provide more diversity.
+Total number of unique entries to generate for the dataset. Each entry represents one user message that can be used as a turn in conversations. Entries are reused across conversations and turns according to `--dataset-sampling-strategy`. Higher values provide more diversity. Repeated prompts can hit the server's prefix cache and affect TTFT and throughput. Size the pool to cover profiling and warmup requests when measuring uncached prefill. Without --config, an omitted synthetic pool size uses --num-conversations, then --request-count when set, otherwise 100.
 <br/>_Constraints: ≥ 1_
 <br/>_Default: `100`_
 
