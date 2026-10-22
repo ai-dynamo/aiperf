@@ -1468,6 +1468,15 @@ gpu_telemetry_collector:
 # One-to-one mapping based on grader configuration or benchmark default.
 # =============================================================================
 spec_decode_adapter:
+  sglang:
+    class: aiperf.spec_decode.sglang_adapter:SGLangSpecDecodeAdapter
+    description: |
+      Reads SGLang's ``sglext.spec_tokens_details`` response extension when
+      the request sets ``return_spec_tokens_details: true``. Derives acceptance
+      from per-request counters and fills the engine-neutral record for chat
+      and completions, streaming and non-streaming.
+    metadata: {}
+
   vllm:
     class: aiperf.spec_decode.vllm_adapter:VLLMSpecDecodeAdapter
     description: |

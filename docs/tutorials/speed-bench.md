@@ -18,16 +18,16 @@ Everything downstream depends on how your server reports acceptance, so decide t
 
 | | Per-request | Server scrape |
 |---|---|---|
-| **Where the numbers come from** | `metrics.speculative_decoding` on each response body | The server's Prometheus `/metrics` endpoint, sampled during the run |
-| **Engines** | vLLM only, direct (not behind Dynamo, which strips the field) | vLLM, SGLang, TensorRT-LLM, NIM-LLM |
+| **Where the numbers come from** | Engine-specific acceptance details on each response body | The server's Prometheus `/metrics` endpoint, sampled during the run |
+| **Engines** | vLLM, SGLang v0.5.19+, TensorRT-LLM, direct to the engine | vLLM, SGLang, TensorRT-LLM, NIM-LLM |
 | **Runs needed for the 11-category matrix** | **One** | Eleven (one per category) |
 | **Scope of the numbers** | Exactly the requests AIPerf issued | The whole server for the sampled window |
-| **Extra AIPerf flags** | None | `--server-metrics` (on by default) |
-| **Server setup** | `--per-request-spec-decode-metrics summary` | none |
+| **Extra AIPerf flags** | SGLang: `--extra-inputs return_spec_tokens_details:true` | `--server-metrics` (on by default) |
+| **Server setup** | See [per-request prerequisites](spec-decode-metrics.md#prerequisites) | none |
 
 The per-request path is the better measurement wherever it is available: acceptance is attributed to individual requests rather than inferred from a whole-server counter delta, so nothing another client sends during your run can leak into the result, and you get distributions and a pooled histogram instead of a single ratio. It is also what collapses the eleven-run sweep into one run.
 
-If you are on SGLang or TensorRT-LLM, or your vLLM sits behind Dynamo, skip to [Portable path: server scrape](#portable-path-server-scrape). Everything else on this page - the datasets, the prepare step, the sampling defaults - applies to both paths.
+If your server does not return acceptance details, use [Portable path: server scrape](#portable-path-server-scrape). Everything else on this page - the datasets, the prepare step, the sampling defaults - applies to both paths.
 
 ---
 
@@ -199,6 +199,22 @@ If that object is absent, the per-request path will silently produce nothing - s
 
 ---
 
+## SGLang per-request acceptance
+
+For SGLang v0.5.19+ with speculative decoding enabled, add
+`--extra-inputs return_spec_tokens_details:true` to the AIPerf commands below.
+In the `speed_bench_per_request` template, set
+`benchmark.endpoint.extra.return_spec_tokens_details: true`.
+The extension works with chat and completions, streaming and non-streaming.
+
+See the [SGLang adapter reference](../reference/spec-decode-acceptance.md#the-sglang-adapter)
+for the counters and formulas. The existing `--source auto` fallback also applies
+to SGLang: records, then summary, then server metrics.
+For older builds, use the `speed_bench_sweep` template with scraping enabled.
+The aggregate template disables scraping and cannot supply the server fallback.
+
+---
+
 ## Recommended Defaults
 
 ### Non-Reasoning Models
@@ -337,7 +353,7 @@ aiperf profile --config speed_bench.yaml
 
 | `--source` | File read | Where the data came from | Columns per run |
 |---|---|---|---|
-| `records` | `profile_export.jsonl` | per-request `metrics.speculative_decoding` on each **response body** | one **per category** |
+| `records` | `profile_export.jsonl` | per-request acceptance details on each **response body** | one **per category** |
 | `summary` | `profile_export_aiperf.json` | the **same per-request data**, reduced by AIPerf to run-level scalars | one |
 | `server` | `server_metrics_export.json` | the engine's **Prometheus counters**, scraped during the run | one |
 
@@ -355,7 +371,7 @@ divided once. Averaging each request's own ratio would weight a 3-step request e
 with a 300-step one and give a different number.
 
 > [!WARNING]
-> **Gauge-based engines are not token-weighted.** SGLang exposes acceptance as a gauge
+> **Scraped gauges are not token-weighted.** SGLang exposes acceptance as a gauge
 > (`sglang:spec_accept_length`), as does TensorRT-LLM, and the report reads those as the
 > unweighted mean of the scrape samples - a time-average, in which an idle interval counts
 > as much as a busy one. The same applies to a vLLM build that publishes
@@ -478,7 +494,7 @@ The `accept_rate` and `throughput` metrics work identically.
 
 ## Portable path: server scrape
 
-Use this when the per-request path is unavailable: SGLang, TensorRT-LLM, NIM-LLM containers, or a vLLM behind Dynamo (which strips the custom response field). Acceptance is read from the server's Prometheus endpoint during each run and written to `server_metrics_export.json`; the report computes acceptance length from vLLM's counters (`accepted_tokens / num_drafts + 1`), SGLang's `spec_accept_length` gauge, or a TensorRT-LLM equivalent.
+Use this when the per-request path is unavailable, including older SGLang builds or proxies that strip the custom response field. Acceptance is read from the server's Prometheus endpoint during each run and written to `server_metrics_export.json`; the report computes acceptance length from vLLM's counters (`accepted_tokens / num_drafts + 1`), SGLang's `spec_accept_length` gauge, or a TensorRT-LLM equivalent.
 
 Because the scrape is a whole-server measurement rather than a per-request one, the matrix needs one run per category.
 
