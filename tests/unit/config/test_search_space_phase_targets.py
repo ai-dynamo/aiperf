@@ -121,3 +121,66 @@ def test_search_space_unresolvable_phase_selector_is_skipped(tmp_path: Path) -> 
     )
 
     assert config.benchmark.phases[0].type == "concurrency"
+
+
+@pytest.mark.parametrize("source", ["cli", "yaml"])
+@pytest.mark.parametrize(
+    "path,lo,kind,message",
+    [
+        param("phases.profiling.rate", 0, "real", "lower bound must be > 0", id="rate"),
+        param("phases.profiling.smoothness", -1, "real", "lower bound must be > 0", id="smoothness"),
+        param("phases.profiling.rate_ramp", 0, "real", "lower bound must be > 0", id="rate-ramp"),
+        param("phases.warmup.smoothness", 0, "real", "lower bound must be > 0", id="warmup"),
+        param("phases.measured.rate_ramp.duration", 0, "real", "lower bound must be > 0", id="nested"),
+        param("phases.profiling.users", 0, "int", "lower bound must be >= 1", id="users-bound"),
+        param("phases.profiling.users", 1, "real", "must use ':int'", id="users-kind"),
+        param("phases.warmup.rate_series", 1, "real", "piecewise-linear", id="rate-series"),
+    ],
+)  # fmt: skip
+def test_search_space_invalid_dimension_rejected_before_run(
+    tmp_path: Path, source: str, path: str, lo: float, kind: str, message: str
+) -> None:
+    body = _yaml("gamma", "rate: 10\n      smoothness: 1")
+    flags = CLIConfig()
+    if source == "cli":
+        flags = CLIConfig(search_space=[f"{path}:{lo},10:{kind}"], **_SEARCH_FLAGS)
+    else:
+        body += f"""\
+sweep:
+  type: adaptive_search
+  max_iterations: 20
+  objectives:
+    - metric: time_to_first_token
+      direction: minimize
+  search_space:
+    - path: {path}
+      lo: {lo}
+      hi: 10
+      kind: {kind}
+"""
+    config_file = _write(tmp_path, body)
+    with pytest.raises((ValueError, ConfigurationError), match=message):
+        resolve_config(flags, config_file)
+
+
+def test_yaml_search_space_keeps_authored_phase_and_values(tmp_path: Path) -> None:
+    body = (
+        _yaml("gamma", "rate: 10\n      smoothness: 1")
+        + """\
+sweep:
+  type: adaptive_search
+  max_iterations: 20
+  objectives:
+    - metric: time_to_first_token
+      direction: minimize
+  search_space:
+    - path: phases.measured.smoothness
+      lo: 0.1
+      hi: 2
+"""
+    )
+    config = resolve_config(CLIConfig(), _write(tmp_path, body))
+
+    phase = config.benchmark.phases[0]
+    assert (phase.type, phase.rate, phase.smoothness) == ("gamma", 10, 1)
+    assert config.sweep.search_space[0].path == "phases.measured.smoothness"
