@@ -1388,8 +1388,28 @@ class _ServerMetricsSettings(BaseSettings):
         ge=0.0,
         le=30.0,
         default=2.0,
-        description="Time in seconds to continue collecting metrics after profiling completes, "
-        "allowing server-side metrics to flush/finalize before shutting down (default: 2.0s)",
+        description=(
+            "Time in seconds to wait for server-side metrics to flush/finalize "
+            "at phase boundaries: after warmup completes (before profiling "
+            "starts) and after profiling completes (before shutdown). "
+            "The warmup flush/ack barrier runs only when server metrics "
+            "collection is runtime-active (reachable collectors). "
+            "Default: 2.0s."
+        ),
+    )
+    WARMUP_BOUNDARY_TIMEOUT: float | None = Field(
+        ge=0.0,
+        le=3600.0,
+        default=None,
+        description=(
+            "Optional override in seconds for PhaseRunner's wait for "
+            "SERVER_METRICS_WARMUP_BOUNDARY_READY after warmup completes. "
+            "When unset or 0, the timeout is derived as "
+            "COLLECTION_FLUSH_PERIOD + SCRAPE_TIMEOUT * (2 * N) + 5, where N "
+            "is the reachable collector count from ServerMetricsStatusMessage. "
+            "The wait and fail-closed abort on timeout apply only when "
+            "collection is runtime-active."
+        ),
     )
     PROFILE_COMPLETE_RELAY_TIMEOUT: float = Field(
         ge=1.0,

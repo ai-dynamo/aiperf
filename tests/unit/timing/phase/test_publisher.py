@@ -111,3 +111,47 @@ class TestPhasePublisher:
         await pub.request_profile_cancel()
         sender.assert_awaited_once()
         mock_pub_client.publish.assert_not_called()
+
+    async def test_update_server_metrics_runtime_status_active(
+        self, mock_pub_client: MagicMock
+    ) -> None:
+        pub = PhasePublisher(
+            pub_client=mock_pub_client,
+            service_id="tm-001",
+            profile_cancel_sender=AsyncMock(),
+        )
+        assert pub.server_metrics_runtime_active is False
+        assert pub.server_metrics_collector_count == 0
+
+        pub.update_server_metrics_runtime_status(
+            enabled=True,
+            endpoints_reachable=[
+                "http://localhost:8000/metrics",
+                "http://localhost:8001/metrics",
+            ],
+        )
+        assert pub.server_metrics_runtime_active is True
+        assert pub.server_metrics_collector_count == 2
+
+    async def test_update_server_metrics_runtime_status_inactive_when_unreachable(
+        self, mock_pub_client: MagicMock
+    ) -> None:
+        pub = PhasePublisher(
+            pub_client=mock_pub_client,
+            service_id="tm-001",
+            profile_cancel_sender=AsyncMock(),
+        )
+        pub.update_server_metrics_runtime_status(
+            enabled=False,
+            endpoints_reachable=[],
+        )
+        assert pub.server_metrics_runtime_active is False
+        assert pub.server_metrics_collector_count == 0
+
+        # enabled=True with empty reachable list is still inactive
+        pub.update_server_metrics_runtime_status(
+            enabled=True,
+            endpoints_reachable=[],
+        )
+        assert pub.server_metrics_runtime_active is False
+        assert pub.server_metrics_collector_count == 0
