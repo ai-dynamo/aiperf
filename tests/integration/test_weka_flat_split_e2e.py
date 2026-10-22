@@ -764,8 +764,9 @@ async def test_spawn_join_gates_main_turn_until_worker_chain_completes(
     assert branch_stats.children_errored == 0, branch_stats
 
 
+@pytest.mark.parametrize("probe_rep", range(40))  # DO NOT MERGE: CI flake probe
 async def test_runtime_idle_cap_handles_independent_stream_clock_drift(
-    tmp_path: Path, mock_server_factory: MockServerFactory
+    tmp_path: Path, mock_server_factory: MockServerFactory, probe_rep: int
 ) -> None:
     """A slow child cannot recreate a tree-idle gap beyond the dataset cap."""
     corpus = _write_independent_stream_drift_trace(tmp_path / "traces")

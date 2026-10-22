@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+# DO NOT MERGE: temporary probe that repeats one flaky integration test.
 name: "Run Integration Tests"
 
 on:
@@ -20,10 +21,6 @@ jobs:
       matrix:
         os: ["ubuntu-latest"]
         python-version: ["3.11", "3.12", "3.13"]
-        shard: [0, 1, 2, 3]
-    env:
-      AIPERF_SHARD_INDEX: ${{ matrix.shard }}
-      AIPERF_SHARD_TOTAL: 4
 
     steps:
     - uses: actions/checkout@v6
@@ -37,6 +34,17 @@ jobs:
       run: |
         make first-time-setup PYTHON_VERSION=${{ matrix.python-version }}
 
-    - name: Run integration tests
+    - name: Repeat idle-cap test (40x, 4 at a time)
       run: |
-        make integration-tests-ci
+        . .venv/bin/activate
+        pytest "tests/integration/test_weka_flat_split_e2e.py::test_runtime_idle_cap_handles_independent_stream_clock_drift" \
+          -m integration -n 4 -v --tb=long -p no:randomly --basetemp="$RUNNER_TEMP/pt"
+
+    - name: Upload aiperf logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: idle-cap-probe-logs-py${{ matrix.python-version }}
+        path: ${{ runner.temp }}/pt/**/logs/*.log
+        if-no-files-found: ignore
+        retention-days: 7
