@@ -599,7 +599,12 @@ async def test_idle_watchdog_debug_logs_fire_with_requests_in_flight(
 async def test_idle_watchdog_debug_logs_fire_that_advances_nothing(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The cap lapsing with no timer to move is reported with the pending count."""
+    """An expiry with nothing to advance still marks the cap expired.
+
+    ``idle_cap_expired`` is what lets a later grouped timer re-enforce the cap
+    (``_on_root_timer_done``), and ``pending_timers=0`` in the log separates
+    "no timers left" from the in-flight case when diagnosing a CI gap failure.
+    """
     caplog.set_level(logging.DEBUG, logger=replay_dependencies.__name__)
     scheduler = LoopScheduler()
     coordinator = _watchdog_coordinator(scheduler)
@@ -659,7 +664,12 @@ async def test_idle_cap_advances_request_past_control_timer_that_issues_nothing(
 
 @pytest.mark.asyncio
 async def test_idle_cap_does_not_advance_past_timer_that_issued_a_request() -> None:
-    """Re-enforcing must stop once the advanced timer puts work on the wire."""
+    """A timer that issues a request ends the idle gap, so the cap stops.
+
+    ``observe_issued`` clears ``idle_cap_expired``; when the issuing timer
+    returns, the group observer must leave the next request at its original
+    trace offset rather than pulling it in behind work already on the wire.
+    """
     scheduler = LoopScheduler()
     coordinator = _watchdog_coordinator(scheduler)
     loop = asyncio.get_running_loop()
@@ -689,7 +699,12 @@ async def test_idle_cap_does_not_advance_past_timer_that_issued_a_request() -> N
 
 @pytest.mark.asyncio
 async def test_timer_issuing_nothing_before_cap_expires_keeps_replay_spacing() -> None:
-    """A control timer inside the cap budget must not pull later requests in."""
+    """Before the cap expires, a timer that issues nothing must not move others.
+
+    The group observer runs after every grouped timer, but re-enforcement is
+    gated on ``idle_cap_expired``. Without that gate, every join deadline in a
+    normal trace would compress the spacing to the following request.
+    """
     scheduler = LoopScheduler()
     coordinator = _watchdog_coordinator(scheduler)
     loop = asyncio.get_running_loop()

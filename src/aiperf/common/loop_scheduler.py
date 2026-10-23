@@ -431,7 +431,11 @@ class LoopScheduler:
         return shift_sec
 
     def pending_count_for_group(self, group_id: str) -> int:
-        """Scheduled timers tagged with ``group_id`` that have not fired yet."""
+        """Count ``group_id`` timers still waiting to fire.
+
+        An entry is dropped when its timer fires or is cancelled, so a timer
+        whose coroutine is already running is not counted.
+        """
         return sum(1 for group in self._handle_groups.values() if group == group_id)
 
     def cap_pending_delay_for_group(self, group_id: str, max_delay_sec: float) -> float:
