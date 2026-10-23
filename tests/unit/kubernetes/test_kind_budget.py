@@ -6,8 +6,9 @@ Regression coverage for the weekly "Run Kubernetes Audit Tests" workflow,
 which failed every scheduled run with operator pods stuck Pending on
 ``FailedScheduling: 0/1 nodes available: Insufficient cpu``. The test
 fixtures pinned production-scale requests (worker pod 3350m + controller pod
-2600m = 5950m per AIPerfJob) onto a single-node Kind cluster whose
-ubuntu-latest runner has only 4 vCPUs, so no benchmark pod ever scheduled.
+2650m = 6000m per AIPerfJob; 6250m with both optional managers) onto a
+single-node Kind cluster whose ubuntu-latest runner has only 4 vCPUs, so no
+benchmark pod ever scheduled.
 
 The audit workflow opts into two complementary mechanisms:
 
@@ -71,8 +72,14 @@ kindnet 100m + scheduler 100m (kind v0.27 / k8s 1.32 measures the same)."""
 _JOBSET_CONTROLLER_CPU_MCPU = 500
 """jobset v0.8.0 manifests.yaml: controller-manager requests.cpu."""
 
-_SWEEP_CONTROLLER_CPU_MCPU = 75
-"""K8sEnvironment.SWEEP_CONTROLLER default; runs alongside one sweep cell."""
+_AUDIT_SCOPED_MOCK_CPU_MCPU = 500
+"""Mock-server request approach A (Kind-sized fixtures) requires in the audit
+suite. The shared dev/deploy/mock-server.yaml manifest is currently 2000m
+(sibling commit 3a6a44ad0 restored it for the other suites); with that value
+even the kind-sized workload cannot fit a physical 4-vCPU node, so an A-only
+resolution of the approach A/B decision must scope a 500m mock to the audit
+fixture before this physical-budget guard describes the real deployment.
+See ci-data/lane-m2-report.md."""
 
 
 def _parse_cpu_mcpu(quantity: str) -> int:
@@ -107,6 +114,19 @@ def _controller_pod_cpu_mcpu(
             overrides.get(f"AIPERF_K8S_{name}_CPU", getattr(defaults, name).CPU)
         )
         for name in CONTROLLER_RESOURCE_KEYS
+    )
+
+
+def _sweep_pod_cpu_mcpu(defaults: _K8sEnvironment) -> int:
+    """Sweep-controller pod request total, parsed from the shipped defaults.
+
+    The renderer (operator/handlers/sweep/create.py) gives the pod two
+    resource-bearing containers — the sweep controller itself and its results
+    sidecar — so both are counted, from K8sEnvironment rather than a frozen
+    literal.
+    """
+    return _parse_cpu_mcpu(defaults.SWEEP_CONTROLLER.CPU) + _parse_cpu_mcpu(
+        defaults.RESULTS_SIDECAR.CPU
     )
 
 
@@ -159,7 +179,7 @@ def test_kind_sized_peak_fits_advertised_floor() -> None:
     peak_benchmark_mcpu = (
         _controller_pod_cpu_mcpu(overrides, defaults)
         + _parse_cpu_mcpu(overrides["AIPERF_K8S_WORKER_POD_CPU"])
-        + _SWEEP_CONTROLLER_CPU_MCPU
+        + _sweep_pod_cpu_mcpu(defaults)
     )
     total_mcpu = peak_benchmark_mcpu + _fixed_tenants_mcpu()
 
@@ -181,7 +201,7 @@ def test_production_default_peak_also_fits_advertised_floor() -> None:
     peak_benchmark_mcpu = (
         _controller_pod_cpu_mcpu({}, defaults)
         + _parse_cpu_mcpu(defaults.WORKER_POD.CPU)
-        + _SWEEP_CONTROLLER_CPU_MCPU
+        + _sweep_pod_cpu_mcpu(defaults)
     )
     total_mcpu = peak_benchmark_mcpu + _fixed_tenants_mcpu()
 
@@ -190,6 +210,48 @@ def test_production_default_peak_also_fits_advertised_floor() -> None:
         f"{_fixed_tenants_mcpu()}m = {total_mcpu}m exceeds the advertised "
         f"{_ADVERTISED_FLOOR_MCPU}m floor; the overcommit floor no longer "
         "covers production-sized pods"
+    )
+
+
+@pytest.mark.usefixtures("_clean_k8s_env")
+def test_kind_sized_peak_fits_physical_4vcpu_runner() -> None:
+    """Approach-A physical budget: the kind-sized workload must fit the real
+    4-vCPU ubuntu-latest runner with no advertised-capacity floor.
+
+    This is the original regression protection for the weekly failure: if the
+    overcommit opt-in is ever removed from the audit workflow, only this
+    arithmetic keeps benchmark pods schedulable. It uses the complete pod
+    inventory (controller pod incl. event-bus proxy, worker pod, sweep
+    controller + sweep results sidecar) and fixed tenants measured/parsed
+    from sources, with the mock server at its approach-A audit-scoped value
+    (_AUDIT_SCOPED_MOCK_CPU_MCPU), NOT the current shared-manifest value —
+    see that constant's comment for the operator-decision dependency.
+    """
+    defaults = _K8sEnvironment()
+    overrides = _fixture_overrides()
+
+    peak_benchmark_mcpu = (
+        _controller_pod_cpu_mcpu(overrides, defaults)
+        + _parse_cpu_mcpu(overrides["AIPERF_K8S_WORKER_POD_CPU"])
+        + _sweep_pod_cpu_mcpu(defaults)
+    )
+    fixed_mcpu = (
+        _KUBE_SYSTEM_CPU_MCPU
+        + _JOBSET_CONTROLLER_CPU_MCPU
+        + _AUDIT_SCOPED_MOCK_CPU_MCPU
+        + _operator_pod_cpu_mcpu()
+    )
+
+    physical_budget_mcpu = 4000
+    assert peak_benchmark_mcpu <= physical_budget_mcpu - fixed_mcpu, (
+        f"kind-sized peak {peak_benchmark_mcpu}m (controller "
+        f"{_controller_pod_cpu_mcpu(overrides, defaults)}m + worker pod "
+        f"{overrides['AIPERF_K8S_WORKER_POD_CPU']} + sweep pod "
+        f"{_sweep_pod_cpu_mcpu(defaults)}m) exceeds the "
+        f"{physical_budget_mcpu - fixed_mcpu}m left on a physical 4-vCPU "
+        f"Kind node after fixed tenants ({fixed_mcpu}m, mock at the "
+        f"audit-scoped {_AUDIT_SCOPED_MOCK_CPU_MCPU}m); without the "
+        "overcommit floor, pods would sit Pending with FailedScheduling"
     )
 
 
