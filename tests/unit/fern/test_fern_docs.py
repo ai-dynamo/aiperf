@@ -27,7 +27,10 @@ FERN_DEV_TIMEOUT_S = 120
 # Per-attempt budget for the one-time docs-preview-bundle download (~365 MB).
 # Cold downloads on GitHub-hosted runners finish in well under 60 s
 # typically; the observed flake (main push, 2026-10-15) was still
-# downloading at 120 s. 300 s covers ~2.5x the worst observed attempt.
+# downloading when the old 120 s budget expired, so its true completion time
+# is unknown (censored observation). 300 s is 2.5x that previous budget,
+# chosen to absorb a several-fold-slower-than-typical download rather than a
+# measured tail.
 FERN_PREWARM_TIMEOUT_S = 300
 
 
