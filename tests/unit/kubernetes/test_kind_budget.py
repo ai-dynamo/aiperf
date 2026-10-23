@@ -35,10 +35,14 @@ from pathlib import Path
 import pytest
 import yaml
 
+from aiperf.common.environment import Environment
+from aiperf.kubernetes.constants import WORKER_IMPORT_MEMORY_FLOOR_MIB
 from aiperf.kubernetes.environment import (
     CONTROLLER_RESOURCE_KEYS,
     _K8sEnvironment,
 )
+from aiperf.kubernetes.jobset import split_worker_pod_resources
+from aiperf.kubernetes.utils import parse_memory_mib
 from tests.kubernetes.helpers.operator import KIND_JOB_POD_ENV
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -47,7 +51,9 @@ _KIND_NODE_CPU_MCPU = 4000
 """ubuntu-latest GitHub-hosted runner: 4 vCPUs; Kind reserves nothing."""
 
 _KUBE_SYSTEM_CPU_MCPU = 950
-"""Measured on a fresh kind v0.27.0 / k8s v1.32.2 control-plane node."""
+"""Measured on a fresh kind v0.31.0 / k8s v1.35.0 control-plane node:
+apiserver 250m + controller-manager 200m + coredns 2x100m + etcd 100m +
+kindnet 100m + scheduler 100m (kind v0.27 / k8s 1.32 measures the same)."""
 
 _JOBSET_CONTROLLER_CPU_MCPU = 500
 """jobset v0.8.0 manifests.yaml: controller-manager requests.cpu."""
@@ -147,4 +153,42 @@ def test_peak_benchmark_pod_cpu_fits_kind_node() -> None:
         f"{_SWEEP_CONTROLLER_CPU_MCPU}m) exceeds the {budget_mcpu}m left on a "
         f"4-vCPU Kind node after fixed tenants ({fixed_mcpu}m); pods would sit "
         "Pending with FailedScheduling"
+    )
+
+
+@pytest.mark.usefixtures("_clean_k8s_env")
+def test_worker_pod_budget_renders_at_default_topology(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fixture's WORKER_POD budget must survive render-time split validation.
+
+    The operator divides the worker-pod budget across 1 worker-pod-manager +
+    DEFAULT_WORKERS_PER_POD workers + that many record processors and refuses
+    shares below the per-worker import-memory floor. A too-small memory budget
+    therefore fails JobSet rendering with ValueError instead of merely
+    scheduling tight — a failure mode the CPU budget check above cannot see.
+    """
+    for key, value in _fixture_overrides().items():
+        monkeypatch.setenv(key, value)
+    env = _K8sEnvironment()
+    worker_count = Environment.WORKER.DEFAULT_WORKERS_PER_POD
+    record_processors = max(1, worker_count // env.RECORD_PROCESSOR_SCALE_FACTOR)
+
+    split = split_worker_pod_resources(
+        env.WORKER_POD.to_k8s_resources(burstable=True),
+        worker_count,
+        record_processors,
+        None,
+        burstable=True,
+    )
+
+    worker_shares = split[1 : 1 + worker_count]
+    floor = WORKER_IMPORT_MEMORY_FLOOR_MIB
+    assert all(
+        parse_memory_mib(share["requests"]["memory"]) >= floor
+        for share in worker_shares
+    ), (
+        f"worker containers fall below the {floor}Mi import-memory floor at "
+        f"the default {worker_count}-worker/{record_processors}-record-"
+        "processor topology"
     )

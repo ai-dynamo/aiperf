@@ -37,8 +37,13 @@ apiserver accepts the CRD object, not when ``Established=True`` is set."""
 
 
 KIND_JOB_POD_ENV: tuple[str, ...] = (
+    # Worker pod CPU is the only worker-pod override: 4 vCPU is the binding
+    # CI constraint. MEMORY deliberately stays at the 6Gi product default —
+    # the shipped 10-worker/10-record-processor topology enforces a 162Mi
+    # per-worker import floor (split_worker_pod_resources), which needs a
+    # >= ~5Gi pod budget; a 2Gi override makes JobSet rendering raise
+    # ValueError instead of scheduling.
     "AIPERF_K8S_WORKER_POD_CPU=1000m",
-    "AIPERF_K8S_WORKER_POD_MEMORY=2Gi",
     "AIPERF_K8S_SYSTEM_CONTROLLER_CPU=75m",
     "AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY=192Mi",
     "AIPERF_K8S_TIMING_MANAGER_CPU=50m",
@@ -58,14 +63,14 @@ KIND_JOB_POD_ENV: tuple[str, ...] = (
 )
 """Right-sized resource requests for the single-node Kind cluster these tests
 run on. CI uses ubuntu-latest (4 vCPU): the node must also host kube-system
-(~950m of measured requests), the JobSet controller (500m), the mock server
-(500m), and the operator pod itself (350m: operator 250m + results-server
-100m), leaving roughly 1.7 CPUs for benchmark pods. The previous
-production-sized values (worker pod 3350m + controller pod 2600m = 5950m per
-AIPerfJob) exceeded the whole node, so every operator-managed pod sat Pending
-with FailedScheduling/Insufficient cpu until the test timed out. Requests only
-gate scheduling: resource_mode defaults to burstable (no limits), so
-containers still burst to full node CPU at runtime. Guarded by
+(~950m of measured requests on kind v0.31/k8s 1.35), the JobSet controller
+(500m), the mock server (500m), and the operator pod itself (350m: operator
+250m + results-server 100m), leaving roughly 1.7 CPUs for benchmark pods. The
+previous production-sized values (worker pod 3350m + controller pod 2600m =
+5950m per AIPerfJob) exceeded the whole node, so every operator-managed pod
+sat Pending with FailedScheduling/Insufficient cpu until the test timed out.
+Requests only gate scheduling: resource_mode defaults to burstable (no
+limits), so containers still burst to full node CPU at runtime. Guarded by
 tests/unit/kubernetes/test_kind_budget.py."""
 
 
