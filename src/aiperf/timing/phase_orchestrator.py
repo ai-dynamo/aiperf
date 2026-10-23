@@ -311,7 +311,8 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         # First fatal failure surfaced by a seamless phase's detached return-wait
         # task; re-raised by _execute_phases so the run fails (not reports success).
         self._seamless_phase_error: BaseException | None = None
-        # Set by cancel(); stops _execute_phases from starting any later phase.
+        # Winding-down marker: once set (by cancel() or by stop-path
+        # teardown), _execute_phases must not start any later phase.
         self._cancelled = False
 
     def _record_control_fatal_error(self, error: BaseException) -> None:
@@ -653,6 +654,10 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         and is torn down alongside the orchestrator, so its callback table
         does not outlive us.
         """
+        # Mark winding-down even when no runner is active: the phase loop
+        # may not have appended its first runner yet (stop racing start),
+        # and must not begin a phase once stop has begun.
+        self._cancelled = True
         if self._active_runners:
             self.debug(
                 lambda: (
@@ -663,7 +668,15 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         await self._stop_server_profiler_warn_only()
 
     def _cancel_active_runners(self) -> None:
-        """Cancel every tracked phase runner and clear the active list."""
+        """Cancel every tracked phase runner and clear the active list.
+
+        Clearing the list ends the phase loop too: every teardown path that
+        funnels through here must prevent ``_execute_phases`` from starting
+        a later phase against the runners it just cleared. ``cancel()``
+        additionally sets the flag up front because it awaits
+        ``cancel_all_credits()`` before reaching this helper.
+        """
+        self._cancelled = True
         for runner in self._active_runners:
             runner.cancel()
             self.debug(f"Cancelled active phase runner for phase {runner.phase}")
