@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
-from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
@@ -335,196 +335,145 @@ class TestUserClass:
 
 
 @pytest.mark.asyncio
-class TestInitialUserChaining:
-    """Deterministic coverage for the chained initial first-turn timers.
+class TestArrivalQueueClamping:
+    """Deterministic coverage for the clamped arrival queue in execute_phase.
 
-    UserCentricStrategy._schedule_initial_user chains each initial user's
-    timer to the next so an event-loop stall longer than the stagger window
-    re-spaces the remaining arrivals instead of bursting them in one batch
-    (the Windows CI flake in TestUserCentricRateStaggerTiming). These tests
-    drive the chain helper directly on the real loop with a real
-    LoopScheduler; no_sleep only patches asyncio.sleep, which none of these
-    tests use -- waits are event/wait_for based and timers run in real time.
+    Every arrival slot fires at max(planned, previous_slot_fire + stagger),
+    so an event-loop stall re-spaces later arrivals instead of bursting
+    overdue slots in one batch (the collapsed-stagger CI flake). These tests
+    run execute_phase under time_traveler (virtual time): the clamp sleeps
+    (asyncio.sleep) and its perf_counter reads share the loop's virtual
+    clock, so slot fire times are exact, and every test terminates because
+    the issuer returns False after a fixed number of calls (the arrival queue
+    always derives a replacement slot per issue, so it never runs dry first).
     """
 
     @staticmethod
-    def _strategy(
-        scheduler: LoopScheduler,
-        issuer: MagicMock,
-        *,
-        sending_complete: bool = False,
-    ) -> UserCentricStrategy:
-        lifecycle = MagicMock()
-        lifecycle.is_sending_complete = sending_complete
+    def _strategy(num_users: int = 3, rate: float = 20.0) -> UserCentricStrategy:
+        """Real ConversationSource (one 2-turn conversation, wrapping sampler),
+        mocked scheduler/stop_checker/lifecycle; issuer injected per test.
+        rate=20.0 -> stagger=50ms, turn_gap=num_users/rate=150ms."""
+        ds = DatasetMetadata(
+            conversations=[
+                ConversationMetadata(
+                    conversation_id="c1",
+                    turns=[TurnMetadata(delay_ms=None), TurnMetadata(delay_ms=None)],
+                )
+            ],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+        sampler = make_sampler(["c1"], DatasetSamplingStrategy.SEQUENTIAL)
+        src = ConversationSource(ds, sampler)
         cfg = CreditPhaseConfig(
             phase=CreditPhase.PROFILING,
             timing_mode=TimingMode.USER_CENTRIC_RATE,
-            request_rate=20.0,  # stagger = 50ms
-            num_users=3,
-            total_expected_requests=6,
+            request_rate=rate,
+            num_users=num_users,
+            total_expected_requests=num_users * 2,
         )
         return UserCentricStrategy(
             config=cfg,
-            conversation_source=MagicMock(),
-            scheduler=scheduler,
+            conversation_source=src,
+            scheduler=MagicMock(),
             stop_checker=MagicMock(),
-            credit_issuer=issuer,
-            lifecycle=lifecycle,
+            credit_issuer=MagicMock(),
+            lifecycle=MagicMock(),
         )
 
     @staticmethod
-    def _users(n: int) -> list[User]:
-        return [User(user_id=i, sampled=MagicMock(), order=i) for i in range(n)]
-
-    @staticmethod
-    def _recording_issuer(call_times: list[float]) -> MagicMock:
-        issuer = MagicMock()
+    def _recording_issuer(call_times: list[float], stop_after: int) -> AsyncMock:
+        """Record virtual fire time per issued arrival; refuse the call that
+        reaches stop_after so execute_phase returns deterministically."""
 
         async def _issue(_turn) -> bool:
             call_times.append(time.perf_counter())
-            return True
+            return len(call_times) < stop_after
 
-        issuer.issue_credit = AsyncMock(side_effect=_issue)
-        return issuer
-
-    @staticmethod
-    async def _wait_for_calls(call_times: list[float], n: int) -> None:
-        """Pump the loop until n issuance calls land; each wait_for timeout
-        lets the real timers fire. No asyncio.sleep (no_sleep collapses it)."""
-        while len(call_times) < n:
-            try:
-                await asyncio.wait_for(asyncio.Event().wait(), timeout=0.2)
-            except asyncio.TimeoutError:
-                pass
+        return AsyncMock(side_effect=_issue)
 
     @staticmethod
-    async def _cleanup(scheduler: LoopScheduler) -> None:
-        await asyncio.gather(*scheduler.cancel_all(), return_exceptions=True)
+    async def _run(strategy: UserCentricStrategy) -> None:
+        task = asyncio.create_task(strategy.execute_phase())
+        try:
+            await task
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
 
-    async def test_chain_respaces_successor_when_timer_fires_late(self) -> None:
-        """A successor whose planned slot is already due (collapsed grid after
-        a stall) must be re-armed at fire_time + stagger, not fired in the
-        same batch."""
-        scheduler = LoopScheduler()
-        call_times: list[float] = []
-        issuer = self._recording_issuer(call_times)
-        strategy = self._strategy(scheduler, issuer)
-        users = self._users(3)
-
-        now = time.perf_counter()
-        users[0].next_send_time = now  # fires ~immediately
-        # Planned successor slots are nearly immediate too: without
-        # re-spacing, all three would fire in the same loop batch.
-        users[1].next_send_time = now + 0.005
-        users[2].next_send_time = now + 0.010
-
-        strategy._schedule_initial_user(users, 0)
-        await self._wait_for_calls(call_times, 3)
-        await self._cleanup(scheduler)
-
+    async def test_healthy_grid_lands_on_planned_slots(self, time_traveler) -> None:
+        """With no stall the clamp never engages: initial users issue exactly
+        on the planned stagger grid (base + order * stagger)."""
+        strategy = self._strategy()
+        await strategy.setup_phase()
         stagger = strategy._stagger
-        assert len(call_times) == 3
-        # Each hop is spaced by ~stagger from the previous ACTUAL fire, not
-        # by the collapsed planned grid. Late firing only inflates the gap,
-        # and the loop clock fires at most one resolution early, so the
-        # half-stagger lower bound is robust.
-        assert call_times[1] - call_times[0] >= stagger / 2
-        assert call_times[2] - call_times[1] >= stagger / 2
+        start_ns = time_traveler.perf_counter_ns()
+        strategy._lifecycle.started_at_perf_ns = start_ns
+        strategy._lifecycle.started_at_perf_sec = start_ns / NANOS_PER_SECOND
 
-    async def test_chain_keeps_planned_grid_when_successor_slot_is_future(self) -> None:
-        """On a healthy loop the max() anchor keeps the planned slot: a
-        successor planned beyond fire_time + stagger still fires on plan."""
-        scheduler = LoopScheduler()
         call_times: list[float] = []
-        issuer = self._recording_issuer(call_times)
-        strategy = self._strategy(scheduler, issuer)
-        users = self._users(2)
+        strategy._credit_issuer.issue_credit = self._recording_issuer(
+            call_times, stop_after=3
+        )
+        await self._run(strategy)
 
-        now = time.perf_counter()
-        users[0].next_send_time = now
-        users[1].next_send_time = now + 0.25  # well past now + stagger (0.05)
+        start = start_ns / NANOS_PER_SECOND
+        planned = [start + i * stagger for i in range(3)]
+        assert call_times == pytest.approx(planned, abs=stagger / 10)
 
-        strategy._schedule_initial_user(users, 0)
-        await self._wait_for_calls(call_times, 2)
-        await self._cleanup(scheduler)
+    async def test_stalled_grid_respaces_initial_and_replacement_arrivals(
+        self, time_traveler
+    ) -> None:
+        """Started far in the past, every planned slot -- initial grid and
+        derived replacements alike -- is overdue. The clamp must re-space all
+        of them at one stagger per slot instead of bursting them at one
+        instant (the pre-fix CI failure: mean stagger 0.0000s)."""
+        strategy = self._strategy()
+        await strategy.setup_phase()
+        stagger = strategy._stagger
+        # 10 staggers in the past: initial slots and every derived replacement
+        # slot (max + 2 * turn_gap = +6 staggers) are all overdue.
+        start_ns = time_traveler.perf_counter_ns() - int(
+            10 * stagger * NANOS_PER_SECOND
+        )
+        strategy._lifecycle.started_at_perf_ns = start_ns
+        strategy._lifecycle.started_at_perf_sec = start_ns / NANOS_PER_SECOND
 
-        assert len(call_times) == 2
-        assert call_times[1] - call_times[0] >= 0.20
-
-    async def test_chain_advances_while_first_issuance_is_blocked(self) -> None:
-        """The successor is armed when the timer fires, before issuance: a
-        blocked first issue_credit must not delay or suppress the chain."""
-        scheduler = LoopScheduler()
-        issuer = MagicMock()
-        gate = asyncio.Event()
-        second_call = asyncio.Event()
-        calls = 0
-
-        async def _issue(_turn) -> bool:
-            nonlocal calls
-            calls += 1
-            if calls == 1:
-                await gate.wait()  # first issuance blocks until released
-            else:
-                second_call.set()
-            return True
-
-        issuer.issue_credit = AsyncMock(side_effect=_issue)
-        strategy = self._strategy(scheduler, issuer)
-        users = self._users(2)
-
-        now = time.perf_counter()
-        users[0].next_send_time = now
-        users[1].next_send_time = now  # collapsed planned grid
-
-        strategy._schedule_initial_user(users, 0)
-        # Chain must advance to the second user's issuance even though the
-        # first issuance is still blocked.
-        await asyncio.wait_for(second_call.wait(), timeout=2.0)
-        gate.set()
-        await self._cleanup(scheduler)
-
-        assert calls == 2
-
-    async def test_chain_not_rearmed_after_sending_cutoff(self) -> None:
-        """Once the phase marks sending complete, PhaseRunner's cutoff has
-        cancelled all pending timers; a timer firing past the cutoff must not
-        recreate new ones."""
-        scheduler = LoopScheduler()
         call_times: list[float] = []
-        issuer = self._recording_issuer(call_times)
-        strategy = self._strategy(scheduler, issuer, sending_complete=True)
-        users = self._users(3)
+        strategy._credit_issuer.issue_credit = self._recording_issuer(
+            call_times, stop_after=6  # 3 initial users + 3 replacements
+        )
+        await self._run(strategy)
 
-        now = time.perf_counter()
-        for i, user in enumerate(users):
-            user.next_send_time = now + i * 0.01
+        assert len(call_times) == 6
+        gaps = [b - a for a, b in zip(call_times, call_times[1:], strict=True)]
+        assert all(gap == pytest.approx(stagger, abs=stagger / 10) for gap in gaps)
 
-        strategy._schedule_initial_user(users, 0)
-        await self._wait_for_calls(call_times, 1)
+    async def test_cancelled_execution_task_leaves_no_scheduler_timers(
+        self, time_traveler
+    ) -> None:
+        """Arrival pacing uses no LoopScheduler timers at all, so cancelling
+        the execution task mid-phase cannot strand or recreate pending
+        timers (the chained-timer rework's leak class)."""
+        strategy = self._strategy()
+        await strategy.setup_phase()
+        start_ns = time_traveler.perf_counter_ns()
+        strategy._lifecycle.started_at_perf_ns = start_ns
+        strategy._lifecycle.started_at_perf_sec = start_ns / NANOS_PER_SECOND
 
-        # The fired timer issued its own credit but armed no successor.
-        assert scheduler.pending_count() == 0
-        await self._cleanup(scheduler)
-        assert len(call_times) == 1
-
-    async def test_pending_chain_timer_cancelled_before_fire(self) -> None:
-        """Cancelling the pending chain timer before it fires issues nothing
-        and leaves no timers behind."""
-        scheduler = LoopScheduler()
         call_times: list[float] = []
-        issuer = self._recording_issuer(call_times)
-        strategy = self._strategy(scheduler, issuer)
-        users = self._users(3)
+        strategy._credit_issuer.issue_credit = self._recording_issuer(
+            call_times, stop_after=100
+        )
+        task = asyncio.create_task(strategy.execute_phase())
+        while not call_times:
+            await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
-        now = time.perf_counter()
-        for i, user in enumerate(users):
-            user.next_send_time = now + 0.05 + i * 0.01
-
-        strategy._schedule_initial_user(users, 0)
-        scheduler.cancel_all_pending()
-        assert scheduler.pending_count() == 0
-
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(asyncio.Event().wait(), timeout=0.1)
-        assert not call_times
+        assert call_times
+        strategy._scheduler.schedule_at_perf_sec.assert_not_called()
+        strategy._scheduler.schedule_at_perf_ns.assert_not_called()
+        strategy._scheduler.schedule_later.assert_not_called()
+        strategy._scheduler.schedule_at.assert_not_called()
