@@ -17,7 +17,6 @@ import asyncio
 import logging
 import os
 import sys
-import threading
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -44,9 +43,8 @@ from tests.kubernetes.helpers.benchmark import (
 from tests.kubernetes.helpers.cluster import (
     ClusterConfig,
     ClusterRuntime,
+    CpuOvercommitReconciler,
     LocalCluster,
-    apply_cpu_overcommit,
-    start_cpu_overcommit_thread,
 )
 from tests.kubernetes.helpers.diagnostics import dump_cluster_diagnostics
 from tests.kubernetes.helpers.helm import HelmClient, HelmDeployer, HelmValues
@@ -213,15 +211,16 @@ class K8sTestSettings:
     """
 
     node_cpu_overcommit: int = 0
-    """Fake CPU capacity floor (whole cores) for local Kind nodes; 0 disables.
+    """Opt-in fake CPU capacity floor (whole cores) for local Kind nodes.
 
-    Strictly opt-in. Lets the scheduler admit production-sized pod requests
-    on small CI runners. Applied only to nodes with a ``kind://`` providerID
-    on clusters the fixture manages (kind runtime), never to existing/remote
-    clusters. The chaos CI targets opt in with
-    ``K8S_TEST_NODE_CPU_OVERCOMMIT=32`` (KIND_CPU_OVERCOMMIT_FLOOR). See
-    helpers/cluster.py for the rationale and the kubelet re-assertion cadence
-    this is re-applied on.
+    0 (default) disables. When > 0, the local_cluster fixture patches every
+    Kind node's advertised capacity/allocatable up to the floor so the
+    scheduler admits production-sized pod requests on small CI runners, and
+    re-applies it on an interval (kubelet re-asserts real capacity within
+    seconds). Applied only to fixture-managed Kind clusters whose nodes carry
+    the kind:// providerID marker — never to existing/remote clusters. The
+    chaos and audit CI workflows set this to 32; see helpers/cluster.py for
+    the full rationale.
     """
 
     @property
@@ -263,7 +262,7 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-job-node-selector", "K8S_TEST_JOB_NODE_SELECTOR", None, "str", "Comma-separated key=value node selector for benchmark pods (e.g. kubernetes.io/arch=amd64)"),
     ("--k8s-tolerate-gpu-nodes", "K8S_TEST_TOLERATE_GPU_NODES", None, "bool", "Add tolerations for GPU node taints (nvidia.com/gpu, kubernetes.io/arch=arm64) so pods can run on GPU nodes"),
     ("--k8s-allow-disruptive", "K8S_TEST_ALLOW_DISRUPTIVE", None, "bool", "Allow tests marked k8s_disruptive that make cluster-wide mutations (e.g. CRD deletion); skipped by default"),
-    ("--k8s-node-cpu-overcommit", "K8S_TEST_NODE_CPU_OVERCOMMIT", "0", "int", "Opt-in fake CPU capacity floor (cores) for local Kind nodes so production-sized pod requests schedule on small CI runners; 0 disables (default). Only kind:// providerID nodes are patched"),
+    ("--k8s-node-cpu-overcommit", "K8S_TEST_NODE_CPU_OVERCOMMIT", "0", "int", "Opt-in fake CPU capacity floor (cores) for local Kind nodes so production-sized pod requests schedule on small CI runners; 0 (default) disables. Only nodes with the kind:// providerID marker are ever patched"),
     ("--k8s-operator-strict-preflight", "K8S_TEST_OPERATOR_STRICT_PREFLIGHT", None, "bool", "Deploy the operator with AIPERF_PREFLIGHT_STRICT_RESOURCES=true so provable capacity shortfalls fail fast instead of hanging at Pending (CI chaos/audit)"),
     ("--k8s-keep-cluster-on-failure", "K8S_TEST_KEEP_CLUSTER_ON_FAILURE", None, "bool", "Skip only the final cluster delete, and only when tests failed (CI diagnostics; a later workflow step deletes the cluster)"),
     ("--k8s-diagnostics-dir", "K8S_TEST_DIAGNOSTICS_DIR", None, "str", "Dump cluster diagnostics here from fixture teardown when any test failed, before fixtures uninstall the operator and delete the cluster"),
@@ -875,28 +874,30 @@ async def local_cluster(
     # operator's production-sized pod requests (one AIPerfJob wants ~6 CPUs
     # across its controller and worker pods; a 4-vCPU ubuntu-latest runner
     # cannot fit that beside kube-system, the mock server, and the operator
-    # pod itself). Raise the nodes' advertised CPU floor so the test workload
-    # schedules. Kubelet re-asserts real capacity on every node-status sync,
-    # so the patch is re-applied on an interval for the whole session. Only
-    # nodes with a kind:// providerID are ever patched — never existing/
-    # remote clusters, even if the context is repointed mid-session.
-    overcommit_stop: threading.Event | None = None
+    # pod itself). Suites may opt into raising the nodes' advertised CPU
+    # floor so the test workload schedules (the chaos and audit CI workflows
+    # set K8S_TEST_NODE_CPU_OVERCOMMIT=32). Kubelet re-asserts real capacity
+    # on every node-status sync, so a daemon-thread reconciler re-applies the
+    # patch on an interval — it must not be an asyncio task on this fixture's
+    # package-scoped loop, which is suspended for the entire duration of each
+    # function-scoped test loop. Only fixture-managed Kind clusters are
+    # patched, and apply_cpu_overcommit_sync additionally requires each
+    # node's providerID to carry the kind:// locality marker before touching
+    # it.
+    overcommit_reconciler: CpuOvercommitReconciler | None = None
     if cluster.runtime == ClusterRuntime.KIND and s.node_cpu_overcommit > 0:
-        # Eager apply must succeed: without it the first benchmark pods race
-        # kubelet's next capacity re-assertion and may never schedule.
-        await apply_cpu_overcommit(cluster.context, s.node_cpu_overcommit)
-        # The re-assert loop must NOT run on a pytest-asyncio loop: those only
-        # advance while a coroutine is executing, so a package-loop task would
-        # freeze for the duration of every test. Run it on a daemon thread.
-        _overcommit_thread, overcommit_stop = start_cpu_overcommit_thread(
+        overcommit_reconciler = CpuOvercommitReconciler(
             cluster.context, s.node_cpu_overcommit
         )
+        # Eager apply must succeed: without it the first benchmark pods race
+        # kubelet's next capacity re-assertion and may never schedule.
+        await asyncio.to_thread(overcommit_reconciler.start)
 
     try:
         yield cluster
     finally:
-        if overcommit_stop is not None:
-            overcommit_stop.set()
+        if overcommit_reconciler is not None:
+            await asyncio.to_thread(overcommit_reconciler.stop)
 
     failures = _session_failures(request.config)
     keep_for_failure = s.keep_cluster_on_failure and bool(failures)
