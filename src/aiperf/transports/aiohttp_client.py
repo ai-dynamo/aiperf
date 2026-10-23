@@ -250,9 +250,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                                 """
                                 try:
                                     if stream_idle_timeout > 0:
-                                        async with asyncio.timeout(
-                                            stream_idle_timeout
-                                        ):
+                                        async with asyncio.timeout(stream_idle_timeout):
                                             return await anext(chunk_iter)
                                     return await anext(chunk_iter)
                                 except StopAsyncIteration:
