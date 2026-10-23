@@ -833,8 +833,19 @@ async def local_cluster(
     # providerID to carry the kind:// locality marker before touching it.
     overcommit_reconciler: CpuOvercommitReconciler | None = None
     if cluster.runtime == ClusterRuntime.KIND and s.node_cpu_overcommit > 0:
+        # Bind reconciliation to THIS cluster's node set: the providerID
+        # marker alone only proves the provider type, so a repointed context
+        # resolving to a different (possibly remote) Kind cluster must select
+        # nothing. Without a verifiable node set there is no safe patch.
+        expected_nodes = set(await cluster.get_nodes())
+        if not expected_nodes:
+            raise RuntimeError(
+                f"--k8s-node-cpu-overcommit={s.node_cpu_overcommit} was "
+                f"requested but cluster {cluster.name} reports no nodes; "
+                "cannot verify patch locality, refusing to fake capacity"
+            )
         overcommit_reconciler = CpuOvercommitReconciler(
-            cluster.context, s.node_cpu_overcommit
+            cluster.context, s.node_cpu_overcommit, expected_nodes
         )
         # Eager apply must succeed: without it the first benchmark pods race
         # kubelet's next capacity re-assertion and may never schedule.
