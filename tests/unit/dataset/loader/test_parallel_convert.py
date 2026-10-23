@@ -81,7 +81,7 @@ def _drive_worker_inproc(
     "corpus",
     [param(PromptCorpus.SONNET, id="sonnet"), param(PromptCorpus.CODING, id="coding")],
 )  # fmt: skip
-def test_newline_hash_blocks_reject_size_one_but_allow_final_partial(
+def test_build_token_sequence_one_token_blocks_rejected_and_partials_supported(
     corpus: PromptCorpus,
 ) -> None:
     tokenizer = Tokenizer.from_pretrained("builtin")
@@ -102,9 +102,29 @@ def test_newline_hash_blocks_reject_size_one_but_allow_final_partial(
     trace = {"hash_ids": [101, 102, 103], "input_length": 17}
     tokens = generator._build_token_sequence(17, trace["hash_ids"], 8)
     parallel = _drive_worker_inproc(generator, [("s1", [trace])], trace_id, 8)
+    _, turns = parallel[0]
+    _, _, parallel_prompt, _ = turns[0]
     assert len(tokens) == 17
     assert len(generator._cache[103]) == 1
-    assert parallel[0][1][0][2] == tokenizer.decode(tokens)
+    assert parallel_prompt == tokenizer.decode(tokens)
+
+
+def test_process_batch_literal_text_with_one_token_blocks_preserved() -> None:
+    tokenizer = Tokenizer.from_pretrained("builtin")
+    generator = PromptGenerator(
+        prompts=PromptConfig(block_size=1),
+        prefix_prompts=None,
+        tokenizer=tokenizer,
+    )
+    trace = {
+        "hash_ids": [101, 102],
+        "input_length": 2,
+        "text_input": "recorded prompt",
+    }
+
+    results = _drive_worker_inproc(generator, [("s1", [trace])], "literal-text", 1)
+
+    assert results == [("s1", [(None, None, "recorded prompt", None)])]
 
 
 def test_parallel_convert_matches_in_process(real_prompt_generator):

@@ -140,7 +140,6 @@ def _process_batch(
     block_cache = _worker_state.block_cache
 
     def get_block_tokens(hash_id: int, size: int) -> list[int]:
-        reject_separator_only_blocks(block_size, sep_token)
         cached = block_cache.get(hash_id)
         if cached is None:
             hash_rng.reseed_for_hash_id(hash_id)
@@ -166,6 +165,7 @@ def _process_batch(
                 # Literal prompt provided by the trace (no generation needed).
                 prompt = trace["text_input"]
             elif trace.get("hash_ids"):
+                reject_separator_only_blocks(block_size, sep_token)
                 # Generate prompt from hash_id blocks. All blocks are full-sized
                 # except the last. Mirror the serial
                 # PromptGenerator._build_token_sequence guard: when hash_ids
