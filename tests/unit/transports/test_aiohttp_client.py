@@ -489,22 +489,27 @@ class TestAioHttpClient:
             assert call_args[1]["data"] == large_payload
 
 
-# --- Stream Idle Timeout Test Helpers ---
+# --- Response Idle Timeout Test Helpers ---
 
 
 class _StallingStreamReader:
-    """iter_any() that yields the given chunks, then optionally blocks forever.
+    """iter_any() that yields the given chunks, then stalls.
 
-    With ``stall=True`` this mimics a wedged streaming response: the connection
-    stays open (no EOF, no error) but no more bytes ever arrive.
+    ``stall_seconds=None`` blocks forever: a wedged stream (connection open,
+    no EOF, no error, no more bytes). A float stalls that long and then ends
+    the stream normally, for tests that need a real wait without a hang.
     """
 
     def __init__(
-        self, chunks: list[bytes], *, chunk_delay: float = 0.0, stall: bool = True
+        self,
+        chunks: list[bytes],
+        *,
+        chunk_delay: float = 0.0,
+        stall_seconds: float | None = None,
     ) -> None:
         self._chunks = chunks
         self._chunk_delay = chunk_delay
-        self._stall = stall
+        self._stall_seconds = stall_seconds
 
     def iter_any(self):
         return self._gen()
@@ -514,33 +519,40 @@ class _StallingStreamReader:
             if self._chunk_delay:
                 await asyncio.sleep(self._chunk_delay)
             yield chunk
-        if self._stall:
+        if self._stall_seconds is None:
             await asyncio.Event().wait()  # never set: the stream is wedged
+        else:
+            await asyncio.sleep(self._stall_seconds)
 
 
 @pytest.mark.asyncio
-class TestStreamIdleTimeout:
-    """A stream that stops delivering bytes must fail the request, not the run.
+class TestResponseIdleTimeout:
+    """AIPERF_HTTP_RESPONSE_IDLE_TIMEOUT pins.
 
-    Regression coverage for the wedged-stream stall: the per-request total
-    timeout defaults to 6h, so without a per-read idle bound a hung stream
-    only surfaced via the run-level stall watchdog aborting the benchmark.
+    Regression coverage for the wedged-response stall: the per-request total
+    timeout defaults to 6h, so without an idle bound a response that stops
+    delivering bytes only surfaced via the run-level stall watchdog aborting
+    the whole benchmark. The bound is opt-in (default 0) and per-read: it arms
+    on every read and resets on every received byte.
     """
 
-    async def test_wedged_stream_aborts_request_after_idle_timeout(
+    async def test_wedged_stream_aborts_after_idle_timeout_and_releases_connection(
         self,
         aiohttp_client: AioHttpClient,
         mock_sse_response: Mock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """One delivered chunk, then silence: the request records
-        StreamIdleTimeoutError instead of hanging until the total timeout."""
-        monkeypatch.setattr(Environment.HTTP, "STREAM_IDLE_TIMEOUT", 0.05)
+        ResponseIdleTimeoutError instead of hanging until the total timeout,
+        and the aborted response's connection is released, not leaked."""
+        monkeypatch.setattr(Environment.HTTP, "RESPONSE_IDLE_TIMEOUT", 0.05)
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_sse_response.content = _StallingStreamReader(
                 [b'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n']
             )
-            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+            mock_session = setup_mock_session(
+                mock_session_class, mock_sse_response, ["request"]
+            )
 
             start_ns = time.perf_counter_ns()
             record = await aiohttp_client.post_request(
@@ -550,10 +562,15 @@ class TestStreamIdleTimeout:
             )
             elapsed_s = (time.perf_counter_ns() - start_ns) / 1e9
 
+            # The request CM must be exited so the wedged connection is
+            # released instead of leaking into the pool.
+            request_ctx = mock_session.request.return_value
+            request_ctx.__aexit__.assert_awaited()
+
         # Bounded by the idle timeout, nowhere near the 600s total timeout.
         assert elapsed_s < 5.0
         assert record.error is not None
-        assert record.error.type == "StreamIdleTimeoutError"
+        assert record.error.type == "ResponseIdleTimeoutError"
         assert "no data received" in record.error.message
         # The one delivered chunk was parsed before the stream wedged.
         assert len(record.responses) == 1
@@ -567,7 +584,7 @@ class TestStreamIdleTimeout:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Headers arrive but the body never starts: still an idle timeout."""
-        monkeypatch.setattr(Environment.HTTP, "STREAM_IDLE_TIMEOUT", 0.05)
+        monkeypatch.setattr(Environment.HTTP, "RESPONSE_IDLE_TIMEOUT", 0.05)
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_sse_response.content = _StallingStreamReader([])
             setup_mock_session(mock_session_class, mock_sse_response, ["request"])
@@ -579,25 +596,30 @@ class TestStreamIdleTimeout:
             )
 
         assert record.error is not None
-        assert record.error.type == "StreamIdleTimeoutError"
+        assert record.error.type == "ResponseIdleTimeoutError"
         assert len(record.responses) == 0
         assert aiohttp_client.stream_chunks_received == 0
 
-    async def test_healthy_stream_under_idle_bound_completes(
+    async def test_per_read_bound_resets_on_every_chunk(
         self,
         aiohttp_client: AioHttpClient,
         mock_sse_response: Mock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Chunks arriving inside the bound must never trip the idle timeout."""
-        monkeypatch.setattr(Environment.HTTP, "STREAM_IDLE_TIMEOUT", 5.0)
+        """Chunks arriving every T/3 must never trip a bound of T: the window
+        resets per read. Cumulative stream time (0.4s) exceeds the bound
+        (0.15s), so a single arm-at-start timer would falsely fire here."""
+        monkeypatch.setattr(Environment.HTTP, "RESPONSE_IDLE_TIMEOUT", 0.15)
         with patch("aiohttp.ClientSession") as mock_session_class:
-            mock_sse_response.content = MockStreamReader(
+            mock_sse_response.content = _StallingStreamReader(
                 [
                     b'data: {"choices":[{"delta":{"content":"a"}}]}\n\n',
                     b'data: {"choices":[{"delta":{"content":"b"}}]}\n\n',
-                    b"data: [DONE]\n\n",
-                ]
+                    b'data: {"choices":[{"delta":{"content":"c"}}]}\n\n',
+                    b'data: {"choices":[{"delta":{"content":"d"}}]}\n\n',
+                ],
+                chunk_delay=0.05,
+                stall_seconds=0.05,
             )
             setup_mock_session(mock_session_class, mock_sse_response, ["request"])
 
@@ -608,7 +630,8 @@ class TestStreamIdleTimeout:
             )
 
         assert record.error is None
-        assert len(record.responses) == 3
+        assert len(record.responses) == 4
+        assert aiohttp_client.stream_chunks_received == 4
 
     async def test_idle_timeout_zero_disables_the_bound(
         self,
@@ -616,16 +639,13 @@ class TestStreamIdleTimeout:
         mock_sse_response: Mock,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """AIPERF_HTTP_STREAM_IDLE_TIMEOUT=0 keeps the pre-existing behavior:
-        no per-read bound, and normal streams still complete."""
-        monkeypatch.setattr(Environment.HTTP, "STREAM_IDLE_TIMEOUT", 0.0)
+        """AIPERF_HTTP_RESPONSE_IDLE_TIMEOUT=0 arms nothing: a real 0.3s
+        mid-stream silence (6x the bound used in the armed tests) completes."""
+        monkeypatch.setattr(Environment.HTTP, "RESPONSE_IDLE_TIMEOUT", 0.0)
         with patch("aiohttp.ClientSession") as mock_session_class:
-            # stall=False: with the bound disabled a wedged stream would hang
-            # forever, so this stream ends normally after its chunks.
             mock_sse_response.content = _StallingStreamReader(
                 [b'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'],
-                chunk_delay=0.01,
-                stall=False,
+                stall_seconds=0.3,
             )
             setup_mock_session(mock_session_class, mock_sse_response, ["request"])
 
@@ -637,6 +657,86 @@ class TestStreamIdleTimeout:
 
         assert record.error is None
         assert len(record.responses) == 1
+
+    async def test_non_streaming_body_read_is_bounded(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_aiohttp_response: Mock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A non-streaming response whose body never arrives is aborted too."""
+        monkeypatch.setattr(Environment.HTTP, "RESPONSE_IDLE_TIMEOUT", 0.05)
+
+        async def _hang_text() -> str:
+            await asyncio.Event().wait()  # never set
+            raise AssertionError("unreachable")
+
+        mock_aiohttp_response.text = _hang_text
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            setup_mock_session(mock_session_class, mock_aiohttp_response, ["request"])
+
+            record = await aiohttp_client.post_request(
+                "http://test.com/api", '{"test": "data"}', {}
+            )
+
+        assert record.error is not None
+        assert record.error.type == "ResponseIdleTimeoutError"
+
+    async def test_response_headers_wait_is_bounded(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_aiohttp_response: Mock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The wait for response headers carries the whole non-streaming
+        generation; a server that never answers is aborted by the idle bound."""
+        monkeypatch.setattr(Environment.HTTP, "RESPONSE_IDLE_TIMEOUT", 0.05)
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_session = setup_mock_session(
+                mock_session_class, mock_aiohttp_response, ["request"]
+            )
+
+            async def _hang_enter():
+                await asyncio.Event().wait()  # never set
+                raise AssertionError("unreachable")
+
+            request_ctx = mock_session.request.return_value
+            request_ctx.__aenter__ = AsyncMock(side_effect=_hang_enter)
+
+            record = await aiohttp_client.post_request(
+                "http://test.com/api", '{"test": "data"}', {}
+            )
+
+        assert record.error is not None
+        assert record.error.type == "ResponseIdleTimeoutError"
+
+    @pytest.mark.parametrize("idle_timeout", [0.0, 0.05])
+    async def test_total_timeout_keeps_its_identity(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_aiohttp_response: Mock,
+        monkeypatch: pytest.MonkeyPatch,
+        idle_timeout: float,
+    ) -> None:
+        """The session's own total timeout (raised inside the read, long before
+        the idle window elapses) must surface as TimeoutError, never be
+        relabeled ResponseIdleTimeoutError -- with the bound armed or not."""
+        monkeypatch.setattr(Environment.HTTP, "RESPONSE_IDLE_TIMEOUT", idle_timeout)
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_session = setup_mock_session(
+                mock_session_class, mock_aiohttp_response, ["request"]
+            )
+            request_ctx = mock_session.request.return_value
+            request_ctx.__aenter__ = AsyncMock(
+                side_effect=TimeoutError("total request timeout")
+            )
+
+            record = await aiohttp_client.post_request(
+                "http://test.com/api", '{"test": "data"}', {}
+            )
+
+        assert record.error is not None
+        assert record.error.type == "TimeoutError"
 
 
 # --- FirstToken Callback Test Helpers ---

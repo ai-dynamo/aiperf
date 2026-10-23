@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import socket
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 import aiohttp
@@ -11,7 +12,7 @@ from yarl import URL
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import SSEResponseError, StreamIdleTimeoutError
+from aiperf.common.exceptions import ResponseIdleTimeoutError, SSEResponseError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     AioHttpTraceData,
@@ -55,6 +56,59 @@ def _expected_request_body_size(data: Any) -> int | None:
 
 
 VIDEO_DOWNLOAD_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+# Slack in the idle-timeout attribution check: asyncio's timer can only fire
+# late, never early, so a foreign (session-total) timeout always measures
+# strictly under the idle window and keeps its own TimeoutError identity.
+_IDLE_TIMEOUT_EPSILON_S = 0.01
+
+
+async def _await_with_idle_bound(
+    awaitable: Awaitable[Any],
+    idle_timeout_s: float,
+    make_error: Callable[[], ResponseIdleTimeoutError],
+) -> Any:
+    """Await one HTTP read under the per-operation idle bound.
+
+    With ``idle_timeout_s <= 0`` the awaitable runs unbounded and untouched.
+    Otherwise it is wrapped in ``asyncio.timeout(idle_timeout_s)``. Only a
+    timeout that consumed the full idle window is relabeled
+    ``ResponseIdleTimeoutError``; the session's total timeout firing earlier
+    inside the window is re-raised as a plain ``TimeoutError`` so the two keep
+    distinct identities in the record's error table.
+    """
+    if idle_timeout_s <= 0:
+        return await awaitable
+    started_ns = time.monotonic_ns()
+    try:
+        async with asyncio.timeout(idle_timeout_s):
+            return await awaitable
+    except TimeoutError as e:
+        elapsed_s = (time.monotonic_ns() - started_ns) / NANOS_PER_SECOND
+        if elapsed_s >= idle_timeout_s - _IDLE_TIMEOUT_EPSILON_S:
+            raise make_error() from e
+        raise
+
+
+@contextlib.asynccontextmanager
+async def _request_with_idle_bound(
+    request_cm: Any,
+    idle_timeout_s: float,
+    make_error: Callable[[], ResponseIdleTimeoutError],
+) -> AsyncIterator[aiohttp.ClientResponse]:
+    """Enter the request context manager under the idle bound.
+
+    Bounding only the entry covers the wait for response headers — for a
+    non-streaming response that wait is the entire generation, which emits no
+    bytes until completion. The exit stack forwards body-phase exceptions to
+    the request CM's ``__aexit__``, so an aborted response still releases its
+    connection instead of leaking a wedged socket into the pool.
+    """
+    async with contextlib.AsyncExitStack() as stack:
+        response = await _await_with_idle_bound(
+            stack.enter_async_context(request_cm), idle_timeout_s, make_error
+        )
+        yield response
 
 
 class AioHttpClient(AIPerfLoggerMixin):
@@ -152,6 +206,22 @@ class AioHttpClient(AIPerfLoggerMixin):
         )
 
         try:
+            # Per-read liveness bound for the whole response. The session's
+            # total timeout defaults to 6h, so without this a response that
+            # stops delivering bytes mid-flight (server-side wedge, runaway
+            # generation, half-dead connection) hangs the request until the
+            # run-level stall watchdog aborts the whole run. Opt-in (0 = off):
+            # silence cannot tell a wedged response from a legitimately slow
+            # one, and aborted requests are not retried.
+            response_idle_timeout = Environment.HTTP.RESPONSE_IDLE_TIMEOUT
+
+            def _idle_error() -> ResponseIdleTimeoutError:
+                return ResponseIdleTimeoutError(
+                    idle_timeout_sec=response_idle_timeout,
+                    chunks_received=record.trace_data.response_chunks_count,
+                    bytes_received=record.trace_data.response_bytes_total,
+                )
+
             # Make raw HTTP request with precise timing using aiohttp
             # Create a new session for each request with unique trace config
             # connector_owner controls whether session closes the connector:
@@ -174,8 +244,12 @@ class AioHttpClient(AIPerfLoggerMixin):
                 # timestamp_ns from it.
                 record.start_perf_ns = time.perf_counter_ns()
                 record.timestamp_ns = process_clock().wall_ns_at(record.start_perf_ns)
-                async with session.request(
-                    method, url, data=data, headers=headers, **kwargs
+                # The idle bound on entry covers the wait for response headers,
+                # which for a non-streaming response is the whole generation.
+                async with _request_with_idle_bound(
+                    session.request(method, url, data=data, headers=headers, **kwargs),
+                    response_idle_timeout,
+                    _idle_error,
                 ) as response:
                     record.status = response.status
 
@@ -209,18 +283,6 @@ class AioHttpClient(AIPerfLoggerMixin):
                     if method == "POST" and (
                         response.content_type == "text/event-stream" or is_eventstream
                     ):
-                        # Per-read liveness bound for the stream. The session's
-                        # total timeout defaults to 6h, so without this a stream
-                        # that stops delivering bytes mid-flight (server-side
-                        # wedge, half-dead connection) hangs the request until
-                        # the run-level stall watchdog aborts the whole run.
-                        # Bounding each read instead of the socket (aiohttp's
-                        # sock_read would also fire on non-streaming reads)
-                        # keeps non-streaming requests unaffected: they
-                        # legitimately receive no bytes until completion. Only
-                        # streaming responses come through this path.
-                        stream_idle_timeout = Environment.HTTP.STREAM_IDLE_TIMEOUT
-
                         # Parse SSE stream with optimal performance
                         # Wrap the content stream to track chunks for trace data
 
@@ -244,23 +306,18 @@ class AioHttpClient(AIPerfLoggerMixin):
                             async def _next_chunk() -> bytes | None:
                                 """Next raw chunk, or None at end of stream.
 
-                                Raises StreamIdleTimeoutError when the stream
+                                Raises ResponseIdleTimeoutError when the stream
                                 delivers no bytes within the configured idle
                                 bound (0 disables the bound).
                                 """
                                 try:
-                                    if stream_idle_timeout > 0:
-                                        async with asyncio.timeout(stream_idle_timeout):
-                                            return await anext(chunk_iter)
-                                    return await anext(chunk_iter)
+                                    return await _await_with_idle_bound(
+                                        anext(chunk_iter),
+                                        response_idle_timeout,
+                                        _idle_error,
+                                    )
                                 except StopAsyncIteration:
                                     return None
-                                except TimeoutError as e:
-                                    raise StreamIdleTimeoutError(
-                                        idle_timeout_sec=stream_idle_timeout,
-                                        chunks_received=_trace.response_chunks_count,
-                                        bytes_received=_trace.response_bytes_total,
-                                    ) from e
 
                             while True:
                                 chunk = await _next_chunk()
@@ -328,7 +385,9 @@ class AioHttpClient(AIPerfLoggerMixin):
                         )
 
                         if is_binary:
-                            raw_bytes = await response.read()
+                            raw_bytes = await _await_with_idle_bound(
+                                response.read(), response_idle_timeout, _idle_error
+                            )
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
                                 BinaryResponse(
@@ -338,7 +397,9 @@ class AioHttpClient(AIPerfLoggerMixin):
                                 )
                             )
                         else:
-                            raw_response = await response.text()
+                            raw_response = await _await_with_idle_bound(
+                                response.text(), response_idle_timeout, _idle_error
+                            )
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
                                 TextResponse(
