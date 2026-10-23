@@ -726,6 +726,11 @@ class TestResponseIdleTimeout:
         assert record.error is None
         assert len(record.responses) == 1
         assert record.responses[0].text == '{"ok": true}'
+        # The iter_any drain bypasses aiohttp's trace callbacks, so the manual
+        # accounting must keep the metrics/watchdog signals populated.
+        assert record.trace_data.response_chunks_count == 3
+        assert record.trace_data.response_bytes_total == len(b'{"ok": true}')
+        assert aiohttp_client.stream_chunks_received == 3
 
     async def test_response_headers_wait_is_bounded(
         self,
