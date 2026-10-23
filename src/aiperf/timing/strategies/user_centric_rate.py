@@ -166,6 +166,7 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         self._initial_users: list[User] = []
         self._spawn_queue: list[tuple[float, int, User | None]] | None = None
         self._spawn_seq = itertools.count()
+        self._arrivals_stopped = False
         self._next_user_id: int = 1
         self._retired_user_cancellations = 0
 
@@ -365,19 +366,21 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         # regardless of whether the previous user completed on time. The only
         # exception is if `--concurrency` is set (slot acquisition blocks).
         #
-        # Overdue slots are re-spaced to one stagger after the previous
-        # arrival's actual fire time: without that clamp, an event-loop stall
-        # longer than one planned gap makes a backlog of overdue slots pop
-        # back-to-back and burst new-user arrivals -- exactly what the stagger
-        # exists to prevent, and the mechanism behind the collapsed-stagger CI
-        # flake (initial pre-armed timers bursting, and replacements popping
-        # overdue while the initial grid was still incomplete). Slots that are
-        # NOT overdue keep their absolute planned time, so the clamp
-        # introduces no drift of its own: ordinary per-hop timer lateness is
-        # absorbed by the next planned slot instead of accumulating, and only
-        # sustained overload (every slot overdue) slides the grid.
+        # Every slot fires at max(planned, previous_arrival_fire + stagger):
+        # stagger is the documented SMALLEST gap between any two users' first
+        # turns, so the clamp applies to on-plan and overdue slots alike -- a
+        # late fire must not let the next on-plan slot close to a sub-stagger
+        # gap. Without the clamp, an event-loop stall longer than one planned
+        # gap makes a backlog of overdue slots pop back-to-back and burst
+        # new-user arrivals -- exactly what the stagger exists to prevent, and
+        # the mechanism behind the collapsed-stagger CI flake (initial
+        # pre-armed timers bursting, and replacements popping overdue while
+        # the initial grid was still incomplete). The absolute grid is kept
+        # exactly when the loop keeps up; under persistent lateness the grid
+        # slides (spacing is preserved, punctuality is not recoverable).
         spawn_queue: list[tuple[float, int, User | None]] = []
         self._spawn_queue = spawn_queue
+        self._arrivals_stopped = False
 
         base_perf_sec = self._lifecycle.started_at_perf_sec
         for user in sorted(self._initial_users, key=lambda u: u.order):
@@ -385,23 +388,26 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             user.next_send_time = base_perf_sec + (user.order * self._stagger)
             self._push_arrival(spawn_queue, user.next_send_time, user)
 
-        # Anchored before issuance so slot backpressure and issuance latency
-        # do not shift the next slot's target; issuance slower than one
-        # stagger inevitably paces arrivals itself.
+        # Anchored at slot fire time, before issuance: slot backpressure and
+        # issuance latency never shift subsequent slot targets. Issuance
+        # itself is fire-and-track (one task per arrival via the scheduler,
+        # which captures per-issue exceptions and cancels them at teardown),
+        # so one blocked or excepting issuance neither stalls nor aborts the
+        # remaining grid; measured capture times still reflect issuance
+        # backpressure when slots block, which is the intended concurrency
+        # behavior.
         last_slot_perf = base_perf_sec - self._stagger
         while True:
+            if self._arrivals_stopped:
+                return
             if not spawn_queue:
                 await asyncio.sleep(0.1)
                 continue
 
             spawn_sec, _, queued_user = heapq.heappop(spawn_queue)
-            if spawn_sec <= time.perf_counter():
-                # Overdue: re-space from the previous arrival's actual fire.
-                target_sec = max(spawn_sec, last_slot_perf + self._stagger)
-            else:
-                # On plan: absolute grid slot, unaffected by prior lateness.
-                target_sec = spawn_sec
+            target_sec = max(spawn_sec, last_slot_perf + self._stagger)
             await asyncio.sleep(max(0.0, target_sec - time.perf_counter()))
+            last_slot_perf = time.perf_counter()
 
             if queued_user is None:
                 if not self._should_spawn_user():
@@ -411,16 +417,28 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             else:
                 user = queued_user
 
-            last_slot_perf = time.perf_counter()
-            should_continue = await self._credit_issuer.issue_credit(
-                user.build_first_turn()
-            )
-            if not should_continue:
-                return
+            self._scheduler.execute_async(self._issue_arrival(user, spawn_sec))
 
-            # Derive next spawn time based on estimated time to completion.
-            # Adaptive scale-down drains excess users by suppressing replacements.
-            self._schedule_replacement_user(spawn_queue, spawn_sec, user)
+    async def _issue_arrival(self, user: User, spawn_sec: float) -> None:
+        """Issue one arrival's first turn and derive its replacement slot.
+
+        Runs as a scheduler-tracked task (fire-and-track from execute_phase).
+        A refusal (stop condition reached / sending stopped) flips
+        ``_arrivals_stopped`` so the pop loop exits instead of spinning on a
+        queue that no longer grows; exceptions propagate to the scheduler's
+        exception handler without disturbing the other arrivals.
+        """
+        should_continue = await self._credit_issuer.issue_credit(
+            user.build_first_turn()
+        )
+        if not should_continue:
+            self._arrivals_stopped = True
+            return
+
+        # Derive next spawn time based on estimated time to completion.
+        # Adaptive scale-down drains excess users by suppressing replacements.
+        assert self._spawn_queue is not None
+        self._schedule_replacement_user(self._spawn_queue, spawn_sec, user)
 
     async def handle_credit_return(
         self,
