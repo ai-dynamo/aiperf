@@ -348,20 +348,30 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         spawn_queue: list[float] = []
         self._spawn_queue = spawn_queue
 
-        # Schedule initial users and derive the initial spawn times.
-        # This is what creates the initial "steady-state" of the benchmark.
-        for user in self._initial_users:
+        # Schedule initial users on the stagger grid and derive the initial
+        # spawn times. This is what creates the initial "steady-state" of the
+        # benchmark. The first-turn timers are chained (see
+        # _schedule_initial_user): each user's timer, when it actually fires,
+        # schedules the next user's slot anchored to the actual send time.
+        # Independent up-front call_at timers would all come due during an
+        # event-loop stall longer than the stagger window and then fire in a
+        # single batch, collapsing the stagger into a simultaneous burst of
+        # arrivals -- exactly what the stagger exists to prevent. Chaining
+        # keeps consecutive first turns spaced by `stagger` even after a
+        # stall; on a healthy loop the planned grid is unchanged.
+        ordered_users = sorted(self._initial_users, key=lambda u: u.order)
+        base_perf_sec = self._lifecycle.started_at_perf_sec
+        for user in ordered_users:
             # Send time is based on starting order (0 = first, N-1 = last)
-            user.next_send_time = self._lifecycle.started_at_perf_sec + (
-                user.order * self._stagger
-            )
-            self._scheduler.schedule_at_perf_sec(
-                user.next_send_time,
-                self._credit_issuer.issue_credit(user.build_first_turn()),
-            )
-            # Derive next spawn time based on estimated time to completion
+            user.next_send_time = base_perf_sec + (user.order * self._stagger)
+            # Derive next spawn time based on estimated time to completion.
+            # Replacement spawning is an open-loop absolute schedule by
+            # design, so this stays on the planned grid even if first-turn
+            # sends slide.
             next_spawn_sec = user.next_send_time + (user.max_turns * self._turn_gap)
             heapq.heappush(spawn_queue, next_spawn_sec)
+        if ordered_users:
+            self._schedule_initial_user(ordered_users, 0)
 
         # Continuously spawn new users at discrete intervals to maintain the target QPS.
         while True:
@@ -385,6 +395,31 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             # Derive next spawn time based on estimated time to completion.
             # Adaptive scale-down drains excess users by suppressing replacements.
             self._schedule_replacement_user(spawn_queue, spawn_sec, user)
+
+    def _schedule_initial_user(self, ordered_users: list[User], index: int) -> None:
+        """Schedule one initial user's first turn; on fire, chain the next.
+
+        Anchoring each slot to the previous user's actual send time (rather
+        than pre-arming every slot) is what keeps the stagger intact when the
+        event loop falls behind: a stalled loop re-spaces the remaining
+        arrivals instead of bursting them all in one batch.
+        """
+        user = ordered_users[index]
+
+        async def _fire() -> None:
+            should_continue = await self._credit_issuer.issue_credit(
+                user.build_first_turn()
+            )
+            next_index = index + 1
+            if not should_continue or next_index >= len(ordered_users):
+                return
+            nxt = ordered_users[next_index]
+            nxt.next_send_time = max(
+                nxt.next_send_time, time.perf_counter() + self._stagger
+            )
+            self._schedule_initial_user(ordered_users, next_index)
+
+        self._scheduler.schedule_at_perf_sec(user.next_send_time, _fire())
 
     async def handle_credit_return(
         self,
