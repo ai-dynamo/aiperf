@@ -48,6 +48,7 @@ from tests.kubernetes.helpers.cluster import (
     apply_cpu_overcommit,
     start_cpu_overcommit_thread,
 )
+from tests.kubernetes.helpers.diagnostics import dump_cluster_diagnostics
 from tests.kubernetes.helpers.helm import HelmClient, HelmDeployer, HelmValues
 from tests.kubernetes.helpers.images import ImageConfig, ImageManager
 from tests.kubernetes.helpers.kubectl import KubectlClient
@@ -73,6 +74,29 @@ def _is_tty() -> bool:
 
 # Stash key for K8sTestSettings on pytest.Config
 _SETTINGS_KEY = pytest.StashKey["K8sTestSettings"]()
+# Stash key for the session's failed-test node IDs (fixture teardown reads it)
+_FAILED_TESTS_KEY = pytest.StashKey[list[str]]()
+
+
+class _FailureTracker:
+    """pytest plugin recording failed reports for package-fixture teardown.
+
+    The diagnostics capture and keep-cluster-on-failure decisions in the
+    fixtures need to know whether the session saw failures; hook callers
+    cannot request fixtures, so the node IDs live on the config stash.
+    """
+
+    def __init__(self) -> None:
+        self.failed: list[str] = []
+
+    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+        if report.failed:
+            self.failed.append(report.nodeid)
+
+
+def _session_failures(config: pytest.Config) -> list[str]:
+    """Node IDs of failed reports so far this session (empty when all green)."""
+    return config.stash.get(_FAILED_TESTS_KEY, None) or []
 
 
 # ============================================================================
@@ -170,6 +194,24 @@ class K8sTestSettings:
     flexible WARN-and-proceed behavior.
     """
 
+    keep_cluster_on_failure: bool = False
+    """Skip only the end-of-session cluster delete, and only when tests failed.
+
+    For CI, where a post-pytest step collects diagnostics from the still-live
+    cluster and a later always() step deletes it. Unlike skip_cleanup this
+    leaves per-test resource cleanup and the operator uninstall intact, and
+    unlike it the cluster is still torn down on success so shared/self-hosted
+    runners are never left with stale clusters after a green run.
+    """
+
+    diagnostics_dir: str | None = None
+    """When set and any test failed, dump cluster diagnostics here from within
+    fixture teardown (resources, events, describes, per-pod logs, and a Kind
+    log export at cluster teardown), BEFORE the fixtures uninstall the
+    operator and delete the cluster — the CI diagnostics step runs after
+    pytest exits and would otherwise capture nothing but connection-refused.
+    """
+
     node_cpu_overcommit: int = 0
     """Fake CPU capacity floor (whole cores) for local Kind nodes; 0 disables.
 
@@ -223,6 +265,8 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-allow-disruptive", "K8S_TEST_ALLOW_DISRUPTIVE", None, "bool", "Allow tests marked k8s_disruptive that make cluster-wide mutations (e.g. CRD deletion); skipped by default"),
     ("--k8s-node-cpu-overcommit", "K8S_TEST_NODE_CPU_OVERCOMMIT", "0", "int", "Opt-in fake CPU capacity floor (cores) for local Kind nodes so production-sized pod requests schedule on small CI runners; 0 disables (default). Only kind:// providerID nodes are patched"),
     ("--k8s-operator-strict-preflight", "K8S_TEST_OPERATOR_STRICT_PREFLIGHT", None, "bool", "Deploy the operator with AIPERF_PREFLIGHT_STRICT_RESOURCES=true so provable capacity shortfalls fail fast instead of hanging at Pending (CI chaos/audit)"),
+    ("--k8s-keep-cluster-on-failure", "K8S_TEST_KEEP_CLUSTER_ON_FAILURE", None, "bool", "Skip only the final cluster delete, and only when tests failed (CI diagnostics; a later workflow step deletes the cluster)"),
+    ("--k8s-diagnostics-dir", "K8S_TEST_DIAGNOSTICS_DIR", None, "str", "Dump cluster diagnostics here from fixture teardown when any test failed, before fixtures uninstall the operator and delete the cluster"),
 ]  # fmt: skip
 
 
@@ -333,6 +377,7 @@ def _resolve_settings(config: pytest.Config) -> K8sTestSettings:
         "tolerate_gpu_nodes",
         "allow_disruptive",
         "operator_strict_preflight",
+        "keep_cluster_on_failure",
     ):
         if resolved.get(key) is None:
             resolved[key] = False
@@ -422,6 +467,10 @@ def pytest_configure(config: pytest.Config) -> None:
     # Resolve and stash settings
     settings = _resolve_settings(config)
     config.stash[_SETTINGS_KEY] = settings
+
+    tracker = _FailureTracker()
+    config.stash[_FAILED_TESTS_KEY] = tracker.failed
+    config.pluginmanager.register(tracker, "aiperf-k8s-failure-tracker")
 
     if _is_chaos_invocation(config) and getattr(config.option, "dist", None):
         config.option.dist = "loadgroup"
@@ -781,6 +830,7 @@ async def local_cluster(
     cluster_config: ClusterConfig,
     k8s_settings: K8sTestSettings,
     tmp_path_factory: pytest.TempPathFactory,
+    request: pytest.FixtureRequest,
 ) -> AsyncGenerator[LocalCluster, None]:
     """Create and manage a local K8s cluster for the test package.
 
@@ -848,8 +898,30 @@ async def local_cluster(
         if overcommit_stop is not None:
             overcommit_stop.set()
 
+    failures = _session_failures(request.config)
+    keep_for_failure = s.keep_cluster_on_failure and bool(failures)
+
+    # Failure diagnostics must be captured HERE, before the cluster delete
+    # below: the CI workflow's diagnostics step runs after pytest exits, when
+    # the fixtures have already uninstalled the operator and (absent
+    # keep-cluster-on-failure) deleted the cluster, so every artifact it
+    # collected was empty or connection-refused. `kind export logs` in
+    # particular still finds terminated pods' container logs on the node
+    # filesystem, but only while the cluster is alive.
+    if s.diagnostics_dir and failures:
+        try:
+            await dump_cluster_diagnostics(
+                context=cluster.context,
+                out_dir=Path(s.diagnostics_dir) / "cluster-teardown",
+                cluster_name=cluster.name
+                if cluster.runtime == ClusterRuntime.KIND
+                else None,
+            )
+        except Exception as exc:  # noqa: BLE001 — never fail teardown on diagnostics
+            logger.warning(f"[diagnostics] cluster-teardown capture failed: {exc}")
+
     # Cleanup
-    if not s.skip_cleanup and not s.reuse_cluster:
+    if not s.skip_cleanup and not s.reuse_cluster and not keep_for_failure:
         try:
             await cluster.delete()
         except RuntimeError as exc:
@@ -878,6 +950,12 @@ async def local_cluster(
                 logger.warning(
                     f"[cleanup] docker rm -f {node_container} also failed: {docker_exc}"
                 )
+    elif keep_for_failure:
+        logger.info(
+            f"Keeping cluster after {len(failures)} failed test(s): {cluster.name} "
+            "(the CI diagnostics step reads it; the workflow's always() teardown "
+            "deletes it)"
+        )
     else:
         logger.info(f"Keeping cluster: {cluster.name}")
 
@@ -2073,6 +2151,7 @@ async def operator_ready(
     k8s_settings: K8sTestSettings,
     tmp_path_factory: pytest.TempPathFactory,
     worker_id: str,
+    request: pytest.FixtureRequest,
 ) -> AsyncGenerator[OperatorDeployer, None]:
     """Ensure operator is deployed and ready (package-scoped).
 
@@ -2102,6 +2181,20 @@ async def operator_ready(
             flag_path.touch()
 
     yield operator_deployer
+
+    # Capture the operator's evidence BEFORE the uninstall below deletes its
+    # pod: the CI workflow's diagnostics step runs after pytest exits, when
+    # this fixture has already uninstalled the operator, so its per-pod log
+    # collection found nothing. Only on failure and only when a diagnostics
+    # dir is configured.
+    if k8s_settings.diagnostics_dir and _session_failures(request.config):
+        try:
+            await dump_cluster_diagnostics(
+                context=operator_deployer.kubectl.context,
+                out_dir=Path(k8s_settings.diagnostics_dir) / "operator-teardown",
+            )
+        except Exception as exc:  # noqa: BLE001 — never fail teardown on diagnostics
+            logger.warning(f"[diagnostics] operator-teardown capture failed: {exc}")
 
     if (
         not k8s_settings.skip_cleanup
