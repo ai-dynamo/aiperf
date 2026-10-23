@@ -11,8 +11,11 @@ Run with: ``make test-fern-docs`` or ``pytest -m fern``
 
 from __future__ import annotations
 
+import contextlib
+import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -106,12 +109,16 @@ def _run_fern_docs_dev(staged_fern_docs: Path, timeout_s: int) -> None:
     ``timeout_s``.
     """
     port = _get_free_port()
+    # start_new_session: the CLI spawns setup/runtime children (pnpm, esbuild,
+    # the node backend) that can outlive it; a dedicated process group lets the
+    # cleanup below reap them instead of leaking them into the pytest session.
     proc = subprocess.Popen(
         ["fern", "docs", "dev", "--port", str(port)],
         cwd=staged_fern_docs,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
+        start_new_session=True,
     )
 
     output_lines: list[str] = []
@@ -155,6 +162,34 @@ def _run_fern_docs_dev(staged_fern_docs: Path, timeout_s: int) -> None:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=5)
+        # Best-effort sweep of orphaned CLI children. With start_new_session
+        # the process group id is the CLI's pid; on Windows killpg does not
+        # exist and terminate/kill above are all we have.
+        killpg = getattr(os, "killpg", None)
+        if killpg is not None:
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                killpg(proc.pid, signal.SIGKILL)
+
+
+def _invalidate_interrupted_preview_bundle() -> None:
+    """Drop bundle state left by an interrupted ``fern docs dev`` setup.
+
+    The pinned fern CLI (5.149.0) extracts the preview bundle straight into
+    the live ``~/.fern/app-preview/.next`` directory — there is no atomic
+    promotion of a completed bundle — and writes the ``app-preview/etag``
+    marker after extraction but *before* its pnpm/esbuild setup step
+    finishes. A killed or timed-out attempt can therefore leave either a
+    partial ``.next`` with no etag or a matching etag over unfinished setup,
+    and the next invocation's ETag fast path ("Using already downloaded
+    bundle") would skip the unfinished setup entirely. Removing the whole
+    ``app-preview`` subtree — the same unit the CLI itself removes for a
+    forced re-download — forces the retry to redo the full download and
+    setup. Everything else under ``~/.fern`` (``id``, ``logs/``, other
+    bundle kinds) is untouched. ``shutil.rmtree`` refuses to follow a
+    symlinked ``app-preview``, so a hostile or surprising cache layout is
+    left alone rather than deleted through.
+    """
+    shutil.rmtree(Path.home() / ".fern" / "app-preview", ignore_errors=True)
 
 
 @pytest.fixture(scope="session")
@@ -170,11 +205,15 @@ def fern_preview_bundle_prewarmed(staged_fern_docs: Path) -> None:
     with a download-sized budget keeps the test's own budget for what it
     actually asserts — a warm server boot.
 
-    One retry on timeout: a killed download leaves no partial bundle, so the
-    retry re-downloads from scratch — its value is escaping a wedged or
-    stalled connection, and the two attempts bound the total session cost at
-    ~2x ``FERN_PREWARM_TIMEOUT_S``. ``[error]`` output and unexpected exits
-    fail immediately: those are deterministic defects, not network variance.
+    One retry on timeout: its value is escaping a wedged or stalled
+    connection, and the two attempts bound the total session cost at ~2x
+    ``FERN_PREWARM_TIMEOUT_S``. An interrupted attempt can leave partial or
+    etag-marked-but-unfinished bundle state (see
+    ``_invalidate_interrupted_preview_bundle``), so the bundle is
+    invalidated before the retry — the retry never takes the ETag fast path
+    on state from an attempt we cut off. ``[error]`` output and unexpected
+    exits fail immediately without a retry and without invalidation: those
+    are deterministic defects, not network variance.
     """
     last_error: TimeoutError | None = None
     for _attempt in (1, 2):
@@ -183,6 +222,7 @@ def fern_preview_bundle_prewarmed(staged_fern_docs: Path) -> None:
             return
         except TimeoutError as exc:
             last_error = exc
+            _invalidate_interrupted_preview_bundle()
     pytest.fail(
         "fern docs dev failed to become ready during bundle pre-warm after "
         f"2 attempts of {FERN_PREWARM_TIMEOUT_S}s each:\n{last_error}"
