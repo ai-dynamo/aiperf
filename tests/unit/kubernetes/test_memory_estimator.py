@@ -1364,8 +1364,7 @@ def _amortized_heap_bytes(factory: Callable[[int], object], n: int) -> float:
         stat.size_diff
         for stat in after.compare_to(before, "traceback")
         if any(
-            os.path.abspath(frame.filename) == _MODULE_FILE
-            for frame in stat.traceback
+            os.path.abspath(frame.filename) == _MODULE_FILE for frame in stat.traceback
         )
     )
     tracemalloc.stop()

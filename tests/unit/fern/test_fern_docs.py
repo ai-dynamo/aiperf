@@ -143,8 +143,7 @@ def _run_fern_docs_dev(staged_fern_docs: Path, timeout_s: int) -> None:
                     f"before becoming ready:\n{captured}"
                 )
             raise TimeoutError(
-                f"fern docs dev did not become ready within {timeout_s}s:\n"
-                f"{captured}"
+                f"fern docs dev did not become ready within {timeout_s}s:\n{captured}"
             )
     finally:
         proc.terminate()

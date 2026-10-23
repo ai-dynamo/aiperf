@@ -869,9 +869,7 @@ class TestIssuedAtTimestamp:
             await credit_issuer.issue_credit(make_turn())
             after = time.time_ns()
             sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
-            assert (before - slack_ns) <= sent_credit.issued_at_ns <= (
-                after + slack_ns
-            )
+            assert (before - slack_ns) <= sent_credit.issued_at_ns <= (after + slack_ns)
             issued.append(sent_credit.issued_at_ns)
 
         # A timestamp cached across issues would fall below the second
