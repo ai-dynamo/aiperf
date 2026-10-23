@@ -72,8 +72,12 @@ spec:
             - name: MAX_TOKENS
               value: "5000"
           resources:
+            # Requests gate scheduling only; keep them small enough that the
+            # mock server coexists with benchmark pods on the single-node
+            # 4-vCPU Kind clusters used by CI (ubuntu-latest). The 8000m
+            # limit still lets it burst to the whole node under load.
             requests:
-              cpu: "2000m"
+              cpu: "500m"
               memory: "2Gi"
             limits:
               cpu: "8000m"
