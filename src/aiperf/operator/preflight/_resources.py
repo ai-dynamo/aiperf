@@ -99,6 +99,52 @@ def _matching_schedulable_nodes(
 class _ResourceChecksMixin:
     """Checks related to cluster/node resources, quotas, memory, and tolerations."""
 
+    @staticmethod
+    def _provable_capacity_failure(
+        *,
+        required_cpu: float,
+        required_mem: float,
+        total_allocatable_cpu: float,
+        total_allocatable_memory: float,
+        ready_nodes: int,
+        tainted_suffix: str,
+    ) -> CheckResult | None:
+        """FAIL (strict mode only) when the cluster can NEVER fit the benchmark.
+
+        Provable insufficiency compares required resources against total
+        schedulable ALLOCATABLE — not free capacity — so no amount of waiting
+        for running pods to release requests could help; the JobSet pods would
+        sit Pending until the job times out. Strict mode
+        (``AIPERF_PREFLIGHT_STRICT_RESOURCES``, opt-in for CI chaos/audit
+        paths) fails fast with a diagnosable message; the default stays
+        WARN-and-proceed (reported by the free-capacity check below) because
+        production deployments may legitimately over-commit or autoscale
+        while a job queues.
+        """
+        if (
+            required_cpu <= total_allocatable_cpu
+            and required_mem <= total_allocatable_memory
+        ):
+            return None
+        if not OperatorEnvironment.PREFLIGHT_STRICT_RESOURCES:
+            return None
+        return CheckResult(
+            name="Node Resources",
+            status=CheckStatus.FAIL,
+            message=(
+                f"Cluster can never fit this benchmark. "
+                f"Need {format_cpu(required_cpu)} CPU, {format_memory(required_mem)} mem "
+                f"but only {format_cpu(total_allocatable_cpu)} CPU, "
+                f"{format_memory(total_allocatable_memory)} mem allocatable across "
+                f"{ready_nodes} schedulable node(s){tainted_suffix}. "
+                "Failing fast because AIPERF_PREFLIGHT_STRICT_RESOURCES=true."
+            ),
+            hints=[
+                "Reduce worker count or add cluster capacity",
+                "Unset AIPERF_PREFLIGHT_STRICT_RESOURCES to only warn",
+            ],
+        )
+
     async def _check_node_resources(self) -> CheckResult:
         """Check aggregate free CPU/mem across schedulable Ready nodes.
 
@@ -189,37 +235,15 @@ class _ResourceChecksMixin:
                 ],
             )
 
-        if (
-            required_cpu > total_allocatable_cpu
-            or required_mem > total_allocatable_memory
+        if failure := self._provable_capacity_failure(
+            required_cpu=required_cpu,
+            required_mem=required_mem,
+            total_allocatable_cpu=total_allocatable_cpu,
+            total_allocatable_memory=total_allocatable_memory,
+            ready_nodes=ready_nodes,
+            tainted_suffix=tainted_suffix,
         ):
-            # Provably insufficient: even if every pod on the schedulable
-            # nodes released its requests, the benchmark could never fit, so
-            # its pods would sit Pending until the job times out. Strict mode
-            # (CI chaos/audit paths) fails fast with a diagnosable message
-            # instead of hanging; the default stays WARN-and-proceed because
-            # production deployments may legitimately over-commit or add
-            # capacity (autoscaling) while the job queues.
-            provable_message = (
-                f"Cluster can never fit this benchmark. "
-                f"Need {format_cpu(required_cpu)} CPU, {format_memory(required_mem)} mem "
-                f"but only {format_cpu(total_allocatable_cpu)} CPU, "
-                f"{format_memory(total_allocatable_memory)} mem allocatable across "
-                f"{ready_nodes} schedulable node(s){tainted_suffix}."
-            )
-            if OperatorEnvironment.PREFLIGHT_STRICT_RESOURCES:
-                return CheckResult(
-                    name="Node Resources",
-                    status=CheckStatus.FAIL,
-                    message=(
-                        f"{provable_message} Failing fast because "
-                        "AIPERF_PREFLIGHT_STRICT_RESOURCES=true."
-                    ),
-                    hints=[
-                        "Reduce worker count or add cluster capacity",
-                        "Unset AIPERF_PREFLIGHT_STRICT_RESOURCES to only warn",
-                    ],
-                )
+            return failure
 
         if required_cpu > total_cpu or required_mem > total_memory:
             return CheckResult(
