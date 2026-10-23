@@ -843,28 +843,40 @@ class TestIssuedAtTimestamp:
     """Tests for credit timestamp accuracy."""
 
     async def test_issued_at_ns_is_recent(self, credit_issuer, mock_router):
-        """Issued timestamp should be very recent (within 1 second).
+        """Issued timestamp must be taken from the current clock at issue time.
 
         Production code derives ``issued_at_ns`` from ``started_at_ns +
         (perf_counter_ns - started_at_perf_ns)`` — mixing wall clock with a
         monotonic delta. On Windows the two clocks can drift by a few
         microseconds, so allow a small slack window on either side instead
         of strict ``before <= ts <= after``.
+
+        The real invariant is that the timestamp lands inside the wall-clock
+        bracket of the call that produced it: not stale (cached from an
+        earlier issue) and not from the future. There is deliberately no
+        fixed bound on ``after - issued_at_ns``: that would assert the
+        test's own execution speed, and on a loaded CI runner the event
+        loop can stall for over a second between the in-call timestamp and
+        the post-await clock read (Nightly 2026-10-16 failed at 1.02 s),
+        which says nothing about timestamp freshness.
         """
         import sys
 
         slack_ns = 50_000_000 if sys.platform == "win32" else 0  # 50ms on Windows
-        before = time.time_ns()
-        turn = make_turn()
+        issued: list[int] = []
+        for _ in range(2):
+            before = time.time_ns()
+            await credit_issuer.issue_credit(make_turn())
+            after = time.time_ns()
+            sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+            assert (before - slack_ns) <= sent_credit.issued_at_ns <= (
+                after + slack_ns
+            )
+            issued.append(sent_credit.issued_at_ns)
 
-        await credit_issuer.issue_credit(turn)
-
-        after = time.time_ns()
-        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
-
-        assert (before - slack_ns) <= sent_credit.issued_at_ns <= (after + slack_ns)
-        # Should be within 1 second
-        assert (after - sent_credit.issued_at_ns) < 1_000_000_000
+        # A timestamp cached across issues would fall below the second
+        # call's bracket; the two must also be non-decreasing.
+        assert issued[1] >= issued[0]
 
 
 # =============================================================================
