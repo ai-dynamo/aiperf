@@ -99,6 +99,7 @@ async def test_dump_captures_state_pod_logs_and_kind_export(
     out = await dump_cluster_diagnostics(
         "kind-ci", tmp_path / "diag", cluster_name="ci"
     )
+    assert out == tmp_path / "diag"
 
     cmds = [cmd for cmd, _ in captured]
     files = [p.name for _, p in captured]
@@ -109,9 +110,7 @@ async def test_dump_captures_state_pod_logs_and_kind_export(
     assert "jobsets.yaml" in files
     # Per-pod logs for the pod listed by the index capture.
     assert "logs-aiperf-system-aiperf-operator-abc.txt" in files
-    assert any(
-        cmd[:4] == ["kubectl", "--context", "kind-ci", "logs"] for cmd in cmds
-    )
+    assert any(cmd[:4] == ["kubectl", "--context", "kind-ci", "logs"] for cmd in cmds)
     # kind export runs only because a cluster name was passed.
     assert any(cmd[:3] == ["kind", "export", "logs"] for cmd in cmds)
 

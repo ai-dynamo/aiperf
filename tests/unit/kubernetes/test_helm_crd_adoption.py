@@ -61,9 +61,7 @@ async def test_install_chart_adopts_crds_into_helm_field_manager(
     helm.template = AsyncMock(return_value=_RENDERED)
     helm.install = AsyncMock()
 
-    monkeypatch.setattr(
-        helm_mod, "wait_for_aiperf_crds_established", AsyncMock()
-    )
+    monkeypatch.setattr(helm_mod, "wait_for_aiperf_crds_established", AsyncMock())
 
     deployer = HelmDeployer(
         kubectl=kubectl,  # type: ignore[arg-type]
@@ -82,11 +80,7 @@ async def test_install_chart_adopts_crds_into_helm_field_manager(
     assert kwargs["field_manager"] == "helm"
     assert kwargs["force_conflicts"] is True
 
-    adopted_docs = [
-        doc
-        for doc in yaml.safe_load_all(adopt.await_args.args[0])
-        if doc
-    ]
+    adopted_docs = [doc for doc in yaml.safe_load_all(adopt.await_args.args[0]) if doc]
     assert [doc["kind"] for doc in adopted_docs] == ["CustomResourceDefinition"], (
         "SSA force-conflicts adoption must be scoped to CRD objects only"
     )
@@ -107,12 +101,12 @@ async def test_install_chart_skips_adoption_when_render_has_no_crds(
 
     helm = SimpleNamespace()
     helm.get_release_status = AsyncMock(return_value="not-found")
-    helm.template = AsyncMock(return_value="apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n")
+    helm.template = AsyncMock(
+        return_value="apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n"
+    )
     helm.install = AsyncMock()
 
-    monkeypatch.setattr(
-        helm_mod, "wait_for_aiperf_crds_established", AsyncMock()
-    )
+    monkeypatch.setattr(helm_mod, "wait_for_aiperf_crds_established", AsyncMock())
 
     deployer = HelmDeployer(
         kubectl=kubectl,  # type: ignore[arg-type]
