@@ -57,10 +57,22 @@ def _expected_request_body_size(data: Any) -> int | None:
 
 VIDEO_DOWNLOAD_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
-# Slack in the idle-timeout attribution check: asyncio's timer can only fire
-# late, never early, so a foreign (session-total) timeout always measures
-# strictly under the idle window and keeps its own TimeoutError identity.
-_IDLE_TIMEOUT_EPSILON_S = 0.01
+
+class _PassthroughTimeout(Exception):
+    """Marks a TimeoutError raised by the read itself, not by the idle bound.
+
+    ``asyncio.timeout`` converts only its own timer's cancellation into
+    ``TimeoutError``; a foreign one (e.g. the session's total, which aiohttp
+    raises from inside the read) passes through unchanged and is
+    indistinguishable by type. Wrapping the foreign one inside the window —
+    so only the wrapper's own timer can surface as a bare ``TimeoutError``
+    outside it — is what makes attribution exact regardless of when the
+    foreign timeout lands relative to the idle window.
+    """
+
+    def __init__(self, original: TimeoutError) -> None:
+        super().__init__(str(original))
+        self.original = original
 
 
 async def _await_with_idle_bound(
@@ -71,23 +83,66 @@ async def _await_with_idle_bound(
     """Await one HTTP read under the per-operation idle bound.
 
     With ``idle_timeout_s <= 0`` the awaitable runs unbounded and untouched.
-    Otherwise it is wrapped in ``asyncio.timeout(idle_timeout_s)``. Only a
-    timeout that consumed the full idle window is relabeled
-    ``ResponseIdleTimeoutError``; the session's total timeout firing earlier
-    inside the window is re-raised as a plain ``TimeoutError`` so the two keep
-    distinct identities in the record's error table.
+    Otherwise it runs inside ``asyncio.timeout(idle_timeout_s)``; only a
+    timeout produced by that wrapper's own timer is relabeled
+    ``ResponseIdleTimeoutError`` (a ``TimeoutError`` the awaitable raises
+    itself is wrapped in ``_PassthroughTimeout`` before it can reach the
+    context, and re-raised with its original identity outside it). External
+    cancellation is untouched: the context re-raises a foreign
+    ``CancelledError`` unchanged, so credit cancellation still surfaces as
+    ``RequestCancellationError``.
     """
     if idle_timeout_s <= 0:
         return await awaitable
-    started_ns = time.monotonic_ns()
     try:
         async with asyncio.timeout(idle_timeout_s):
-            return await awaitable
-    except TimeoutError as e:
-        elapsed_s = (time.monotonic_ns() - started_ns) / NANOS_PER_SECOND
-        if elapsed_s >= idle_timeout_s - _IDLE_TIMEOUT_EPSILON_S:
-            raise make_error() from e
-        raise
+            try:
+                return await awaitable
+            except TimeoutError as inner:
+                raise _PassthroughTimeout(inner) from inner
+    except _PassthroughTimeout as passthrough:
+        raise passthrough.original from None
+    except TimeoutError as idle:
+        raise make_error() from idle
+
+
+async def _read_body_with_idle_bound(
+    response: aiohttp.ClientResponse,
+    idle_timeout_s: float,
+    make_error: Callable[[], ResponseIdleTimeoutError],
+) -> bytes:
+    """Drain a non-streamed body with per-read silence semantics.
+
+    A single deadline around ``response.read()`` would abort a slow but
+    continuously arriving body; bounding each ``iter_any`` read keeps the
+    documented "no bytes for N seconds" meaning — the window resets on every
+    received byte. With the bound disabled the stock read runs untouched.
+    """
+    if idle_timeout_s <= 0:
+        return await response.read()
+    parts: list[bytes] = []
+    chunk_iter = response.content.iter_any()
+    while True:
+        try:
+            chunk = await _await_with_idle_bound(
+                anext(chunk_iter), idle_timeout_s, make_error
+            )
+        except StopAsyncIteration:
+            break
+        parts.append(chunk)
+    return b"".join(parts)
+
+
+async def _read_text_with_idle_bound(
+    response: aiohttp.ClientResponse,
+    idle_timeout_s: float,
+    make_error: Callable[[], ResponseIdleTimeoutError],
+) -> str:
+    """``response.text()`` with per-read silence semantics when armed."""
+    if idle_timeout_s <= 0:
+        return await response.text()
+    body = await _read_body_with_idle_bound(response, idle_timeout_s, make_error)
+    return body.decode(response.get_encoding())
 
 
 @contextlib.asynccontextmanager
@@ -268,7 +323,9 @@ class AioHttpClient(AIPerfLoggerMixin):
                     # Treat the full 2xx range as success so async job APIs can
                     # return accepted/created responses without being rejected.
                     if response.status < 200 or response.status >= 300:
-                        error_text = await response.text()
+                        error_text = await _read_text_with_idle_bound(
+                            response, response_idle_timeout, _idle_error
+                        )
                         record.end_perf_ns = time.perf_counter_ns()
                         record.error = ErrorDetails(
                             code=response.status,
@@ -385,8 +442,8 @@ class AioHttpClient(AIPerfLoggerMixin):
                         )
 
                         if is_binary:
-                            raw_bytes = await _await_with_idle_bound(
-                                response.read(), response_idle_timeout, _idle_error
+                            raw_bytes = await _read_body_with_idle_bound(
+                                response, response_idle_timeout, _idle_error
                             )
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
@@ -397,8 +454,8 @@ class AioHttpClient(AIPerfLoggerMixin):
                                 )
                             )
                         else:
-                            raw_response = await _await_with_idle_bound(
-                                response.text(), response_idle_timeout, _idle_error
+                            raw_response = await _read_text_with_idle_bound(
+                                response, response_idle_timeout, _idle_error
                             )
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(

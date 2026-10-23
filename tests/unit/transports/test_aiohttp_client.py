@@ -534,17 +534,26 @@ class TestResponseIdleTimeout:
     delivering bytes only surfaced via the run-level stall watchdog aborting
     the whole benchmark. The bound is opt-in (default 0) and per-read: it arms
     on every read and resets on every received byte.
+
+    All tests run on the time_traveler_no_patch_sleep virtual clock (the
+    autouse no_sleep patch is skipped for it), so the delays below are REAL
+    waits in virtual time: the idle wrapper's timer only escapes a wait
+    longer than the bound, which is what makes the reset/disable pins
+    non-vacuous while keeping wall time at zero.
     """
 
-    async def test_wedged_stream_aborts_after_idle_timeout_and_releases_connection(
+    async def test_wedged_stream_aborts_after_idle_timeout_and_exits_response(
         self,
         aiohttp_client: AioHttpClient,
         mock_sse_response: Mock,
         monkeypatch: pytest.MonkeyPatch,
+        time_traveler_no_patch_sleep,
     ) -> None:
         """One delivered chunk, then silence: the request records
-        ResponseIdleTimeoutError instead of hanging until the total timeout,
-        and the aborted response's connection is released, not leaked."""
+        ResponseIdleTimeoutError after the bound (virtual-time pinned), and
+        the aborted response's context manager is exited -- the release path
+        through which aiohttp closes rather than pools the wedged connection.
+        (A real-pool leak audit needs a live server; deferred to integration.)"""
         monkeypatch.setattr(Environment.HTTP, "RESPONSE_IDLE_TIMEOUT", 0.05)
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_sse_response.content = _StallingStreamReader(
@@ -554,21 +563,21 @@ class TestResponseIdleTimeout:
                 mock_session_class, mock_sse_response, ["request"]
             )
 
-            start_ns = time.perf_counter_ns()
+            start = time_traveler_no_patch_sleep.time()
             record = await aiohttp_client.post_request(
                 "http://test.com/stream",
                 '{"stream": true}',
                 {"Accept": "text/event-stream"},
             )
-            elapsed_s = (time.perf_counter_ns() - start_ns) / 1e9
+            elapsed = time_traveler_no_patch_sleep.time() - start
 
             # The request CM must be exited so the wedged connection is
             # released instead of leaking into the pool.
             request_ctx = mock_session.request.return_value
             request_ctx.__aexit__.assert_awaited()
 
-        # Bounded by the idle timeout, nowhere near the 600s total timeout.
-        assert elapsed_s < 5.0
+        # Fired at the 0.05s idle bound, nowhere near the 600s total timeout.
+        assert 0.04 <= elapsed < 30.0
         assert record.error is not None
         assert record.error.type == "ResponseIdleTimeoutError"
         assert "no data received" in record.error.message
@@ -582,6 +591,7 @@ class TestResponseIdleTimeout:
         aiohttp_client: AioHttpClient,
         mock_sse_response: Mock,
         monkeypatch: pytest.MonkeyPatch,
+        time_traveler_no_patch_sleep,
     ) -> None:
         """Headers arrive but the body never starts: still an idle timeout."""
         monkeypatch.setattr(Environment.HTTP, "RESPONSE_IDLE_TIMEOUT", 0.05)
@@ -605,9 +615,10 @@ class TestResponseIdleTimeout:
         aiohttp_client: AioHttpClient,
         mock_sse_response: Mock,
         monkeypatch: pytest.MonkeyPatch,
+        time_traveler_no_patch_sleep,
     ) -> None:
         """Chunks arriving every T/3 must never trip a bound of T: the window
-        resets per read. Cumulative stream time (0.4s) exceeds the bound
+        resets per read. Virtual stream time (~0.25s) exceeds the bound
         (0.15s), so a single arm-at-start timer would falsely fire here."""
         monkeypatch.setattr(Environment.HTTP, "RESPONSE_IDLE_TIMEOUT", 0.15)
         with patch("aiohttp.ClientSession") as mock_session_class:
@@ -623,55 +634,61 @@ class TestResponseIdleTimeout:
             )
             setup_mock_session(mock_session_class, mock_sse_response, ["request"])
 
+            start = time_traveler_no_patch_sleep.time()
             record = await aiohttp_client.post_request(
                 "http://test.com/stream",
                 '{"stream": true}',
                 {"Accept": "text/event-stream"},
             )
+            elapsed = time_traveler_no_patch_sleep.time() - start
 
         assert record.error is None
         assert len(record.responses) == 4
         assert aiohttp_client.stream_chunks_received == 4
+        # Cumulative virtual silence windows sum past the bound; only a
+        # per-read reset lets the request survive.
+        assert elapsed > 0.15
 
     async def test_idle_timeout_zero_disables_the_bound(
         self,
         aiohttp_client: AioHttpClient,
         mock_sse_response: Mock,
         monkeypatch: pytest.MonkeyPatch,
+        time_traveler_no_patch_sleep,
     ) -> None:
-        """AIPERF_HTTP_RESPONSE_IDLE_TIMEOUT=0 arms nothing: a real 0.3s
-        mid-stream silence (6x the bound used in the armed tests) completes."""
+        """AIPERF_HTTP_RESPONSE_IDLE_TIMEOUT=0 arms nothing: a 30s (virtual)
+        mid-stream silence completes. Any mistakenly armed sub-minute bound
+        would fire long before 30s, so the disable pin is real."""
         monkeypatch.setattr(Environment.HTTP, "RESPONSE_IDLE_TIMEOUT", 0.0)
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_sse_response.content = _StallingStreamReader(
                 [b'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'],
-                stall_seconds=0.3,
+                stall_seconds=30.0,
             )
             setup_mock_session(mock_session_class, mock_sse_response, ["request"])
 
+            start = time_traveler_no_patch_sleep.time()
             record = await aiohttp_client.post_request(
                 "http://test.com/stream",
                 '{"stream": true}',
                 {"Accept": "text/event-stream"},
             )
+            elapsed = time_traveler_no_patch_sleep.time() - start
 
         assert record.error is None
         assert len(record.responses) == 1
+        assert elapsed >= 30.0
 
     async def test_non_streaming_body_read_is_bounded(
         self,
         aiohttp_client: AioHttpClient,
         mock_aiohttp_response: Mock,
         monkeypatch: pytest.MonkeyPatch,
+        time_traveler_no_patch_sleep,
     ) -> None:
         """A non-streaming response whose body never arrives is aborted too."""
         monkeypatch.setattr(Environment.HTTP, "RESPONSE_IDLE_TIMEOUT", 0.05)
-
-        async def _hang_text() -> str:
-            await asyncio.Event().wait()  # never set
-            raise AssertionError("unreachable")
-
-        mock_aiohttp_response.text = _hang_text
+        mock_aiohttp_response.content = _StallingStreamReader([])
         with patch("aiohttp.ClientSession") as mock_session_class:
             setup_mock_session(mock_session_class, mock_aiohttp_response, ["request"])
 
@@ -682,11 +699,40 @@ class TestResponseIdleTimeout:
         assert record.error is not None
         assert record.error.type == "ResponseIdleTimeoutError"
 
+    async def test_non_streaming_body_drip_feed_never_trips(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_aiohttp_response: Mock,
+        monkeypatch: pytest.MonkeyPatch,
+        time_traveler_no_patch_sleep,
+    ) -> None:
+        """A body arriving in slow but steady pieces keeps the same per-read
+        silence semantics as streaming: cumulative time past the bound with
+        every gap under it must complete with the full payload."""
+        monkeypatch.setattr(Environment.HTTP, "RESPONSE_IDLE_TIMEOUT", 0.15)
+        mock_aiohttp_response.content = _StallingStreamReader(
+            [b'{"ok":', b" true", b"}"],
+            chunk_delay=0.05,
+            stall_seconds=0.05,
+        )
+        mock_aiohttp_response.get_encoding.return_value = "utf-8"
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            setup_mock_session(mock_session_class, mock_aiohttp_response, ["request"])
+
+            record = await aiohttp_client.post_request(
+                "http://test.com/api", '{"test": "data"}', {}
+            )
+
+        assert record.error is None
+        assert len(record.responses) == 1
+        assert record.responses[0].text == '{"ok": true}'
+
     async def test_response_headers_wait_is_bounded(
         self,
         aiohttp_client: AioHttpClient,
         mock_aiohttp_response: Mock,
         monkeypatch: pytest.MonkeyPatch,
+        time_traveler_no_patch_sleep,
     ) -> None:
         """The wait for response headers carries the whole non-streaming
         generation; a server that never answers is aborted by the idle bound."""
@@ -718,9 +764,10 @@ class TestResponseIdleTimeout:
         monkeypatch: pytest.MonkeyPatch,
         idle_timeout: float,
     ) -> None:
-        """The session's own total timeout (raised inside the read, long before
-        the idle window elapses) must surface as TimeoutError, never be
-        relabeled ResponseIdleTimeoutError -- with the bound armed or not."""
+        """The session's own total timeout (raised inside the read) must
+        surface as TimeoutError, never be relabeled ResponseIdleTimeoutError
+        -- with the bound armed or not. Attribution is structural (the
+        passthrough wrapper), not elapsed-time guessing."""
         monkeypatch.setattr(Environment.HTTP, "RESPONSE_IDLE_TIMEOUT", idle_timeout)
         with patch("aiohttp.ClientSession") as mock_session_class:
             mock_session = setup_mock_session(
