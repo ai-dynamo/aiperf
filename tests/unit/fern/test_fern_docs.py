@@ -185,11 +185,29 @@ def _invalidate_interrupted_preview_bundle() -> None:
     ``app-preview`` subtree — the same unit the CLI itself removes for a
     forced re-download — forces the retry to redo the full download and
     setup. Everything else under ``~/.fern`` (``id``, ``logs/``, other
-    bundle kinds) is untouched. ``shutil.rmtree`` refuses to follow a
-    symlinked ``app-preview``, so a hostile or surprising cache layout is
-    left alone rather than deleted through.
+    bundle kinds) is untouched.
+
+    Only true absence is tolerated: a symlinked ``app-preview`` is refused
+    (never delete through a link), and any other deletion failure raises —
+    proceeding to the retry with the interrupted bundle still in place would
+    risk reusing exactly the half-installed state this invalidation exists
+    to discard, so the pre-warm fails loudly instead.
     """
-    shutil.rmtree(Path.home() / ".fern" / "app-preview", ignore_errors=True)
+    app_preview = Path.home() / ".fern" / "app-preview"
+    if app_preview.is_symlink():
+        raise RuntimeError(
+            f"refusing to invalidate symlinked fern preview bundle: {app_preview}"
+        )
+    try:
+        shutil.rmtree(app_preview)
+    except FileNotFoundError:
+        return  # nothing to invalidate
+    except OSError as exc:
+        raise RuntimeError(
+            f"could not invalidate interrupted fern preview bundle at "
+            f"{app_preview}: {exc}; retrying would risk reusing unfinished "
+            f"setup state, so the pre-warm is aborted"
+        ) from exc
 
 
 @pytest.fixture(scope="session")
@@ -211,9 +229,11 @@ def fern_preview_bundle_prewarmed(staged_fern_docs: Path) -> None:
     etag-marked-but-unfinished bundle state (see
     ``_invalidate_interrupted_preview_bundle``), so the bundle is
     invalidated before the retry — the retry never takes the ETag fast path
-    on state from an attempt we cut off. ``[error]`` output and unexpected
-    exits fail immediately without a retry and without invalidation: those
-    are deterministic defects, not network variance.
+    on state from an attempt we cut off, and an invalidation failure aborts
+    the pre-warm loudly rather than proceeding on a best-effort delete.
+    ``[error]`` output and unexpected exits fail immediately without a retry
+    and without invalidation: those are deterministic defects, not network
+    variance.
     """
     last_error: TimeoutError | None = None
     for _attempt in (1, 2):
