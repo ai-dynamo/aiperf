@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -123,6 +124,115 @@ async def _kubectl_apply_stdin(context: str, manifest: str) -> None:
     _, stderr = await proc.communicate(input=manifest.encode())
     if proc.returncode != 0:
         raise RuntimeError(f"kubectl apply failed: {stderr.decode()}")
+
+
+# ============================================================================
+# CPU overcommit for local Kind clusters
+# ============================================================================
+
+KIND_CPU_OVERCOMMIT_FLOOR: int = 32
+"""Fake CPU capacity floor (in whole cores) for local Kind nodes.
+
+The operator deploys production-calibrated pod requests (one AIPerfJob wants
+~6 CPUs across its controller and worker pods; the mock server alone requests
+2). A single-node Kind cluster on a 4-vCPU CI runner cannot admit them, so
+pods sat Pending with FailedScheduling/Insufficient cpu until the test timed
+out (the weekly audit workflow failed 4/4 scheduled runs this way).
+
+Kind already overcommits in the other direction — every node advertises the
+*host's* CPU count regardless of what the node container could actually use —
+so raising the advertised floor for test clusters keeps pod requests honest
+(production defaults stay meaningful) while making the test cluster admit the
+test workload. The runner's real CPUs are unchanged: admitted pods contend
+for actual CPU, which is exactly what the suites already tolerate (audit
+tolerance bands exist because of this contention). Only CPU is faked; memory
+accounting stays real so OOM behavior is unchanged.
+"""
+
+CPU_OVERCOMMIT_INTERVAL_SECONDS: float = 5.0
+"""Re-assert cadence for the faked capacity.
+
+Kubelet recomputes real capacity/allocatable on every node-status sync
+(~every 10s) and patches the API object back whenever it detects drift
+(pkg/kubelet/kubelet_node_status.go tryUpdateNodeStatus), so a one-shot patch
+reverts within seconds. The fixture re-applies on this interval for the life
+of the test session.
+"""
+
+
+def parse_cpu_millicores(quantity: str) -> int:
+    """Parse a Kubernetes CPU quantity ('4', '4000m', '2500m') to millicores."""
+    quantity = quantity.strip()
+    if quantity.endswith("m"):
+        return int(quantity[:-1])
+    return int(float(quantity) * 1000)
+
+
+def node_cpu_overcommit_patch(allocatable_cpu: str, floor_cpus: int) -> str | None:
+    """JSON status patch raising a node's CPU capacity/allocatable to the floor.
+
+    Returns None when the node already meets the floor, so genuinely large
+    nodes (e.g. GPU runners) are never shrunk.
+    """
+    if parse_cpu_millicores(allocatable_cpu) >= floor_cpus * 1000:
+        return None
+    return json.dumps(
+        [
+            {
+                "op": "replace",
+                "path": "/status/capacity/cpu",
+                "value": str(floor_cpus),
+            },
+            {
+                "op": "replace",
+                "path": "/status/allocatable/cpu",
+                "value": str(floor_cpus),
+            },
+        ]
+    )
+
+
+async def apply_cpu_overcommit(context: str, floor_cpus: int) -> list[str]:
+    """Patch every under-floor node's status to advertise ``floor_cpus`` cores.
+
+    Returns the names of the nodes that were patched. Safe to call repeatedly;
+    kubelet re-asserts real capacity on its node-status sync, so the test
+    fixture calls this on an interval for the session's lifetime.
+    """
+    rc, stdout, _ = await _kubectl(
+        context,
+        "get",
+        "nodes",
+        "-o",
+        "jsonpath={range .items[*]}{.metadata.name} {.status.allocatable.cpu}{'\\n'}{end}",
+    )
+    if rc != 0:
+        return []
+    patched: list[str] = []
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        name, _, allocatable = line.partition(" ")
+        patch = node_cpu_overcommit_patch(allocatable, floor_cpus)
+        if patch is None:
+            continue
+        await _kubectl(
+            context,
+            "patch",
+            "node",
+            name,
+            "--subresource=status",
+            "--type=json",
+            f"-p={patch}",
+        )
+        patched.append(name)
+    if patched:
+        logger.info(
+            f"CPU overcommit: node(s) {patched} now advertise {floor_cpus} CPUs "
+            "(test-cluster scheduling floor; real runner CPUs unchanged)"
+        )
+    return patched
 
 
 async def _create_nvidia_runtime_class(context: str) -> None:
