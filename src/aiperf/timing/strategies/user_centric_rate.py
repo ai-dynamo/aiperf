@@ -407,6 +407,11 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             spawn_sec, _, queued_user = heapq.heappop(spawn_queue)
             target_sec = max(spawn_sec, last_slot_perf + self._stagger)
             await asyncio.sleep(max(0.0, target_sec - time.perf_counter()))
+            # Issuance is fire-and-track, so a refusal lands one loop
+            # iteration late; re-check after the sleep so a stopped phase
+            # fires at most the slots already in flight.
+            if self._arrivals_stopped:
+                return
             last_slot_perf = time.perf_counter()
 
             if queued_user is None:
