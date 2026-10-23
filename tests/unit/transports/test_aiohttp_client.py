@@ -742,7 +742,7 @@ class TestResponseIdleTimeout:
                 mock_session_class, mock_aiohttp_response, ["request"]
             )
 
-            async def _hang_enter():
+            async def _hang_enter(*_args):  # mock magic-method binding passes self
                 await asyncio.Event().wait()  # never set
                 raise AssertionError("unreachable")
 
