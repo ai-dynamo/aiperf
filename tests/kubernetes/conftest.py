@@ -42,8 +42,8 @@ from tests.kubernetes.helpers.benchmark import (
     BenchmarkResult,
 )
 from tests.kubernetes.helpers.cluster import (
-    KIND_CPU_OVERCOMMIT_FLOOR,
     CPU_OVERCOMMIT_INTERVAL_SECONDS,
+    KIND_CPU_OVERCOMMIT_FLOOR,
     ClusterConfig,
     ClusterRuntime,
     LocalCluster,
@@ -824,9 +824,7 @@ async def local_cluster(
             while True:
                 await asyncio.sleep(CPU_OVERCOMMIT_INTERVAL_SECONDS)
                 try:
-                    await apply_cpu_overcommit(
-                        cluster.context, s.node_cpu_overcommit
-                    )
+                    await apply_cpu_overcommit(cluster.context, s.node_cpu_overcommit)
                 except Exception as exc:  # transient kubectl failure; keep looping
                     logger.warning(f"CPU overcommit re-apply failed: {exc}")
 
