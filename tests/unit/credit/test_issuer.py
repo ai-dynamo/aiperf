@@ -876,6 +876,30 @@ class TestIssuedAtTimestamp:
         # call's bracket; the two must also be non-decreasing.
         assert issued[1] >= issued[0]
 
+    async def test_issued_at_ns_uses_the_clock_at_each_issue(
+        self, credit_issuer, mock_router, mock_lifecycle
+    ):
+        """Each credit carries the clock value read during its own issue.
+
+        Deterministic cached-timestamp regression guard: stub the lifecycle
+        clock with distinct per-call readings and require each issued credit
+        to carry exactly its own call's reading. Reusing an earlier reading
+        (cached across calls) fails here regardless of platform clock slack,
+        which the real-clock bracket test above cannot guarantee: with the
+        Windows slack window, a value cached from the immediately preceding
+        call could still land inside the next call's bracket.
+        """
+        readings = [1_700_000_000_000_000_000, 1_700_000_123_456_789_000]
+        mock_lifecycle.now_ns = MagicMock(side_effect=iter(readings))
+
+        for expected in readings:
+            await credit_issuer.issue_credit(make_turn())
+            sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+            assert sent_credit.issued_at_ns == expected
+
+        # Exactly one clock read per issue; no more, no fewer.
+        assert mock_lifecycle.now_ns.call_count == len(readings)
+
 
 # =============================================================================
 # Test: URL Selection Strategy Integration
