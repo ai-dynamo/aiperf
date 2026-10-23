@@ -26,6 +26,7 @@ from aiperf.config.deployment import (
 )
 from aiperf.kubernetes.preflight import CheckResult, CheckStatus
 from aiperf.kubernetes.resources import KubernetesDeployment
+from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.preflight import (
     OperatorPreflightChecker,
     _is_node_ready_typed,
@@ -516,6 +517,75 @@ class TestCheckNodeResources:
         with _patch_core_v1(mock_core):
             result = await checker._check_node_resources()
         assert result.status == CheckStatus.WARN
+
+
+def _pod_on(node_name: str, cpu: str, memory: str):
+    """Build a typed-ish V1Pod mock scheduled on ``node_name``."""
+    pod = MagicMock()
+    pod.spec = MagicMock()
+    pod.spec.node_name = node_name
+    container = MagicMock()
+    container.resources = MagicMock()
+    container.resources.requests = {"cpu": cpu, "memory": memory}
+    pod.spec.containers = [container]
+    return pod
+
+
+class TestCheckNodeResourcesStrictMode:
+    """AIPERF_PREFLIGHT_STRICT_RESOURCES promotes provable insufficiency to FAIL.
+
+    CI chaos/audit paths opt in so a cluster that can never fit the benchmark
+    fails the job in seconds with a diagnosable message instead of hanging at
+    Pending until the test timeout. Transient free-capacity shortfalls (pods
+    that may release capacity) must keep WARNing even in strict mode.
+    """
+
+    @pytest.mark.asyncio
+    async def test_provable_shortfall_fails_in_strict_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", True)
+        checker = _make_checker()
+        n = _node("tiny-node", "1", "1Gi")
+        mock_core = MagicMock(list_node=AsyncMock(return_value=_list([n])))
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert result.status == CheckStatus.FAIL
+        assert "can never fit" in result.message
+        assert "AIPERF_PREFLIGHT_STRICT_RESOURCES" in result.message
+
+    @pytest.mark.asyncio
+    async def test_provable_shortfall_warns_by_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", False)
+        checker = _make_checker()
+        n = _node("tiny-node", "1", "1Gi")
+        mock_core = MagicMock(list_node=AsyncMock(return_value=_list([n])))
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert result.status == CheckStatus.WARN
+        assert "may not have enough" in result.message
+
+    @pytest.mark.asyncio
+    async def test_transient_free_shortfall_still_warns_in_strict_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Allocatable fits the job but running pods booked the node: waiting
+        can help, so even strict mode must WARN rather than FAIL."""
+        monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", True)
+        checker = _make_checker()
+        n = _node("big-node", "16", "64Gi")
+        mock_core = MagicMock(
+            list_node=AsyncMock(return_value=_list([n])),
+            list_pod_for_all_namespaces=AsyncMock(
+                return_value=_list([_pod_on("big-node", "14", "1Gi")])
+            ),
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert result.status == CheckStatus.WARN
+        assert "may not have enough" in result.message
 
 
 class TestCheckNodeSelectorMatch:

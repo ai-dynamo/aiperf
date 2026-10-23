@@ -160,6 +160,16 @@ class K8sTestSettings:
     By default these are skipped to protect shared cluster state.
     """
 
+    operator_strict_preflight: bool = False
+    """Deploy the operator with AIPERF_PREFLIGHT_STRICT_RESOURCES=true.
+
+    Strictly opt-in for CI chaos/audit paths: the operator's
+    resource-capacity preflight FAILS the job fast when the cluster provably
+    cannot fit the benchmark, instead of WARNing and letting pods sit Pending
+    until the test timeout. Default off so production-shaped runs keep the
+    flexible WARN-and-proceed behavior.
+    """
+
     node_cpu_overcommit: int = 0
     """Fake CPU capacity floor (whole cores) for local Kind nodes; 0 disables.
 
@@ -212,6 +222,7 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-tolerate-gpu-nodes", "K8S_TEST_TOLERATE_GPU_NODES", None, "bool", "Add tolerations for GPU node taints (nvidia.com/gpu, kubernetes.io/arch=arm64) so pods can run on GPU nodes"),
     ("--k8s-allow-disruptive", "K8S_TEST_ALLOW_DISRUPTIVE", None, "bool", "Allow tests marked k8s_disruptive that make cluster-wide mutations (e.g. CRD deletion); skipped by default"),
     ("--k8s-node-cpu-overcommit", "K8S_TEST_NODE_CPU_OVERCOMMIT", "0", "int", "Opt-in fake CPU capacity floor (cores) for local Kind nodes so production-sized pod requests schedule on small CI runners; 0 disables (default). Only kind:// providerID nodes are patched"),
+    ("--k8s-operator-strict-preflight", "K8S_TEST_OPERATOR_STRICT_PREFLIGHT", None, "bool", "Deploy the operator with AIPERF_PREFLIGHT_STRICT_RESOURCES=true so provable capacity shortfalls fail fast instead of hanging at Pending (CI chaos/audit)"),
 ]  # fmt: skip
 
 
@@ -321,6 +332,7 @@ def _resolve_settings(config: pytest.Config) -> K8sTestSettings:
         "skip_operator_deploy",
         "tolerate_gpu_nodes",
         "allow_disruptive",
+        "operator_strict_preflight",
     ):
         if resolved.get(key) is None:
             resolved[key] = False
@@ -2031,6 +2043,7 @@ async def operator_deployer(
         image_pull_policy=k8s_settings.image_pull_policy,
         image_pull_secret=k8s_settings.image_pull_secret,
         operator_namespace=k8s_settings.operator_namespace,
+        strict_preflight=k8s_settings.operator_strict_preflight,
     )
 
     # Skip CRD install when using an existing remote cluster (CRDs already present)

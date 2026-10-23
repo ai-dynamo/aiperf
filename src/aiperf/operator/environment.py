@@ -584,6 +584,20 @@ class _OperatorEnvironment(BaseSettings):
         le=120,
         description="Seconds to wait for all pre-flight checks to complete",
     )
+    PREFLIGHT_STRICT_RESOURCES: bool = Field(
+        default=False,
+        description=(
+            "Fail resource-capacity preflight checks (instead of WARN) when "
+            "the cluster provably cannot fit the benchmark: required CPU or "
+            "memory exceeds total schedulable allocatable, so the JobSet pods "
+            "would stay Pending no matter how long the monitor waits. "
+            "Transient free-capacity shortfalls (capacity booked by pods that "
+            "may release it) still WARN. Defaults false so production "
+            "deployments keep the flexible WARN-and-proceed behavior; CI "
+            "chaos/audit paths opt in to fail fast with a diagnosable "
+            "message instead of hanging at Pending until the test timeout."
+        ),
+    )
     CLIENT_CACHE_MAX_ENTRIES: int = Field(
         default=200,
         ge=1,

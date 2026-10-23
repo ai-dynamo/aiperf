@@ -353,13 +353,17 @@ kubernetes-audit-tests-ci test-kubernetes-audit-ci: #? run the serial Kubernetes
 # K8S_TEST_NODE_CPU_OVERCOMMIT=32: fake a 32-core CPU capacity floor on the
 # local Kind node (kind:// providerID only; re-asserted every 5s against
 # kubelet's capacity rewrite) so production-sized pod requests schedule on the
-# 4-vCPU ubuntu-latest runner.
+# 4-vCPU ubuntu-latest runner. K8S_TEST_OPERATOR_STRICT_PREFLIGHT=1: turn the
+# operator's resource-capacity preflight WARN into a fail-fast FAIL when the
+# cluster provably cannot fit the job, so a scheduling-capacity regression
+# fails in seconds with a clear message instead of hanging at Pending until
+# the test timeout.
 kubernetes-chaos-tests-ci test-kubernetes-chaos-ci: #? run the legacy Kubernetes fault-injection scenarios serially.
-	$(activate_venv) && K8S_TEST_NODE_CPU_OVERCOMMIT=32 pytest tests/kubernetes/chaos/ \
+	$(activate_venv) && K8S_TEST_NODE_CPU_OVERCOMMIT=32 K8S_TEST_OPERATOR_STRICT_PREFLIGHT=1 pytest tests/kubernetes/chaos/ \
 		-m 'k8s and k8s_slow' -n 0 -v --tb=long $(args)
 
 kubernetes-chaos-aiperf-tests-ci test-kubernetes-chaos-aiperf-ci: #? run the unified-API Kubernetes fault-injection scenarios serially.
-	$(activate_venv) && K8S_TEST_NODE_CPU_OVERCOMMIT=32 pytest tests/kubernetes/chaos_aiperf/ \
+	$(activate_venv) && K8S_TEST_NODE_CPU_OVERCOMMIT=32 K8S_TEST_OPERATOR_STRICT_PREFLIGHT=1 pytest tests/kubernetes/chaos_aiperf/ \
 		-m 'k8s and k8s_slow' -n 0 -v --tb=long $(args)
 
 component-integration-tests test-component-integration: #? run component integration tests with with AIPerf Mock Server.

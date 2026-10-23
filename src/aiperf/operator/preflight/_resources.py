@@ -16,6 +16,7 @@ from aiperf.kubernetes.utils import (
     parse_cpu,
     parse_memory_gib,
 )
+from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.preflight._common import (
     _is_node_ready_typed,
     controller_resource_requirements,
@@ -142,6 +143,8 @@ class _ResourceChecksMixin:
         tolerations = self.deploy_config.pod_template.tolerations or []
         total_cpu = 0.0
         total_memory = 0.0
+        total_allocatable_cpu = 0.0
+        total_allocatable_memory = 0.0
         ready_nodes = 0
         skipped_tainted = 0
 
@@ -155,6 +158,9 @@ class _ResourceChecksMixin:
             cpu, memory = _node_free(node, requested)
             total_cpu += cpu
             total_memory += memory
+            alloc_cpu, alloc_memory = _node_free(node, None)
+            total_allocatable_cpu += alloc_cpu
+            total_allocatable_memory += alloc_memory
 
         ctrl_cpu, ctrl_mem = controller_resource_requirements()
         worker_cpu = parse_cpu(K8sEnvironment.WORKER_POD.CPU)
@@ -182,6 +188,38 @@ class _ResourceChecksMixin:
                     "Check node Ready condition",
                 ],
             )
+
+        if (
+            required_cpu > total_allocatable_cpu
+            or required_mem > total_allocatable_memory
+        ):
+            # Provably insufficient: even if every pod on the schedulable
+            # nodes released its requests, the benchmark could never fit, so
+            # its pods would sit Pending until the job times out. Strict mode
+            # (CI chaos/audit paths) fails fast with a diagnosable message
+            # instead of hanging; the default stays WARN-and-proceed because
+            # production deployments may legitimately over-commit or add
+            # capacity (autoscaling) while the job queues.
+            provable_message = (
+                f"Cluster can never fit this benchmark. "
+                f"Need {format_cpu(required_cpu)} CPU, {format_memory(required_mem)} mem "
+                f"but only {format_cpu(total_allocatable_cpu)} CPU, "
+                f"{format_memory(total_allocatable_memory)} mem allocatable across "
+                f"{ready_nodes} schedulable node(s){tainted_suffix}."
+            )
+            if OperatorEnvironment.PREFLIGHT_STRICT_RESOURCES:
+                return CheckResult(
+                    name="Node Resources",
+                    status=CheckStatus.FAIL,
+                    message=(
+                        f"{provable_message} Failing fast because "
+                        "AIPERF_PREFLIGHT_STRICT_RESOURCES=true."
+                    ),
+                    hints=[
+                        "Reduce worker count or add cluster capacity",
+                        "Unset AIPERF_PREFLIGHT_STRICT_RESOURCES to only warn",
+                    ],
+                )
 
         if required_cpu > total_cpu or required_mem > total_memory:
             return CheckResult(
