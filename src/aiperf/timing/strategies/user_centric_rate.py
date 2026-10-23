@@ -422,28 +422,28 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             else:
                 user = queued_user
 
-            self._scheduler.execute_async(self._issue_arrival(user, spawn_sec))
+            # Derive the replacement slot at fire time, from the planned
+            # schedule: an excepting or blocked issuance must not kill or
+            # delay this user's replacement stream. Adaptive scale-down can
+            # still suppress the derivation.
+            self._schedule_replacement_user(spawn_queue, spawn_sec, user)
+            self._scheduler.execute_async(self._issue_arrival(user))
 
-    async def _issue_arrival(self, user: User, spawn_sec: float) -> None:
-        """Issue one arrival's first turn and derive its replacement slot.
+    async def _issue_arrival(self, user: User) -> None:
+        """Issue one arrival's first turn.
 
         Runs as a scheduler-tracked task (fire-and-track from execute_phase).
         A refusal (stop condition reached / sending stopped) flips
-        ``_arrivals_stopped`` so the pop loop exits instead of spinning on a
-        queue that no longer grows; exceptions propagate to the scheduler's
-        exception handler without disturbing the other arrivals.
+        ``_arrivals_stopped`` so the pop loop exits instead of spinning
+        forever; exceptions propagate to the scheduler's exception handler
+        without disturbing the other arrivals or their replacement slots
+        (already derived at fire time).
         """
         should_continue = await self._credit_issuer.issue_credit(
             user.build_first_turn()
         )
         if not should_continue:
             self._arrivals_stopped = True
-            return
-
-        # Derive next spawn time based on estimated time to completion.
-        # Adaptive scale-down drains excess users by suppressing replacements.
-        assert self._spawn_queue is not None
-        self._schedule_replacement_user(self._spawn_queue, spawn_sec, user)
 
     async def handle_credit_return(
         self,

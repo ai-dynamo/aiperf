@@ -344,13 +344,19 @@ class TestArrivalQueueClamping:
     documented SMALLEST gap between any two users' first turns, so the clamp
     applies to on-plan and overdue slots alike. Issuance is fire-and-track
     (one scheduler task per arrival): a blocked or excepting issuance must
-    neither stall nor abort the remaining grid.
+    neither stall nor abort the remaining grid, and replacement slots are
+    derived at fire time so a failed issuance cannot kill its user's
+    replacement stream.
 
-    All tests run under time_traveler (virtual time): clamp sleeps and
-    perf_counter reads share the loop's virtual clock, so fire times are
-    exact. Every wait is bounded by asyncio.wait_for with a finite virtual
-    timeout (which looptime reaches in bounded real time), and cleanup always
-    cancels the execution task and drains scheduler-tracked issuance tasks.
+    All tests run under time_traveler_no_patch_sleep: looptime virtualizes
+    the loop clock (real asyncio.sleep calls become virtual loop timers that
+    the loop reaches instantly when idle, and pending issuance tasks always
+    run BEFORE the idle clock jump), while time.perf_counter reads share the
+    same virtual clock -- so fire times are exact. (time_traveler's patched
+    sleep advances its offset BEFORE yielding, which would let a later
+    queue sleep shift an issuance task's recorded timestamp.) Every wait is
+    bounded by asyncio.wait_for with a finite virtual timeout, and cleanup
+    always cancels the execution task and drains scheduler-tracked tasks.
     """
 
     @staticmethod
@@ -416,13 +422,15 @@ class TestArrivalQueueClamping:
         strategy._lifecycle.started_at_perf_sec = start_ns / NANOS_PER_SECOND
         return start_ns / NANOS_PER_SECOND
 
-    async def test_healthy_grid_lands_on_planned_slots(self, time_traveler) -> None:
+    async def test_healthy_grid_lands_on_planned_slots(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
         """With no stall the clamp never engages: initial users issue exactly
         on the planned stagger grid (base + order * stagger)."""
         strategy = self._strategy()
         await strategy.setup_phase()
         stagger = strategy._stagger
-        start = self._set_phase_start(strategy, time_traveler)
+        start = self._set_phase_start(strategy, time_traveler_no_patch_sleep)
 
         call_times: list[float] = []
 
@@ -437,7 +445,7 @@ class TestArrivalQueueClamping:
         assert call_times == pytest.approx(planned, abs=stagger / 10)
 
     async def test_stalled_grid_respaces_initial_and_replacement_arrivals(
-        self, time_traveler
+        self, time_traveler_no_patch_sleep
     ) -> None:
         """Started 10 staggers in the past, every planned slot -- initial grid
         and derived replacements alike -- is overdue. The clamp must re-space
@@ -446,7 +454,9 @@ class TestArrivalQueueClamping:
         strategy = self._strategy()
         await strategy.setup_phase()
         stagger = strategy._stagger
-        self._set_phase_start(strategy, time_traveler, offset_staggers=10.0)
+        self._set_phase_start(
+            strategy, time_traveler_no_patch_sleep, offset_staggers=10.0
+        )
 
         call_times: list[float] = []
 
@@ -461,7 +471,9 @@ class TestArrivalQueueClamping:
         gaps = [b - a for a, b in zip(call_times, call_times[1:])]
         assert all(gap == pytest.approx(stagger, abs=stagger / 10) for gap in gaps)
 
-    async def test_sub_stagger_planned_gap_is_clamped(self, time_traveler) -> None:
+    async def test_sub_stagger_planned_gap_is_clamped(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
         """The min-gap contract applies to on-plan slots too: two arrivals
         planned 0.4 staggers apart must still fire one full stagger apart."""
         strategy = self._strategy()
@@ -471,7 +483,7 @@ class TestArrivalQueueClamping:
             User(user_id=1, sampled=MagicMock(), max_turns=1, order=0),
             User(user_id=2, sampled=MagicMock(), max_turns=1, order=0.4),
         ]
-        self._set_phase_start(strategy, time_traveler)
+        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
 
         call_times: list[float] = []
 
@@ -487,14 +499,17 @@ class TestArrivalQueueClamping:
             stagger, abs=stagger / 10
         )
 
-    async def test_issuer_exception_isolated_per_arrival(self, time_traveler) -> None:
+    async def test_issuer_exception_isolated_and_stream_survives(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
         """One excepting issuance must neither abort nor stall the remaining
-        grid: later slots still fire on the clamped schedule, and the failure
-        is captured by the scheduler's exception handler."""
+        grid, and its user's replacement stream survives: replacement slots
+        are derived at fire time, before the issuance outcome is known.
+        The failure is captured by the scheduler's exception handler."""
         strategy = self._strategy()
         await strategy.setup_phase()
         stagger = strategy._stagger
-        self._set_phase_start(strategy, time_traveler)
+        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
 
         errors: list[BaseException] = []
         strategy._scheduler.set_exception_handler(
@@ -506,25 +521,29 @@ class TestArrivalQueueClamping:
             call_times.append(time.perf_counter())
             if len(call_times) == 1:
                 raise RuntimeError("boom")
-            return len(call_times) < 3
+            return len(call_times) < 6  # 3 initials + 3 replacements
 
         strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
         await self._run(strategy)
 
-        assert len(call_times) == 3
+        # All three replacements fire -- including the failed user's --
+        # proving its stream was not killed by the exception.
+        assert len(call_times) == 6
         gaps = [b - a for a, b in zip(call_times, call_times[1:])]
         assert all(gap == pytest.approx(stagger, abs=stagger / 10) for gap in gaps)
         assert len(errors) == 1
         assert isinstance(errors[0], RuntimeError)
 
-    async def test_blocked_issuance_does_not_stall_grid(self, time_traveler) -> None:
+    async def test_blocked_issuance_does_not_stall_grid(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
         """Fire-and-track: an issuance blocked on slot acquisition must not
         delay later slots -- they fire on the clamped schedule while the
         first issuance is still blocked."""
         strategy = self._strategy()
         await strategy.setup_phase()
         stagger = strategy._stagger
-        self._set_phase_start(strategy, time_traveler)
+        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
 
         gate = asyncio.Event()
         third_call = asyncio.Event()
@@ -557,12 +576,15 @@ class TestArrivalQueueClamping:
         gaps = [b - a for a, b in zip(call_times, call_times[1:])]
         assert all(gap == pytest.approx(stagger, abs=stagger / 10) for gap in gaps)
 
-    async def test_refusal_stops_arrival_loop(self, time_traveler) -> None:
-        """A refused issuance (stop condition) flips the loop's stop flag, so
-        no further arrivals fire even though the queue keeps derived slots."""
+    async def test_refusal_stops_arrival_loop(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
+        """A refused issuance (stop condition) flips the loop's stop flag,
+        which is re-checked after each clamp sleep, so no further arrival
+        fires once the refusal has landed."""
         strategy = self._strategy()
         await strategy.setup_phase()
-        self._set_phase_start(strategy, time_traveler)
+        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
 
         call_times: list[float] = []
 
@@ -577,13 +599,14 @@ class TestArrivalQueueClamping:
         assert len(call_times) == 2
 
     async def test_cancelled_execution_task_strands_no_timers_or_tasks(
-        self, time_traveler
+        self, time_traveler_no_patch_sleep
     ) -> None:
         """Cancelling the execution task mid-phase leaves no pending timers
-        and no running issuance tasks after scheduler cleanup."""
+        and no running issuance tasks after scheduler cleanup; a timeout
+        waiting for the first arrival still runs full cleanup."""
         strategy = self._strategy()
         await strategy.setup_phase()
-        self._set_phase_start(strategy, time_traveler)
+        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
 
         gate = asyncio.Event()
         first_call = asyncio.Event()
@@ -595,14 +618,19 @@ class TestArrivalQueueClamping:
 
         strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
         task = asyncio.create_task(strategy.execute_phase())
-        await asyncio.wait_for(first_call.wait(), timeout=5.0)
-        task.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await task
-        gate.set()
-        await asyncio.gather(
-            *strategy._scheduler.cancel_all(), return_exceptions=True
-        )
+        try:
+            await asyncio.wait_for(first_call.wait(), timeout=5.0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            gate.set()
+            await asyncio.gather(
+                *strategy._scheduler.cancel_all(), return_exceptions=True
+            )
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
         assert strategy._scheduler.pending_count == 0
         assert strategy._scheduler.running_count == 0
