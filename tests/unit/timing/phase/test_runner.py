@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import BaselineKind, CreditPhase
 from aiperf.common.environment import Environment
@@ -1204,6 +1205,54 @@ class TestFixedScheduleConfigCorrection:
 
         # Config should remain unchanged for USER_CENTRIC_RATE
         assert r._config.total_expected_requests == 100
+
+    @pytest.mark.parametrize(
+        "mode",
+        [
+            param(TimingMode.REQUEST_RATE, id="request_rate"),
+            param(TimingMode.USER_CENTRIC_RATE, id="user_centric"),
+        ],
+    )  # fmt: skip
+    async def test_sessions_from_dataset_resolves_to_conversation_count(
+        self,
+        mode: TimingMode,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """``sessions: all`` targets every loaded conversation, not the turn count."""
+        config = cfg(mode=mode, reqs=None).model_copy(
+            update={"sessions_from_dataset": True}
+        )
+
+        conv_src = MagicMock()
+        conv_src.dataset_metadata = make_dataset_metadata(
+            [("c1", 2), ("c2", 2), ("c3", 1)]
+        )
+
+        r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
+
+        assert r._config.expected_num_sessions == 3
+        assert r._config.total_expected_requests is None
+
+    async def test_sessions_from_dataset_without_metadata_leaves_config(
+        self,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        config = cfg(reqs=None).model_copy(update={"sessions_from_dataset": True})
+
+        conv_src = MagicMock()
+        conv_src.dataset_metadata = None
+
+        r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
+
+        assert r._config.expected_num_sessions is None
 
     async def test_fixed_schedule_filtered_dataset_scenario(
         self,

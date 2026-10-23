@@ -295,7 +295,8 @@ def _estimate_phase_requests(phase: BasePhaseConfig, concurrency: int) -> int:
         # Inverse of the concurrency-driven branch of _estimate_phase_duration:
         # each slot completes one request every _PHASE_AVG_SEC_PER_REQUEST.
         return int(phase.duration * concurrency / _PHASE_AVG_SEC_PER_REQUEST)
-    if phase.sessions is not None:
+    # sessions='all' is sized by the dataset at run time; fall through to the default.
+    if isinstance(phase.sessions, int):
         return phase.sessions * 3  # assume ~3 turns average
     return _DEFAULT_PHASE_REQUEST_COUNT
 
@@ -305,7 +306,7 @@ def _estimate_phase_duration(phase: BasePhaseConfig, concurrency: int) -> float:
     if phase.duration is not None:
         return phase.duration
     requests = phase.requests
-    if requests is None and phase.sessions is not None:
+    if requests is None and isinstance(phase.sessions, int):
         requests = phase.sessions * 3
     if requests is None:
         requests = _DEFAULT_PHASE_REQUEST_COUNT

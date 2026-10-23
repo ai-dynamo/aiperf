@@ -187,6 +187,16 @@ class PhaseRunner(TaskManagerMixin):
                     self._config = config.model_copy(
                         update={"total_expected_requests": warmup_count}
                     )
+
+        if config.sessions_from_dataset and metadata:
+            self._config = self._config.model_copy(
+                update={"expected_num_sessions": len(metadata.conversations)}
+            )
+            self.info(
+                f"Phase {config.phase_name or config.phase}: sessions=all, running "
+                f"one full pass over {len(metadata.conversations):,} conversations"
+            )
+
         self._phase_publisher = phase_publisher
         self._credit_router = credit_router
         self._concurrency_manager = concurrency_manager

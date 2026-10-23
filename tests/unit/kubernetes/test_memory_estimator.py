@@ -2023,6 +2023,20 @@ class TestPhaseRequestRateTracksAvgSecPerRequest:
             == 10 * 3 * _PHASE_AVG_SEC_PER_REQUEST / 5
         )
 
+    def test_estimate_phase_requests_sessions_all_uses_default_count(self) -> None:
+        from aiperf.kubernetes._memory_estimator.constants import (
+            _DEFAULT_PHASE_REQUEST_COUNT,
+        )
+        from aiperf.kubernetes._memory_estimator.params import (
+            _estimate_phase_duration,
+            _estimate_phase_requests,
+        )
+
+        phase = SimpleNamespace(duration=None, requests=None, rate=None, sessions="all")
+
+        assert _estimate_phase_requests(phase, 5) == _DEFAULT_PHASE_REQUEST_COUNT
+        assert _estimate_phase_duration(phase, 5) > 0
+
     @pytest.mark.parametrize(
         "requests,concurrency",
         [

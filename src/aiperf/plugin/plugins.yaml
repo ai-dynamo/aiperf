@@ -698,6 +698,8 @@ custom_dataset_loader:
     description: |
       SPEED-Bench qualitative split from HuggingFace (nvidia). 880 prompts across
       11 semantic domains for measuring speculative decoding acceptance rates.
+    metadata:
+      full_pass_by_default: true
 
 
   speed_bench_throughput_1k:
@@ -705,30 +707,40 @@ custom_dataset_loader:
     description: |
       SPEED-Bench throughput split at ~1K input tokens from HuggingFace (nvidia).
       1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      full_pass_by_default: true
 
   speed_bench_throughput_2k:
     class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput2KLoader
     description: |
       SPEED-Bench throughput split at ~2K input tokens from HuggingFace (nvidia).
       1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      full_pass_by_default: true
 
   speed_bench_throughput_8k:
     class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput8KLoader
     description: |
       SPEED-Bench throughput split at ~8K input tokens from HuggingFace (nvidia).
       1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      full_pass_by_default: true
 
   speed_bench_throughput_16k:
     class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput16KLoader
     description: |
       SPEED-Bench throughput split at ~16K input tokens from HuggingFace (nvidia).
       1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      full_pass_by_default: true
 
   speed_bench_throughput_32k:
     class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput32KLoader
     description: |
       SPEED-Bench throughput split at ~32K input tokens from HuggingFace (nvidia).
       1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      full_pass_by_default: true
 
   tracelab:
     class: aiperf.dataset.loader.tracelab_trace:TraceLabTraceDatasetLoader
@@ -1912,6 +1924,8 @@ public_dataset_loader:
     description: |
       SpecBench speculative decoding benchmark dataset from GitHub (hemingkx).
       Loads single-turn questions for evaluating speculative decoding methods.
+    metadata:
+      full_pass_by_default: true
 
   # ---------------------------------------------------------------------------
   # Speculative-decoding acceptance-length benchmarks (auto-downloaded from HF).
@@ -1932,6 +1946,7 @@ public_dataset_loader:
       hf_subset: main
       hf_split: test
       prompt_column: question
+      full_pass_by_default: true
 
   spec_al_math500:
     class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
@@ -1943,6 +1958,7 @@ public_dataset_loader:
       hf_dataset_name: HuggingFaceH4/MATH-500
       hf_split: test
       prompt_column: problem
+      full_pass_by_default: true
 
   spec_al_humaneval:
     class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
@@ -1957,6 +1973,7 @@ public_dataset_loader:
       hf_dataset_name: openai/openai_humaneval
       hf_split: test
       prompt_column: prompt
+      full_pass_by_default: true
 
   spec_al_mbpp:
     class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
@@ -1970,6 +1987,7 @@ public_dataset_loader:
       hf_subset: full
       hf_split: test
       prompt_column: text
+      full_pass_by_default: true
 
   spec_al_mtbench:
     class: aiperf.dataset.loader.mt_bench:MTBenchDatasetLoader
@@ -1980,6 +1998,7 @@ public_dataset_loader:
     metadata:
       hf_dataset_name: HuggingFaceH4/mt_bench_prompts
       hf_split: train
+      full_pass_by_default: true
 
   instruct_coder:
     class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
@@ -2462,6 +2481,7 @@ public_dataset_loader:
       hf_split: test
       hf_subset: qualitative
       multi_turn: true
+      full_pass_by_default: true
 
   speed_bench_coding:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2473,6 +2493,7 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: coding
+      full_pass_by_default: true
 
   speed_bench_humanities:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2484,6 +2505,7 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: humanities
+      full_pass_by_default: true
 
   speed_bench_math:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2495,6 +2517,7 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: math
+      full_pass_by_default: true
 
   speed_bench_multilingual:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2506,6 +2529,7 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: multilingual
+      full_pass_by_default: true
 
   speed_bench_qa:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2517,6 +2541,7 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: qa
+      full_pass_by_default: true
 
   speed_bench_rag:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2528,6 +2553,7 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: rag
+      full_pass_by_default: true
 
   speed_bench_reasoning:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2539,6 +2565,7 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: reasoning
+      full_pass_by_default: true
 
   speed_bench_roleplay:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2550,6 +2577,7 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: roleplay
+      full_pass_by_default: true
 
   speed_bench_stem:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2561,6 +2589,7 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: stem
+      full_pass_by_default: true
 
   speed_bench_summarization:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2572,6 +2601,7 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: summarization
+      full_pass_by_default: true
 
   speed_bench_writing:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2583,6 +2613,7 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: writing
+      full_pass_by_default: true
 
   speed_bench_throughput_1k:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2593,6 +2624,7 @@ public_dataset_loader:
       hf_split: test
       hf_subset: throughput_1k
       multi_turn: true
+      full_pass_by_default: true
 
   speed_bench_throughput_1k_low_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2604,6 +2636,7 @@ public_dataset_loader:
       hf_subset: throughput_1k
       multi_turn: true
       category: low_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_1k_mixed:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2615,6 +2648,7 @@ public_dataset_loader:
       hf_subset: throughput_1k
       multi_turn: true
       category: mixed
+      full_pass_by_default: true
 
   speed_bench_throughput_1k_high_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2626,6 +2660,7 @@ public_dataset_loader:
       hf_subset: throughput_1k
       multi_turn: true
       category: high_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_2k:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2636,6 +2671,7 @@ public_dataset_loader:
       hf_split: test
       hf_subset: throughput_2k
       multi_turn: true
+      full_pass_by_default: true
 
   speed_bench_throughput_2k_low_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2647,6 +2683,7 @@ public_dataset_loader:
       hf_subset: throughput_2k
       multi_turn: true
       category: low_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_2k_mixed:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2658,6 +2695,7 @@ public_dataset_loader:
       hf_subset: throughput_2k
       multi_turn: true
       category: mixed
+      full_pass_by_default: true
 
   speed_bench_throughput_2k_high_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2669,6 +2707,7 @@ public_dataset_loader:
       hf_subset: throughput_2k
       multi_turn: true
       category: high_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_8k:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2679,6 +2718,7 @@ public_dataset_loader:
       hf_split: test
       hf_subset: throughput_8k
       multi_turn: true
+      full_pass_by_default: true
 
   speed_bench_throughput_8k_low_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2690,6 +2730,7 @@ public_dataset_loader:
       hf_subset: throughput_8k
       multi_turn: true
       category: low_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_8k_mixed:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2701,6 +2742,7 @@ public_dataset_loader:
       hf_subset: throughput_8k
       multi_turn: true
       category: mixed
+      full_pass_by_default: true
 
   speed_bench_throughput_8k_high_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2712,6 +2754,7 @@ public_dataset_loader:
       hf_subset: throughput_8k
       multi_turn: true
       category: high_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_16k:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2722,6 +2765,7 @@ public_dataset_loader:
       hf_split: test
       hf_subset: throughput_16k
       multi_turn: true
+      full_pass_by_default: true
 
   speed_bench_throughput_16k_low_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2733,6 +2777,7 @@ public_dataset_loader:
       hf_subset: throughput_16k
       multi_turn: true
       category: low_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_16k_mixed:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2744,6 +2789,7 @@ public_dataset_loader:
       hf_subset: throughput_16k
       multi_turn: true
       category: mixed
+      full_pass_by_default: true
 
   speed_bench_throughput_16k_high_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2755,6 +2801,7 @@ public_dataset_loader:
       hf_subset: throughput_16k
       multi_turn: true
       category: high_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_32k:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2765,6 +2812,7 @@ public_dataset_loader:
       hf_split: test
       hf_subset: throughput_32k
       multi_turn: true
+      full_pass_by_default: true
 
   speed_bench_throughput_32k_low_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2776,6 +2824,7 @@ public_dataset_loader:
       hf_subset: throughput_32k
       multi_turn: true
       category: low_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_32k_mixed:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2787,6 +2836,7 @@ public_dataset_loader:
       hf_subset: throughput_32k
       multi_turn: true
       category: mixed
+      full_pass_by_default: true
 
   speed_bench_throughput_32k_high_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2798,6 +2848,7 @@ public_dataset_loader:
       hf_subset: throughput_32k
       multi_turn: true
       category: high_entropy
+      full_pass_by_default: true
 
   h_cua_perf:
     class: aiperf.dataset.loader.h_cua_perf:HCuaPerfDatasetLoader

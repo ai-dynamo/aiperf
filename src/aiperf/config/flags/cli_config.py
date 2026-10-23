@@ -2379,8 +2379,11 @@ class CLIConfig(BaseConfig):
     request_count: Annotated[
         Any,
         Field(
-            description="The maximum number of requests to send. If not set, will be automatically determined based "
-            "on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. "
+            description="The maximum number of requests to send. When none of `--request-count`, `--num-conversations`, "
+            "or `--benchmark-duration` is set, the run is bounded automatically: trace datasets replay every record, "
+            "`dag_jsonl` runs every root session, benchmark suites (SPEED-Bench, `spec_al_*`, `spec_bench`) run one full "
+            "pass over every loaded conversation, concurrency runs send `max(10, 2 * concurrency)` requests (the largest "
+            "value for a `--concurrency` sweep), and request-rate and user-centric runs send 10. "
             "Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple "
             "request counts; the converter promotes the list to a sweep on phases.profiling.requests "
             "before AIPerfConfig validation.",
