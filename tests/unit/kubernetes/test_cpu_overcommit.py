@@ -141,7 +141,7 @@ async def test_apply_refuses_non_kind_nodes(monkeypatch: pytest.MonkeyPatch) -> 
     patched = await cluster_mod.apply_cpu_overcommit("kind-fake", 32)
 
     assert patched == []
-    assert all(c[:2] == ("get", "nodes") for c in calls), (
+    assert all(c[:2] == ["get", "nodes"] for c in calls), (
         f"no patch may be issued against non-kind nodes, got {calls}"
     )
 
