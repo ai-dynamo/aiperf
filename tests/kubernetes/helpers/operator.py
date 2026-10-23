@@ -716,26 +716,36 @@ class OperatorDeployer:
         # and fail with 'no matches for kind'. Wait for both CRDs.
         await self._wait_for_crd_established()
 
-        # Use defaults that match production; Kind node has enough memory
+        # Right-sized for the single-node Kind cluster these tests run on.
+        # CI uses ubuntu-latest (4 vCPU): the node must also host kube-system
+        # (~250m of requests), the JobSet controller (10m), the mock server
+        # (500m), and the operator pod itself (350m: operator 250m +
+        # results-server 100m), leaving roughly 3 CPUs for benchmark pods.
+        # The previous production-sized values (worker pod 3350m + controller
+        # pod 2600m = 5950m per AIPerfJob) exceeded the whole node, so every
+        # operator-managed pod sat Pending with FailedScheduling/Insufficient
+        # cpu until the test timed out. Requests only gate scheduling:
+        # resource_mode defaults to burstable (no limits), so containers
+        # still burst to full node CPU at runtime.
         env_pairs = [
-            "AIPERF_K8S_WORKER_POD_CPU=3350m",
-            "AIPERF_K8S_WORKER_POD_MEMORY=6144Mi",
-            "AIPERF_K8S_SYSTEM_CONTROLLER_CPU=250m",
-            "AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY=256Mi",
-            "AIPERF_K8S_TIMING_MANAGER_CPU=1000m",
-            "AIPERF_K8S_TIMING_MANAGER_MEMORY=512Mi",
-            "AIPERF_K8S_DATASET_MANAGER_CPU=500m",
-            "AIPERF_K8S_DATASET_MANAGER_MEMORY=512Mi",
-            "AIPERF_K8S_RECORDS_MANAGER_CPU=500m",
-            "AIPERF_K8S_RECORDS_MANAGER_MEMORY=512Mi",
-            "AIPERF_K8S_API_CPU=250m",
+            "AIPERF_K8S_WORKER_POD_CPU=1000m",
+            "AIPERF_K8S_WORKER_POD_MEMORY=2Gi",
+            "AIPERF_K8S_SYSTEM_CONTROLLER_CPU=75m",
+            "AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY=192Mi",
+            "AIPERF_K8S_TIMING_MANAGER_CPU=50m",
+            "AIPERF_K8S_TIMING_MANAGER_MEMORY=192Mi",
+            "AIPERF_K8S_DATASET_MANAGER_CPU=50m",
+            "AIPERF_K8S_DATASET_MANAGER_MEMORY=256Mi",
+            "AIPERF_K8S_RECORDS_MANAGER_CPU=75m",
+            "AIPERF_K8S_RECORDS_MANAGER_MEMORY=256Mi",
+            "AIPERF_K8S_API_CPU=75m",
             "AIPERF_K8S_API_MEMORY=256Mi",
-            "AIPERF_K8S_GPU_TELEMETRY_MANAGER_CPU=125m",
-            "AIPERF_K8S_GPU_TELEMETRY_MANAGER_MEMORY=128Mi",
-            "AIPERF_K8S_SERVER_METRICS_MANAGER_CPU=125m",
-            "AIPERF_K8S_SERVER_METRICS_MANAGER_MEMORY=256Mi",
-            "AIPERF_K8S_RESULTS_SIDECAR_CPU=100m",
-            "AIPERF_K8S_RESULTS_SIDECAR_MEMORY=128Mi",
+            "AIPERF_K8S_GPU_TELEMETRY_MANAGER_CPU=25m",
+            "AIPERF_K8S_GPU_TELEMETRY_MANAGER_MEMORY=192Mi",
+            "AIPERF_K8S_SERVER_METRICS_MANAGER_CPU=25m",
+            "AIPERF_K8S_SERVER_METRICS_MANAGER_MEMORY=192Mi",
+            "AIPERF_K8S_RESULTS_SIDECAR_CPU=25m",
+            "AIPERF_K8S_RESULTS_SIDECAR_MEMORY=192Mi",
         ]
         if self.share_process_namespace:
             env_pairs.append("AIPERF_K8S_SHARE_PROCESS_NAMESPACE=true")
