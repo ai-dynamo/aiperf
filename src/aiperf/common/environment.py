@@ -961,6 +961,21 @@ class _HTTPSettings(BaseSettings):
         "when request cancellation is enabled. Used as fallback when no explicit timeout is configured "
         "to prevent hanging indefinitely while waiting for the request to be written to the socket.",
     )
+    STREAM_IDLE_TIMEOUT: float = Field(
+        ge=0.0,
+        le=3600.0,
+        default=300.0,
+        description="Maximum seconds a streaming inference response may deliver no bytes "
+        "before the request is aborted as unresponsive. Bounds both time-to-first-byte "
+        "(after response headers) and the gap between stream chunks. The per-request "
+        "total timeout (--request-timeout-seconds) defaults to 6 hours, so a stream that "
+        "wedges mid-flight (connection open, zero bytes) would otherwise hang until the "
+        "run-level stall watchdog (AIPERF_RECORD_PROGRESS_STALL_TIMEOUT) aborts the whole "
+        "benchmark; this bound terminates only the wedged request, which is recorded as an "
+        "error (StreamIdleTimeoutError) and lets the run complete. Only applies to "
+        "streaming (SSE/eventstream) responses; non-streaming requests legitimately "
+        "receive no bytes until completion. Set to 0 to disable.",
+    )
     IP_VERSION: Literal["4", "6", "auto"] = Field(
         default="4",
         description="IP version for HTTP socket connections. "

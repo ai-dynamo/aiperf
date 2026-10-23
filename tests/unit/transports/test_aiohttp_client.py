@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import aiohttp
 import pytest
 
+from aiperf.common.environment import Environment
 from aiperf.common.models import SSEField, SSEMessage
 from aiperf.common.monotonic_clock import process_clock
 from aiperf.transports.aiohttp_client import AioHttpClient
@@ -486,6 +487,156 @@ class TestAioHttpClient:
             mock_session.request.assert_called_once()
             call_args = mock_session.request.call_args
             assert call_args[1]["data"] == large_payload
+
+
+# --- Stream Idle Timeout Test Helpers ---
+
+
+class _StallingStreamReader:
+    """iter_any() that yields the given chunks, then optionally blocks forever.
+
+    With ``stall=True`` this mimics a wedged streaming response: the connection
+    stays open (no EOF, no error) but no more bytes ever arrive.
+    """
+
+    def __init__(
+        self, chunks: list[bytes], *, chunk_delay: float = 0.0, stall: bool = True
+    ) -> None:
+        self._chunks = chunks
+        self._chunk_delay = chunk_delay
+        self._stall = stall
+
+    def iter_any(self):
+        return self._gen()
+
+    async def _gen(self):
+        for chunk in self._chunks:
+            if self._chunk_delay:
+                await asyncio.sleep(self._chunk_delay)
+            yield chunk
+        if self._stall:
+            await asyncio.Event().wait()  # never set: the stream is wedged
+
+
+@pytest.mark.asyncio
+class TestStreamIdleTimeout:
+    """A stream that stops delivering bytes must fail the request, not the run.
+
+    Regression coverage for the wedged-stream stall: the per-request total
+    timeout defaults to 6h, so without a per-read idle bound a hung stream
+    only surfaced via the run-level stall watchdog aborting the benchmark.
+    """
+
+    async def test_wedged_stream_aborts_request_after_idle_timeout(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_sse_response: Mock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """One delivered chunk, then silence: the request records
+        StreamIdleTimeoutError instead of hanging until the total timeout."""
+        monkeypatch.setattr(Environment.HTTP, "STREAM_IDLE_TIMEOUT", 0.05)
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_sse_response.content = _StallingStreamReader(
+                [b'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n']
+            )
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+
+            start_ns = time.perf_counter_ns()
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream",
+                '{"stream": true}',
+                {"Accept": "text/event-stream"},
+            )
+            elapsed_s = (time.perf_counter_ns() - start_ns) / 1e9
+
+        # Bounded by the idle timeout, nowhere near the 600s total timeout.
+        assert elapsed_s < 5.0
+        assert record.error is not None
+        assert record.error.type == "StreamIdleTimeoutError"
+        assert "no data received" in record.error.message
+        # The one delivered chunk was parsed before the stream wedged.
+        assert len(record.responses) == 1
+        assert isinstance(record.responses[0], SSEMessage)
+        assert aiohttp_client.stream_chunks_received == 1
+
+    async def test_wedged_stream_before_first_byte_aborts(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_sse_response: Mock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Headers arrive but the body never starts: still an idle timeout."""
+        monkeypatch.setattr(Environment.HTTP, "STREAM_IDLE_TIMEOUT", 0.05)
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_sse_response.content = _StallingStreamReader([])
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream",
+                '{"stream": true}',
+                {"Accept": "text/event-stream"},
+            )
+
+        assert record.error is not None
+        assert record.error.type == "StreamIdleTimeoutError"
+        assert len(record.responses) == 0
+        assert aiohttp_client.stream_chunks_received == 0
+
+    async def test_healthy_stream_under_idle_bound_completes(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_sse_response: Mock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Chunks arriving inside the bound must never trip the idle timeout."""
+        monkeypatch.setattr(Environment.HTTP, "STREAM_IDLE_TIMEOUT", 5.0)
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            mock_sse_response.content = MockStreamReader(
+                [
+                    b'data: {"choices":[{"delta":{"content":"a"}}]}\n\n',
+                    b'data: {"choices":[{"delta":{"content":"b"}}]}\n\n',
+                    b"data: [DONE]\n\n",
+                ]
+            )
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream",
+                '{"stream": true}',
+                {"Accept": "text/event-stream"},
+            )
+
+        assert record.error is None
+        assert len(record.responses) == 3
+
+    async def test_idle_timeout_zero_disables_the_bound(
+        self,
+        aiohttp_client: AioHttpClient,
+        mock_sse_response: Mock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """AIPERF_HTTP_STREAM_IDLE_TIMEOUT=0 keeps the pre-existing behavior:
+        no per-read bound, and normal streams still complete."""
+        monkeypatch.setattr(Environment.HTTP, "STREAM_IDLE_TIMEOUT", 0.0)
+        with patch("aiohttp.ClientSession") as mock_session_class:
+            # stall=False: with the bound disabled a wedged stream would hang
+            # forever, so this stream ends normally after its chunks.
+            mock_sse_response.content = _StallingStreamReader(
+                [b'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n'],
+                chunk_delay=0.01,
+                stall=False,
+            )
+            setup_mock_session(mock_session_class, mock_sse_response, ["request"])
+
+            record = await aiohttp_client.post_request(
+                "http://test.com/stream",
+                '{"stream": true}',
+                {"Accept": "text/event-stream"},
+            )
+
+        assert record.error is None
+        assert len(record.responses) == 1
 
 
 # --- FirstToken Callback Test Helpers ---

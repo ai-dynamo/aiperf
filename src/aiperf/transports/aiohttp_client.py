@@ -11,7 +11,7 @@ from yarl import URL
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import SSEResponseError
+from aiperf.common.exceptions import SSEResponseError, StreamIdleTimeoutError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     AioHttpTraceData,
@@ -209,8 +209,21 @@ class AioHttpClient(AIPerfLoggerMixin):
                     if method == "POST" and (
                         response.content_type == "text/event-stream" or is_eventstream
                     ):
+                        # Per-read liveness bound for the stream. The session's
+                        # total timeout defaults to 6h, so without this a stream
+                        # that stops delivering bytes mid-flight (server-side
+                        # wedge, half-dead connection) hangs the request until
+                        # the run-level stall watchdog aborts the whole run.
+                        # Bounding each read instead of the socket (aiohttp's
+                        # sock_read would also fire on non-streaming reads)
+                        # keeps non-streaming requests unaffected: they
+                        # legitimately receive no bytes until completion. Only
+                        # streaming responses come through this path.
+                        stream_idle_timeout = Environment.HTTP.STREAM_IDLE_TIMEOUT
+
                         # Parse SSE stream with optimal performance
                         # Wrap the content stream to track chunks for trace data
+
                         async def tracked_content_stream():
                             """Wrapper that tracks chunk timing while yielding chunks for SSE parsing."""
                             # iter_any() yields raw bytes immediately as they arrive from the network,
@@ -226,7 +239,35 @@ class AioHttpClient(AIPerfLoggerMixin):
                                 _trace.response_chunks.append if _collect else None
                             )
                             awaiting_first_chunk = True
-                            async for chunk in response.content.iter_any():
+                            chunk_iter = response.content.iter_any()
+
+                            async def _next_chunk() -> bytes | None:
+                                """Next raw chunk, or None at end of stream.
+
+                                Raises StreamIdleTimeoutError when the stream
+                                delivers no bytes within the configured idle
+                                bound (0 disables the bound).
+                                """
+                                try:
+                                    if stream_idle_timeout > 0:
+                                        async with asyncio.timeout(
+                                            stream_idle_timeout
+                                        ):
+                                            return await anext(chunk_iter)
+                                    return await anext(chunk_iter)
+                                except StopAsyncIteration:
+                                    return None
+                                except TimeoutError as e:
+                                    raise StreamIdleTimeoutError(
+                                        idle_timeout_sec=stream_idle_timeout,
+                                        chunks_received=_trace.response_chunks_count,
+                                        bytes_received=_trace.response_bytes_total,
+                                    ) from e
+
+                            while True:
+                                chunk = await _next_chunk()
+                                if chunk is None:
+                                    break
                                 chunk_ns = time.perf_counter_ns()
                                 chunk_len = len(chunk)
                                 self.stream_chunks_received += 1
