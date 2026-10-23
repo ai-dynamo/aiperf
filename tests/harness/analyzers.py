@@ -544,11 +544,14 @@ class StatisticalAnalyzer:
 
         mean = sum(values) / len(values)
         tolerance = expected * (tolerance_pct / 100)
+        # Failure reasons carry the raw gaps so CI logs show the stall/burst
+        # pattern directly instead of a bare statistic.
+        gaps_detail = f"gaps={ [round(v, 4) for v in values] }"
 
         if abs(mean - expected) > tolerance:
             return (
                 False,
-                f"Mean {mean:.4f} differs from expected {expected:.4f} by more than {tolerance_pct}%",
+                f"Mean {mean:.4f} differs from expected {expected:.4f} by more than {tolerance_pct}% ({gaps_detail})",
             )
 
         # For constant rate, CV should be low
@@ -556,7 +559,7 @@ class StatisticalAnalyzer:
         if cv > max_cv:
             return (
                 False,
-                f"CV {cv:.4f} too high for constant rate (expected < {max_cv})",
+                f"CV {cv:.4f} too high for constant rate (expected < {max_cv}) ({gaps_detail})",
             )
 
         return True, f"Mean={mean:.4f}, CV={cv:.4f}"
