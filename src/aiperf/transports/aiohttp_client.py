@@ -106,45 +106,6 @@ async def _await_with_idle_bound(
         raise make_error() from idle
 
 
-async def _read_body_with_idle_bound(
-    response: aiohttp.ClientResponse,
-    idle_timeout_s: float,
-    make_error: Callable[[], ResponseIdleTimeoutError],
-) -> bytes:
-    """Drain a non-streamed body with per-read silence semantics.
-
-    A single deadline around ``response.read()`` would abort a slow but
-    continuously arriving body; bounding each ``iter_any`` read keeps the
-    documented "no bytes for N seconds" meaning — the window resets on every
-    received byte. With the bound disabled the stock read runs untouched.
-    """
-    if idle_timeout_s <= 0:
-        return await response.read()
-    parts: list[bytes] = []
-    chunk_iter = response.content.iter_any()
-    while True:
-        try:
-            chunk = await _await_with_idle_bound(
-                anext(chunk_iter), idle_timeout_s, make_error
-            )
-        except StopAsyncIteration:
-            break
-        parts.append(chunk)
-    return b"".join(parts)
-
-
-async def _read_text_with_idle_bound(
-    response: aiohttp.ClientResponse,
-    idle_timeout_s: float,
-    make_error: Callable[[], ResponseIdleTimeoutError],
-) -> str:
-    """``response.text()`` with per-read silence semantics when armed."""
-    if idle_timeout_s <= 0:
-        return await response.text()
-    body = await _read_body_with_idle_bound(response, idle_timeout_s, make_error)
-    return body.decode(response.get_encoding())
-
-
 @contextlib.asynccontextmanager
 async def _request_with_idle_bound(
     request_cm: Any,
@@ -323,8 +284,12 @@ class AioHttpClient(AIPerfLoggerMixin):
                     # Treat the full 2xx range as success so async job APIs can
                     # return accepted/created responses without being rejected.
                     if response.status < 200 or response.status >= 300:
-                        error_text = await _read_text_with_idle_bound(
-                            response, response_idle_timeout, _idle_error
+                        error_text = await self._read_text_with_idle_bound(
+                            response,
+                            response_idle_timeout,
+                            _idle_error,
+                            record.trace_data,
+                            collect_chunks,
                         )
                         record.end_perf_ns = time.perf_counter_ns()
                         record.error = ErrorDetails(
@@ -442,8 +407,12 @@ class AioHttpClient(AIPerfLoggerMixin):
                         )
 
                         if is_binary:
-                            raw_bytes = await _read_body_with_idle_bound(
-                                response, response_idle_timeout, _idle_error
+                            raw_bytes = await self._read_body_with_idle_bound(
+                                response,
+                                response_idle_timeout,
+                                _idle_error,
+                                record.trace_data,
+                                collect_chunks,
                             )
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
@@ -454,8 +423,12 @@ class AioHttpClient(AIPerfLoggerMixin):
                                 )
                             )
                         else:
-                            raw_response = await _read_text_with_idle_bound(
-                                response, response_idle_timeout, _idle_error
+                            raw_response = await self._read_text_with_idle_bound(
+                                response,
+                                response_idle_timeout,
+                                _idle_error,
+                                record.trace_data,
+                                collect_chunks,
                             )
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
@@ -508,6 +481,80 @@ class AioHttpClient(AIPerfLoggerMixin):
             record.error = ErrorDetails.from_exception(e)
 
         return record
+
+    async def _read_body_with_idle_bound(
+        self,
+        response: aiohttp.ClientResponse,
+        idle_timeout_s: float,
+        make_error: Callable[[], ResponseIdleTimeoutError],
+        trace_data: AioHttpTraceData,
+        collect_chunks: bool,
+    ) -> bytes:
+        """Drain a non-streamed body with per-read silence semantics.
+
+        A single deadline around ``response.read()`` would abort a slow but
+        continuously arriving body; bounding each ``iter_any`` read keeps the
+        documented "no bytes for N seconds" meaning — the window resets on
+        every received byte. With the bound disabled the stock read runs
+        untouched.
+
+        ``iter_any()`` bypasses aiohttp's trace callback system, so the
+        received chunk/byte accounting (consumed by http_trace_metrics) and
+        the stream-activity counter (the run-level watchdog's liveness
+        signal) are mirrored manually here, exactly as the streaming path
+        does. When the bound is disabled the stock ``read()`` fires the real
+        trace callbacks instead, unchanged.
+        """
+        if idle_timeout_s <= 0:
+            return await response.read()
+        parts: list[bytes] = []
+        append_chunk = trace_data.response_chunks.append if collect_chunks else None
+        chunk_iter = response.content.iter_any()
+        while True:
+            try:
+                chunk = await _await_with_idle_bound(
+                    anext(chunk_iter), idle_timeout_s, make_error
+                )
+            except StopAsyncIteration:
+                break
+            chunk_ns = time.perf_counter_ns()
+            self.stream_chunks_received += 1
+            trace_data.response_chunks_count += 1
+            trace_data.response_bytes_total += len(chunk)
+            if append_chunk is not None:
+                append_chunk((chunk_ns, len(chunk)))
+            if trace_data.response_receive_start_perf_ns is None:
+                trace_data.response_receive_start_perf_ns = chunk_ns
+            trace_data.response_receive_end_perf_ns = chunk_ns
+            parts.append(chunk)
+        return b"".join(parts)
+
+    async def _read_text_with_idle_bound(
+        self,
+        response: aiohttp.ClientResponse,
+        idle_timeout_s: float,
+        make_error: Callable[[], ResponseIdleTimeoutError],
+        trace_data: AioHttpTraceData,
+        collect_chunks: bool,
+    ) -> str:
+        """``response.text()`` with per-read silence semantics when armed.
+
+        The drained body never lands in ``response._body``, so
+        ``get_encoding()`` cannot sniff it and raises RuntimeError for a
+        charset-less non-JSON body: use its charset/content-type fast paths
+        (which need no body) and fall back to UTF-8, the encoding chardet
+        resolves for any ASCII/UTF-8 payload.
+        """
+        if idle_timeout_s <= 0:
+            return await response.text()
+        body = await self._read_body_with_idle_bound(
+            response, idle_timeout_s, make_error, trace_data, collect_chunks
+        )
+        try:
+            encoding = response.get_encoding()
+        except RuntimeError:
+            encoding = "utf-8"
+        return body.decode(encoding, errors="strict")
 
     async def post_request(
         self,
