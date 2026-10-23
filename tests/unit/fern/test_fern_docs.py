@@ -24,6 +24,11 @@ import pytest
 FERN_READY_PATTERN = re.compile(r"Docs preview server ready")
 FERN_ERROR_PATTERN = re.compile(r"\[error\]")
 FERN_DEV_TIMEOUT_S = 120
+# Per-attempt budget for the one-time docs-preview-bundle download (~365 MB).
+# Cold downloads on GitHub-hosted runners finish in well under 60 s
+# typically; the observed flake (main push, 2026-10-15) was still
+# downloading at 120 s. 300 s covers ~2.5x the worst observed attempt.
+FERN_PREWARM_TIMEOUT_S = 300
 
 
 def _get_free_port() -> int:
@@ -90,13 +95,12 @@ def test_fern_check(staged_fern_docs: Path) -> None:
     )
 
 
-def test_fern_docs_dev_starts(staged_fern_docs: Path) -> None:
-    """Verify fern docs dev builds and starts without errors.
+def _run_fern_docs_dev(staged_fern_docs: Path, timeout_s: int) -> None:
+    """Run ``fern docs dev`` until the preview server is ready, then stop it.
 
-    Starts ``fern docs dev`` in a subprocess, monitors stdout for the
-    "ready" message or ``[error]`` lines, then terminates the server.
-    Fails if an error is detected or the server does not become ready
-    within the timeout.
+    Monitors stdout for the "ready" message or ``[error]`` lines. Fails if an
+    error is detected or the server does not become ready within
+    ``timeout_s``.
     """
     port = _get_free_port()
     proc = subprocess.Popen(
@@ -126,7 +130,7 @@ def test_fern_docs_dev_starts(staged_fern_docs: Path) -> None:
     reader.start()
 
     try:
-        reader.join(timeout=FERN_DEV_TIMEOUT_S)
+        reader.join(timeout=timeout_s)
         captured = "".join(output_lines)
 
         if error.is_set():
@@ -138,8 +142,9 @@ def test_fern_docs_dev_starts(staged_fern_docs: Path) -> None:
                     f"fern docs dev exited with code {proc.returncode} "
                     f"before becoming ready:\n{captured}"
                 )
-            pytest.fail(
-                f"fern docs dev timed out after {FERN_DEV_TIMEOUT_S}s:\n{captured}"
+            raise TimeoutError(
+                f"fern docs dev did not become ready within {timeout_s}s:\n"
+                f"{captured}"
             )
     finally:
         proc.terminate()
@@ -148,6 +153,50 @@ def test_fern_docs_dev_starts(staged_fern_docs: Path) -> None:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=5)
+
+
+@pytest.fixture(scope="session")
+def fern_preview_bundle_prewarmed(staged_fern_docs: Path) -> None:
+    """Pay the one-time docs-preview-bundle download outside any test budget.
+
+    The first ``fern docs dev`` on a machine downloads and installs a ~365 MB
+    preview bundle into the user-level fern cache (``~/.fern``); the CLI
+    reuses it whenever the upstream ETag is unchanged. That download is
+    network-bound with high variance: observed CI cold starts complete in
+    under ~60 s typically, but the 2026-10-15 main-push run was still
+    downloading when the test's 120 s budget expired. Warming the cache here
+    with a download-sized budget keeps the test's own budget for what it
+    actually asserts — a warm server boot.
+
+    One retry on timeout: a killed download leaves no partial bundle, so the
+    retry re-downloads from scratch — its value is escaping a wedged or
+    stalled connection, and the two attempts bound the total session cost at
+    ~2x ``FERN_PREWARM_TIMEOUT_S``. ``[error]`` output and unexpected exits
+    fail immediately: those are deterministic defects, not network variance.
+    """
+    last_error: TimeoutError | None = None
+    for _attempt in (1, 2):
+        try:
+            _run_fern_docs_dev(staged_fern_docs, FERN_PREWARM_TIMEOUT_S)
+            return
+        except TimeoutError as exc:
+            last_error = exc
+    pytest.fail(
+        "fern docs dev failed to become ready during bundle pre-warm after "
+        f"2 attempts of {FERN_PREWARM_TIMEOUT_S}s each:\n{last_error}"
+    )
+
+
+def test_fern_docs_dev_starts(
+    staged_fern_docs: Path, fern_preview_bundle_prewarmed: None
+) -> None:
+    """Verify fern docs dev builds and starts without errors.
+
+    The bundle cache is already warm (see ``fern_preview_bundle_prewarmed``),
+    so ``FERN_DEV_TIMEOUT_S`` only has to cover a warm boot, which observed
+    CI runs complete in well under a minute.
+    """
+    _run_fern_docs_dev(staged_fern_docs, FERN_DEV_TIMEOUT_S)
 
 
 def test_fern_check_strict(staged_fern_docs: Path) -> None:
