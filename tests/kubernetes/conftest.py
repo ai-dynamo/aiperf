@@ -14,10 +14,10 @@ Usage::
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import os
 import sys
+import threading
 import time
 import uuid
 from collections.abc import AsyncGenerator
@@ -42,12 +42,11 @@ from tests.kubernetes.helpers.benchmark import (
     BenchmarkResult,
 )
 from tests.kubernetes.helpers.cluster import (
-    CPU_OVERCOMMIT_INTERVAL_SECONDS,
-    KIND_CPU_OVERCOMMIT_FLOOR,
     ClusterConfig,
     ClusterRuntime,
     LocalCluster,
     apply_cpu_overcommit,
+    start_cpu_overcommit_thread,
 )
 from tests.kubernetes.helpers.helm import HelmClient, HelmDeployer, HelmValues
 from tests.kubernetes.helpers.images import ImageConfig, ImageManager
@@ -161,13 +160,16 @@ class K8sTestSettings:
     By default these are skipped to protect shared cluster state.
     """
 
-    node_cpu_overcommit: int = KIND_CPU_OVERCOMMIT_FLOOR
+    node_cpu_overcommit: int = 0
     """Fake CPU capacity floor (whole cores) for local Kind nodes; 0 disables.
 
-    Lets the scheduler admit production-sized pod requests on small CI
-    runners. Applied only to clusters the fixture manages (kind runtime),
-    never to existing/remote clusters. See helpers/cluster.py for the
-    rationale and the kubelet re-assertion cadence this is re-applied on.
+    Strictly opt-in. Lets the scheduler admit production-sized pod requests
+    on small CI runners. Applied only to nodes with a ``kind://`` providerID
+    on clusters the fixture manages (kind runtime), never to existing/remote
+    clusters. The chaos CI targets opt in with
+    ``K8S_TEST_NODE_CPU_OVERCOMMIT=32`` (KIND_CPU_OVERCOMMIT_FLOOR). See
+    helpers/cluster.py for the rationale and the kubelet re-assertion cadence
+    this is re-applied on.
     """
 
     @property
@@ -209,7 +211,7 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-job-node-selector", "K8S_TEST_JOB_NODE_SELECTOR", None, "str", "Comma-separated key=value node selector for benchmark pods (e.g. kubernetes.io/arch=amd64)"),
     ("--k8s-tolerate-gpu-nodes", "K8S_TEST_TOLERATE_GPU_NODES", None, "bool", "Add tolerations for GPU node taints (nvidia.com/gpu, kubernetes.io/arch=arm64) so pods can run on GPU nodes"),
     ("--k8s-allow-disruptive", "K8S_TEST_ALLOW_DISRUPTIVE", None, "bool", "Allow tests marked k8s_disruptive that make cluster-wide mutations (e.g. CRD deletion); skipped by default"),
-    ("--k8s-node-cpu-overcommit", "K8S_TEST_NODE_CPU_OVERCOMMIT", str(KIND_CPU_OVERCOMMIT_FLOOR), "int", "Fake CPU capacity floor (cores) for local Kind nodes so production-sized pod requests schedule on small CI runners; 0 disables"),
+    ("--k8s-node-cpu-overcommit", "K8S_TEST_NODE_CPU_OVERCOMMIT", "0", "int", "Opt-in fake CPU capacity floor (cores) for local Kind nodes so production-sized pod requests schedule on small CI runners; 0 disables (default). Only kind:// providerID nodes are patched"),
 ]  # fmt: skip
 
 
@@ -806,37 +808,33 @@ async def local_cluster(
         else:
             await cluster.create(force=not s.reuse_cluster)
 
-    # Local Kind nodes on small CI runners cannot admit the operator's
-    # production-sized pod requests (one AIPerfJob wants ~6 CPUs across its
-    # controller and worker pods; a 4-vCPU ubuntu-latest runner cannot fit
-    # that beside kube-system, the mock server, and the operator pod itself).
-    # Raise the nodes' advertised CPU floor so the test workload schedules.
-    # Kubelet re-asserts real capacity on every node-status sync, so the
-    # patch is re-applied on an interval for the whole session. Only fixture-
-    # managed Kind clusters are patched — never existing/remote clusters.
-    overcommit_task: asyncio.Task[None] | None = None
+    # Opt-in (--k8s-node-cpu-overcommit / K8S_TEST_NODE_CPU_OVERCOMMIT, 0
+    # disables): local Kind nodes on small CI runners cannot admit the
+    # operator's production-sized pod requests (one AIPerfJob wants ~6 CPUs
+    # across its controller and worker pods; a 4-vCPU ubuntu-latest runner
+    # cannot fit that beside kube-system, the mock server, and the operator
+    # pod itself). Raise the nodes' advertised CPU floor so the test workload
+    # schedules. Kubelet re-asserts real capacity on every node-status sync,
+    # so the patch is re-applied on an interval for the whole session. Only
+    # nodes with a kind:// providerID are ever patched — never existing/
+    # remote clusters, even if the context is repointed mid-session.
+    overcommit_stop: threading.Event | None = None
     if cluster.runtime == ClusterRuntime.KIND and s.node_cpu_overcommit > 0:
         # Eager apply must succeed: without it the first benchmark pods race
         # kubelet's next capacity re-assertion and may never schedule.
         await apply_cpu_overcommit(cluster.context, s.node_cpu_overcommit)
-
-        async def _reapply_cpu_overcommit() -> None:
-            while True:
-                await asyncio.sleep(CPU_OVERCOMMIT_INTERVAL_SECONDS)
-                try:
-                    await apply_cpu_overcommit(cluster.context, s.node_cpu_overcommit)
-                except Exception as exc:  # transient kubectl failure; keep looping
-                    logger.warning(f"CPU overcommit re-apply failed: {exc}")
-
-        overcommit_task = asyncio.create_task(_reapply_cpu_overcommit())
+        # The re-assert loop must NOT run on a pytest-asyncio loop: those only
+        # advance while a coroutine is executing, so a package-loop task would
+        # freeze for the duration of every test. Run it on a daemon thread.
+        _overcommit_thread, overcommit_stop = start_cpu_overcommit_thread(
+            cluster.context, s.node_cpu_overcommit
+        )
 
     try:
         yield cluster
     finally:
-        if overcommit_task is not None:
-            overcommit_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await overcommit_task
+        if overcommit_stop is not None:
+            overcommit_stop.set()
 
     # Cleanup
     if not s.skip_cleanup and not s.reuse_cluster:

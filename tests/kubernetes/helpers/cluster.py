@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import threading
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -137,7 +138,8 @@ The operator deploys production-calibrated pod requests (one AIPerfJob wants
 ~6 CPUs across its controller and worker pods; the mock server alone requests
 2). A single-node Kind cluster on a 4-vCPU CI runner cannot admit them, so
 pods sat Pending with FailedScheduling/Insufficient cpu until the test timed
-out (the weekly audit workflow failed 4/4 scheduled runs this way).
+out (the weekly audit workflow failed 4/4 scheduled runs this way; the chaos
+workflow has never passed for the same reason).
 
 Kind already overcommits in the other direction — every node advertises the
 *host's* CPU count regardless of what the node container could actually use —
@@ -147,6 +149,12 @@ test workload. The runner's real CPUs are unchanged: admitted pods contend
 for actual CPU, which is exactly what the suites already tolerate (audit
 tolerance bands exist because of this contention). Only CPU is faked; memory
 accounting stays real so OOM behavior is unchanged.
+
+The mechanism is strictly opt-in (``--k8s-node-cpu-overcommit`` /
+``K8S_TEST_NODE_CPU_OVERCOMMIT``, default 0 = disabled) and locality-checked:
+only nodes whose providerID is ``kind://...`` are ever patched, so a
+repointed kubeconfig context can never fake capacity on a remote or shared
+cluster.
 """
 
 CPU_OVERCOMMIT_INTERVAL_SECONDS: float = 5.0
@@ -156,8 +164,12 @@ Kubelet recomputes real capacity/allocatable on every node-status sync
 (~every 10s) and patches the API object back whenever it detects drift
 (pkg/kubelet/kubelet_node_status.go tryUpdateNodeStatus), so a one-shot patch
 reverts within seconds. The fixture re-applies on this interval for the life
-of the test session.
+of the test session from a daemon thread — never from a pytest-asyncio event
+loop, which only advances while a coroutine is running and would freeze the
+re-assertion for the duration of every test.
 """
+
+_KIND_PROVIDER_ID_PREFIX = "kind://"
 
 
 def parse_cpu_millicores(quantity: str) -> int:
@@ -168,53 +180,69 @@ def parse_cpu_millicores(quantity: str) -> int:
     return int(float(quantity) * 1000)
 
 
-def node_cpu_overcommit_patch(allocatable_cpu: str, floor_cpus: int) -> str | None:
+def node_cpu_overcommit_patch(
+    capacity_cpu: str, allocatable_cpu: str, floor_cpus: int
+) -> str | None:
     """JSON status patch raising a node's CPU capacity/allocatable to the floor.
 
-    Returns None when the node already meets the floor, so genuinely large
-    nodes (e.g. GPU runners) are never shrunk.
+    Each field is floored independently and only ever RAISED: a node whose
+    real capacity already exceeds the floor keeps it (genuinely large nodes,
+    e.g. GPU runners, are never shrunk), and allocatable is never raised
+    above capacity. Returns None when both fields already meet the floor.
     """
-    if parse_cpu_millicores(allocatable_cpu) >= floor_cpus * 1000:
-        return None
-    return json.dumps(
-        [
+    ops = []
+    if parse_cpu_millicores(capacity_cpu) < floor_cpus * 1000:
+        ops.append(
             {
                 "op": "replace",
                 "path": "/status/capacity/cpu",
                 "value": str(floor_cpus),
-            },
+            }
+        )
+    if parse_cpu_millicores(allocatable_cpu) < floor_cpus * 1000:
+        ops.append(
             {
                 "op": "replace",
                 "path": "/status/allocatable/cpu",
                 "value": str(floor_cpus),
-            },
-        ]
-    )
+            }
+        )
+    return json.dumps(ops) if ops else None
 
 
 async def apply_cpu_overcommit(context: str, floor_cpus: int) -> list[str]:
-    """Patch every under-floor node's status to advertise ``floor_cpus`` cores.
+    """Patch every under-floor Kind node's status to advertise ``floor_cpus``.
 
-    Returns the names of the nodes that were patched. Safe to call repeatedly;
-    kubelet re-asserts real capacity on its node-status sync, so the test
-    fixture calls this on an interval for the session's lifetime.
+    Only nodes with a ``kind://`` providerID are eligible — a kubeconfig
+    context repointed at a remote or shared cluster must never have its
+    capacity faked. Returns the names of the nodes that were patched. Safe to
+    call repeatedly; kubelet re-asserts real capacity on its node-status
+    sync, so the test fixture re-applies this on an interval for the
+    session's lifetime.
     """
     rc, stdout, _ = await _kubectl(
         context,
         "get",
         "nodes",
         "-o",
-        "jsonpath={range .items[*]}{.metadata.name} {.status.allocatable.cpu}{'\\n'}{end}",
+        "jsonpath={range .items[*]}{.metadata.name} {.spec.providerID} "
+        "{.status.capacity.cpu} {.status.allocatable.cpu}{'\\n'}{end}",
     )
     if rc != 0:
         return []
     patched: list[str] = []
+    skipped_non_kind: list[str] = []
     for line in stdout.splitlines():
         line = line.strip()
         if not line:
             continue
-        name, _, allocatable = line.partition(" ")
-        patch = node_cpu_overcommit_patch(allocatable, floor_cpus)
+        name, _, rest = line.partition(" ")
+        provider_id, _, rest = rest.partition(" ")
+        capacity, _, allocatable = rest.partition(" ")
+        if not provider_id.startswith(_KIND_PROVIDER_ID_PREFIX):
+            skipped_non_kind.append(name)
+            continue
+        patch = node_cpu_overcommit_patch(capacity, allocatable, floor_cpus)
         if patch is None:
             continue
         await _kubectl(
@@ -227,12 +255,61 @@ async def apply_cpu_overcommit(context: str, floor_cpus: int) -> list[str]:
             f"-p={patch}",
         )
         patched.append(name)
+    if skipped_non_kind:
+        logger.warning(
+            f"CPU overcommit REFUSED for node(s) {skipped_non_kind}: providerID "
+            f"does not start with {_KIND_PROVIDER_ID_PREFIX!r} — never fake "
+            "capacity on a non-Kind (remote/shared) cluster"
+        )
     if patched:
         logger.info(
-            f"CPU overcommit: node(s) {patched} now advertise {floor_cpus} CPUs "
-            "(test-cluster scheduling floor; real runner CPUs unchanged)"
+            f"CPU overcommit: Kind node(s) {patched} now advertise "
+            f"{floor_cpus} CPUs (test-cluster scheduling floor; real runner "
+            "CPUs unchanged; memory NOT faked)"
         )
     return patched
+
+
+def run_cpu_overcommit_loop(
+    context: str,
+    floor_cpus: int,
+    stop: threading.Event,
+    interval: float = CPU_OVERCOMMIT_INTERVAL_SECONDS,
+) -> None:
+    """Re-apply the CPU floor until ``stop`` is set.
+
+    Runs in a dedicated daemon thread with a fresh event loop per pass
+    (``asyncio.run``). It must NOT live on a pytest-asyncio event loop: those
+    loops only advance while a test/fixture coroutine is running, so a task
+    created on the package-scoped loop freezes for the whole duration of
+    every test — exactly when the scheduler needs the floor re-asserted
+    against kubelet's ~10s capacity rewrite.
+    """
+    while not stop.is_set():
+        try:
+            asyncio.run(apply_cpu_overcommit(context, floor_cpus))
+        except Exception as exc:  # transient kubectl failure; keep looping
+            logger.warning(f"CPU overcommit re-apply failed: {exc}")
+        stop.wait(interval)
+
+
+def start_cpu_overcommit_thread(
+    context: str, floor_cpus: int
+) -> tuple[threading.Thread, threading.Event]:
+    """Start the CPU-overcommit re-assert daemon thread.
+
+    Returns the thread and its stop event; set the event to stop re-asserting
+    (the thread is a daemon, so it never outlives the test process).
+    """
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=run_cpu_overcommit_loop,
+        args=(context, floor_cpus, stop),
+        name="k8s-node-cpu-overcommit",
+        daemon=True,
+    )
+    thread.start()
+    return thread, stop
 
 
 async def _create_nvidia_runtime_class(context: str) -> None:

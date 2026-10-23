@@ -350,12 +350,16 @@ kubernetes-audit-tests-ci test-kubernetes-audit-ci: #? run the serial Kubernetes
 	$(activate_venv) && pytest tests/kubernetes/audit/ \
 		-m 'k8s and k8s_audit' -n 0 -v --tb=long $(args)
 
+# K8S_TEST_NODE_CPU_OVERCOMMIT=32: fake a 32-core CPU capacity floor on the
+# local Kind node (kind:// providerID only; re-asserted every 5s against
+# kubelet's capacity rewrite) so production-sized pod requests schedule on the
+# 4-vCPU ubuntu-latest runner.
 kubernetes-chaos-tests-ci test-kubernetes-chaos-ci: #? run the legacy Kubernetes fault-injection scenarios serially.
-	$(activate_venv) && pytest tests/kubernetes/chaos/ \
+	$(activate_venv) && K8S_TEST_NODE_CPU_OVERCOMMIT=32 pytest tests/kubernetes/chaos/ \
 		-m 'k8s and k8s_slow' -n 0 -v --tb=long $(args)
 
 kubernetes-chaos-aiperf-tests-ci test-kubernetes-chaos-aiperf-ci: #? run the unified-API Kubernetes fault-injection scenarios serially.
-	$(activate_venv) && pytest tests/kubernetes/chaos_aiperf/ \
+	$(activate_venv) && K8S_TEST_NODE_CPU_OVERCOMMIT=32 pytest tests/kubernetes/chaos_aiperf/ \
 		-m 'k8s and k8s_slow' -n 0 -v --tb=long $(args)
 
 component-integration-tests test-component-integration: #? run component integration tests with with AIPerf Mock Server.
