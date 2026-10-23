@@ -214,18 +214,47 @@ def test_production_default_peak_also_fits_advertised_floor() -> None:
 
 
 @pytest.mark.usefixtures("_clean_k8s_env")
-def test_kind_sized_peak_fits_physical_4vcpu_runner() -> None:
-    """Approach-A physical budget: the kind-sized workload must fit the real
-    4-vCPU ubuntu-latest runner with no advertised-capacity floor.
+def test_overcommit_floor_is_load_bearing_with_real_deployed_mock() -> None:
+    """Real-deployment arithmetic: with the mock server at its CURRENT shared
+    manifest value, even the kind-sized workload does NOT fit a physical
+    4-vCPU node — so the overcommit floor is load-bearing today and its
+    removal from the audit workflow is caught here as arithmetic, not as a
+    weekly CI failure."""
+    defaults = _K8sEnvironment()
+    overrides = _fixture_overrides()
 
-    This is the original regression protection for the weekly failure: if the
-    overcommit opt-in is ever removed from the audit workflow, only this
-    arithmetic keeps benchmark pods schedulable. It uses the complete pod
-    inventory (controller pod incl. event-bus proxy, worker pod, sweep
-    controller + sweep results sidecar) and fixed tenants measured/parsed
-    from sources, with the mock server at its approach-A audit-scoped value
-    (_AUDIT_SCOPED_MOCK_CPU_MCPU), NOT the current shared-manifest value —
-    see that constant's comment for the operator-decision dependency.
+    peak_benchmark_mcpu = (
+        _controller_pod_cpu_mcpu(overrides, defaults)
+        + _parse_cpu_mcpu(overrides["AIPERF_K8S_WORKER_POD_CPU"])
+        + _sweep_pod_cpu_mcpu(defaults)
+    )
+    fixed_mcpu = (
+        _KUBE_SYSTEM_CPU_MCPU
+        + _JOBSET_CONTROLLER_CPU_MCPU
+        + _mock_server_cpu_mcpu()  # the real, deployed manifest value
+        + _operator_pod_cpu_mcpu()
+    )
+
+    assert peak_benchmark_mcpu > 4000 - fixed_mcpu, (
+        "with the real deployed mock-server request, the kind-sized workload "
+        "unexpectedly fits a physical 4-vCPU node — re-evaluate whether the "
+        "overcommit floor is still required"
+    )
+
+
+@pytest.mark.usefixtures("_clean_k8s_env")
+def test_kind_sized_peak_physical_4vcpu_budget_prospective_only() -> None:
+    """PROSPECTIVE arithmetic, not the deployed configuration: the kind-sized
+    workload would fit a real 4-vCPU ubuntu-latest runner with no advertised
+    floor ONLY IF the audit suite also scoped its mock server to
+    _AUDIT_SCOPED_MOCK_CPU_MCPU (500m). The shared manifest today requests
+    2000m (see test_overcommit_floor_is_load_bearing_with_real_deployed_mock),
+    so this test documents the approach-A-only world, not current reality.
+
+    It exists so an operator deciding to drop the overcommit opt-in can see
+    exactly what else must shrink first. It uses the complete pod inventory
+    (controller pod incl. event-bus proxy, worker pod, sweep controller +
+    sweep results sidecar) and fixed tenants measured/parsed from sources.
     """
     defaults = _K8sEnvironment()
     overrides = _fixture_overrides()
