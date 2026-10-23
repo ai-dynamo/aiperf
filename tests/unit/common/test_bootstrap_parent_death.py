@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """The parent-death guard installs a kernel-level PR_SET_PDEATHSIG(SIGKILL) backstop so spawned services die when their controller does."""
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -208,8 +209,6 @@ def test_parent_death_signal_real_kill_reaps_child():
             # instant"; the parent can still exit before kill() delivers
             # the signal, and signalling a reaped pid raises
             # ProcessLookupError. Already gone is the goal state.
-            try:
+            with contextlib.suppress(ProcessLookupError):
                 parent.kill()
-            except ProcessLookupError:
-                pass
             parent.wait(timeout=10)

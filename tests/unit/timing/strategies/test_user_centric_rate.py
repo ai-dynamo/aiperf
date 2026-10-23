@@ -468,7 +468,7 @@ class TestArrivalQueueClamping:
         await self._run(strategy)
 
         assert len(call_times) == 6
-        gaps = [b - a for a, b in zip(call_times, call_times[1:])]
+        gaps = [b - a for a, b in zip(call_times, call_times[1:], strict=False)]
         assert all(gap == pytest.approx(stagger, abs=stagger / 10) for gap in gaps)
 
     async def test_sub_stagger_planned_gap_is_clamped(
@@ -495,9 +495,7 @@ class TestArrivalQueueClamping:
         await self._run(strategy)
 
         assert len(call_times) == 2
-        assert call_times[1] - call_times[0] == pytest.approx(
-            stagger, abs=stagger / 10
-        )
+        assert call_times[1] - call_times[0] == pytest.approx(stagger, abs=stagger / 10)
 
     async def test_issuer_exception_isolated_and_stream_survives(
         self, time_traveler_no_patch_sleep
@@ -529,7 +527,7 @@ class TestArrivalQueueClamping:
         # All three replacements fire -- including the failed user's --
         # proving its stream was not killed by the exception.
         assert len(call_times) == 6
-        gaps = [b - a for a, b in zip(call_times, call_times[1:])]
+        gaps = [b - a for a, b in zip(call_times, call_times[1:], strict=False)]
         assert all(gap == pytest.approx(stagger, abs=stagger / 10) for gap in gaps)
         assert len(errors) == 1
         assert isinstance(errors[0], RuntimeError)
@@ -573,7 +571,7 @@ class TestArrivalQueueClamping:
             )
 
         assert len(call_times) == 3
-        gaps = [b - a for a, b in zip(call_times, call_times[1:])]
+        gaps = [b - a for a, b in zip(call_times, call_times[1:], strict=False)]
         assert all(gap == pytest.approx(stagger, abs=stagger / 10) for gap in gaps)
 
     async def test_refusal_stops_arrival_loop(

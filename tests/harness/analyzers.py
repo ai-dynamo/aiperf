@@ -546,7 +546,7 @@ class StatisticalAnalyzer:
         tolerance = expected * (tolerance_pct / 100)
         # Failure reasons carry the raw gaps so CI logs show the stall/burst
         # pattern directly instead of a bare statistic.
-        gaps_detail = f"gaps={ [round(v, 4) for v in values] }"
+        gaps_detail = f"gaps={[round(v, 4) for v in values]}"
 
         if abs(mean - expected) > tolerance:
             return (
