@@ -851,14 +851,19 @@ class TestIssuedAtTimestamp:
         microseconds, so allow a small slack window on either side instead
         of strict ``before <= ts <= after``.
 
-        The real invariant is that the timestamp lands inside the wall-clock
-        bracket of the call that produced it: not stale (cached from an
-        earlier issue) and not from the future. There is deliberately no
+        The invariant asserted here is that the timestamp lands inside the
+        wall-clock bracket of the call that produced it: fresh within the
+        platform slack and not from the future. There is deliberately no
         fixed bound on ``after - issued_at_ns``: that would assert the
         test's own execution speed, and on a loaded CI runner the event
         loop can stall for over a second between the in-call timestamp and
         the post-await clock read (Nightly 2026-10-16 failed at 1.02 s),
         which says nothing about timestamp freshness.
+
+        This real-clock smoke cannot fully reject a cached timestamp: on
+        Windows the 50 ms slack can still contain the previous call's
+        reading. The deterministic cached-timestamp guard is
+        ``test_issued_at_ns_uses_the_clock_at_each_issue`` below.
         """
         import sys
 
@@ -872,8 +877,12 @@ class TestIssuedAtTimestamp:
             assert (before - slack_ns) <= sent_credit.issued_at_ns <= (after + slack_ns)
             issued.append(sent_credit.issued_at_ns)
 
-        # A timestamp cached across issues would fall below the second
-        # call's bracket; the two must also be non-decreasing.
+        # Two consecutive issues narrow where a cached timestamp could hide,
+        # but do not rule one out: on Windows the 50 ms slack can still
+        # contain the previous call's reading (cached T satisfies
+        # [before - slack, after + slack], and T >= T passes the ordering
+        # check). Exact rejection of caching is the controlled-clock test
+        # below; here we only assert non-decreasing ordering.
         assert issued[1] >= issued[0]
 
     async def test_issued_at_ns_uses_the_clock_at_each_issue(
