@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import math
+import os
 import tracemalloc
 from collections.abc import Callable
 from types import SimpleNamespace
@@ -1321,6 +1322,12 @@ def _sse_chunk_json(request_idx: int, chunk_idx: int) -> str:
     ).decode()
 
 
+# Deep enough that the factory's frame survives below the Pydantic/orjson
+# internals where most of the measured allocations are made.
+_TRACEMALLOC_FRAMES = 25
+_MODULE_FILE = os.path.abspath(__file__)
+
+
 def _amortized_heap_bytes(factory: Callable[[int], object], n: int) -> float:
     """Amortized marginal heap bytes per object built by ``factory``.
 
@@ -1331,18 +1338,36 @@ def _amortized_heap_bytes(factory: Callable[[int], object], n: int) -> float:
     marginal one. ``sys.getsizeof`` cannot be used — it sees only the
     top-level object, missing ``__dict__`` / ``__pydantic_extra__`` and every
     referenced string.
+
+    The diff is attributed to the factory's call stack: a stat counts only
+    when its traceback passes through this module. A bare process-wide diff
+    also counts unrelated allocations that background threads in the shared
+    pytest-suite process retain between the two snapshots — in the Nightly
+    in-container unit runs of 2026-10-13/10-15/10-22 that background added
+    ~0.1-0.2 MB to the ~1.6 MB measurement window, inflating the result by
+    ~5-12% and flapping the conservatism assert in
+    ``TestPerRequestBytesAgainstMeasuredHeap``. Attribution cannot hide real
+    drift in the objects being measured: their allocations are made under the
+    factory call stack regardless of which library internals perform them.
     """
     warmup = [factory(i) for i in range(16)]
     del warmup
     gc.collect()
 
-    tracemalloc.start()
+    tracemalloc.start(_TRACEMALLOC_FRAMES)
     gc.collect()
     before = tracemalloc.take_snapshot()
     live = [factory(i) for i in range(n)]
     gc.collect()
     after = tracemalloc.take_snapshot()
-    total = sum(stat.size_diff for stat in after.compare_to(before, "filename"))
+    total = sum(
+        stat.size_diff
+        for stat in after.compare_to(before, "traceback")
+        if any(
+            os.path.abspath(frame.filename) == _MODULE_FILE
+            for frame in stat.traceback
+        )
+    )
     tracemalloc.stop()
 
     del live
@@ -1409,9 +1434,12 @@ class TestPerRequestBytesAgainstMeasuredHeap:
     over-estimate that would inflate recommended limits.
 
     Measurement is heap-shape-dependent, not timing-dependent, so it is stable
-    across machines for a given CPython build. It is sensitive to the CPython
-    version's object layout: a future interpreter that changes Pydantic model
-    or dataclass footprints should re-measure rather than widen the band.
+    across machines for a given CPython build — and ``_amortized_heap_bytes``
+    attributes the snapshot diff to the factory's call stack, so background
+    allocations from other tests in the shared suite process cannot inflate
+    it. It is sensitive to the CPython version's object layout: a future
+    interpreter that changes Pydantic model or dataclass footprints should
+    re-measure rather than widen the band.
     """
 
     # Ratios measured 2026-08-24 on CPython 3.12 sat in 1.01-1.07x.
