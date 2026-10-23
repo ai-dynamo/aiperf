@@ -351,8 +351,8 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         # Schedule initial users on the stagger grid and derive the initial
         # spawn times. This is what creates the initial "steady-state" of the
         # benchmark. The first-turn timers are chained (see
-        # _schedule_initial_user): each user's timer, when it actually fires,
-        # schedules the next user's slot anchored to the actual send time.
+        # _schedule_initial_user): each user's timer, the moment it fires,
+        # arms the next user's slot at max(planned, now + stagger).
         # Independent up-front call_at timers would all come due during an
         # event-loop stall longer than the stagger window and then fire in a
         # single batch, collapsing the stagger into a simultaneous burst of
@@ -374,6 +374,17 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             self._schedule_initial_user(ordered_users, 0)
 
         # Continuously spawn new users at discrete intervals to maintain the target QPS.
+        #
+        # Replacement spawns deliberately keep their pre-existing overdue
+        # catch-up (overdue entries pop back-to-back after a loop stall) and
+        # are NOT stagger-clamped like the initial first-turn chain above.
+        # The stagger contract covers only the initial population's arrival
+        # grid (stagger = 1/qps); replacement times encode per-user lifecycle
+        # turnover (spawn + max_turns * turn_gap), which is intentionally
+        # non-uniform -- clamping them to stagger would distort the turnover
+        # math -- and their purpose is to restore the target user population
+        # after a stall, i.e. catch-up there is the rate-keeping mechanism,
+        # not an arrival-spacing violation.
         while True:
             if not spawn_queue:
                 await asyncio.sleep(0.1)
@@ -399,7 +410,7 @@ class UserCentricStrategy(AIPerfLoggerMixin):
     def _schedule_initial_user(self, ordered_users: list[User], index: int) -> None:
         """Schedule one initial user's first turn; on fire, chain the next.
 
-        Anchoring each slot to the previous user's actual send time (rather
+        Anchoring each slot to the previous slot's actual fire time (rather
         than pre-arming every slot) is what keeps the stagger intact when the
         event loop falls behind: a stalled loop re-spaces the remaining
         arrivals instead of bursting them all in one batch.
@@ -407,19 +418,30 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         user = ordered_users[index]
 
         async def _fire() -> None:
-            # Chain in a finally: previously every initial user's timer was
-            # independent, so one refused or failed issue never suppressed the
-            # others. issue_credit safely returns False once sending stops.
-            try:
-                await self._credit_issuer.issue_credit(user.build_first_turn())
-            finally:
-                next_index = index + 1
-                if next_index < len(ordered_users):
-                    nxt = ordered_users[next_index]
-                    nxt.next_send_time = max(
-                        nxt.next_send_time, time.perf_counter() + self._stagger
-                    )
-                    self._schedule_initial_user(ordered_users, next_index)
+            # Re-arm the successor the moment this timer fires, before any
+            # issuance work: slot-acquisition backpressure and issuance
+            # latency must not serialize into the stagger grid. Arming ahead
+            # of the await also preserves the pre-chaining semantics where
+            # every initial user's timer was independent -- one refused or
+            # failed issue never suppresses the remaining first turns.
+            #
+            # Guarded on the sending cutoff: once the phase marks sending
+            # complete, PhaseRunner has cancelled every pending timer
+            # (cancel_all_pending at the cutoff) and the issue gate refuses
+            # new credits; re-arming past that point would recreate timers
+            # behind the cleanup. Timers armed before the cutoff are still
+            # cancelled by it, exactly as pre-armed timers were.
+            next_index = index + 1
+            if (
+                next_index < len(ordered_users)
+                and not self._lifecycle.is_sending_complete
+            ):
+                nxt = ordered_users[next_index]
+                nxt.next_send_time = max(
+                    nxt.next_send_time, time.perf_counter() + self._stagger
+                )
+                self._schedule_initial_user(ordered_users, next_index)
+            await self._credit_issuer.issue_credit(user.build_first_turn())
 
         self._scheduler.schedule_at_perf_sec(user.next_send_time, _fire())
 
