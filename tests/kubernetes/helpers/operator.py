@@ -36,6 +36,39 @@ CR (AIPerfJob or AIPerfSweep) is applied — kubectl apply returns when the
 apiserver accepts the CRD object, not when ``Established=True`` is set."""
 
 
+KIND_JOB_POD_ENV: tuple[str, ...] = (
+    "AIPERF_K8S_WORKER_POD_CPU=1000m",
+    "AIPERF_K8S_WORKER_POD_MEMORY=2Gi",
+    "AIPERF_K8S_SYSTEM_CONTROLLER_CPU=75m",
+    "AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY=192Mi",
+    "AIPERF_K8S_TIMING_MANAGER_CPU=50m",
+    "AIPERF_K8S_TIMING_MANAGER_MEMORY=192Mi",
+    "AIPERF_K8S_DATASET_MANAGER_CPU=50m",
+    "AIPERF_K8S_DATASET_MANAGER_MEMORY=256Mi",
+    "AIPERF_K8S_RECORDS_MANAGER_CPU=75m",
+    "AIPERF_K8S_RECORDS_MANAGER_MEMORY=256Mi",
+    "AIPERF_K8S_API_CPU=75m",
+    "AIPERF_K8S_API_MEMORY=256Mi",
+    "AIPERF_K8S_GPU_TELEMETRY_MANAGER_CPU=25m",
+    "AIPERF_K8S_GPU_TELEMETRY_MANAGER_MEMORY=192Mi",
+    "AIPERF_K8S_SERVER_METRICS_MANAGER_CPU=25m",
+    "AIPERF_K8S_SERVER_METRICS_MANAGER_MEMORY=192Mi",
+    "AIPERF_K8S_RESULTS_SIDECAR_CPU=25m",
+    "AIPERF_K8S_RESULTS_SIDECAR_MEMORY=192Mi",
+)
+"""Right-sized resource requests for the single-node Kind cluster these tests
+run on. CI uses ubuntu-latest (4 vCPU): the node must also host kube-system
+(~950m of measured requests), the JobSet controller (500m), the mock server
+(500m), and the operator pod itself (350m: operator 250m + results-server
+100m), leaving roughly 1.7 CPUs for benchmark pods. The previous
+production-sized values (worker pod 3350m + controller pod 2600m = 5950m per
+AIPerfJob) exceeded the whole node, so every operator-managed pod sat Pending
+with FailedScheduling/Insufficient cpu until the test timed out. Requests only
+gate scheduling: resource_mode defaults to burstable (no limits), so
+containers still burst to full node CPU at runtime. Guarded by
+tests/unit/kubernetes/test_kind_budget.py."""
+
+
 async def wait_for_aiperf_crds_established(
     kubectl: KubectlClient, timeout: int = 60
 ) -> None:
@@ -716,37 +749,8 @@ class OperatorDeployer:
         # and fail with 'no matches for kind'. Wait for both CRDs.
         await self._wait_for_crd_established()
 
-        # Right-sized for the single-node Kind cluster these tests run on.
-        # CI uses ubuntu-latest (4 vCPU): the node must also host kube-system
-        # (~250m of requests), the JobSet controller (10m), the mock server
-        # (500m), and the operator pod itself (350m: operator 250m +
-        # results-server 100m), leaving roughly 3 CPUs for benchmark pods.
-        # The previous production-sized values (worker pod 3350m + controller
-        # pod 2600m = 5950m per AIPerfJob) exceeded the whole node, so every
-        # operator-managed pod sat Pending with FailedScheduling/Insufficient
-        # cpu until the test timed out. Requests only gate scheduling:
-        # resource_mode defaults to burstable (no limits), so containers
-        # still burst to full node CPU at runtime.
-        env_pairs = [
-            "AIPERF_K8S_WORKER_POD_CPU=1000m",
-            "AIPERF_K8S_WORKER_POD_MEMORY=2Gi",
-            "AIPERF_K8S_SYSTEM_CONTROLLER_CPU=75m",
-            "AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY=192Mi",
-            "AIPERF_K8S_TIMING_MANAGER_CPU=50m",
-            "AIPERF_K8S_TIMING_MANAGER_MEMORY=192Mi",
-            "AIPERF_K8S_DATASET_MANAGER_CPU=50m",
-            "AIPERF_K8S_DATASET_MANAGER_MEMORY=256Mi",
-            "AIPERF_K8S_RECORDS_MANAGER_CPU=75m",
-            "AIPERF_K8S_RECORDS_MANAGER_MEMORY=256Mi",
-            "AIPERF_K8S_API_CPU=75m",
-            "AIPERF_K8S_API_MEMORY=256Mi",
-            "AIPERF_K8S_GPU_TELEMETRY_MANAGER_CPU=25m",
-            "AIPERF_K8S_GPU_TELEMETRY_MANAGER_MEMORY=192Mi",
-            "AIPERF_K8S_SERVER_METRICS_MANAGER_CPU=25m",
-            "AIPERF_K8S_SERVER_METRICS_MANAGER_MEMORY=192Mi",
-            "AIPERF_K8S_RESULTS_SIDECAR_CPU=25m",
-            "AIPERF_K8S_RESULTS_SIDECAR_MEMORY=192Mi",
-        ]
+        # Right-sized for the single-node Kind cluster; see KIND_JOB_POD_ENV.
+        env_pairs = list(KIND_JOB_POD_ENV)
         if self.share_process_namespace:
             env_pairs.append("AIPERF_K8S_SHARE_PROCESS_NAMESPACE=true")
         if self.controller_http_url_override:
