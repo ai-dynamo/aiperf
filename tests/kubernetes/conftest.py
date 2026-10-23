@@ -171,6 +171,15 @@ class K8sTestSettings:
     rationale.
     """
 
+    kind_sized_job_pods: bool = False
+    """Opt-in: override operator job-pod resource requests with the
+    Kind-sized KIND_JOB_POD_ENV values in helpers/operator.py.
+
+    False (default) keeps the operator's production-calibrated requests.
+    The audit CI workflow opts in; other suites opt in from their own
+    configuration when they want the smaller footprint.
+    """
+
     @property
     def cluster_runtime(self) -> ClusterRuntime:
         """Get the cluster runtime enum value."""
@@ -211,6 +220,7 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-tolerate-gpu-nodes", "K8S_TEST_TOLERATE_GPU_NODES", None, "bool", "Add tolerations for GPU node taints (nvidia.com/gpu, kubernetes.io/arch=arm64) so pods can run on GPU nodes"),
     ("--k8s-allow-disruptive", "K8S_TEST_ALLOW_DISRUPTIVE", None, "bool", "Allow tests marked k8s_disruptive that make cluster-wide mutations (e.g. CRD deletion); skipped by default"),
     ("--k8s-node-cpu-overcommit", "K8S_TEST_NODE_CPU_OVERCOMMIT", "0", "int", "Opt-in fake CPU capacity floor (cores) for local Kind nodes so production-sized pod requests schedule on small CI runners; 0 (default) disables"),
+    ("--k8s-kind-sized-job-pods", "K8S_TEST_KIND_SIZED_JOB_PODS", None, "bool", "Opt-in Kind-sized job-pod resource requests (KIND_JOB_POD_ENV) instead of the operator's production defaults"),
 ]  # fmt: skip
 
 
@@ -320,6 +330,7 @@ def _resolve_settings(config: pytest.Config) -> K8sTestSettings:
         "skip_operator_deploy",
         "tolerate_gpu_nodes",
         "allow_disruptive",
+        "kind_sized_job_pods",
     ):
         if resolved.get(key) is None:
             resolved[key] = False
@@ -2030,6 +2041,7 @@ async def operator_deployer(
         image_pull_policy=k8s_settings.image_pull_policy,
         image_pull_secret=k8s_settings.image_pull_secret,
         operator_namespace=k8s_settings.operator_namespace,
+        kind_sized_job_pods=k8s_settings.kind_sized_job_pods,
     )
 
     # Skip CRD install when using an existing remote cluster (CRDs already present)
