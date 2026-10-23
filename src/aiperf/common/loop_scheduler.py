@@ -147,15 +147,7 @@ class LoopScheduler:
             handle_id = id(handle_container[0])
             self._handles.pop(handle_id, None)
             group_id = self._handle_groups.pop(handle_id, None)
-        task = self._loop.create_task(coro)
-        self._tasks.add(task)
-        task.add_done_callback(self._done_callback)
-        if group_id is not None:
-            task.add_done_callback(
-                lambda done, group_id=group_id: self._notify_group_task_done(
-                    group_id, done
-                )
-            )
+        self.execute_async(coro, group_id=group_id)
 
     def _track_handle_and_return_id(
         self,
@@ -177,7 +169,9 @@ class LoopScheduler:
             self._handle_groups[handle_id] = group_id
         return handle_id
 
-    def execute_async(self, coro: Coroutine) -> asyncio.Task:
+    def execute_async(
+        self, coro: Coroutine, *, group_id: str | None = None
+    ) -> asyncio.Task:
         """Execute coroutine asynchronously (creates a task and returns it immediately).
 
         Returns:
@@ -187,6 +181,12 @@ class LoopScheduler:
         task = self._loop.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._done_callback)
+        if group_id is not None and self._group_task_observer is not None:
+            task.add_done_callback(
+                lambda done, group_id=group_id: self._notify_group_task_done(
+                    group_id, done
+                )
+            )
         return task
 
     def schedule_later(
@@ -209,7 +209,7 @@ class LoopScheduler:
             Handle for cancellation. Cancelled coroutines are properly closed.
         """
         if delay_sec <= 0:
-            return self.execute_async(coro)
+            return self.execute_async(coro, group_id=group_id)
 
         handle_container = [None]
         handle = self._loop.call_later(
@@ -274,7 +274,7 @@ class LoopScheduler:
         offset_sec = perf_sec - cur_perf_sec
 
         if offset_sec <= 0:
-            return self.execute_async(coro)
+            return self.execute_async(coro, group_id=group_id)
         return self.schedule_at(cur_loop_time + offset_sec, coro, group_id=group_id)
 
     def schedule_at_perf_ns(
@@ -307,7 +307,7 @@ class LoopScheduler:
         offset_sec = (perf_time_ns - cur_perf_ns) / NANOS_PER_SECOND
 
         if offset_sec <= 0:
-            return self.execute_async(coro)
+            return self.execute_async(coro, group_id=group_id)
         return self.schedule_at(cur_loop_time + offset_sec, coro, group_id=group_id)
 
     def cancel_handle_id(self, handle_id: HandleId) -> bool:
