@@ -132,9 +132,7 @@ def test_peak_benchmark_pod_cpu_fits_kind_node() -> None:
     )
     worker_pod_mcpu = _parse_cpu_mcpu(overrides["AIPERF_K8S_WORKER_POD_CPU"])
 
-    peak_benchmark_mcpu = (
-        controller_mcpu + worker_pod_mcpu + _SWEEP_CONTROLLER_CPU_MCPU
-    )
+    peak_benchmark_mcpu = controller_mcpu + worker_pod_mcpu + _SWEEP_CONTROLLER_CPU_MCPU
     fixed_mcpu = (
         _KUBE_SYSTEM_CPU_MCPU
         + _JOBSET_CONTROLLER_CPU_MCPU
