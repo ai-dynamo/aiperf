@@ -567,6 +567,37 @@ class HelmDeployer:
                     "app.kubernetes.io/managed-by=Helm",
                     check=False,
                 )
+        if rendered:
+            # Helm 4 applies chart resources server-side and refuses to take
+            # over fields owned by another field manager. The package-scoped
+            # operator fixture pre-installs this chart's CRDs with kubectl
+            # apply (manager kubectl-client-side-apply, release label
+            # app.kubernetes.io/instance=aiperf-operator), so the install
+            # below would fail with SSA conflicts on the CRD objects
+            # (.metadata.labels.app.kubernetes.io/instance, .spec.versions).
+            # Transfer field ownership to the "helm" manager for the CRD
+            # objects only, re-applying the chart's own rendered CRDs with
+            # the exact values helm is about to set. This is deliberately NOT
+            # a release-wide `helm install --force-conflicts`: that would let
+            # helm silently adopt stale field values on every resource in the
+            # chart, while this only re-asserts the current chart's CRD
+            # content under helm's ownership.
+            crd_docs = [
+                doc
+                for doc in yaml.safe_load_all(rendered)
+                if doc and doc.get("kind") == "CustomResourceDefinition"
+            ]
+            if crd_docs:
+                crd_manifest = "---\n".join(yaml.safe_dump(doc) for doc in crd_docs)
+                await self.kubectl.apply_server_side_manifest(
+                    crd_manifest,
+                    field_manager="helm",
+                    force_conflicts=True,
+                )
+                logger.info(
+                    f"Adopted {len(crd_docs)} CRD(s) into the helm field manager "
+                    "(SSA force-conflicts scoped to CRD objects only)"
+                )
         await asyncio.sleep(3)
 
         await self.helm.install(
