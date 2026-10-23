@@ -528,7 +528,13 @@ class TestArrivalQueueClamping:
         # proving its stream was not killed by the exception.
         assert len(call_times) == 6
         gaps = [b - a for a, b in zip(call_times, call_times[1:], strict=False)]
-        assert all(gap == pytest.approx(stagger, abs=stagger / 10) for gap in gaps)
+        # The initial grid keeps exact stagger spacing despite the exception;
+        # the clamp's contract is a MINIMUM gap, so the planned initial ->
+        # replacement boundary gap (turn_gap >= 2 * stagger here) is allowed
+        # to exceed stagger, but no gap may close below it.
+        assert gaps[0] == pytest.approx(stagger, abs=stagger / 10)
+        assert gaps[1] == pytest.approx(stagger, abs=stagger / 10)
+        assert all(gap >= stagger * 0.9 for gap in gaps)
         assert len(errors) == 1
         assert isinstance(errors[0], RuntimeError)
 
