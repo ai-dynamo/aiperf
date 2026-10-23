@@ -407,17 +407,19 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         user = ordered_users[index]
 
         async def _fire() -> None:
-            should_continue = await self._credit_issuer.issue_credit(
-                user.build_first_turn()
-            )
-            next_index = index + 1
-            if not should_continue or next_index >= len(ordered_users):
-                return
-            nxt = ordered_users[next_index]
-            nxt.next_send_time = max(
-                nxt.next_send_time, time.perf_counter() + self._stagger
-            )
-            self._schedule_initial_user(ordered_users, next_index)
+            # Chain in a finally: previously every initial user's timer was
+            # independent, so one refused or failed issue never suppressed the
+            # others. issue_credit safely returns False once sending stops.
+            try:
+                await self._credit_issuer.issue_credit(user.build_first_turn())
+            finally:
+                next_index = index + 1
+                if next_index < len(ordered_users):
+                    nxt = ordered_users[next_index]
+                    nxt.next_send_time = max(
+                        nxt.next_send_time, time.perf_counter() + self._stagger
+                    )
+                    self._schedule_initial_user(ordered_users, next_index)
 
         self._scheduler.schedule_at_perf_sec(user.next_send_time, _fire())
 
