@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import difflib
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -588,16 +589,7 @@ class HelmDeployer:
                 if doc and doc.get("kind") == "CustomResourceDefinition"
             ]
             if crd_docs:
-                crd_manifest = "---\n".join(yaml.safe_dump(doc) for doc in crd_docs)
-                await self.kubectl.apply_server_side_manifest(
-                    crd_manifest,
-                    field_manager="helm",
-                    force_conflicts=True,
-                )
-                logger.info(
-                    f"Adopted {len(crd_docs)} CRD(s) into the helm field manager "
-                    "(SSA force-conflicts scoped to CRD objects only)"
-                )
+                await self._adopt_crds(crd_docs)
         await asyncio.sleep(3)
 
         await self.helm.install(
@@ -615,6 +607,64 @@ class HelmDeployer:
     async def _wait_for_crd_established(self, timeout: int = 60) -> None:
         """Wait for both AIPerf CRDs (AIPerfJob, AIPerfSweep) to be Established."""
         await wait_for_aiperf_crds_established(self.kubectl, timeout=timeout)
+
+    async def _adopt_crds(self, crd_docs: list[dict[str, Any]]) -> None:
+        """Force-adopt the chart's CRD objects into the helm field manager.
+
+        Re-applies the chart's own rendered CRDs with server-side apply +
+        force-conflicts so every field helm is about to set is already owned
+        by the ``helm`` manager with the same value — the subsequent
+        ``helm install`` finds nothing foreign-owned to conflict on.
+
+        Drift guard: a live CRD whose ``spec`` differs from the chart's was
+        not produced by this chart's own CRD install (only metadata ownership
+        and labels legitimately differ after adoption), so overwriting it
+        could silently replace a schema other consumers depend on. Fail with
+        a diff instead. A missing CRD is the fresh-install case and adopts
+        cleanly.
+        """
+        for doc in crd_docs:
+            name = doc.get("metadata", {}).get("name", "")
+            if not name:
+                continue
+            existing = await self.kubectl.run(
+                "get", "crd", name, "-o", "json", check=False
+            )
+            if existing.returncode != 0:
+                continue  # not present — fresh install, nothing to drift from
+            live_spec = orjson.loads(existing.stdout).get("spec") or {}
+            rendered_spec = doc.get("spec") or {}
+            if live_spec != rendered_spec:
+                diff = "\n".join(
+                    difflib.unified_diff(
+                        orjson.dumps(
+                            live_spec, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
+                        ).decode().splitlines(),
+                        orjson.dumps(
+                            rendered_spec,
+                            option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS,
+                        ).decode().splitlines(),
+                        fromfile=f"live/{name}",
+                        tofile=f"chart/{name}",
+                        lineterm="",
+                    )
+                )
+                raise RuntimeError(
+                    f"Refusing to force-adopt CRD {name}: its live spec differs "
+                    "from the chart's rendered spec (only metadata ownership "
+                    "differences are expected after a fixture CRD install). "
+                    f"Spec drift:\n{diff[:4000]}"
+                )
+        crd_manifest = "---\n".join(yaml.safe_dump(doc) for doc in crd_docs)
+        await self.kubectl.apply_server_side_manifest(
+            crd_manifest,
+            field_manager="helm",
+            force_conflicts=True,
+        )
+        logger.info(
+            f"Adopted {len(crd_docs)} CRD(s) into the helm field manager "
+            "(SSA force-conflicts scoped to CRD objects only, spec drift checked)"
+        )
 
     async def upgrade_chart(
         self,
