@@ -170,6 +170,67 @@ async def test_install_chart_adopts_when_live_spec_matches(
 
 
 @pytest.mark.asyncio
+async def test_install_chart_refuses_schema_property_named_conversion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A live CRD with an extra schema property literally named ``conversion``
+    (e.g. ``{"type": "string"}`` under openAPIV3Schema.properties) must NOT be
+    normalized away — that is user schema content, not API defaulting, and
+    adopting over it would silently replace a served schema."""
+    live = _rendered_crd_spec()
+    live["versions"] = [
+        {
+            **live["versions"][0],
+            "schema": {
+                "openAPIV3Schema": {
+                    "type": "object",
+                    "properties": {
+                        "spec": {
+                            "type": "object",
+                            "properties": {"conversion": {"type": "string"}},
+                        }
+                    },
+                }
+            },
+        }
+    ]
+    deployer, kubectl, helm = _make_deployer(monkeypatch, live_crd_spec=live)
+
+    with pytest.raises(RuntimeError, match="Refusing to force-adopt CRD"):
+        await deployer.install_chart(wait=False)
+
+    kubectl.apply_server_side_manifest.assert_not_awaited()
+    helm.install.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_install_chart_refuses_semantic_schema_default_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A null/default difference INSIDE the schema (e.g. a property default
+    present live, absent in the chart) is real content and must not be
+    normalized away."""
+    live = _rendered_crd_spec()
+    live["versions"] = [
+        {
+            **live["versions"][0],
+            "schema": {
+                "openAPIV3Schema": {
+                    "type": "object",
+                    "properties": {"spec": {"type": "object", "default": None}},
+                }
+            },
+        }
+    ]
+    deployer, kubectl, helm = _make_deployer(monkeypatch, live_crd_spec=live)
+
+    with pytest.raises(RuntimeError, match="Refusing to force-adopt CRD"):
+        await deployer.install_chart(wait=False)
+
+    helm.install.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_install_chart_fails_closed_on_crd_read_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

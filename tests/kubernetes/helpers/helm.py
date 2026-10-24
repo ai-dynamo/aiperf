@@ -31,12 +31,15 @@ logger = AIPerfLogger(__name__)
 
 
 def _is_default_conversion(value: Any) -> bool:
-    """True for the API server's default CRD conversion stanza.
+    """True for the API server's default top-level CRD conversion stanza.
 
-    apiextensions defaults an omitted ``spec.conversion`` to
+    apiextensions defaults an omitted top-level ``spec.conversion`` to
     ``{"strategy": "None"}`` (k8s.io/apiextensions-apiserver
     v1/defaults.go), which then serializes into API responses even though the
-    chart manifest omits it entirely.
+    chart manifest omits it entirely. Must only ever be applied to the CRD
+    spec's top-level ``conversion`` key — a schema PROPERTY named
+    ``conversion`` (e.g. ``{"type": "string"}``) is user schema content, not
+    API defaulting.
     """
     return (
         isinstance(value, dict)
@@ -46,27 +49,16 @@ def _is_default_conversion(value: Any) -> bool:
 
 
 def _normalize_crd_spec(spec: dict[str, Any]) -> dict[str, Any]:
-    """Strip API-server defaulting noise so a CRD installed from a chart
-    compares equal to the chart's rendered spec.
+    """Remove ONLY the API server's default top-level conversion stanza.
 
-    Removes null-valued keys (the API omits them) and the default
-    ``spec.conversion`` stanza. Semantic drift (versions, schema, group,
-    names, scope, non-default conversion) is preserved.
+    Everything else — schema subtrees, nested properties (including any named
+    ``conversion``), and null/default values inside schemas, which can carry
+    meaning — is compared verbatim, so genuine drift cannot be masked by
+    normalization.
     """
-
-    def _strip(value: Any) -> Any:
-        if isinstance(value, dict):
-            return {
-                k: _strip(v)
-                for k, v in value.items()
-                if v is not None
-                and not (k == "conversion" and _is_default_conversion(v))
-            }
-        if isinstance(value, list):
-            return [_strip(v) for v in value]
-        return value
-
-    return _strip(spec)
+    if _is_default_conversion(spec.get("conversion")):
+        return {k: v for k, v in spec.items() if k != "conversion"}
+    return spec
 
 
 @dataclass
