@@ -84,13 +84,11 @@ class _FailureTracker:
     fixtures need to know whether the session saw failures; hook callers
     cannot request fixtures, so the node IDs live on the config stash.
 
-    Two hooks, because of ordering: a teardown-phase failure's logreport is
-    emitted only after the failing finalizers complete
-    (_pytest/runner.py runs finalizers inside CallInfo before the report is
-    constructed and logged), and for the LAST test in a package the
-    package-scope finalizers (operator uninstall, cluster delete) can already
-    have run — too late for the failure-gated diagnostics/keep-alive.
-    ``pytest_exception_interact`` fires at exception time, before both.
+    Test failures are recorded via ``pytest_runtest_logreport`` (which fires
+    before package-scope finalizers run). Failures raised INSIDE a
+    package-fixture finalizer never produce a test report, so the destructive
+    finalizers below also record through ``_record_failure`` at the moment
+    they fail — before the next destructive finalizer runs.
     """
 
     def __init__(self) -> None:
@@ -104,9 +102,18 @@ class _FailureTracker:
         if report.failed:
             self._record(report.nodeid)
 
-    def pytest_exception_interact(self, node, call, report) -> None:  # noqa: ANN001, ANN202 - hook signature fixed by pytest
-        if call.excinfo is not None:
-            self._record(node.nodeid)
+
+def _record_failure(config: pytest.Config, label: str) -> None:
+    """Record a failure label in the session stash (idempotent).
+
+    Used by fixture finalizers: a failure inside one finalizer must be
+    visible to the finalizers that run after it (the cluster teardown's
+    dump/keep decisions), which pytest's test-report hooks cannot cover
+    because finalizer failures produce no test report.
+    """
+    failures = config.stash.get(_FAILED_TESTS_KEY, None)
+    if failures is not None and label not in failures:
+        failures.append(label)
 
 
 def _session_failures(config: pytest.Config) -> list[str]:
@@ -2139,6 +2146,7 @@ async def operator_deployer(
     jobset_controller: None,
     k8s_settings: K8sTestSettings,
     operator_job_namespace: str,
+    request: pytest.FixtureRequest,
 ) -> AsyncGenerator[OperatorDeployer, None]:
     """Create an operator deployer (package-scoped).
 
@@ -2172,8 +2180,15 @@ async def operator_deployer(
 
     yield deployer
 
-    # Cleanup all jobs
-    await deployer.cleanup_all()
+    # Cleanup all jobs. A failure inside this finalizer produces no test
+    # report, so record it before it propagates: later finalizers (the
+    # cluster teardown's dump/keep decisions) must still see the session as
+    # failed.
+    try:
+        await deployer.cleanup_all()
+    except Exception:
+        _record_failure(request.config, "operator-deployer-cleanup")
+        raise
 
 
 @pytest_asyncio.fixture(scope="package", loop_scope="package")
@@ -2233,8 +2248,15 @@ async def operator_ready(
         and not k8s_settings.reuse_cluster
         and not k8s_settings.skip_operator_deploy
     ):
-        async with timed_operation("Uninstalling operator"):
-            await operator_deployer.uninstall_operator()
+        try:
+            async with timed_operation("Uninstalling operator"):
+                await operator_deployer.uninstall_operator()
+        except Exception:
+            # Destructive finalizer failure: no test report will carry it, so
+            # record it before the remaining finalizers (job cleanup, cluster
+            # teardown) make their keep/dump decisions.
+            _record_failure(request.config, "operator-uninstall")
+            raise
 
 
 @pytest.fixture

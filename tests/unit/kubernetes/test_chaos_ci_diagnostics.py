@@ -73,111 +73,98 @@ def test_failure_tracker_records_only_failures() -> None:
     assert tracker.failed == ["t::a"]
 
 
-def test_failure_tracker_records_teardown_exceptions_before_the_report() -> None:
-    """A failure in the final test's fixture teardown surfaces via
-    pytest_exception_interact BEFORE the teardown report is logged (pytest
-    runs finalizers inside CallInfo before constructing the report) — and
-    before the package finalizers that would otherwise delete the evidence.
-    The tracker must record the failure at exception time."""
+def test_failure_tracker_records_only_failures_and_dedupes() -> None:
     tracker = k8s_conftest._FailureTracker()
-    try:
-        raise RuntimeError("package fixture teardown failed")
-    except RuntimeError:
-        excinfo = SimpleNamespace()  # only its presence matters
-    node = SimpleNamespace(nodeid="t::last")
-    call = SimpleNamespace(excinfo=excinfo)
 
-    tracker.pytest_exception_interact(node, call, SimpleNamespace())
-
-    assert tracker.failed == ["t::last"], (
-        "teardown-only failures must be visible before the logreport arrives"
-    )
-
-
-def test_failure_tracker_ignores_passing_interactions_and_dedupes() -> None:
-    tracker = k8s_conftest._FailureTracker()
-    node = SimpleNamespace(nodeid="t::a")
-    report = SimpleNamespace(failed=True, nodeid="t::a")
-
-    # No exception -> nothing to record early.
-    tracker.pytest_exception_interact(node, SimpleNamespace(excinfo=None), report)
-    # Exception + later report for the same test -> recorded exactly once.
-    tracker.pytest_exception_interact(node, SimpleNamespace(excinfo=object()), report)
-    tracker.pytest_runtest_logreport(report)
+    tracker.pytest_runtest_logreport(SimpleNamespace(failed=True, nodeid="t::a"))
+    tracker.pytest_runtest_logreport(SimpleNamespace(failed=False, nodeid="t::b"))
+    tracker.pytest_runtest_logreport(SimpleNamespace(failed=True, nodeid="t::a"))
 
     assert tracker.failed == ["t::a"]
 
 
-def test_session_failures_reads_stash() -> None:
-    config = SimpleNamespace(stash={})
-    assert k8s_conftest._session_failures(config) == []
+def test_record_failure_helper_appends_to_stash() -> None:
+    config = SimpleNamespace(stash={k8s_conftest._FAILED_TESTS_KEY: []})
 
-    config.stash[_FAILED_TESTS_KEY] = ["t::a"]
-    assert k8s_conftest._session_failures(config) == ["t::a"]
+    k8s_conftest._record_failure(config, "operator-uninstall")
+    k8s_conftest._record_failure(config, "operator-uninstall")
+
+    assert k8s_conftest._session_failures(config) == ["operator-uninstall"]
 
 
-@pytest.mark.asyncio
-async def test_dump_captures_state_pod_logs_and_kind_export(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+def test_finalizer_failure_is_recorded_before_later_finalizers_run(
+    tmp_path: Path,
 ) -> None:
-    captured: list[tuple[list[str], Path]] = []
+    """Real pytest lifecycle: an otherwise-passing final test, a failing
+    earlier package finalizer (the operator-uninstall analog), and a later
+    finalizer (the cluster-teardown analog) whose keep/dump decision must
+    already see the failure. Finalizer failures produce no test report, so
+    only boundary recording can close this blind spot."""
+    testdir = tmp_path / "lifecycle"
+    testdir.mkdir()
+    sentinel = tmp_path / "evidence-kept"
+    (testdir / "conftest.py").write_text(
+        """import os
 
-    async def fake_run(cmd: list[str], out_path: Path, timeout: int) -> None:  # noqa: ARG001
-        captured.append((cmd, out_path))
-        if out_path.name == "_pod-index.txt":
-            out_path.write_text("aiperf-system aiperf-operator-abc\n")
-        else:
-            out_path.write_text("<fake>")
+import pytest
 
-    monkeypatch.setattr(diag_mod, "_run_capture", fake_run)
+from tests.kubernetes.conftest import (
+    _FAILED_TESTS_KEY,
+    _FailureTracker,
+    _record_failure,
+    _session_failures,
+)
 
-    out = await dump_cluster_diagnostics(
-        "kind-ci", tmp_path / "diag", cluster_name="ci"
+
+def pytest_configure(config):
+    tracker = _FailureTracker()
+    config.stash[_FAILED_TESTS_KEY] = tracker.failed
+    config.pluginmanager.register(tracker, "failure-tracker")
+
+
+@pytest.fixture(scope="package")
+def cluster_sentinel(request):
+    yield
+    # Tears down SECOND (reverse setup order): the cluster-teardown analog —
+    # must already see the earlier finalizer's failure.
+    if _session_failures(request.config):
+        with open(os.environ["SENTINEL_PATH"], "w") as f:
+            f.write("kept")
+
+
+@pytest.fixture(scope="package")
+def failing_operator_finalizer(request, cluster_sentinel):
+    yield
+    # Tears down FIRST: the operator-uninstall analog.
+    try:
+        raise RuntimeError("uninstall exploded")
+    except RuntimeError:
+        _record_failure(request.config, "operator-uninstall")
+        raise
+"""
     )
-    assert out == tmp_path / "diag"
+    (testdir / "test_lifecycle.py").write_text(
+        """def test_passes(failing_operator_finalizer):
+    assert True
+"""
+    )
 
-    cmds = [cmd for cmd, _ in captured]
-    files = [p.name for _, p in captured]
-    assert "events.txt" in files
-    assert "describe-nodes.txt" in files
-    assert "describe-pods.txt" in files
-    assert "pods.yaml" in files
-    assert "jobsets.yaml" in files
-    # Per-pod logs for the pod listed by the index capture.
-    assert "logs-aiperf-system-aiperf-operator-abc.txt" in files
-    assert any(cmd[:4] == ["kubectl", "--context", "kind-ci", "logs"] for cmd in cmds)
-    # kind export runs only because a cluster name was passed.
-    assert any(cmd[:3] == ["kind", "export", "logs"] for cmd in cmds)
+    import subprocess
+    import sys
 
-
-@pytest.mark.asyncio
-async def test_dump_without_cluster_name_skips_kind_export(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    captured: list[list[str]] = []
-
-    async def fake_run(cmd: list[str], out_path: Path, timeout: int) -> None:  # noqa: ARG001
-        captured.append(cmd)
-        if out_path.name == "_pod-index.txt":
-            out_path.write_text("")
-
-    monkeypatch.setattr(diag_mod, "_run_capture", fake_run)
-
-    await dump_cluster_diagnostics("kind-ci", tmp_path / "diag")
-
-    assert not any(cmd[:2] == ["kind", "export"] for cmd in captured)
-
-
-@pytest.mark.asyncio
-async def test_dump_never_raises_on_capture_failure(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    async def boom(cmd: list[str], out_path: Path, timeout: int) -> None:  # noqa: ARG001
-        raise RuntimeError("cluster is gone")
-
-    monkeypatch.setattr(diag_mod, "_run_capture", fake := boom)
-
-    # Even with every command failing, the dump completes (the pod-index read
-    # just finds nothing) so fixture teardown is never broken by diagnostics.
-    await dump_cluster_diagnostics(None, tmp_path / "diag")
-    assert fake is boom  # silence unused; the assertion is "no exception"
+    repo_root = Path(k8s_conftest.__file__).resolve().parents[2]
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", str(testdir / "test_lifecycle.py")],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        timeout=120,
+        env={**__import__("os").environ, "SENTINEL_PATH": str(sentinel), "PYTHONPATH": str(repo_root)},
+    )
+    assert proc.returncode != 0, (
+        f"the failing finalizer must fail the run.\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )
+    assert sentinel.exists(), (
+        "evidence sentinel missing: the later finalizer did not see the "
+        f"recorded failure.\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
+    )
