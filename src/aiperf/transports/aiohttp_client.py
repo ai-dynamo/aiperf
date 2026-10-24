@@ -286,10 +286,10 @@ class AioHttpClient(AIPerfLoggerMixin):
                     if response.status < 200 or response.status >= 300:
                         error_text = await self._read_text_with_idle_bound(
                             response,
-                            response_idle_timeout,
-                            _idle_error,
-                            record.trace_data,
-                            collect_chunks,
+                            idle_timeout_s=response_idle_timeout,
+                            make_error=_idle_error,
+                            trace_data=record.trace_data,
+                            collect_chunks=collect_chunks,
                         )
                         record.end_perf_ns = time.perf_counter_ns()
                         record.error = ErrorDetails(
@@ -409,10 +409,10 @@ class AioHttpClient(AIPerfLoggerMixin):
                         if is_binary:
                             raw_bytes = await self._read_body_with_idle_bound(
                                 response,
-                                response_idle_timeout,
-                                _idle_error,
-                                record.trace_data,
-                                collect_chunks,
+                                idle_timeout_s=response_idle_timeout,
+                                make_error=_idle_error,
+                                trace_data=record.trace_data,
+                                collect_chunks=collect_chunks,
                             )
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
@@ -425,10 +425,10 @@ class AioHttpClient(AIPerfLoggerMixin):
                         else:
                             raw_response = await self._read_text_with_idle_bound(
                                 response,
-                                response_idle_timeout,
-                                _idle_error,
-                                record.trace_data,
-                                collect_chunks,
+                                idle_timeout_s=response_idle_timeout,
+                                make_error=_idle_error,
+                                trace_data=record.trace_data,
+                                collect_chunks=collect_chunks,
                             )
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
@@ -485,6 +485,7 @@ class AioHttpClient(AIPerfLoggerMixin):
     async def _read_body_with_idle_bound(
         self,
         response: aiohttp.ClientResponse,
+        *,
         idle_timeout_s: float,
         make_error: Callable[[], ResponseIdleTimeoutError],
         trace_data: AioHttpTraceData,
@@ -532,6 +533,7 @@ class AioHttpClient(AIPerfLoggerMixin):
     async def _read_text_with_idle_bound(
         self,
         response: aiohttp.ClientResponse,
+        *,
         idle_timeout_s: float,
         make_error: Callable[[], ResponseIdleTimeoutError],
         trace_data: AioHttpTraceData,
@@ -548,7 +550,11 @@ class AioHttpClient(AIPerfLoggerMixin):
         if idle_timeout_s <= 0:
             return await response.text()
         body = await self._read_body_with_idle_bound(
-            response, idle_timeout_s, make_error, trace_data, collect_chunks
+            response,
+            idle_timeout_s=idle_timeout_s,
+            make_error=make_error,
+            trace_data=trace_data,
+            collect_chunks=collect_chunks,
         )
         try:
             encoding = response.get_encoding()
