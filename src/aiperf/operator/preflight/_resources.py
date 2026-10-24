@@ -271,10 +271,15 @@ class _ResourceChecksMixin:
             latest = totals
             if not totals.allocatable_shortfall(required_cpu, required_mem):
                 return totals, True
-            if elapsed + poll_interval > window:
+            remaining = window - elapsed
+            if remaining <= 0:
                 return latest, False
-            await sleep(poll_interval)
-            elapsed += poll_interval
+            # Final sample lands exactly at the window edge: a shortfall at
+            # elapsed=10 of a 12s window must not reject a node recovering at
+            # t=11 without observing the window's last instant.
+            step = min(poll_interval, remaining)
+            await sleep(step)
+            elapsed += step
 
     async def _check_node_resources(self) -> CheckResult:
         """Check aggregate free CPU/mem across schedulable Ready nodes.
