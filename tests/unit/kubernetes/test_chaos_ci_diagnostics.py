@@ -73,6 +73,41 @@ def test_failure_tracker_records_only_failures() -> None:
     assert tracker.failed == ["t::a"]
 
 
+def test_failure_tracker_records_teardown_exceptions_before_the_report() -> None:
+    """A failure in the final test's fixture teardown surfaces via
+    pytest_exception_interact BEFORE the teardown report is logged (pytest
+    runs finalizers inside CallInfo before constructing the report) — and
+    before the package finalizers that would otherwise delete the evidence.
+    The tracker must record the failure at exception time."""
+    tracker = k8s_conftest._FailureTracker()
+    try:
+        raise RuntimeError("package fixture teardown failed")
+    except RuntimeError:
+        excinfo = SimpleNamespace()  # only its presence matters
+    node = SimpleNamespace(nodeid="t::last")
+    call = SimpleNamespace(excinfo=excinfo)
+
+    tracker.pytest_exception_interact(node, call, SimpleNamespace())
+
+    assert tracker.failed == ["t::last"], (
+        "teardown-only failures must be visible before the logreport arrives"
+    )
+
+
+def test_failure_tracker_ignores_passing_interactions_and_dedupes() -> None:
+    tracker = k8s_conftest._FailureTracker()
+    node = SimpleNamespace(nodeid="t::a")
+    report = SimpleNamespace(failed=True, nodeid="t::a")
+
+    # No exception -> nothing to record early.
+    tracker.pytest_exception_interact(node, SimpleNamespace(excinfo=None), report)
+    # Exception + later report for the same test -> recorded exactly once.
+    tracker.pytest_exception_interact(node, SimpleNamespace(excinfo=object()), report)
+    tracker.pytest_runtest_logreport(report)
+
+    assert tracker.failed == ["t::a"]
+
+
 def test_session_failures_reads_stash() -> None:
     config = SimpleNamespace(stash={})
     assert k8s_conftest._session_failures(config) == []

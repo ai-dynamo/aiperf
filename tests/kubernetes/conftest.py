@@ -78,19 +78,35 @@ _FAILED_TESTS_KEY = pytest.StashKey[list[str]]()
 
 
 class _FailureTracker:
-    """pytest plugin recording failed reports for package-fixture teardown.
+    """pytest plugin recording failed tests for package-fixture teardown.
 
     The diagnostics capture and keep-cluster-on-failure decisions in the
     fixtures need to know whether the session saw failures; hook callers
     cannot request fixtures, so the node IDs live on the config stash.
+
+    Two hooks, because of ordering: a teardown-phase failure's logreport is
+    emitted only after the failing finalizers complete
+    (_pytest/runner.py runs finalizers inside CallInfo before the report is
+    constructed and logged), and for the LAST test in a package the
+    package-scope finalizers (operator uninstall, cluster delete) can already
+    have run — too late for the failure-gated diagnostics/keep-alive.
+    ``pytest_exception_interact`` fires at exception time, before both.
     """
 
     def __init__(self) -> None:
         self.failed: list[str] = []
 
+    def _record(self, nodeid: str) -> None:
+        if nodeid not in self.failed:
+            self.failed.append(nodeid)
+
     def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
         if report.failed:
-            self.failed.append(report.nodeid)
+            self._record(report.nodeid)
+
+    def pytest_exception_interact(self, node, call, report) -> None:  # noqa: ANN001, ANN202 - hook signature fixed by pytest
+        if call.excinfo is not None:
+            self._record(node.nodeid)
 
 
 def _session_failures(config: pytest.Config) -> list[str]:
