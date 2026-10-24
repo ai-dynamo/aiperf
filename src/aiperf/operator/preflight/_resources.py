@@ -232,7 +232,7 @@ class _ResourceChecksMixin:
         *,
         window_seconds: float | None = None,
         poll_interval: float = 2.5,
-        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> tuple[_CapacityTotals, bool] | None:
         """Poll node capacity across the strict confirmation window.
 
@@ -258,6 +258,10 @@ class _ResourceChecksMixin:
             if window_seconds is not None
             else OperatorEnvironment.PREFLIGHT_STRICT_CONFIRM_SECONDS
         )
+        if sleep is None:
+            # Resolved at call time (not bound as a default) so test suites
+            # that patch asyncio.sleep control the clock.
+            sleep = asyncio.sleep
         elapsed = 0.0
         latest: _CapacityTotals | None = None
         while True:
