@@ -208,6 +208,16 @@ jobs:
           AIPERF_SOURCE_DIR: ${{ github.workspace }}
           CI_JOB_NAME: test_docs_end_to_end
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          # Arm the per-request response idle bound for these doc runs: their
+          # requests are small and bounded, so a request that delivers no
+          # response bytes for 300s is wedged, not slow. The request is then
+          # recorded as an error and the run completes, instead of hanging
+          # until the 600s run-level stall watchdog aborts the whole
+          # benchmark. Passed through to the aiperf container by
+          # test_runner.py. Product default stays disabled (0): benchmarks of
+          # legitimately slow/long generations must not be killed by a
+          # silence heuristic.
+          AIPERF_HTTP_RESPONSE_IDLE_TIMEOUT: "300"
           # Matrix-shard params. SHARD_INDEX/SHARD_TOTAL are unset for the
           # single-shard servers; setup_test.sh treats their absence as
           # "no slicing" and runs all commands for the named server.

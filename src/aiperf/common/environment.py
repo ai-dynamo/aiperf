@@ -961,6 +961,24 @@ class _HTTPSettings(BaseSettings):
         "when request cancellation is enabled. Used as fallback when no explicit timeout is configured "
         "to prevent hanging indefinitely while waiting for the request to be written to the socket.",
     )
+    RESPONSE_IDLE_TIMEOUT: float = Field(
+        ge=0.0,
+        le=3600.0,
+        default=0.0,
+        description="Maximum seconds an inference request may go without receiving any "
+        "response bytes -- waiting for response headers, between streamed chunks, or "
+        "reading a non-streamed body -- before the request is aborted as unresponsive "
+        "(recorded as a ResponseIdleTimeoutError, and the run continues). Default 0 "
+        "(disabled): silence cannot distinguish a wedged response from a legitimately "
+        "slow one (long prefill, server-side queueing, or a long non-streamed "
+        "generation), and AIPerf does not retry aborted requests, so this liveness bound "
+        "is opt-in. When armed, the bound resets on every received byte and terminates "
+        "only the silent request, which is what lets a run survive a server that wedges "
+        "mid-response instead of hanging until the run-level stall watchdog "
+        "(AIPERF_RECORD_PROGRESS_STALL_TIMEOUT) aborts the whole benchmark. Arm it below "
+        "the stall watchdog (e.g. 300) in CI harnesses whose requests are small and "
+        "bounded; leave it disabled when benchmarking slow or long generations.",
+    )
     IP_VERSION: Literal["4", "6", "auto"] = Field(
         default="4",
         description="IP version for HTTP socket connections. "
