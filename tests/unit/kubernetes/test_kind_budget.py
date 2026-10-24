@@ -320,3 +320,18 @@ def test_worker_pod_budget_renders_at_default_topology(
         f"the default {worker_count}-worker/{record_processors}-record-"
         "processor topology"
     )
+
+
+def test_audit_workflow_opts_into_both_scheduling_mechanisms() -> None:
+    """Pin the wiring: the budget guards above are only load-bearing if the
+    audit workflow actually opts in. Deleting (or zeroing) the overcommit
+    env from the workflow must fail a unit test, not the weekly run."""
+    workflow = yaml.safe_load(
+        (
+            _REPO_ROOT / ".github" / "workflows" / "run-kubernetes-audit-tests.yml"
+        ).read_text()
+    )
+    env = workflow["jobs"]["kubernetes-audit-tests"]["env"]
+
+    assert int(env["K8S_TEST_NODE_CPU_OVERCOMMIT"]) == KIND_CPU_OVERCOMMIT_FLOOR
+    assert str(env["K8S_TEST_KIND_SIZED_JOB_PODS"]).lower() == "true"

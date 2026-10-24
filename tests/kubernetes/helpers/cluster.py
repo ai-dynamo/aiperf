@@ -250,17 +250,40 @@ def _kubectl_sync(
     )
 
 
+async def kind_cluster_node_names(cluster_name: str) -> set[str]:
+    """Node names of a LOCAL Kind cluster, via the kind CLI.
+
+    kind queries the local Docker daemon by container label
+    (io.x-k8s.kind.cluster=<name>) — it never touches the Kubernetes API, so
+    unlike ``kubectl get nodes`` this answer cannot be poisoned by a
+    repointed kubectl context. This is the locality anchor for the CPU
+    overcommit allowlist: only node names that exist as local Docker
+    containers are patch-eligible.
+    """
+    rc, stdout, _ = await _run_quiet(["kind", "get", "nodes", "--name", cluster_name])
+    if rc != 0:
+        return set()
+    return {line.strip() for line in stdout.splitlines() if line.strip()}
+
+
 def apply_cpu_overcommit_sync(
-    context: str, floor_cpus: int, expected_nodes: set[str]
+    context: str,
+    floor_cpus: int,
+    expected_nodes: set[str],
+    *,
+    should_abort: Callable[[], bool] | None = None,
 ) -> list[str]:
     """Patch eligible under-floor nodes of the fixture-owned Kind cluster to
     advertise ``floor_cpus``.
 
-    Only nodes in ``expected_nodes`` (the fixture's own cluster members) that
-    also carry the kind:// providerID marker are patched. Returns the names
-    of the nodes that were patched. Safe to call repeatedly; kubelet
-    re-asserts real capacity on its node-status sync, so the reconciler calls
-    this on an interval for the session's lifetime.
+    Only nodes in ``expected_nodes`` (derived from the kind CLI against the
+    local Docker daemon — never from the Kubernetes API of the context under
+    test) that also carry the kind:// providerID marker are patched. Returns
+    the names of the nodes that were patched. Safe to call repeatedly;
+    kubelet re-asserts real capacity on its node-status sync, so the
+    reconciler calls this on an interval for the session's lifetime.
+    ``should_abort`` is consulted between sub-operations so teardown is not
+    queued behind a whole node list.
     """
     result = _kubectl_sync(
         context,
@@ -283,7 +306,10 @@ def apply_cpu_overcommit_sync(
             f"'{_KIND_PROVIDER_ID_PREFIX}' provider marker; refusing to fake "
             "capacity on what may be a remote cluster"
         )
+    patched: list[str] = []
     for name, patch in targets:
+        if should_abort is not None and should_abort():
+            break
         _kubectl_sync(
             context,
             "patch",
@@ -293,7 +319,7 @@ def apply_cpu_overcommit_sync(
             "--type=json",
             f"-p={patch}",
         )
-    patched = [name for name, _ in targets]
+        patched.append(name)
     if patched:
         logger.info(
             f"CPU overcommit: node(s) {patched} now advertise >= {floor_cpus} CPUs "
@@ -336,7 +362,12 @@ class CpuOvercommitReconciler:
         self._expected_nodes = expected_nodes
         self._interval = interval_seconds
         self._apply_fn = apply_fn or (
-            lambda: apply_cpu_overcommit_sync(context, floor_cpus, expected_nodes)
+            lambda: apply_cpu_overcommit_sync(
+                context,
+                floor_cpus,
+                expected_nodes,
+                should_abort=self._stop.is_set,
+            )
         )
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -365,21 +396,26 @@ class CpuOvercommitReconciler:
             except Exception as exc:  # transient kubectl failure; keep looping
                 logger.warning(f"CPU overcommit re-apply failed: {exc}")
 
-    def stop(self, timeout: float = 15.0) -> None:
-        """Signal the thread to stop and join it. Never raises past teardown:
-        every kubectl call is bounded (``_kubectl_sync``), so a live thread
-        after ``timeout`` is mid-request and unsticks within seconds; the
-        daemon thread dies with the process regardless."""
+    def stop(self, timeout: float = 45.0) -> None:
+        """Signal the thread to stop and join it with a bound that exceeds
+        the kubectl call bound (30s), so a live thread after the join means
+        a genuine wedge, not a mid-request race. The stop event is also
+        consulted between every patch sub-operation, so the loop cannot
+        outlive fixture teardown and mutate a later cluster. Never raises
+        past teardown; a survived thread keeps its reference and is logged
+        as an error."""
         if self._thread is None:
             return
         self._stop.set()
         self._thread.join(timeout=timeout)
         if self._thread.is_alive():
-            logger.warning(
-                "CPU overcommit reconciler thread still alive after "
-                f"{timeout}s join (mid-request; bounded by kubectl timeout); "
-                "daemon thread exits with the process"
+            logger.error(
+                "CPU overcommit reconciler thread survived a "
+                f"{timeout}s join despite bounded kubectl calls — wedged; "
+                "daemon thread dies with the process, but this indicates a "
+                "real bug in the reconcile path"
             )
+            return  # keep the reference for inspection
         self._thread = None
 
 
