@@ -52,8 +52,10 @@ class _StoppingRunner:
     started: list[CreditPhase] = []
     stop_during: CreditPhase | None = None
     orchestrator: PhaseOrchestrator | None = None
+    last: _StoppingRunner | None = None
 
     def __init__(self, *, config: SimpleNamespace, **_: object) -> None:
+        _StoppingRunner.last = self
         self.phase = config.phase
         self.cancelled = False
 
@@ -87,6 +89,7 @@ def orchestrator(create_orchestrator_harness) -> PhaseOrchestrator:
     _CancellingRunner.started = []
     _CancellingRunner.orchestrator = orch
     _StoppingRunner.started = []
+    _StoppingRunner.last = None
     _StoppingRunner.stop_during = None
     _StoppingRunner.orchestrator = orch
     return orch
@@ -121,6 +124,8 @@ async def test_execute_phases_stop_during_warmup_starts_no_later_phase(
         await orchestrator._execute_phases()
 
     assert _StoppingRunner.started == [CreditPhase.WARMUP]
+    assert _StoppingRunner.last is not None
+    assert _StoppingRunner.last.cancelled
     assert orchestrator._active_runners == []
 
 
