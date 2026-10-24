@@ -271,8 +271,9 @@ class _ResourceChecksMixin:
 
         required_cpu, required_mem = self._required_capacity()
 
-        if OperatorEnvironment.PREFLIGHT_STRICT_RESOURCES and totals.allocatable_shortfall(
-            required_cpu, required_mem
+        if (
+            OperatorEnvironment.PREFLIGHT_STRICT_RESOURCES
+            and totals.allocatable_shortfall(required_cpu, required_mem)
         ):
             confirmed = await self._confirm_capacity_shortfall(
                 tolerations, required_cpu, required_mem

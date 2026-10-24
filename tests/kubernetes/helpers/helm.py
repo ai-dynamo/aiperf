@@ -639,11 +639,15 @@ class HelmDeployer:
                     difflib.unified_diff(
                         orjson.dumps(
                             live_spec, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
-                        ).decode().splitlines(),
+                        )
+                        .decode()
+                        .splitlines(),
                         orjson.dumps(
                             rendered_spec,
                             option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS,
-                        ).decode().splitlines(),
+                        )
+                        .decode()
+                        .splitlines(),
                         fromfile=f"live/{name}",
                         tofile=f"chart/{name}",
                         lineterm="",
