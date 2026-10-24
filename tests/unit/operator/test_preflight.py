@@ -11,6 +11,7 @@ Focuses on:
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -26,6 +27,7 @@ from aiperf.config.deployment import (
 )
 from aiperf.kubernetes.preflight import CheckResult, CheckStatus
 from aiperf.kubernetes.resources import KubernetesDeployment
+from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.preflight import (
     OperatorPreflightChecker,
     _is_node_ready_typed,
@@ -516,6 +518,209 @@ class TestCheckNodeResources:
         with _patch_core_v1(mock_core):
             result = await checker._check_node_resources()
         assert result.status == CheckStatus.WARN
+
+
+def _pod_on(node_name: str, cpu: str, memory: str):
+    """Build a typed-ish V1Pod mock scheduled on ``node_name``."""
+    pod = MagicMock()
+    pod.spec = MagicMock()
+    pod.spec.node_name = node_name
+    container = MagicMock()
+    container.resources = MagicMock()
+    container.resources.requests = {"cpu": cpu, "memory": memory}
+    pod.spec.containers = [container]
+    return pod
+
+
+class TestCheckNodeResourcesStrictMode:
+    """AIPERF_PREFLIGHT_STRICT_RESOURCES promotes provable insufficiency to FAIL.
+
+    CI chaos/audit paths opt in so a cluster that can never fit the benchmark
+    fails the job in seconds with a diagnosable message instead of hanging at
+    Pending until the test timeout. Advertised allocatable oscillates (the CI
+    floor is re-applied every 5s while kubelet re-asserts real capacity), so
+    the strict path POLLS the confirmation window and rejects only when no
+    sample fits. These tests drive the poll loop on an injected logical clock.
+    """
+
+    @staticmethod
+    def _clockdriven(
+        monkeypatch: pytest.MonkeyPatch, capacity_at
+    ) -> tuple[list[float], list[float]]:
+        """Inject a logical clock: record poll sleeps and capacity read times."""
+        clock = {"t": 0.0}
+        sleeps: list[float] = []
+        read_times: list[float] = []
+
+        async def fake_sleep(d: float) -> None:
+            sleeps.append(d)
+            clock["t"] += d
+
+        monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+        def _read():
+            read_times.append(clock["t"])
+            return _list([capacity_at(clock["t"])])
+
+        return sleeps, read_times, _read
+
+    @pytest.mark.asyncio
+    async def test_provable_shortfall_fails_after_full_window(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every sample across the full window insufficient -> FAIL; the final
+        sample lands exactly at the window edge via a shortened last sleep."""
+        monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", True)
+        checker = _make_checker()
+        low = _node("kind-node", "1", "1Gi")
+        sleeps, read_times, read = self._clockdriven(monkeypatch, lambda t: low)
+        mock_core = MagicMock(list_node=AsyncMock(side_effect=lambda: read()))
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert result.status == CheckStatus.FAIL
+        assert "no sample" in result.message
+        # initial read at t=0, then window reads at 0, 2.5, 5, 7.5, 10, 12
+        assert read_times == [0.0, 0.0, 2.5, 5.0, 7.5, 10.0, 12.0]
+        assert sleeps == [2.5, 2.5, 2.5, 2.5, 2.0]
+
+    @pytest.mark.asyncio
+    async def test_low_high_low_window_recovery_observed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The endpoint-sampling regression: capacity low at t=0 AND at t=12
+        (both endpoint reads would miss it), raised only at t in [5, 10). The
+        poll must sleep through the low samples and observe the raised one."""
+        monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", True)
+        checker = _make_checker()
+        low = _node("kind-node", "1", "1Gi")
+        raised = _node("kind-node", "32", "32Gi")
+        sleeps, read_times, read = self._clockdriven(
+            monkeypatch, lambda t: raised if 5.0 <= t < 10.0 else low
+        )
+        mock_core = MagicMock(list_node=AsyncMock(side_effect=lambda: read()))
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert result.status == CheckStatus.PASS
+        # initial read at t=0 (low), window reads at 0 (low) and 2.5 (low),
+        # then 5.0 (raised) -> recovery; both endpoint reads (t=0, t=12) are low
+        assert read_times == [0.0, 0.0, 2.5, 5.0]
+        assert sleeps == [2.5, 2.5]
+        assert not (5.0 <= 0.0 < 10.0) and not (5.0 <= 12.0 < 10.0), (
+            "model check: the old endpoint-only algorithm would see low twice"
+        )
+
+    @pytest.mark.asyncio
+    async def test_recovery_at_window_edge_passes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A node recovering at t=11 of a 12s window must be caught by the
+        final shortened sample, not rejected at t=10."""
+        monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", True)
+        checker = _make_checker()
+        low = _node("kind-node", "1", "1Gi")
+        raised = _node("kind-node", "32", "32Gi")
+        sleeps, read_times, read = self._clockdriven(
+            monkeypatch, lambda t: raised if t >= 11.0 else low
+        )
+        mock_core = MagicMock(list_node=AsyncMock(side_effect=lambda: read()))
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert result.status == CheckStatus.PASS
+        assert read_times == [0.0, 0.0, 2.5, 5.0, 7.5, 10.0, 12.0]
+        assert sleeps == [2.5, 2.5, 2.5, 2.5, 2.0]
+
+    @pytest.mark.asyncio
+    async def test_low_snapshot_then_floor_restored_does_not_fail(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The CI CPU floor oscillates (kubelet re-asserts real capacity
+        between reconciler passes): a preflight that samples the reverted
+        window must poll and succeed once the floor is restored, not
+        permanently fail the job on a stale snapshot."""
+        monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", True)
+        checker = _make_checker()
+        reverted = _node("kind-node", "1", "1Gi")
+        floored = _node("kind-node", "32", "32Gi")
+        mock_core = MagicMock(
+            list_node=AsyncMock(side_effect=[_list([reverted]), _list([floored])])
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert mock_core.list_node.await_count == 2, (
+            "strict mode must poll the window, not just sample its endpoints"
+        )
+        assert result.status == CheckStatus.PASS
+
+    @pytest.mark.asyncio
+    async def test_window_read_error_falls_back_to_warn(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If the node list cannot be read during the window, the shortfall is
+        not provable — fall back to the WARN path with the original totals."""
+        monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", True)
+        checker = _make_checker()
+        low = _node("kind-node", "1", "1Gi")
+        mock_core = MagicMock(
+            list_node=AsyncMock(
+                side_effect=[_list([low]), ApiException(status=503, reason="boom")]
+            )
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert result.status == CheckStatus.WARN
+        assert "may not have enough" in result.message
+
+    @pytest.mark.asyncio
+    async def test_recovering_node_does_not_fail_strict_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A node NotReady at the snapshot but Ready at re-check (taints and
+        readiness are transient) must not permanently fail the job."""
+        monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", True)
+        checker = _make_checker()
+        not_ready = _node("kind-node", "32", "64Gi", ready=False)
+        ready = _node("kind-node", "32", "64Gi")
+        mock_core = MagicMock(
+            list_node=AsyncMock(side_effect=[_list([not_ready]), _list([ready])])
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert result.status == CheckStatus.PASS
+
+    @pytest.mark.asyncio
+    async def test_provable_shortfall_warns_by_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", False)
+        checker = _make_checker()
+        n = _node("tiny-node", "1", "1Gi")
+        mock_core = MagicMock(list_node=AsyncMock(return_value=_list([n])))
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert result.status == CheckStatus.WARN
+        assert "may not have enough" in result.message
+        # Non-strict mode must not pay the confirmation re-check.
+        assert mock_core.list_node.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_transient_free_shortfall_still_warns_in_strict_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Allocatable fits the job but running pods booked the node: waiting
+        can help, so even strict mode must WARN rather than FAIL."""
+        monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", True)
+        checker = _make_checker()
+        n = _node("big-node", "16", "64Gi")
+        mock_core = MagicMock(
+            list_node=AsyncMock(return_value=_list([n])),
+            list_pod_for_all_namespaces=AsyncMock(
+                return_value=_list([_pod_on("big-node", "14", "1Gi")])
+            ),
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert result.status == CheckStatus.WARN
+        assert "may not have enough" in result.message
 
 
 class TestCheckNodeSelectorMatch:
