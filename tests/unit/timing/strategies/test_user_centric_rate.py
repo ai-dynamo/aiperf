@@ -507,7 +507,7 @@ class TestArrivalQueueClamping:
         strategy = self._strategy()
         await strategy.setup_phase()
         stagger = strategy._stagger
-        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
+        start = self._set_phase_start(strategy, time_traveler_no_patch_sleep)
 
         errors: list[BaseException] = []
         strategy._scheduler.set_exception_handler(
@@ -524,17 +524,23 @@ class TestArrivalQueueClamping:
         strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
         await self._run(strategy)
 
-        # All three replacements fire -- including the failed user's --
-        # proving its stream was not killed by the exception.
-        assert len(call_times) == 6
-        gaps = [b - a for a, b in zip(call_times, call_times[1:], strict=False)]
-        # The initial grid keeps exact stagger spacing despite the exception;
-        # the clamp's contract is a MINIMUM gap, so the planned initial ->
-        # replacement boundary gap (turn_gap >= 2 * stagger here) is allowed
-        # to exceed stagger, but no gap may close below it.
-        assert gaps[0] == pytest.approx(stagger, abs=stagger / 10)
-        assert gaps[1] == pytest.approx(stagger, abs=stagger / 10)
-        assert all(gap >= stagger * 0.9 for gap in gaps)
+        # Pin the exact planned slot times, not just the count: with this
+        # fixture the six arrivals are the initial grid (0, stagger, 2x) and
+        # the three derived replacements (4x, 5x, 6x stagger: orders 1 and 2
+        # users have max_turns=1, the order-0 user -- the one whose issuance
+        # raises -- has max_turns=2, so its replacement is the 6x slot). If
+        # the exception killed the failed user's stream, the 6x-stagger slot
+        # would vanish and later re-derived replacements would fire elsewhere.
+        turn_gap = strategy._turn_gap
+        planned = [
+            start,
+            start + stagger,
+            start + 2 * stagger,
+            start + stagger + turn_gap,  # order-1 user's replacement
+            start + 2 * stagger + turn_gap,  # order-2 user's replacement
+            start + 2 * turn_gap,  # excepted (order-0) user's replacement
+        ]
+        assert call_times == pytest.approx(planned, abs=stagger / 10)
         assert len(errors) == 1
         assert isinstance(errors[0], RuntimeError)
 
