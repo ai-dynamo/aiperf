@@ -644,3 +644,112 @@ class TestArrivalQueueClamping:
 
         assert strategy._scheduler.pending_count == 0
         assert strategy._scheduler.running_count == 0
+
+    async def test_scale_down_defers_replacement_slots(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
+        """Adaptive scale-down with target == active population: replacement
+        slots still derive (active <= target) but their issuance is gated off
+        (active !< target), so the pop loop defers them one stagger out and
+        the initial grid is the only issuance."""
+        strategy = self._strategy()
+        await strategy.setup_phase()
+        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
+        strategy.set_target_users(3)  # == active: defer, but still derive
+
+        deferrals = 0
+        first_defer = asyncio.Event()
+        real_defer = strategy._defer_next_spawn
+
+        def _defer_spy(queue) -> None:
+            nonlocal deferrals
+            deferrals += 1
+            first_defer.set()
+            real_defer(queue)
+
+        strategy._defer_next_spawn = _defer_spy
+
+        call_times: list[float] = []
+
+        async def _issue(_turn) -> bool:
+            call_times.append(time.perf_counter())
+            return True
+
+        strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
+        task = asyncio.create_task(strategy.execute_phase())
+        try:
+            await asyncio.wait_for(first_defer.wait(), timeout=5.0)
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await asyncio.gather(
+                *strategy._scheduler.cancel_all(), return_exceptions=True
+            )
+
+        assert len(call_times) == 3  # initial grid only; replacement deferred
+        assert deferrals >= 1
+
+    async def test_empty_queue_idles_until_cancelled(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
+        """With replacement derivation suppressed (adaptive target below the
+        active population), the queue runs dry after the initial grid and the
+        loop idles on its empty-queue sleep instead of exiting or spinning
+        without a wait."""
+        strategy = self._strategy()
+        await strategy.setup_phase()
+        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
+        strategy.set_target_users(2)  # active 3 > target 2: no derivations
+
+        call_times: list[float] = []
+        third_call = asyncio.Event()
+
+        async def _issue(_turn) -> bool:
+            call_times.append(time.perf_counter())
+            if len(call_times) == 3:
+                third_call.set()
+            return True
+
+        strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
+        task = asyncio.create_task(strategy.execute_phase())
+        try:
+            await asyncio.wait_for(third_call.wait(), timeout=5.0)
+            # Let the loop reach and cycle the empty-queue branch.
+            await asyncio.sleep(0.3)
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await asyncio.gather(
+                *strategy._scheduler.cancel_all(), return_exceptions=True
+            )
+
+        # Still idling (not exited, not crashed) when cancelled: the empty
+        # queue was cycled rather than treated as a stop condition.
+        assert task.cancelled()
+        assert len(call_times) == 3
+
+    async def test_refusal_during_empty_queue_sleep_exits_at_loop_top(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
+        """Backstop pin: with derivation suppressed and the initial grid
+        consumed, a refusal landing during the empty-queue sleep is caught by
+        the loop-top check on the next iteration (the post-sleep check only
+        sees refusals that land during a slot's clamp sleep)."""
+        strategy = self._strategy(num_users=2)
+        await strategy.setup_phase()
+        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
+        strategy.set_target_users(1)  # active 2 > target 1: no derivations
+
+        call_times: list[float] = []
+
+        async def _issue(_turn) -> bool:
+            call_times.append(time.perf_counter())
+            return len(call_times) < 2  # 2nd arrival refuses
+
+        strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
+        # Loop returns on its own (via the loop-top check) before the timeout.
+        await self._run(strategy, timeout=5.0)
+
+        assert len(call_times) == 2
