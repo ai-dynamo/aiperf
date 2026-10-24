@@ -1,10 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Cancelling the orchestrator while a phase is running.
+"""Cancelling or stopping the orchestrator while a phase is running.
 
 ``cancel()`` clears ``_active_runners`` while ``_execute_phases`` is still
 awaiting the runner, so the loop must tolerate the runner already being gone
-and must not start any later phase.
+and must not start any later phase. The stop path (``_stop_orchestrator``,
+the ``@on_stop`` hook) tears the same runners down without going through
+``cancel()``, so it must gate the phase loop too — including the window
+where stop arrives before the loop has appended its first runner.
 """
 
 from __future__ import annotations
@@ -45,6 +48,33 @@ class _CancellingRunner:
             await _CancellingRunner.orchestrator.cancel()
 
 
+class _StoppingRunner:
+    started: list[CreditPhase] = []
+    stop_during: CreditPhase | None = None
+    orchestrator: PhaseOrchestrator | None = None
+    last: _StoppingRunner | None = None
+
+    def __init__(self, *, config: SimpleNamespace, **_: object) -> None:
+        _StoppingRunner.last = self
+        self.phase = config.phase
+        self.cancelled = False
+
+    def set_phase_complete_callback(self, _cb: object) -> None:
+        pass
+
+    def set_phase_error_callback(self, _cb: object) -> None:
+        pass
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+    async def run(self, *, is_final_phase: bool, seamless_to_next: bool) -> None:
+        _StoppingRunner.started.append(self.phase)
+        if self.phase == _StoppingRunner.stop_during:
+            assert _StoppingRunner.orchestrator is not None
+            await _StoppingRunner.orchestrator._stop_orchestrator()
+
+
 def _phase_config(phase: CreditPhase) -> SimpleNamespace:
     return SimpleNamespace(phase=phase, seamless=False, request_cancellation=None)
 
@@ -58,6 +88,10 @@ def orchestrator(create_orchestrator_harness) -> PhaseOrchestrator:
     ]
     _CancellingRunner.started = []
     _CancellingRunner.orchestrator = orch
+    _StoppingRunner.started = []
+    _StoppingRunner.last = None
+    _StoppingRunner.stop_during = None
+    _StoppingRunner.orchestrator = orch
     return orch
 
 
@@ -75,4 +109,36 @@ async def test_execute_phases_cancel_during_warmup_stops_cleanly(
         await orchestrator._execute_phases()
 
     assert _CancellingRunner.started == [CreditPhase.WARMUP]
+    assert orchestrator._active_runners == []
+
+
+@pytest.mark.asyncio
+async def test_execute_phases_stop_during_warmup_starts_no_later_phase(
+    orchestrator: PhaseOrchestrator,
+) -> None:
+    _StoppingRunner.stop_during = CreditPhase.WARMUP
+    with (
+        patch("aiperf.timing.phase_orchestrator.PhaseRunner", _StoppingRunner),
+        patch("aiperf.timing.phase_orchestrator.RequestCancellationSimulator"),
+    ):
+        await orchestrator._execute_phases()
+
+    assert _StoppingRunner.started == [CreditPhase.WARMUP]
+    assert _StoppingRunner.last is not None
+    assert _StoppingRunner.last.cancelled
+    assert orchestrator._active_runners == []
+
+
+@pytest.mark.asyncio
+async def test_execute_phases_after_stop_starts_no_phase(
+    orchestrator: PhaseOrchestrator,
+) -> None:
+    await orchestrator._stop_orchestrator()
+    with (
+        patch("aiperf.timing.phase_orchestrator.PhaseRunner", _StoppingRunner),
+        patch("aiperf.timing.phase_orchestrator.RequestCancellationSimulator"),
+    ):
+        await orchestrator._execute_phases()
+
+    assert _StoppingRunner.started == []
     assert orchestrator._active_runners == []
