@@ -49,8 +49,6 @@ class _CancellingRunner:
 
 
 class _StoppingRunner:
-    """Stands in for PhaseRunner; runs the orchestrator's on_stop hook mid-run."""
-
     started: list[CreditPhase] = []
     stop_during: CreditPhase | None = None
     orchestrator: PhaseOrchestrator | None = None
@@ -115,9 +113,6 @@ async def test_execute_phases_cancel_during_warmup_stops_cleanly(
 async def test_execute_phases_stop_during_warmup_starts_no_later_phase(
     orchestrator: PhaseOrchestrator,
 ) -> None:
-    """The on_stop hook clears ``_active_runners`` without going through
-    ``cancel()``; the loop must tolerate the cleared list and must not start
-    the next phase once stop-path teardown has begun."""
     _StoppingRunner.stop_during = CreditPhase.WARMUP
     with (
         patch("aiperf.timing.phase_orchestrator.PhaseRunner", _StoppingRunner),
@@ -133,8 +128,6 @@ async def test_execute_phases_stop_during_warmup_starts_no_later_phase(
 async def test_execute_phases_after_stop_starts_no_phase(
     orchestrator: PhaseOrchestrator,
 ) -> None:
-    """Stop arriving before the loop appends its first runner (empty active
-    list) must still gate the loop: no phase may start after stop began."""
     await orchestrator._stop_orchestrator()
     with (
         patch("aiperf.timing.phase_orchestrator.PhaseRunner", _StoppingRunner),
