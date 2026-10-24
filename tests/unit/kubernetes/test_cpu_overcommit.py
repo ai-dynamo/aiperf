@@ -25,6 +25,7 @@ Two non-obvious invariants are guarded here:
 from __future__ import annotations
 
 import json
+import threading
 import time
 from types import SimpleNamespace
 
@@ -101,23 +102,45 @@ def test_patch_never_shrinks_large_nodes(capacity: str, allocatable: str) -> Non
 
 
 def test_select_targets_requires_kind_provider_id() -> None:
-    """Locality gate: only kind:// nodes may have their capacity faked."""
+    """Locality gate 1: only kind:// nodes may have their capacity faked."""
     nodes = [
         ("kind-cp", "kind://docker/aiperf/aiperf-control-plane", "4", "4"),
         ("remote-1", "aws:///us-west-2/i-0abc123", "4", "4"),
         ("gke-node", "gce://proj/zone/vm", "96", "96"),
     ]
 
-    targets, skipped = select_overcommit_targets(nodes, 32)
+    targets, skipped = select_overcommit_targets(
+        nodes, 32, {"kind-cp", "remote-1", "gke-node"}
+    )
 
     assert [name for name, _ in targets] == ["kind-cp"]
     assert skipped == ["remote-1", "gke-node"]
 
 
+def test_select_targets_requires_fixture_owned_membership() -> None:
+    """Locality gate 2: providerID proves provider TYPE, not identity — a
+    repointed context resolving to a DIFFERENT (possibly remote) Kind cluster
+    must select nothing, because its node names are not the fixture's own."""
+    nodes = [
+        (
+            "other-cluster-control-plane",
+            "kind://docker/other/other-control-plane",
+            "4",
+            "4",
+        ),
+        ("mine-control-plane", "kind://docker/mine/mine-control-plane", "4", "4"),
+    ]
+
+    targets, skipped = select_overcommit_targets(nodes, 32, {"mine-control-plane"})
+
+    assert [name for name, _ in targets] == ["mine-control-plane"]
+    assert skipped == ["other-cluster-control-plane"]
+
+
 def test_select_targets_skips_nodes_already_at_floor() -> None:
     nodes = [("big-kind", "kind://docker/c/c-control-plane", "64", "64")]
 
-    targets, skipped = select_overcommit_targets(nodes, 32)
+    targets, skipped = select_overcommit_targets(nodes, 32, {"big-kind"})
 
     assert targets == []
     assert skipped == []
@@ -146,11 +169,15 @@ def test_reconciler_start_applies_eagerly_and_propagates_failure() -> None:
         calls.append(1)
         raise RuntimeError("kubectl exploded")
 
-    reconciler = CpuOvercommitReconciler("kind-x", 32, apply_fn=_failing_apply)
-    with pytest.raises(RuntimeError, match="kubectl exploded"):
-        reconciler.start()
-    assert calls == [1]
-    reconciler.stop()  # never started; must be a no-op
+    reconciler = CpuOvercommitReconciler("kind-x", 32, set(), apply_fn=_failing_apply)
+    try:
+        with pytest.raises(RuntimeError, match="kubectl exploded"):
+            reconciler.start()
+        # start() applies eagerly and synchronously before any thread exists,
+        # so the count is race-free here.
+        assert calls == [1]
+    finally:
+        reconciler.stop()  # thread never spawned; must be a safe no-op
 
 
 def test_reconciler_thread_runs_without_any_event_loop() -> None:
@@ -158,38 +185,44 @@ def test_reconciler_thread_runs_without_any_event_loop() -> None:
     runs NO asyncio loop — the exact situation while a function-scoped
     pytest-asyncio test body occupies its own loop and the package fixture's
     loop (where an asyncio task would live) is suspended."""
+    fired_thrice = threading.Event()
     calls: list[float] = []
 
     def _apply() -> list[str]:
         calls.append(time.monotonic())
+        if len(calls) >= 3:
+            fired_thrice.set()
         return []
 
     reconciler = CpuOvercommitReconciler(
-        "kind-x", 32, interval_seconds=0.05, apply_fn=_apply
+        "kind-x", 32, set(), interval_seconds=0.05, apply_fn=_apply
     )
     reconciler.start()
-    assert reconciler.apply_count == 1  # eager apply in start()
+    try:
+        # The eager apply is synchronous inside start(); asserting >= 1 (not
+        # == 1) leaves the 50ms-interval thread's fires out of the race.
+        assert reconciler.apply_count >= 1
 
-    # Block this thread with no event loop running; the daemon thread must
-    # keep reconciling through the blockage.
-    time.sleep(0.3)
-    reconciler.stop()
-
-    assert reconciler.apply_count >= 3, (
-        f"reconciler fired {reconciler.apply_count}x in ~0.3s at 0.05s "
-        "interval; it must not depend on any asyncio event loop"
-    )
+        # Block this thread with no event loop running; the daemon thread
+        # must keep reconciling through the blockage.
+        time.sleep(0.3)
+        assert fired_thrice.is_set(), (
+            f"reconciler fired {reconciler.apply_count}x in ~0.3s at 0.05s "
+            "interval; it must not depend on any asyncio event loop"
+        )
+    finally:
+        reconciler.stop()
 
 
 def test_reconciler_stop_join_verifies_thread_exit() -> None:
     reconciler = CpuOvercommitReconciler(
-        "kind-x", 32, interval_seconds=60.0, apply_fn=lambda: []
+        "kind-x", 32, set(), interval_seconds=60.0, apply_fn=lambda: []
     )
     reconciler.start()
     thread = reconciler._thread
-
-    reconciler.stop(timeout=5.0)
-
-    assert thread is not None and not thread.is_alive()
-    # stop() is idempotent after a successful join
-    reconciler.stop()
+    try:
+        reconciler.stop(timeout=5.0)
+        assert thread is not None and not thread.is_alive()
+    finally:
+        # stop() is idempotent and never raises past teardown
+        reconciler.stop()

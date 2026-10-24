@@ -200,18 +200,29 @@ def node_cpu_overcommit_patch(
 
 
 def select_overcommit_targets(
-    nodes: list[tuple[str, str, str, str]], floor_cpus: int
+    nodes: list[tuple[str, str, str, str]],
+    floor_cpus: int,
+    expected_names: set[str],
 ) -> tuple[list[tuple[str, str]], list[str]]:
     """Partition (name, providerID, capacity, allocatable) rows into patch
-    targets and skipped non-Kind nodes.
+    targets and skipped nodes.
 
-    Only nodes whose providerID carries the Kind marker are eligible — this
-    is the locality check that prevents a repointed context from faking
-    capacity on a remote cluster. Returns ((name, patch_body)..., skipped...).
+    Two independent locality proofs, both required before a node is touched:
+
+    - ``expected_names`` binds selection to the fixture-owned cluster: the
+      local_cluster fixture passes the node set of the cluster it created or
+      verified, so a repointed context that resolves to a DIFFERENT Kind
+      cluster (e.g. a remote one) selects nothing.
+    - the ``kind://`` providerID marker proves the provider type.
+
+    Returns ((name, patch_body)..., skipped...).
     """
     targets: list[tuple[str, str]] = []
     skipped: list[str] = []
     for name, provider_id, capacity, allocatable in nodes:
+        if name not in expected_names:
+            skipped.append(name)
+            continue
         if not provider_id.startswith(_KIND_PROVIDER_ID_PREFIX):
             skipped.append(name)
             continue
@@ -222,23 +233,57 @@ def select_overcommit_targets(
 
 
 def _kubectl_sync(
-    context: str, *args: str, check: bool = True
+    context: str, *args: str, check: bool = True, timeout: float = 30.0
 ) -> subprocess.CompletedProcess[str]:
-    """Synchronous kubectl with ``--context`` (for the reconciler thread)."""
+    """Synchronous kubectl with ``--context`` (for the reconciler thread).
+
+    Every call is double-bounded — ``--request-timeout`` at the apiserver
+    level and a subprocess timeout — so a wedged apiserver can never hang the
+    reconciler thread past teardown.
+    """
     return subprocess.run(
-        ["kubectl", "--context", context, *args],
+        ["kubectl", "--context", context, "--request-timeout=10s", *args],
         capture_output=True,
         text=True,
         check=check,
+        timeout=timeout,
     )
 
 
-def apply_cpu_overcommit_sync(context: str, floor_cpus: int) -> list[str]:
-    """Patch every eligible under-floor Kind node to advertise ``floor_cpus``.
+async def kind_cluster_node_names(cluster_name: str) -> set[str]:
+    """Node names of a LOCAL Kind cluster, via the kind CLI.
 
-    Returns the names of the nodes that were patched. Safe to call repeatedly;
+    kind queries the local Docker daemon by container label
+    (io.x-k8s.kind.cluster=<name>) — it never touches the Kubernetes API, so
+    unlike ``kubectl get nodes`` this answer cannot be poisoned by a
+    repointed kubectl context. This is the locality anchor for the CPU
+    overcommit allowlist: only node names that exist as local Docker
+    containers are patch-eligible.
+    """
+    rc, stdout, _ = await _run_quiet(["kind", "get", "nodes", "--name", cluster_name])
+    if rc != 0:
+        return set()
+    return {line.strip() for line in stdout.splitlines() if line.strip()}
+
+
+def apply_cpu_overcommit_sync(
+    context: str,
+    floor_cpus: int,
+    expected_nodes: set[str],
+    *,
+    should_abort: Callable[[], bool] | None = None,
+) -> list[str]:
+    """Patch eligible under-floor nodes of the fixture-owned Kind cluster to
+    advertise ``floor_cpus``.
+
+    Only nodes in ``expected_nodes`` (derived from the kind CLI against the
+    local Docker daemon — never from the Kubernetes API of the context under
+    test) that also carry the kind:// providerID marker are patched. Returns
+    the names of the nodes that were patched. Safe to call repeatedly;
     kubelet re-asserts real capacity on its node-status sync, so the
     reconciler calls this on an interval for the session's lifetime.
+    ``should_abort`` is consulted between sub-operations so teardown is not
+    queued behind a whole node list.
     """
     result = _kubectl_sync(
         context,
@@ -253,14 +298,18 @@ def apply_cpu_overcommit_sync(context: str, floor_cpus: int) -> list[str]:
         for line in result.stdout.splitlines()
         if len(line.split()) == 4
     ]
-    targets, skipped = select_overcommit_targets(nodes, floor_cpus)
+    targets, skipped = select_overcommit_targets(nodes, floor_cpus, expected_nodes)
     if skipped:
         logger.warning(
-            f"CPU overcommit: skipping node(s) {skipped} — providerID lacks the "
-            f"'{_KIND_PROVIDER_ID_PREFIX}' locality marker; refusing to fake "
+            f"CPU overcommit: skipping node(s) {skipped} — not a member of the "
+            f"fixture-owned cluster {sorted(expected_nodes)} or missing the "
+            f"'{_KIND_PROVIDER_ID_PREFIX}' provider marker; refusing to fake "
             "capacity on what may be a remote cluster"
         )
+    patched: list[str] = []
     for name, patch in targets:
+        if should_abort is not None and should_abort():
+            break
         _kubectl_sync(
             context,
             "patch",
@@ -270,7 +319,7 @@ def apply_cpu_overcommit_sync(context: str, floor_cpus: int) -> list[str]:
             "--type=json",
             f"-p={patch}",
         )
-    patched = [name for name, _ in targets]
+        patched.append(name)
     if patched:
         logger.info(
             f"CPU overcommit: node(s) {patched} now advertise >= {floor_cpus} CPUs "
@@ -298,15 +347,27 @@ class CpuOvercommitReconciler:
         self,
         context: str,
         floor_cpus: int,
+        expected_nodes: set[str],
         *,
         interval_seconds: float = CPU_OVERCOMMIT_INTERVAL_SECONDS,
         apply_fn: Callable[[], list[str]] | None = None,
     ) -> None:
+        """Bind the reconciler to the fixture-owned cluster's node set.
+
+        ``expected_nodes`` is the locality anchor: only those node names
+        (further required to carry the kind:// providerID) are ever patched.
+        """
         self._context = context
         self._floor_cpus = floor_cpus
+        self._expected_nodes = expected_nodes
         self._interval = interval_seconds
         self._apply_fn = apply_fn or (
-            lambda: apply_cpu_overcommit_sync(context, floor_cpus)
+            lambda: apply_cpu_overcommit_sync(
+                context,
+                floor_cpus,
+                expected_nodes,
+                should_abort=self._stop.is_set,
+            )
         )
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -335,16 +396,26 @@ class CpuOvercommitReconciler:
             except Exception as exc:  # transient kubectl failure; keep looping
                 logger.warning(f"CPU overcommit re-apply failed: {exc}")
 
-    def stop(self, timeout: float = 15.0) -> None:
-        """Signal the thread to stop and verify it actually exits."""
+    def stop(self, timeout: float = 45.0) -> None:
+        """Signal the thread to stop and join it with a bound that exceeds
+        the kubectl call bound (30s), so a live thread after the join means
+        a genuine wedge, not a mid-request race. The stop event is also
+        consulted between every patch sub-operation, so the loop cannot
+        outlive fixture teardown and mutate a later cluster. Never raises
+        past teardown; a survived thread keeps its reference and is logged
+        as an error."""
         if self._thread is None:
             return
         self._stop.set()
         self._thread.join(timeout=timeout)
         if self._thread.is_alive():
-            raise RuntimeError(
-                f"CPU overcommit reconciler thread did not stop within {timeout}s"
+            logger.error(
+                "CPU overcommit reconciler thread survived a "
+                f"{timeout}s join despite bounded kubectl calls — wedged; "
+                "daemon thread dies with the process, but this indicates a "
+                "real bug in the reconcile path"
             )
+            return  # keep the reference for inspection
         self._thread = None
 
 

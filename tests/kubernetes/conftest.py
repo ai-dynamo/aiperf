@@ -45,6 +45,7 @@ from tests.kubernetes.helpers.cluster import (
     ClusterRuntime,
     CpuOvercommitReconciler,
     LocalCluster,
+    kind_cluster_node_names,
 )
 from tests.kubernetes.helpers.diagnostics import dump_cluster_diagnostics
 from tests.kubernetes.helpers.helm import HelmClient, HelmDeployer, HelmValues
@@ -886,8 +887,22 @@ async def local_cluster(
     # it.
     overcommit_reconciler: CpuOvercommitReconciler | None = None
     if cluster.runtime == ClusterRuntime.KIND and s.node_cpu_overcommit > 0:
+        # Locality anchor: the allowlist comes from `kind get nodes`, which
+        # queries the LOCAL Docker daemon by container label — never the
+        # Kubernetes API of the context under test. A kubectl context
+        # repointed at a remote Kind cluster would list the remote nodes,
+        # which are not in this allowlist, so nothing gets patched. Without
+        # a locally verifiable node set there is no safe patch.
+        expected_nodes = await kind_cluster_node_names(cluster.name)
+        if not expected_nodes:
+            raise RuntimeError(
+                f"--k8s-node-cpu-overcommit={s.node_cpu_overcommit} was "
+                f"requested but 'kind get nodes --name {cluster.name}' found "
+                "no local Kind nodes; cannot verify patch locality, refusing "
+                "to fake capacity"
+            )
         overcommit_reconciler = CpuOvercommitReconciler(
-            cluster.context, s.node_cpu_overcommit
+            cluster.context, s.node_cpu_overcommit, expected_nodes
         )
         # Eager apply must succeed: without it the first benchmark pods race
         # kubelet's next capacity re-assertion and may never schedule.
