@@ -59,7 +59,8 @@ def _normalize_crd_spec(spec: dict[str, Any]) -> dict[str, Any]:
             return {
                 k: _strip(v)
                 for k, v in value.items()
-                if v is not None and not (k == "conversion" and _is_default_conversion(v))
+                if v is not None
+                and not (k == "conversion" and _is_default_conversion(v))
             }
         if isinstance(value, list):
             return [_strip(v) for v in value]

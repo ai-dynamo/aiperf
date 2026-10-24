@@ -154,12 +154,24 @@ def failing_operator_finalizer(request, cluster_sentinel):
 
     repo_root = Path(k8s_conftest.__file__).resolve().parents[2]
     proc = subprocess.run(
-        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q", str(testdir / "test_lifecycle.py")],
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "-p",
+            "no:cacheprovider",
+            "-q",
+            str(testdir / "test_lifecycle.py"),
+        ],
         cwd=repo_root,
         capture_output=True,
         text=True,
         timeout=120,
-        env={**__import__("os").environ, "SENTINEL_PATH": str(sentinel), "PYTHONPATH": str(repo_root)},
+        env={
+            **__import__("os").environ,
+            "SENTINEL_PATH": str(sentinel),
+            "PYTHONPATH": str(repo_root),
+        },
     )
     assert proc.returncode != 0, (
         f"the failing finalizer must fail the run.\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
