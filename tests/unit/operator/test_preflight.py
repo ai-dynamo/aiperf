@@ -568,10 +568,10 @@ class TestCheckNodeResourcesStrictMode:
         permanently fail the job on a stale snapshot."""
         monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", True)
         checker = _make_checker()
-        tiny = _node("kind-node", "4", "12Gi")
-        floored = _node("kind-node", "32", "12Gi")
+        reverted = _node("kind-node", "1", "1Gi")
+        floored = _node("kind-node", "32", "32Gi")
         mock_core = MagicMock(
-            list_node=AsyncMock(side_effect=[_list([tiny]), _list([floored])])
+            list_node=AsyncMock(side_effect=[_list([reverted]), _list([floored])])
         )
         with _patch_core_v1(mock_core):
             result = await checker._check_node_resources()
