@@ -412,7 +412,12 @@ def _combined_log_text(result: AIPerfResults) -> str:
 def _idle_cap_diagnostics(
     result: AIPerfResults, root_corr: str, records: list[MetricRecordMetadata]
 ) -> str:
-    """Timeline and idle-watchdog log lines for one play, for a gap failure message."""
+    """Explain a tree-idle gap failure from what the CI job left behind.
+
+    The gap flaked only on CI, so the failure message carries the play's
+    request timeline and the root's watchdog decisions (DEBUG lines) to show
+    which decision let the gap through without a local repro.
+    """
     t0 = records[0].request_start_ns
     timeline = "\n".join(
         f"  {md.conversation_id}#{md.turn_index}: "
