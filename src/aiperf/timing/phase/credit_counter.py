@@ -45,6 +45,8 @@ class CreditCounter:
         self._completed_sessions: int = 0
         self._cancelled_sessions: int = 0
         self._total_session_turns: int = 0
+        self._sessions_ended_on_truncation: int = 0
+        self._turns_skipped_on_truncation: int = 0
         self._prefills_released: int = 0  # TTFTs received + returns without TTFT
 
         # Final count fields (frozen when phase transitions)
@@ -112,6 +114,16 @@ class CreditCounter:
     def total_session_turns(self) -> int:
         """Total turns across all started sessions."""
         return self._total_session_turns
+
+    @property
+    def sessions_ended_on_truncation(self) -> int:
+        """Root sessions ended early after a turn truncated by the output-token cap."""
+        return self._sessions_ended_on_truncation
+
+    @property
+    def turns_skipped_on_truncation(self) -> int:
+        """Turns never sent because their session ended early on truncation."""
+        return self._turns_skipped_on_truncation
 
     @property
     def in_flight_sessions(self) -> int:
@@ -215,6 +227,33 @@ class CreditCounter:
         """
         self._sent_sessions += 1
         self._total_session_turns += session_turns
+
+    def end_session_early(self, skipped_turns: int) -> bool:
+        """Account for a root session that ends before its authored final turn.
+
+        The session's unsent turns are removed from ``_total_session_turns`` so
+        the session-target predicate (``root_requests_sent >=
+        total_session_turns``) stays satisfiable. Call BEFORE the return's
+        ``increment_returned`` so the frozen sent count is in place for the
+        all-returned check.
+
+        Lock-free: no async calls.
+
+        Returns:
+            True when this early end leaves nothing left to send for the planned
+            sessions. ``increment_sent`` only detects the final credit at send
+            time, and there may be no further send, so the caller must then mark
+            sending complete itself.
+        """
+        self._sessions_ended_on_truncation += 1
+        self._turns_skipped_on_truncation += skipped_turns
+        self._total_session_turns -= skipped_turns
+        return (
+            self._final_requests_sent is None
+            and self._config.expected_num_sessions is not None
+            and self._sent_sessions >= self._config.expected_num_sessions
+            and self._root_requests_sent >= self._total_session_turns
+        )
 
     def increment_sent(self, turn_to_send: TurnToSend) -> tuple[int, bool]:
         """Atomically increment sent count and return (credit_index, is_final_credit).

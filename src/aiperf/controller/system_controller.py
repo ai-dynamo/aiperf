@@ -72,6 +72,7 @@ from aiperf.common.service_registry import ServiceRegistry
 from aiperf.common.types import ServiceTypeT
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.comm import ZMQDualBindConfig
+from aiperf.config.dataset.truncation import end_conversation_on_truncation_enabled
 from aiperf.controller.controller_utils import print_exit_errors
 from aiperf.controller.protocols import (
     KubernetesServiceManagerProtocol,
@@ -169,6 +170,8 @@ class SystemController(
         # EOS may cause server to stop early, producing misleading OSL results
         if self._should_warn_osl_without_ignore_eos():
             warn_osl_without_ignore_eos()
+
+        self._log_end_conversation_on_truncation()
 
         if self._should_warn_accuracy_temperature():
             warn_accuracy_temperature()
@@ -412,8 +415,14 @@ class SystemController(
         )
 
     def _should_warn_osl_without_ignore_eos(self) -> bool:
-        """Check if --osl is used without ignore_eos or min_tokens in extra inputs."""
+        """Check if --osl is used without ignore_eos or min_tokens in extra inputs.
+
+        Suppressed when end_conversation_on_truncation is on: ignore_eos would
+        truncate every turn and end every conversation after its first turn.
+        """
         dataset = self.run.cfg.get_default_dataset()
+        if end_conversation_on_truncation_enabled(dataset):
+            return False
         prompts = getattr(dataset, "prompts", None)
         osl = getattr(prompts, "osl", None) if prompts else None
         if osl is None:
@@ -426,6 +435,33 @@ class SystemController(
         # Check if ignore_eos or min_tokens is set with a truthy value
         extra_dict = dict(extra_inputs)
         return not (extra_dict.get("ignore_eos") or extra_dict.get("min_tokens"))
+
+    def _log_end_conversation_on_truncation(self) -> None:
+        """Report the resolved end_conversation_on_truncation setting once.
+
+        Warns when ignore_eos is also set: it runs every turn to the output-token
+        cap, so every multi-turn conversation would end after its first turn.
+        """
+        dataset = self.run.cfg.get_default_dataset()
+        if not end_conversation_on_truncation_enabled(dataset):
+            return
+        source = (
+            "explicitly set"
+            if dataset.end_conversation_on_truncation is not None
+            else f"default for {getattr(dataset, 'dataset', dataset.type)}"
+        )
+        self.info(
+            f"end_conversation_on_truncation enabled ({source}): a conversation "
+            "ends after any turn truncated by the output-token cap, and its "
+            "remaining turns are skipped"
+        )
+        if dict(self.run.cfg.endpoint.extra or {}).get("ignore_eos"):
+            self.warning(
+                "ignore_eos is set while end_conversation_on_truncation is "
+                "enabled: every turn will run to the output-token cap, so every "
+                "multi-turn conversation ends after its first turn. Drop ignore_eos "
+                "or pass --no-end-conversation-on-truncation."
+            )
 
     def _should_warn_accuracy_temperature(self) -> bool:
         """Check if accuracy mode is active without temperature=0 in extra inputs."""

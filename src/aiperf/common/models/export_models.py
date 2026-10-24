@@ -387,6 +387,19 @@ class JsonExportData(AIPerfBaseModel):
             "DAG-shaped runs; absent for non-DAG benchmarks."
         ),
     )
+    conversations_ended_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Conversations ended early because a turn was truncated by "
+        "the output-token cap (end_conversation_on_truncation). Absent when the "
+        "option is off.",
+    )
+    turns_skipped_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Turns never sent because their conversation ended early on "
+        "a truncated turn. Absent when end_conversation_on_truncation is off.",
+    )
     warmup_metrics: dict[str, JsonMetricResult] | None = Field(
         default=None,
         description="Metrics computed from warmup-phase requests only. Profiling "

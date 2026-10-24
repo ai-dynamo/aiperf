@@ -215,6 +215,17 @@ Do not set `ignore_eos` - let the model stop naturally at its end-of-sequence to
 
 For reasoning models (e.g. DeepSeek-R1, QwQ), follow the model card's recommended settings for temperature, top_p, and output length. Reasoning models typically require higher output limits and specific sampling parameters.
 
+### Truncated Turns in Multi-Turn Categories
+
+The qualitative split includes multi-turn rows whose follow-up prompts assume a complete prior answer. SPEED-Bench's convention is that when a turn reaches the output-token cap, the rest of that conversation is skipped. Inserting a canned answer instead gives acceptance lengths with high variance relative to the true value. AIPerf follows this convention by default for every SPEED-Bench qualitative dataset (and `spec_al_mtbench`):
+
+- A turn the server truncates (`finish_reason: "length"`) is still measured, and the conversation ends there.
+- The run summary prints how many conversations ended early and how many turns were skipped. `profile_export_aiperf.json` records them as `conversations_ended_on_truncation` and `turns_skipped_on_truncation`.
+- If many conversations end early, raise `--osl` (reasoning models often need well over 4K) so later turns are measured too.
+- `--no-end-conversation-on-truncation` restores sending every turn.
+
+This is one more reason not to set `ignore_eos`: every turn would run to the cap, so every conversation would end after its first turn. See [Ending Conversations on Truncated Turns](multi-turn.md#ending-conversations-on-truncated-turns).
+
 ---
 
 ## Per-Category Matrix in One Run
@@ -414,7 +425,7 @@ The speculative-decoding literature overwhelmingly reports acceptance length aga
 
 These are five separate datasets, so unlike the SPEED-Bench categories they cannot collapse into one run - a run takes one dataset. What the per-request path changes here is only where each run's number comes from: with `--per-request-spec-decode-metrics` enabled, the report reads it from that run's own requests instead of scraping the server, and `--server-metrics` becomes unnecessary.
 
-Prompts are emitted verbatim (the raw question/problem/prompt field); the served model's chat template wraps them at request time via `--endpoint-type chat`. HumanEval and MBPP are text-completion tasks in the spec-decode literature, so chat-wrapping them keeps the matrix uniform but shifts their acceptance length somewhat from the papers' headline numbers. Acceptance length is correctness-agnostic, so use greedy decoding (`--extra-inputs temperature:0`) to match the headline numbers reported in the literature. Cap generation with `--osl N`. `spec_al_mtbench` is multi-turn: AIPerf dispatches both turns per session and feeds the live assistant reply back as conversation history between them. Every run below covers its whole dataset by default (one full pass over every conversation), so none of them passes a count.
+Prompts are emitted verbatim (the raw question/problem/prompt field); the served model's chat template wraps them at request time via `--endpoint-type chat`. HumanEval and MBPP are text-completion tasks in the spec-decode literature, so chat-wrapping them keeps the matrix uniform but shifts their acceptance length somewhat from the papers' headline numbers. Acceptance length is correctness-agnostic, so use greedy decoding (`--extra-inputs temperature:0`) to match the headline numbers reported in the literature. Cap generation with `--osl N`. `spec_al_mtbench` is multi-turn: AIPerf dispatches both turns per session and feeds the live assistant reply back as conversation history between them. Every run below covers its whole dataset by default (one full pass over every conversation), so none of them passes a count. If a turn hits the `max_tokens` cap, the conversation's later turns are skipped by default (see [Truncated Turns in Multi-Turn Categories](#truncated-turns-in-multi-turn-categories)).
 
 ### Run All Five with a Matrix Report
 

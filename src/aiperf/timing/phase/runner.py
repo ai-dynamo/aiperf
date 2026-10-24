@@ -20,6 +20,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.mixins import TaskManagerMixin
 from aiperf.common.phase import phase_runtime_key
+from aiperf.config.dataset.truncation import end_conversation_on_truncation_enabled
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TimingMode
@@ -328,6 +329,17 @@ class PhaseRunner(TaskManagerMixin):
             conversation_source.dataset_metadata
         ):
             return
+        # Ending a root early would strand the branches the orchestrator spawns
+        # and later resumes through a join, so reject rather than miscount.
+        # Checked here because DAG-ness is only known once the dataset loads.
+        if self._run is not None and end_conversation_on_truncation_enabled(
+            self._run.cfg.get_default_dataset()
+        ):
+            raise ValueError(
+                "end_conversation_on_truncation (--end-conversation-on-truncation) "
+                "is not supported for DAG datasets or agentic replay; pass "
+                "--no-end-conversation-on-truncation."
+            )
         sticky_router = getattr(self._credit_router, "sticky_router", None)
         benchmark_id = self._run.benchmark_id if self._run is not None else "unknown"
         cache_bust_target = self._resolve_cache_bust_target()
@@ -1338,6 +1350,13 @@ class PhaseRunner(TaskManagerMixin):
                 )
             stats = self._create_final_stats()
             self.notice(self._format_phase_complete(stats))
+            if stats.sessions_ended_on_truncation:
+                self.notice(
+                    f"{stats.sessions_ended_on_truncation:,} conversations ended "
+                    f"early after a turn was truncated at the output-token cap; "
+                    f"{stats.turns_skipped_on_truncation:,} remaining turns were "
+                    f"skipped (end_conversation_on_truncation)"
+                )
             await self._phase_publisher.publish_progress(stats)
             await self._publish_phase_complete_with_server_metrics_gate(stats)
 

@@ -8,6 +8,7 @@ from aiperf.common.models import (
     InferenceServerResponse,
     ParsedResponse,
     RequestInfo,
+    RequestRecord,
 )
 from aiperf.common.types import JsonObject, RequestOutputT
 from aiperf.endpoints.base_endpoint import BaseEndpoint
@@ -113,6 +114,10 @@ class CompletionsEndpoint(BaseEndpoint):
             )
 
         return None
+
+    def is_truncated(self, record: RequestRecord) -> bool:
+        """True when the final ``choices[0].finish_reason`` is ``"length"``."""
+        return self._choices_finish_reason_is_length(record)
 
     def extract_completions_response_data(
         self, json_obj: JsonObject

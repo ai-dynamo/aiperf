@@ -1216,6 +1216,30 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    end_conversation_on_truncation: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description="End a multi-turn conversation after any turn the server "
+            "truncated at the output-token cap (`finish_reason=length`, Anthropic "
+            "`stop_reason=max_tokens`, or an incomplete Responses API reply) and "
+            "skip its remaining turns. The truncated turn is still measured. "
+            "Follow-up prompts assume a complete prior answer, so sending them "
+            "after a cut-off reply measures off-distribution generations. Default: "
+            "on for SPEED-Bench qualitative datasets and `spec_al_mtbench`, off "
+            "otherwise. Counts of ended conversations and skipped turns are logged "
+            "and written to `profile_export_aiperf.json`. Conflicts with "
+            "`--extra-inputs ignore_eos:true`, which truncates every turn. "
+            "Rejected at startup for DAG datasets and agentic replay. "
+            "Maps to the dataset's ``end_conversation_on_truncation``.",
+        ),
+        CLIParameter(
+            name=("--end-conversation-on-truncation",),
+            negative="--no-end-conversation-on-truncation",
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = None
+
     max_idle_gap_cap_seconds: Annotated[
         float | None,
         Field(

@@ -95,6 +95,35 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         """
         return None
 
+    def is_truncated(self, record: RequestRecord) -> bool:
+        """True when the server reports the response stopped because it hit the
+        output-token cap (``max_tokens``).
+
+        Endpoints without a stop-reason signal return False.
+        """
+        return False
+
+    @staticmethod
+    def _choices_finish_reason_is_length(record: RequestRecord) -> bool:
+        """OpenAI ``choices[0].finish_reason == "length"`` check, shared by the
+        Chat Completions and Completions endpoints.
+
+        Walks responses in reverse so a stream is decided by its last
+        finish-bearing chunk (the trailing usage-only chunk has empty
+        ``choices`` and is skipped) without scanning every token chunk.
+        """
+        for response in reversed(record.responses):
+            json_obj = response.get_json()
+            if not isinstance(json_obj, dict):
+                continue
+            choices = json_obj.get("choices")
+            if not choices or not isinstance(choices[0], dict):
+                continue
+            finish_reason = choices[0].get("finish_reason")
+            if finish_reason is not None:
+                return finish_reason == "length"
+        return False
+
     def process_responses(
         self,
         record: RequestRecord,

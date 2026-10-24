@@ -868,17 +868,70 @@ class TestTerminalContextOverflowClassifier:
         assert _is_terminal_context_overflow(credit, ctx) is expected
 
 
+class TestDetectEndedOnTruncation:
+    """``_detect_ended_on_truncation`` flags only a truncated, successful,
+    non-final root turn, and only when the option is enabled."""
+
+    def _detect(
+        self,
+        *,
+        enabled: bool = True,
+        is_final: bool = False,
+        agent_depth: int = 0,
+        has_error: bool = False,
+        truncated: bool = True,
+        endpoint_has_method: bool = True,
+    ) -> bool:
+        worker = MagicMock()
+        worker._end_conversation_on_truncation = enabled
+        endpoint = MagicMock(spec=["is_truncated"] if endpoint_has_method else [])
+        if endpoint_has_method:
+            endpoint.is_truncated.return_value = truncated
+        worker.inference_client.endpoint = endpoint
+        ctx = CreditContext(
+            credit=MagicMock(is_final_turn=is_final, agent_depth=agent_depth),
+            drop_perf_ns=0,
+        )
+        record = MagicMock(has_error=has_error)
+        Worker._detect_ended_on_truncation.__get__(worker)(ctx, record)
+        return ctx.ended_on_truncation
+
+    def test_detect_truncated_nonfinal_root_sets_flag(self) -> None:
+        assert self._detect() is True
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            param({"enabled": False}, id="option-off"),
+            param({"is_final": True}, id="final-turn"),
+            param({"agent_depth": 1}, id="dag-child"),
+            param({"has_error": True}, id="errored"),
+            param({"truncated": False}, id="not-truncated"),
+            param({"endpoint_has_method": False}, id="protocol-only-endpoint"),
+        ],
+    )  # fmt: skip
+    def test_detect_not_applicable_leaves_flag_unset(self, kwargs: dict) -> None:
+        assert self._detect(**kwargs) is False
+
+
 class TestTerminalDisposition:
     """Every terminal disposition (final turn, cancellation, terminal context overflow) routes to ``_release_and_evict_for_terminal``; a non-final plain error does not."""
 
     def _dispatch_terminal(
-        self, *, is_final: bool, cancelled: bool, error
+        self,
+        *,
+        is_final: bool,
+        cancelled: bool,
+        error,
+        ended_on_truncation: bool = False,
     ) -> MagicMock:
         """Drive the real terminal-disposition gate on a mock worker."""
         worker = MagicMock()
         worker._release_and_evict_for_terminal = Mock()
         credit = MagicMock(is_final_turn=is_final)
-        ctx = MagicMock(cancelled=cancelled, error=error)
+        ctx = MagicMock(
+            cancelled=cancelled, error=error, ended_on_truncation=ended_on_truncation
+        )
         Worker._handle_terminal_disposition.__get__(worker)(credit, ctx, "conv-X")
         return worker
 
@@ -900,6 +953,16 @@ class TestTerminalDisposition:
         worker = self._dispatch_terminal(
             is_final=False, cancelled=False, error="connection reset by peer"
         )
+        worker._release_and_evict_for_terminal.assert_not_called()
+
+    def test_nonfinal_ended_on_truncation_evicts(self) -> None:
+        worker = self._dispatch_terminal(
+            is_final=False, cancelled=False, error=None, ended_on_truncation=True
+        )
+        worker._release_and_evict_for_terminal.assert_called_once()
+
+    def test_nonfinal_success_does_not_evict(self) -> None:
+        worker = self._dispatch_terminal(is_final=False, cancelled=False, error=None)
         worker._release_and_evict_for_terminal.assert_not_called()
 
 

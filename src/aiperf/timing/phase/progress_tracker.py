@@ -181,6 +181,17 @@ class PhaseProgressTracker:
         """
         self._counter.increment_prefill_released()
 
+    def end_session_early(self, skipped_turns: int) -> bool:
+        """Account for a root session ended early on a truncated turn.
+
+        Delegates to :meth:`CreditCounter.end_session_early`. If it returns
+        True, the caller should freeze sent counts and set
+        ``all_credits_sent_event``.
+
+        CRITICAL: No async calls in this method - preserves atomicity.
+        """
+        return self._counter.end_session_early(skipped_turns)
+
     def account_lane_session(self, session_turns: int) -> None:
         """Count a deferred-lane session that acquires its slot directly.
 
@@ -267,6 +278,8 @@ class PhaseProgressTracker:
             completed_sessions=self._counter.completed_sessions,
             cancelled_sessions=self._counter.cancelled_sessions,
             total_session_turns=self._counter.total_session_turns,
+            sessions_ended_on_truncation=self._counter.sessions_ended_on_truncation,
+            turns_skipped_on_truncation=self._counter.turns_skipped_on_truncation,
             # Final counts (frozen values)
             final_requests_sent=self._counter.final_requests_sent,
             final_requests_completed=self._counter.final_requests_completed,

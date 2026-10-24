@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.structs import TurnToSend
@@ -399,3 +400,46 @@ def test_no_request_child_credit_does_not_bump_sent_counter():
     )
     c.increment_sent(real)
     assert c.requests_sent == 1
+
+
+class TestEndSessionEarly:
+    def test_end_session_early_counts_and_removes_skipped_turns(self) -> None:
+        c = CreditCounter(cfg(sessions=2))
+        c.increment_sent(turn(idx=0, num=3, corr="a"))
+        assert c.end_session_early(skipped_turns=2) is False
+        assert c.sessions_ended_on_truncation == 1
+        assert c.turns_skipped_on_truncation == 2
+        assert c.total_session_turns == 1
+
+    def test_end_session_early_last_pending_session_completes_sending(self) -> None:
+        c = CreditCounter(cfg(sessions=2))
+        c.increment_sent(turn(idx=0, num=2, corr="a"))
+        c.increment_sent(turn(idx=1, num=2, corr="a"))
+        _, is_final = c.increment_sent(turn(idx=0, num=3, corr="b"))
+        assert is_final is False
+        assert c.end_session_early(skipped_turns=2) is True
+
+    def test_end_session_early_with_unstarted_sessions_keeps_sending(self) -> None:
+        c = CreditCounter(cfg(sessions=2))
+        c.increment_sent(turn(idx=0, num=3, corr="a"))
+        assert c.end_session_early(skipped_turns=2) is False
+
+    @pytest.mark.parametrize(
+        "config",
+        [
+            param(cfg(reqs=10), id="request_count"),
+            param(cfg(dur=5.0), id="duration"),
+        ],
+    )  # fmt: skip
+    def test_end_session_early_without_session_target_never_completes_sending(
+        self, config: CreditPhaseConfig
+    ) -> None:
+        c = CreditCounter(config)
+        c.increment_sent(turn(idx=0, num=3))
+        assert c.end_session_early(skipped_turns=2) is False
+
+    def test_end_session_early_after_sent_counts_frozen_returns_false(self) -> None:
+        c = CreditCounter(cfg(sessions=1))
+        c.increment_sent(turn(idx=0, num=3))
+        c.freeze_sent_counts()
+        assert c.end_session_early(skipped_turns=2) is False

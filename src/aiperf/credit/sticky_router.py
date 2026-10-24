@@ -818,6 +818,30 @@ class StickyCreditRouter(CommunicationMixin):
             load.active_sessions -= 1
             load.active_session_ids.discard(root_key)
 
+    def _release_sticky_for_early_end(self, credit: Credit) -> None:
+        """Release a root's sticky entry when its conversation ends early.
+
+        A conversation ended after a truncated turn never sends the final turn
+        whose dispatch normally drops the entry, so without this the owning
+        worker keeps counting the session in ``active_sessions`` for the rest
+        of the run and loses load-balancing ties it should win. Mirrors the
+        final-turn arm of ``send_credit``, including keeping the entry for a turn
+        that forks so ``register_child_routing`` can still find it.
+        """
+        key = credit.x_correlation_id
+        entry = self._sticky_sessions.get(key)
+        if entry is None:
+            return
+        entry.parent_final_seen = True
+        entry.ref_count -= 1
+        if entry.ref_count > 0 or credit.has_forks:
+            return
+        self._pop_entry(key, entry)
+        load = self._workers.get(entry.worker_id)
+        if load is not None:
+            load.active_sessions -= 1
+            load.active_session_ids.discard(entry.root_key or key)
+
     def _pop_entry(self, key: str, entry: _StickyEntry) -> None:
         """Drop an entry along with its root key and every alias pointing at it.
 
@@ -869,6 +893,8 @@ class StickyCreditRouter(CommunicationMixin):
                     message.cancelled,
                     message.error is not None,
                 )
+                if message.ended_on_truncation and not message.cancelled:
+                    self._release_sticky_for_early_end(message.credit)
                 if self._on_return_callback:
                     # Await directly instead of execute_async - credit returns release
                     # concurrency slots, so delays here directly impact throughput.

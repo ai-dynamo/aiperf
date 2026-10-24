@@ -528,6 +528,18 @@ class ProfileResults(AIPerfBaseModel):
         "runs. Forwarded to profile_export_aiperf.json under the "
         "``branch_stats`` key when present.",
     )
+    conversations_ended_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Conversations ended early because a turn was truncated by "
+        "the output-token cap. None when end_conversation_on_truncation is off.",
+    )
+    turns_skipped_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Turns never sent because their conversation ended early on "
+        "a truncated turn. None when end_conversation_on_truncation is off.",
+    )
     context_overflow_count: int = Field(
         default=0,
         ge=0,
