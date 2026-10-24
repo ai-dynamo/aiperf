@@ -555,7 +555,7 @@ class TestCheckNodeResourcesStrictMode:
             result = await checker._check_node_resources()
         assert result.status == CheckStatus.FAIL
         assert "cannot fit this benchmark" in result.message
-        assert "confirmation window" in result.message
+        assert "no sample" in result.message
         assert "AIPERF_PREFLIGHT_STRICT_RESOURCES" in result.message
 
     @pytest.mark.asyncio
@@ -564,7 +564,7 @@ class TestCheckNodeResourcesStrictMode:
     ) -> None:
         """The CI CPU floor oscillates (kubelet re-asserts real capacity
         between reconciler passes): a preflight that samples the reverted
-        window must re-check and succeed once the floor is restored, not
+        window must poll and succeed once the floor is restored, not
         permanently fail the job on a stale snapshot."""
         monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", True)
         checker = _make_checker()
@@ -576,9 +576,59 @@ class TestCheckNodeResourcesStrictMode:
         with _patch_core_v1(mock_core):
             result = await checker._check_node_resources()
         assert mock_core.list_node.await_count == 2, (
-            "strict mode must re-evaluate after the confirmation window"
+            "strict mode must poll the window, not just sample its endpoints"
         )
         assert result.status == CheckStatus.PASS
+
+    @pytest.mark.asyncio
+    async def test_low_high_low_within_window_does_not_fail(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Endpoint sampling can miss a raised window: low at t=0, raised at
+        t=2.5, low again by t=5. The poll must observe the raised sample and
+        refuse to permanently reject the job — capacity demonstrably recovers,
+        so the job is evaluated on the fitting totals instead of failing."""
+        monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", True)
+        checker = _make_checker()
+        low = _node("kind-node", "1", "1Gi")
+        raised = _node("kind-node", "32", "32Gi")
+        # t=0 initial sample (in _check_node_resources), then window polls at
+        # t=2.5 (raised), t=5 (low again): recovery observed mid-window, so the
+        # endpoint-only pattern this regression described cannot fail the job.
+        mock_core = MagicMock(
+            list_node=AsyncMock(
+                side_effect=[
+                    _list([low]),
+                    _list([raised]),
+                    _list([low]),
+                ]
+            )
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert result.status == CheckStatus.PASS, (
+            "an observed in-window recovery must downgrade the strict FAIL"
+        )
+        assert mock_core.list_node.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_window_read_error_falls_back_to_warn(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """If the node list cannot be read during the window, the shortfall is
+        not provable — fall back to the WARN path with the original totals."""
+        monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", True)
+        checker = _make_checker()
+        low = _node("kind-node", "1", "1Gi")
+        mock_core = MagicMock(
+            list_node=AsyncMock(
+                side_effect=[_list([low]), ApiException(status=503, reason="boom")]
+            )
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert result.status == CheckStatus.WARN
+        assert "may not have enough" in result.message
 
     @pytest.mark.asyncio
     async def test_recovering_node_does_not_fail_strict_mode(

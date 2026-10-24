@@ -603,15 +603,16 @@ class _OperatorEnvironment(BaseSettings):
         ge=0,
         le=120,
         description=(
-            "Seconds to wait before re-evaluating a strict-mode capacity "
-            "shortfall. Advertised allocatable is a changing snapshot, not "
-            "proof a job can never fit: kubelet re-asserts real capacity "
-            "between test-floor re-applications, tainted/NotReady nodes "
-            "recover, and autoscalers add capacity. The shortfall must "
-            "persist across this window before the job is permanently "
-            "rejected, so a single low snapshot cannot fail a job the "
-            "cluster would admit seconds later. Must stay below "
-            "PREFLIGHT_TIMEOUT to leave budget for the re-check."
+            "Length of the strict-mode capacity observation window. On an "
+            "allocatable-level shortfall the operator polls node capacity for "
+            "this many seconds and permanently rejects the job only when NO "
+            "sample in the window fits; any fitting sample (a CI test floor "
+            "restored between kubelet re-assertions, a recovering "
+            "NotReady/tainted node, an autoscaler mid-scale-up) downgrades to "
+            "the normal WARN/PASS evaluation. Advertised allocatable is a "
+            "changing snapshot, so a single read — or two window-endpoint "
+            "reads — cannot prove a job can never fit. Keep below "
+            "PREFLIGHT_TIMEOUT to leave budget for the polling."
         ),
     )
     CLIENT_CACHE_MAX_ENTRIES: int = Field(

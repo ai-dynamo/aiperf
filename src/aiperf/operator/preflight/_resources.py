@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import aiohttp
 from kubernetes_asyncio import client
@@ -24,6 +25,9 @@ from aiperf.operator.preflight._common import (
     _is_node_ready_typed,
     controller_resource_requirements,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 
 def _toleration_matches_taint(
@@ -194,7 +198,8 @@ class _ResourceChecksMixin:
         required_cpu: float,
         required_mem: float,
     ) -> CheckResult:
-        """Build the strict-mode FAIL for a CONFIRMED capacity shortfall."""
+        """Build the strict-mode FAIL for a capacity shortfall that no sample
+        across the observation window could fit."""
         tainted_suffix = (
             f" ({totals.skipped_tainted} tainted node(s) excluded)"
             if totals.skipped_tainted
@@ -204,9 +209,9 @@ class _ResourceChecksMixin:
             name="Node Resources",
             status=CheckStatus.FAIL,
             message=(
-                f"Cluster cannot fit this benchmark (shortfall persisted across a "
+                f"Cluster cannot fit this benchmark (no sample across a "
                 f"{OperatorEnvironment.PREFLIGHT_STRICT_CONFIRM_SECONDS:.0f}s "
-                f"confirmation window). Need {format_cpu(required_cpu)} CPU, "
+                f"observation window could fit it). Need {format_cpu(required_cpu)} CPU, "
                 f"{format_memory(required_mem)} mem but only "
                 f"{format_cpu(totals.allocatable_cpu)} CPU, "
                 f"{format_memory(totals.allocatable_memory)} mem allocatable across "
@@ -219,27 +224,53 @@ class _ResourceChecksMixin:
             ],
         )
 
-    async def _confirm_capacity_shortfall(
+    async def _observe_capacity_window(
         self,
         tolerations: list[dict[str, object]],
         required_cpu: float,
         required_mem: float,
-    ) -> _CapacityTotals | None:
-        """Re-evaluate capacity after a bounded delay and return fresh totals.
+        *,
+        window_seconds: float | None = None,
+        poll_interval: float = 2.5,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> tuple[_CapacityTotals, bool] | None:
+        """Poll node capacity across the strict confirmation window.
 
-        Advertised allocatable is a changing snapshot, not proof a job can
-        never fit: kubelet re-asserts real capacity between test-floor
-        re-applications (the CI CPU overcommit reconciler re-patches every
-        5s), tainted/NotReady nodes recover, and autoscalers add capacity.
-        The shortfall must persist across
-        ``AIPERF_PREFLIGHT_STRICT_CONFIRM_SECONDS`` before the job is
-        permanently rejected, so one low snapshot cannot fail a job the
-        cluster would admit seconds later. Returns None when the re-check
-        itself fails (shortfall not provable; caller falls back to WARN).
+        Advertised allocatable oscillates under the CI test floor (kubelet
+        re-asserts real capacity between the reconciler's 5s re-applications)
+        and recovers when tainted/NotReady nodes heal, so two endpoint samples
+        can both land in lowered windows even while capacity recovers in
+        between. Poll instead: any fitting sample proves the shortfall is not
+        stable and downgrades to the normal WARN/PASS evaluation on those
+        totals; a FAIL is produced only when NO sample across the window fits.
+
+        Returns ``(totals, recovered)`` — totals from the first fitting sample
+        when recovered, else the last sample — or None when the node list
+        could not be read during the window (shortfall not provable; the
+        caller falls back to the WARN path with its original totals).
+
+        ``sleep``/``poll_interval``/``window_seconds`` are injectable so tests
+        can drive the loop with a logical clock (the unit suite's patched
+        asyncio.sleep does not advance wall time).
         """
-        await asyncio.sleep(OperatorEnvironment.PREFLIGHT_STRICT_CONFIRM_SECONDS)
-        totals = await self._capacity_totals(tolerations)
-        return None if isinstance(totals, CheckResult) else totals
+        window = (
+            window_seconds
+            if window_seconds is not None
+            else OperatorEnvironment.PREFLIGHT_STRICT_CONFIRM_SECONDS
+        )
+        elapsed = 0.0
+        latest: _CapacityTotals | None = None
+        while True:
+            totals = await self._capacity_totals(tolerations)
+            if isinstance(totals, CheckResult):
+                return None
+            latest = totals
+            if not totals.allocatable_shortfall(required_cpu, required_mem):
+                return totals, True
+            if elapsed + poll_interval > window:
+                return latest, False
+            await sleep(poll_interval)
+            elapsed += poll_interval
 
     async def _check_node_resources(self) -> CheckResult:
         """Check aggregate free CPU/mem across schedulable Ready nodes.
@@ -254,12 +285,13 @@ class _ResourceChecksMixin:
         node. Without subtracting those, a cluster booked to 100% still
         reports PASS here and every AIPerf pod then sits Pending.
 
-        Strict mode (``AIPERF_PREFLIGHT_STRICT_RESOURCES``) FAILs only on a
-        CONFIRMED allocatable-level shortfall: the snapshot must still be
-        insufficient after a bounded confirmation window, so transiently low
-        capacity (a test floor between kubelet re-assertions, recovering
-        NotReady/tainted nodes, an autoscaler mid-scale-up) cannot permanently
-        reject a job the cluster would admit moments later.
+        Strict mode (``AIPERF_PREFLIGHT_STRICT_RESOURCES``) FAILs only when NO
+        sample across a bounded observation window can fit the job: capacity is
+        polled for ``AIPERF_PREFLIGHT_STRICT_CONFIRM_SECONDS``, and any fitting
+        sample (a test floor restored between kubelet re-assertions, a
+        recovering NotReady/tainted node, an autoscaler mid-scale-up)
+        downgrades to the normal WARN/PASS evaluation instead of permanently
+        rejecting the job.
         """
         if skip := self._resource_mode_skip("Node Resources"):
             return skip
@@ -275,12 +307,12 @@ class _ResourceChecksMixin:
             OperatorEnvironment.PREFLIGHT_STRICT_RESOURCES
             and totals.allocatable_shortfall(required_cpu, required_mem)
         ):
-            confirmed = await self._confirm_capacity_shortfall(
+            observed = await self._observe_capacity_window(
                 tolerations, required_cpu, required_mem
             )
-            if confirmed is not None:
-                totals = confirmed
-                if totals.allocatable_shortfall(required_cpu, required_mem):
+            if observed is not None:
+                totals, recovered = observed
+                if not recovered:
                     return self._provable_capacity_failure(
                         totals,
                         required_cpu=required_cpu,
