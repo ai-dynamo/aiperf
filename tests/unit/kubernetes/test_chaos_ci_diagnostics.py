@@ -22,9 +22,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tests.kubernetes import conftest as k8s_conftest
-from tests.kubernetes.conftest import _FAILED_TESTS_KEY, _resolve_settings
-from tests.kubernetes.helpers import diagnostics as diag_mod
-from tests.kubernetes.helpers.diagnostics import dump_cluster_diagnostics
+from tests.kubernetes.conftest import _resolve_settings
 
 
 class _FakeConfig:
