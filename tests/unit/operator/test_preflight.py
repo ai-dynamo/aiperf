@@ -537,7 +537,10 @@ class TestCheckNodeResourcesStrictMode:
     CI chaos/audit paths opt in so a cluster that can never fit the benchmark
     fails the job in seconds with a diagnosable message instead of hanging at
     Pending until the test timeout. Transient free-capacity shortfalls (pods
-    that may release capacity) must keep WARNing even in strict mode.
+    that may release capacity) must keep WARNing even in strict mode, and an
+    allocatable shortfall must persist across the confirmation window before
+    it is fatal — a low snapshot during a test-floor re-assertion gap or a
+    recovering node must not permanently reject the job.
     """
 
     @pytest.mark.asyncio
@@ -551,8 +554,48 @@ class TestCheckNodeResourcesStrictMode:
         with _patch_core_v1(mock_core):
             result = await checker._check_node_resources()
         assert result.status == CheckStatus.FAIL
-        assert "can never fit" in result.message
+        assert "cannot fit this benchmark" in result.message
+        assert "confirmation window" in result.message
         assert "AIPERF_PREFLIGHT_STRICT_RESOURCES" in result.message
+
+    @pytest.mark.asyncio
+    async def test_low_snapshot_then_floor_restored_does_not_fail(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The CI CPU floor oscillates (kubelet re-asserts real capacity
+        between reconciler passes): a preflight that samples the reverted
+        window must re-check and succeed once the floor is restored, not
+        permanently fail the job on a stale snapshot."""
+        monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", True)
+        checker = _make_checker()
+        tiny = _node("kind-node", "4", "12Gi")
+        floored = _node("kind-node", "32", "12Gi")
+        mock_core = MagicMock(
+            list_node=AsyncMock(side_effect=[_list([tiny]), _list([floored])])
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert mock_core.list_node.await_count == 2, (
+            "strict mode must re-evaluate after the confirmation window"
+        )
+        assert result.status == CheckStatus.PASS
+
+    @pytest.mark.asyncio
+    async def test_recovering_node_does_not_fail_strict_mode(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A node NotReady at the snapshot but Ready at re-check (taints and
+        readiness are transient) must not permanently fail the job."""
+        monkeypatch.setattr(OperatorEnvironment, "PREFLIGHT_STRICT_RESOURCES", True)
+        checker = _make_checker()
+        not_ready = _node("kind-node", "32", "64Gi", ready=False)
+        ready = _node("kind-node", "32", "64Gi")
+        mock_core = MagicMock(
+            list_node=AsyncMock(side_effect=[_list([not_ready]), _list([ready])])
+        )
+        with _patch_core_v1(mock_core):
+            result = await checker._check_node_resources()
+        assert result.status == CheckStatus.PASS
 
     @pytest.mark.asyncio
     async def test_provable_shortfall_warns_by_default(
@@ -566,6 +609,8 @@ class TestCheckNodeResourcesStrictMode:
             result = await checker._check_node_resources()
         assert result.status == CheckStatus.WARN
         assert "may not have enough" in result.message
+        # Non-strict mode must not pay the confirmation re-check.
+        assert mock_core.list_node.await_count == 1
 
     @pytest.mark.asyncio
     async def test_transient_free_shortfall_still_warns_in_strict_mode(

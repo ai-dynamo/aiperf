@@ -598,6 +598,22 @@ class _OperatorEnvironment(BaseSettings):
             "message instead of hanging at Pending until the test timeout."
         ),
     )
+    PREFLIGHT_STRICT_CONFIRM_SECONDS: float = Field(
+        default=12.0,
+        ge=0,
+        le=120,
+        description=(
+            "Seconds to wait before re-evaluating a strict-mode capacity "
+            "shortfall. Advertised allocatable is a changing snapshot, not "
+            "proof a job can never fit: kubelet re-asserts real capacity "
+            "between test-floor re-applications, tainted/NotReady nodes "
+            "recover, and autoscalers add capacity. The shortfall must "
+            "persist across this window before the job is permanently "
+            "rejected, so a single low snapshot cannot fail a job the "
+            "cluster would admit seconds later. Must stay below "
+            "PREFLIGHT_TIMEOUT to leave budget for the re-check."
+        ),
+    )
     CLIENT_CACHE_MAX_ENTRIES: int = Field(
         default=200,
         ge=1,
