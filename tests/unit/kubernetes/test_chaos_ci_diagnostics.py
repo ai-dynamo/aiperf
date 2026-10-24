@@ -180,3 +180,50 @@ def failing_operator_finalizer(request, cluster_sentinel):
         "evidence sentinel missing: the later finalizer did not see the "
         f"recorded failure.\nstdout: {proc.stdout}\nstderr: {proc.stderr}"
     )
+
+
+@pytest.mark.asyncio
+async def test_helm_deployer_finalizer_records_failure_before_propagating(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Drive the ACTUAL helm_deployer fixture (not an analog): a failing
+    cleanup must be recorded in the session stash before the exception
+    propagates to the remaining finalizer stack."""
+    failures: list[str] = []
+    config = SimpleNamespace(stash={k8s_conftest._FAILED_TESTS_KEY: failures})
+    request = SimpleNamespace(config=config)
+
+    helm_deployer_mod = __import__(
+        "tests.kubernetes.helpers.helm", fromlist=["HelmDeployer"]
+    )
+    monkeypatch.setattr(
+        helm_deployer_mod.HelmDeployer,
+        "cleanup_all",
+        AsyncMock(side_effect=RuntimeError("cleanup exploded")),
+    )
+
+    kubectl = SimpleNamespace(run=AsyncMock(return_value=SimpleNamespace(returncode=0)))
+    operator_deployer = SimpleNamespace(
+        is_operator_healthy=AsyncMock(return_value=True)
+    )
+    k8s_settings = SimpleNamespace(image_pull_secret=None)
+
+    gen = k8s_conftest.helm_deployer.__wrapped__(
+        kubectl=kubectl,
+        helm_client=SimpleNamespace(),
+        project_root=Path("/nonexistent"),
+        loaded_images=None,
+        jobset_controller=None,
+        helm_values=SimpleNamespace(),
+        operator_deployer=operator_deployer,
+        worker_namespace_suffix="w0",
+        k8s_settings=k8s_settings,
+        request=request,
+    )
+    await gen.__anext__()  # fixture setup
+    with pytest.raises(RuntimeError, match="cleanup exploded"):
+        await gen.__anext__()  # finalizer raises
+
+    assert failures == ["helm-deployer-teardown"], (
+        "the destructive finalizer must record its failure before propagating"
+    )

@@ -1891,6 +1891,7 @@ async def benchmark_deployer(
     k8s_ready: LocalCluster,
     k8s_settings: K8sTestSettings,
     benchmark_namespace: str,
+    request: pytest.FixtureRequest,
 ) -> AsyncGenerator[BenchmarkDeployer, None]:
     """Create a benchmark deployer.
 
@@ -1913,9 +1914,16 @@ async def benchmark_deployer(
 
     yield deployer
 
-    # Cleanup all deployments
+    # Cleanup all deployments. A finalizer failure produces its teardown
+    # report only after ALL finalizers finish (pytest runs the whole stack
+    # first), so record it now: the cluster teardown's dump/keep decisions
+    # run later and must see the session as failed.
     if not k8s_settings.skip_cleanup:
-        await deployer.cleanup_all()
+        try:
+            await deployer.cleanup_all()
+        except Exception:
+            _record_failure(request.config, "benchmark-deployer-cleanup")
+            raise
 
 
 # ============================================================================
@@ -2435,6 +2443,7 @@ async def helm_deployer(
     operator_deployer: OperatorDeployer,
     worker_namespace_suffix: str,
     k8s_settings: K8sTestSettings,
+    request: pytest.FixtureRequest,
 ) -> AsyncGenerator[HelmDeployer, None]:
     """Create a Helm deployer (module-scoped).
 
@@ -2473,13 +2482,20 @@ async def helm_deployer(
     # HelmDeployer suspends the package-scoped operator by removing its RBAC so
     # the two controllers cannot reconcile the same cluster-wide CR watches.
     # Tear down the Helm controller before restoring that shared operator.
+    # Every failure in this destructive sequence is recorded immediately:
+    # pytest reports teardown failures only after the whole finalizer stack
+    # finishes, and the cluster teardown's dump/keep decisions must see them.
     try:
-        await deployer.cleanup_all()
-        if await deployer.is_installed():
-            await deployer.uninstall_chart(wait=False)
-    finally:
-        if not await operator_deployer.is_operator_healthy():
-            await operator_deployer.deploy_operator()
+        try:
+            await deployer.cleanup_all()
+            if await deployer.is_installed():
+                await deployer.uninstall_chart(wait=False)
+        finally:
+            if not await operator_deployer.is_operator_healthy():
+                await operator_deployer.deploy_operator()
+    except Exception:
+        _record_failure(request.config, "helm-deployer-teardown")
+        raise
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="package")
@@ -2487,6 +2503,7 @@ async def helm_deployed(
     helm_deployer: HelmDeployer,
     mock_server: None,
     k8s_settings: K8sTestSettings,
+    request: pytest.FixtureRequest,
 ) -> AsyncGenerator[HelmDeployer, None]:
     """Ensure operator is deployed via Helm and ready (module-scoped).
 
@@ -2503,7 +2520,10 @@ async def helm_deployed(
     if not k8s_settings.skip_cleanup:
         try:
             await asyncio.wait_for(helm_deployer.cleanup_all(), timeout=120)
-        except (TimeoutError, Exception) as e:
+        except Exception as e:
+            # Deliberately swallowed (cleanup must not mask test results), but
+            # recorded so the cluster teardown still dumps/keeps evidence.
+            _record_failure(request.config, "helm-job-cleanup")
             logger.warning(f"Job cleanup timed out: {e}")
 
 
