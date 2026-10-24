@@ -384,17 +384,18 @@ still run. See `OperatorPreflightChecker._resource_mode_skip`.
     Schedulability` instead.)
   - `fail` (operator, opt-in strict mode) — with
     `AIPERF_PREFLIGHT_STRICT_RESOURCES=true`, an aggregate shortfall against
-    total *allocatable* (not free) capacity fails the job instead of warning.
-    Because advertised allocatable is a changing snapshot — kubelet re-asserts
-    real capacity between CI test-floor re-applications, tainted/NotReady nodes
-    recover, autoscalers add capacity — the shortfall must persist across a
-    bounded confirmation window
-    (`AIPERF_PREFLIGHT_STRICT_CONFIRM_SECONDS`, default 12s, kept below
-    `AIPERF_PREFLIGHT_TIMEOUT`) before the job is permanently rejected, so one
-    low snapshot cannot fail a job the cluster would admit seconds later.
-    Strict mode is off by default: production deployments may legitimately
-    over-commit or queue while the cluster autoscales, so the default stays
-    warn-and-proceed.
+    total *allocatable* (not free) capacity fails the job instead of warning —
+    but only after observation, not on a single snapshot. Because advertised
+    allocatable oscillates (kubelet re-asserts real capacity between CI
+    test-floor re-applications, tainted/NotReady nodes recover, autoscalers
+    add capacity), the operator polls capacity for
+    `AIPERF_PREFLIGHT_STRICT_CONFIRM_SECONDS` (default 12s; keep it below
+    `AIPERF_PREFLIGHT_TIMEOUT` so the polling has budget) and rejects the job
+    only when NO sample in the window fits. Any fitting sample downgrades to
+    the normal warn/pass evaluation, so a job whose capacity recovers
+    mid-window is never permanently rejected. Strict mode is off by default:
+    production deployments may legitimately over-commit or queue while the
+    cluster autoscales, so the default stays warn-and-proceed.
 - **Fix**: reduce worker count, add nodes, or right-size the pods via
   `AIPERF_K8S_WORKER_POD_*` and the per-container control-plane resource vars
   (`AIPERF_K8S_SYSTEM_CONTROLLER_*`, `AIPERF_K8S_RECORDS_MANAGER_*`, etc.).
