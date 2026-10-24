@@ -30,6 +30,44 @@ from tests.kubernetes.helpers.operator import (
 logger = AIPerfLogger(__name__)
 
 
+def _is_default_conversion(value: Any) -> bool:
+    """True for the API server's default CRD conversion stanza.
+
+    apiextensions defaults an omitted ``spec.conversion`` to
+    ``{"strategy": "None"}`` (k8s.io/apiextensions-apiserver
+    v1/defaults.go), which then serializes into API responses even though the
+    chart manifest omits it entirely.
+    """
+    return (
+        isinstance(value, dict)
+        and value.get("strategy") in (None, "None")
+        and not value.get("webhook")
+    )
+
+
+def _normalize_crd_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """Strip API-server defaulting noise so a CRD installed from a chart
+    compares equal to the chart's rendered spec.
+
+    Removes null-valued keys (the API omits them) and the default
+    ``spec.conversion`` stanza. Semantic drift (versions, schema, group,
+    names, scope, non-default conversion) is preserved.
+    """
+
+    def _strip(value: Any) -> Any:
+        if isinstance(value, dict):
+            return {
+                k: _strip(v)
+                for k, v in value.items()
+                if v is not None and not (k == "conversion" and _is_default_conversion(v))
+            }
+        if isinstance(value, list):
+            return [_strip(v) for v in value]
+        return value
+
+    return _strip(spec)
+
+
 @dataclass
 class HelmValues:
     """Helm values configuration for aiperf-operator chart."""
@@ -619,9 +657,13 @@ class HelmDeployer:
         Drift guard: a live CRD whose ``spec`` differs from the chart's was
         not produced by this chart's own CRD install (only metadata ownership
         and labels legitimately differ after adoption), so overwriting it
-        could silently replace a schema other consumers depend on. Fail with
-        a diff instead. A missing CRD is the fresh-install case and adopts
-        cleanly.
+        could silently replace a schema other consumers depend on. Specs are
+        compared after stripping API-server defaulting noise (an omitted
+        ``spec.conversion`` is stored as ``{"strategy": "None"}``; null fields
+        are omitted), so a CRD installed from this exact chart compares equal.
+        Real drift fails with a diff. A genuinely missing CRD is the
+        fresh-install case and adopts cleanly; a READ failure (RBAC, API
+        error) is not proof of absence and fails closed.
         """
         for doc in crd_docs:
             name = doc.get("metadata", {}).get("name", "")
@@ -631,10 +673,16 @@ class HelmDeployer:
                 "get", "crd", name, "-o", "json", check=False
             )
             if existing.returncode != 0:
-                continue  # not present — fresh install, nothing to drift from
+                if "NotFound" in existing.stderr:
+                    continue  # genuinely absent — fresh install
+                raise RuntimeError(
+                    f"Cannot verify CRD {name} for safe adoption "
+                    f"(kubectl get failed: {existing.stderr.strip()[:500]}); "
+                    "refusing to force-adopt an unverified live schema"
+                )
             live_spec = orjson.loads(existing.stdout).get("spec") or {}
             rendered_spec = doc.get("spec") or {}
-            if live_spec != rendered_spec:
+            if _normalize_crd_spec(live_spec) != _normalize_crd_spec(rendered_spec):
                 diff = "\n".join(
                     difflib.unified_diff(
                         orjson.dumps(

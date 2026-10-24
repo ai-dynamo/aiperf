@@ -60,13 +60,14 @@ def _rendered_crd_spec() -> dict:
 def _make_deployer(
     monkeypatch: pytest.MonkeyPatch,
     *,
-    live_crd_spec: dict | None = None,
+    live_crd_spec: dict | Exception | None = None,
     call_order: list[str] | None = None,
 ) -> tuple[HelmDeployer, SimpleNamespace, SimpleNamespace]:
     """HelmDeployer over fully mocked kubectl/helm.
 
-    ``live_crd_spec=None`` simulates a fresh cluster (the CRD does not exist
-    yet); a dict simulates a pre-existing CRD with that live spec.
+    ``live_crd_spec=None`` simulates a fresh cluster (kubectl answers
+    NotFound); a dict simulates a pre-existing CRD with that live spec; an
+    Exception instance simulates a read failure with that message.
     ``call_order`` records "adopt" / "install" invocation order.
     """
     kubectl = SimpleNamespace()
@@ -74,7 +75,15 @@ def _make_deployer(
     async def _run(*args: str, **kwargs: object) -> SimpleNamespace:
         if args[:2] == ("get", "crd"):
             if live_crd_spec is None:
-                return SimpleNamespace(returncode=1, stdout="", stderr="not found")
+                return SimpleNamespace(
+                    returncode=1,
+                    stdout="",
+                    stderr='Error from server (NotFound): customresourcedefinitions.apiextensions.k8s.io "x" not found',
+                )
+            if isinstance(live_crd_spec, Exception):
+                return SimpleNamespace(
+                    returncode=1, stdout="", stderr=str(live_crd_spec)
+                )
             return SimpleNamespace(
                 returncode=0,
                 stdout=orjson.dumps({"spec": live_crd_spec}).decode(),
@@ -143,15 +152,41 @@ async def test_install_chart_adopts_crds_into_helm_field_manager(
 async def test_install_chart_adopts_when_live_spec_matches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A live CRD the fixture installed from this same chart adopts cleanly."""
-    deployer, kubectl, helm = _make_deployer(
-        monkeypatch, live_crd_spec=_rendered_crd_spec()
-    )
+    """A live CRD installed from this chart adopts cleanly — including the
+    API-server defaulting the live object carries (spec.conversion defaults
+    to {"strategy": "None"} server-side even though the chart omits it)."""
+    api_defaulted = {
+        **_rendered_crd_spec(),
+        # What the API actually stores for a chart that omits spec.conversion
+        # (apiextensions v1 defaults.go): non-null strategy, no webhook.
+        "conversion": {"strategy": "None"},
+    }
+    deployer, kubectl, helm = _make_deployer(monkeypatch, live_crd_spec=api_defaulted)
 
     await deployer.install_chart(wait=False)
 
     assert kubectl.apply_server_side_manifest.await_count == 1
     assert helm.install.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_install_chart_fails_closed_on_crd_read_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed CRD read (RBAC, API error) is not proof of absence: the
+    takeover must refuse rather than force-adopt an unverified live schema."""
+    deployer, kubectl, helm = _make_deployer(
+        monkeypatch,
+        live_crd_spec=RuntimeError(
+            'Error from server (Forbidden): customresourcedefinitions.apiextensions.k8s.io "x" is forbidden'
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="Cannot verify CRD"):
+        await deployer.install_chart(wait=False)
+
+    kubectl.apply_server_side_manifest.assert_not_awaited()
+    helm.install.assert_not_awaited()
 
 
 @pytest.mark.asyncio
