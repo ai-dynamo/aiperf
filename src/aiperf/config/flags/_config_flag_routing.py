@@ -189,6 +189,7 @@ DATASET_SOURCE_FIELDS: frozenset[str] = frozenset(
         # of keys the user wrote in the config file.
         "public_dataset",
         "hf_weka_dataset",
+        "hf_mooncake_dataset",
     }
 )
 
