@@ -16,8 +16,9 @@ parameters.  Blue = aiperf, red = vLLM Docker; overlapping bars appear purple.
 
 ![Llama 3.1 8B Instruct ISL distribution — aiperf vs vLLM Docker](isl-example-llama.svg)
 
-An interactive version with additional tokenizer comparisons is available in
-[isl-distribution-examples.html](isl-distribution-examples.html).
+An interactive version with additional tokenizer comparisons is available in the
+repository at [`docs/reference/isl-distribution-examples.html`](https://github.com/ai-dynamo/aiperf/blob/main/docs/reference/isl-distribution-examples.html)
+(download it and open it directly in a browser).
 
 ## Quick start
 

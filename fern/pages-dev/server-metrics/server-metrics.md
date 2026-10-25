@@ -228,7 +228,7 @@ all-namespace mode and requires a cluster-scoped `pods: list` grant. To discover
 server in another named namespace, add that namespace to the operator chart's
 `serverMetricsDiscoveryNamespaces` value; if the benchmark pod uses a custom
 ServiceAccount, use the chart's `{namespace, serviceAccounts}` entry form. See
-[Kubernetes RBAC and security](../kubernetes/rbac-security.md#benchmark-pod-permissions).
+[Kubernetes RBAC and security](../kubernetes/rbac-security.md#benchmark-namespace-role-catalog).
 
 The built-in eligibility rules select Dynamo's
 `nvidia.com/metrics-enabled=true` pods, pods with

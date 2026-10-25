@@ -10,9 +10,9 @@ so each vendor's totals sum only its own GPUs. A mixed NVIDIA+AMD run emits both
 lanes' sections; a vendor with no reporting GPU is omitted entirely.
 
 <Note>
-A self-contained, richly-styled HTML version of this diagram lives alongside
-this page at [`gpu-telemetry-metrics-dataflow.html`](gpu-telemetry-metrics-dataflow.html)
-(open it directly in a browser).
+A self-contained, richly-styled HTML version of this diagram lives in the
+repository at [`docs/reference/gpu-telemetry-metrics-dataflow.html`](https://github.com/ai-dynamo/aiperf/blob/main/docs/reference/gpu-telemetry-metrics-dataflow.html)
+(download it and open it directly in a browser).
 </Note>
 
 ## Dataflow
