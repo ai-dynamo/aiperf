@@ -22,6 +22,13 @@ class WorkerTaskStats(AIPerfBaseModel):
         default=0,
         description="The number of tasks that were completed successfully",
     )
+    stream_chunks_received: int = Field(
+        default=0,
+        ge=0,
+        description="Running count of streamed response chunks received by the "
+        "worker's transport. Advances while a long generation is still streaming, "
+        "so the progress-stall watchdog can tell a slow request from a stuck one.",
+    )
 
     def task_finished(self, valid: bool) -> None:
         """Increment the task stats based on success or failure."""

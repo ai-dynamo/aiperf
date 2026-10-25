@@ -6,6 +6,7 @@ Markdown parser for extracting server setup and AIPerf run commands.
 
 import logging
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -34,11 +35,34 @@ class MarkdownParser:
         """Parse all markdown files in directory and extract commands"""
         logger.info(f"Parsing markdown files in {directory}")
 
-        for file_path in Path(directory).rglob("*.md"):
+        for file_path in self._markdown_files(directory):
             logger.info(f"Parsing file: {file_path}")
             self._parse_file(str(file_path))
 
         return self.servers
+
+    @staticmethod
+    def _markdown_files(directory: str) -> list[Path]:
+        """Markdown files the repository tracks, sorted for a stable order.
+
+        A plain rglob also walks ignored trees -- a git worktree kept under the
+        checkout, a local virtualenv, a sibling clone -- so a second copy of
+        docs/ there reads as a duplicate setup tag and exits the process. Only
+        tracked files can carry a tag the harness is meant to run.
+        """
+        root = Path(directory)
+        try:
+            result = subprocess.run(
+                ["git", "-C", str(root), "ls-files", "-z", "--", "*.md"],
+                capture_output=True,
+                check=True,
+            )
+        except (OSError, subprocess.CalledProcessError):
+            logger.warning(f"{root} is not a git checkout; falling back to rglob")
+            return sorted(root.rglob("*.md"))
+
+        names = result.stdout.decode("utf-8").split("\0")
+        return sorted(root / name for name in names if name)
 
     def _parse_file(self, file_path: str):
         """Parse a single markdown file for tagged commands"""

@@ -740,6 +740,40 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    hf_mooncake_dataset: Annotated[
+        str | None,
+        Field(
+            description="HuggingFace repository for the Mooncake trajectory loader. "
+            "Auto-selects --public-dataset mooncake_hf. Cannot be combined with "
+            "another public dataset or a custom dataset. With --config, set the repository in YAML."
+        ),
+        CLIParameter(name=("--hf-mooncake-dataset",), group=Groups.INPUT),
+    ] = None
+
+    hf_mooncake_split: Annotated[
+        str | None,
+        Field(
+            description="HuggingFace split for mooncake_hf (e.g. train or test). "
+            "Defaults to test. Only supported by --public-dataset mooncake_hf.",
+        ),
+        CLIParameter(name=("--hf-mooncake-split",), group=Groups.INPUT),
+    ] = None
+
+    mooncake_trace_to_hf_mapping: Annotated[
+        list[str],
+        Field(
+            default_factory=list,
+            description="Map a Mooncake trace field to a dotted HuggingFace column path: MOONCAKE_FIELD=HF_COLUMN. "
+            "Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. "
+            "Only supported by mooncake_hf. Unmapped fields use canonical column names.",
+        ),
+        CLIParameter(
+            name=("--mooncake-trace-to-hf-mapping",),
+            consume_multiple=True,
+            group=Groups.INPUT,
+        ),
+    ]
+
     hf_weka_dataset: Annotated[
         str | None,
         Field(
@@ -823,7 +857,7 @@ class CLIConfig(BaseConfig):
             description="For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) "
             "instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded "
             "`api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta "
-            "for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.",
+            "for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders. Under fixed-schedule replay the recorded timestamps drive dispatch, so this flag has no effect there; for weka_trace it therefore suppresses fixed-schedule auto-promotion, and passing an explicit --fixed-schedule alongside it wins and the flag is ignored.",
         ),
         CLIParameter(
             name=("--use-think-time-only",),
@@ -951,9 +985,14 @@ class CLIConfig(BaseConfig):
             description="Suppress the automatic switch to fixed-schedule mode for "
             "trace datasets that carry per-record timestamps. By default a "
             "trace input (e.g. mooncake_trace) with timestamps in the first "
-            "record auto-promotes the profiling phase to fixed_schedule. Pass "
-            "--no-fixed-schedule to keep the user-selected timing mode (e.g. "
-            "concurrency, request_rate) and ignore the trace timestamps.",
+            "record auto-promotes the profiling phase to fixed_schedule; "
+            "weka_trace is promoted by type instead, since its timing is "
+            "nested per request and its input is usually a directory. "
+            "--ignore-trace-delays and --use-think-time-only also suppress "
+            "promotion, because both say the recorded timeline should not be "
+            "replayed. Pass --no-fixed-schedule to keep the user-selected "
+            "timing mode (e.g. concurrency, request_rate) and ignore the trace "
+            "timestamps.",
         ),
         CLIParameter(
             name=("--no-fixed-schedule",),
