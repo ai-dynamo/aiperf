@@ -23,6 +23,7 @@ import secrets
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.constants import DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS
 from aiperf.common.scenario.base import (
     ScenarioLockError,
     ScenarioOutcome,
@@ -578,6 +579,11 @@ def _apply_duration(
         for phase in profiling_phases:
             if phase.duration is None:
                 phase.duration = float(spec.default_benchmark_duration_seconds)
+                # The CLI converter only applies the default grace period when
+                # --benchmark-duration is explicit; without this the auto-filled
+                # duration would cancel in-flight requests at the deadline.
+                if phase.grace_period is None:
+                    phase.grace_period = DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS
                 _logger.info(
                     "Scenario %r: auto-set --benchmark-duration=%s (was unset).",
                     spec.name,
@@ -704,19 +710,6 @@ def _apply_trace_idle_gap_cap(
         # Synthetic datasets have no trace idle-gap concept; nothing to lock.
         return
     idle = dataset.trace_idle_gap_cap_seconds
-    if spec.forbid_trace_idle_gap_cap and idle is not None:
-        violations.append(
-            ScenarioViolation(
-                flag="--trace-idle-gap-cap-seconds",
-                current_value=idle,
-                required_value=None,
-                message=(
-                    f"scenario {spec.name!r} preserves original per-trace "
-                    "request timing and forbids timeline compression"
-                ),
-            )
-        )
-        return
     if spec.trace_idle_gap_cap_seconds is None:
         return
     explicit = "trace_idle_gap_cap_seconds" in getattr(dataset, "model_fields_set", ())

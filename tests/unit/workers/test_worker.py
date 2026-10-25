@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
@@ -8,18 +9,25 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import ConversationContextMode, CreditPhase
+from aiperf.common.messages import ErrorMessage
 from aiperf.common.models import (
     Conversation,
     ErrorDetails,
     ParsedResponse,
+    ProcessHealth,
+    RequestInfo,
     RequestRecord,
     SSEMessage,
+    Text,
     TextResponseData,
     Turn,
 )
+from aiperf.common.monotonic_clock import process_clock
 from aiperf.config.phases import ConcurrencyPhase
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.dataset.memory_map_utils import PayloadTurnData
+from aiperf.endpoints.openai_responses import ResponsesEndpoint
+from aiperf.plugin.enums import EndpointType
 from aiperf.workers.session_manager import UserSession
 from aiperf.workers.worker import (
     Worker,
@@ -30,6 +38,7 @@ from tests.harness.fake_communication import FakeCommunication as FakeCommunicat
 from tests.harness.fake_service_manager import FakeServiceManager as FakeServiceManager
 from tests.harness.fake_tokenizer import FakeTokenizer
 from tests.harness.fake_transport import FakeTransport as FakeTransport
+from tests.unit.endpoints.conftest import create_model_endpoint
 
 
 @pytest.mark.parametrize(
@@ -646,6 +655,66 @@ class TestEmitCreditFailureRecord:
         assert record.request_info.phase_name == "second-profiling"
         assert record.request_info.phase_kind == "profiling"
 
+    async def test_emit_credit_failure_record_uses_process_clock(
+        self, mock_worker, monkeypatch
+    ):
+        credit_context = CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.PROFILING,
+                conversation_id="test-conv",
+                x_correlation_id="test-correlation",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+            ),
+            drop_perf_ns=0,
+            error=ErrorDetails(message="boom", type="CreditProcessingError", code=500),
+        )
+        mock_worker._send_inference_result_message = AsyncMock()
+        process_clock()
+        # A wall-clock step must not move the record's exported start.
+        monkeypatch.setattr(time, "time_ns", lambda: 0)
+
+        await mock_worker._emit_credit_failure_record(credit_context)
+
+        record = mock_worker._send_inference_result_message.call_args.args[0]
+        assert record.timestamp_ns == process_clock().wall_ns_at(record.start_perf_ns)
+
+    async def test_conversation_retrieval_error_record_uses_process_clock(
+        self, mock_worker, monkeypatch
+    ):
+        credit_context = CreditContext(
+            credit=Credit(
+                id=1,
+                phase=CreditPhase.PROFILING,
+                conversation_id="test-conv",
+                x_correlation_id="test-correlation",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=0,
+            ),
+            drop_perf_ns=0,
+        )
+        mock_worker.conversation_request_client = Mock(
+            request=AsyncMock(
+                return_value=ErrorMessage(
+                    error=ErrorDetails(message="missing", type="NotFound", code=404)
+                )
+            )
+        )
+        mock_worker._send_inference_result_message = AsyncMock()
+        process_clock()
+        monkeypatch.setattr(time, "time_ns", lambda: 0)
+
+        with pytest.raises(ValueError, match="Failed to retrieve conversation"):
+            await mock_worker._request_conversation_from_dataset_manager(
+                "test-conv", credit_context
+            )
+
+        record = mock_worker._send_inference_result_message.call_args.args[0]
+        assert record.timestamp_ns == process_clock().wall_ns_at(record.start_perf_ns)
+
 
 # --- Fixture for CreditContext ---
 
@@ -1091,6 +1160,174 @@ class TestFinalizeSessionResponseChaining:
 
         assert session.previous_response_id == "resp_new"
 
+    async def test_finalize_session_response_success_records_system_prompt_flag(
+        self,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The flag is computed from the full RequestInfo that was sent, not the
+        slim RecordContext on the record."""
+        monkeypatch.setattr(
+            mock_worker, "_process_responses_for_record", Mock(return_value=([], None))
+        )
+        monkeypatch.setattr(mock_worker, "_populate_response_metrics", Mock())
+        endpoint = mock_worker.inference_client.endpoint
+        monkeypatch.setattr(
+            endpoint, "extract_response_id", Mock(return_value="resp_new")
+        )
+        stored = Mock(return_value=True)
+        monkeypatch.setattr(
+            endpoint, "stored_history_has_system_prompt", stored, raising=False
+        )
+        session = self._chaining_session()
+        request_info = Mock(spec=RequestInfo)
+        record = RequestRecord(timestamp_ns=1, start_perf_ns=1, end_perf_ns=2)
+
+        mock_worker._finalize_session_response(
+            session, sample_credit_context, record, request_info
+        )
+
+        stored.assert_called_once_with(request_info)
+        assert session.previous_response_id == "resp_new"
+        assert session.system_prompt_in_stored_history is True
+
+    async def test_finalize_real_responses_endpoint_other_id_override_records_false(
+        self,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Real ``RequestInfo`` + real ``ResponsesEndpoint`` flag computation.
+
+        Storing the assistant turn appends to ``session.turn_list``. The sent
+        request must keep ending at the dispatch turn (``RequestInfo`` copies
+        the list), and an override chaining onto another response must record
+        the prompt as not stored, even though the session's own chain held it.
+        """
+        endpoint = ResponsesEndpoint(
+            model_endpoint=create_model_endpoint(
+                EndpointType.RESPONSES, extra=[("store", True)]
+            )
+        )
+        monkeypatch.setattr(mock_worker.inference_client, "endpoint", endpoint)
+        monkeypatch.setattr(
+            endpoint, "extract_response_id", Mock(return_value="resp_new")
+        )
+        assistant = Turn(role="assistant", texts=[Text(contents=["REPLY"])])
+        monkeypatch.setattr(
+            mock_worker,
+            "_process_responses_for_record",
+            Mock(return_value=([], assistant)),
+        )
+        monkeypatch.setattr(mock_worker, "_populate_response_metrics", Mock())
+
+        dispatch = Turn(
+            raw_messages=[{"role": "user", "content": "SECOND", "type": "message"}],
+            extra_body={"previous_response_id": "resp_elsewhere"},
+        )
+        conv = Conversation(
+            conversation_id="test-conv-override",
+            turns=[
+                Turn(
+                    raw_messages=[
+                        {"role": "system", "content": "DATASET POLICY"},
+                        {"role": "user", "content": "FIRST"},
+                    ]
+                ),
+                dispatch,
+            ],
+        )
+        session = UserSession(
+            x_correlation_id="test-corr",
+            num_turns=2,
+            conversation=conv,
+            context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
+        )
+        session.advance_turn(0)
+        session.store_response_id("resp_first", system_prompt_in_history=True)
+        session.advance_turn(1)
+        request_info = mock_worker._create_request_info(
+            session=session,
+            credit_context=sample_credit_context,
+            x_request_id="x-req",
+            system_message="CLI POLICY",
+            user_context_message=None,
+        )
+        record = RequestRecord(timestamp_ns=1, start_perf_ns=1, end_perf_ns=2)
+
+        mock_worker._finalize_session_response(
+            session, sample_credit_context, record, request_info
+        )
+
+        assert session.turn_list[-1] is assistant
+        assert request_info.turns[-1] == dispatch
+        assert session.previous_response_id == "resp_new"
+        assert session.system_prompt_in_stored_history is False
+
+    @pytest.mark.parametrize("last_good_flag", [param(True, id="flag_true"), param(False, id="flag_false")])  # fmt: skip
+    async def test_finalize_session_response_error_keeps_last_good_system_prompt_flag(
+        self,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        monkeypatch: pytest.MonkeyPatch,
+        last_good_flag: bool,
+    ) -> None:
+        """A failed request never reached stored history, so neither the id nor
+        the flag may move off the last successful response."""
+        monkeypatch.setattr(
+            mock_worker, "_process_responses_for_record", Mock(return_value=([], None))
+        )
+        monkeypatch.setattr(mock_worker, "_populate_response_metrics", Mock())
+        endpoint = mock_worker.inference_client.endpoint
+        monkeypatch.setattr(
+            endpoint, "extract_response_id", Mock(return_value="resp_partial")
+        )
+        stored = Mock(return_value=not last_good_flag)
+        monkeypatch.setattr(
+            endpoint, "stored_history_has_system_prompt", stored, raising=False
+        )
+        session = self._chaining_session()
+        session.store_response_id("resp_good", system_prompt_in_history=last_good_flag)
+        record = RequestRecord(error=ErrorDetails(message="boom", type="TestError"))
+
+        mock_worker._finalize_session_response(
+            session, sample_credit_context, record, Mock(spec=RequestInfo)
+        )
+
+        stored.assert_not_called()
+        assert session.previous_response_id == "resp_good"
+        assert session.system_prompt_in_stored_history is last_good_flag
+
+    async def test_process_credit_with_session_finalizes_with_sent_request_info(
+        self,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The record only carries a slim RecordContext, so the full RequestInfo
+        that was sent must reach the finalizer for the flag to be computed."""
+        session = self._chaining_session()
+        monkeypatch.setattr(
+            mock_worker.session_manager, "get", Mock(return_value=session)
+        )
+        sent = Mock(spec=RequestInfo)
+        monkeypatch.setattr(
+            mock_worker, "_create_request_info", Mock(return_value=sent)
+        )
+        record = RequestRecord(timestamp_ns=1, start_perf_ns=1, end_perf_ns=2)
+        monkeypatch.setattr(
+            mock_worker, "_execute_request", AsyncMock(return_value=record)
+        )
+        finalize = Mock()
+        monkeypatch.setattr(mock_worker, "_finalize_session_response", finalize)
+
+        await mock_worker._process_credit_with_session(
+            sample_credit_context, "x-req", "test-corr", None
+        )
+
+        finalize.assert_called_once_with(session, sample_credit_context, record, sent)
+
 
 @pytest.mark.asyncio
 class TestMakeFirstTokenCallback:
@@ -1177,3 +1414,45 @@ class TestNoRequestCredit:
         assert credit_return.error is None
         assert credit_return.first_token_sent is False
         assert credit_return.credit.id == 42
+
+
+class TestHealthMessageStreamChunks:
+    """Health reports carry the transport's streamed-chunk count to the watchdog."""
+
+    async def test_create_health_message_reports_transport_stream_chunks(
+        self, mock_worker, monkeypatch
+    ):
+        monkeypatch.setattr(
+            mock_worker.inference_client,
+            "transport",
+            SimpleNamespace(stream_chunks_received=17),
+        )
+        health = ProcessHealth(
+            pid=1, create_time=0.0, uptime=0.0, cpu_usage=0.0, memory_usage=0
+        )
+
+        message = mock_worker.create_health_message(health)
+
+        assert message.task_stats.stream_chunks_received == 17
+        assert mock_worker.task_stats.stream_chunks_received == 0, (
+            "building a health message must not mutate the worker's task stats"
+        )
+
+    async def test_create_health_message_tolerates_transport_without_counter(
+        self, mock_worker, monkeypatch
+    ):
+        """A plugin transport written before the counter existed reports 0.
+
+        TransportProtocol is structural, and the health task logs and retries
+        on error, so a missing attribute would silently stop health reports.
+        """
+        monkeypatch.setattr(
+            mock_worker.inference_client, "transport", SimpleNamespace()
+        )
+        health = ProcessHealth(
+            pid=1, create_time=0.0, uptime=0.0, cpu_usage=0.0, memory_usage=0
+        )
+
+        message = mock_worker.create_health_message(health)
+
+        assert message.task_stats.stream_chunks_received == 0

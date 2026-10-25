@@ -43,7 +43,7 @@ def _subagent(agent_id, t):
         "total_tokens": 100,
         "tool_use_count": 1,
         "status": "completed",
-        "requests": [_normal(0.0, SHARED_IN, SHARED_HASH_IDS)],
+        "requests": [_normal(t, SHARED_IN, SHARED_HASH_IDS)],
         "models": ["test-model"],
         "tool_tokens": 0,
         "system_tokens": 0,

@@ -57,6 +57,18 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
             Callable[[str, str, int | None], Awaitable[None]] | None
         ) = None
 
+    def spawned_worker_ids(self) -> frozenset[str]:
+        """IDs of workers this manager spawned as local processes.
+
+        Empty here: only managers that own the worker processes can answer, and
+        the SystemController reads an empty set as "no local workers to judge".
+        """
+        return frozenset()
+
+    def live_worker_ids(self) -> frozenset[str]:
+        """IDs of locally spawned workers whose process is alive; empty here."""
+        return frozenset()
+
     def get_service_liveness(self, service_id: str) -> bool | None:
         """Report authoritative liveness for a service, when the manager knows it.
 
@@ -69,6 +81,14 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
         available it must win over that inference, otherwise a service that
         merely blocks its event loop past the stale threshold is declared dead
         and its buffered results are dropped from the run.
+        """
+        return None
+
+    def get_service_exit_code(self, service_id: str) -> int | None:
+        """Exit code of a service process this manager spawned, if it has exited.
+
+        ``None`` when unknown: still running, not spawned here, or (as under
+        Kubernetes) no process handle to read.
         """
         return None
 

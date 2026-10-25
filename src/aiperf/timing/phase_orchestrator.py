@@ -24,7 +24,7 @@ from aiperf.common.control_hooks import (
     stop_server_profiler,
 )
 from aiperf.common.control_plane_http import ControlPlaneHttpError
-from aiperf.common.enums import CacheBustTarget, CreditPhase
+from aiperf.common.enums import CacheBustTarget, CreditPhase, ProfileCancelReason
 from aiperf.common.hooks import on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.credit.callback_handler import CreditCallbackHandler
@@ -39,6 +39,7 @@ from aiperf.timing.trajectory_source import TrajectorySource
 from aiperf.timing.url_samplers import URLSelectionStrategyProtocol
 
 if TYPE_CHECKING:
+    from aiperf.auth.base_signer import RequestSignerProtocol
     from aiperf.common.models import DatasetMetadata
     from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.credit.sticky_router import CreditRouterProtocol
@@ -157,6 +158,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         dataset_metadata: DatasetMetadata,
         control_hooks: PreparedEndpointControlHooks | None = None,
         control_headers: dict[str, str] | None = None,
+        control_signer: RequestSignerProtocol | None = None,
         run: BenchmarkRun | None = None,
         **kwargs,
     ) -> None:
@@ -170,6 +172,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             control_hooks: Prepared endpoint control hooks (profiler URLs);
                 owned by TimingManager, never by workers
             control_headers: Auth headers for control-plane POSTs
+            control_signer: Request signer applied to control-plane POSTs when
+                ``endpoint.auth_type`` is set (e.g. SigV4). Owned and
+                lifecycle-managed by TimingManager, matching control_hooks.
             run: Full ``BenchmarkRun`` for strategies that need it (e.g.
                 AgenticReplayStrategy reads ``run.cfg.get_cache_bust_target()``
                 and ``run.benchmark_id``). Optional; strategies that don't need
@@ -182,6 +187,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._dataset_metadata = dataset_metadata
         self._control_hooks = control_hooks
         self._control_headers = control_headers or {}
+        self._control_signer = control_signer
         self._run = run
 
         # Create dataset sampler
@@ -283,7 +289,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._callback_handler = CreditCallbackHandler(
             self._concurrency_manager,
             session_tree_registry=self._session_tree_registry,
-            on_warmup_abort=self._phase_publisher.request_profile_cancel,
+            on_warmup_abort=lambda: self._phase_publisher.request_profile_cancel(
+                ProfileCancelReason.WARMUP_FAILURE
+            ),
         )
         self._credit_router.set_return_callback(self._callback_handler.on_credit_return)
         self._credit_router.set_first_token_callback(
@@ -303,6 +311,8 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         # First fatal failure surfaced by a seamless phase's detached return-wait
         # task; re-raised by _execute_phases so the run fails (not reports success).
         self._seamless_phase_error: BaseException | None = None
+        # Set by cancel(); stops _execute_phases from starting any later phase.
+        self._cancelled = False
 
     def _record_control_fatal_error(self, error: BaseException) -> None:
         """Record a fatal request-free control-node failure.
@@ -375,6 +385,8 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             sends).
         """
         for i, phase_config in enumerate(self._ordered_phase_configs):
+            if self._cancelled:
+                break
             is_final_phase = i == len(self._ordered_phase_configs) - 1
             seamless_to_next = (
                 not is_final_phase and self._ordered_phase_configs[i + 1].seamless
@@ -465,8 +477,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 raise e
 
             # Remove from active runners when fully complete
-            # For seamless phases, this happens after returns complete (background task)
-            if not seamless_to_next:
+            # For seamless phases, this happens after returns complete (background task).
+            # cancel() may already have cleared the list while run() was awaited.
+            if not seamless_to_next and runner in self._active_runners:
                 self._active_runners.remove(runner)
 
         # Barrier: a seamless phase's return-wait runs detached and
@@ -530,7 +543,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
     ) -> None:
         """Start the profiler when the first profiling runner takes ownership."""
         if not self._server_profiler_owners:
-            await start_server_profiler(hooks, headers)
+            await start_server_profiler(hooks, headers, signer=self._control_signer)
         self._server_profiler_owners.add(runner)
 
     async def _stop_server_profiler_for_runner(
@@ -545,7 +558,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._server_profiler_owners.remove(runner)
         if self._server_profiler_owners:
             return
-        await stop_server_profiler(hooks, headers)
+        await stop_server_profiler(hooks, headers, signer=self._control_signer)
 
     async def _stop_server_profiler_for_runner_warn_only(
         self, runner: PhaseRunner
@@ -555,7 +568,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             return
         try:
             await self._stop_server_profiler_for_runner(
-                runner, self._control_hooks, self._control_headers
+                runner,
+                self._control_hooks,
+                self._control_headers,
             )
         except ControlPlaneHttpError as error:
             self.warning(f"server_profiler stop failed: {error}")
@@ -600,7 +615,11 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             return
         self._server_profiler_owners.clear()
         try:
-            await stop_server_profiler(self._control_hooks, self._control_headers)
+            await stop_server_profiler(
+                self._control_hooks,
+                self._control_headers,
+                signer=self._control_signer,
+            )
         except ControlPlaneHttpError as error:
             self.warning(f"server_profiler stop failed: {error}")
 
@@ -611,6 +630,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         Called when user requests cancellation (e.g., Ctrl+C).
         """
         self.warning("Cancelling phase orchestrator")
+        self._cancelled = True
 
         # Cancel all in-flight credits first
         await self._credit_router.cancel_all_credits()

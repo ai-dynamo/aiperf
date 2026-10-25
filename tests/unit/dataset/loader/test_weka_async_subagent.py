@@ -476,7 +476,7 @@ def test_parallel_inner_chains_under_parallel_reconstruction(tmp_path, monkeypat
 
 
 def test_async_subagent_with_parallel_inner_real_trace(tmp_path, monkeypatch):
-    """End-to-end regression against the real captured trace: one non-background SPAWN branch, two sibling children, and the join only on the late parent turn."""
+    """End-to-end regression against a real captured AgentX trace."""
     src = FIXTURES / "async_subagent_with_parallel_inner.json"
     assert src.exists(), f"regression fixture missing: {src}"
     # Loader requires a single file path or directory; copy into tmp_path

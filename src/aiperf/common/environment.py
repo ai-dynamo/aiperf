@@ -233,6 +233,33 @@ class _APIServerSettings(BaseSettings):
     )
 
 
+class _AWSSettings(BaseSettings):
+    """AWS request-signing settings.
+
+    Controls credential-rotation behavior for the SigV4 request signer
+    (--auth-type sigv4).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="AIPERF_AWS_")
+
+    CREDENTIAL_RERESOLVE_INTERVAL: float = Field(
+        ge=0.0,
+        default=900.0,
+        description="Seconds between full credential-chain re-resolutions "
+        "(new botocore.session.Session, re-run the credential provider chain) "
+        "during a benchmark, on top of botocore's own per-call expiry-based "
+        "refresh (get_frozen_credentials()). Expiry-based refresh alone only "
+        "picks up a NEW credential value from the SAME already-resolved "
+        "provider (e.g. STS/SSO auto-renewal); it does not notice if the "
+        "underlying source changed entirely (e.g. a rotated static key in "
+        "~/.aws/credentials, a re-issued credential_process). Periodic "
+        "re-resolution protects long-running benchmarks (hours) against "
+        "continuing to sign with a leaked/rotated-out credential after its "
+        "replacement is already available. Set to 0 to disable and rely "
+        "solely on expiry-based refresh.",
+    )
+
+
 class _ChatSettings(BaseSettings):
     """Settings for the interactive ``aiperf chat`` command."""
 
@@ -544,6 +571,15 @@ class _DatasetSettings(BaseSettings):
         "turns with a recorded tool signal (input_types / prior stop) shape; "
         "legacy traces are unaffected. Default False keeps the byte-exact "
         "plain-user replay shape.",
+    )
+    WEKA_FORK_PARENT_MESSAGES: bool = Field(
+        default=True,
+        description="When True (default), a child conversation's first turn "
+        "splits the hash_id prefix it shares with its parent turn into the "
+        "parent's roles and message boundaries, then adds the rest as one user "
+        "message, so its rendered prompt keeps the parent's message layout. The "
+        "tokens are the same as with False. Set to False for the previous behavior: one "
+        "flattened user message, which shares only the parent's first message.",
     )
     WEKA_SEAM_MAX_GAP_SECONDS: float = Field(
         ge=0.0,
@@ -977,6 +1013,14 @@ class _HTTPSettings(BaseSettings):
         "Lower values provide faster completion detection but increase server load. "
         "Applies to the aiohttp transport.",
     )
+    VIDEO_DOWNLOAD_MAX_REDIRECTS: int = Field(
+        default=5,
+        ge=0,
+        le=100,
+        description="Maximum redirects followed when downloading generated video content. "
+        "Each hop re-checks the original endpoint origin before sending credentials. "
+        "Set to 0 to refuse redirects. Applies to the aiohttp transport.",
+    )
 
 
 class _LoggingSettings(BaseSettings):
@@ -1038,7 +1082,7 @@ class _MetricsSettings(BaseSettings):
     )
     LIST_BACKEND: Literal["ragged", "tdigest"] = Field(
         default="ragged",
-        description="Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (at most 0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint.",
+        description="Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (at most 0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. 'tdigest' requires the optional crick dependency: install with `pip install \"aiperf[tdigest]\"`. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint.",
     )
 
 
@@ -1143,6 +1187,41 @@ class _RecordSettings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="AIPERF_RECORD_",
+    )
+
+    PROGRESS_STALL_TIMEOUT: float = Field(
+        ge=0.0,
+        le=86400.0,
+        default=600.0,
+        description="Seconds during which a profiling phase has requests in "
+        "flight, none of them complete, and no worker receives streamed "
+        "response data, after which the run fails instead "
+        "of waiting indefinitely. A phase completes only once the credit "
+        "phase reports its final count, so a credit that is never returned "
+        "leaves that condition unevaluable and the run waits forever with no "
+        "output. Per-request timeouts do not cover this: they default to 6 "
+        "hours and never apply to a request that was not dispatched. "
+        "Streamed response data counts as progress for the whole process, not "
+        "per request or per phase: while any worker is still receiving chunks, "
+        "no phase's stall clock advances. A long streaming generation is "
+        "therefore never cut short, but a request stuck alongside one that "
+        "keeps streaming is only caught once that streaming stops. A single "
+        "legitimately long non-streaming request will fail the run if it "
+        "exceeds this timeout while nothing else completes or streams, so "
+        "raise this value for such workloads. Completions are judged per "
+        "profiling phase, so an overlapping `seamless` phase that keeps "
+        "completing work does not mask a stall in another. Set to 0 to "
+        "disable and restore the previous unbounded wait.",
+    )
+
+    PROGRESS_STALL_CHECK_INTERVAL: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=30.0,
+        description="Seconds between stall checks. Each check with no "
+        "completions also logs how many requests are still in flight and "
+        "which phase they belong to, so a stalled run is diagnosable from the "
+        "log rather than silent.",
     )
 
     CHECKPOINT_INTERVAL: float = Field(
@@ -2475,6 +2554,10 @@ class _Environment(BaseSettings):
     API_SERVER: _APIServerSettings = Field(
         default_factory=_APIServerSettings,
         description="API server settings",
+    )
+    AWS: _AWSSettings = Field(
+        default_factory=_AWSSettings,
+        description="AWS request-signing settings (SigV4 credential rotation)",
     )
     CHAT: _ChatSettings = Field(
         default_factory=_ChatSettings,

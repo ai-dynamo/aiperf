@@ -63,6 +63,57 @@ class TestSelectEncoding:
         else:
             assert result == expected
 
+    @pytest.mark.parametrize(
+        "accept_encoding,zstd_available,expected",
+        [
+            param("*", True, CompressionEncoding.ZSTD, id="wildcard-prefers-zstd"),
+            param("*", False, CompressionEncoding.GZIP, id="wildcard-without-zstd"),
+            param("*;q=0.5, zstd;q=0", True, CompressionEncoding.GZIP, id="explicit-zstd-rejection"),
+            param("*;q=0.5, gzip;q=0", False, CompressionEncoding.IDENTITY, id="explicit-gzip-rejection"),
+            param("*;q=0, gzip;q=1", True, CompressionEncoding.GZIP, id="explicit-gzip-overrides-wildcard"),
+            param("*;q=0, identity;q=1", True, CompressionEncoding.IDENTITY, id="explicit-identity-overrides-wildcard"),
+            param("*;q=1, zstd;q=0, gzip;q=0", True, CompressionEncoding.IDENTITY, id="explicit-rejections-override-wildcard"),
+        ],
+    )  # fmt: skip
+    def test_select_encoding_wildcard(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        accept_encoding: str,
+        zstd_available: bool,
+        expected: CompressionEncoding,
+    ) -> None:
+        monkeypatch.setattr(
+            "aiperf.common.compression.is_zstd_available", lambda: zstd_available
+        )
+        assert select_encoding(accept_encoding) == expected
+
+    @pytest.mark.parametrize("default", list(CompressionEncoding))
+    @pytest.mark.parametrize("zstd_available", [False, True])
+    @pytest.mark.parametrize(
+        "accept_encoding",
+        [
+            param("*;q=0", id="wildcard-rejection"),
+            param("zstd;q=0, gzip;q=0, identity;q=0", id="explicit-rejection"),
+        ],
+    )  # fmt: skip
+    def test_select_encoding_all_rejected_returns_none(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        accept_encoding: str,
+        zstd_available: bool,
+        default: CompressionEncoding,
+    ) -> None:
+        monkeypatch.setattr(
+            "aiperf.common.compression.is_zstd_available", lambda: zstd_available
+        )
+        assert select_encoding(accept_encoding, default=default) is None
+
+    @pytest.mark.parametrize("default", list(CompressionEncoding))
+    def test_select_encoding_missing_header_preserves_default(
+        self, default: CompressionEncoding
+    ) -> None:
+        assert select_encoding(None, default=default) == default
+
     def test_select_encoding_custom_default(self) -> None:
         """Test that custom default is used when no encoding matches."""
         result = select_encoding("br, deflate", default=CompressionEncoding.IDENTITY)
@@ -130,13 +181,13 @@ class TestQualityValueParsing:
             param("gzip;q=0.8", CompressionEncoding.GZIP, id="gzip-with-quality"),
             param("zstd;q=0, gzip;q=1.0", CompressionEncoding.GZIP, id="zstd-rejected-q0"),
             param("gzip;q=0, zstd;q=0", CompressionEncoding.IDENTITY, id="all-rejected-identity-fallback"),
-            param("gzip;q=0, zstd;q=0, identity;q=0", CompressionEncoding.GZIP, id="all-rejected-falls-to-default"),
+            param("gzip;q=0, zstd;q=0, identity;q=0", None, id="all-rejected"),
             param("identity;q=1.0", CompressionEncoding.IDENTITY, id="identity-only"),
             param("zstd;q=0, gzip;q=0, identity;q=1.0", CompressionEncoding.IDENTITY, id="only-identity-accepted"),
         ],
     )  # fmt: skip
     def test_quality_value_encoding_selection(
-        self, accept_encoding: str, expected: CompressionEncoding
+        self, accept_encoding: str, expected: CompressionEncoding | None
     ) -> None:
         """Test encoding selection respects quality values."""
         result = select_encoding(accept_encoding)

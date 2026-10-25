@@ -226,7 +226,6 @@ dependencies = [
     { name = "aiofiles" },
     { name = "aiohttp" },
     { name = "aiosqlite" },
-    { name = "crick" },
     { name = "cyclopts" },
     { name = "dash" },
     { name = "dash-bootstrap-components" },
@@ -283,6 +282,9 @@ accuracy = [
     { name = "lighteval" },
     { name = "sympy" },
 ]
+aws = [
+    { name = "botocore" },
+]
 botorch = [
     { name = "botorch" },
     { name = "gpytorch" },
@@ -292,6 +294,8 @@ botorch = [
 ]
 dev = [
     { name = "black" },
+    { name = "botocore" },
+    { name = "crick" },
     { name = "httpx" },
     { name = "hypothesis" },
     { name = "jsonschema" },
@@ -324,7 +328,12 @@ otel = [
     { name = "opentelemetry-exporter-otlp-proto-http" },
     { name = "opentelemetry-sdk" },
 ]
+tdigest = [
+    { name = "crick" },
+]
 test = [
+    { name = "botocore" },
+    { name = "crick" },
     { name = "httpx" },
     { name = "hypothesis" },
     { name = "jsonschema" },
@@ -352,11 +361,14 @@ requires-dist = [
     { name = "aiofiles", specifier = "~=24.1.0" },
     { name = "aiohttp", specifier = ">=3.14.3,<4" },
     { name = "aiosqlite", specifier = ">=0.19.0" },
+    { name = "aiperf", extras = ["aws"], marker = "extra == 'test'" },
+    { name = "aiperf", extras = ["aws", "mlflow", "otel", "test", "wandb"], marker = "extra == 'dev'" },
     { name = "aiperf", extras = ["botorch"], marker = "extra == 'optuna'" },
-    { name = "aiperf", extras = ["mlflow", "otel", "test", "wandb"], marker = "extra == 'dev'" },
     { name = "black", marker = "extra == 'dev'", specifier = ">=25.1.0" },
+    { name = "botocore", marker = "extra == 'aws'", specifier = ">=1.34.0" },
     { name = "botorch", marker = "extra == 'botorch'", specifier = ">=0.10" },
-    { name = "crick", specifier = "~=0.0.8" },
+    { name = "crick", marker = "extra == 'tdigest'", specifier = "~=0.0.8" },
+    { name = "crick", marker = "extra == 'test'", specifier = "~=0.0.8" },
     { name = "cyclopts", specifier = ">=4,<5" },
     { name = "dash", specifier = "~=3.1.0" },
     { name = "dash-bootstrap-components", specifier = "~=2.0.0" },
@@ -400,7 +412,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.10.0,<3.0.0" },
     { name = "pydantic-settings", specifier = ">=2.10.0,<3.0.0" },
     { name = "pytest", marker = "extra == 'test'", specifier = ">=7.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'test'" },
+    { name = "pytest-asyncio", marker = "extra == 'test'", specifier = ">=1.4.0" },
     { name = "pytest-cov", marker = "extra == 'test'" },
     { name = "pytest-rerunfailures", marker = "extra == 'test'", specifier = ">=15.0" },
     { name = "pytest-timeout", marker = "extra == 'test'", specifier = ">=2.0.0" },
@@ -428,7 +440,7 @@ requires-dist = [
     { name = "wandb", marker = "extra == 'wandb'", specifier = ">=0.19.0,<1.0.0" },
     { name = "zstandard", specifier = ">=0.25.0" },
 ]
-provides-extras = ["mlflow", "wandb", "otel", "test", "dev", "botorch", "optuna", "accuracy"]
+provides-extras = ["tdigest", "mlflow", "wandb", "otel", "aws", "test", "dev", "botorch", "optuna", "accuracy"]
 
 [package.metadata.requires-dev]
 dev = [

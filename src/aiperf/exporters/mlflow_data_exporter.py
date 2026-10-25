@@ -30,6 +30,90 @@ class MLflowDataExporter(AIPerfLoggerMixin):
     _PLOT_SUFFIXES: frozenset[str] = frozenset(
         {".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp", ".html"}
     )
+    # MLflow's grouping is an export naming policy, independent of console
+    # visibility and INTERNAL flags (timestamps remain top-level metrics).
+    _SYSTEM_METRIC_TAGS: frozenset[str] = frozenset(
+        {
+            "http_req_blocked",
+            "http_req_dns_lookup",
+            "http_req_connecting",
+            "http_req_sending",
+            "http_req_waiting",
+            "http_req_receiving",
+            "http_req_duration",
+            "http_req_connection_overhead",
+            "http_req_total",
+            "http_req_data_sent",
+            "http_req_data_received",
+            "http_req_chunks_sent",
+            "http_req_chunks_received",
+            "http_req_connection_reused",
+            "credit_drop_latency",
+            "inter_chunk_latency",
+            "error_isl",
+            "total_error_isl",
+            "num_images",
+            "video_peak_memory",
+            "usage_prompt_tokens",
+            "usage_completion_tokens",
+            "usage_total_tokens",
+            "usage_reasoning_tokens",
+            "usage_prompt_cache_read_tokens",
+            "usage_prompt_cache_write_tokens",
+            "usage_prompt_cache_miss_tokens",
+            "usage_prompt_audio_tokens",
+            "usage_completion_audio_tokens",
+            "usage_prompt_audio_seconds",
+            "usage_tool_use_prompt_tokens",
+            "usage_accepted_prediction_tokens",
+            "usage_rejected_prediction_tokens",
+            "total_usage_prompt_tokens",
+            "total_usage_completion_tokens",
+            "total_usage_total_tokens",
+            "total_usage_reasoning_tokens",
+            "total_usage_prompt_cache_read_tokens",
+            "total_usage_prompt_cache_write_tokens",
+            "total_usage_prompt_cache_miss_tokens",
+            "total_usage_prompt_audio_tokens",
+            "total_usage_completion_audio_tokens",
+            "total_usage_prompt_audio_seconds",
+            "total_usage_tool_use_prompt_tokens",
+            "total_usage_accepted_prediction_tokens",
+            "total_usage_rejected_prediction_tokens",
+            "overall_usage_prompt_cache_read_pct",
+            "usage_prompt_tokens_diff_pct",
+            "usage_completion_tokens_diff_pct",
+            "usage_reasoning_tokens_diff_pct",
+            "usage_discrepancy_count",
+            "requested_osl",
+            "osl_mismatch_diff_pct",
+            "osl_mismatch_count",
+            "nvidia_energy_delay_product",
+            "nvidia_performance_per_watt",
+            "nvidia_output_tps_per_watt",
+            "nvidia_goodput_per_watt",
+            "nvidia_average_gpu_power",
+            "nvidia_total_gpu_energy",
+            "nvidia_total_gpu_power",
+            "nvidia_energy_per_total_token",
+            "nvidia_energy_per_output_token",
+            "nvidia_energy_per_request",
+            "nvidia_output_tokens_per_joule",
+            "nvidia_energy_per_user",
+            "amd_energy_delay_product",
+            "amd_performance_per_watt",
+            "amd_output_tps_per_watt",
+            "amd_goodput_per_watt",
+            "amd_average_gpu_power",
+            "amd_total_gpu_energy",
+            "amd_total_gpu_power",
+            "amd_energy_per_total_token",
+            "amd_energy_per_output_token",
+            "amd_energy_per_request",
+            "amd_output_tokens_per_joule",
+            "amd_energy_per_user",
+        }
+    )
     is_deferred = True  # runs after all local exporters write their files
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs: Any) -> None:
@@ -333,25 +417,41 @@ class MLflowDataExporter(AIPerfLoggerMixin):
     _STAT_FIELDS = ("avg", "p1", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p99", "min", "max", "std", "count", "sum")  # fmt: skip
 
     def _build_metric_payload(self) -> dict[str, float]:
-        payload: dict[str, float] = {}
+        payload: dict[str, float] = {
+            "aiperf.completed_requests": float(self._results.completed)
+        }
+        if self._results.total_expected is not None:
+            payload["aiperf.total_expected_requests"] = float(
+                self._results.total_expected
+            )
+        sources: dict[str, str] = dict.fromkeys(payload, "benchmark bookkeeping")
         for metric in self._results.records or []:
+            tag = (
+                f"system/{metric.tag}"
+                if metric.tag in self._SYSTEM_METRIC_TAGS
+                else metric.tag
+            )
             for field in self._STAT_FIELDS:
                 value = getattr(metric, field, None)
                 if value is None:
                     continue
                 try:
-                    key = metric.tag if field == "avg" else f"{metric.tag}.{field}"
-                    payload[key] = float(value)
+                    key = tag if field == "avg" else f"{tag}.{field}"
+                    numeric_value = float(value)
                 except (TypeError, ValueError):
                     self.debug(
                         f"Skipping non-numeric metric for MLflow export: "
                         f"{metric.tag}.{field}"
                     )
-        payload["aiperf.completed_requests"] = float(self._results.completed)
-        if self._results.total_expected is not None:
-            payload["aiperf.total_expected_requests"] = float(
-                self._results.total_expected
-            )
+                    continue
+                source = f"{metric.tag}.{field}"
+                if previous_source := sources.get(key):
+                    raise ValueError(
+                        f"Duplicate MLflow metric key {key!r} after namespace "
+                        f"normalization from {previous_source!r} and {source!r}."
+                    )
+                payload[key] = numeric_value
+                sources[key] = source
         return payload
 
     def _build_param_payload(self) -> dict[str, str]:

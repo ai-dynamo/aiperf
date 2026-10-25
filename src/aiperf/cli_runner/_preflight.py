@@ -168,36 +168,41 @@ def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:
     assumed to share an endpoint.
     """
     import asyncio
-    import logging
 
     cfg = plan.configs[0].endpoint
     if cfg.wait_for_model_timeout <= 0:
         return
 
+    from aiperf.common.logging import install_preflight_handler
+
     # Preflight runs before rich logging is installed; install a minimal
     # stderr handler so probe lines are visible.
-    if not logging.getLogger().handlers:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        )
+    install_preflight_handler()
 
+    from aiperf.common.endpoint_auth import endpoint_signer
     from aiperf.common.readiness_probe import wait_for_endpoint
 
     headers = _readiness_auth_headers(cfg)
+    run_cfg = plan.configs[0]
 
-    asyncio.run(
-        wait_for_endpoint(
-            urls=list(cfg.urls),
-            model_names=plan.configs[0].get_model_names(),
-            mode=cfg.wait_for_model_mode,
-            endpoint_type=str(cfg.type),
-            custom_endpoint=cfg.path,
-            timeout_s=cfg.wait_for_model_timeout,
-            interval_s=cfg.wait_for_model_interval,
-            headers=headers,
-        )
-    )
+    async def _probe() -> None:
+        # The signer is built from the same resolved config the benchmark
+        # runs against, so preflight signs with the identical credential
+        # chain, region, and service the first real request will use.
+        async with endpoint_signer(run_cfg) as signer:
+            await wait_for_endpoint(
+                urls=list(cfg.urls),
+                model_names=run_cfg.get_model_names(),
+                mode=cfg.wait_for_model_mode,
+                endpoint_type=str(cfg.type),
+                custom_endpoint=cfg.path,
+                timeout_s=cfg.wait_for_model_timeout,
+                interval_s=cfg.wait_for_model_interval,
+                headers=headers,
+                signer=signer,
+            )
+
+    asyncio.run(_probe())
 
 
 def _public_dataset_loaders(plan: BenchmarkPlan):
@@ -282,11 +287,9 @@ def _preflight_dataset_materialize(plan: BenchmarkPlan) -> None:
     # yet, and a multi-GB fetch with no output looks like a hang. That check
     # returns early when endpoint waiting is disabled, so don't rely on it
     # having installed the handler.
-    if not logging.getLogger().handlers:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        )
+    from aiperf.common.logging import install_preflight_handler
+
+    if install_preflight_handler():
         # Root INFO also switches on httpx's per-request logging, and resolution
         # makes hundreds of requests -- including the 404s `datasets` expects
         # while probing for a legacy loading script before falling back to

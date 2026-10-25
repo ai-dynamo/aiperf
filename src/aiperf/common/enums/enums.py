@@ -108,6 +108,20 @@ class CommandType(CaseInsensitiveStrEnum):
     and leave the pod permanently half-dead at 1/13 Ready."""
 
 
+class ProfileCancelReason(CaseInsensitiveStrEnum):
+    """Why a PROFILE_CANCEL command was issued; controls run exit semantics."""
+
+    USER = "user"
+    WARMUP_FAILURE = "warmup_failure"
+    FAILED_REQUEST_THRESHOLD = "failed_request_threshold"
+    PROGRESS_STALL = "progress_stall"
+
+    @property
+    def is_abort(self) -> bool:
+        """Return whether the cancellation represents a benchmark failure."""
+        return self is not ProfileCancelReason.USER
+
+
 class ConversationBranchMode(CaseInsensitiveStrEnum):
     """Mode discriminator for ``ConversationBranchInfo``.
 
@@ -116,10 +130,11 @@ class ConversationBranchMode(CaseInsensitiveStrEnum):
     - ``FORK``: child inherits the parent's accumulated message context and
       sticky-routes to the parent's worker (prefix-cache locality). Used by
       aiperf's native DAG conversation-forking semantics.
-    - ``SPAWN``: child starts with a fresh context but still sticky-co-locates
-      on the parent's worker while that sticky entry is live (no SPAWN
-      refcount bump; least-loaded after the parent entry is gone). Used for
-      sub-agent dispatch and upcoming graph-mode fan-out.
+    - ``SPAWN``: child starts with a fresh context; its first turn co-locates
+      on the parent's worker when that sticky entry is live (least-loaded
+      otherwise), then it pins to that worker under its own id (no parent
+      refcount bump). Used for sub-agent dispatch and upcoming graph-mode
+      fan-out.
     """
 
     FORK = "fork"
@@ -127,8 +142,8 @@ class ConversationBranchMode(CaseInsensitiveStrEnum):
     live responses); sticky-routes to parent's worker for prefix-cache locality."""
 
     SPAWN = "spawn"
-    """Child gets a fresh context; sticky-co-locates on the parent's worker
-    while that sticky entry is live (no SPAWN refcount bump).
+    """Child gets a fresh context; starts on the parent's worker when that
+    sticky entry is live, then pins under its own id (no parent refcount bump).
 
     Disambiguation note: this SPAWN is the DAG-branch mode (a child
     *conversation* that runs alongside its parent). It is unrelated to

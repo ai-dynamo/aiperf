@@ -33,6 +33,7 @@ def _orchestrator(*, with_profiler_hooks: bool) -> PhaseOrchestrator:
     orch._server_profiler_owners = set()
     orch._deferred_profiler_stops = set()
     orch._seamless_phase_error = None
+    orch._cancelled = False
     orch._control_headers = {}
     orch._control_hooks = (
         PreparedEndpointControlHooks(

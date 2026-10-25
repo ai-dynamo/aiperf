@@ -53,6 +53,7 @@ _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 # Recorded in the trace ``totals`` so a reconstructed trace names its origin.
 SOURCE_TAG = "tracelab"
+_TIMESTAMP_EPSILON_SECONDS = 1e-6
 
 
 def parse_ts(value: str) -> float:
@@ -513,22 +514,17 @@ def build_subagent_entry(
     inner, models = build_requests(timed, hash_chains, t0)
 
     entry_t = spawn.start - t0
-    # An inner timestamp EARLIER than the spawn marker is read downstream as
-    # subagent-RELATIVE and rewritten to entry.t + req.t. That heuristic is
-    # per-request and silent, so one inner request slipping below entry_t would
-    # be flung far into the future while its siblings stayed put.
-    #
-    # The containment join makes that unreachable: a child only matches when
-    # its whole span falls inside the spawn window, and the span mins over
-    # timing events AND tool stamps while a request time is drawn from timing
-    # events alone, so every request is at or after entry_t already. This is a
-    # guard on that precondition, not a live transform. It stays because the
-    # failure it prevents is silent and whole-trace, while the check is one
-    # comparison per request, and any future join rule that is not
-    # containment-based would need it.
+    # TraceLab conversion authors root-absolute nested timestamps. Containment
+    # should make a materially pre-marker child impossible; surface a broken
+    # join instead of silently changing its recorded time.
     for req in inner:
+        if req["t"] + _TIMESTAMP_EPSILON_SECONDS < entry_t:
+            raise ValueError(
+                f"TraceLab child {spawn.child_sid!r} request timestamp {req['t']} "
+                f"precedes its spawn marker {entry_t}"
+            )
         if req["t"] < entry_t:
-            req["t"] = round(entry_t, 6)
+            req["t"] = entry_t
     # think_time on the child's first request would be a gap measured from
     # nothing.
     inner[0]["think_time"] = None

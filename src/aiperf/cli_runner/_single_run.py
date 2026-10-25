@@ -29,7 +29,7 @@ from aiperf.common.control_hooks import (
     prepare_endpoint_control_hooks,
     run_reset_kv_cache,
 )
-from aiperf.common.endpoint_auth import auth_headers_for_endpoint
+from aiperf.common.endpoint_auth import auth_headers_for_endpoint, endpoint_signer
 from aiperf.plugin.enums import ServiceType, UIType
 
 if TYPE_CHECKING:
@@ -44,7 +44,8 @@ async def maybe_reset_kv_cache_before_run(run: BenchmarkRun) -> None:
 
     hooks = prepare_endpoint_control_hooks(endpoint)
     headers = auth_headers_for_endpoint(endpoint)
-    await run_reset_kv_cache(hooks, headers)
+    async with endpoint_signer(run.cfg) as signer:
+        await run_reset_kv_cache(hooks, headers, signer=signer)
 
 
 def _run_single_benchmark(

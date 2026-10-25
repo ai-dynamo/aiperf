@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.control_structs import Command
@@ -1028,6 +1029,12 @@ def _create_credit_phase_stats() -> CreditPhaseStats:
 
 def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager = RecordsManager.__new__(RecordsManager)
+    # Built via __new__, so __init__ never ran. The stall watchdog indexes
+    # these by phase_index, which needs the containers to already exist.
+    manager._latest_profiling_credit_stats = {}
+    manager._progress_stall_last_total = {}
+    manager._progress_stall_since = {}
+    manager._progress_stall_triggered = False
     manager._dataset_configured_event = asyncio.Event()
     manager._dataset_configured_event.set()
     manager._records_tracker = MagicMock()
@@ -1464,7 +1471,15 @@ class TestRecordsManagerTimingDispatch:
         )
         assert orjson.loads(
             manager.send_command_to_controller.await_args.kwargs["payload"]
-        ) == {"origin_service_id": "records-manager"}
+        ) == {
+            "origin_service_id": "records-manager",
+            "reason": "failed_request_threshold",
+            "reason_detail": (
+                "10/10 profiling requests failed (100.0%), exceeding the "
+                "--failed-request-threshold limit of 20.0%. Check inference "
+                "server logs."
+            ),
+        }
         assert (
             manager._records_tracker.total_records_for_phase(CreditPhase.PROFILING)
             == 10
@@ -1517,7 +1532,15 @@ class TestRecordsManagerTimingDispatch:
         )
         assert orjson.loads(
             manager.send_command_to_controller.await_args.kwargs["payload"]
-        ) == {"origin_service_id": "records-manager"}
+        ) == {
+            "origin_service_id": "records-manager",
+            "reason": "failed_request_threshold",
+            "reason_detail": (
+                "10/10 profiling requests failed (100.0%), exceeding the "
+                "--failed-request-threshold limit of 50.0%. Check inference "
+                "server logs."
+            ),
+        }
 
     @pytest.mark.asyncio
     async def test_failed_request_threshold_read_from_owning_phase(self) -> None:
@@ -1625,11 +1648,20 @@ class TestRecordsManagerTimingDispatch:
 
 
 class TestRecordsManagerAnalyzerMetrics:
-    """Pin the invariant that `completed` counts request-derived records only,
-    and that analyzer-injected metrics are merged after the snapshot."""
-
+    @pytest.mark.parametrize(
+        ("success_count", "error_count", "cancelled"),
+        [
+            param(3, 0, False, id="successful"),
+            param(3, 1, False, id="mixed"),
+            param(0, 3, False, id="errors-only"),
+            param(1, 2, True, id="cancelled-partial"),
+            param(0, 0, True, id="cancelled-empty"),
+        ],
+    )  # fmt: skip
     @pytest.mark.asyncio
-    async def test_completed_excludes_analyzer_metrics(self) -> None:
+    async def test_completed_counts_phase_requests_not_metric_summaries(
+        self, success_count: int, error_count: int, cancelled: bool
+    ) -> None:
         manager = RecordsManager.__new__(RecordsManager)
 
         manager.debug = MagicMock()
@@ -1649,15 +1681,16 @@ class TestRecordsManagerAnalyzerMetrics:
         manager.run.cfg.gpu_telemetry_disabled = True
         manager.run.cfg.server_metrics_disabled = True
         manager.run.cfg.network_latency.enabled = False
+        manager.run.cfg.scenario = None
 
-        request_records = [
+        summary_metrics = [
             MetricResult(tag="request_latency", header="h", unit="ms", avg=1.0),
             MetricResult(tag="output_token_count", header="h", unit="tokens", avg=2.0),
         ]
         metric_accumulator = MagicMock()
         metric_accumulator.summarize = AsyncMock(
             return_value=AccumulatorMetricsSummary(
-                results={r.tag: r for r in request_records},
+                results={r.tag: r for r in summary_metrics},
             )
         )
         manager._accumulators = {AccumulatorType.METRIC_RESULTS: metric_accumulator}
@@ -1666,8 +1699,6 @@ class TestRecordsManagerAnalyzerMetrics:
         manager._gpu_telemetry_accumulator = None
         manager._server_metrics_accumulator = None
 
-        # An analyzer contributes derived aggregates that must NOT inflate
-        # `completed` (which counts request-derived records only).
         analyzer_metrics = [
             MetricResult(tag="total_gpu_power", header="h", unit="W", avg=200.0),
             MetricResult(tag="total_gpu_energy", header="h", unit="J", avg=1000.0),
@@ -1686,13 +1717,32 @@ class TestRecordsManagerAnalyzerMetrics:
         ]
         manager._run_analyzers = RecordsManager._run_analyzers.__get__(manager)
 
-        manager._records_tracker = MagicMock()
-        manager._records_tracker.create_stats_for_phase.return_value = MagicMock(
-            start_ns=1_000_000_000,
-            requests_end_ns=2_000_000_000,
-            success_records=2,
-            error_records=0,
+        manager._records_tracker = RecordsTracker()
+        manager._records_tracker.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                start_ns=1_000_000_000,
+                requests_end_ns=2_000_000_000,
+            )
         )
+        for phase, successes, errors in (
+            (CreditPhase.WARMUP, 5, 1),
+            (CreditPhase.PROFILING, success_count, error_count),
+        ):
+            for index in range(successes + errors):
+                manager._records_tracker.update_from_request(
+                    MetricRecordMetadata(
+                        session_num=index,
+                        request_start_ns=1_000_000_000,
+                        request_end_ns=2_000_000_000,
+                        worker_id="worker",
+                        record_processor_id="processor",
+                        benchmark_phase=phase,
+                    ),
+                    None
+                    if index < successes
+                    else ErrorDetails(code=500, type="ServerError", message="failed"),
+                )
         manager._error_tracker = MagicMock()
         manager._error_tracker.get_error_summary_for_phase.return_value = []
 
@@ -1701,10 +1751,16 @@ class TestRecordsManagerAnalyzerMetrics:
         manager._finalize_record_processor_artifacts = AsyncMock()
         manager._await_telemetry_ingest_complete = AsyncMock(return_value=[])
 
-        result = await manager._process_results(CreditPhase.PROFILING, cancelled=False)
+        result = await manager._process_results(
+            CreditPhase.PROFILING, cancelled=cancelled
+        )
 
-        assert result.results.completed == len(request_records)
-        assert len(result.results.records) == len(request_records) + len(
+        assert result.results.completed == success_count + error_count
+        assert result.results.successful_request_count == success_count
+        assert result.results.error_request_count == error_count
+        assert result.results.was_cancelled is cancelled
+        assert result.results.is_complete is not cancelled
+        assert len(result.results.records) == len(summary_metrics) + len(
             analyzer_metrics
         )
         assert {r.tag for r in result.results.records} == {
@@ -1889,3 +1945,31 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         assert isinstance(published, BaseServiceErrorMessage)
         # ... and the record is not processed.
         manager._dispatch_record.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_abort_request_clears_the_latch_so_a_later_record_retries() -> (
+    None
+):
+    """A cancel that never left the process must not look like one in flight.
+
+    ``_failed_request_abort_triggered`` is set before the request goes out, so
+    leaving it set after a failed send would suppress every later attempt and
+    the run would keep going past its own failure threshold in silence.
+    """
+    manager = _create_manager_for_timing_dispatch()
+    manager._failed_request_threshold = 0.2
+    manager._failed_request_grace_floor = 1
+    manager.warning = MagicMock()
+    manager._records_tracker.total_records_for_phase.return_value = 10
+    manager._records_tracker.error_records_for_phase.return_value = 10
+    manager._request_profile_cancel = AsyncMock(return_value=False)
+
+    await RecordsManager._maybe_trigger_failed_request_abort(
+        manager, CreditPhase.PROFILING, phase_index=0, profiling_index=0
+    )
+
+    manager._request_profile_cancel.assert_awaited_once()
+    assert manager._failed_request_abort_triggered is False, (
+        "a cancel that could not be sent must leave the abort retryable"
+    )
