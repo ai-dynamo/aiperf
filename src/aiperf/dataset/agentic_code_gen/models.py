@@ -144,6 +144,15 @@ class MixtureDelayConfig(AIPerfBaseModel):
     A Bernoulli draw selects which component to sample from.
     """
 
+    context_scaling: bool = Field(
+        default=True,
+        description=(
+            "Shorten delays as context fills using max(0.2, 1 - 0.8 * "
+            "previous_input / max_prompt_tokens); disable to keep sampled delays. "
+            "Component minima are enforced after scaling, with the global max "
+            "taking precedence. Enabled by default for workload compatibility."
+        ),
+    )
     agentic_fraction: float = Field(
         default=0.7,
         ge=0.0,

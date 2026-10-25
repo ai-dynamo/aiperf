@@ -147,6 +147,12 @@
           "title": "Agentic Fraction",
           "type": "number"
         },
+        "context_scaling": {
+          "default": true,
+          "description": "Shorten delays as context fills using max(0.2, 1 - 0.8 * previous_input / max_prompt_tokens); disable to keep sampled delays. Component minima are enforced after scaling, with the global max taking precedence. Enabled by default for workload compatibility.",
+          "title": "Context Scaling",
+          "type": "boolean"
+        },
         "human_delay": {
           "$ref": "#/$defs/LognormalParams",
           "description": "Slow delay distribution (human think time)"

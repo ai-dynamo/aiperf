@@ -9,6 +9,7 @@ import math
 
 import numpy as np
 import pytest
+from pytest import param
 
 from aiperf.dataset.agentic_code_gen.distributions import (
     fit_from_samples,
@@ -150,6 +151,48 @@ class TestSampleLognormal:
 
 
 class TestSampleMixtureDelay:
+    def test_scaled_mixture_applies_each_selected_component_minimum(self) -> None:
+        config = MixtureDelayConfig(
+            agentic_fraction=0.5,
+            agentic_delay=LognormalParams(mean=1000, median=1000, min=900),
+            human_delay=LognormalParams(mean=5000, median=5000, min=4500),
+        )
+
+        samples = sample_mixture_delay(
+            config, np.random.default_rng(42), size=100, delay_scale=0.2
+        )
+
+        assert set(samples) == {900.0, 4500.0}
+
+    def test_zero_global_cap_overrides_component_minima(self) -> None:
+        config = MixtureDelayConfig(
+            agentic_delay=LognormalParams(mean=1000, median=1000, min=900),
+            human_delay=LognormalParams(mean=5000, median=5000, min=4500),
+            max=0,
+        )
+
+        samples = sample_mixture_delay(
+            config, np.random.default_rng(42), size=100, delay_scale=0.2
+        )
+
+        assert np.array_equal(samples, np.zeros(100))
+
+    @pytest.mark.parametrize(
+        "delay_scale",
+        [
+            param(0, id="zero"),
+            param(-1, id="negative"),
+            param(1.1, id="above-one"),
+            param(float("nan"), id="nan"),
+            param(float("inf"), id="inf"),
+        ],
+    )  # fmt: skip
+    def test_invalid_delay_scale_is_rejected(self, delay_scale: float) -> None:
+        with pytest.raises(ValueError, match="delay_scale must be in"):
+            sample_mixture_delay(
+                MixtureDelayConfig(), np.random.default_rng(42), delay_scale=delay_scale
+            )
+
     def test_returns_correct_shape(self) -> None:
         config = MixtureDelayConfig(
             agentic_fraction=0.7,
