@@ -13,8 +13,10 @@ from pathlib import Path, PurePosixPath
 from constants import (
     AIPERF_RUN_TAG_PREFIX,
     AIPERF_RUN_TAG_PREFIX_LEN,
+    FILE_TAG_ATTRS,
     HEALTH_CHECK_TAG_PREFIX,
     HEALTH_CHECK_TAG_PREFIX_LEN,
+    RUN_TAG_ATTRS,
     SETUP_FILE_TAG_PREFIX,
     SETUP_FILE_TAG_PREFIX_LEN,
     SETUP_TAG_PREFIX,
@@ -110,6 +112,11 @@ class MarkdownParser:
                     # longer prefix of the same namespace, and the block it
                     # introduces is yaml/json/jsonl rather than bash.
                     if self._is_file_tag(tag_name):
+                        if self._reject_unknown_attrs(
+                            tag_name, attrs, FILE_TAG_ATTRS, file_path, i + 1
+                        ):
+                            i += 1
+                            continue
                         path_attr = attrs.get("path")
                         if not path_attr:
                             logger.error(
@@ -140,6 +147,11 @@ class MarkdownParser:
 
                     # Check for setup or aiperf-run tags ending with endpoint-server
                     if self._is_target_tag(tag_name):
+                        if self._reject_unknown_attrs(
+                            tag_name, attrs, RUN_TAG_ATTRS, file_path, i + 1
+                        ):
+                            i += 1
+                            continue
                         logger.info(f"Found target tag: {tag_name}")
 
                         # Extract the bash command
@@ -219,6 +231,38 @@ class MarkdownParser:
         ):
             return None
         return fence
+
+    def _reject_unknown_attrs(
+        self,
+        tag_name: str,
+        attrs: dict[str, str],
+        allowed: frozenset[str],
+        file_path: str,
+        line: int,
+    ) -> bool:
+        """Whether this tag carries an attribute the harness does not read.
+
+        An unreadable attribute is almost always a misspelling of one that is
+        read, and ignoring it is the quiet kind of wrong: a misspelled
+        ``timeout=`` looks
+        like it raised the deadline, the command keeps the 1200s default, and
+        the SIGKILL twenty minutes later reads as the command being slow rather
+        than the attribute never having applied. Treated like an invalid value
+        -- drop the one command, record it, fail the run.
+        """
+        unknown = sorted(set(attrs) - allowed)
+        if not unknown:
+            return False
+        logger.error(
+            f"Ignoring command with unknown attribute(s) {unknown} in tag "
+            f"{tag_name} ({file_path}:{line}); expected one of {sorted(allowed)}"
+        )
+        self._record_parse_error(
+            tag_name,
+            f"dropped the block at {file_path}:{line} over unknown tag "
+            f"attribute(s) {unknown}",
+        )
+        return True
 
     @staticmethod
     def _positive_int(

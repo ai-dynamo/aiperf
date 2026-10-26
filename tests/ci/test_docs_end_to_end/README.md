@@ -64,8 +64,11 @@ the closing `-->`.
 `weight` and `timeout` must be positive integers. A non-integer, zero or
 negative value drops that one command rather than aborting discovery for every
 guide -- but the drop is recorded and fails the run, so a typo cannot quietly
-shrink what CI covers. A `setup-file` tag with no `path=`, or one whose fenced
-block is missing or never closed, fails the run the same way.
+shrink what CI covers. The same applies to an attribute name the harness does
+not read: a misspelled `timeout=` is rejected rather than ignored, because
+ignoring it would leave the guide looking like it raised the deadline when it
+did not. A `setup-file` tag with no `path=`, or one whose fenced block is
+missing or never closed, fails the run the same way.
 
 ### Fixtures belong with their consumer
 

@@ -118,3 +118,46 @@ def test_a_commented_command_is_not_the_invocation(command: str) -> None:
 def test_a_hash_inside_quotes_is_not_a_comment() -> None:
     injected = inject_ui_type('echo "# not a comment" && aiperf profile --model m')
     assert "aiperf profile --ui-type simple --model m" in injected
+
+
+def test_a_commented_ui_flag_does_not_silence_the_real_invocation() -> None:
+    """The flag in a comment is text bash never runs.
+
+    Reading it as the guide's own choice skips injection entirely, so the
+    harness only appears to control the UI of the command that does run.
+    """
+    injected = inject_ui_type(
+        "# aiperf profile --ui-type none\naiperf profile --model m"
+    )
+
+    assert injected.splitlines()[0] == "# aiperf profile --ui-type none"
+    assert injected.splitlines()[1] == "aiperf profile --ui-type simple --model m"
+
+
+def test_an_escaped_quote_does_not_hide_the_invocation() -> None:
+    """A backslash-escaped apostrophe outside quotes opens nothing.
+
+    Treating it as a quote leaves the scanner inside a string for the rest of
+    the block, so every invocation after it becomes invisible and silently
+    runs without the flag.
+    """
+    injected = inject_ui_type("echo It\\'s here\naiperf profile --model m")
+
+    assert "aiperf profile --ui-type simple --model m" in injected
+
+
+def test_every_invocation_in_a_block_is_injected() -> None:
+    """A guide that profiles twice must not leave the second one interactive."""
+    injected = inject_ui_type("aiperf profile --model a\naiperf profile --model b")
+
+    assert injected.count("--ui-type simple") == 2
+
+
+def test_one_invocations_explicit_choice_does_not_cover_another() -> None:
+    """The check is per invocation, over that invocation's own arguments."""
+    injected = inject_ui_type(
+        "aiperf profile --model a\naiperf profile --model b --ui-type none"
+    )
+
+    assert injected.splitlines()[0] == "aiperf profile --ui-type simple --model a"
+    assert injected.splitlines()[1] == "aiperf profile --model b --ui-type none"

@@ -18,6 +18,12 @@ HEALTH_CHECK_TAG_PREFIX_LEN = len(HEALTH_CHECK_TAG_PREFIX)
 AIPERF_RUN_TAG_PREFIX_LEN = len(AIPERF_RUN_TAG_PREFIX)
 TAG_SUFFIX_LEN = len(TAG_SUFFIX)
 
+# Attributes each tag kind reads. Anything else on a harness tag is rejected:
+# an unread attribute is nearly always a misspelling of one of these, and
+# silently ignoring it leaves the guide author believing it applied.
+RUN_TAG_ATTRS = frozenset({"weight", "timeout"})
+FILE_TAG_ATTRS = frozenset({"path"})
+
 # AIPerf execution
 AIPERF_UI_TYPE = "simple"
 

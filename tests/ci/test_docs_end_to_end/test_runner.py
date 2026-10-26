@@ -37,6 +37,72 @@ logger = logging.getLogger(__name__)
 _UI_FLAG_RE = re.compile(r"(?<!\S)--ui(-type)?(=|\s)")
 
 
+def _scan(command: str):
+    """Walk a shell command, tracking quoting, comments and escapes.
+
+    Yields ``(index, quote, in_comment)`` per character, where ``quote`` is the
+    enclosing quote character or None. Escaped characters are consumed and
+    never yielded, so ``\\'`` in unquoted text cannot open a quote that
+    swallows the rest of the command -- which would hide every invocation
+    after it.
+
+    One scanner rather than one per caller: the locator and the option check
+    have to agree about what the shell would actually execute, and two copies
+    of these rules will not stay in agreement.
+    """
+    quote: str | None = None
+    in_comment = False
+    i = 0
+    while i < len(command):
+        char = command[i]
+        if in_comment:
+            if char == "\n":
+                in_comment = False
+            else:
+                yield i, quote, True
+                i += 1
+                continue
+        if quote is None:
+            if char == "\\":
+                i += 2
+                continue
+            if char == "#" and (i == 0 or command[i - 1].isspace()):
+                in_comment = True
+                i += 1
+                continue
+            if char in "\"'":
+                quote = char
+                yield i, None, False
+                i += 1
+                continue
+        else:
+            if char == "\\" and quote == '"':
+                i += 2
+                continue
+            if char == quote:
+                quote = None
+                yield i, None, False
+                i += 1
+                continue
+        yield i, quote, False
+        i += 1
+
+
+def _executable_text(command: str) -> str:
+    """The command with comment spans blanked out, for option scanning.
+
+    Guides routinely show a commented variant above the command they run
+    (``# aiperf profile --ui-type none``). Tokenizing the raw text finds the
+    flag in that comment and concludes the guide chose a UI, so the real
+    invocation never gets one.
+    """
+    chars = [" "] * len(command)
+    for i, _quote, in_comment in _scan(command):
+        if not in_comment:
+            chars[i] = command[i]
+    return "".join(chars)
+
+
 def _has_explicit_ui_flag(command: str) -> bool:
     """Whether the command really passes ``--ui``/``--ui-type`` as an option.
 
@@ -50,70 +116,57 @@ def _has_explicit_ui_flag(command: str) -> bool:
     means injecting a second one, and AIPerf rejects that outright with
     ``Parameter --ui-type specified multiple times``.
     """
+    text = _executable_text(command)
     try:
-        tokens = shlex.split(command, comments=False)
+        tokens = shlex.split(text, comments=False)
     except ValueError:
         # Unbalanced quotes: bash will fail on this anyway, so fall back to the
         # textual check rather than guessing at the author's intent.
-        return bool(_UI_FLAG_RE.search(command))
+        return bool(_UI_FLAG_RE.search(text))
     return any(
         token in ("--ui", "--ui-type") or token.startswith(("--ui=", "--ui-type="))
         for token in tokens
     )
 
 
-def _first_unquoted_index(command: str, needle: str) -> int:
-    """Index of ``needle`` outside any quoted span or shell comment, or -1.
+def _invocation_indices(command: str, needle: str) -> list[int]:
+    """Every index where ``needle`` is really executed, in order.
 
-    Guides routinely show a commented variant above the command they actually
-    run (``# aiperf profile --model other``). Matching that line would bury the
-    injected flag in the comment, so the real invocation never receives it.
-    That does not hang -- AIPerf falls back to ``UIType.NONE`` on a piped
-    stdout -- but the harness then only appears to control the UI, and the
-    guide's own documented choice is what silently stops being honoured.
+    Skips quoted spans and shell comments: a payload or a commented variant
+    that merely mentions the command is not an invocation of it.
     """
-    quote: str | None = None
-    i = 0
-    while i < len(command):
-        char = command[i]
-        if quote is not None:
-            if char == "\\" and quote == '"':
-                i += 2
-                continue
-            if char == quote:
-                quote = None
-        elif char == "#" and (i == 0 or command[i - 1].isspace()):
-            # A '#' starting a word begins a comment; skip to end of line.
-            newline = command.find("\n", i)
-            if newline == -1:
-                return -1
-            i = newline
-        elif char in "\"'":
-            quote = char
-        elif command.startswith(needle, i):
-            return i
-        i += 1
-    return -1
+    return [
+        i
+        for i, quote, in_comment in _scan(command)
+        if quote is None and not in_comment and command.startswith(needle, i)
+    ]
 
 
 def inject_ui_type(command: str, ui_type: str = AIPERF_UI_TYPE) -> str:
-    """Force the non-interactive UI unless the doc already selected one.
+    """Force the non-interactive UI on every invocation the doc left open.
 
     cyclopts rejects a repeated parameter with "Parameter --ui-type specified
     multiple times" and exits 1, so injecting unconditionally would make every
     guide that teaches ``--ui-type``/``--ui`` impossible to tag for docs-e2e.
+    The check is therefore per invocation, over that invocation's own
+    arguments: a block that profiles twice must not have the first command's
+    explicit choice silence the second.
 
-    Injects at the first real invocation only. A plain ``str.replace`` also
-    rewrites the text inside a quoted argument, corrupting a payload that
-    merely mentions the command.
+    A plain ``str.replace`` would also rewrite the text inside a quoted
+    argument, corrupting a payload that merely mentions the command.
     """
-    if _has_explicit_ui_flag(command):
+    starts = _invocation_indices(command, "aiperf profile")
+    if not starts:
         return command
-    index = _first_unquoted_index(command, "aiperf profile")
-    if index < 0:
-        return command
-    end = index + len("aiperf profile")
-    return f"{command[:end]} --ui-type {ui_type}{command[end:]}"
+    bounds = starts[1:] + [len(command)]
+    result = command
+    # Right to left: an insertion then cannot shift an index still to be used.
+    for start, stop in zip(reversed(starts), reversed(bounds), strict=True):
+        if _has_explicit_ui_flag(command[start:stop]):
+            continue
+        end = start + len("aiperf profile")
+        result = f"{result[:end]} --ui-type {ui_type}{result[end:]}"
+    return result
 
 
 def build_command_exec_argv(container_id: str, command: str) -> list[str]:

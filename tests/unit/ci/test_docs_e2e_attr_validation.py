@@ -103,3 +103,50 @@ def test_valid_attributes_are_applied(tmp_path) -> None:
     command = servers["demo"].aiperf_commands[0]
     assert command.weight == 3
     assert command.timeout == 1800
+
+
+@pytest.mark.parametrize(
+    "attr",
+    [
+        param("timout=3600", id="misspelled-timeout"),  # codespell:ignore
+        param("weigth=250", id="misspelled-weight"),  # codespell:ignore
+        param("Timeout=3600", id="wrong-case"),
+        param("path=config.yaml", id="file-attribute-on-a-run-tag"),
+    ],
+)  # fmt: skip
+def test_an_unknown_attribute_drops_its_command(tmp_path, attr) -> None:
+    """An attribute the harness does not read is almost always a typo.
+
+    Ignoring it is the quiet kind of wrong: a misspelled `timeout=` reads as a
+    raised deadline, the command keeps the 1200s default, and the SIGKILL twenty
+    minutes later looks like a slow command rather than an attribute that
+    never applied. Treated like an invalid value -- drop the command, record
+    it, fail the run.
+    """
+    servers = _parse(tmp_path, GOOD, BAD_TEMPLATE.format(attr=attr))
+
+    commands = servers["demo"].aiperf_commands
+    assert [c.command.strip() for c in commands] == ["aiperf profile --model m"]
+    assert len(servers["demo"].parse_errors) == 1
+    assert attr.split("=")[0] in servers["demo"].parse_errors[0]
+
+
+def test_an_unknown_attribute_on_a_file_tag_drops_the_fixture(tmp_path) -> None:
+    doc = """\
+<!-- setup-file-demo-endpoint-server path=config.yaml weight=3 -->
+```yaml
+a: 1
+```
+"""
+    servers = _parse(tmp_path, GOOD, doc)
+
+    assert servers["demo"].files == []
+    assert len(servers["demo"].parse_errors) == 1
+    assert "weight" in servers["demo"].parse_errors[0]
+
+
+def test_a_comment_that_is_not_a_harness_tag_is_left_alone(tmp_path) -> None:
+    """Only harness tags are policed; ordinary markdown comments are not."""
+    servers = _parse(tmp_path, GOOD, "<!-- prettier-ignore foo=bar -->\n")
+
+    assert servers["demo"].parse_errors == []
