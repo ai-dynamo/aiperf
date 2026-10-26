@@ -110,3 +110,101 @@ def test_a_clean_set_still_passes(monkeypatch) -> None:
     monkeypatch.setattr(runner, "_test_server", lambda server: True)
 
     assert runner.run_tests({"a": _server("a"), "b": _server("b")}) is True
+
+
+DUPLICATE_DOC = """\
+<!-- setup-{name}-endpoint-server -->
+```bash
+echo boot
+```
+<!-- /setup-{name}-endpoint-server -->
+<!-- health-check-{name}-endpoint-server -->
+```bash
+echo ok
+```
+<!-- /health-check-{name}-endpoint-server -->
+<!-- aiperf-run-{name}-endpoint-server -->
+```bash
+aiperf profile --model m
+```
+<!-- /aiperf-run-{name}-endpoint-server -->
+"""
+
+SECOND_SETUP = """\
+<!-- setup-{name}-endpoint-server -->
+```bash
+echo other-boot
+```
+<!-- /setup-{name}-endpoint-server -->
+"""
+
+
+def _parse_docs(tmp_path: Path, **docs: str) -> dict:
+    from parser import MarkdownParser  # noqa: PLC0415
+
+    parser = MarkdownParser()
+    for stem, text in docs.items():
+        doc = tmp_path / f"{stem}.md"
+        doc.write_text(text, encoding="utf-8")
+        parser._parse_file(str(doc))
+    return parser.servers
+
+
+def test_a_duplicate_setup_does_not_abort_discovery(tmp_path) -> None:
+    """Two guides disagreeing about one server says nothing about the others.
+
+    This used to call ``sys.exit(1)`` mid-parse, so a duplicate tag in one
+    guide took every other documented server with it and no other result was
+    ever reported.
+    """
+    servers = _parse_docs(
+        tmp_path,
+        a_dup=DUPLICATE_DOC.format(name="dup") + SECOND_SETUP.format(name="dup"),
+        b_good=DUPLICATE_DOC.format(name="good"),
+    )
+
+    assert sorted(servers) == ["dup", "good"]
+    assert servers["dup"].command_conflicts == ["setup"]
+    assert servers["good"].command_conflicts == []
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        param("setup", id="duplicate-setup"),
+        param("health-check", id="duplicate-health-check"),
+    ],
+)  # fmt: skip
+def test_a_conflicted_server_is_skipped_and_the_run_fails(tmp_path, kind) -> None:
+    """Unrecoverable, unlike a dropped command: neither guide can be chosen.
+
+    Running either would benchmark a server booted in a way no guide
+    documents, so the server is skipped rather than degraded.
+    """
+    second = SECOND_SETUP.format(name="dup")
+    if kind == "health-check":
+        second = second.replace("setup-dup", "health-check-dup").replace(
+            "echo other-boot", "echo other-ok"
+        )
+    servers = _parse_docs(
+        tmp_path,
+        a_dup=DUPLICATE_DOC.format(name="dup") + second,
+        b_good=DUPLICATE_DOC.format(name="good"),
+    )
+
+    runner = EndToEndTestRunner.__new__(EndToEndTestRunner)
+    invalid = EndToEndTestRunner._validate_servers(runner, servers)
+
+    assert invalid == ["dup"]
+    assert [n for n in servers if n not in invalid] == ["good"]
+
+
+def test_the_first_definition_is_the_one_kept(tmp_path) -> None:
+    """Which one wins does not matter -- the server never runs -- but the
+    message has to be able to name both, so the first is left in place."""
+    servers = _parse_docs(
+        tmp_path,
+        a_dup=DUPLICATE_DOC.format(name="dup") + SECOND_SETUP.format(name="dup"),
+    )
+
+    assert servers["dup"].setup_command.command.strip() == "echo boot"

@@ -7,7 +7,6 @@ Markdown parser for extracting server setup and AIPerf run commands.
 import logging
 import re
 import subprocess
-import sys
 from pathlib import Path, PurePosixPath
 
 from constants import (
@@ -489,12 +488,18 @@ class MarkdownParser:
             self._ensure_server(server_name)
 
             if self.servers[server_name].setup_command is not None:
+                # Recorded rather than fatal: aborting the process here takes
+                # every other documented server down with it, and one guide
+                # disagreeing with another about this server says nothing
+                # about the rest. _validate_servers skips this server and the
+                # run still fails.
                 logger.error(f"DUPLICATE SETUP COMMAND for server '{server_name}'")
                 logger.error(
                     f"  First: {self.servers[server_name].setup_command.file_path}"
                 )
                 logger.error(f"  Second: {command.file_path}")
-                sys.exit(1)
+                self.servers[server_name].command_conflicts.append("setup")
+                return
 
             self.servers[server_name].setup_command = command
 
@@ -504,6 +509,11 @@ class MarkdownParser:
             self._ensure_server(server_name)
 
             if self.servers[server_name].health_check_command is not None:
+                # Recorded rather than fatal: aborting the process here takes
+                # every other documented server down with it, and one guide
+                # disagreeing with another about this server says nothing
+                # about the rest. _validate_servers skips this server and the
+                # run still fails.
                 logger.error(
                     f"DUPLICATE HEALTH CHECK COMMAND for server '{server_name}'"
                 )
@@ -511,7 +521,8 @@ class MarkdownParser:
                     f"  First: {self.servers[server_name].health_check_command.file_path}"
                 )
                 logger.error(f"  Second: {command.file_path}")
-                sys.exit(1)
+                self.servers[server_name].command_conflicts.append("health-check")
+                return
 
             self.servers[server_name].health_check_command = command
 

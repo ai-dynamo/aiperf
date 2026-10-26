@@ -470,6 +470,11 @@ class EndToEndTestRunner:
             problems = []
             if missing:
                 problems.append(f"is missing {', '.join(missing)} command(s)")
+            if server.command_conflicts:
+                problems.append(
+                    "has more than one "
+                    f"{', '.join(sorted(set(server.command_conflicts)))} command"
+                )
             if server.fixture_conflicts:
                 problems.append(
                     "declares more than one file fixture for "
