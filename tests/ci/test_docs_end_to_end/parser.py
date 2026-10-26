@@ -95,12 +95,14 @@ class MarkdownParser:
             # Look for HTML comment tags. Two forms:
             #   <!-- tag-name -->
             #   <!-- tag-name attr=<value> ... -->
-            # Attributes parse generically; the ones read today are
-            # weight=<int> (runtime hint, seconds), timeout=<int> (per-command
-            # override) and path=<relative path> (on setup-file- tags). weight
-            # and timeout are only meaningful on opening aiperf-run tags; they
-            # are silently ignored on closing tags (which the categorizer
-            # filters out anyway).
+            # Attributes parse generically but are then checked against the
+            # set each tag kind reads: weight=<int> (runtime hint, seconds)
+            # and timeout=<int> (per-command override) on aiperf-run, and
+            # path=<relative path> on setup-file-. An unrecognised name is
+            # rejected rather than ignored, because it is nearly always a
+            # misspelling of one of these. weight and timeout are meaningful
+            # only on opening tags; closing tags are filtered out by the
+            # categorizer anyway.
             if line.startswith("<!--") and line.endswith("-->"):
                 tag_match = re.match(r"<!--\s*(\S+)((?:\s+\w+=\S+)*)\s*-->", line)
                 if tag_match:
