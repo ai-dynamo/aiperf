@@ -320,7 +320,7 @@ def _encode_chat_prompt_ids(
     # literal instead of the text, inflating the ISL measurement.
     raw_messages = [_message_to_dict(msg) for msg in request.messages]
     messages = [
-        {**m, "content": _content_to_text(m["content"])}
+        {**m, "content": _content_to_text(m.get("content"))}
         if not isinstance(m.get("content"), str)
         else m
         for m in raw_messages

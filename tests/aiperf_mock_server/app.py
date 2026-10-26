@@ -816,7 +816,7 @@ def _extract_chat_embedding_inputs(req: ChatCompletionRequest) -> list[str]:
             continue
         text = "\n".join(
             item.get("text", "")
-            for item in content
+            for item in content or []
             if isinstance(item, dict) and item.get("type") == "text"
         )
         inputs.append(text)

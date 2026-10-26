@@ -29,6 +29,7 @@ from aiperf.common.models import (
     Turn,
 )
 from aiperf.common.types import RequestOutputT
+from aiperf.plugin.enums import EndpointType
 
 
 class BaseEndpoint(AIPerfLoggerMixin, ABC):
@@ -327,10 +328,23 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         Endpoints with a different envelope (e.g. Responses input items with
         additional fields) override this.
         """
-        return {
+        message = {
             "role": turn.role or self.DEFAULT_TURN_ROLE,
             "content": self._render_turn_content(turn),
         }
+        if (metadata := turn.chat_tool_metadata) is not None:
+            if self.model_endpoint.endpoint.type != EndpointType.CHAT:
+                raise NotImplementedError(
+                    "tool_calls and tool_call_id in single_turn/multi_turn datasets "
+                    "are only supported with the chat endpoint"
+                )
+            if not (turn.texts or turn.images or turn.audios or turn.videos):
+                message["content"] = "" if metadata.tool_call_id is not None else None
+            if metadata.tool_calls is not None:
+                message["tool_calls"] = metadata.tool_calls
+            if metadata.tool_call_id is not None:
+                message["tool_call_id"] = metadata.tool_call_id
+        return message
 
     def _render_turn_content(self, turn: Turn) -> str | list[dict[str, Any]]:
         """Render the ``content`` side of a synthetic turn message.

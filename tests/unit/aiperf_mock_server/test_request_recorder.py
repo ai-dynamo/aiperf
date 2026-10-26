@@ -538,6 +538,41 @@ class TestRecorderTokenIdTracking:
         assert row["tokenization_mode"] == "chat_template"
         r._file.close()
 
+    def test_record_request_chat_tool_call_without_content(
+        self, tmp_path: Path
+    ) -> None:
+        tok = _ChatTemplateTokenizer()
+        recorder = _make_recorder(tmp_path, tok)
+        calls = [
+            {
+                "id": "call_read",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": "{}"},
+            }
+        ]
+        request = ChatCompletionRequest(
+            model="m",
+            messages=[Message(role="assistant", content=None, tool_calls=calls)],
+        )
+        recorder.record_request(
+            ts=0.0,
+            endpoint="/v1/chat/completions",
+            request_id="tool-call",
+            model="m",
+            request=request,
+            stream=False,
+            osl_fingerprint={},
+        )
+        recorder._file.flush()
+        rows = _read_jsonl(recorder.path)
+        recorder._file.close()
+
+        assert len(rows) == 1
+        assert rows[0]["tokenization_mode"] == "chat_template"
+        assert tok.template_calls[0]["messages"] == [
+            {"role": "assistant", "content": "", "tool_calls": calls}
+        ]
+
     def test_record_request_chat_typerror_retry_uses_conversation_kwarg(
         self, tmp_path
     ) -> None:

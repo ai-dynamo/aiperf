@@ -14,7 +14,7 @@ from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import MultiTurn, SingleTurn
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import DatasetSamplingStrategy
+from aiperf.plugin.enums import DatasetSamplingStrategy, EndpointType
 
 
 class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
@@ -263,6 +263,10 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
 
     def _build_turn(self, single_turn: SingleTurn, media: dict[str, list[Any]]) -> Turn:
         """Build a ``Turn`` from a parsed ``SingleTurn`` and its converted media."""
+        if (
+            single_turn.tool_calls is not None or single_turn.tool_call_id is not None
+        ) and self.run.cfg.endpoint.type != EndpointType.CHAT:
+            raise NotImplementedError("Tool-call messages require --endpoint-type chat")
         return Turn(
             texts=media[MediaType.TEXT],
             images=media[MediaType.IMAGE],
@@ -271,6 +275,7 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
             timestamp=single_turn.timestamp,
             delay=self._delay_cap_tracker.clamp(single_turn.delay),
             role=single_turn.role,
+            chat_tool_metadata=single_turn.chat_tool_metadata,
             max_tokens=single_turn.output_length,
             extra_body=single_turn.extra,
         )
