@@ -10,12 +10,11 @@ guards against on newly added docs.
 > it at the in-repo mock server -- a green run would then prove nothing about
 > the documented command.
 
-> **This page deliberately never spells a tag out in full.** The parser scans
-> every markdown file in the repo line by line and does not care whether a line
-> sits inside a code fence, so a complete example here would be collected and
-> executed as if it were a real benchmark. Placeholders in `{braces}` below
-> stand in for the literal text; `docs/tutorial.md` holds working examples of
-> all three kinds.
+> **This page spells tags out only in placeholder form.** The parser skips
+> tags inside a fenced code block, so a fenced example here is safe; a tag
+> written in running prose is not, and would be collected and executed as a
+> real benchmark. Placeholders in `{braces}` below keep that distinction from
+> mattering. `docs/tutorial.md` holds working examples of every kind.
 
 ## Tagging a guide
 
@@ -30,6 +29,7 @@ slash.
 | `setup` | Starts the inference server. Runs once per server group, before anything else. |
 | `health-check` | Blocks until the server answers. Gates that group's run commands. |
 | `aiperf-run` | A command to execute. A group may have many. |
+| `setup-file` | A file to write into the container before any command runs. Needs `path=`; the block is yaml/json/jsonl rather than bash. |
 
 `{server}` names the server group the block belongs to. Blocks sharing a
 `{server}` form one unit no matter which file they live in: the harness
@@ -52,12 +52,20 @@ conflict, not an addition. Copy the shape from `docs/tutorial.md`.
 
 ### Attributes
 
-An opening `aiperf-run` tag may carry a `weight={seconds}` attribute, after the
-tag name and before the closing `-->`. The weight is the command's estimated
-runtime, used only by the matrix sharder to bin-pack work so one shard does not
-end up owning every slow test. The default (80s) suits a typical
-synthetic-input tutorial; set it when a command runs materially longer. Getting
-it wrong makes the sharding lopsided, not incorrect.
+An opening tag may carry `name=value` attributes, after the tag name and before
+the closing `-->`.
+
+| Attribute | Valid on | Meaning |
+|---|---|---|
+| `weight={seconds}` | `aiperf-run` | The command's estimated runtime, used only by the matrix sharder to bin-pack work so one shard does not end up owning every slow test. The default (80s) suits a typical synthetic-input tutorial; set it when a command runs materially longer. Getting it wrong makes the sharding lopsided, not incorrect. |
+| `timeout={seconds}` | `aiperf-run` | How long this one command may run before the watchdog kills it, overriding the global default. Set it when a documented command is legitimately slower than the rest. |
+| `path={relative path}` | `setup-file` | Where the block's content is written inside the container, relative to the working directory. Required. An absolute path or one containing `..` is rejected before any server boots. |
+
+`weight` and `timeout` must be positive integers. A non-integer, zero or
+negative value drops that one command rather than aborting discovery for every
+guide -- but the drop is recorded and fails the run, so a typo cannot quietly
+shrink what CI covers. A `setup-file` tag with no `path=`, or one whose fenced
+block is missing or never closed, fails the run the same way.
 
 ### Fixtures belong with their consumer
 

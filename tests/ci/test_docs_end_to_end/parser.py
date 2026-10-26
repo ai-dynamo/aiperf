@@ -115,11 +115,21 @@ class MarkdownParser:
                             logger.error(
                                 f"{tag_name} at {file_path}:{i + 1} has no path= attribute; skipping"
                             )
+                            self._record_parse_error(
+                                tag_name,
+                                f"dropped the fixture at {file_path}:{i + 1} "
+                                f"over a missing path= attribute",
+                            )
                         else:
                             content = self._extract_fenced_block(lines, i + 1)
                             if content is None:
                                 logger.warning(
                                     f"No fenced block found after tag {tag_name}"
+                                )
+                                self._record_parse_error(
+                                    tag_name,
+                                    f"dropped the fixture at {file_path}:{i + 1} "
+                                    f"over a missing or unterminated fenced block",
                                 )
                             else:
                                 self._add_file_fixture(
@@ -189,7 +199,17 @@ class MarkdownParser:
         """
         match = re.match(r"( {0,3})(`{3,}|~{3,})(.*)$", raw_line)
         if fence is None:
-            return (match.group(2)[0], len(match.group(2))) if match else None
+            if match is None:
+                return None
+            # CommonMark forbids a backtick inside a backtick fence's info
+            # string, so a paragraph opening with inline code is text, not a
+            # fence. Accepting it opens a block that never closes until the
+            # next three backticks, and every tag in between stops being
+            # collected -- a documented command silently leaves the suite
+            # while the run still reports green.
+            if match.group(2)[0] == "`" and "`" in match.group(3):
+                return None
+            return (match.group(2)[0], len(match.group(2)))
         char, length = fence
         if (
             match
@@ -280,10 +300,8 @@ class MarkdownParser:
 
     def _is_file_tag(self, tag_name: str) -> bool:
         """Whether this tag declares a file to materialize before the run."""
-        return (
-            tag_name.startswith(SETUP_FILE_TAG_PREFIX)
-            and tag_name.endswith(TAG_SUFFIX)
-            and not tag_name.startswith("/")
+        return tag_name.startswith(SETUP_FILE_TAG_PREFIX) and tag_name.endswith(
+            TAG_SUFFIX
         )
 
     def _extract_fenced_block(self, lines: list[str], start_idx: int) -> str | None:
@@ -315,7 +333,7 @@ class MarkdownParser:
     def _add_file_fixture(
         self, tag_name: str, path: str, content: str, file_path: str, line_no: int
     ) -> None:
-        server_name = tag_name[SETUP_FILE_TAG_PREFIX_LEN:-TAG_SUFFIX_LEN].rstrip("-")
+        server_name = self._server_name_for_tag(tag_name)
         server = self._ensure_server(server_name)
         # Compare destinations, not spellings: ``config.yaml`` and
         # ``./config.yaml`` are written to the same file by
@@ -388,10 +406,7 @@ class MarkdownParser:
         tag_name = command.tag_name
 
         if tag_name.startswith(SETUP_TAG_PREFIX):
-            # Extract server name: setup-{server-name}-endpoint-server
-            server_name = tag_name[SETUP_TAG_PREFIX_LEN:-TAG_SUFFIX_LEN].rstrip(
-                "-"
-            )  # Remove prefix, suffix, and trailing dash
+            server_name = self._server_name_for_tag(tag_name)
 
             self._ensure_server(server_name)
 
@@ -406,10 +421,7 @@ class MarkdownParser:
             self.servers[server_name].setup_command = command
 
         elif tag_name.startswith(HEALTH_CHECK_TAG_PREFIX):
-            # Extract server name: health-check-{server-name}-endpoint-server
-            server_name = tag_name[HEALTH_CHECK_TAG_PREFIX_LEN:-TAG_SUFFIX_LEN].rstrip(
-                "-"
-            )  # Remove prefix, suffix, and trailing dash
+            server_name = self._server_name_for_tag(tag_name)
 
             self._ensure_server(server_name)
 
@@ -426,10 +438,7 @@ class MarkdownParser:
             self.servers[server_name].health_check_command = command
 
         elif tag_name.startswith(AIPERF_RUN_TAG_PREFIX):
-            # Extract server name: aiperf-run-{server-name}-endpoint-server
-            server_name = tag_name[AIPERF_RUN_TAG_PREFIX_LEN:-TAG_SUFFIX_LEN].rstrip(
-                "-"
-            )  # Remove prefix, suffix, and trailing dash
+            server_name = self._server_name_for_tag(tag_name)
 
             self._ensure_server(server_name)
 

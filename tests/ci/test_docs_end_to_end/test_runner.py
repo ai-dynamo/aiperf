@@ -127,19 +127,13 @@ def build_command_exec_argv(container_id: str, command: str) -> list[str]:
 
     Note the absence of ``-i``: the caller runs this with stdin closed. A
     script delivered over stdin shares that stream with the commands it runs,
-    so the first one to read stdin consumes the rest of the block. Shared with
-    the unit tests so both properties are pinned where they are consumed.
+    so the first one to read stdin consumes the rest of the block.
     """
     return ["docker", "exec", container_id, "bash", "-c", command]
 
 
 def resolve_command_timeout(aiperf_cmd: Command) -> int:
-    """Pick the per-command ``timeout=`` if the guide set one, else the global.
-
-    Shared with the unit tests so the per-command value is pinned where it is
-    consumed: asserting only that the parser produced it leaves the runner free
-    to ignore it, which is exactly the regression this guards.
-    """
+    """Pick the per-command ``timeout=`` if the guide set one, else the global."""
     return aiperf_cmd.timeout or AIPERF_COMMAND_TIMEOUT
 
 
@@ -149,7 +143,7 @@ def is_unsafe_fixture_path(path: str) -> bool:
     `path=` is ordinary documentation text that reaches a shell, so it is
     checked twice: once up front, where an invalid guide is rejected before
     any server is booted, and again at write time, which is the call that
-    actually depends on it. Shared so the two cannot disagree.
+    actually depends on it.
     """
     target = PurePosixPath(path)
     return target.is_absolute() or ".." in target.parts
@@ -162,8 +156,7 @@ def build_fixture_write_command(target: PurePosixPath) -> str:
     documentation text that reaches a shell. The absolute/`..` guard stops the
     file being written outside the working directory but does nothing about
     metacharacters, and an unquoted `cat > {target}` turns `path=x;touch PWNED`
-    into a second command running inside the CI container. Shared with the unit
-    tests so the quoting is pinned where it is actually used.
+    into a second command running inside the CI container.
     """
     quoted = shlex.quote(str(target))
     parent = target.parent
