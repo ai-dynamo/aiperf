@@ -365,6 +365,19 @@ class ReplayBarrierCoordinator:
             )
             return
         state.idle_cap_expired = True
+        running = self._scheduler.running_count_for_group(root_id)
+        if running:
+            # A started grouped timer may still be on its way to the wire
+            # (awaiting a prefill slot or the credit send) without having
+            # reached ``observe_issued``; the tree is not idle. Leave the
+            # expired cap for that timer to settle: if it issues,
+            # ``observe_issued`` clears it; if it returns without issuing,
+            # ``_on_root_timer_done`` re-enforces once it is no longer counted.
+            _logger.debug(
+                lambda: f"Idle watchdog root={root_id}: deferred, "
+                f"running_group_tasks={running}"
+            )
+            return
         shifted = self._scheduler.cap_pending_delay_for_group(root_id, 0.0)
         if shifted <= 0:
             scheduler = self._scheduler

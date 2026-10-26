@@ -146,6 +146,7 @@ async def test_idle_watchdog_advances_only_the_completed_runtime_root(
 ) -> None:
     """A fully idle tree advances its own timers without touching another tree."""
     scheduler = MagicMock()
+    scheduler.running_count_for_group.return_value = 0
     advanced = asyncio.Event()
 
     def advance(*_args) -> float:
@@ -172,6 +173,7 @@ async def test_idle_watchdog_advances_only_the_completed_runtime_root(
 async def test_idle_watchdog_covers_initial_profiling_idle() -> None:
     """A root with only future timers is idle before its first request."""
     scheduler = MagicMock()
+    scheduler.running_count_for_group.return_value = 0
     advanced = asyncio.Event()
 
     def advance(*_args) -> float:
@@ -218,6 +220,7 @@ async def test_initial_idle_watchdog_advances_real_group_timer() -> None:
 async def test_new_request_cancels_runtime_root_idle_watchdog() -> None:
     """Overlapping work prevents an idle cap from advancing replay timers."""
     scheduler = MagicMock()
+    scheduler.running_count_for_group.return_value = 0
     coordinator = ReplayBarrierCoordinator(
         _metadata(),
         scheduler=scheduler,
@@ -516,6 +519,8 @@ def _watchdog_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
 def _watchdog_coordinator(
     scheduler: LoopScheduler | MagicMock,
 ) -> ReplayBarrierCoordinator:
+    if isinstance(scheduler, MagicMock):
+        scheduler.running_count_for_group.return_value = 0
     coordinator = ReplayBarrierCoordinator(
         _metadata(), scheduler=scheduler, root_idle_gap_cap_seconds=0.05
     )
@@ -726,4 +731,109 @@ async def test_timer_issuing_nothing_before_cap_expires_keeps_replay_spacing() -
 
     [(handle, _)] = scheduler._handles.values()
     assert handle.when() == pytest.approx(later_when)
+    scheduler.cancel_all()
+
+
+def _started_unissued_metadata() -> DatasetMetadata:
+    """``_metadata()`` plus an independent request ``e`` on the same tree."""
+    metadata = _metadata()
+    metadata.conversations.append(
+        ConversationMetadata(conversation_id="e", turns=[TurnMetadata(timestamp_ms=0)])
+    )
+    return metadata
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("second_timer", ["barrier_blocked", "issues_nothing"])
+async def test_idle_cap_waits_for_started_timer_that_has_not_issued(
+    second_timer: str,
+) -> None:
+    """A started timer still on its way to the wire keeps the tree busy.
+
+    Timer ``a`` has fired and is waiting for capacity (a prefill slot in
+    production) before ``observe_issued``, so ``in_flight`` is still zero.
+    A second timer then either lands on a barrier-blocked turn (the
+    zero-delay rearm in ``submit``) or returns without issuing (the
+    group-task observer). Neither may advance ``e``: it must keep its
+    recorded 0.4 s spacing after ``a``.
+    """
+    loop = asyncio.get_running_loop()
+    scheduler = LoopScheduler()
+    coordinator = ReplayBarrierCoordinator(
+        _started_unissued_metadata(),
+        scheduler=scheduler,
+        root_idle_gap_cap_seconds=0.02,
+    )
+    coordinator.activate()
+    capacity = asyncio.Event()
+    times: dict[str, float] = {}
+    e_fired = asyncio.Event()
+
+    async def timer_a() -> None:
+        times["a"] = loop.time()
+
+        async def issue() -> bool:
+            await capacity.wait()
+            coordinator.observe_issued(_credit("a"))
+            return True
+
+        await coordinator.submit(_turn("a"), issue)
+
+    async def timer_second() -> None:
+        if second_timer == "barrier_blocked":
+            await coordinator.submit(_turn("d"), lambda: _record_issue([], "d"))
+
+    async def timer_e() -> None:
+        times["e"] = loop.time()
+        e_fired.set()
+
+    scheduler.schedule_later(1.0, timer_a(), group_id="root")
+    scheduler.schedule_later(1.05, timer_second(), group_id="root")
+    scheduler.schedule_later(1.4, timer_e(), group_id="root")
+    coordinator.observe_idle_root("root")
+    try:
+        await asyncio.wait_for(e_fired.wait(), timeout=1.0)
+    finally:
+        capacity.set()
+        await asyncio.sleep(0)
+        await coordinator.cancel_pending(notify_refused=False)
+        scheduler.cancel_all()
+
+    assert times["e"] - times["a"] >= 0.35
+
+
+@pytest.mark.asyncio
+async def test_idle_cap_resumes_when_started_timer_returns_without_issuing() -> None:
+    """Deferring for a running timer must not strand the expired cap.
+
+    Once the running timer returns without issuing, the group-task observer
+    re-enforces the cap, so the far-off next timer is still advanced.
+    """
+    scheduler = LoopScheduler()
+    coordinator = ReplayBarrierCoordinator(
+        _metadata(), scheduler=scheduler, root_idle_gap_cap_seconds=0.02
+    )
+    coordinator.activate()
+    release = asyncio.Event()
+    fired = asyncio.Event()
+
+    async def slow_noop() -> None:
+        await release.wait()
+
+    async def far_timer() -> None:
+        fired.set()
+
+    scheduler.schedule_later(1.0, slow_noop(), group_id="root")
+    scheduler.schedule_later(5.0, far_timer(), group_id="root")
+    coordinator.observe_idle_root("root")
+    loop = asyncio.get_running_loop()
+    while scheduler.running_count_for_group("root") == 0:
+        await asyncio.sleep(0.005)
+    await asyncio.sleep(0.05)  # watchdog retries are deferred while it runs
+    assert not fired.is_set()
+
+    started = loop.time()
+    release.set()
+    await asyncio.wait_for(fired.wait(), timeout=0.5)
+    assert loop.time() - started < 0.2
     scheduler.cancel_all()
