@@ -14,7 +14,7 @@ guards against on newly added docs.
 > tags inside a fenced code block, so a fenced example here is safe; a tag
 > written in running prose is not, and would be collected and executed as a
 > real benchmark. Placeholders in `{braces}` below keep that distinction from
-> mattering. `docs/tutorial.md` holds working examples of every kind.
+> mattering. `docs/tutorial.md` holds working examples of the three command kinds.
 
 ## Tagging a guide
 
@@ -106,3 +106,13 @@ its own workflow, the `Dockerfile`, or the surface a documented command is
 written against -- the plugin registry, the config and CLI layers, and the
 enums whose members appear verbatim in tutorial flags. A behavior change deeper
 in `src/` is left to the nightly run.
+
+The hash covers everything the harness would act on: the setup and
+health-check commands, each run command with its `weight=` and `timeout=`, and
+every fixture's path and content. An edit the hash cannot see skips the matrix,
+so a new tag attribute must be added to the fingerprint in the same change that
+teaches the parser to read it. `dump_config_hash.py` also exits non-zero when
+the parser rejected anything -- a dropped command, a duplicate tag, a
+conflicting fixture -- which the workflow reads as "no comparable hash" and
+runs the matrix. Nothing else would stop a tree whose tags no longer parse from
+printing its pre-breakage digest and comparing clean against its own base.

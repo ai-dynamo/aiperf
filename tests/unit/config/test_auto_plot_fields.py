@@ -91,9 +91,7 @@ def test_v2_artifacts_accepts_combinations(
 def test_auto_plot_quick_start_uses_url_for_server_address() -> None:
     """The server address must ride ``--url``, never ``--endpoint``.
 
-    Asserted on the flag rather than a literal host: the quick start is
-    executed verbatim by the docs end-to-end test, so its address tracks
-    whatever server that harness boots.
+    Assert the flag rather than a literal host.
     """
     doc = Path("docs/tutorials/auto-plot.md").read_text()
     quick_start = doc.split("## Quick start", 1)[1].split("```", 2)[1]

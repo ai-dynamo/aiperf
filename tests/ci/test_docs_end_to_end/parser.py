@@ -245,8 +245,8 @@ class MarkdownParser:
 
         An unreadable attribute is almost always a misspelling of one that is
         read, and ignoring it is the quiet kind of wrong: a misspelled
-        ``timeout=`` looks
-        like it raised the deadline, the command keeps the 1200s default, and
+        ``timeout=`` looks like it raised the deadline, the command keeps the
+        1200s default, and
         the SIGKILL twenty minutes later reads as the command being slow rather
         than the attribute never having applied. Treated like an invalid value
         -- drop the one command, record it, fail the run.
@@ -509,11 +509,6 @@ class MarkdownParser:
             self._ensure_server(server_name)
 
             if self.servers[server_name].health_check_command is not None:
-                # Recorded rather than fatal: aborting the process here takes
-                # every other documented server down with it, and one guide
-                # disagreeing with another about this server says nothing
-                # about the rest. _validate_servers skips this server and the
-                # run still fails.
                 logger.error(
                     f"DUPLICATE HEALTH CHECK COMMAND for server '{server_name}'"
                 )

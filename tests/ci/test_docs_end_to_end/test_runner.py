@@ -578,6 +578,39 @@ class EndToEndTestRunner:
         except Exception as e:
             logger.debug(f"Detached log thread exception: {e}")
 
+    def _is_attached_to_setup(self, container_id: str) -> bool:
+        """Whether this container's output already reaches the setup pipe.
+
+        A foreground ``docker run`` leaves ``AttachStdout`` true and streams
+        the engine's output down the setup process's stdout, which
+        ``_monitor_server_logs`` is already printing. ``docker run -d`` leaves
+        it false and prints only a container id, which is the case this
+        follower exists for. Without the distinction every documented server
+        -- all of which boot in the foreground today -- has its logs printed
+        twice under the same ``SERVER[name]`` prefix.
+
+        Unknown on a docker failure, and answered ``False`` there: a duplicated
+        log is a nuisance, a missing boot traceback is the failure this capture
+        was added to diagnose.
+        """
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", "-f", "{{.Config.AttachStdout}}", container_id],
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=CONTAINER_DISCOVERY_TIMEOUT,
+            )
+        except (subprocess.TimeoutExpired, OSError) as e:
+            logger.warning(f"docker inspect failed for {container_id[:12]} ({e})")
+            return False
+        if result.returncode != 0:
+            logger.warning(
+                f"docker inspect exited {result.returncode} for {container_id[:12]}"
+            )
+            return False
+        return result.stdout.strip() == "true"
+
     def _follow_detached_containers(
         self, before: set[str] | None, server_name: str
     ) -> list[threading.Thread]:
@@ -603,6 +636,12 @@ class EndToEndTestRunner:
             )
             return started
         for container_id in sorted(after - before):
+            if self._is_attached_to_setup(container_id):
+                logger.info(
+                    f"Container {container_id[:12]} runs in the foreground; its "
+                    "output already arrives through the setup pipe"
+                )
+                continue
             logger.info(f"Following logs for detached container {container_id[:12]}")
             thread = threading.Thread(
                 target=self._stream_container_logs,
