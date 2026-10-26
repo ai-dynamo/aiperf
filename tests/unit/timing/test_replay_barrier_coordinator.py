@@ -806,8 +806,10 @@ async def test_idle_cap_waits_for_started_timer_that_has_not_issued(
 async def test_idle_cap_resumes_when_started_timer_returns_without_issuing() -> None:
     """Deferring for a running timer must not strand the expired cap.
 
-    Once the running timer returns without issuing, the group-task observer
-    re-enforces the cap, so the far-off next timer is still advanced.
+    ``quick_noop`` returns while ``slow_noop`` is still running, so the
+    group-task observer re-enforces the expired cap and must defer. Once
+    ``slow_noop`` returns without issuing, the observer re-enforces again and
+    the far-off next timer is advanced.
     """
     scheduler = LoopScheduler()
     coordinator = ReplayBarrierCoordinator(
@@ -815,23 +817,29 @@ async def test_idle_cap_resumes_when_started_timer_returns_without_issuing() -> 
     )
     coordinator.activate()
     release = asyncio.Event()
+    quick_done = asyncio.Event()
     fired = asyncio.Event()
 
     async def slow_noop() -> None:
         await release.wait()
 
+    async def quick_noop() -> None:
+        quick_done.set()
+
     async def far_timer() -> None:
         fired.set()
 
     scheduler.schedule_later(1.0, slow_noop(), group_id="root")
+    scheduler.schedule_later(1.05, quick_noop(), group_id="root")
     scheduler.schedule_later(5.0, far_timer(), group_id="root")
     coordinator.observe_idle_root("root")
-    loop = asyncio.get_running_loop()
-    while scheduler.running_count_for_group("root") == 0:
-        await asyncio.sleep(0.005)
-    await asyncio.sleep(0.05)  # watchdog retries are deferred while it runs
+    await asyncio.wait_for(quick_done.wait(), timeout=0.5)
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert scheduler.pending_count_for_group("root") == 1
     assert not fired.is_set()
 
+    loop = asyncio.get_running_loop()
     started = loop.time()
     release.set()
     await asyncio.wait_for(fired.wait(), timeout=0.5)
