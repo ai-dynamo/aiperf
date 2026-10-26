@@ -287,10 +287,11 @@ class TestScheduleLater:
     async def test_cancel_all_running_clears_group_running_counts(
         self, scheduler: LoopScheduler
     ):
-        """Cancelled grouped tasks must not leave their group counted.
+        """Cancelling running tasks stops counting them right away.
 
-        A stale count would make the idle cap treat the root as busy and
-        defer indefinitely.
+        The count drops before the cancelled tasks finish unwinding, not only
+        once their done callbacks run. A stale count would make the idle cap
+        treat the root as busy and defer indefinitely.
         """
 
         async def hold():
@@ -300,6 +301,7 @@ class TestScheduleLater:
         await yield_to_scheduler(n=1)
         assert scheduler.running_count_for_group("root-a") == 1
         tasks = scheduler.cancel_all_running()
+        assert scheduler.running_count_for_group("root-a") == 0
         await asyncio.gather(*tasks, return_exceptions=True)
         assert scheduler.running_count_for_group("root-a") == 0
 
