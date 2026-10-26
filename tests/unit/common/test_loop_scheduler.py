@@ -249,7 +249,7 @@ class TestScheduleLater:
 
         scheduler.schedule_later(0.01, hold(), group_id="root-a")
         scheduler.schedule_later(5.0, noop(), group_id="root-a")
-        scheduler.execute_async(noop())  # ungrouped work is never counted
+        scheduler.execute_async(noop())
         assert scheduler.running_count_for_group("root-a") == 0
 
         await asyncio.wait_for(started.wait(), timeout=1.0)
