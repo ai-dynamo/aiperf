@@ -304,28 +304,60 @@ class MarkdownParser:
             TAG_SUFFIX
         )
 
+    @staticmethod
+    def _looks_like_tag(line: str) -> bool:
+        """Whether a line is a harness tag rather than block content."""
+        match = re.match(r"<!--\s*/?(\S+)", line)
+        if match is None or not line.endswith("-->"):
+            return False
+        name = match.group(1)
+        return name.endswith(TAG_SUFFIX) and name.startswith(
+            (
+                SETUP_FILE_TAG_PREFIX,
+                SETUP_TAG_PREFIX,
+                HEALTH_CHECK_TAG_PREFIX,
+                AIPERF_RUN_TAG_PREFIX,
+            )
+        )
+
     def _extract_fenced_block(self, lines: list[str], start_idx: int) -> str | None:
         """Extract the next fenced block regardless of its language.
 
         ``_extract_bash_block`` deliberately only accepts ```bash; a config
         fixture is yaml/json/jsonl, so it needs its own reader.
+
+        Fence matching goes through ``_next_fence_state`` so a four-backtick
+        fixture may quote a three-backtick block and a tilde fence works at
+        all, and so this reader cannot disagree with the tag scanner about
+        where a block ends.
         """
         i = start_idx
+        fence: tuple[str, int] | None = None
         while i < len(lines):
-            line = lines[i].strip()
-            if line.startswith("```"):
+            fence = self._next_fence_state(None, lines[i])
+            if fence is not None:
                 break
+            line = lines[i].strip()
             if line and not line.startswith("#"):
                 return None
             i += 1
-        else:
+        if fence is None:
             return None
 
         body: list[str] = []
         i += 1
         while i < len(lines):
-            if lines[i].strip() == "```":
+            if self._next_fence_state(fence, lines[i]) is None:
                 return "".join(body)
+            # A harness tag inside the body means the opener was never closed
+            # and this reader has run past the end of the fixture. Hitting the
+            # end of the file is the obvious shape of that mistake, but not
+            # the common one: any block below closes the fixture on the
+            # author's behalf, so the reader returns text that looks fine. It
+            # is not -- the file written from it is markdown, and the command
+            # whose tag it ate never registers. Refuse both.
+            if self._looks_like_tag(lines[i].strip()):
+                return None
             body.append(lines[i])
             i += 1
         return None
