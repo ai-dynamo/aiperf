@@ -229,7 +229,14 @@ class TestScheduleLater:
     async def test_running_count_for_group_counts_started_unfinished_tasks(
         self, scheduler: LoopScheduler
     ):
-        """A fired grouped timer is running until its coroutine returns."""
+        """A fired grouped timer still counts for its group until it returns.
+
+        Firing moves a timer out of ``pending_count_for_group``, but its
+        coroutine may still be waiting on a prefill slot or the credit send.
+        The idle cap reads this count to tell that window apart from a truly
+        idle tree, so it must cover the gap without counting ungrouped work or
+        other groups.
+        """
         started = asyncio.Event()
         release = asyncio.Event()
 
@@ -258,7 +265,13 @@ class TestScheduleLater:
     async def test_running_count_for_group_excludes_task_in_group_observer(
         self, scheduler: LoopScheduler
     ):
-        """The group observer runs after the finished task stops counting."""
+        """The finished task is no longer counted when the group observer runs.
+
+        ``ReplayBarrierCoordinator._on_root_timer_done`` re-enforces the idle
+        cap from this observer and defers while the root has running tasks.
+        If the task that just returned still counted itself, the cap would
+        always defer and never resume after a timer that issued nothing.
+        """
         seen: list[int] = []
         scheduler.set_group_task_observer(
             lambda group: seen.append(scheduler.running_count_for_group(group))
@@ -274,6 +287,12 @@ class TestScheduleLater:
     async def test_cancel_all_running_clears_group_running_counts(
         self, scheduler: LoopScheduler
     ):
+        """Cancelled grouped tasks must not leave their group counted.
+
+        A stale count would make the idle cap treat the root as busy and
+        defer indefinitely.
+        """
+
         async def hold():
             await asyncio.Event().wait()
 
