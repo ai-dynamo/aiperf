@@ -19,7 +19,7 @@ A mock server for integration testing and performance benchmarking of LLM applic
 - [**Error Injection**](#error-injection): Reproducible fault testing with configurable error rates
 - [**Deterministic Responses**](#token-generation): Hash-based generation for identical outputs
 - [**Fast Mode**](#quick-start): Zero-latency mode (`--fast`) for integration testing
-- [**Corpus**](#corpus): Pre-tokenized corpus loaded from aiperf's shakespeare.txt for deterministic output
+- [**Corpus**](#tokenizer-options): Pre-tokenized corpus loaded from aiperf's shakespeare.txt for deterministic output
 - [**Request Recording**](#request-recording): Per-request ISL + requested OSL capture with JSONL output and a shutdown summary
 
 ### Supported Endpoints
