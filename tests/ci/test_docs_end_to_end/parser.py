@@ -104,10 +104,19 @@ class MarkdownParser:
             # only on opening tags; closing tags are filtered out by the
             # categorizer anyway.
             if line.startswith("<!--") and line.endswith("-->"):
-                tag_match = re.match(r"<!--\s*(\S+)((?:\s+\w+=\S+)*)\s*-->", line)
+                # The attribute region is captured loosely and validated
+                # afterwards, never matched strictly. Requiring it to be
+                # well-formed to match at all meant a tag the author got
+                # slightly wrong -- ``timeout=`` with no value, ``weight =
+                # 300`` with spaces, a hyphen in the name -- failed the regex
+                # and was read as ordinary prose, so the command left the
+                # suite with no error recorded and the run stayed green. That
+                # is the failure the attribute checking below exists to
+                # prevent, and it cannot run on a tag that was never matched.
+                tag_match = re.match(r"<!--\s*(\S+)(.*?)-->", line)
                 if tag_match:
                     tag_name = tag_match.group(1).strip()
-                    attrs = dict(re.findall(r"(\w+)=(\S+)", tag_match.group(2) or ""))
+                    attrs, malformed = self._parse_attrs(tag_match.group(2))
                     weight_str = attrs.get("weight")
 
                     # setup-file- must be checked before setup-: it is a
@@ -115,7 +124,7 @@ class MarkdownParser:
                     # introduces is yaml/json/jsonl rather than bash.
                     if self._is_file_tag(tag_name):
                         if self._reject_unknown_attrs(
-                            tag_name, attrs, FILE_TAG_ATTRS, file_path, i + 1
+                            tag_name, attrs, malformed, FILE_TAG_ATTRS, file_path, i + 1
                         ):
                             i += 1
                             continue
@@ -155,7 +164,7 @@ class MarkdownParser:
                             else LIFECYCLE_TAG_ATTRS
                         )
                         if self._reject_unknown_attrs(
-                            tag_name, attrs, allowed, file_path, i + 1
+                            tag_name, attrs, malformed, allowed, file_path, i + 1
                         ):
                             i += 1
                             continue
@@ -239,10 +248,30 @@ class MarkdownParser:
             return None
         return fence
 
+    @staticmethod
+    def _parse_attrs(text: str | None) -> tuple[dict[str, str], list[str]]:
+        """Split a tag's attribute region into readable pairs and junk.
+
+        Returned rather than raised so the caller can decide: the same text
+        after a tag name the harness does not own is an ordinary markdown
+        comment, and policing those would reject every ``<!-- prettier-ignore
+        -->`` in the docs.
+        """
+        attrs: dict[str, str] = {}
+        malformed: list[str] = []
+        for token in (text or "").split():
+            pair = re.fullmatch(r"(\w+)=(\S+)", token)
+            if pair is None:
+                malformed.append(token)
+            else:
+                attrs[pair.group(1)] = pair.group(2)
+        return attrs, malformed
+
     def _reject_unknown_attrs(
         self,
         tag_name: str,
         attrs: dict[str, str],
+        malformed: list[str],
         allowed: frozenset[str],
         file_path: str,
         line: int,
@@ -261,6 +290,18 @@ class MarkdownParser:
         correctly spelled ``timeout=`` is just as misleading: nothing reads it
         off a lifecycle command.
         """
+        if malformed:
+            logger.error(
+                f"Ignoring command with malformed attribute(s) {malformed} in "
+                f"tag {tag_name} ({file_path}:{line}); expected name=value "
+                f"with no spaces"
+            )
+            self._record_parse_error(
+                tag_name,
+                f"dropped the block at {file_path}:{line} over malformed tag "
+                f"attribute(s) {malformed}",
+            )
+            return True
         unknown = sorted(set(attrs) - allowed)
         if not unknown:
             return False

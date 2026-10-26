@@ -305,16 +305,11 @@ COPY --from=python-licenses /opt/licenses/ /
 # Test stage: env-builder installs only runtime deps now, so reinstall aiperf
 # with the [test] extra (pytest, hypothesis, etc.) from the already-built wheel,
 # and add curl for server health checks.
-#
-# otel and mlflow ride along so that docs/tutorials/otel-mlflow.md can be
-# tagged without a second image change: --otel-url / --mlflow-tracking-uri
-# need those client libraries present. They are user-facing export paths, so
-# a silent break there is what tagging that guide is meant to catch.
 FROM env-builder AS test
 
 COPY --from=wheel-builder /dist /tmp/dist
 RUN WHEEL=$(ls /tmp/dist/aiperf-*.whl) \
-    && uv pip install "aiperf[test,otel,mlflow] @ file://${WHEEL}" \
+    && uv pip install "aiperf[test] @ file://${WHEEL}" \
     && rm -rf /tmp/dist
 
 RUN apt-get update -y && \

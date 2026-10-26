@@ -192,3 +192,68 @@ def test_a_lifecycle_tag_without_attributes_still_parses(tmp_path) -> None:
     assert servers["demo"].setup_command is not None
     assert servers["demo"].health_check_command is not None
     assert servers["demo"].parse_errors == []
+
+
+@pytest.mark.parametrize(
+    "attr",
+    [
+        param("timeout=", id="empty-value"),
+        param("weight = 300", id="spaces-around-equals"),
+        param("my-attr=1", id="hyphen-in-name"),
+        param("timeout=1 2", id="space-in-value"),
+        param("stray", id="bare-word"),
+    ],
+)  # fmt: skip
+def test_a_malformed_attribute_is_rejected_not_ignored(tmp_path, attr) -> None:
+    """A tag the author got slightly wrong must not read as ordinary prose.
+
+    The attribute region used to have to be well-formed for the tag to match
+    at all, so these shapes failed the regex and the block was never
+    recognised as a harness tag -- the command left the suite with nothing
+    recorded and the run stayed green. The rejection below cannot run on a
+    tag that was never matched, which is why the region is now captured
+    loosely and validated afterwards.
+    """
+    doc = f"""\
+<!-- aiperf-run-demo-endpoint-server {attr} -->
+```bash
+aiperf profile --model dropped
+```
+<!-- /aiperf-run-demo-endpoint-server -->
+"""
+    servers = _parse(tmp_path, GOOD, doc)
+
+    commands = servers["demo"].aiperf_commands
+    assert [c.command.strip() for c in commands] == ["aiperf profile --model m"]
+    assert len(servers["demo"].parse_errors) == 1
+    assert "malformed" in servers["demo"].parse_errors[0]
+
+
+def test_a_malformed_attribute_on_a_file_tag_is_rejected(tmp_path) -> None:
+    """An empty `path=` is the same typo as a missing one, so same answer."""
+    doc = """\
+<!-- setup-file-demo-endpoint-server path= -->
+```yaml
+a: 1
+```
+"""
+    servers = _parse(tmp_path, GOOD, doc)
+
+    assert servers["demo"].files == []
+    assert len(servers["demo"].parse_errors) == 1
+
+
+@pytest.mark.parametrize(
+    "comment",
+    [
+        param("<!-- prettier-ignore -->", id="bare-directive"),
+        param("<!-- some text with spaces -->", id="prose"),
+        param("<!-- TOC depth=2 -->", id="other-tool-attribute"),
+    ],
+)  # fmt: skip
+def test_a_non_harness_comment_is_never_policed(tmp_path, comment) -> None:
+    """Loosening the match must not turn every markdown comment into an error."""
+    servers = _parse(tmp_path, GOOD, f"{comment}\n")
+
+    assert servers["demo"].parse_errors == []
+    assert len(servers["demo"].aiperf_commands) == 1

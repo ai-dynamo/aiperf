@@ -24,7 +24,10 @@ from aiperf.common.constants import IS_WINDOWS
 HARNESS = Path(__file__).resolve().parents[3] / "tests/ci/test_docs_end_to_end"
 sys.path.insert(0, str(HARNESS))
 
-from test_runner import build_fixture_write_command  # noqa: E402
+from test_runner import (  # noqa: E402
+    build_fixture_write_command,
+    is_unsafe_fixture_path,
+)
 
 pytestmark = pytest.mark.skipif(
     IS_WINDOWS, reason="docs-e2e fixtures are written inside a Linux container"
@@ -71,3 +74,20 @@ def test_an_ordinary_nested_path_still_works(tmp_path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert (tmp_path / "configs/bench.yaml").read_text() == "model: m\n"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        param(".", id="current-directory"),
+        param("..", id="parent-directory"),
+        param("sub/", id="trailing-slash-is-still-a-name"),
+    ],
+)  # fmt: skip
+def test_a_directory_shaped_path_is_rejected(path) -> None:
+    """``path=.`` would become ``cat > .`` and fail about the wrong thing.
+
+    ``sub/`` is included as the control: it names a file, so it stays safe.
+    """
+    expected = path in (".", "..")
+    assert is_unsafe_fixture_path(path) is expected

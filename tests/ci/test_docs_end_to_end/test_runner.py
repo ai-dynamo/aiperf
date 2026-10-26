@@ -199,7 +199,11 @@ def is_unsafe_fixture_path(path: str) -> bool:
     actually depends on it.
     """
     target = PurePosixPath(path)
-    return target.is_absolute() or ".." in target.parts
+    # An empty ``name`` means the path addresses a directory rather than a
+    # file -- ``path=.`` is the plausible one -- and the write would become
+    # ``cat > .``, failing mid-run with an error about a directory rather
+    # than about the tag that is actually wrong.
+    return target.is_absolute() or ".." in target.parts or not target.name
 
 
 def build_fixture_write_command(target: PurePosixPath) -> str:

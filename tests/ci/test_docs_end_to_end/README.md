@@ -84,6 +84,14 @@ attribute that does nothing misleads exactly as much as a typo. A `setup-file`
 tag with no `path=`, or one whose fenced block is missing or never closed,
 fails the run the same way.
 
+An attribute must be `name=value` with no spaces around the `=` and no spaces
+inside the value. A shape the harness cannot read -- `timeout=` with nothing
+after it, `weight = 300`, a hyphen in the name -- is reported and drops the
+block, rather than making the whole tag unreadable. Getting that backwards is
+the worst available outcome: a tag that fails to parse as a tag is
+indistinguishable from prose, so the command leaves the suite with nothing
+recorded and the run stays green.
+
 ### Fixtures belong with their consumer
 
 A guide that builds its own input -- a heredoc writing a `.jsonl` trace, say --
