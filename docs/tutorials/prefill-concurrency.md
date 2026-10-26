@@ -83,9 +83,10 @@ This means:
 
 Benchmark with 16K token prompts, limiting how many can prefill simultaneously:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=150 -->
 ```bash
 aiperf profile \
-    --model Qwen/Qwen2.5-7B-Instruct \
+    --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
     --streaming \
     --url localhost:8000 \
@@ -95,6 +96,7 @@ aiperf profile \
     --output-tokens-mean 500 \
     --request-count 100
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 **Sample Output (Successful Run):**
 ```

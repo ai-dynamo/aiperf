@@ -31,12 +31,18 @@ In multi-run mode, the dashboard UI is rejected at startup; `simple` and `none` 
 ### Supported UI Options
 
 **Simple UI**
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=180 -->
 ```bash
 aiperf profile \
+  --model Qwen/Qwen3-0.6B \
+  --url localhost:8000 \
+  --endpoint-type chat \
+  --concurrency 4 \
+  --request-count 10 \
   --num-profile-runs 5 \
-  --ui simple \
-  ...
+  --ui simple
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 Shows progress bars for each run - works well with multi-run mode.
 
 **No UI**
