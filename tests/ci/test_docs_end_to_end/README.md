@@ -50,6 +50,10 @@ default chat server, and `docs/tutorials/{vision,audio,mmvu,embeddings}.md` for
 the others -- and a second setup block for a group that already has one is a
 conflict, not an addition. Copy the shape from `docs/tutorial.md`.
 
+Discovering no servers at all fails the run too. Nothing legitimately parses
+to zero -- the tags live in this repository -- so an empty result means the
+suite would boot a GPU runner, build the image and execute nothing.
+
 A duplicate `setup` or `health-check` tag skips that whole server and fails
 the run. It is not recoverable the way a dropped command is: two guides
 disagree about how to boot the group, and running either would benchmark
