@@ -15,6 +15,7 @@ from constants import (
     FILE_TAG_ATTRS,
     HEALTH_CHECK_TAG_PREFIX,
     HEALTH_CHECK_TAG_PREFIX_LEN,
+    LIFECYCLE_TAG_ATTRS,
     RUN_TAG_ATTRS,
     SETUP_FILE_TAG_PREFIX,
     SETUP_FILE_TAG_PREFIX_LEN,
@@ -148,8 +149,13 @@ class MarkdownParser:
 
                     # Check for setup or aiperf-run tags ending with endpoint-server
                     if self._is_target_tag(tag_name):
+                        allowed = (
+                            RUN_TAG_ATTRS
+                            if tag_name.startswith(AIPERF_RUN_TAG_PREFIX)
+                            else LIFECYCLE_TAG_ATTRS
+                        )
                         if self._reject_unknown_attrs(
-                            tag_name, attrs, RUN_TAG_ATTRS, file_path, i + 1
+                            tag_name, attrs, allowed, file_path, i + 1
                         ):
                             i += 1
                             continue
@@ -246,17 +252,26 @@ class MarkdownParser:
         An unreadable attribute is almost always a misspelling of one that is
         read, and ignoring it is the quiet kind of wrong: a misspelled
         ``timeout=`` looks like it raised the deadline, the command keeps the
-        1200s default, and
-        the SIGKILL twenty minutes later reads as the command being slow rather
-        than the attribute never having applied. Treated like an invalid value
-        -- drop the one command, record it, fail the run.
+        1200s default, and the SIGKILL twenty minutes later reads as the
+        command being slow rather than the attribute never having applied.
+        Treated like an invalid value -- drop the one command, record it, fail
+        the run.
+
+        ``allowed`` is empty for setup and health-check tags, where a
+        correctly spelled ``timeout=`` is just as misleading: nothing reads it
+        off a lifecycle command.
         """
         unknown = sorted(set(attrs) - allowed)
         if not unknown:
             return False
+        expected = (
+            f"expected one of {sorted(allowed)}"
+            if allowed
+            else "this tag kind reads no attributes"
+        )
         logger.error(
             f"Ignoring command with unknown attribute(s) {unknown} in tag "
-            f"{tag_name} ({file_path}:{line}); expected one of {sorted(allowed)}"
+            f"{tag_name} ({file_path}:{line}); {expected}"
         )
         self._record_parse_error(
             tag_name,

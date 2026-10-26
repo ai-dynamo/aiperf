@@ -23,6 +23,12 @@ TAG_SUFFIX_LEN = len(TAG_SUFFIX)
 # silently ignoring it leaves the guide author believing it applied.
 RUN_TAG_ATTRS = frozenset({"weight", "timeout"})
 FILE_TAG_ATTRS = frozenset({"path"})
+# A server boots once per run, under the setup monitor and the guide's own
+# health-check deadline; neither `weight=` nor `timeout=` is read off those
+# commands by anything. Accepting them would leave a guide author believing
+# the boot deadline moved, which is the failure the rejection above exists to
+# prevent -- here with a correctly spelled attribute rather than a typo.
+LIFECYCLE_TAG_ATTRS: frozenset[str] = frozenset()
 
 # AIPerf execution
 AIPERF_UI_TYPE = "simple"

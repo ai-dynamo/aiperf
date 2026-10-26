@@ -150,3 +150,45 @@ def test_a_comment_that_is_not_a_harness_tag_is_left_alone(tmp_path) -> None:
     servers = _parse(tmp_path, GOOD, "<!-- prettier-ignore foo=bar -->\n")
 
     assert servers["demo"].parse_errors == []
+
+
+@pytest.mark.parametrize(
+    "kind,attr",
+    [
+        param("setup", "timeout=7200", id="setup-timeout"),
+        param("setup", "weight=500", id="setup-weight"),
+        param("health-check", "timeout=7200", id="health-check-timeout"),
+        param("health-check", "weight=500", id="health-check-weight"),
+    ],
+)  # fmt: skip
+def test_a_run_attribute_on_a_lifecycle_tag_is_rejected(tmp_path, kind, attr) -> None:
+    """Nothing reads `weight=` or `timeout=` off a setup or health-check command.
+
+    They are read only from ``aiperf_commands`` -- by ``shard_commands`` and
+    ``resolve_command_timeout``. Accepted here they would set a field no code
+    consults, leaving the guide looking like its boot deadline moved. That is
+    the same failure as a misspelled attribute, so it gets the same answer.
+    """
+    doc = f"""\
+<!-- {kind}-solo-endpoint-server {attr} -->
+```bash
+echo hi
+```
+<!-- /{kind}-solo-endpoint-server -->
+"""
+    servers = _parse(tmp_path, doc)
+
+    server = servers["solo"]
+    assert server.setup_command is None
+    assert server.health_check_command is None
+    assert len(server.parse_errors) == 1
+    assert attr.split("=")[0] in server.parse_errors[0]
+
+
+def test_a_lifecycle_tag_without_attributes_still_parses(tmp_path) -> None:
+    """The rejection must not cost the overwhelmingly common bare tag."""
+    servers = _parse(tmp_path, GOOD)
+
+    assert servers["demo"].setup_command is not None
+    assert servers["demo"].health_check_command is not None
+    assert servers["demo"].parse_errors == []

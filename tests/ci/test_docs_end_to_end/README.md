@@ -73,8 +73,12 @@ guide -- but the drop is recorded and fails the run, so a typo cannot quietly
 shrink what CI covers. The same applies to an attribute name the harness does
 not read: a misspelled `timeout=` is rejected rather than ignored, because
 ignoring it would leave the guide looking like it raised the deadline when it
-did not. A `setup-file` tag with no `path=`, or one whose fenced block is
-missing or never closed, fails the run the same way.
+did not. The **Valid on** column is enforced, not advisory -- `weight=` or
+`timeout=` on a `setup` or `health-check` tag is rejected for the same reason,
+since nothing reads either off a lifecycle command and a correctly spelled
+attribute that does nothing misleads exactly as much as a typo. A `setup-file`
+tag with no `path=`, or one whose fenced block is missing or never closed,
+fails the run the same way.
 
 ### Fixtures belong with their consumer
 
