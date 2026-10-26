@@ -449,7 +449,7 @@ class LoopScheduler:
     def running_count_for_group(self, group_id: str) -> int:
         """Count ``group_id`` coroutines that have started and not finished.
 
-        The complement of ``pending_count_for_group``: a grouped timer moves
+        The counterpart of ``pending_count_for_group``: a grouped timer moves
         from that count to this one when it fires. A task is removed in the
         scheduler's first done callback, so by the time a group task observer
         runs for it, the finished task is no longer counted.

@@ -734,15 +734,6 @@ async def test_timer_issuing_nothing_before_cap_expires_keeps_replay_spacing() -
     scheduler.cancel_all()
 
 
-def _started_unissued_metadata() -> DatasetMetadata:
-    """``_metadata()`` plus an independent request ``e`` on the same tree."""
-    metadata = _metadata()
-    metadata.conversations.append(
-        ConversationMetadata(conversation_id="e", turns=[TurnMetadata(timestamp_ms=0)])
-    )
-    return metadata
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("second_timer", ["barrier_blocked", "issues_nothing"])
 async def test_idle_cap_waits_for_started_timer_that_has_not_issued(
@@ -760,7 +751,7 @@ async def test_idle_cap_waits_for_started_timer_that_has_not_issued(
     loop = asyncio.get_running_loop()
     scheduler = LoopScheduler()
     coordinator = ReplayBarrierCoordinator(
-        _started_unissued_metadata(),
+        _metadata(),
         scheduler=scheduler,
         root_idle_gap_cap_seconds=0.02,
     )
