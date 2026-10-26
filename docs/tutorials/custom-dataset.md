@@ -239,6 +239,11 @@ serialization and chat request formatting. Text and media on a message are
 still rendered normally. Request-level tool definitions can be supplied with
 the existing per-turn `extra` field, for example `"extra": {"tools": [...]}`.
 
+When recording requests with the mock server, tokenizers without a usable
+chat template include tool fields in a deterministic JSON fallback alongside
+message content. Those input-length estimates are not model-specific tool
+template measurements.
+
 These fields also work on `single_turn` records. Session-grouped
 `single_turn` records remain self-contained requests; use `multi_turn` to
 accumulate authored conversation history.

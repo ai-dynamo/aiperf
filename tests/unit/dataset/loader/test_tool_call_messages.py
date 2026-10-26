@@ -23,6 +23,7 @@ from tests.unit.endpoints.conftest import create_model_endpoint, create_request_
 
 @pytest.fixture
 def tool_calls() -> list[dict[str, Any]]:
+    """Provide parallel calls with argument whitespace that replay must preserve."""
     return [
         {
             "id": f"call_{name}",
@@ -42,6 +43,7 @@ def test_tool_messages_survive_dataset_and_wire_round_trip(
     tmp_path: Path,
     default_cfg: Any,
 ) -> None:
+    """Both loaders preserve authored tool fields through serialization and chat JSON."""
     turns = [
         {"role": "user", "text": "Read main.py"},
         {"role": "assistant", "text": None, "tool_calls": tool_calls},
@@ -86,6 +88,7 @@ def test_tool_messages_survive_dataset_and_wire_round_trip(
 def test_tool_calls_keep_multimodal_content(
     tool_calls: list[dict[str, Any]], default_cfg: Any
 ) -> None:
+    """Adding tool fields retains the existing text and image content rendering."""
     default_cfg.endpoint_type = EndpointType.CHAT
     data = MultiTurn.model_validate(
         {
@@ -124,11 +127,13 @@ def test_tool_calls_keep_multimodal_content(
 
 @pytest.mark.parametrize("fields", [{}, {"role": "assistant", "tool_calls": []}])
 def test_empty_turn_still_rejected(fields: dict[str, Any]) -> None:
+    """Tool support does not make empty turns valid inputs."""
     with pytest.raises(ValidationError, match="At least one modality"):
         SingleTurn.model_validate(fields)
 
 
 def test_plain_chat_message_has_no_tool_fields() -> None:
+    """Ordinary chat messages keep their original wire shape."""
     endpoint = ChatEndpoint(model_endpoint=create_model_endpoint(EndpointType.CHAT))
     assert endpoint.build_messages([Turn(texts=[Text(contents=["Hello"])])]) == [
         {"role": "user", "content": "Hello"}
@@ -145,6 +150,7 @@ def test_plain_chat_message_has_no_tool_fields() -> None:
     ],
 )  # fmt: skip
 def test_invalid_tool_message_rejected(fields: dict[str, Any], match: str) -> None:
+    """Reject role mismatches, empty call IDs, and absent tool-result content."""
     with pytest.raises(ValidationError, match=match):
         SingleTurn.model_validate(fields)
 
@@ -152,6 +158,7 @@ def test_invalid_tool_message_rejected(fields: dict[str, Any], match: str) -> No
 def test_chat_tool_metadata_rejected_by_responses_endpoint(
     tool_calls: list[dict[str, Any]],
 ) -> None:
+    """The Responses formatter rejects chat-only tool fields instead of losing them."""
     endpoint = ResponsesEndpoint(
         model_endpoint=create_model_endpoint(EndpointType.RESPONSES)
     )
@@ -180,6 +187,7 @@ def test_loaders_reject_tool_metadata_on_non_chat_endpoints(
     endpoint_type: str,
     tool_calls: list[dict[str, Any]],
 ) -> None:
+    """Reject unsupported endpoints before they can silently discard tool metadata."""
     cfg = CLIConfig(model_names=["test-model"], endpoint_type=endpoint_type)
     loader = loader_class(filename="unused.jsonl", run=make_run_from_cli(cfg))
     turn = SingleTurn(role="assistant", text="Inspect main.py", tool_calls=tool_calls)

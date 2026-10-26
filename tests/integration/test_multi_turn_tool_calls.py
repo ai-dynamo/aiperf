@@ -19,6 +19,7 @@ async def test_multi_turn_tool_messages_reach_chat_requests(
     tmp_path: Path,
     streaming: bool,
 ) -> None:
+    """The real CLI preserves tool fields and live responses in both streaming modes."""
     tool_calls = [
         {
             "id": "call_read",

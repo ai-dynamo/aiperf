@@ -15,6 +15,7 @@ from aiperf_mock_server.models import (
 
 @pytest.mark.parametrize("content", [None, ""])
 def test_mock_message_accepts_assistant_tool_call(content: str | None) -> None:
+    """Accept nullable or empty assistant content when tool calls are supplied."""
     calls = [
         {
             "id": "call_read",
@@ -29,6 +30,7 @@ def test_mock_message_accepts_assistant_tool_call(content: str | None) -> None:
 
 @pytest.mark.parametrize("role", ["user", "assistant", "tool"])
 def test_mock_message_rejects_missing_content_without_tool_calls(role: str) -> None:
+    """Nullable content remains invalid for messages without assistant tool calls."""
     with pytest.raises(ValueError, match="Message content is required"):
         Message(role=role, content=None)
 

@@ -808,6 +808,7 @@ def _build_embedding_response_data(
 
 
 def _extract_chat_embedding_inputs(req: ChatCompletionRequest) -> list[str]:
+    """Extract embedding text while accepting nullable assistant tool-call content."""
     inputs: list[str] = []
     for message in req.messages:
         content = message.content
