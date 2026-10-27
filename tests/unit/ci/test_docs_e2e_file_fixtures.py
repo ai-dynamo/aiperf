@@ -282,3 +282,127 @@ def test_unsafe_fixture_paths_are_recognised(path: str, unsafe: bool) -> None:
     built an image and booted a server before anything objected.
     """
     assert is_unsafe_fixture_path(path) is unsafe
+
+
+def test_a_fixture_without_a_path_is_recorded_not_just_logged(
+    tmp_path: Path,
+) -> None:
+    """A dropped fixture must fail the run, like a dropped command already does.
+
+    Logging alone leaves the server otherwise complete, so it validates, runs
+    its remaining commands and reports a pass -- while the file those commands
+    read was never written. The guide then benchmarks whatever the previous
+    server left behind.
+    """
+    parser = _parse(
+        tmp_path,
+        f"""
+<!-- setup-file-{SERVER}-endpoint-server -->
+```yaml
+a: 1
+```
+""",
+    )
+    errors = parser.servers[SERVER].parse_errors
+    assert len(errors) == 1
+    assert "path=" in errors[0]
+
+
+def test_a_fixture_fence_closed_by_the_next_block_is_recorded(
+    tmp_path: Path,
+) -> None:
+    """The common shape of a missing fence, and the one that looks healthy.
+
+    Running off the end of the file is the obvious case. In a real guide there
+    is always another block below, so its closing fence ends the fixture on
+    the author's behalf and the reader returns text that parses fine. It is
+    not fine: the file written from it is markdown, and the run tag it
+    swallowed never registers as a command. Both halves are invisible unless
+    this is recorded.
+    """
+    parser = _parse(
+        tmp_path,
+        f"""
+<!-- setup-file-{SERVER}-endpoint-server path=config.yaml -->
+```yaml
+a: 1
+<!-- aiperf-run-{SERVER}-endpoint-server -->
+```bash
+aiperf profile --model m
+```
+<!-- /aiperf-run-{SERVER}-endpoint-server -->
+""",
+    )
+    server = parser.servers[SERVER]
+    assert server.files == []
+    assert len(server.parse_errors) == 1
+    assert "unterminated" in server.parse_errors[0]
+
+
+def test_a_four_backtick_fixture_may_quote_a_three_backtick_block(
+    tmp_path: Path,
+) -> None:
+    """Fence matching goes through the same tracker the tag scanner uses."""
+    parser = _parse(
+        tmp_path,
+        f"""
+<!-- setup-file-{SERVER}-endpoint-server path=snippet.md -->
+````markdown
+before
+```
+after
+````
+""",
+    )
+    server = parser.servers[SERVER]
+    assert server.parse_errors == []
+    assert server.files[0].content == "before\n```\nafter\n"
+
+
+def test_a_tilde_fenced_fixture_is_read(tmp_path: Path) -> None:
+    parser = _parse(
+        tmp_path,
+        f"""
+<!-- setup-file-{SERVER}-endpoint-server path=config.yaml -->
+~~~yaml
+a: 1
+~~~
+""",
+    )
+    assert parser.servers[SERVER].parse_errors == []
+    assert parser.servers[SERVER].files[0].content == "a: 1\n"
+
+
+def test_an_unterminated_fixture_fence_is_recorded(tmp_path: Path) -> None:
+    """An unclosed fixture block also swallows whatever follows it.
+
+    The fence tracker keeps reading, so a run tag after the fixture lands
+    inside it: the fixture content is wrong *and* the command disappears.
+    Nothing about that is recoverable, so the run has to fail rather than
+    quietly cover less than the guide claims.
+    """
+    parser = _parse(
+        tmp_path,
+        f"""
+<!-- setup-file-{SERVER}-endpoint-server path=config.yaml -->
+```yaml
+a: 1
+""",
+    )
+    errors = parser.servers[SERVER].parse_errors
+    assert len(errors) == 1
+    assert "unterminated" in errors[0]
+
+
+def test_a_well_formed_fixture_records_no_error(tmp_path: Path) -> None:
+    parser = _parse(
+        tmp_path,
+        f"""
+<!-- setup-file-{SERVER}-endpoint-server path=config.yaml -->
+```yaml
+a: 1
+```
+""",
+    )
+    assert parser.servers[SERVER].parse_errors == []
+    assert len(parser.servers[SERVER].files) == 1

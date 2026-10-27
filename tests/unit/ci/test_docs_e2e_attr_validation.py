@@ -74,6 +74,24 @@ def test_malformed_attribute_drops_only_its_own_command(tmp_path, attr) -> None:
     assert [c.command.strip() for c in commands] == ["aiperf profile --model m"]
 
 
+def test_the_dropped_command_is_recorded_on_its_server(tmp_path) -> None:
+    """Dropping the command must not also drop the fact that it was dropped.
+
+    The sharper half of the bug: the server still has one valid run command,
+    so it validates, executes that one, and reports a pass while the rejected
+    command never ran and nothing in the result says so.
+    """
+    servers = _parse(tmp_path, GOOD, BAD_TEMPLATE.format(attr="timeout=abc"))
+
+    errors = servers["demo"].parse_errors
+    assert len(errors) == 1, "the rejected command left no trace in the result"
+    assert "doc1.md:1" in errors[0]
+
+
+def test_a_clean_parse_records_no_errors(tmp_path) -> None:
+    assert _parse(tmp_path, GOOD)["demo"].parse_errors == []
+
+
 def test_valid_attributes_are_applied(tmp_path) -> None:
     servers = _parse(
         tmp_path,
@@ -85,3 +103,157 @@ def test_valid_attributes_are_applied(tmp_path) -> None:
     command = servers["demo"].aiperf_commands[0]
     assert command.weight == 3
     assert command.timeout == 1800
+
+
+@pytest.mark.parametrize(
+    "attr",
+    [
+        param("timout=3600", id="misspelled-timeout"),  # codespell:ignore
+        param("weigth=250", id="misspelled-weight"),  # codespell:ignore
+        param("Timeout=3600", id="wrong-case"),
+        param("path=config.yaml", id="file-attribute-on-a-run-tag"),
+    ],
+)  # fmt: skip
+def test_an_unknown_attribute_drops_its_command(tmp_path, attr) -> None:
+    """An attribute the harness does not read is almost always a typo.
+
+    Ignoring it is the quiet kind of wrong: a misspelled `timeout=` reads as a
+    raised deadline, the command keeps the 1200s default, and the SIGKILL twenty
+    minutes later looks like a slow command rather than an attribute that
+    never applied. Treated like an invalid value -- drop the command, record
+    it, fail the run.
+    """
+    servers = _parse(tmp_path, GOOD, BAD_TEMPLATE.format(attr=attr))
+
+    commands = servers["demo"].aiperf_commands
+    assert [c.command.strip() for c in commands] == ["aiperf profile --model m"]
+    assert len(servers["demo"].parse_errors) == 1
+    assert attr.split("=")[0] in servers["demo"].parse_errors[0]
+
+
+def test_an_unknown_attribute_on_a_file_tag_drops_the_fixture(tmp_path) -> None:
+    doc = """\
+<!-- setup-file-demo-endpoint-server path=config.yaml weight=3 -->
+```yaml
+a: 1
+```
+"""
+    servers = _parse(tmp_path, GOOD, doc)
+
+    assert servers["demo"].files == []
+    assert len(servers["demo"].parse_errors) == 1
+    assert "weight" in servers["demo"].parse_errors[0]
+
+
+def test_a_comment_that_is_not_a_harness_tag_is_left_alone(tmp_path) -> None:
+    """Only harness tags are policed; ordinary markdown comments are not."""
+    servers = _parse(tmp_path, GOOD, "<!-- prettier-ignore foo=bar -->\n")
+
+    assert servers["demo"].parse_errors == []
+
+
+@pytest.mark.parametrize(
+    "kind,attr",
+    [
+        param("setup", "timeout=7200", id="setup-timeout"),
+        param("setup", "weight=500", id="setup-weight"),
+        param("health-check", "timeout=7200", id="health-check-timeout"),
+        param("health-check", "weight=500", id="health-check-weight"),
+    ],
+)  # fmt: skip
+def test_a_run_attribute_on_a_lifecycle_tag_is_rejected(tmp_path, kind, attr) -> None:
+    """Nothing reads `weight=` or `timeout=` off a setup or health-check command.
+
+    They are read only from ``aiperf_commands`` -- by ``shard_commands`` and
+    ``resolve_command_timeout``. Accepted here they would set a field no code
+    consults, leaving the guide looking like its boot deadline moved. That is
+    the same failure as a misspelled attribute, so it gets the same answer.
+    """
+    doc = f"""\
+<!-- {kind}-solo-endpoint-server {attr} -->
+```bash
+echo hi
+```
+<!-- /{kind}-solo-endpoint-server -->
+"""
+    servers = _parse(tmp_path, doc)
+
+    server = servers["solo"]
+    assert server.setup_command is None
+    assert server.health_check_command is None
+    assert len(server.parse_errors) == 1
+    assert attr.split("=")[0] in server.parse_errors[0]
+
+
+def test_a_lifecycle_tag_without_attributes_still_parses(tmp_path) -> None:
+    """The rejection must not cost the overwhelmingly common bare tag."""
+    servers = _parse(tmp_path, GOOD)
+
+    assert servers["demo"].setup_command is not None
+    assert servers["demo"].health_check_command is not None
+    assert servers["demo"].parse_errors == []
+
+
+@pytest.mark.parametrize(
+    "attr",
+    [
+        param("timeout=", id="empty-value"),
+        param("weight = 300", id="spaces-around-equals"),
+        param("my-attr=1", id="hyphen-in-name"),
+        param("timeout=1 2", id="space-in-value"),
+        param("stray", id="bare-word"),
+    ],
+)  # fmt: skip
+def test_a_malformed_attribute_is_rejected_not_ignored(tmp_path, attr) -> None:
+    """A tag the author got slightly wrong must not read as ordinary prose.
+
+    The attribute region used to have to be well-formed for the tag to match
+    at all, so these shapes failed the regex and the block was never
+    recognised as a harness tag -- the command left the suite with nothing
+    recorded and the run stayed green. The rejection below cannot run on a
+    tag that was never matched, which is why the region is now captured
+    loosely and validated afterwards.
+    """
+    doc = f"""\
+<!-- aiperf-run-demo-endpoint-server {attr} -->
+```bash
+aiperf profile --model dropped
+```
+<!-- /aiperf-run-demo-endpoint-server -->
+"""
+    servers = _parse(tmp_path, GOOD, doc)
+
+    commands = servers["demo"].aiperf_commands
+    assert [c.command.strip() for c in commands] == ["aiperf profile --model m"]
+    assert len(servers["demo"].parse_errors) == 1
+    assert "malformed" in servers["demo"].parse_errors[0]
+
+
+def test_a_malformed_attribute_on_a_file_tag_is_rejected(tmp_path) -> None:
+    """An empty `path=` is the same typo as a missing one, so same answer."""
+    doc = """\
+<!-- setup-file-demo-endpoint-server path= -->
+```yaml
+a: 1
+```
+"""
+    servers = _parse(tmp_path, GOOD, doc)
+
+    assert servers["demo"].files == []
+    assert len(servers["demo"].parse_errors) == 1
+
+
+@pytest.mark.parametrize(
+    "comment",
+    [
+        param("<!-- prettier-ignore -->", id="bare-directive"),
+        param("<!-- some text with spaces -->", id="prose"),
+        param("<!-- TOC depth=2 -->", id="other-tool-attribute"),
+    ],
+)  # fmt: skip
+def test_a_non_harness_comment_is_never_policed(tmp_path, comment) -> None:
+    """Loosening the match must not turn every markdown comment into an error."""
+    servers = _parse(tmp_path, GOOD, f"{comment}\n")
+
+    assert servers["demo"].parse_errors == []
+    assert len(servers["demo"].aiperf_commands) == 1

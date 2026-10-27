@@ -306,10 +306,12 @@ COPY --from=python-licenses /opt/licenses/ /
 # with the [test] extra (pytest, hypothesis, etc.) from the already-built wheel,
 # and add curl for server health checks.
 #
-# otel and mlflow ride along so that docs/tutorials/otel-mlflow.md can be
-# tagged without a second image change: --otel-url / --mlflow-tracking-uri
-# need those client libraries present. They are user-facing export paths, so
-# a silent break there is what tagging that guide is meant to catch.
+# otel, mlflow and wandb are here because this branch tags the guides that use
+# them: --otel-url, --mlflow-tracking-uri and the wandb exporter need those
+# client libraries present, and they are user-facing export paths, so a silent
+# break there is exactly what tagging those guides is meant to catch. They
+# cost ~40 packages on an image every shard builds, so they belong with the
+# tagged commands rather than ahead of them.
 FROM env-builder AS test
 
 COPY --from=wheel-builder /dist /tmp/dist
