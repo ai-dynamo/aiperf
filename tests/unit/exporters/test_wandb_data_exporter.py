@@ -308,6 +308,25 @@ class TestWandbDataExporter:
         assert scalars == {"metrics/request_throughput/avg": 42.5}  # None cells skipped
 
     @pytest.mark.asyncio
+    async def test_export_logs_no_scalars_for_incomplete_results(
+        self,
+        tmp_path: Path,
+        sample_results: ProfileResults,
+        fake_wandb: dict[str, Any],
+    ) -> None:
+        """Metrics of an incomplete result must not be compared with complete
+        runs, so only the table is logged.
+        """
+        results = sample_results.model_copy(
+            update={"is_complete": False, "incomplete_reason": "record-stall watchdog"}
+        )
+        exporter = _make_exporter(_make_cfg(tmp_path), results)
+        await asyncio.to_thread(exporter._export_sync)
+
+        [logged] = fake_wandb["logged"]
+        assert set(logged) == {"summary_metrics"}
+
+    @pytest.mark.asyncio
     async def test_export_includes_redacted_cli_command(
         self,
         tmp_path: Path,

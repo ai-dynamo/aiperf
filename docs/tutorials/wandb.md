@@ -106,7 +106,9 @@ Every filled cell of the table is also logged as a scalar named
 or `metrics/time_to_first_token/avg`. Table cells cannot be plotted, but
 these scalars appear in the run summary and the runs table, and bar
 charts, scatter plots and parallel coordinates can compare them across
-runs — including runs grouped by a config key.
+runs — including runs grouped by a config key. An incomplete result (the
+console's `INCOMPLETE RESULTS` banner) logs no scalars, since its metrics
+must not be compared with complete runs.
 
 ### Artifact bundle
 

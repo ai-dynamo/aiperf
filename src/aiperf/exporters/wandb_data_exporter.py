@@ -152,7 +152,10 @@ class WandbDataExporter(AIPerfLoggerMixin):
     def _build_metric_scalars(self) -> dict[str, float]:
         """The table's finite cells as ``metrics/<tag>/<stat>`` scalars, which
         wandb panels can plot and compare across runs, unlike table cells.
+        Incomplete results log none: their metrics must not be compared.
         """
+        if not self._results.is_complete:
+            return {}
         return {
             f"metrics/{record.tag}/{stat}": float(value)
             for record, _ in self._visible_metrics()
