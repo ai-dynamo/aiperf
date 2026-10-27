@@ -8,13 +8,14 @@ class name so a stale dashboard/log block is diagnosable.
 """
 
 import logging
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
-from aiperf.common.accumulator_protocols import SummaryContext
+from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import MetricResult
+from aiperf.metrics.types.inter_chunk_latency_metric import InterChunkLatencyMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.records.records_manager_processing import generate_realtime_metrics
 from tests.unit.post_processors.conftest import (
@@ -156,3 +157,57 @@ async def test_generate_realtime_metrics_can_scope_to_phase_index(
 
     latency = next(m for m in flat if m.tag == RequestLatencyMetric.tag)
     assert latency.avg == pytest.approx(300.0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase_index", [None, 2])
+async def test_generate_realtime_metrics_skips_timeslices_and_preserves_final_export(
+    _mock_registry_for_accumulator: Mock,
+    benchmark_run,
+    phase_index: int | None,
+) -> None:
+    benchmark_run.cfg.artifacts.slice_duration = 1.0
+    accumulator = create_accumulator_with_metrics(
+        benchmark_run, RequestLatencyMetric, InterChunkLatencyMetric
+    )
+    accumulator.set_network_rtt_ns(1_000_000.0)
+    for idx, phase in enumerate(
+        [CreditPhase.WARMUP, CreditPhase.PROFILING, CreditPhase.PROFILING]
+    ):
+        start_ns = (idx + 1) * 2_000_000_000
+        metadata = create_metric_metadata(
+            session_num=idx,
+            benchmark_phase=phase,
+            request_start_ns=start_ns,
+            request_end_ns=start_ns + 600_000_000,
+        ).model_copy(update={"phase_index": idx})
+        await accumulator.process_record(
+            create_metric_records_data(
+                metadata=metadata,
+                results=[
+                    {
+                        RequestLatencyMetric.tag: 600_000_000.0,
+                        InterChunkLatencyMetric.tag: [300_000_000.0, 100_000_000.0],
+                    }
+                ],
+            )
+        )
+
+    ctx = ExportContext(phase=CreditPhase.PROFILING, phase_index=phase_index)
+    before = await accumulator.export_results(ctx)
+    assert before.timeslices
+    assert "effective_concurrency" in before.results
+    assert "network_adjusted_request_latency" in before.results
+
+    # Failing at the expensive entry point proves it is skipped, not discarded.
+    with patch.object(
+        accumulator,
+        "_compute_timeslices",
+        side_effect=AssertionError("live timeslices"),
+    ) as timeslices:
+        live = await generate_realtime_metrics([accumulator], phase_index=phase_index)
+    timeslices.assert_not_called()
+    assert {metric.tag: metric for metric in live} == before.results
+
+    after = await accumulator.export_results(ctx)
+    assert after == before

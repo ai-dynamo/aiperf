@@ -668,8 +668,8 @@ class MetricsAccumulator(BaseMetricsProcessor):
     ) -> AccumulatorMetricsSummary:
         """Compute and return aggregated metric results.
 
-        If slice_duration is configured, also computes per-timeslice results
-        by partitioning the data into time windows. Always derives the
+        Timeslices are reserved for export_results(); realtime consumers only
+        use the overall results. Always derives the
         coordinated-omission-aware ``effective_latency`` and the
         ``credit_to_start_latency`` queue-wait metric from stored timestamps,
         plus a per-``turn_index`` TTFT trend that surfaces KV-cache effectiveness.
@@ -688,10 +688,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # (and reallocates on grow) them, with no lock between the two. The
         # final export path can safely use a thread because ingestion has
         # stopped by then; see export_results.
-        return self._summarize_for_export_context(export_ctx)
+        return self._summarize_for_export_context(export_ctx, include_timeslices=False)
 
     def _summarize_for_export_context(
-        self, ctx: ExportContext | None = None
+        self, ctx: ExportContext | None = None, *, include_timeslices: bool
     ) -> AccumulatorMetricsSummary:
         mask = self._mask_for_export_context(ctx)
 
@@ -726,7 +726,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 adjusted_arrays = compute_network_adjusted_arrays(
                     self._column_store, self._network_rtt_ns
                 )
-            if self._slice_duration_ns is not None:
+            if include_timeslices and self._slice_duration_ns is not None:
                 timeslices = self._compute_timeslices(
                     sweeps, mask=mask, adjusted_arrays=adjusted_arrays
                 )
@@ -783,8 +783,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # publishing. Keep that path on the event loop so column-store mutation
         # cannot race a worker thread traversing its arrays.
         if ctx.cancelled:
-            return self._summarize_for_export_context(ctx)
-        return await asyncio.to_thread(self._summarize_for_export_context, ctx)
+            return self._summarize_for_export_context(ctx, include_timeslices=True)
+        return await asyncio.to_thread(
+            self._summarize_for_export_context, ctx, include_timeslices=True
+        )
 
     def _inject_sweep_metrics(
         self,

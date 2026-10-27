@@ -8,6 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.models import MetricResult
 from aiperf.metrics.accumulator import MetricsAccumulator
 from aiperf.metrics.metric_registry import MetricRegistry
@@ -348,7 +349,7 @@ class TestNetworkAdjustedTimeslices:
         await self._seed_two_windows(accumulator)
         accumulator.set_network_rtt_ns(1_000_000.0)  # 1ms
 
-        summary = await accumulator.summarize()
+        summary = await accumulator.export_results(ExportContext())
 
         assert summary.timeslices is not None
         assert len(summary.timeslices) >= 2
@@ -366,7 +367,7 @@ class TestNetworkAdjustedTimeslices:
         rtt_ns = 1_000_000.0
         accumulator.set_network_rtt_ns(rtt_ns)
 
-        summary = await accumulator.summarize()
+        summary = await accumulator.export_results(ExportContext())
 
         assert summary.timeslices
         for ts in summary.timeslices:
@@ -380,7 +381,7 @@ class TestNetworkAdjustedTimeslices:
         await self._seed_two_windows(accumulator)
         # No set_network_rtt_ns -> no adjustment anywhere.
 
-        summary = await accumulator.summarize()
+        summary = await accumulator.export_results(ExportContext())
 
         assert summary.timeslices
         for ts in summary.timeslices:
@@ -396,7 +397,7 @@ class TestNetworkAdjustedTimeslices:
         await self._seed_two_windows(accumulator)  # slice_duration set
         accumulator.set_network_rtt_ns(1_000_000.0)  # 1ms
 
-        summary = await accumulator.summarize()
+        summary = await accumulator.export_results(ExportContext())
 
         assert summary.timeslices  # per-window injection actually ran
         raw_avg = summary.results["request_latency"].avg
