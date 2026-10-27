@@ -122,8 +122,7 @@ async def test_duration_cutoff_does_not_wait_for_the_recorded_target(
 
 
 @pytest.mark.asyncio
-async def test_duration_cutoff_drops_satisfied_future_join() -> None:
-    """A parent that never reaches its gate cannot hold phase drain open."""
+async def test_duration_cutoff_drops_undispatchable_future_join() -> None:
     orch = _orchestrator()
     pending = PendingBranchJoin(
         parent_x_correlation_id="corr-1",
@@ -131,12 +130,13 @@ async def test_duration_cutoff_drops_satisfied_future_join() -> None:
         parent_num_turns=8,
         gated_turn_index=7,
     )
+    pending.outstanding["SPAWN_JOIN:r:0"] = PrereqState()
     orch._future_joins["corr-1"] = {7: pending}
     orch._issuer.can_dispatch_join.return_value = False
 
+    assert not pending.is_satisfied
     await orch.expire_replay_deadlines()
 
-    assert pending.is_satisfied
     assert not orch.has_pending_branch_work()
     orch._issuer.dispatch_join_turn.assert_not_awaited()
 
