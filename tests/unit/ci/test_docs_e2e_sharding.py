@@ -106,14 +106,23 @@ def test_the_trace_replay_fixture_ships_with_its_consumer(shard_total: int) -> N
             f"shard {index + 1}/{shard_total} profiles against "
             f"custom_trace.jsonl but never creates it"
         )
-        if writes:
+        if writes and reads:
             consumer = next(
                 i for i, b in enumerate(bodies) if "--input-file custom_trace" in b
             )
             creator = next(
                 i for i, b in enumerate(bodies) if "custom_trace.jsonl << " in b
             )
-            assert creator < consumer, "the fixture must run before its consumer"
+            assert creator <= consumer, "the fixture must run before its consumer"
+            if creator == consumer:
+                # One block writes the trace and then profiles against it, which
+                # is stronger than two ordered commands: the sharder cannot
+                # separate them at any shard count. Order still has to hold
+                # inside the body.
+                body = bodies[creator]
+                assert body.index("custom_trace.jsonl << ") < body.index(
+                    "--input-file custom_trace"
+                )
 
 
 def test_shards_stay_balanced() -> None:
