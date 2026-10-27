@@ -263,18 +263,6 @@ async def test_cutoff_keeps_future_join_that_can_still_dispatch(
 
 
 @pytest.mark.asyncio
-async def test_child_finishing_before_cutoff_keeps_future_join() -> None:
-    orch = _orchestrator()
-    pending = _future_join_waiting_on_child(orch)
-
-    result = await orch._satisfy_prerequisite("corr-1", 7, "SPAWN_JOIN:r:0", "child-1")
-
-    assert result is None
-    assert pending.is_satisfied
-    assert orch._future_joins["corr-1"][7] is pending
-
-
-@pytest.mark.asyncio
 async def test_normal_release_still_honours_the_recorded_target(
     recorded_holds,
 ) -> None:

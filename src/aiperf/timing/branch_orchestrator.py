@@ -1726,8 +1726,6 @@ class BranchOrchestrator:
         back first so the joins they gated can drain. Think-time sleepers are
         woken before any join is released here; each returns at once if its
         gated turn would now be refused and otherwise keeps its think-time.
-        Future joins with no legal next turn are discarded here; completions
-        after this sweep are handled by ``_satisfy_prerequisite``.
         """
         self._schedule_stopped.set()
         self._wake_think_time_sleepers()
