@@ -126,8 +126,13 @@ jobs:
       # --continue-on-collection-errors preserves the previous two-step
       # behaviour where a unit collection error did not block the zmq suite.
       if: runner.os == 'Windows'
+      # -n logical, not -n auto: xdist's ``auto`` asks psutil for the PHYSICAL
+      # core count, and the GitHub x86 Windows VM reports 1 physical core for
+      # its 4 vCPUs, so ``auto`` ran the whole suite in a single worker (~3x
+      # slower than windows-11-arm, which happens to report 3). ``logical``
+      # uses the logical count on both and tracks the runner size if it grows.
       run: |
-        uv run pytest tests/unit tests/ui tests/zmq -n auto --dist=worksteal --tb=short --continue-on-collection-errors -m 'not performance and not stress and not slow'
+        uv run pytest tests/unit tests/ui tests/zmq -n logical --dist=worksteal --tb=short --continue-on-collection-errors -m 'not performance and not stress and not slow'
     - name: Run component integration tests (Windows)
       # ``!cancelled()`` overrides the implicit ``success()`` so component
       # integration still runs even if the unit-test step failed — matching
@@ -135,8 +140,9 @@ jobs:
       # Cancellation is still respected so we don't burn runner minutes
       # finishing after a manual stop.
       if: ${{ !cancelled() && runner.os == 'Windows' }}
+      # -n logical for the reason given on the unit-test step above.
       run: |
-        uv run pytest tests/component_integration -n auto --dist=worksteal --tb=short -v -m 'not performance and not stress and not slow'
+        uv run pytest tests/component_integration -n logical --dist=worksteal --tb=short -v -m 'not performance and not stress and not slow'
     - name: Upload results to Codecov
       if: matrix.os == 'linux' && matrix.python-version == '3.12'
       uses: codecov/codecov-action@v5
