@@ -1719,10 +1719,8 @@ class BranchOrchestrator:
         back first so the joins they gated can drain. Think-time sleepers are
         woken before any join is released here; each returns at once if its
         gated turn would now be refused and otherwise keeps its think-time.
-        Satisfied future joins are also discarded because their parents can no
-        longer advance to those gates after scheduling stops. A join that is
-        still waiting on a child remains tracked; ``_satisfy_prerequisite``
-        discards it if that final child returns after this cutoff sweep.
+        Completed future joins are discarded here; completions after this
+        sweep are handled by ``_satisfy_prerequisite``.
         """
         self._schedule_stopped.set()
         self._wake_think_time_sleepers()
@@ -1786,13 +1784,7 @@ class BranchOrchestrator:
             return self._active_joins.pop(parent_corr, None)
         if pending.is_blocked:
             return None
-        # A request-free spine normally retains a satisfied future join so the
-        # parent's next return can apply its between-round think-time. Once the
-        # phase has stopped scheduling, that return can no longer advance the
-        # parent. The last child may finish after the sending cutoff, so the
-        # cutoff-time sweep alone cannot discard this join. Drop it at the
-        # transition to satisfied instead of holding phase drain open until the
-        # grace period expires.
+        # Nothing can consume this completed entry after scheduling stops.
         if self._schedule_stopped.is_set():
             self._pop_future_join(parent_corr, gated_idx)
             return None

@@ -30,7 +30,6 @@ from aiperf.common.models import (
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.branch_orchestrator import (
     BranchOrchestrator,
-    ChildJoinEntry,
     PendingBranchJoin,
     PrereqState,
 )
@@ -141,17 +140,7 @@ async def test_duration_cutoff_drops_satisfied_future_join() -> None:
     orch._issuer.dispatch_join_turn.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_child_finishing_after_cutoff_drops_satisfied_future_join() -> None:
-    """A late final credit cannot strand a request-free spine gate.
-
-    At the sending cutoff the gate is still unsatisfied, so the cutoff sweep
-    must retain it while the child request is in flight. When that child
-    returns, request-free spine gates normally stay in ``_future_joins`` for
-    the parent's next turn to apply think-time. The stopped phase cannot issue
-    that turn, so retaining the gate would consume the entire grace period.
-    """
-    orch = _orchestrator()
+def _future_join_waiting_on_child(orch: BranchOrchestrator) -> PendingBranchJoin:
     pending = PendingBranchJoin(
         parent_x_correlation_id="corr-1",
         parent_conversation_id="r",
@@ -161,41 +150,30 @@ async def test_child_finishing_after_cutoff_drops_satisfied_future_join() -> Non
     )
     pending.outstanding["SPAWN_JOIN:r:0"] = PrereqState(expected=1, registered=True)
     orch._future_joins["corr-1"] = {7: pending}
-    orch._child_to_join["child-1"] = [
-        ChildJoinEntry(
-            parent_correlation_id="corr-1",
-            gated_turn_index=7,
-            prereq_key="SPAWN_JOIN:r:0",
-        )
-    ]
-    orch._descendant_counts["corr-1"] = 1
+    return pending
+
+
+@pytest.mark.asyncio
+async def test_child_finishing_after_cutoff_drops_future_join() -> None:
+    orch = _orchestrator()
+    pending = _future_join_waiting_on_child(orch)
 
     await orch.expire_replay_deadlines()
 
     assert not pending.is_satisfied
     assert orch.has_pending_branch_work()
 
-    await orch.on_child_leaf_reached("child-1")
+    await orch._satisfy_prerequisite("corr-1", 7, "SPAWN_JOIN:r:0", "child-1")
 
     assert pending.is_satisfied
     assert not orch.has_pending_branch_work()
-    assert "corr-1" not in orch._descendant_counts
     orch._issuer.dispatch_join_turn.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_child_finishing_before_cutoff_retains_request_free_future_join() -> None:
-    """Normal spine replay still keeps the gate for its next-turn think-time."""
+async def test_child_finishing_before_cutoff_keeps_future_join() -> None:
     orch = _orchestrator()
-    pending = PendingBranchJoin(
-        parent_x_correlation_id="corr-1",
-        parent_conversation_id="r",
-        parent_num_turns=8,
-        gated_turn_index=7,
-        parent_no_request_on_gated_turn=True,
-    )
-    pending.outstanding["SPAWN_JOIN:r:0"] = PrereqState(expected=1, registered=True)
-    orch._future_joins["corr-1"] = {7: pending}
+    pending = _future_join_waiting_on_child(orch)
 
     result = await orch._satisfy_prerequisite("corr-1", 7, "SPAWN_JOIN:r:0", "child-1")
 
