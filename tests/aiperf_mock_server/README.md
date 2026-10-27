@@ -19,7 +19,7 @@ A mock server for integration testing and performance benchmarking of LLM applic
 - [**Error Injection**](#error-injection): Reproducible fault testing with configurable error rates
 - [**Deterministic Responses**](#token-generation): Hash-based generation for identical outputs
 - [**Fast Mode**](#quick-start): Zero-latency mode (`--fast`) for integration testing
-- [**Corpus**](#corpus): Pre-tokenized corpus loaded from aiperf's shakespeare.txt for deterministic output
+- [**Corpus**](#tokenizer-options): Pre-tokenized corpus loaded from aiperf's shakespeare.txt for deterministic output
 - [**Request Recording**](#request-recording): Per-request ISL + requested OSL capture with JSONL output and a shutdown summary
 
 ### Supported Endpoints
@@ -139,6 +139,25 @@ Configuration via CLI arguments or environment variables (`MOCK_SERVER_` prefix)
 |--------|---------|-------------|
 | `--error-rate` | `0.0` | Error injection rate (0-100%) |
 | `--random-seed` | `None` | Seed for reproducible errors |
+
+### Speculative Decoding
+
+Emits a per-request speculative-decoding acceptance payload on chat and
+completions responses (streaming and non-streaming), so AIPerf's spec-decode
+adapters and metrics can be exercised without a GPU. Off by default, so
+responses are unchanged unless enabled.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--spec-decode-enabled` | `false` | Emit the acceptance payload |
+| `--spec-decode-flavor` | `vllm` | Wire format: `vllm` (response-root `metrics.speculative_decoding`) or `trtllm` (per-choice `speculative_decoding`, TensorRT-LLM field names) |
+| `--spec-decode-num-spec-tokens` | `3` | Draft budget per step, emitted as `num_spec_tokens` |
+| `--spec-decode-acceptance-rate` | `0.5` | Target fraction of drafted tokens accepted (0.0-1.0) |
+
+The emitted counts are derived from each response's own `completion_tokens`, so
+acceptance and usage stay consistent. As with every option, these can also be
+set through `MOCK_SERVER_`-prefixed environment variables, e.g.
+`MOCK_SERVER_SPEC_DECODE_ENABLED=true`.
 
 ### GPU Telemetry
 

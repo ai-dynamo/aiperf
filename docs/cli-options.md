@@ -688,11 +688,23 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `h_cua_perf`]_
+<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`, `mooncake_hf`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `h_cua_perf`]_
 
 #### `--hf-subset` `<str>`
 
 HuggingFace dataset subset/config name to override the plugin default (e.g. `sharegpt4o`). Only applies when using `--public-dataset` with a HuggingFace-backed loader. Takes priority over the subset defined in the plugin registry.
+
+#### `--hf-mooncake-dataset` `<str>`
+
+HuggingFace repository for the Mooncake trajectory loader. Auto-selects --public-dataset mooncake_hf. Cannot be combined with another public dataset or a custom dataset. With --config, set the repository in YAML.
+
+#### `--hf-mooncake-split` `<str>`
+
+HuggingFace split for mooncake_hf (e.g. train or test). Defaults to test. Only supported by --public-dataset mooncake_hf.
+
+#### `--mooncake-trace-to-hf-mapping` `<list>`
+
+Map a Mooncake trace field to a dotted HuggingFace column path: MOONCAKE_FIELD=HF_COLUMN. Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. Only supported by mooncake_hf. Unmapped fields use canonical column names.
 
 #### `--hf-weka-dataset` `<str>`
 
@@ -710,7 +722,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `h_cua_perf`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
 
 #### `--ignore-trace-delays`
 
@@ -719,7 +731,7 @@ Strip per-turn timestamps and inter-turn delays from trace datasets at load time
 
 #### `--use-think-time-only`
 
-For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.
+For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders. Under fixed-schedule replay the recorded timestamps drive dispatch, so this flag has no effect there; for weka_trace it therefore suppresses fixed-schedule auto-promotion, and passing an explicit --fixed-schedule alongside it wins and the flag is ignored.
 <br/>_Flag (no value required)_
 
 #### `--max-context-length` `<int>`
@@ -759,7 +771,7 @@ Run requests according to timestamps specified in the input dataset. When enable
 
 #### `--no-fixed-schedule`
 
-Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
+Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule; weka_trace is promoted by type instead, since its timing is nested per request and its input is usually a directory. --ignore-trace-delays and --use-think-time-only also suppress promotion, because both say the recorded timeline should not be replayed. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
 
 #### `--fixed-schedule-auto-offset`
 
@@ -1678,7 +1690,7 @@ Execution order for sweep + multi-trial composition. 'repeated' (default) iterat
 
 #### `--sweep-type` `<str>`
 
-Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set or when the sweep is declared in YAML.
+Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set. With --config, rejected when the config file declares its own sweep or no magic-list flag is passed.
 <br/>_Default: `grid`_
 
 #### `--no-sweep-table`
@@ -2323,11 +2335,23 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `h_cua_perf`]_
+<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`, `mooncake_hf`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `h_cua_perf`]_
 
 #### `--hf-subset` `<str>`
 
 HuggingFace dataset subset/config name to override the plugin default (e.g. `sharegpt4o`). Only applies when using `--public-dataset` with a HuggingFace-backed loader. Takes priority over the subset defined in the plugin registry.
+
+#### `--hf-mooncake-dataset` `<str>`
+
+HuggingFace repository for the Mooncake trajectory loader. Auto-selects --public-dataset mooncake_hf. Cannot be combined with another public dataset or a custom dataset. With --config, set the repository in YAML.
+
+#### `--hf-mooncake-split` `<str>`
+
+HuggingFace split for mooncake_hf (e.g. train or test). Defaults to test. Only supported by --public-dataset mooncake_hf.
+
+#### `--mooncake-trace-to-hf-mapping` `<list>`
+
+Map a Mooncake trace field to a dotted HuggingFace column path: MOONCAKE_FIELD=HF_COLUMN. Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. Only supported by mooncake_hf. Unmapped fields use canonical column names.
 
 #### `--hf-weka-dataset` `<str>`
 
@@ -2345,7 +2369,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `h_cua_perf`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
 
 #### `--ignore-trace-delays`
 
@@ -2354,7 +2378,7 @@ Strip per-turn timestamps and inter-turn delays from trace datasets at load time
 
 #### `--use-think-time-only`
 
-For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.
+For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders. Under fixed-schedule replay the recorded timestamps drive dispatch, so this flag has no effect there; for weka_trace it therefore suppresses fixed-schedule auto-promotion, and passing an explicit --fixed-schedule alongside it wins and the flag is ignored.
 <br/>_Flag (no value required)_
 
 #### `--max-context-length` `<int>`
@@ -2394,7 +2418,7 @@ Run requests according to timestamps specified in the input dataset. When enable
 
 #### `--no-fixed-schedule`
 
-Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
+Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule; weka_trace is promoted by type instead, since its timing is nested per request and its input is usually a directory. --ignore-trace-delays and --use-think-time-only also suppress promotion, because both say the recorded timeline should not be replayed. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
 
 #### `--fixed-schedule-auto-offset`
 
@@ -3313,7 +3337,7 @@ Execution order for sweep + multi-trial composition. 'repeated' (default) iterat
 
 #### `--sweep-type` `<str>`
 
-Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set or when the sweep is declared in YAML.
+Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set. With --config, rejected when the config file declares its own sweep or no magic-list flag is passed.
 <br/>_Default: `grid`_
 
 #### `--no-sweep-table`
@@ -3953,11 +3977,23 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `h_cua_perf`]_
+<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`, `mooncake_hf`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `h_cua_perf`]_
 
 #### `--hf-subset` `<str>`
 
 HuggingFace dataset subset/config name to override the plugin default (e.g. `sharegpt4o`). Only applies when using `--public-dataset` with a HuggingFace-backed loader. Takes priority over the subset defined in the plugin registry.
+
+#### `--hf-mooncake-dataset` `<str>`
+
+HuggingFace repository for the Mooncake trajectory loader. Auto-selects --public-dataset mooncake_hf. Cannot be combined with another public dataset or a custom dataset. With --config, set the repository in YAML.
+
+#### `--hf-mooncake-split` `<str>`
+
+HuggingFace split for mooncake_hf (e.g. train or test). Defaults to test. Only supported by --public-dataset mooncake_hf.
+
+#### `--mooncake-trace-to-hf-mapping` `<list>`
+
+Map a Mooncake trace field to a dotted HuggingFace column path: MOONCAKE_FIELD=HF_COLUMN. Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. Only supported by mooncake_hf. Unmapped fields use canonical column names.
 
 #### `--hf-weka-dataset` `<str>`
 
@@ -3975,7 +4011,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `h_cua_perf`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
 
 #### `--ignore-trace-delays`
 
@@ -3984,7 +4020,7 @@ Strip per-turn timestamps and inter-turn delays from trace datasets at load time
 
 #### `--use-think-time-only`
 
-For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.
+For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders. Under fixed-schedule replay the recorded timestamps drive dispatch, so this flag has no effect there; for weka_trace it therefore suppresses fixed-schedule auto-promotion, and passing an explicit --fixed-schedule alongside it wins and the flag is ignored.
 <br/>_Flag (no value required)_
 
 #### `--max-context-length` `<int>`
@@ -4024,7 +4060,7 @@ Run requests according to timestamps specified in the input dataset. When enable
 
 #### `--no-fixed-schedule`
 
-Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
+Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule; weka_trace is promoted by type instead, since its timing is nested per request and its input is usually a directory. --ignore-trace-delays and --use-think-time-only also suppress promotion, because both say the recorded timeline should not be replayed. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
 
 #### `--fixed-schedule-auto-offset`
 
@@ -4943,7 +4979,7 @@ Execution order for sweep + multi-trial composition. 'repeated' (default) iterat
 
 #### `--sweep-type` `<str>`
 
-Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set or when the sweep is declared in YAML.
+Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set. With --config, rejected when the config file declares its own sweep or no magic-list flag is passed.
 <br/>_Default: `grid`_
 
 #### `--no-sweep-table`
@@ -6090,11 +6126,23 @@ Path to file or directory containing benchmark dataset. Required when using `--c
 #### `--public-dataset` `<str>`
 
 Pre-configured public dataset to download and use for benchmarking (e.g., `sharegpt`). AIPerf automatically downloads and parses these datasets. Mutually exclusive with `--custom-dataset-type`. Run `aiperf plugins public_dataset_loader` to list available datasets. Use `--hf-subset` to override the HuggingFace subset/config for HF-backed datasets.
-<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `h_cua_perf`]_
+<br/>_Choices: [`exgentic_v2`, `exgentic`, `sharegpt`, `aimo`, `mmstar`, `mmvu`, `vision_arena`, `llava_onevision`, `aimo_aime`, `aimo_numina_cot`, `aimo_numina_1_5`, `spec_bench`, `spec_al_gsm8k`, `spec_al_math500`, `spec_al_humaneval`, `spec_al_mbpp`, `spec_al_mtbench`, `instruct_coder`, `blazedit_5k`, `blazedit_10k`, `librispeech`, `voxpopuli`, `gigaspeech`, `ami`, `spgispeech`, `semianalysis_cc_traces_weka`, `semianalysis_cc_traces_weka_no_subagents`, `semianalysis_cc_traces_weka_with_subagents`, `semianalysis_cc_traces_weka_with_subagents_256k`, `semianalysis_cc_traces_weka_with_subagents_060226`, `semianalysis_cc_traces_weka_with_subagents_060226_256k`, `semianalysis_cc_traces_weka_with_subagents_060526`, `semianalysis_cc_traces_weka_with_subagents_060526_256k`, `semianalysis_cc_traces_weka_with_subagents_060826`, `semianalysis_cc_traces_weka_with_subagents_060826_256k`, `semianalysis_cc_traces_weka_061326`, `semianalysis_cc_traces_weka_061326_256k`, `semianalysis_cc_traces_weka_061526`, `semianalysis_cc_traces_weka_061526_256k`, `semianalysis_cc_traces_weka_062126`, `semianalysis_cc_traces_weka_062126_256k`, `weka_hf`, `mooncake_hf`, `speed_bench_qualitative`, `speed_bench_coding`, `speed_bench_humanities`, `speed_bench_math`, `speed_bench_multilingual`, `speed_bench_qa`, `speed_bench_rag`, `speed_bench_reasoning`, `speed_bench_roleplay`, `speed_bench_stem`, `speed_bench_summarization`, `speed_bench_writing`, `speed_bench_throughput_1k`, `speed_bench_throughput_1k_low_entropy`, `speed_bench_throughput_1k_mixed`, `speed_bench_throughput_1k_high_entropy`, `speed_bench_throughput_2k`, `speed_bench_throughput_2k_low_entropy`, `speed_bench_throughput_2k_mixed`, `speed_bench_throughput_2k_high_entropy`, `speed_bench_throughput_8k`, `speed_bench_throughput_8k_low_entropy`, `speed_bench_throughput_8k_mixed`, `speed_bench_throughput_8k_high_entropy`, `speed_bench_throughput_16k`, `speed_bench_throughput_16k_low_entropy`, `speed_bench_throughput_16k_mixed`, `speed_bench_throughput_16k_high_entropy`, `speed_bench_throughput_32k`, `speed_bench_throughput_32k_low_entropy`, `speed_bench_throughput_32k_mixed`, `speed_bench_throughput_32k_high_entropy`, `h_cua_perf`]_
 
 #### `--hf-subset` `<str>`
 
 HuggingFace dataset subset/config name to override the plugin default (e.g. `sharegpt4o`). Only applies when using `--public-dataset` with a HuggingFace-backed loader. Takes priority over the subset defined in the plugin registry.
+
+#### `--hf-mooncake-dataset` `<str>`
+
+HuggingFace repository for the Mooncake trajectory loader. Auto-selects --public-dataset mooncake_hf. Cannot be combined with another public dataset or a custom dataset. With --config, set the repository in YAML.
+
+#### `--hf-mooncake-split` `<str>`
+
+HuggingFace split for mooncake_hf (e.g. train or test). Defaults to test. Only supported by --public-dataset mooncake_hf.
+
+#### `--mooncake-trace-to-hf-mapping` `<list>`
+
+Map a Mooncake trace field to a dotted HuggingFace column path: MOONCAKE_FIELD=HF_COLUMN. Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. Only supported by mooncake_hf. Unmapped fields use canonical column names.
 
 #### `--hf-weka-dataset` `<str>`
 
@@ -6112,7 +6160,7 @@ Dataset-specific filter in key=value form. Repeat for multiple filters. Only sup
 #### `--custom-dataset-type` `<str>`
 
 Format specification for custom dataset provided via `--input-file`. Determines parsing logic and expected file structure. Options: `single_turn` (JSONL with single exchanges), `multi_turn` (JSONL with conversation history), `tracelab` (TraceLab agentic-coding corpus, JSONL or gzipped JSONL), `mooncake_trace`/`bailian_trace`/`baseten_trace` (timestamped trace files), `random_pool` (directory of reusable prompts; when using `random_pool`, `--conversation-num` defaults to 100 if not specified; batch sizes > 1 sample each modality independently from a flat pool and do not preserve per-entry associations - use `single_turn` if paired modalities must stay together). Requires `--input-file`. Mutually exclusive with `--public-dataset`.
-<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
+<br/>_Choices: [`burst_gpt_trace`, `bailian_trace`, `baseten_trace`, `mooncake_trace`, `h_cua_perf`, `raw_payload`, `inputs_json`, `dag_jsonl`, `sagemaker_data_capture`, `multi_turn`, `random_pool`, `single_turn`, `speed_bench_qualitative`, `speed_bench_throughput_1k`, `speed_bench_throughput_2k`, `speed_bench_throughput_8k`, `speed_bench_throughput_16k`, `speed_bench_throughput_32k`, `tracelab`, `weka_trace`]_
 
 #### `--ignore-trace-delays`
 
@@ -6121,7 +6169,7 @@ Strip per-turn timestamps and inter-turn delays from trace datasets at load time
 
 #### `--use-think-time-only`
 
-For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.
+For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded `api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders. Under fixed-schedule replay the recorded timestamps drive dispatch, so this flag has no effect there; for weka_trace it therefore suppresses fixed-schedule auto-promotion, and passing an explicit --fixed-schedule alongside it wins and the flag is ignored.
 <br/>_Flag (no value required)_
 
 #### `--max-context-length` `<int>`
@@ -6161,7 +6209,7 @@ Run requests according to timestamps specified in the input dataset. When enable
 
 #### `--no-fixed-schedule`
 
-Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
+Suppress the automatic switch to fixed-schedule mode for trace datasets that carry per-record timestamps. By default a trace input (e.g. mooncake_trace) with timestamps in the first record auto-promotes the profiling phase to fixed_schedule; weka_trace is promoted by type instead, since its timing is nested per request and its input is usually a directory. --ignore-trace-delays and --use-think-time-only also suppress promotion, because both say the recorded timeline should not be replayed. Pass --no-fixed-schedule to keep the user-selected timing mode (e.g. concurrency, request_rate) and ignore the trace timestamps.
 
 #### `--fixed-schedule-auto-offset`
 
@@ -7080,7 +7128,7 @@ Execution order for sweep + multi-trial composition. 'repeated' (default) iterat
 
 #### `--sweep-type` `<str>`
 
-Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set or when the sweep is declared in YAML.
+Topology used when multiple CLI magic-list flags (--concurrency, --request-rate, --isl, --osl, ...) are passed together. 'grid' (default) takes the Cartesian product of all lists; 'zip' pairs them element-wise (all lists must have equal length, like the YAML `sweep: {type: zip}` block). Ignored when only one magic-list flag is set. With --config, rejected when the config file declares its own sweep or no magic-list flag is passed.
 <br/>_Default: `grid`_
 
 #### `--no-sweep-table`
