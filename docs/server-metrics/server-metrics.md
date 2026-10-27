@@ -316,7 +316,7 @@ When server metrics collection is **runtime-active** (configure found at least o
 2. The manager suspends periodic scrapes, drains in-flight warmup-tagged scrapes, takes a final warmup scrape, then publishes `SERVER_METRICS_WARMUP_BOUNDARY_READY`.
 3. The runner does not return from warmup (so profiling credits cannot start) until that acknowledgement arrives.
 
-If the acknowledgement is missing while collection is active, the runner aborts with a `TimeoutError` before profiling credits start. That fail-closed contract protects attribution when collectors are live but slow.
+If the acknowledgement is missing while collection is active, the runner aborts with a `TimeoutError` before profiling credits start. That fail-closed contract protects attribution when collectors are live but slow. The status wait before phases start is deliberately fail-open: if `ServerMetricsStatusMessage` has not arrived within `min(SCRAPE_TIMEOUT, 5)` seconds, there is no evidence any collector is live (the common cause is an unreachable `/metrics` with the default `enabled=True`, where the manager has already shut down and would never ack), so phases start with the barrier off and a warning is logged rather than failing the run.
 
 When collection is **runtime-inactive** (no reachable `/metrics`, or `--no-server-metrics`), the flush and ack waits are skipped entirely. The benchmark proceeds without server-metrics exports, matching the behaviour when server metrics were never enabled.
 
