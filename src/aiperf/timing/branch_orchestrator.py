@@ -1734,15 +1734,17 @@ class BranchOrchestrator:
                 releasable.append(pending)
         for pending in releasable:
             await self._release_blocked_join(pending)
-        for parent_corr, gates in list(self._future_joins.items()):
-            for gated_idx, pending in list(gates.items()):
-                if (
-                    pending.total_outstanding == 0
-                    and not self._issuer.can_dispatch_join(pending.parent_agent_depth)
-                ):
-                    self._pop_future_join(parent_corr, gated_idx)
-            self._release_parent_slot_if_drained(parent_corr)
+        for parent_corr in list(self._future_joins):
+            self._discard_undispatchable_future_joins(parent_corr)
         self._notify_drain()
+
+    def _discard_undispatchable_future_joins(self, parent_corr: str) -> None:
+        for gated_idx, pending in list(self._future_joins.get(parent_corr, {}).items()):
+            if pending.total_outstanding == 0 and not self._issuer.can_dispatch_join(
+                pending.parent_agent_depth
+            ):
+                self._pop_future_join(parent_corr, gated_idx)
+        self._release_parent_slot_if_drained(parent_corr)
 
     async def _satisfy_prerequisite(
         self,
@@ -2073,8 +2075,10 @@ class BranchOrchestrator:
         """
         if self._cleaning_up:
             return
+        self._discard_undispatchable_future_joins(child_x_correlation_id)
         entries = self._child_to_join.get(child_x_correlation_id)
         if not entries:
+            self._notify_drain()
             return
         self.stats.children_truncated += 1
         await self._handle_child_done(child_x_correlation_id, entries)

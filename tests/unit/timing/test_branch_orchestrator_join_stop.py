@@ -172,6 +172,43 @@ async def test_child_finishing_after_cutoff_drops_future_join() -> None:
     orch._issuer.dispatch_join_turn.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_stopped_parent_drops_undispatchable_future_join() -> None:
+    orch = _orchestrator()
+    pending = PendingBranchJoin(
+        parent_x_correlation_id="child-1",
+        parent_conversation_id="r",
+        parent_num_turns=8,
+        gated_turn_index=7,
+        parent_agent_depth=1,
+    )
+    orch._future_joins["child-1"] = {7: pending}
+    orch._issuer.can_dispatch_join.return_value = False
+
+    await orch.on_child_stopped("child-1")
+
+    assert not orch.has_pending_branch_work()
+
+
+@pytest.mark.asyncio
+async def test_stopped_parent_keeps_future_join_with_in_flight_child() -> None:
+    orch = _orchestrator()
+    pending = PendingBranchJoin(
+        parent_x_correlation_id="child-1",
+        parent_conversation_id="r",
+        parent_num_turns=8,
+        gated_turn_index=7,
+        parent_agent_depth=1,
+    )
+    pending.outstanding["SPAWN_JOIN:r:0"] = PrereqState(expected=1, registered=True)
+    orch._future_joins["child-1"] = {7: pending}
+    orch._issuer.can_dispatch_join.return_value = False
+
+    await orch.on_child_stopped("child-1")
+
+    assert orch._future_joins["child-1"][7] is pending
+
+
 @pytest.mark.parametrize(
     "complete_after_cutoff",
     [False, True],
