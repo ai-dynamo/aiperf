@@ -177,6 +177,23 @@ Adaptive scale is a YAML-only timing strategy configured on the phase it control
 - Adaptive artifact fields are orchestration-facing. Renaming schema fields such as `control_variable`, `control_value_before`, `control_value_after`, `boundary_value`, `last_passing_value`, or `first_failing_value` needs migration and backcompat thought.
 
 
+## Streaming Coverage Across Cancellation
+
+Scenario liveness is independent of successful-request accounting. For scenarios with
+`minimum_profile_metric_coverage_ratio`, `Worker._make_content_callback` keeps observing parsed
+profiling content after the first token. Returning `False` keeps the transport callback active;
+`credit_context.first_token_sent` still prevents duplicate prefill releases.
+
+Send `StreamingContent` through the existing worker-to-router return channel, at most once per
+second per request. Include the concrete `phase_index` and the content timestamp, derived from the
+SSE arrival time (`process_clock().wall_ns_at(message.perf_ns)`) rather than the cancellation
+time, and mapped to controller time with `ClockOffsetTracker.correct_timestamp` on Kubernetes so
+it is comparable to the controller-stamped phase start. The matching phase progress tracker
+retains the maximum; unknown and completed phases ignore updates. `CreditReturn` carries the exact
+last timestamp to cover a final chunk between reports. Activity messages do not return credits,
+release slots, create records, or contribute throughput/latency samples. Phase stats carry the
+timestamp into the Records Manager's `streaming_content_ratio` coverage calculation.
+
 ## Service Pattern
 
 Services run in separate processes via `bootstrap.py`:

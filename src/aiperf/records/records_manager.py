@@ -2458,13 +2458,23 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 expected_duration_seconds=float(phase_config.duration),
                 required_ratio=required_ratio,
             )
+            last_content_ns = stats.last_streaming_content_ns or stats.start_ns
+            coverage.streaming_content_ratio = min(
+                max(
+                    (last_content_ns - stats.start_ns)
+                    / (float(phase_config.duration) * NANOS_PER_SECOND),
+                    0.0,
+                ),
+                1.0,
+            )
             coverage_results.append(coverage)
             if coverage.passed:
                 self.info(
                     "Profiling metric coverage passed for "
                     f"{phase_config.name!r}: TTFT={coverage.ttft_ratio:.1%}, "
                     "inter-token latency="
-                    f"{coverage.inter_token_latency_ratio:.1%} "
+                    f"{coverage.inter_token_latency_ratio:.1%}, "
+                    f"streaming content={coverage.streaming_content_ratio:.1%} "
                     f"(required={required_ratio:.1%})."
                 )
                 continue
@@ -2474,9 +2484,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 f"Profiling metric coverage below the required {required_ratio:.1%} "
                 f"for phase {phase_config.name!r}: TTFT={coverage.ttft_ratio:.1%}, "
                 "inter-token latency="
-                f"{coverage.inter_token_latency_ratio:.1%} over the configured "
-                f"{float(phase_config.duration):.1f}s duration. Neither latency "
-                f"signal extended into the final {allowed_tail_seconds:.1f}s before "
+                f"{coverage.inter_token_latency_ratio:.1%}, "
+                f"streaming content={coverage.streaming_content_ratio:.1%} over the configured "
+                f"{float(phase_config.duration):.1f}s duration. No latency or streaming "
+                f"content signal extended into the final {allowed_tail_seconds:.1f}s before "
                 "the nominal profiling end; check inference server logs for a stalled "
                 "or unavailable server."
             )

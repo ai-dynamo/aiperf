@@ -417,9 +417,9 @@ Three possible states for `submission_valid`:
     re-apply the scenario lock on the base config (import/env breakage).
     Fail-closed: the aggregate stamps `submission_valid: false` rather than
     assuming the lock held.
-  - `"insufficient_profile_metric_coverage"` — neither TTFT nor
-    inter-token-latency observations reached 95% of the configured profiling
-    duration; see [Troubleshooting](#troubleshooting).
+  - `"insufficient_profile_metric_coverage"` — no TTFT,
+    inter-token-latency, or streaming content observation reached 95% of the
+    configured profiling duration; see [Troubleshooting](#troubleshooting).
   - `"profile_metric_coverage_validation_failed"` — AIPerf could not validate
     that coverage because required accumulator data or phase timestamps were
     unavailable.
@@ -820,11 +820,20 @@ not count toward `--failed-request-threshold`, and shows up only in
 `profile_export_aiperf.json`.
 
 **Run exits non-zero with `ProfileMetricCoverageError`**
-The server stopped producing both TTFT and inter-token-latency observations before 95% of the
-configured profiling duration elapsed (the coverage ratio this scenario requires). Either signal proves global server activity, so a long
-streaming response remains valid even when no new request starts near the boundary. AIPerf retains
-the result artifact, marks it invalid with
-`insufficient_profile_metric_coverage`, and reports the observed coverage for both signals. Check
+The server stopped producing TTFT, inter-token-latency, and streaming content observations before
+95% of the configured profiling duration elapsed (the coverage ratio this scenario requires). Any
+one signal proves server activity, so a long streaming response remains valid even when no new
+request starts near the boundary. Streaming content covers the request that is still streaming when
+the grace period expires: it is cancelled and produces no metric record, but workers keep its last
+content timestamp (reported at most once per second while it streams, and exactly on the credit
+return), which becomes `streaming_content_ratio` in `metric_duration_coverage`. Cancelled requests
+still add no successful requests, throughput, or latency samples. Text, reasoning, and tool-call
+deltas count as content; role-only and usage-only chunks, finish markers, keepalives, and
+cancellation itself do not. The ratio is clamped to [0, 1], and activity is scoped to the concrete
+profiling phase. If a cancelled credit never returns, the last periodic report is used, which can
+precede the last content by under one second. AIPerf retains the result artifact, marks it invalid
+with `insufficient_profile_metric_coverage`, and reports the observed coverage for all three
+signals. Check
 the inference-server logs for a crash or stalled request processing. Warmup metrics and profiling
 phases shorter than the scenario's minimum valid duration are excluded.
 If you added `--request-count` or `--num-sessions`, the scenario does not

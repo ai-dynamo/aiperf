@@ -48,6 +48,7 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
         self._start_ns: int | None = None
         self._sent_end_ns: int | None = None
         self._requests_end_ns: int | None = None
+        self._last_streaming_content_ns: int | None = None
         self._baseline_start_ns: int | None = None
         self._baseline_end_ns: int | None = None
         # Records processing timestamp fields
@@ -101,6 +102,7 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
             start_ns=self._start_ns,
             sent_end_ns=self._sent_end_ns,
             requests_end_ns=self._requests_end_ns,
+            last_streaming_content_ns=self._last_streaming_content_ns,
             baseline_start_ns=self._baseline_start_ns,
             baseline_end_ns=self._baseline_end_ns,
             records_end_ns=self._records_end_ns,
@@ -124,6 +126,7 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
         self._start_ns = credit_stats.start_ns
         self._sent_end_ns = credit_stats.sent_end_ns
         self._requests_end_ns = credit_stats.requests_end_ns
+        self._last_streaming_content_ns = credit_stats.last_streaming_content_ns
         self._baseline_start_ns = credit_stats.baseline_start_ns
         self._baseline_end_ns = credit_stats.baseline_end_ns
         self._total_expected_requests = credit_stats.total_expected_requests
@@ -311,6 +314,14 @@ class RecordsTracker:
             start_ns=min(starts) if starts else None,
             sent_end_ns=max(sent_ends) if sent_ends else None,
             requests_end_ns=max(request_ends) if request_ends else None,
+            last_streaming_content_ns=max(
+                (
+                    s.last_streaming_content_ns
+                    for s in stats
+                    if s.last_streaming_content_ns is not None
+                ),
+                default=None,
+            ),
             baseline_start_ns=min(baseline_starts) if baseline_starts else None,
             baseline_end_ns=max(baseline_ends) if baseline_ends else None,
             records_end_ns=max(record_ends) if record_ends else None,
