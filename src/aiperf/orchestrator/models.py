@@ -47,6 +47,10 @@ class RunResult(AIPerfBaseModel):
         default=False,
         description="True when this run's profile export was written after a graceful Ctrl+C (partial metrics); scenario submissions must treat such runs as invalid.",
     )
+    runtime_submission_invalid_reasons: list[str] = Field(
+        default_factory=list,
+        description="Runtime reason tags that invalidate this run's scenario submission, read back from its profile export's top-level runtime_submission_invalid_reasons field.",
+    )
 
 
 VariationKey = tuple[str, tuple[tuple[str, Any], ...]]

@@ -139,6 +139,7 @@ def _api_script(expression: str) -> str:
         import fs from 'node:fs';
         let source = fs.readFileSync({str(_API_PATH)!r}, 'utf8');
         source = source.replace(/import \{{[\s\S]*?\}} from '\.\/state\.js';/, 'function setError() {{}}');
+        source = source.replace("import {{ API_BASE }} from './base-path.js';", "const API_BASE = '/api/v1';");
         source = source.replace(/^export /gm, '');
         eval(source + '\\nglobalThis.api = api;');
         {expression}

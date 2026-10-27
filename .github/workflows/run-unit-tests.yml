@@ -183,3 +183,23 @@ jobs:
       run: |
         uv run pytest -n auto --dist=worksteal -m slow \
           tests/unit/orchestrator/search_planner/test_optuna_dsp_kernel.py
+
+  # The merge ruleset requires this single check rather than each matrix leg,
+  # whose names change whenever a leg is added or renamed. always() keeps it
+  # from being skipped, because GitHub treats a skipped required check as passed.
+  unit-tests-gate:
+    name: Unit Tests Gate
+    needs: [build, botorch-regression]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+    - name: Require every unit test job to pass
+      env:
+        RESULTS: ${{ join(needs.*.result, ' ') }}
+      run: |
+        echo "Job results: ${RESULTS}"
+        for result in ${RESULTS}; do
+          [ "${result}" = "success" ] || exit 1
+        done

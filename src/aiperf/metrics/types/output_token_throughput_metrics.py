@@ -7,7 +7,10 @@ from aiperf.common.models.record_models import ParsedResponseRecord
 from aiperf.metrics import BaseDerivedMetric, BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 from aiperf.metrics.types.benchmark_duration_metric import BenchmarkDurationMetric
-from aiperf.metrics.types.inter_token_latency_metric import InterTokenLatencyMetric
+from aiperf.metrics.types.inter_token_latency_metric import (
+    FullResponseInterTokenLatencyMetric,
+    InterTokenLatencyMetric,
+)
 from aiperf.metrics.types.output_sequence_length_metric import (
     TotalOutputSequenceLengthMetric,
 )
@@ -74,5 +77,35 @@ class OutputTokenThroughputPerUserMetric(BaseRecordMetric[float]):
         if converted_itl == 0:
             raise NoMetricValue(
                 "ITL is zero, cannot calculate output token throughput per user metric"
+            )
+        return 1 / converted_itl
+
+
+class FullResponseOutputTokenThroughputPerUserMetric(BaseRecordMetric[float]):
+    """Inverse of full-response inter-token latency."""
+
+    tag = "full_response_output_token_throughput_per_user"
+    header = "Full-Response Output Token Throughput Per User"
+    short_header = "Full Output TPS/User"
+    short_header_hide_unit = True
+    unit = MetricOverTimeUnit.TOKENS_PER_SECOND_PER_USER
+    display_order = 520
+    flags = MetricFlags.STREAMING_TOKENS_ONLY | MetricFlags.LARGER_IS_BETTER
+    required_metrics = {
+        FullResponseInterTokenLatencyMetric.tag,
+    }
+
+    def _parse_record(
+        self,
+        record: ParsedResponseRecord,
+        record_metrics: MetricRecordDict,
+    ) -> float:
+        converted_itl = record_metrics.get_converted_or_raise(
+            FullResponseInterTokenLatencyMetric,
+            self.unit.time_unit,  # type: ignore
+        )
+        if converted_itl == 0:
+            raise NoMetricValue(
+                "Full-response ITL is zero, cannot calculate full-response output token throughput"
             )
         return 1 / converted_itl

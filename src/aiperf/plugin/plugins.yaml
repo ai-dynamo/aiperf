@@ -513,6 +513,17 @@ transport:
     metadata:
       transport_type: http
       url_schemes: [http, https]
+  sagemaker:
+    class: aiperf.transports.aws.sagemaker:SageMakerTransport
+    description: |
+      Invokes an AWS SageMaker Runtime endpoint (InvokeEndpoint, or
+      InvokeEndpointWithResponseStream with --streaming), with SigV4-signed
+      requests and eventstream response decoding. Selected by
+      --sagemaker-endpoint-name, or explicitly with --transport sagemaker; it is
+      never auto-detected from the URL.
+    metadata:
+      transport_type: sagemaker
+      url_schemes: []
 
 # =============================================================================
 # Request Signers
@@ -610,6 +621,19 @@ custom_dataset_loader:
     metadata:
       is_trace: true
       default_block_size: 512
+
+  h_cua_perf:
+    class: aiperf.dataset.loader.h_cua_perf_file:HCuaPerfFileLoader
+    description: |
+      H CUA Perf computer-use agent traces read from a local build: <name>.jsonl.zst
+      beside its <name>.meta.json manifest, e.g. a variant derived from
+      Hcompany/h_cua_perf with the dataset's trace_processor.py. Same records
+      and replay as the h_cua_perf public dataset, minus its --dataset-filter
+      knobs: a derived build already carries its shape. Never auto-detected;
+      select it by name.
+      Usage: --input-file ./build/h_cua.jsonl.zst --custom-dataset-type h_cua_perf
+    metadata:
+      is_trace: true
 
   raw_payload:
     class: aiperf.dataset.loader.raw_payload:RawPayloadDatasetLoader
@@ -1434,6 +1458,21 @@ spec_decode_adapter:
       list into the record's sparse map.
     metadata: {}
 
+  tensorrt_llm:
+    class: aiperf.spec_decode.trtllm_adapter:TRTLLMSpecDecodeAdapter
+    description: |
+      Reads TensorRT-LLM's per-choice ``speculative_decoding`` object (emitted
+      when the server sets ``per_request_spec_decode_stats``) and fills the
+      engine-neutral
+      SpecDecodeAcceptanceRecord. Handles chat and completions, streaming and
+      non-streaming. Derives mean acceptance length from the counts, since
+      TRT-LLM does not report it (its ``avg_decoded_tokens_per_iter`` averages
+      over all decoding iterations, not just drafting steps).
+      Declaration order here is not a detection mechanism: adapters are
+      distinguished by disjoint payload signatures, and the parser rejects a
+      payload that more than one adapter claims.
+    metadata: {}
+
 accuracy_grader:
   exact_match:
     class: aiperf.accuracy.graders.exact_match:ExactMatchGrader
@@ -2054,6 +2093,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_no_subagents:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2074,6 +2114,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2098,6 +2139,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2118,6 +2160,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060226:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2137,6 +2180,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060226_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2156,6 +2200,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060526:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2174,6 +2219,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060526_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2194,6 +2240,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060826:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2212,6 +2259,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060826_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2232,6 +2280,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_061326:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2255,6 +2304,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_061326_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2275,6 +2325,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_061526:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2297,6 +2348,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_061526_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2318,6 +2370,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_062126:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2338,6 +2391,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_062126_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2358,6 +2412,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   weka_hf:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2373,6 +2428,22 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
+
+  mooncake_hf:
+    class: aiperf.dataset.loader.hf_mooncake_trace:HFMooncakeTraceDatasetLoader
+    description: |
+      Generic HuggingFace-backed Mooncake trajectory dataset loader. Use this for
+      compatible trajectory corpora without adding a pinned alias for each
+      dataset. Selected automatically when you pass --hf-mooncake-dataset
+      (which supplies the HuggingFace dataset repo name); passing
+      --public-dataset mooncake_hf explicitly is equivalent.
+      Use --mooncake-trace-to-hf-mapping to map source columns to Mooncake fields.
+      Usage: --hf-mooncake-dataset org/trajectory-dataset
+    metadata:
+      hf_split: test
+      streaming: true
+      is_trace: true
 
   # ---------------------------------------------------------------------------
   # SPEED-Bench. Prompt text for rows whose source datasets forbid
@@ -2738,7 +2809,8 @@ public_dataset_loader:
       on CUA-Gym desktop tasks: full text history, 10 tool definitions and one
       screenshot per request. Delegates to the mooncake_trace loader, replaying
       the recorded inter-request delays. --dataset-filter reshapes the corpus in
-      place: n_screenshots, min_trace_length, max_trace_length, avg_trace_length.
+      place: n_screenshots, min_trace_length, max_trace_length, avg_trace_length,
+      uuid_cache, disable_structured_output.
       Usage: --public-dataset h_cua_perf --dataset-filter n_screenshots=3
     metadata:
       hf_dataset_name: Hcompany/h_cua_perf

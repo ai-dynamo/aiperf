@@ -538,9 +538,12 @@ If the namespace has a ResourceQuota, preflight projects the total CPU and memor
 ### Upgrading
 
 ```bash
-helm upgrade aiperf-operator deploy/helm/aiperf-operator \
+helm upgrade aiperf-operator oci://ghcr.io/ai-dynamo/charts/aiperf-operator \
+  --version X.Y.Z \
   --namespace aiperf-system
 ```
+
+From a source checkout, pass `deploy/helm/aiperf-operator` in place of the OCI reference.
 
 > **WARNING:** Drain active benchmarks before upgrading from a chart older than
 > 0.8.0. Those versions rendered the benchmark `Role` and `RoleBinding` into a
