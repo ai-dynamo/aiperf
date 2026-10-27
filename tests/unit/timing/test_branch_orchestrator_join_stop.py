@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
+from aiperf.common.enums import ConversationBranchMode, CreditPhase, PrerequisiteKind
 from aiperf.common.models import (
     ConversationBranchInfo,
     ConversationMetadata,
@@ -207,6 +207,36 @@ async def test_stopped_parent_keeps_future_join_with_in_flight_child() -> None:
     await orch.on_child_stopped("child-1")
 
     assert orch._future_joins["child-1"][7] is pending
+
+
+@pytest.mark.asyncio
+async def test_cutoff_does_not_recreate_gate_from_late_parent_return() -> None:
+    orch = _orchestrator()
+    pending = PendingBranchJoin(
+        parent_x_correlation_id="corr-1",
+        parent_conversation_id="r",
+        parent_num_turns=8,
+        gated_turn_index=7,
+    )
+    pending.outstanding["SPAWN_JOIN:r:0"] = PrereqState()
+    orch._future_joins["corr-1"] = {7: pending}
+    credit = MagicMock(
+        phase=CreditPhase.PROFILING,
+        no_request=False,
+        turn_index=0,
+        x_correlation_id="corr-1",
+    )
+    orch.get_branch_ids = MagicMock(return_value=["r:0"])
+    orch._spawn_children_and_register_gates = AsyncMock()
+    orch._issuer.can_dispatch_join.return_value = False
+    orch._issuer.can_dispatch_child_turn.return_value = False
+
+    await orch.expire_replay_deadlines()
+    intercepted = await orch.intercept(credit)
+
+    assert not intercepted
+    assert not orch.has_pending_branch_work()
+    orch._spawn_children_and_register_gates.assert_not_awaited()
 
 
 @pytest.mark.parametrize(

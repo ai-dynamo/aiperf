@@ -917,6 +917,13 @@ class BranchOrchestrator:
             self.stats.graphs_admitted += 1
 
         parent_corr = credit.x_correlation_id
+        if (
+            self._schedule_stopped.is_set()
+            and not self._issuer.can_dispatch_child_turn()
+        ):
+            self._discard_undispatchable_future_joins(parent_corr)
+            self._notify_drain()
+            return False
 
         async with self._parent_locks[parent_corr]:
             branch_ids = self.get_branch_ids(credit)
