@@ -210,6 +210,27 @@ Unit tests run on NVIDIA runners, so copy-pr-bot copies each PR to a `pull-reque
 
 A PR must also be up to date with `main` before it merges, and every branch update creates a new head commit that needs a full unit test run. For a PR that is not copied automatically, a maintainer must comment `/ok to test <sha>` again after each update. If a job fails from a known flake, rerun the failed jobs with `gh run rerun <run-id> --failed`, which also reruns `Unit Tests Gate`.
 
+## Documenting a Runnable Command
+
+A tutorial's `aiperf profile` command is executed in CI against a real
+inference server only if the block carrying it is tagged, so an untagged guide
+rots silently -- a renamed flag leaves a copy-pasteable command that no longer
+works, and nothing fails until a user tries it.
+
+Tag at least one command in a new guide by wrapping its fenced block in a pair
+of HTML comments named `aiperf-run-{server}-endpoint-server`, the closing one
+prefixed with a slash. `docs/tutorial.md` shows the exact syntax, and
+[`tests/ci/test_docs_end_to_end/README.md`](tests/ci/test_docs_end_to_end/README.md)
+documents the available server groups, the `weight=` attribute, and how to run
+the suite locally.
+
+`tools/check_docs_e2e_tags.py` fails a PR that adds a doc with an untagged
+`aiperf profile` command.
+
+> Spelling a tag out in full here would be a mistake: the harness parses every
+> markdown file in the repo and does not skip code fences, so the example would
+> be collected and run as a real benchmark.
+
 ## Running GitHub Actions Locally
 
 You can use the `act` tool to run GitHub Actions locally. See [act usage](https://nektosact.com/introduction.html).
