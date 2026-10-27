@@ -12,7 +12,8 @@ This tutorial walks through AIPerf's Weights & Biases (wandb) integration:
 
 - **Post-run results table** — upload the final benchmark results as a
   wandb Table that mirrors the console metrics view, one row per metric
-  with `avg`/`min`/`max`/`p99`/`p90`/`p50`/`std` columns.
+  with `avg`/`min`/`max`/`p99`/`p90`/`p50`/`std` columns, and each cell
+  as a `metrics/<metric>/<stat>` scalar that wandb panels can plot.
 - **Artifact upload** — attach the generated output files (`inputs.json`,
   `profile_export.jsonl`, CSV/JSON summaries) to the run so it is fully
   reproducible from the wandb UI.
@@ -98,6 +99,15 @@ metrics) appear as empty cells, matching the console's `N/A`.
 > Table panels paginate by default. Use the page-size selector in the
 > panel footer (10/25/50/100) to fit the whole table on one page.
 
+### Metric scalars
+
+Every filled cell of the table is also logged as a scalar named
+`metrics/<metric tag>/<stat>`, for example `metrics/request_latency/p50`
+or `metrics/time_to_first_token/avg`. Table cells cannot be plotted, but
+these scalars appear in the run summary and the runs table, and bar
+charts, scatter plots and parallel coordinates can compare them across
+runs — including runs grouped by a config key.
+
 ### Artifact bundle
 
 Each run logs one `aiperf-run` artifact containing the files from the
@@ -130,8 +140,9 @@ for c in 1 2 4 8; do
 done
 ```
 
-In the wandb project, open each run to read its full results table, or
-use the runs table to compare the same metric across runs side by side.
+In the wandb project, open each run to read its full results table, use
+the runs table to compare the same metric across runs side by side, or
+add a bar chart panel of `metrics/request_latency/p50` to plot it per run.
 
 ## Troubleshooting
 
