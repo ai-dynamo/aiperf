@@ -919,14 +919,21 @@ class MetricsAccumulator(BaseMetricsProcessor):
         at O(values in the slice) per slice instead of O(all values).
         """
         bin_ids = np.arange(n_bins, dtype=np.int64)
+        n_records = len(record_bin)
         index: dict[MetricTagT, SliceIndex] = {}
         for tag in self._column_store.ragged_tags():
             backend = self._column_store.ragged(tag)
             if not getattr(backend, "SUPPORTS_PER_RECORD_REPLAY", False):
                 continue
-            if len(backend.record_indices) == 0:
+            rec_idx = backend.record_indices
+            if len(rec_idx) == 0:
                 continue
-            value_bin = record_bin[backend.record_indices]
+            # Same race guard as RaggedSeries.get_values_for_mask: values for
+            # records ingested after the record_bin snapshot fall in no slice.
+            in_bounds = rec_idx < n_records
+            value_bin = np.where(
+                in_bounds, record_bin[np.where(in_bounds, rec_idx, 0)], -1
+            )
             order = np.argsort(value_bin, kind="stable")
             sorted_bin = value_bin[order]
             index[tag] = (

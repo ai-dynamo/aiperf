@@ -1194,6 +1194,27 @@ class TestTimesliceRaggedIndex:
         )
         assert self._dump(indexed) == self._dump(reference)
 
+    def test_slice_index_skips_values_ingested_after_snapshot(self, mock_run) -> None:
+        """Mirrors get_values_for_mask's race guard: records appended after the
+        timeslice snapshot must be left out, not raise IndexError."""
+        accumulator = MetricsAccumulator(mock_run)
+        series = RaggedSeries()
+        series.extend(0, [1.0, 2.0])
+        series.extend(1, [3.0])
+        series.extend(5, [9.0])  # arrived after the 3-record snapshot
+        store = Mock()
+        store.ragged_tags.return_value = ["icl"]
+        store.ragged.return_value = series
+        accumulator._column_store = store
+        record_bin = np.array([0, 1, -1], dtype=np.int64)
+
+        order, starts, ends = accumulator._build_slice_ragged_index(record_bin, 2)[
+            "icl"
+        ]
+
+        assert series.values[order[starts[0] : ends[0]]].tolist() == [1.0, 2.0]
+        assert series.values[order[starts[1] : ends[1]]].tolist() == [3.0]
+
 
 class TestMetricsSummary:
     def test_to_json(self) -> None:
