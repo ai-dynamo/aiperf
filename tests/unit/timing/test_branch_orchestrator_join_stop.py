@@ -132,6 +132,7 @@ async def test_duration_cutoff_drops_satisfied_future_join() -> None:
         gated_turn_index=7,
     )
     orch._future_joins["corr-1"] = {7: pending}
+    orch._issuer.can_dispatch_join.return_value = False
 
     await orch.expire_replay_deadlines()
 
@@ -157,6 +158,7 @@ def _future_join_waiting_on_child(orch: BranchOrchestrator) -> PendingBranchJoin
 async def test_child_finishing_after_cutoff_drops_future_join() -> None:
     orch = _orchestrator()
     pending = _future_join_waiting_on_child(orch)
+    orch._issuer.can_dispatch_join.return_value = False
 
     await orch.expire_replay_deadlines()
 
@@ -168,6 +170,29 @@ async def test_child_finishing_after_cutoff_drops_future_join() -> None:
     assert pending.is_satisfied
     assert not orch.has_pending_branch_work()
     orch._issuer.dispatch_join_turn.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "complete_after_cutoff",
+    [False, True],
+    ids=["complete-at-cutoff", "complete-after-cutoff"],
+)
+@pytest.mark.asyncio
+async def test_cutoff_keeps_future_join_that_can_still_dispatch(
+    complete_after_cutoff: bool,
+) -> None:
+    orch = _orchestrator()
+    pending = _future_join_waiting_on_child(orch)
+    orch._issuer.can_dispatch_join.return_value = True
+    if not complete_after_cutoff:
+        await orch._satisfy_prerequisite("corr-1", 7, "SPAWN_JOIN:r:0", "child-1")
+
+    await orch.expire_replay_deadlines()
+    if complete_after_cutoff:
+        await orch._satisfy_prerequisite("corr-1", 7, "SPAWN_JOIN:r:0", "child-1")
+
+    assert pending.is_satisfied
+    assert orch._future_joins["corr-1"][7] is pending
 
 
 @pytest.mark.asyncio
