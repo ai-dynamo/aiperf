@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import contextlib
+import time
 import warnings
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,6 +19,7 @@ from aiperf.common.models.model_endpoint_info import (
     ModelListInfo,
 )
 from aiperf.common.models.record_models import RequestInfo, RequestRecord
+from aiperf.common.monotonic_clock import process_clock
 from aiperf.common.redact import REDACTED_VALUE
 from aiperf.plugin.enums import EndpointType, TransportType
 from aiperf.workers.inference_client import InferenceClient, detect_transport_from_url
@@ -182,6 +184,23 @@ class TestInferenceClient:
         assert "Authorization" in request_info.endpoint_headers
         assert request_info.endpoint_headers["Authorization"] == REDACTED_VALUE
         assert request_info.endpoint_headers["X-Custom"] == "value"
+
+    @pytest.mark.asyncio
+    async def test_transport_exception_record_uses_process_clock(
+        self, inference_client, sample_request_info, monkeypatch
+    ):
+        """An error record's wall start comes from the process clock, not a fresh wall read."""
+        process_clock()
+        # A wall-clock step must not move the error record's exported start.
+        monkeypatch.setattr(time, "time_ns", lambda: 0)
+        inference_client.transport.send_request = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+
+        record = await inference_client.send_request(sample_request_info)
+
+        assert record.error is not None
+        assert record.timestamp_ns == process_clock().wall_ns_at(record.start_perf_ns)
 
     @pytest.mark.asyncio
     async def test_send_request_sets_endpoint_params(

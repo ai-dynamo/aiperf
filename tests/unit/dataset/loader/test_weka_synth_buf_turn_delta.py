@@ -119,6 +119,36 @@ def test_turn_delta_case_1_strict_append_emits_only_new_segments():
     assert r._last_disturbance_at is None
 
 
+def test_turn_delta_equal_context_retry_reemits_full_context():
+    """An unchanged retry resets to the full prompt instead of emitting ``[]``."""
+    r = _make_recon()
+    hash_ids = [1, 2]
+    in_tokens = 2 * BLOCK_SIZE
+    r.init_turn_0(
+        hash_ids=hash_ids,
+        in_tokens=in_tokens,
+        tool_tokens=0,
+        system_tokens=0,
+        seed="t:0",
+    )
+    first = r.turn_delta()
+
+    r.advance_turn(
+        prev_hash_ids=hash_ids,
+        prev_in_tokens=in_tokens,
+        prev_out_tokens=BLOCK_SIZE,
+        curr_hash_ids=hash_ids,
+        curr_in_tokens=in_tokens,
+        seed="t:1",
+    )
+    retry = r.turn_delta()
+
+    assert retry.reset_context is True
+    assert retry.delta_messages == first.delta_messages
+    assert retry.delta_messages
+    assert retry.delta_messages[-1]["role"] == "user"
+
+
 def test_turn_delta_case_1_strict_append_three_turns_chain():
     """Three sequential strict-append advances: each delta is incremental."""
     r = _make_recon()

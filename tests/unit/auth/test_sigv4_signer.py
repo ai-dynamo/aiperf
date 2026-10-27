@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import math
+import time
+from collections.abc import Callable
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,21 +26,22 @@ from aiperf.common.models.model_endpoint_info import (  # noqa: E402
 from aiperf.plugin.enums import EndpointType  # noqa: E402
 
 
-async def _pump_until(condition, *, max_iterations: int = 5000) -> None:
-    """Pump the event loop until `condition()` is true or the iteration budget
-    is exhausted.
+async def _pump_until(
+    condition: Callable[[], bool], *, timeout_s: float = 10.0
+) -> None:
+    """Pump the event loop until `condition()` is true or `timeout_s` of real
+    time has elapsed.
 
-    A fixed pump count is flaky under parallel test execution (xdist): CPU
-    contention across workers changes how many event-loop iterations a given
-    wall-clock/scheduling slice actually buys, so a background task under
-    test may need meaningfully more yields to complete the same number of
-    loop iterations. Polling a condition is only as slow as the real work
-    takes, and still bounded so a genuinely stuck test fails instead of
-    hanging.
+    The work being waited on runs on asyncio.to_thread worker threads, which
+    the event loop does not drive: yielding only gives a thread the chance
+    to finish, it does not make it finish. Any yield-count budget is
+    therefore a hidden wall-clock budget (5000 yields was ~140 ms), and a
+    descheduled worker thread on a loaded xdist runner outlasts it. Bounding
+    by real time keeps the test fast when the threads are quick and still
+    fails, rather than hangs, when the background task is truly stuck.
     """
-    for _ in range(max_iterations):
-        if condition():
-            return
+    deadline = time.monotonic() + timeout_s
+    while not condition() and time.monotonic() < deadline:
         await asyncio.sleep(0)
 
 
@@ -619,3 +622,101 @@ class TestSignedUrlMatchesTheWireUrl:
         await signer.sign("GET", "https://example.com/a%30?x=%31", {}, None)
 
         assert seen == ["https://example.com/a0?x=1"]
+
+
+def _real_signer(credentials) -> SigV4RequestSigner:
+    """A signer holding real botocore credentials and real signing classes, so
+    the fast-path decision sees the same types a benchmark would."""
+    from botocore.auth import SigV4Auth
+    from botocore.awsrequest import AWSRequest
+    from botocore.credentials import Credentials
+
+    signer = SigV4RequestSigner(model_endpoint=_make_model_endpoint())
+    signer._credentials = credentials
+    signer._SigV4Auth = SigV4Auth
+    signer._AWSRequest = AWSRequest
+    signer._Credentials = Credentials
+    return signer
+
+
+def _refreshable_credentials():
+    import datetime as dt
+
+    from botocore.credentials import RefreshableCredentials
+
+    expiry = (dt.datetime.now(dt.UTC) + dt.timedelta(hours=1)).isoformat()
+    metadata = {
+        "access_key": "AKIDREFRESH",
+        "secret_key": "secret",
+        "token": "token",
+        "expiry_time": expiry,
+    }
+    return RefreshableCredentials.create_from_metadata(
+        metadata=metadata, refresh_using=lambda: metadata, method="test"
+    )
+
+
+class TestStaticCredentialsSkipTheThreadHop:
+    """Static credentials have nothing to refresh, so the thread hop that
+    protects the event loop from a blocking STS/SSO refresh buys nothing."""
+
+    @pytest.mark.asyncio
+    async def test_static_credentials_are_read_inline(self) -> None:
+        from botocore.credentials import Credentials
+
+        signer = _real_signer(Credentials("AKIDSTATIC", "secret"))
+        with patch(
+            "aiperf.auth.sigv4_signer.asyncio.to_thread", wraps=asyncio.to_thread
+        ) as mock_to_thread:
+            result = await signer.sign("POST", "https://example.com/x", {}, b"{}")
+
+        mock_to_thread.assert_not_called()
+        assert "Credential=AKIDSTATIC/" in result.headers["Authorization"]
+
+    @pytest.mark.asyncio
+    async def test_refreshable_credentials_still_go_through_a_thread(self) -> None:
+        signer = _real_signer(_refreshable_credentials())
+        with patch(
+            "aiperf.auth.sigv4_signer.asyncio.to_thread", wraps=asyncio.to_thread
+        ) as mock_to_thread:
+            result = await signer.sign("POST", "https://example.com/x", {}, b"{}")
+
+        mock_to_thread.assert_called_once()
+        assert "Credential=AKIDREFRESH/" in result.headers["Authorization"]
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_credentials_subclass_still_goes_through_a_thread(
+        self,
+    ) -> None:
+        """Only the exact static type is known not to block; a subclass may
+        override get_frozen_credentials() with I/O."""
+        from botocore.credentials import Credentials
+
+        class CustomCredentials(Credentials):
+            pass
+
+        signer = _real_signer(CustomCredentials("AKIDCUSTOM", "secret"))
+        with patch(
+            "aiperf.auth.sigv4_signer.asyncio.to_thread", wraps=asyncio.to_thread
+        ) as mock_to_thread:
+            await signer.sign("POST", "https://example.com/x", {}, b"{}")
+
+        mock_to_thread.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_the_decision_follows_credentials_swapped_by_reresolution(
+        self,
+    ) -> None:
+        """Periodic re-resolution can replace static credentials with
+        refreshable ones mid-run, so the check must be made per request."""
+        from botocore.credentials import Credentials
+
+        signer = _real_signer(Credentials("AKIDSTATIC", "secret"))
+        with patch(
+            "aiperf.auth.sigv4_signer.asyncio.to_thread", wraps=asyncio.to_thread
+        ) as mock_to_thread:
+            await signer.sign("POST", "https://example.com/x", {}, b"{}")
+            signer._credentials = _refreshable_credentials()
+            await signer.sign("POST", "https://example.com/x", {}, b"{}")
+
+        mock_to_thread.assert_called_once()
