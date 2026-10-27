@@ -14,11 +14,13 @@ Uses time_traveler_no_patch_sleep fixture which:
 
 import asyncio
 import time
+from collections.abc import Callable, Coroutine
 
 import pytest
+from pytest import param
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.loop_scheduler import LoopScheduler
+from aiperf.common.loop_scheduler import HandleId, LoopScheduler
 from aiperf.common.utils import yield_to_event_loop
 
 # =============================================================================
@@ -198,6 +200,92 @@ class TestScheduleLater:
         assert after_a[1] - after_a[0] == pytest.approx(before_a[1] - before_a[0])
         assert after_b == before_b
         scheduler.cancel_all_pending()
+
+    async def test_pending_count_for_group_counts_only_unfired_group_timers(
+        self, scheduler: LoopScheduler
+    ):
+        """The idle-cap diagnostics report only timers still waiting to fire."""
+        fired = asyncio.Event()
+
+        async def mark_fired():
+            fired.set()
+
+        async def noop():
+            pass
+
+        scheduler.schedule_later(0.01, mark_fired(), group_id="root-a")
+        scheduler.schedule_later(5.0, noop(), group_id="root-a")
+        scheduler.schedule_later(5.0, noop(), group_id="root-b")
+        assert scheduler.pending_count_for_group("root-a") == 2
+
+        await asyncio.wait_for(fired.wait(), timeout=1.0)
+
+        assert scheduler.pending_count_for_group("root-a") == 1
+        assert scheduler.pending_count_for_group("root-b") == 1
+        assert scheduler.pending_count_for_group("missing") == 0
+        scheduler.cancel_all_pending()
+        assert scheduler.pending_count_for_group("root-a") == 0
+
+    async def test_group_task_observer_reports_completed_grouped_timers_only(
+        self, scheduler: LoopScheduler
+    ):
+        """The idle cap re-checks a tree only after its grouped timer returns."""
+        seen: list[str] = []
+        scheduler.set_group_task_observer(seen.append)
+        done = asyncio.Event()
+        started = asyncio.Event()
+
+        async def noop():
+            pass
+
+        async def blocked():
+            started.set()
+            await asyncio.Event().wait()
+
+        async def last():
+            done.set()
+
+        scheduler.schedule_later(0.01, blocked(), group_id="root-c")
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        await asyncio.gather(*scheduler.cancel_all_running(), return_exceptions=True)
+
+        scheduler.schedule_later(0.01, noop(), group_id="root-a")
+        scheduler.schedule_later(0.01, noop())
+        cancelled = scheduler.schedule_later(0.01, noop(), group_id="root-b")
+        scheduler.cancel_handle_id(cancelled)
+        scheduler.schedule_later(0.02, last())
+
+        await asyncio.wait_for(done.wait(), timeout=1.0)
+        await asyncio.sleep(0)
+
+        assert seen == ["root-a"]
+
+    @pytest.mark.parametrize(
+        "schedule",
+        [
+            param(lambda s, c: s.schedule_later(0.0, c, group_id="root-a"), id="schedule_later"),
+            param(lambda s, c: s.schedule_at_perf_sec(time.perf_counter() - 1.0, c, group_id="root-a"), id="schedule_at_perf_sec"),
+            param(lambda s, c: s.schedule_at_perf_ns(time.perf_counter_ns() - NANOS_PER_SECOND, c, group_id="root-a"), id="schedule_at_perf_ns"),
+            param(lambda s, c: s.execute_async(c, group_id="root-a"), id="execute_async"),
+        ],
+    )  # fmt: skip
+    async def test_group_task_observer_reports_immediate_grouped_tasks(
+        self,
+        scheduler: LoopScheduler,
+        schedule: Callable[[LoopScheduler, Coroutine], HandleId | asyncio.Task],
+    ):
+        seen: list[str] = []
+        scheduler.set_group_task_observer(seen.append)
+
+        async def noop():
+            pass
+
+        task = schedule(scheduler, noop())
+        assert isinstance(task, asyncio.Task)
+        await task
+        await asyncio.sleep(0)
+
+        assert seen == ["root-a"]
 
     async def test_global_cap_preserves_group_ownership(self, scheduler: LoopScheduler):
         """A global idle jump cannot erase later per-trace cap ownership."""
