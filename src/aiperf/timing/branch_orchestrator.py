@@ -1719,6 +1719,10 @@ class BranchOrchestrator:
         back first so the joins they gated can drain. Think-time sleepers are
         woken before any join is released here; each returns at once if its
         gated turn would now be refused and otherwise keeps its think-time.
+        Satisfied future joins are also discarded because their parents can no
+        longer advance to those gates after scheduling stops. A join that is
+        still waiting on a child remains tracked; ``_satisfy_prerequisite``
+        discards it if that final child returns after this cutoff sweep.
         """
         self._schedule_stopped.set()
         self._wake_think_time_sleepers()
@@ -1732,6 +1736,11 @@ class BranchOrchestrator:
                 releasable.append(pending)
         for pending in releasable:
             await self._release_blocked_join(pending)
+        for parent_corr, gates in list(self._future_joins.items()):
+            for gated_idx, pending in list(gates.items()):
+                if pending.is_satisfied:
+                    self._pop_future_join(parent_corr, gated_idx)
+            self._release_parent_slot_if_drained(parent_corr)
         self._notify_drain()
 
     async def _satisfy_prerequisite(
@@ -1776,6 +1785,16 @@ class BranchOrchestrator:
         if pending.is_blocked and pending.can_release:
             return self._active_joins.pop(parent_corr, None)
         if pending.is_blocked:
+            return None
+        # A request-free spine normally retains a satisfied future join so the
+        # parent's next return can apply its between-round think-time. Once the
+        # phase has stopped scheduling, that return can no longer advance the
+        # parent. The last child may finish after the sending cutoff, so the
+        # cutoff-time sweep alone cannot discard this join. Drop it at the
+        # transition to satisfied instead of holding phase drain open until the
+        # grace period expires.
+        if self._schedule_stopped.is_set():
+            self._pop_future_join(parent_corr, gated_idx)
             return None
         # Satisfied before the parent arrived. A request-free SPINE gate carries
         # between-round think-time, so leave it in place (marked satisfied) for
