@@ -199,16 +199,29 @@ class PhasePublisher:
         if self._warmup_boundary_ready is not None:
             self._warmup_boundary_ready.clear()
 
-    async def wait_for_warmup_boundary_ready(self, timeout: float) -> bool:
+    async def wait_for_warmup_boundary_ready(
+        self, timeout: float, cancel_event: asyncio.Event | None = None
+    ) -> bool:
         """Wait for ServerMetricsManager's warmup boundary acknowledgment.
 
-        Returns True when the ready event fires, False on timeout or when no
-        event was wired (server metrics disabled / tests without TimingManager).
+        Returns True when the ready event fires, False on timeout or when
+        ``cancel_event`` fires first; callers passing ``cancel_event`` should
+        check their own cancel state afterwards. Returns True when no event was
+        wired (server metrics disabled / tests without TimingManager).
         """
         if self._warmup_boundary_ready is None:
             return True
+        ready_task = asyncio.ensure_future(self._warmup_boundary_ready.wait())
+        waiters = {ready_task}
+        if cancel_event is not None:
+            waiters.add(asyncio.ensure_future(cancel_event.wait()))
         try:
-            await asyncio.wait_for(self._warmup_boundary_ready.wait(), timeout=timeout)
-            return True
-        except TimeoutError:
-            return False
+            await asyncio.wait(
+                waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            for task in waiters:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*waiters, return_exceptions=True)
+        return self._warmup_boundary_ready.is_set()

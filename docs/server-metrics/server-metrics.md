@@ -320,7 +320,7 @@ If the acknowledgement is missing while collection is active, the runner aborts 
 
 When collection is **runtime-inactive** (no reachable `/metrics`, or `--no-server-metrics`), the flush and ack waits are skipped entirely. The benchmark proceeds without server-metrics exports, matching the behaviour when server metrics were never enabled.
 
-The ack wait budget defaults to `COLLECTION_FLUSH_PERIOD + SCRAPE_TIMEOUT * (2 * N) + 5`, where `N` is the reachable collector count from `ServerMetricsStatusMessage`. Set `AIPERF_SERVER_METRICS_WARMUP_BOUNDARY_TIMEOUT` to override that derived budget.
+The ack wait budget defaults to `COLLECTION_FLUSH_PERIOD + SCRAPE_TIMEOUT * (N + 2) + 5`, where `N` is the reachable collector count from `ServerMetricsStatusMessage`; that covers the manager's worst case of one scrape timeout draining in-flight scrapes, one waiting on cancelled periodic scrapes, and `N` serial final scrapes. Set `AIPERF_SERVER_METRICS_WARMUP_BOUNDARY_TIMEOUT` to override that derived budget.
 
 ## Configuration
 

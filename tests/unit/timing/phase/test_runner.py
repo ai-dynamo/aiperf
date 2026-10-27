@@ -1573,7 +1573,7 @@ class TestWarmupServerMetricsFlushBarrier:
         async def record_phase_complete(*args, **kwargs) -> None:
             events.append("phase_complete")
 
-        async def record_ready(timeout: float) -> bool:
+        async def record_ready(timeout: float, cancel_event=None) -> bool:
             events.append("boundary_ready_wait")
             return True
 
@@ -1658,8 +1658,69 @@ class TestWarmupServerMetricsFlushBarrier:
         try:
             with pytest.raises(TimeoutError, match="warmup boundary ready"):
                 await runner._wait_for_returning_complete(phase_id="phase-warmup")
-            # flush(0.2) + scrape(8) * (2 * runtime_count 2) + 5 = 37.2
-            pub.wait_for_warmup_boundary_ready.assert_awaited_once_with(37.2)
+            # flush(0.2) + scrape(8) * (runtime_count 2 + 2) + 5 = 37.2
+            pub.wait_for_warmup_boundary_ready.assert_awaited_once_with(
+                37.2, cancel_event=runner._cancel_event
+            )
+        finally:
+            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush
+            Environment.SERVER_METRICS.SCRAPE_TIMEOUT = original_scrape
+            Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT = original_override
+
+    async def test_cancel_during_boundary_wait_leaves_via_cancel_path(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """cancel() during the ack wait must not surface as a boundary TimeoutError."""
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["test-model"],
+                endpoint_type=EndpointType.CHAT,
+                urls=["http://localhost:8000/v1/chat"],
+            )
+        )
+        run.cfg.server_metrics.enabled = True
+        pub.server_metrics_runtime_active = True
+        pub.server_metrics_collector_count = 2
+        runner = make_runner(
+            cfg(phase=CreditPhase.WARMUP),
+            conv_src,
+            pub,
+            router,
+            conc,
+            cancel,
+            cb,
+            run=run,
+        )
+        pub.publish_phase_complete = AsyncMock()
+
+        async def wait_then_cancel(timeout: float, cancel_event=None) -> bool:
+            asyncio.get_running_loop().call_soon(runner.cancel)
+            await asyncio.wait_for(cancel_event.wait(), timeout=5.0)
+            return False
+
+        pub.wait_for_warmup_boundary_ready = AsyncMock(side_effect=wait_then_cancel)
+        runner._lifecycle.start()
+        runner._lifecycle.mark_sending_complete(timeout_triggered=False)
+        runner._progress.all_credits_returned_event.set()
+
+        original_flush = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
+        original_scrape = Environment.SERVER_METRICS.SCRAPE_TIMEOUT
+        original_override = Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT
+        Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = 0.2
+        Environment.SERVER_METRICS.SCRAPE_TIMEOUT = 8.0
+        Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT = None
+        try:
+            await runner._publish_phase_complete_with_server_metrics_gate(
+                runner._create_final_stats()
+            )
+            assert runner._was_cancelled
+            pub.wait_for_warmup_boundary_ready.assert_awaited_once()
         finally:
             Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush
             Environment.SERVER_METRICS.SCRAPE_TIMEOUT = original_scrape
@@ -1760,8 +1821,8 @@ class TestWarmupServerMetricsFlushBarrier:
         Environment.SERVER_METRICS.SCRAPE_TIMEOUT = 8.0
         Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT = None
         try:
-            # flush(0.2) + scrape(8) * (2 * 3) + 5 = 53.2
-            assert runner._server_metrics_warmup_boundary_ready_timeout() == 53.2
+            # flush(0.2) + scrape(8) * (3 + 2) + 5 = 45.2
+            assert runner._server_metrics_warmup_boundary_ready_timeout() == 45.2
         finally:
             Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD = original_flush
             Environment.SERVER_METRICS.SCRAPE_TIMEOUT = original_scrape

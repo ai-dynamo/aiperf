@@ -227,6 +227,7 @@ class PhaseRunner(TaskManagerMixin):
         self._return_wait_task: asyncio.Task | None = None
         self._router_phase_started = False
         self._was_cancelled = False
+        self._cancel_event = asyncio.Event()
         self._rampers: list[RateControllerProtocol] = []
         self._baseline_start_ns: int | None = None
         self._baseline_end_ns: int | None = None
@@ -460,6 +461,7 @@ class PhaseRunner(TaskManagerMixin):
     def cancel(self) -> None:
         """Cancel the phase runner (external cancellation like Ctrl+C)."""
         self._was_cancelled = True
+        self._cancel_event.set()
         self._lifecycle.cancel()
         if self._execution_task:
             self._execution_task.cancel()
@@ -1394,7 +1396,9 @@ class PhaseRunner(TaskManagerMixin):
         in-flight scrapes then takes a serial final scrape per collector.
         Prefer ``AIPERF_SERVER_METRICS_WARMUP_BOUNDARY_TIMEOUT`` when set;
         otherwise derive from the runtime reachable collector count
-        (``flush + SCRAPE_TIMEOUT * (2 * N) + 5``).
+        (``flush + SCRAPE_TIMEOUT * (N + 2) + 5``). The manager can spend up to
+        one ``SCRAPE_TIMEOUT`` draining in-flight scrapes, up to another
+        waiting on cancelled periodic scrapes, then ``N`` serial final scrapes.
         """
         override = Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT
         if override is not None and override > 0:
@@ -1405,7 +1409,7 @@ class PhaseRunner(TaskManagerMixin):
         collector_budget = max(collector_count, 1)
         return (
             Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
-            + Environment.SERVER_METRICS.SCRAPE_TIMEOUT * (2 * collector_budget)
+            + Environment.SERVER_METRICS.SCRAPE_TIMEOUT * (collector_budget + 2)
             + 5.0
         )
 
@@ -1425,7 +1429,13 @@ class PhaseRunner(TaskManagerMixin):
         if not self._is_warmup or not self._server_metrics_collection_active():
             return
         timeout = self._server_metrics_warmup_boundary_ready_timeout()
-        ready = await self._phase_publisher.wait_for_warmup_boundary_ready(timeout)
+        # Race the ack against cancel(): nothing else interrupts this wait, so
+        # a Ctrl+C here should leave through the cancel path, not the timeout.
+        ready = await self._phase_publisher.wait_for_warmup_boundary_ready(
+            timeout, cancel_event=self._cancel_event
+        )
+        if self._was_cancelled:
+            return
         if not ready:
             raise TimeoutError(
                 f"Timed out after {timeout:.1f}s waiting for server-metrics "
