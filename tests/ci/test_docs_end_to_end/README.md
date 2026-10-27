@@ -50,6 +50,12 @@ default chat server, and `docs/tutorials/{vision,audio,mmvu,embeddings}.md` for
 the others -- and a second setup block for a group that already has one is a
 conflict, not an addition. Copy the shape from `docs/tutorial.md`.
 
+A server's containers are stopped however its test ends -- a setup that dies,
+a health check that never passes, a fixture that cannot be written. Every
+documented group binds 8000, so an engine left holding the port makes the next
+server fail to bind and report a docker networking error naming neither the
+real failure nor the server that caused it.
+
 Discovering no servers at all fails the run too. Nothing legitimately parses
 to zero -- the tags live in this repository -- so an empty result means the
 suite would boot a GPU runner, build the image and execute nothing.
