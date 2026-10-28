@@ -291,6 +291,25 @@ def _is_tiktoken_cached(name: str) -> bool:
     return Path(cache_dir, cache_key).is_file()
 
 
+def _is_local_path(name: str) -> bool:
+    """Whether *name* names a local tokenizer path rather than an HF repo id.
+
+    Shared by alias resolution (parent process) and offline snapshot
+    resolution (worker processes) so both treat the same names as local.
+    ``path.is_dir()`` mirrors transformers, which loads any existing directory
+    before consulting the hub, so a bare ``tok`` or ``models/tok`` in the CWD
+    resolves the same way in both places.
+
+    ``path.anchor`` is used instead of ``path.is_absolute()`` because the
+    latter requires a drive letter on Windows
+    (``WindowsPath("/home/user/foo").is_absolute() == False``; pinned by
+    ``test_resolve_alias_treats_posix_absolute_path_as_local``). Anchor is
+    truthy for any path with a drive and/or root.
+    """
+    path = Path(name)
+    return bool(path.anchor) or name.startswith(("./", "../")) or path.is_dir()
+
+
 def resolve_alias(name: str) -> AliasResolutionResult:
     """Resolve a tokenizer name alias to its canonical repository ID.
 
@@ -304,21 +323,7 @@ def resolve_alias(name: str) -> AliasResolutionResult:
     Returns:
         AliasResolutionResult with resolved name and any suggestions.
     """
-    # Check if this looks like a local path. Use ``path.anchor`` instead of
-    # ``path.is_absolute()`` because the latter requires a drive letter on
-    # Windows (``WindowsPath("/home/user/foo").is_absolute() == False``;
-    # pinned by ``test_resolve_alias_treats_posix_absolute_path_as_local``).
-    # Anchor is truthy for any path with a drive AND/OR root, so a POSIX-style
-    # absolute path passed on Windows is correctly recognized as local.
-    path = Path(name)
-    is_local_path = (
-        bool(path.anchor)
-        or name.startswith("./")
-        or name.startswith("../")
-        or path.is_dir()
-    )
-
-    if is_local_path or _is_offline_mode() or _is_hf_cached(name):
+    if _is_local_path(name) or _is_offline_mode() or _is_hf_cached(name):
         return AliasResolutionResult(resolved_name=name)
 
     # Lazy import HuggingFace Hub
@@ -670,9 +675,20 @@ class Tokenizer:
         Tries the canonical repo ID first, then alias matches (e.g. ``gpt2``
         cached as ``openai-community/gpt2``). Raises ``OSError`` with a clear
         message if no local snapshot exists.
+
+        A local path is returned as-is: ``snapshot_download`` validates its
+        argument as a repo id, so an absolute path raises ``HFValidationError``
+        and a relative one misses the cache. ``_is_local_path`` is the same
+        predicate alias resolution uses, so offline workers load the directory
+        the online parent loaded.
         """
         from huggingface_hub import snapshot_download
         from huggingface_hub.errors import LocalEntryNotFoundError
+
+        if _is_local_path(name):
+            if Path(name).is_dir():
+                return name
+            raise OSError(f"Local tokenizer path '{name}' is not a directory.")
 
         candidates = [name]
         if "/" not in name:
