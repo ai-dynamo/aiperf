@@ -14,11 +14,13 @@ Uses time_traveler_no_patch_sleep fixture which:
 
 import asyncio
 import time
+from collections.abc import Callable, Coroutine
 
 import pytest
+from pytest import param
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.loop_scheduler import LoopScheduler
+from aiperf.common.loop_scheduler import HandleId, LoopScheduler
 from aiperf.common.utils import yield_to_event_loop
 
 # =============================================================================
@@ -159,6 +161,260 @@ class TestScheduleLater:
         scheduler.schedule_later(1.0, noop())
         assert scheduler.cap_pending_delay(2.0) == 0.0
         scheduler.cancel_all_pending()
+
+    async def test_cap_pending_delay_for_group_isolated_and_uniform(
+        self, scheduler: LoopScheduler
+    ):
+        """A trace-local cap cannot move another trace's replay schedule."""
+
+        async def noop():
+            pass
+
+        scheduler.schedule_later(5.0, noop(), group_id="root-a")
+        scheduler.schedule_later(8.0, noop(), group_id="root-a")
+        scheduler.schedule_later(6.0, noop(), group_id="root-b")
+        before_a = sorted(
+            handle.when()
+            for handle_id, (handle, _) in scheduler._handles.items()
+            if scheduler._handle_groups.get(handle_id) == "root-a"
+        )
+        before_b = [
+            handle.when()
+            for handle_id, (handle, _) in scheduler._handles.items()
+            if scheduler._handle_groups.get(handle_id) == "root-b"
+        ]
+
+        shifted = scheduler.cap_pending_delay_for_group("root-a", 1.0)
+
+        after_a = sorted(
+            handle.when()
+            for handle_id, (handle, _) in scheduler._handles.items()
+            if scheduler._handle_groups.get(handle_id) == "root-a"
+        )
+        after_b = [
+            handle.when()
+            for handle_id, (handle, _) in scheduler._handles.items()
+            if scheduler._handle_groups.get(handle_id) == "root-b"
+        ]
+        assert shifted == pytest.approx(4.0, abs=0.02)
+        assert after_a[1] - after_a[0] == pytest.approx(before_a[1] - before_a[0])
+        assert after_b == before_b
+        scheduler.cancel_all_pending()
+
+    async def test_pending_count_for_group_counts_only_unfired_group_timers(
+        self, scheduler: LoopScheduler
+    ):
+        """The idle-cap diagnostics report only timers still waiting to fire."""
+        fired = asyncio.Event()
+
+        async def mark_fired():
+            fired.set()
+
+        async def noop():
+            pass
+
+        scheduler.schedule_later(0.01, mark_fired(), group_id="root-a")
+        scheduler.schedule_later(5.0, noop(), group_id="root-a")
+        scheduler.schedule_later(5.0, noop(), group_id="root-b")
+        assert scheduler.pending_count_for_group("root-a") == 2
+
+        await asyncio.wait_for(fired.wait(), timeout=1.0)
+
+        assert scheduler.pending_count_for_group("root-a") == 1
+        assert scheduler.pending_count_for_group("root-b") == 1
+        assert scheduler.pending_count_for_group("missing") == 0
+        scheduler.cancel_all_pending()
+        assert scheduler.pending_count_for_group("root-a") == 0
+
+    async def test_running_count_for_group_counts_started_unfinished_tasks(
+        self, scheduler: LoopScheduler
+    ):
+        """A fired grouped timer still counts for its group until it returns.
+
+        Firing moves a timer out of ``pending_count_for_group``, but its
+        coroutine may still be waiting on a prefill slot or the credit send.
+        The idle cap reads this count to tell that window apart from a truly
+        idle tree, so it must cover the gap without counting ungrouped work or
+        other groups.
+        """
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def hold():
+            started.set()
+            await release.wait()
+
+        async def noop():
+            pass
+
+        scheduler.schedule_later(0.01, hold(), group_id="root-a")
+        scheduler.schedule_later(5.0, noop(), group_id="root-a")
+        scheduler.execute_async(noop())
+        assert scheduler.running_count_for_group("root-a") == 0
+
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        assert scheduler.running_count_for_group("root-a") == 1
+        assert scheduler.pending_count_for_group("root-a") == 1
+        assert scheduler.running_count_for_group("root-b") == 0
+
+        release.set()
+        await yield_to_scheduler(n=3)
+        assert scheduler.running_count_for_group("root-a") == 0
+        scheduler.cancel_all_pending()
+
+    async def test_running_count_for_group_excludes_task_in_group_observer(
+        self, scheduler: LoopScheduler
+    ):
+        """The finished task is no longer counted when the group observer runs.
+
+        ``ReplayBarrierCoordinator._on_root_timer_done`` re-enforces the idle
+        cap from this observer and defers while the root has running tasks.
+        If the task that just returned still counted itself, the cap would
+        always defer and never resume after a timer that issued nothing.
+        """
+        seen: list[int] = []
+        scheduler.set_group_task_observer(
+            lambda group: seen.append(scheduler.running_count_for_group(group))
+        )
+
+        async def noop():
+            pass
+
+        scheduler.schedule_later(0, noop(), group_id="root-a")
+        await yield_to_scheduler(n=3)
+        assert seen == [0]
+
+    async def test_cancel_all_running_clears_group_running_counts(
+        self, scheduler: LoopScheduler
+    ):
+        """Cancelling running tasks stops counting them right away.
+
+        The count drops before the cancelled tasks finish unwinding, not only
+        once their done callbacks run. A stale count would make the idle cap
+        treat the root as busy and defer indefinitely.
+        """
+
+        async def hold():
+            await asyncio.Event().wait()
+
+        scheduler.schedule_later(0, hold(), group_id="root-a")
+        await yield_to_scheduler(n=1)
+        assert scheduler.running_count_for_group("root-a") == 1
+        tasks = scheduler.cancel_all_running()
+        assert scheduler.running_count_for_group("root-a") == 0
+        await asyncio.gather(*tasks, return_exceptions=True)
+        assert scheduler.running_count_for_group("root-a") == 0
+
+    async def test_group_task_observer_reports_completed_grouped_timers_only(
+        self, scheduler: LoopScheduler
+    ):
+        """The idle cap re-checks a tree only after its grouped timer returns."""
+        seen: list[str] = []
+        scheduler.set_group_task_observer(seen.append)
+        done = asyncio.Event()
+        started = asyncio.Event()
+
+        async def noop():
+            pass
+
+        async def blocked():
+            started.set()
+            await asyncio.Event().wait()
+
+        async def last():
+            done.set()
+
+        scheduler.schedule_later(0.01, blocked(), group_id="root-c")
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        await asyncio.gather(*scheduler.cancel_all_running(), return_exceptions=True)
+
+        scheduler.schedule_later(0.01, noop(), group_id="root-a")
+        scheduler.schedule_later(0.01, noop())
+        cancelled = scheduler.schedule_later(0.01, noop(), group_id="root-b")
+        scheduler.cancel_handle_id(cancelled)
+        scheduler.schedule_later(0.02, last())
+
+        await asyncio.wait_for(done.wait(), timeout=1.0)
+        await asyncio.sleep(0)
+
+        assert seen == ["root-a"]
+
+    @pytest.mark.parametrize(
+        "schedule",
+        [
+            param(lambda s, c: s.schedule_later(0.0, c, group_id="root-a"), id="schedule_later"),
+            param(lambda s, c: s.schedule_at_perf_sec(time.perf_counter() - 1.0, c, group_id="root-a"), id="schedule_at_perf_sec"),
+            param(lambda s, c: s.schedule_at_perf_ns(time.perf_counter_ns() - NANOS_PER_SECOND, c, group_id="root-a"), id="schedule_at_perf_ns"),
+            param(lambda s, c: s.execute_async(c, group_id="root-a"), id="execute_async"),
+        ],
+    )  # fmt: skip
+    async def test_group_task_observer_reports_immediate_grouped_tasks(
+        self,
+        scheduler: LoopScheduler,
+        schedule: Callable[[LoopScheduler, Coroutine], HandleId | asyncio.Task],
+    ):
+        seen: list[str] = []
+        scheduler.set_group_task_observer(seen.append)
+
+        async def noop():
+            pass
+
+        task = schedule(scheduler, noop())
+        assert isinstance(task, asyncio.Task)
+        await task
+        await asyncio.sleep(0)
+
+        assert seen == ["root-a"]
+
+    async def test_global_cap_preserves_group_ownership(self, scheduler: LoopScheduler):
+        """A global idle jump cannot erase later per-trace cap ownership."""
+
+        async def noop():
+            pass
+
+        scheduler.schedule_later(5.0, noop(), group_id="root-a")
+        scheduler.schedule_later(8.0, noop(), group_id="root-b")
+        assert scheduler.cap_pending_delay(1.0) == pytest.approx(4.0, abs=0.02)
+
+        groups = set(scheduler._handle_groups.values())
+        assert groups == {"root-a", "root-b"}
+        root_a_before = next(
+            handle.when()
+            for handle_id, (handle, _) in scheduler._handles.items()
+            if scheduler._handle_groups.get(handle_id) == "root-a"
+        )
+
+        assert scheduler.cap_pending_delay_for_group("root-b", 0.0) == pytest.approx(
+            4.0, abs=0.02
+        )
+        root_a_after = next(
+            handle.when()
+            for handle_id, (handle, _) in scheduler._handles.items()
+            if scheduler._handle_groups.get(handle_id) == "root-a"
+        )
+        assert root_a_after == root_a_before
+        scheduler.cancel_all_pending()
+
+    async def test_cap_pending_delay_zero_queues_timer_as_ready_work(
+        self, scheduler: LoopScheduler
+    ):
+        """A zero idle budget fires instead of stranding a timer at loop.time()."""
+        fired = asyncio.Event()
+
+        async def mark_fired():
+            fired.set()
+
+        scheduler.schedule_later(60.0, mark_fired())
+        assert scheduler.cap_pending_delay(0.0) == pytest.approx(60.0, abs=0.02)
+        # Re-entrant idle observations before the ready callback runs are a
+        # no-op, not an AttributeError from treating Handle as TimerHandle.
+        assert scheduler.cap_pending_delay(0.0) == 0.0
+
+        await asyncio.wait_for(fired.wait(), timeout=0.1)
+        await yield_to_scheduler()
+
+        assert scheduler.pending_count == 0
+        assert scheduler.running_count == 0
 
     async def test_cap_pending_delay_rejects_negative_cap(
         self, scheduler: LoopScheduler

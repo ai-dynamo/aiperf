@@ -36,6 +36,7 @@ from typing import Annotated, Any, Literal, TypeAlias
 from cyclopts import Parameter
 from pydantic import AfterValidator, BeforeValidator, Field
 
+from aiperf.common.constants import DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS
 from aiperf.common.enums import (
     AIPerfLogLevel,
     AudioFormat,
@@ -739,6 +740,40 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    hf_mooncake_dataset: Annotated[
+        str | None,
+        Field(
+            description="HuggingFace repository for the Mooncake trajectory loader. "
+            "Auto-selects --public-dataset mooncake_hf. Cannot be combined with "
+            "another public dataset or a custom dataset. With --config, set the repository in YAML."
+        ),
+        CLIParameter(name=("--hf-mooncake-dataset",), group=Groups.INPUT),
+    ] = None
+
+    hf_mooncake_split: Annotated[
+        str | None,
+        Field(
+            description="HuggingFace split for mooncake_hf (e.g. train or test). "
+            "Defaults to test. Only supported by --public-dataset mooncake_hf.",
+        ),
+        CLIParameter(name=("--hf-mooncake-split",), group=Groups.INPUT),
+    ] = None
+
+    mooncake_trace_to_hf_mapping: Annotated[
+        list[str],
+        Field(
+            default_factory=list,
+            description="Map a Mooncake trace field to a dotted HuggingFace column path: MOONCAKE_FIELD=HF_COLUMN. "
+            "Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. "
+            "Only supported by mooncake_hf. Unmapped fields use canonical column names.",
+        ),
+        CLIParameter(
+            name=("--mooncake-trace-to-hf-mapping",),
+            consume_multiple=True,
+            group=Groups.INPUT,
+        ),
+    ]
+
     hf_weka_dataset: Annotated[
         str | None,
         Field(
@@ -822,7 +857,7 @@ class CLIConfig(BaseConfig):
             description="For weka_trace inputs, emit Turn.delay using only the recorded per-request `think_time` (client-side delay before each request) "
             "instead of the full `t_curr - t_prev` inter-request delta. Compresses replay wall time against zero-latency mocks because the recorded "
             "`api_time` portion of each gap is dropped. Mirrors kv-cache-tester's default `--timing-strategy think-only`. Falls back to the full delta "
-            "for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders.",
+            "for turns whose recorded `think_time` is null. Mutually exclusive with `--ignore-trace-delays`. No effect on non-weka trace loaders. Under fixed-schedule replay the recorded timestamps drive dispatch, so this flag has no effect there; for weka_trace it therefore suppresses fixed-schedule auto-promotion, and passing an explicit --fixed-schedule alongside it wins and the flag is ignored.",
         ),
         CLIParameter(
             name=("--use-think-time-only",),
@@ -950,9 +985,14 @@ class CLIConfig(BaseConfig):
             description="Suppress the automatic switch to fixed-schedule mode for "
             "trace datasets that carry per-record timestamps. By default a "
             "trace input (e.g. mooncake_trace) with timestamps in the first "
-            "record auto-promotes the profiling phase to fixed_schedule. Pass "
-            "--no-fixed-schedule to keep the user-selected timing mode (e.g. "
-            "concurrency, request_rate) and ignore the trace timestamps.",
+            "record auto-promotes the profiling phase to fixed_schedule; "
+            "weka_trace is promoted by type instead, since its timing is "
+            "nested per request and its input is usually a directory. "
+            "--ignore-trace-delays and --use-think-time-only also suppress "
+            "promotion, because both say the recorded timeline should not be "
+            "replayed. Pass --no-fixed-schedule to keep the user-selected "
+            "timing mode (e.g. concurrency, request_rate) and ignore the trace "
+            "timestamps.",
         ),
         CLIParameter(
             name=("--no-fixed-schedule",),
@@ -2253,7 +2293,7 @@ class CLIConfig(BaseConfig):
             name=("--benchmark-grace-period",),
             group=Groups.LOAD_GENERATOR,
         ),
-    ] = 30.0
+    ] = DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS
 
     concurrency: Annotated[
         Any,
@@ -2464,17 +2504,14 @@ class CLIConfig(BaseConfig):
         Field(
             description="AGENTIC_REPLAY only: collapse the WARMUP-start and "
             "PROFILING-start dispatches into synchronized bursts instead of "
-            "spreading them by each request's recorded offset from t*. By "
-            "default (False) the phase starts are SPREAD: WARMUP requests are "
-            "aligned globally so every trajectory reaches its t* at the same "
-            "instant (the warmup end), and each lane's first PROFILING request "
-            "waits out its recorded gap after t* -- reproducing the recorded "
-            "arrival pattern at both phase boundaries. The rest of the replay "
-            "(inter-turn delays) is timing-faithful regardless of this flag; "
-            "it governs ONLY the burst-vs-spread of the two phase starts. Pass "
-            "--burst-phase-starts to fire each phase's first requests together "
-            "(faster concurrency ramp, synchronized start), e.g. for a "
-            "throughput-oriented run rather than a faithful arrival replay.",
+            "preserving recorded spacing. By default (False), WARMUP requests "
+            "are aligned globally so every trajectory reaches t* together. "
+            "PROFILING subtracts one phase-wide minimum from every first "
+            "request offset: the earliest request starts immediately and all "
+            "other trajectories retain their recorded spacing. Pass "
+            "--burst-phase-starts to subtract a separate minimum per lane, "
+            "making every lane start immediately. Subsequent inter-turn "
+            "delays are timing-faithful in either mode.",
         ),
         CLIParameter(
             name=("--burst-phase-starts",),
@@ -2487,15 +2524,14 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             ge=0.0,
-            description="Hard ceiling (seconds) for idle gaps within each individual trace. "
-            "For Weka trace replay, AIPerf looks at all parent and subagent request "
-            "submission timestamps within one root trace, compresses long gaps between "
-            "consecutive request submissions, and derives turn delays from the "
-            "compressed per-trace timeline. Original request api_time values are not "
-            "used to decide these idle gaps. When set for Weka, this takes precedence over "
-            "`--inter-turn-delay-cap-seconds` so individual parent/subagent-line "
-            "delays are not separately capped. Defaults to None (no per-trace "
-            "idle-gap compression).",
+            description="Hard ceiling (seconds) for observed runtime idle time within "
+            "each AgentX trajectory tree. The idle clock covers initial future work and "
+            "restarts when the final in-flight request across the root and all descendant "
+            "streams completes. If no request from that tree reaches the wire before the "
+            "cap, AIPerf uniformly advances "
+            "only that tree's pending replay timers. Dataset timestamps are unchanged, "
+            "and request order, spawn/join dependencies, and replay barriers remain "
+            "authoritative. Defaults to None (no per-trace runtime idle cap).",
         ),
         CLIParameter(
             name=("--trace-idle-gap-cap-seconds",),
@@ -2588,10 +2624,27 @@ class CLIConfig(BaseConfig):
             "After the normal snapshot warmup drains, AIPerf continues the live "
             "trajectories without recorded idle delays and with one-token outputs, "
             "then drains and resumes profiling from the resulting trajectory state "
-            "using each live stream's residual next-turn delay.",
+            "using each live stream's full next-turn delay. Mutually exclusive "
+            "with --warmup-requests-per-lane.",
         ),
         CLIParameter(
             name=("--agentic-cache-warmup-duration",),
+            group=Groups.WARMUP,
+        ),
+    ] = None
+
+    warmup_requests_per_lane: Annotated[
+        int | None,
+        Field(
+            gt=0,
+            description="Deterministic agentic cache-pressure warmup request "
+            "budget per concurrency lane, additional to mandatory snapshot "
+            "primers. For example, 10 with concurrency 16 sends 160 additional "
+            "cache-pressure requests after the primers. Mutually exclusive with "
+            "--agentic-cache-warmup-duration.",
+        ),
+        CLIParameter(
+            name=("--warmup-requests-per-lane",),
             group=Groups.WARMUP,
         ),
     ] = None
@@ -3489,8 +3542,9 @@ class CLIConfig(BaseConfig):
             "(--concurrency, --request-rate, --isl, --osl, ...) are passed together. "
             "'grid' (default) takes the Cartesian product of all lists; 'zip' pairs "
             "them element-wise (all lists must have equal length, like the YAML "
-            "`sweep: {type: zip}` block). Ignored when only one magic-list flag is set "
-            "or when the sweep is declared in YAML.",
+            "`sweep: {type: zip}` block). Ignored when only one magic-list flag is set. "
+            "With --config, rejected when the config file declares its own sweep or "
+            "no magic-list flag is passed.",
         ),
         CLIParameter(
             name=("--sweep-type",),

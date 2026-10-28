@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pytest import param
 
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags._section_fields import (
@@ -85,34 +86,43 @@ def test_unrouted_input_flag_raises_naming_the_flag(base_yaml: Path) -> None:
         resolve_config(cli(public_dataset="sharegpt"), base_yaml)
 
 
-def test_unrouted_sweeping_flag_raises(base_yaml: Path) -> None:
-    """Sweep bounds resolve cleanly and change nothing, so they must error.
-
-    (The warmup flags this used to check are routed now.)
-    """
-    with pytest.raises(ConfigurationError, match=r"--concurrency-min"):
-        resolve_config(cli(concurrency_min=2), base_yaml)
+def test_unrouted_phase_flag_raises(base_yaml: Path) -> None:
+    """--no-fixed-schedule is consumed by phase construction, which this path
+    does not rebuild, so it must error rather than be dropped."""
+    with pytest.raises(ConfigurationError, match=r"--no-fixed-schedule"):
+        resolve_config(cli(disable_auto_fixed_schedule=True), base_yaml)
 
 
-def test_dataset_type_switch_flag_raises(base_yaml: Path) -> None:
-    """--hf-weka-dataset implies a public dataset, switching the type."""
-    with pytest.raises(ConfigurationError, match=r"--hf-weka-dataset"):
-        resolve_config(cli(hf_weka_dataset="some/dataset"), base_yaml)
+@pytest.mark.parametrize(
+    "field,flag",
+    [
+        param("hf_weka_dataset", "--hf-weka-dataset", id="weka"),
+        param("hf_mooncake_dataset", "--hf-mooncake-dataset", id="mooncake"),
+    ],
+)  # fmt: skip
+def test_dataset_type_switch_flag_raises(
+    base_yaml: Path, field: str, flag: str
+) -> None:
+    """HF repository flags imply a public dataset, switching the type."""
+    with pytest.raises(ConfigurationError, match=flag):
+        resolve_config(cli(**{field: "some/dataset"}), base_yaml)
 
 
 def test_error_names_every_offending_flag(base_yaml: Path) -> None:
     """All unrouted flags are reported at once, not one per run."""
     with pytest.raises(ConfigurationError) as excinfo:
-        resolve_config(cli(concurrency_min=2, public_dataset="sharegpt"), base_yaml)
+        resolve_config(
+            cli(disable_auto_fixed_schedule=True, public_dataset="sharegpt"), base_yaml
+        )
     message = str(excinfo.value)
-    assert "--concurrency-min" in message
+    assert "--no-fixed-schedule" in message
     assert "--public-dataset" in message
 
 
 def test_error_mentions_config_flag_as_the_cause(base_yaml: Path) -> None:
     """The message must tell users WHY the flag was rejected."""
     with pytest.raises(ConfigurationError, match=r"--config"):
-        resolve_config(cli(concurrency_min=2), base_yaml)
+        resolve_config(cli(disable_auto_fixed_schedule=True), base_yaml)
 
 
 # ---------------------------------------------------------------------------
@@ -137,6 +147,53 @@ def test_no_flags_with_config_is_fine(base_yaml: Path) -> None:
     """A bare --config invocation must not trip the guard."""
     resolved = resolve_config(cli(), base_yaml)
     assert resolved.benchmark.models.items[0].name == "test-model"
+
+
+@pytest.mark.parametrize("split", [None, "validation"])
+def test_hf_trace_overrides_merge_with_yaml(tmp_path: Path, split: str | None) -> None:
+    config = tmp_path / "hf.yaml"
+    config.write_text(
+        """\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint: {type: chat, url: "http://localhost:8000"}
+  dataset:
+    type: public
+    dataset: mooncake_hf
+    hf_mooncake_dataset: original/repo
+    hf_subset: original-subset
+    hf_mooncake_split: train
+    mooncake_trace_to_hf_mapping: {messages: history, tools: functions}
+    filters: {model: original-model, benchmark: original-benchmark}
+  phases: {type: concurrency, concurrency: 2, sessions: 3}
+"""
+    )
+    resolved = resolve_config(
+        cli(
+            **({"hf_mooncake_split": split} if split is not None else {}),
+            hf_dataset_subset="new-subset",
+            mooncake_trace_to_hf_mapping=[
+                "messages=turns",
+                "extra.temperature=params.temperature",
+            ],
+            dataset_filters=["model=new-model"],
+        ),
+        config,
+    )
+    dataset = resolved.benchmark.get_default_dataset()
+    assert dataset.hf_mooncake_dataset == "original/repo"
+    assert dataset.hf_subset == "new-subset"
+    assert dataset.hf_mooncake_split == (split or "train")
+    assert dataset.mooncake_trace_to_hf_mapping == {
+        "messages": "turns",
+        "tools": "functions",
+        "extra.temperature": "params.temperature",
+    }
+    assert dataset.filters == {
+        "model": "new-model",
+        "benchmark": "original-benchmark",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -303,15 +360,13 @@ def test_dataset_source_in_type_fields_names_input_file_and_custom_dataset_type(
     assert DATASET_SOURCE_IN_TYPE_FIELDS <= ROUTED_UNDER_CONFIG
 
 
-def test_error_lists_every_spelling_of_a_multi_alias_flag(base_yaml: Path) -> None:
+def test_error_lists_every_spelling_of_a_multi_alias_flag() -> None:
     """Naming only the first declared spelling sends users looking for a flag
     they never typed.
 
     ``--sweep-variant`` was reported as ``--variant``. Since the resolver
     cannot see which spelling was typed, it names them all.
     """
-    with pytest.raises(ConfigurationError) as excinfo:
-        resolve_config(cli(sweep_variants=["concurrency=2"]), base_yaml)
-    message = str(excinfo.value)
-    assert "--variant" in message
-    assert "--sweep-variant" in message
+    from aiperf.config.flags._config_flag_routing import _describe
+
+    assert _describe("sweep_variants") == "--variant/--sweep-variant"
