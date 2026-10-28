@@ -222,6 +222,29 @@ def test_apply_injected_dataset_urls_non_reference_entry_is_named_by_index_only(
     assert "topsecret" not in message
 
 
+def test_apply_injected_dataset_urls_two_signings_of_one_dataset_raise_by_index(
+    tmp_path: Path,
+) -> None:
+    resigned = RAW.replace("topsecret", "newsecret")
+    run = _run(PLAIN, tmp_path)
+    with pytest.raises(
+        ValueError, match="entries 0 and 1 .*different URLs for the same dataset"
+    ) as exc_info:
+        apply_injected_dataset_urls(run, [RAW, resigned])
+    message = str(exc_info.value)
+    assert "topsecret" not in message
+    assert "newsecret" not in message
+    assert "bucket.s3" not in message
+
+
+def test_apply_injected_dataset_urls_repeated_identical_url_is_accepted(
+    tmp_path: Path,
+) -> None:
+    run = _run(PLAIN, tmp_path)
+    apply_injected_dataset_urls(run, [RAW, RAW])
+    assert run.cfg.datasets[0].path.ref == RAW
+
+
 def test_apply_injected_dataset_urls_public_ref_without_injection_is_unchanged(
     tmp_path: Path,
 ) -> None:

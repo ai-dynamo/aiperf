@@ -428,11 +428,13 @@ def _injected_refs_by_canonical(urls: list[str]) -> dict[str, RemoteRef]:
     """Parse injected URLs, keyed by canonical reference.
 
     A malformed entry is named only by its position: it may be a bare token, so
-    even a redacted echo could leak it.
+    even a redacted echo could leak it. Two different URLs for one dataset (an old
+    and a re-signed one, say) are rejected rather than letting the later one win.
     """
     from aiperf.config.dataset.remote_ref import RemoteRef
 
     by_canonical: dict[str, RemoteRef] = {}
+    first_index: dict[str, int] = {}
     for index, url in enumerate(urls):
         try:
             ref = RemoteRef(ref=url)
@@ -443,7 +445,16 @@ def _injected_refs_by_canonical(urls: list[str]) -> dict[str, RemoteRef]:
                 "is not a dataset reference. Each entry must be a full hf://, "
                 "s3://, https:// or http:// URL."
             ) from None
+        if canonical in by_canonical:
+            if by_canonical[canonical].ref == url:
+                continue
+            raise ValueError(
+                f"{AIPERF_INJECTED_DATASET_URLS} entries {first_index[canonical]} and "
+                f"{index} (counting from 0) are different URLs for the same dataset. "
+                "Keep one URL per dataset in the Secret."
+            )
         by_canonical[canonical] = ref
+        first_index[canonical] = index
     return by_canonical
 
 
