@@ -1,0 +1,130 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1240" viewBox="0 0 1280 1240"
+     role="img" aria-labelledby="title desc">
+  <title id="title">AIPerfSweep orchestration</title>
+  <desc id="desc">An AIPerfSweep triggers the operator to provision the sweep: it creates the sweep RBAC and launches the sweep controller pod in a JobSet, and the RBAC authorizes that pod. The sweep controller creates child AIPerfJobs one at a time. Child phase changes trigger the operator to roll counts up into the sweep status. When aggregation is done the sweep controller patches the sweep, and the operator downloads the aggregate from the controller and writes it to the results volume.</desc>
+  <defs>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1565C0"/>
+    </marker>
+    <marker id="arrow-slate" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2E7D32"/>
+    </marker>
+    <style>
+      .title { font: 700 30px system-ui, sans-serif; fill: #1f2937; }
+      .subtitle { font: 500 17px system-ui, sans-serif; fill: #4b5563; }
+      .column { font: 700 21px system-ui, sans-serif; }
+      .node-title { font: 700 17px system-ui, sans-serif; fill: #111827; }
+      .node-text { font: 500 15px system-ui, sans-serif; fill: #374151; }
+      .step { font: 700 16px system-ui, sans-serif; fill: white; }
+      .edge-label { font: 600 15px system-ui, sans-serif; fill: #374151; }
+      .edge { fill: none; stroke-width: 3; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="1240" rx="24" fill="#f8fafc"/>
+  <text x="640" y="52" text-anchor="middle" class="title">AIPerfSweep orchestration</text>
+  <text x="640" y="82" text-anchor="middle" class="subtitle">The sweep controller pod runs the sweep; the operator only provisions it, rolls up child phases, and harvests</text>
+
+  <!-- Lanes -->
+  <rect x="40" y="115" width="290" height="1035" rx="20" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2"/>
+  <rect x="355" y="115" width="290" height="1035" rx="20" fill="#ecfdf5" stroke="#81C784" stroke-width="2"/>
+  <rect x="670" y="115" width="290" height="1035" rx="20" fill="#eff6ff" stroke="#64B5F6" stroke-width="2"/>
+  <rect x="985" y="115" width="255" height="1035" rx="20" fill="#fff7ed" stroke="#FDBA74" stroke-width="2"/>
+
+  <text x="185" y="155" text-anchor="middle" class="column" fill="#475569">Kubernetes API</text>
+  <text x="500" y="155" text-anchor="middle" class="column" fill="#2E7D32">Operator</text>
+  <text x="815" y="155" text-anchor="middle" class="column" fill="#1565C0">Sweep controller</text>
+  <text x="1112" y="155" text-anchor="middle" class="column" fill="#B45309">Results volume</text>
+
+  <!-- Kubernetes API objects -->
+  <rect x="75" y="250" width="220" height="100" rx="13" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+  <text x="185" y="284" text-anchor="middle" class="node-title">AIPerfSweep</text>
+  <text x="185" y="309" text-anchor="middle" class="node-text">Spec from the user,</text>
+  <text x="185" y="331" text-anchor="middle" class="node-text">rollup in its status</text>
+
+  <rect x="75" y="390" width="220" height="70" rx="13" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+  <text x="185" y="419" text-anchor="middle" class="node-title">Sweep RBAC</text>
+  <text x="185" y="443" text-anchor="middle" class="node-text">Account, Role, binding</text>
+
+  <rect x="75" y="700" width="220" height="100" rx="13" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+  <text x="185" y="734" text-anchor="middle" class="node-title">Child AIPerfJobs</text>
+  <text x="185" y="759" text-anchor="middle" class="node-text">One per variation</text>
+  <text x="185" y="781" text-anchor="middle" class="node-text">and trial</text>
+
+  <!-- Operator -->
+  <rect x="420" y="250" width="185" height="100" rx="13" fill="#dcfce7" stroke="#2E7D32" stroke-width="2"/>
+  <text x="512" y="284" text-anchor="middle" class="node-title">Provision</text>
+  <text x="512" y="309" text-anchor="middle" class="node-text">Validates spec,</text>
+  <text x="512" y="331" text-anchor="middle" class="node-text">enforces limits</text>
+
+  <rect x="395" y="815" width="210" height="100" rx="13" fill="#dcfce7" stroke="#2E7D32" stroke-width="2"/>
+  <text x="500" y="849" text-anchor="middle" class="node-title">Roll up children</text>
+  <text x="500" y="874" text-anchor="middle" class="node-text">Counts, run states,</text>
+  <text x="500" y="896" text-anchor="middle" class="node-text">then Aggregating</text>
+
+  <rect x="395" y="950" width="210" height="90" rx="13" fill="#dcfce7" stroke="#2E7D32" stroke-width="2"/>
+  <text x="500" y="984" text-anchor="middle" class="node-title">Harvest</text>
+  <text x="500" y="1009" text-anchor="middle" class="node-text">On aggregation done</text>
+
+  <!-- Sweep controller -->
+  <rect x="715" y="250" width="200" height="760" rx="13" fill="#dbeafe" stroke="#1565C0" stroke-width="2"/>
+  <text x="815" y="560" text-anchor="middle" class="node-title">Sweep controller</text>
+  <text x="815" y="585" text-anchor="middle" class="node-text">Pod in a JobSet,</text>
+  <text x="815" y="607" text-anchor="middle" class="node-text">with results sidecar</text>
+  <text x="815" y="629" text-anchor="middle" class="node-text">Aggregates at the end</text>
+
+  <!-- Results volume -->
+  <rect x="1030" y="1030" width="180" height="100" rx="13" fill="#ffedd5" stroke="#B45309" stroke-width="2"/>
+  <text x="1120" y="1064" text-anchor="middle" class="node-title">Sweep aggregate</text>
+  <text x="1120" y="1089" text-anchor="middle" class="node-text">Plus child list and</text>
+  <text x="1120" y="1111" text-anchor="middle" class="node-text">harvest sentinel</text>
+
+  <!-- Provisioning -->
+  <path d="M295 300 H416" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="357" y="262" text-anchor="middle" class="edge-label">triggers</text>
+  <text x="357" y="282" text-anchor="middle" class="edge-label">create</text>
+  <path d="M450 350 V425 H299" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="370" y="413" text-anchor="middle" class="edge-label">creates</text>
+  <path d="M605 330 H711" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="658" y="290" text-anchor="middle" class="edge-label">launches in</text>
+  <text x="658" y="310" text-anchor="middle" class="edge-label">a JobSet</text>
+  <path d="M185 460 V500 H711" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="500" y="488" text-anchor="middle" class="edge-label">authorizes</text>
+
+  <!-- Children -->
+  <path d="M715 640 H185 V696" class="edge" stroke="#1565C0" marker-end="url(#arrow-blue)"/>
+  <text x="450" y="628" text-anchor="middle" class="edge-label">creates one at a time</text>
+
+  <!-- Rollup -->
+  <path d="M185 800 V850 H391" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="282" y="877" text-anchor="middle" class="edge-label">report phase changes</text>
+  <path d="M395 895 H55 V300 H71" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="225" y="917" text-anchor="middle" class="edge-label">patches rollup counts</text>
+
+  <!-- Aggregation complete -->
+  <path d="M815 250 V205 H185 V246" class="edge" stroke="#1565C0" marker-end="url(#arrow-blue)"/>
+  <text x="500" y="227" text-anchor="middle" class="edge-label">patches aggregation complete</text>
+
+  <!-- Harvest -->
+  <path d="M605 980 H711" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="658" y="943" text-anchor="middle" class="edge-label">downloads</text>
+  <text x="658" y="963" text-anchor="middle" class="edge-label">aggregate</text>
+  <path d="M500 1040 V1075 H1026" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="850" y="1063" text-anchor="middle" class="edge-label">writes aggregate</text>
+
+  <!-- Step badges sit on top of their nodes -->
+  <circle cx="424" cy="254" r="18" fill="#2E7D32"/><text x="424" y="260" text-anchor="middle" class="step">1</text>
+  <circle cx="719" cy="254" r="18" fill="#1565C0"/><text x="719" y="260" text-anchor="middle" class="step">2</text>
+  <circle cx="399" cy="819" r="18" fill="#2E7D32"/><text x="399" y="825" text-anchor="middle" class="step">3</text>
+  <circle cx="399" cy="954" r="18" fill="#2E7D32"/><text x="399" y="960" text-anchor="middle" class="step">4</text>
+
+  <rect x="90" y="1170" width="1100" height="42" rx="12" fill="#ffffff" stroke="#9E9E9E" stroke-width="2"/>
+  <text x="640" y="1197" text-anchor="middle" class="node-text">The operator never expands the sweep; one AIPerfJob per variation and trial, each a normal benchmark</text>
+</svg>

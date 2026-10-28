@@ -1,0 +1,155 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1120" viewBox="0 0 1280 1120"
+     role="img" aria-labelledby="title desc">
+  <title id="title">Resources behind one AIPerfJob benchmark</title>
+  <desc id="desc">A user applies an AIPerfJob, which triggers the operator to provision the run. The operator creates a Role and RoleBinding, a run-config ConfigMap, and a JobSet; the ConfigMap supplies the run config to the JobSet. The JobSet runs the controller pod and the worker pods, and the controller dispatches credits to the workers. The controller pushes status, heartbeats and the completion signal onto the AIPerfJob. The operator then fetches results from the controller and writes them to the results volume.</desc>
+  <defs>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1565C0"/>
+    </marker>
+    <marker id="arrow-slate" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2E7D32"/>
+    </marker>
+    <style>
+      .title { font: 700 30px system-ui, sans-serif; fill: #1f2937; }
+      .subtitle { font: 500 17px system-ui, sans-serif; fill: #4b5563; }
+      .column { font: 700 21px system-ui, sans-serif; }
+      .node-title { font: 700 17px system-ui, sans-serif; fill: #111827; }
+      .node-text { font: 500 15px system-ui, sans-serif; fill: #374151; }
+      .step { font: 700 16px system-ui, sans-serif; fill: white; }
+      .edge-label { font: 600 15px system-ui, sans-serif; fill: #374151; }
+      .note { font: 600 15px system-ui, sans-serif; fill: #475569; }
+      .frame-label { font: 700 15px system-ui, sans-serif; fill: #1565C0; }
+      .edge { fill: none; stroke-width: 3; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="1120" rx="24" fill="#f8fafc"/>
+  <text x="640" y="52" text-anchor="middle" class="title">What one benchmark looks like</text>
+  <text x="640" y="82" text-anchor="middle" class="subtitle">The operator provisions the run; the controller pod reports back through the AIPerfJob instead of being polled</text>
+
+  <!-- Lanes -->
+  <rect x="40" y="115" width="290" height="910" rx="20" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2"/>
+  <rect x="355" y="115" width="290" height="910" rx="20" fill="#ecfdf5" stroke="#81C784" stroke-width="2"/>
+  <rect x="670" y="115" width="290" height="910" rx="20" fill="#eff6ff" stroke="#64B5F6" stroke-width="2"/>
+  <rect x="985" y="115" width="255" height="910" rx="20" fill="#fff7ed" stroke="#FDBA74" stroke-width="2"/>
+
+  <text x="185" y="155" text-anchor="middle" class="column" fill="#475569">Kubernetes API</text>
+  <text x="500" y="155" text-anchor="middle" class="column" fill="#2E7D32">Operator</text>
+  <text x="815" y="155" text-anchor="middle" class="column" fill="#1565C0">Benchmark pods</text>
+  <text x="1112" y="155" text-anchor="middle" class="column" fill="#B45309">Results volume</text>
+
+  <!-- User -->
+  <rect x="75" y="175" width="220" height="60" rx="13" fill="#ffffff" stroke="#94a3b8" stroke-width="2" stroke-dasharray="7 6"/>
+  <text x="185" y="200" text-anchor="middle" class="note">User</text>
+  <text x="185" y="222" text-anchor="middle" class="node-text">kubectl or aiperf CLI</text>
+
+  <!-- AIPerfJob -->
+  <rect x="75" y="300" width="220" height="100" rx="13" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+  <text x="185" y="333" text-anchor="middle" class="node-title">AIPerfJob</text>
+  <text x="185" y="358" text-anchor="middle" class="node-text">Spec from the user,</text>
+  <text x="185" y="380" text-anchor="middle" class="node-text">status from the pods</text>
+
+  <!-- Objects the operator creates -->
+  <rect x="75" y="450" width="220" height="70" rx="13" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+  <text x="185" y="479" text-anchor="middle" class="node-title">Role and RoleBinding</text>
+  <text x="185" y="503" text-anchor="middle" class="node-text">Pod permissions</text>
+
+  <rect x="75" y="560" width="220" height="70" rx="13" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+  <text x="185" y="589" text-anchor="middle" class="node-title">Run config</text>
+  <text x="185" y="613" text-anchor="middle" class="node-text">ConfigMap</text>
+
+  <rect x="75" y="700" width="220" height="90" rx="13" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+  <text x="185" y="732" text-anchor="middle" class="node-title">Benchmark JobSet</text>
+  <text x="185" y="756" text-anchor="middle" class="node-text">Suspended if a Kueue</text>
+  <text x="185" y="777" text-anchor="middle" class="node-text">queue resolves</text>
+
+  <!-- Operator: provision -->
+  <rect x="400" y="430" width="200" height="320" rx="13" fill="#dcfce7" stroke="#2E7D32" stroke-width="2"/>
+  <text x="500" y="468" text-anchor="middle" class="node-title">Provision the run</text>
+  <text x="500" y="494" text-anchor="middle" class="node-text">Validates the spec</text>
+  <text x="500" y="516" text-anchor="middle" class="node-text">Probes the endpoint</text>
+  <text x="500" y="538" text-anchor="middle" class="node-text">Runs preflight</text>
+  <text x="500" y="560" text-anchor="middle" class="node-text">Saves the job spec</text>
+  <text x="500" y="582" text-anchor="middle" class="node-text">Then creates objects</text>
+
+  <!-- Operator: harvest -->
+  <rect x="400" y="860" width="200" height="100" rx="13" fill="#dcfce7" stroke="#2E7D32" stroke-width="2"/>
+  <text x="500" y="893" text-anchor="middle" class="node-title">Harvest results</text>
+  <text x="500" y="918" text-anchor="middle" class="node-text">On the completion</text>
+  <text x="500" y="940" text-anchor="middle" class="node-text">signal, once</text>
+
+  <!-- Pods run by the JobSet -->
+  <rect x="690" y="300" width="250" height="500" rx="16" fill="none" stroke="#1565C0" stroke-width="2" stroke-dasharray="8 6"/>
+  <text x="925" y="788" text-anchor="end" class="frame-label">JobSet pods</text>
+
+  <rect x="715" y="330" width="200" height="110" rx="13" fill="#dbeafe" stroke="#1565C0" stroke-width="2"/>
+  <text x="815" y="364" text-anchor="middle" class="node-title">Controller pod</text>
+  <text x="815" y="389" text-anchor="middle" class="node-text">Runs the benchmark</text>
+  <text x="815" y="411" text-anchor="middle" class="node-text">Serves result files</text>
+
+  <rect x="715" y="650" width="200" height="90" rx="13" fill="#dbeafe" stroke="#1565C0" stroke-width="2"/>
+  <text x="815" y="684" text-anchor="middle" class="node-title">Worker pods</text>
+  <text x="815" y="708" text-anchor="middle" class="node-text">Generate the load</text>
+
+  <!-- Results volume -->
+  <rect x="1012" y="870" width="200" height="110" rx="13" fill="#ffedd5" stroke="#B45309" stroke-width="2"/>
+  <text x="1112" y="905" text-anchor="middle" class="node-title">Run directory</text>
+  <text x="1112" y="930" text-anchor="middle" class="node-text">Validated exports</text>
+  <text x="1112" y="952" text-anchor="middle" class="node-text">plus index row</text>
+
+  <!-- User applies -->
+  <path d="M185 235 V296" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="173" y="273" text-anchor="end" class="edge-label">applies</text>
+
+  <!-- AIPerfJob triggers provisioning -->
+  <path d="M295 340 H500 V426" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="397" y="327" text-anchor="middle" class="edge-label">triggers create</text>
+
+  <!-- Operator creates objects -->
+  <path d="M400 485 H299" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="347" y="472" text-anchor="middle" class="edge-label">creates</text>
+  <path d="M400 595 H299" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="347" y="582" text-anchor="middle" class="edge-label">creates</text>
+  <path d="M400 730 H299" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="347" y="717" text-anchor="middle" class="edge-label">creates</text>
+
+  <!-- ConfigMap feeds the JobSet -->
+  <path d="M185 630 V696" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="168" y="657" text-anchor="end" class="edge-label">supplies</text>
+  <text x="168" y="677" text-anchor="end" class="edge-label">run config</text>
+
+  <!-- JobSet runs the pods -->
+  <path d="M295 775 H686" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="325" y="765" text-anchor="middle" class="edge-label">runs</text>
+
+  <!-- Controller dispatches credits -->
+  <path d="M760 440 V646" class="edge" stroke="#1565C0" marker-end="url(#arrow-blue)"/>
+  <text x="774" y="538" class="edge-label">dispatches</text>
+  <text x="774" y="558" class="edge-label">credits</text>
+
+  <!-- Controller reports through the AIPerfJob -->
+  <path d="M860 330 V265 H260 V296" class="edge" stroke="#1565C0" marker-end="url(#arrow-blue)"/>
+  <text x="560" y="252" text-anchor="middle" class="edge-label">pushes status, heartbeat, completion signal</text>
+
+  <!-- Operator fetches results, then writes the volume -->
+  <path d="M600 890 H950 V420 H919" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="775" y="877" text-anchor="middle" class="edge-label">fetches results</text>
+  <path d="M600 935 H1008" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="800" y="924" text-anchor="middle" class="edge-label">writes results</text>
+
+  <!-- Step badges sit on top of their nodes -->
+  <circle cx="79" cy="179" r="18" fill="#475569"/><text x="79" y="185" text-anchor="middle" class="step">1</text>
+  <circle cx="404" cy="434" r="18" fill="#2E7D32"/><text x="404" y="440" text-anchor="middle" class="step">2</text>
+  <circle cx="719" cy="334" r="18" fill="#1565C0"/><text x="719" y="340" text-anchor="middle" class="step">3</text>
+  <circle cx="404" cy="864" r="18" fill="#2E7D32"/><text x="404" y="870" text-anchor="middle" class="step">4</text>
+
+  <rect x="90" y="1048" width="1100" height="42" rx="12" fill="#ffffff" stroke="#9E9E9E" stroke-width="2"/>
+  <text x="640" y="1075" text-anchor="middle" class="node-text">The operator reacts to watch events on the AIPerfJob; it never sends benchmark traffic and does not poll on a timer</text>
+</svg>

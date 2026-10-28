@@ -42,52 +42,7 @@ If you only want to run a benchmark, start with
 The Helm chart deploys one `Deployment` with `strategy: Recreate` and up to three
 containers sharing the results volume:
 
-```mermaid
----
-config:
-  theme: base
-  look: classic
-  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
-  themeVariables:
-    lineColor: '#8494AE'
-    nodeTextColor: '#183153'
-    edgeLabelBackground: '#FFFFFF'
-    textColor: '#183153'
-    clusterBorder: '#8494AE'
-    transitionColor: '#8494AE'
-    transitionLabelColor: '#183153'
-    labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#8494AE'
-    clusterBkg: '#FFFFFF'
-    titleColor: '#183153'
-    fontFamily: 'Arial, Helvetica, sans-serif'
----
-flowchart LR
-  accTitle: Ownership flowchart for the operator pod
-  accDescr: The reconciler container is the only writer of the results volume. The results API and dashboard containers only read it.
-  classDef src fill:#E7F7EF,stroke:#23845B,color:#183153
-  classDef stage fill:#E9F0FF,stroke:#3468D4,color:#183153
-  classDef store fill:#FFF1DC,stroke:#CC7000,color:#183153
-  classDef out fill:#F0EDFF,stroke:#7254D6,color:#183153
-  subgraph cp["Control plane"]
-    api["Kubernetes API server (control plane)"]:::src
-  end
-  subgraph pod["Operator pod"]
-    rec["Reconciler (kopf container)"]:::stage
-    rs["Results API (HTTP container)"]:::out
-    dash["Dashboard (optional container)"]:::out
-  end
-  vol[("Results volume (store)")]:::store
-  api -->|delivers watch events| rec
-  rec -->|patches CRs, deletes JobSets| api
-  rec -->|writes artifacts and index| vol
-  rs -->|reads files and index| vol
-  dash -->|reads run data| vol
-  rs -->|proxies dashboard requests| dash
-  rec -->|requests refresh after a claim| dash
-```
-
-*Ownership flowchart for the operator pod: only the reconciler writes the results volume; the results API and dashboard read it.*
+![The operator pod holds three containers. The reconciler container receives watch events from the Kubernetes API server, patches custom resources and deletes JobSets, writes result artifacts and the runs index to the results volume, and asks the dashboard to refresh after a completion claim. The results API container reads files and the index from the volume and proxies dashboard requests to the optional dashboard container, which reads run data from the volume. Only the reconciler writes the volume.](../diagrams/operator/operator-pod.svg)
 
 | Container | Process | Role |
 |---|---|---|
@@ -109,56 +64,7 @@ all capabilities dropped, and seccomp `RuntimeDefault`. See
 
 ### What a benchmark looks like
 
-```mermaid
----
-config:
-  theme: base
-  look: classic
-  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
-  themeVariables:
-    lineColor: '#8494AE'
-    nodeTextColor: '#183153'
-    edgeLabelBackground: '#FFFFFF'
-    textColor: '#183153'
-    clusterBorder: '#8494AE'
-    transitionColor: '#8494AE'
-    transitionLabelColor: '#183153'
-    labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#8494AE'
-    clusterBkg: '#FFFFFF'
-    titleColor: '#183153'
-    fontFamily: 'Arial, Helvetica, sans-serif'
----
-flowchart TB
-  accTitle: Resource flowchart for one AIPerfJob benchmark
-  accDescr: The operator provisions RBAC, a run config, and a JobSet. The controller pod reports back through the AIPerfJob, and the operator fetches results from it.
-  classDef src fill:#E7F7EF,stroke:#23845B,color:#183153
-  classDef stage fill:#E9F0FF,stroke:#3468D4,color:#183153
-  classDef store fill:#FFF1DC,stroke:#CC7000,color:#183153
-  user["User (kubectl or aiperf CLI)"]:::src
-  cr[("AIPerfJob (custom resource)")]:::store
-  op["Operator (reconciler)"]:::stage
-  rbac["Role and RoleBinding (pod RBAC)"]:::src
-  cfg["Run config (ConfigMap)"]:::src
-  js["Benchmark JobSet (workload)"]:::stage
-  ctrl["Controller pod (benchmark control)"]:::stage
-  wk["Worker pods (load generators)"]:::stage
-  vol[("Results volume (store)")]:::store
-  user -->|applies| cr
-  cr -->|triggers create| op
-  op -->|creates| rbac
-  op -->|creates| cfg
-  op -->|creates| js
-  cfg -->|supplies run config| js
-  js -->|runs| ctrl
-  js -->|runs| wk
-  ctrl -->|dispatches credits| wk
-  ctrl -->|pushes status, heartbeat, completion signal| cr
-  op -->|fetches results from| ctrl
-  op -->|writes results| vol
-```
-
-*Resource flowchart for one benchmark: the operator provisions the JobSet, and the controller pod reports progress and completion through the AIPerfJob rather than being polled.*
+![A user applies an AIPerfJob, which triggers the operator to provision the run. The operator creates a Role and RoleBinding, a run-config ConfigMap, and a JobSet; the ConfigMap supplies the run config to the JobSet. The JobSet runs the controller pod and the worker pods, and the controller dispatches credits to the workers. The controller pushes status, heartbeats and the completion signal onto the AIPerfJob. The operator then fetches results from the controller and writes them to the results volume.](../diagrams/operator/benchmark-resources.svg)
 
 The operator never runs benchmark traffic itself. It provisions a
 [JobSet](https://jobset.sigs.k8s.io/), and the controller pod inside that JobSet
@@ -215,92 +121,7 @@ benchmark namespaces.
 
 ### Phases
 
-```mermaid
----
-config:
-  theme: base
-  look: classic
-  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
-  themeVariables:
-    lineColor: '#8494AE'
-    nodeTextColor: '#183153'
-    edgeLabelBackground: '#FFFFFF'
-    textColor: '#183153'
-    clusterBorder: '#8494AE'
-    transitionColor: '#8494AE'
-    transitionLabelColor: '#183153'
-    labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#8494AE'
-    clusterBkg: '#FFFFFF'
-    titleColor: '#183153'
-    fontFamily: 'Arial, Helvetica, sans-serif'
----
-stateDiagram-v2
-  accTitle: State diagram for AIPerfJob forward progress
-  accDescr: A job only moves forward, from Pending through the optional Queued and Initializing phases to Running and Completed.
-  classDef stage fill:#E9F0FF,stroke:#3468D4,color:#183153
-  classDef out fill:#F0EDFF,stroke:#7254D6,color:#183153
-  state "Completed (terminal)" as Completed
-  [*] --> Pending: operator creates resources
-  Pending --> Queued: Kueue suspends JobSet
-  Queued --> Initializing: worker pod ready or controller reports state
-  Pending --> Initializing: worker pod ready or controller reports state
-  Pending --> Running: controller reports profiling
-  Queued --> Running: controller reports profiling
-  Initializing --> Running: controller reports profiling
-  Running --> Completed: operator harvests and validates results
-  Completed --> [*]
-  class Pending, Queued, Initializing, Running stage
-  class Completed out
-```
-
-*State diagram for AIPerfJob forward progress: phases only move forward, and Queued and Initializing can be skipped when the controller reports profiling first.*
-
-```mermaid
----
-config:
-  theme: base
-  look: classic
-  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
-  themeVariables:
-    lineColor: '#8494AE'
-    nodeTextColor: '#183153'
-    edgeLabelBackground: '#FFFFFF'
-    textColor: '#183153'
-    clusterBorder: '#8494AE'
-    transitionColor: '#8494AE'
-    transitionLabelColor: '#183153'
-    labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#8494AE'
-    clusterBkg: '#FFFFFF'
-    titleColor: '#183153'
-    fontFamily: 'Arial, Helvetica, sans-serif'
----
-stateDiagram-v2
-  accTitle: State diagram for AIPerfJob failure and cancellation
-  accDescr: Any active phase can fail or be cancelled. A completed job can still be failed by a fatal report from the controller.
-  classDef src fill:#E7F7EF,stroke:#23845B,color:#183153
-  classDef stage fill:#E9F0FF,stroke:#3468D4,color:#183153
-  classDef out fill:#F0EDFF,stroke:#7254D6,color:#183153
-  state "New AIPerfJob (submitted)" as New
-  state "Active phase (Pending, Queued, Initializing, Running)" as Active
-  state "Completed (terminal)" as Completed
-  state "Failed (terminal)" as Failed
-  state "Cancelled (terminal)" as Cancelled
-  [*] --> New: user applies the AIPerfJob
-  New --> Active: operator creates resources
-  New --> Failed: operator rejects spec, DNS, or preflight
-  New --> Cancelled: user created it with spec.cancel
-  Active --> Completed: operator harvests results
-  Active --> Failed: timeout, JobSet failure, startup blocker, or fetch failure
-  Active --> Cancelled: user sets spec.cancel
-  Completed --> Failed: controller reports fatal failure
-  class New src
-  class Active stage
-  class Completed, Failed, Cancelled out
-```
-
-*State diagram for failure and cancellation: every active phase can end Failed or Cancelled, and a controller fatal report is the only way out of Completed.*
+![A new AIPerfJob moves forward through Pending, the optional Queued and Initializing phases, and Running to Completed. Pending can skip to Initializing or Running, and Queued can skip to Running. Any active phase can end Failed, through a timeout, JobSet failure, startup blocker or fetch failure, or Cancelled when the user sets spec.cancel. At creation the operator can reject the job straight to Failed, or a job created with spec.cancel goes straight to Cancelled. The only edge out of Completed is to Failed, when the controller reports a fatal failure.](../diagrams/operator/job-lifecycle.svg)
 
 | Phase | Meaning | Written by |
 |---|---|---|
@@ -541,63 +362,7 @@ different: see [Sweep cleanup](#cancel-ttl-delete).
 
 The controller pod pushes progress; the operator does not poll for it.
 
-```mermaid
----
-config:
-  theme: base
-  look: classic
-  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
-  themeVariables:
-    lineColor: '#8494AE'
-    nodeTextColor: '#183153'
-    edgeLabelBackground: '#FFFFFF'
-    textColor: '#183153'
-    clusterBorder: '#8494AE'
-    transitionColor: '#8494AE'
-    transitionLabelColor: '#183153'
-    labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#8494AE'
-    clusterBkg: '#FFFFFF'
-    titleColor: '#183153'
-    fontFamily: 'Arial, Helvetica, sans-serif'
-    actorBkg: '#E9F0FF'
-    actorBorder: '#3468D4'
-    actorTextColor: '#183153'
-    actorLineColor: '#8494AE'
-    signalColor: '#8494AE'
-    signalTextColor: '#183153'
-    labelBoxBkgColor: '#E9F0FF'
-    labelBoxBorderColor: '#3468D4'
-    labelTextColor: '#183153'
-    loopTextColor: '#183153'
-    noteBkgColor: '#FFF1DC'
-    noteBorderColor: '#CC7000'
-    noteTextColor: '#183153'
----
-sequenceDiagram
-  accTitle: Sequence diagram for benchmark progress reporting
-  accDescr: The controller pushes progress onto the AIPerfJob, and the operator reacts to watch events instead of polling the controller.
-  participant C as Controller pod
-  participant K as Kubernetes API server
-  participant O as Operator
-  rect rgb(255, 255, 255)
-  rect rgb(233, 240, 255)
-  loop Every heartbeat interval (10 s) or on a state change
-    C->>K: patch heartbeat annotation (UID-tested)
-    C->>K: patch status: system state, progress, live metrics, workers
-  end
-  end
-  K-)O: deliver system-state change (watch event)
-  O->>K: patch phase forward (Initializing or Running)
-  rect rgb(231, 247, 239)
-  loop Every JobSet patch interval (10 s), when values change
-    C->>K: patch progress annotations on JobSet and AIPerfJob
-  end
-  end
-  end
-```
-
-*Sequence diagram for progress reporting: the controller pushes and the operator reacts. Filled head = synchronous API call; open head = asynchronous watch event.*
+![Three lanes: controller pod, Kubernetes API server, and operator. In loop A, every heartbeat interval of 10 seconds or on a state change, the controller patches a UID-tested heartbeat annotation and pushes status with system state, progress, live metrics, and workers. The API server delivers the system-state change to the operator as a watch event, and the operator patches the phase forward to Initializing or Running. In loop B, every JobSet patch interval of 10 seconds and only when values change, the controller patches progress annotations onto the JobSet and mirrors them onto the AIPerfJob. The operator never polls for progress.](../diagrams/operator/progress-reporting.svg)
 
 - **CR status push.** The controller writes only `subPhase`, `phases`,
   `currentPhase`, `requestsCompleted`, `requestsTotal`, `requestsPerSecond`,
@@ -655,51 +420,7 @@ downloads as a whole.
 
 ## Failure Detection
 
-```mermaid
----
-config:
-  theme: base
-  look: classic
-  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
-  themeVariables:
-    lineColor: '#8494AE'
-    nodeTextColor: '#183153'
-    edgeLabelBackground: '#FFFFFF'
-    textColor: '#183153'
-    clusterBorder: '#8494AE'
-    transitionColor: '#8494AE'
-    transitionLabelColor: '#183153'
-    labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#8494AE'
-    clusterBkg: '#FFFFFF'
-    titleColor: '#183153'
-    fontFamily: 'Arial, Helvetica, sans-serif'
----
-flowchart LR
-  accTitle: Signal flowchart for AIPerfJob failure detection
-  accDescr: Pod status, JobSet conditions, controller reports, and the heartbeat timer each lead to a different outcome. Restart counting only warns.
-  classDef src fill:#E7F7EF,stroke:#23845B,color:#183153
-  classDef store fill:#FFF1DC,stroke:#CC7000,color:#183153
-  classDef out fill:#F0EDFF,stroke:#7254D6,color:#183153
-  pod["Pod status change (watch event)"]:::src
-  jsf["JobSet Failed condition (watch event)"]:::src
-  cf["Controller fatal report (CR status)"]:::src
-  hb["Stale heartbeat or due timeout (timer)"]:::src
-  issue[("Startup issue (CR status)")]:::store
-  warn["Warning event (result)"]:::out
-  failed["Failed phase (result)"]:::out
-  harvest["Recovery harvest (result)"]:::out
-  pod -->|warns at restart threshold| warn
-  pod -->|records startup blocker| issue
-  issue -->|fails job after 90 s stable| failed
-  pod -->|salvages on controller exit| harvest
-  jsf -->|fails job when controller job fails| failed
-  cf -->|fails job, even if Completed| failed
-  hb -->|fails job on timeout or missing JobSet| failed
-  hb -->|resumes an orphaned claim| harvest
-```
-
-*Signal flowchart for failure detection: four signal sources drive three outcomes, and container restarts alone never fail a job.*
+![Four signal sources lead to three outcomes. A pod status change posts a warning event at the restart threshold, records a startup blocker, and triggers salvage when the controller exits. The startup issue record posts a warning after 30 seconds and fails the job after 90 seconds stable, for terminal-capable blockers only. A JobSet Failed condition fails the job when the controller job fails. A controller fatal report fails the job, even if it was Completed. A stale heartbeat or due timeout fails the job on timeout or a missing JobSet, and resumes an orphaned completion claim as a recovery harvest. Restart counting only warns, and capacity scheduling delays never fail a job.](../diagrams/operator/failure-detection.svg)
 
 ### Pod restarts
 
@@ -825,72 +546,7 @@ path the handler clears its pending kopf patch. A stale patch would otherwise
 Completion must happen exactly once, even with operator restarts, multiple
 detection paths, and user-editable annotations.
 
-```mermaid
----
-config:
-  theme: base
-  look: classic
-  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
-  themeVariables:
-    lineColor: '#8494AE'
-    nodeTextColor: '#183153'
-    edgeLabelBackground: '#FFFFFF'
-    textColor: '#183153'
-    clusterBorder: '#8494AE'
-    transitionColor: '#8494AE'
-    transitionLabelColor: '#183153'
-    labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#8494AE'
-    clusterBkg: '#FFFFFF'
-    titleColor: '#183153'
-    fontFamily: 'Arial, Helvetica, sans-serif'
-    actorBkg: '#E9F0FF'
-    actorBorder: '#3468D4'
-    actorTextColor: '#183153'
-    actorLineColor: '#8494AE'
-    signalColor: '#8494AE'
-    signalTextColor: '#183153'
-    labelBoxBkgColor: '#E9F0FF'
-    labelBoxBorderColor: '#3468D4'
-    labelTextColor: '#183153'
-    loopTextColor: '#183153'
-    noteBkgColor: '#FFF1DC'
-    noteBorderColor: '#CC7000'
-    noteTextColor: '#183153'
----
-sequenceDiagram
-  accTitle: Sequence diagram for exactly-once AIPerfJob completion
-  accDescr: The controller signals completion, the operator claims it atomically on the API server, and only the claim winner downloads, publishes, and finalizes results.
-  participant C as Controller pod
-  participant K as Kubernetes API server
-  participant O as Operator
-  participant V as Results volume
-  rect rgb(255, 255, 255)
-  C->>K: patch benchmark-complete annotation (UID-tested)
-  K-)O: deliver annotation change (watch event)
-  O->>K: patch completion claim (tests UID and resourceVersion)
-  alt Claim lost
-    K-->>O: 409 conflict, live claim present
-    Note over O: Stops, the claim owner harvests
-  else Claim won
-    K-->>O: claim accepted
-    rect rgb(231, 247, 239)
-    O->>C: fetch metrics, list and download result files
-    C-->>O: result files
-    O->>V: write files atomically
-    Note over O: Validates key exports and error rate
-    end
-    rect rgb(240, 237, 255)
-    O->>K: delete JobSet (success only)
-    O->>V: write ready marker, then latest pointer, then index row
-    O->>K: patch terminal phase and ResultsAvailable
-    O->>C: request shutdown
-    end
-  end
-  end
-```
-
-*Sequence diagram for completion: the atomic claim on the API server picks a single harvester. Filled head = synchronous call; open head = asynchronous watch event; dashed = reply.*
+![An eight-step sequence across four lanes. The controller pod signals completion through an annotation, the API server delivers the watch event, and the operator claims completion with an atomic JSON patch. Only the claim winner downloads the result files, writes and validates them on the results volume, publishes the run, finalizes the AIPerfJob status, and releases the controller.](../diagrams/operator/operator-completion.svg)
 
 ### Detection
 
@@ -1023,51 +679,7 @@ by in-process sweeps. The user-facing guide is
 [Running Sweeps on Kubernetes](../tutorials/sweeps.md#running-sweeps-on-kubernetes);
 for Bayesian optimization see [Adaptive Search on Kubernetes](adaptive-search.md).
 
-```mermaid
----
-config:
-  theme: base
-  look: classic
-  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
-  themeVariables:
-    lineColor: '#8494AE'
-    nodeTextColor: '#183153'
-    edgeLabelBackground: '#FFFFFF'
-    textColor: '#183153'
-    clusterBorder: '#8494AE'
-    transitionColor: '#8494AE'
-    transitionLabelColor: '#183153'
-    labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#8494AE'
-    clusterBkg: '#FFFFFF'
-    titleColor: '#183153'
-    fontFamily: 'Arial, Helvetica, sans-serif'
----
-flowchart TB
-  accTitle: Ownership flowchart for an AIPerfSweep
-  accDescr: The operator launches a sweep controller that creates child AIPerfJobs one at a time. The operator rolls child phases up into the sweep and harvests the aggregate.
-  classDef src fill:#E7F7EF,stroke:#23845B,color:#183153
-  classDef stage fill:#E9F0FF,stroke:#3468D4,color:#183153
-  classDef store fill:#FFF1DC,stroke:#CC7000,color:#183153
-  sw[("AIPerfSweep (custom resource)")]:::store
-  op["Operator (reconciler)"]:::stage
-  rbac["Sweep RBAC (ServiceAccount, Role)"]:::src
-  sc["Sweep controller pod (workload)"]:::stage
-  ch[("Child AIPerfJobs (one per variation and trial)")]:::store
-  vol[("Results volume (store)")]:::store
-  sw -->|triggers create| op
-  op -->|creates| rbac
-  op -->|launches in a JobSet| sc
-  rbac -->|authorizes| sc
-  sc -->|creates one at a time| ch
-  ch -->|report phase changes| op
-  op -->|patches rollup counts| sw
-  sc -->|patches aggregation complete| sw
-  op -->|downloads aggregate from| sc
-  op -->|writes aggregate| vol
-```
-
-*Ownership flowchart for a sweep: the sweep controller pod creates children; the operator only provisions it, rolls up child phases, and harvests the aggregate.*
+![An AIPerfSweep triggers the operator to provision the sweep: it creates the sweep RBAC and launches the sweep controller pod in a JobSet, and the RBAC authorizes that pod. The sweep controller creates child AIPerfJobs one at a time. Child phase changes trigger the operator to roll counts up into the sweep status. When aggregation is done the sweep controller patches the sweep, and the operator downloads the aggregate from the controller and writes it to the results volume.](../diagrams/operator/sweep-orchestration.svg)
 
 ### Creation and limits
 
