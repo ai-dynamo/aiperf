@@ -53,6 +53,7 @@ config:
     edgeLabelBackground: '#FFFFFF'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
+    fontFamily: 'Arial, Helvetica, sans-serif'
 ---
 flowchart LR
   accTitle: Ownership flowchart for the operator pod
@@ -110,6 +111,7 @@ config:
     edgeLabelBackground: '#FFFFFF'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
+    fontFamily: 'Arial, Helvetica, sans-serif'
 ---
 flowchart TB
   accTitle: Resource flowchart for one AIPerfJob benchmark
@@ -122,10 +124,9 @@ flowchart TB
   op["Operator (reconciler)"]:::stage
   rbac["Role and RoleBinding (pod RBAC)"]:::src
   cfg["Run config (ConfigMap)"]:::src
-  subgraph js["Benchmark JobSet"]
-    ctrl["Controller pod (benchmark control)"]:::stage
-    wk["Worker pods (load generators)"]:::stage
-  end
+  js["Benchmark JobSet (workload)"]:::stage
+  ctrl["Controller pod (benchmark control)"]:::stage
+  wk["Worker pods (load generators)"]:::stage
   vol[("Results volume (store)")]:::store
   user -->|applies| cr
   cr -->|triggers create| op
@@ -133,6 +134,8 @@ flowchart TB
   op -->|creates| cfg
   op -->|creates| js
   cfg -->|supplies run config| js
+  js -->|runs| ctrl
+  js -->|runs| wk
   ctrl -->|dispatches credits| wk
   ctrl -->|pushes status, heartbeat, completion signal| cr
   op -->|fetches results from| ctrl
@@ -207,6 +210,7 @@ config:
     edgeLabelBackground: '#FFFFFF'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
+    fontFamily: 'Arial, Helvetica, sans-serif'
 ---
 stateDiagram-v2
   accTitle: State diagram for AIPerfJob forward progress
@@ -240,23 +244,28 @@ config:
     edgeLabelBackground: '#FFFFFF'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
+    fontFamily: 'Arial, Helvetica, sans-serif'
 ---
 stateDiagram-v2
   accTitle: State diagram for AIPerfJob failure and cancellation
   accDescr: Any active phase can fail or be cancelled. A completed job can still be failed by a fatal report from the controller.
+  classDef src fill:#E7F7EF,stroke:#23845B,color:#183153
   classDef stage fill:#E9F0FF,stroke:#3468D4,color:#183153
   classDef out fill:#F0EDFF,stroke:#7254D6,color:#183153
+  state "New AIPerfJob (submitted)" as New
   state "Active phase (Pending, Queued, Initializing, Running)" as Active
   state "Completed (terminal)" as Completed
   state "Failed (terminal)" as Failed
   state "Cancelled (terminal)" as Cancelled
-  [*] --> Active: operator creates resources
-  [*] --> Failed: operator rejects spec, DNS, or preflight
-  [*] --> Cancelled: user creates with spec.cancel
+  [*] --> New: user applies the AIPerfJob
+  New --> Active: operator creates resources
+  New --> Failed: operator rejects spec, DNS, or preflight
+  New --> Cancelled: user created it with spec.cancel
   Active --> Completed: operator harvests results
   Active --> Failed: timeout, JobSet failure, startup blocker, or fetch failure
   Active --> Cancelled: user sets spec.cancel
   Completed --> Failed: controller reports fatal failure
+  class New src
   class Active stage
   class Completed, Failed, Cancelled out
 ```
@@ -513,6 +522,7 @@ config:
     edgeLabelBackground: '#FFFFFF'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
+    fontFamily: 'Arial, Helvetica, sans-serif'
     actorBkg: '#E9F0FF'
     actorBorder: '#3468D4'
     actorTextColor: '#183153'
@@ -617,6 +627,7 @@ config:
     edgeLabelBackground: '#FFFFFF'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
+    fontFamily: 'Arial, Helvetica, sans-serif'
 ---
 flowchart LR
   accTitle: Signal flowchart for AIPerfJob failure detection
@@ -779,6 +790,7 @@ config:
     edgeLabelBackground: '#FFFFFF'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
+    fontFamily: 'Arial, Helvetica, sans-serif'
     actorBkg: '#E9F0FF'
     actorBorder: '#3468D4'
     actorTextColor: '#183153'
@@ -967,6 +979,7 @@ config:
     edgeLabelBackground: '#FFFFFF'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
+    fontFamily: 'Arial, Helvetica, sans-serif'
 ---
 flowchart TB
   accTitle: Ownership flowchart for an AIPerfSweep
