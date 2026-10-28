@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import pytest
 from pytest import param
 
+from aiperf.cli_runner._sweep_aggregate import _plan_iteration_order
 from aiperf.common.enums import SweepMode
 from aiperf.config.config import BenchmarkConfig
 from aiperf.config.resolution.plan import BenchmarkPlan, BenchmarkRun
@@ -494,6 +495,58 @@ async def test_repeated_mode_passes_growing_prior_results_to_strategy(
     # this locks against), every entry would be 0.
     assert by_var[0] == [0, 1, 2]
     assert by_var[1] == [0, 1, 2]
+
+
+async def test_multi_run_without_sweep_stops_once_the_strategy_has_converged(
+    tmp_path, monkeypatch
+):
+    plan = _make_plan(num_variations=1, trials=5).model_copy(update={"sweep": None})
+
+    class _ConvergedAfterTwo:
+        def validate_config(self, cfg) -> None:
+            pass
+
+        def get_next_config(self, cfg, prior):
+            return cfg
+
+        def get_run_label(self, trial):
+            return f"run_{trial + 1:04d}"
+
+        def get_run_path(self, base, trial):
+            return Path(base) / "profile_runs" / f"run_{trial + 1:04d}"
+
+        def get_cooldown_seconds(self):
+            return 0.0
+
+        def should_continue(self, results):
+            return len(results) < 2
+
+    import aiperf.cli_runner._strategy as strategy_mod
+
+    monkeypatch.setattr(
+        strategy_mod, "build_strategy", lambda plan, logger: _ConvergedAfterTwo()
+    )
+
+    executor = FakeExecutor()
+    await MultiRunOrchestrator(base_dir=tmp_path).execute(plan, executor)
+
+    assert [trial for _, trial, _ in executor.calls] == [0, 1]
+
+
+@pytest.mark.parametrize(
+    ("sweep", "expected"),
+    [
+        param(None, SweepMode.INDEPENDENT, id="no-sweep"),
+        param(
+            GridSweep(parameters={"phases.profiling.concurrency": [1]}),
+            SweepMode.REPEATED,
+            id="grid-default",
+        ),
+        param(SimpleNamespace(), SweepMode.REPEATED, id="non-grid-sweep"),
+    ],
+)
+def test_plan_iteration_order(sweep, expected):
+    assert _plan_iteration_order(SimpleNamespace(sweep=sweep)) == expected
 
 
 # ---------------------------------------------------------------------------
