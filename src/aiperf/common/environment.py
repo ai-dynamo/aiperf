@@ -572,6 +572,15 @@ class _DatasetSettings(BaseSettings):
         "legacy traces are unaffected. Default False keeps the byte-exact "
         "plain-user replay shape.",
     )
+    WEKA_FORK_PARENT_MESSAGES: bool = Field(
+        default=True,
+        description="When True (default), a child conversation's first turn "
+        "splits the hash_id prefix it shares with its parent turn into the "
+        "parent's roles and message boundaries, then adds the rest as one user "
+        "message, so its rendered prompt keeps the parent's message layout. The "
+        "tokens are the same as with False. Set to False for the previous behavior: one "
+        "flattened user message, which shares only the parent's first message.",
+    )
     WEKA_SEAM_MAX_GAP_SECONDS: float = Field(
         ge=0.0,
         default=3600.0,
@@ -1185,19 +1194,24 @@ class _RecordSettings(BaseSettings):
         le=86400.0,
         default=600.0,
         description="Seconds during which a profiling phase has requests in "
-        "flight and none of them complete, after which the run fails instead "
+        "flight, none of them complete, and no worker receives streamed "
+        "response data, after which the run fails instead "
         "of waiting indefinitely. A phase completes only once the credit "
         "phase reports its final count, so a credit that is never returned "
         "leaves that condition unevaluable and the run waits forever with no "
         "output. Per-request timeouts do not cover this: they default to 6 "
-        "hours and never apply to a request that was not dispatched. Note "
-        "that a single legitimately long request will fail the run if it "
-        "exceeds this timeout while nothing else completes, so raise this "
-        "value for workloads whose individual requests run longer. Each "
-        "profiling phase is judged on its own counters, so an overlapping "
-        "`seamless` phase that keeps completing work does not mask a stall in "
-        "another. Set to 0 to disable and restore the previous unbounded "
-        "wait.",
+        "hours and never apply to a request that was not dispatched. "
+        "Streamed response data counts as progress for the whole process, not "
+        "per request or per phase: while any worker is still receiving chunks, "
+        "no phase's stall clock advances. A long streaming generation is "
+        "therefore never cut short, but a request stuck alongside one that "
+        "keeps streaming is only caught once that streaming stops. A single "
+        "legitimately long non-streaming request will fail the run if it "
+        "exceeds this timeout while nothing else completes or streams, so "
+        "raise this value for such workloads. Completions are judged per "
+        "profiling phase, so an overlapping `seamless` phase that keeps "
+        "completing work does not mask a stall in another. Set to 0 to "
+        "disable and restore the previous unbounded wait.",
     )
 
     PROGRESS_STALL_CHECK_INTERVAL: float = Field(
