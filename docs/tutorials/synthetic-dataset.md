@@ -89,7 +89,7 @@ Available modes:
 
 - `noise` (default): A fresh random-noise image is generated at the requested width × height for every request. No filesystem access; pool size is unlimited.
 - `assets`: Resizes one of the 4 bundled source images in `assets/source_images/` to the requested dimensions. Smaller payload bytes than noise because natural images compress well, but the pool is only 4 images.
-- `<path>`: Resizes images from a user-supplied directory (e.g. `--image-source ./my_images`). All readable files in the directory are loaded; non-image files are skipped.
+- `<path>`: Resizes images from a user-supplied directory (e.g. `--image-source ./my_images`). The directory path is interpreted literally, including characters such as square brackets. All readable files in the directory are loaded; non-image files are skipped.
 
 After source selection, the image is converted to the configured format (PNG, JPEG, or randomly selected) and base64-encoded as a data URI for API requests.
 
@@ -110,6 +110,7 @@ aiperf profile \
   --image-format png \
   --image-batch-size 2 \
   --synthetic-input-tokens-mean 100 \
+  --output-tokens-mean 100 \
   --request-count 5
 ```
 <!-- /aiperf-run-vllm-vision-openai-endpoint-server -->

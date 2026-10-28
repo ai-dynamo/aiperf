@@ -738,8 +738,9 @@ async def test_get_metadata_raises_propagates_through_intercept():
         await orch.intercept(_mk_credit("root", "corr-root", 0))
 
 
-def test_spawn_child_with_parent_correlation_routes_to_parent_worker():
-    """SampledSession.routing_key returns parent_correlation_id whenever set, so SPAWN children that inherit it route to the parent's worker regardless of branch_mode."""
+def test_sampled_session_spawn_child_routing_key_is_parent_correlation_id():
+    """The router follows this parent key for a SPAWN child only on its first
+    turn; later turns use the child's own sticky entry."""
     from aiperf.timing.conversation_source import SampledSession
 
     spawn = SampledSession(

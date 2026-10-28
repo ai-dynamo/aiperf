@@ -84,6 +84,9 @@ def _implicit_timing_types() -> frozenset[object]:
     * ``baseten_trace`` is Parquet.
     * ``tracelab`` nests it under ``timing_events[]`` and may be gzipped; the
       loader derives an absolute submission time for every round it keeps.
+    * ``weka_trace`` nests it under ``requests[].t``; the top level of a trace
+      is ``{id, models, block_size, hash_id_scope, requests}``, so the generic
+      first-record probe sees no timing at all.
 
     Built lazily: ``CustomDatasetType`` members are registered from plugins.yaml.
     """
@@ -95,6 +98,7 @@ def _implicit_timing_types() -> frozenset[object]:
             CustomDatasetType.BURST_GPT_TRACE,
             CustomDatasetType.BASETEN_TRACE,
             CustomDatasetType.TRACELAB,
+            CustomDatasetType.WEKA_TRACE,
         }
     )
 

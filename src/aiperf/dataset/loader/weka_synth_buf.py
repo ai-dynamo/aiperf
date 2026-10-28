@@ -10,7 +10,7 @@ turns. The canonical reconstructor lives in :class:`ConversationReconstructor`.
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -27,6 +27,8 @@ from aiperf.dataset.loader.weka_tool_shape import (
 )
 
 _logger = AIPerfLogger(__name__)
+
+_Role = Literal["system", "user", "assistant"]
 
 
 @dataclass
@@ -59,7 +61,7 @@ class RoleSegment:
     given hash_id are byte-identical across every segment they appear in.
     """
 
-    role: Literal["system", "user", "assistant"]
+    role: _Role
     block_start: int
     block_count: int
     tokens: list[int]
@@ -74,6 +76,58 @@ class RoleSegment:
     def content_token_count(self) -> int:
         """Token count == ``len(tokens)``. Kept as a property for back-compat."""
         return len(self.tokens)
+
+
+@dataclass(frozen=True, slots=True)
+class LayoutSegment:
+    role: _Role
+    block_start: int
+    tool_result_turn: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ParentPrefix:
+    """One parent turn's message layout, for a child's turn 0.
+
+    A segment ends where the next one starts: after a shared partial block,
+    the next segment starts one block later.
+    """
+
+    hash_ids: tuple[int, ...]
+    segments: tuple[LayoutSegment, ...]
+    next_tool_turn: int
+    """First tool-call id number past the parent's, so child ids never collide."""
+
+    def spans(self) -> list[tuple[LayoutSegment, int]]:
+        """Each segment with the hash index where it ends (the next
+        segment's ``block_start``, or the end of ``hash_ids``)."""
+        if not self.segments:
+            return []
+        ends = [seg.block_start for seg in self.segments[1:]] + [len(self.hash_ids)]
+        return list(zip(self.segments, ends, strict=True))
+
+
+@dataclass(slots=True)
+class ParentPrefixes:
+    """Parent turn layouts that child turn 0s need, keyed by ``(session_id, turn)``.
+
+    Shared by the serial and parallel reconstruction paths so both capture the
+    same layouts at the same point.
+    """
+
+    wanted: set[tuple[str, int] | None]
+    """Turns some child forks from; only these are captured."""
+    layouts: dict[tuple[str, int], ParentPrefix] = field(default_factory=dict)
+
+    def capture(
+        self,
+        session_id: str,
+        turn: int,
+        recon: ConversationReconstructor,
+        hash_ids: list[int],
+    ) -> None:
+        if (session_id, turn) in self.wanted:
+            self.layouts[(session_id, turn)] = recon.parent_prefix(hash_ids)
 
 
 @dataclass
@@ -109,6 +163,9 @@ class ConversationReconstructor:
     _emitted_segment_count: int = 0
     _last_disturbance_at: int | None = None
     _turn_index: int = 0
+    _tool_turn_offset: int = 0
+    """Added to the turn index in synthetic tool-call ids (non-zero only for a
+    child that inherited its parent's ids)."""
     _trailing_non_user_turns: list[int] = field(default_factory=list)
     """Turn indices whose segment list could NOT be made to end with a user
     block. The wire invariant (every turn ends with a user message) is
@@ -129,8 +186,13 @@ class ConversationReconstructor:
         system_tokens: int,
         seed: str,
         is_tool_result: bool = False,
+        parent_prefix: ParentPrefix | None = None,
+        turn_0_pullbacks: Collection[int] = (),
     ) -> None:
         """Initialize segments for turn 0 from a tool+system / user prefix split.
+
+        With ``parent_prefix``, see :meth:`_init_turn_0_from_parent`;
+        ``turn_0_pullbacks`` comes from :func:`compute_asst_block_caps`.
 
         See spec §4.3. hash_ids tile the first ``floor(in_tokens / bs)`` blocks
         when fully recorded; any partial tail of ``in_tokens % bs`` tokens is
@@ -164,11 +226,17 @@ class ConversationReconstructor:
         guarantees ``sum(len(seg.tokens)) == in_tokens`` exactly and that
         every segment decodes the cached hash content byte-identically.
         """
+        if parent_prefix is not None and self._init_turn_0_from_parent(
+            parent_prefix,
+            hash_ids=hash_ids,
+            in_tokens=in_tokens,
+            seed=seed,
+            is_tool_result=is_tool_result,
+            turn_0_pullbacks=turn_0_pullbacks,
+        ):
+            return
         bs = self.block_size
-        m_full = in_tokens // bs
-        partial_tail_tokens_n = in_tokens - m_full * bs
-        covered_blocks = min(m_full, len(hash_ids))
-        missing_block_tokens = (m_full - covered_blocks) * bs
+        covered_blocks = min(in_tokens // bs, len(hash_ids))
 
         cursor = 0
         segs: list[RoleSegment] = []
@@ -225,10 +293,13 @@ class ConversationReconstructor:
         # boundary cut and flag a spurious disturbance (reset_context) on a
         # pure-growth turn — skip it unless it is the only segment.
         user_blocks = covered_blocks - cursor
-        user_tokens = self.decode_block_tokens(hash_ids[cursor : cursor + user_blocks])
-        synth_tail_n = missing_block_tokens + partial_tail_tokens_n
-        if synth_tail_n > 0:
-            user_tokens.extend(self.sample_partial_tail_tokens(synth_tail_n, seed))
+        user_tokens = self._own_tokens(
+            hash_ids,
+            start=cursor,
+            covered=covered_blocks,
+            in_tokens=in_tokens,
+            seed=seed,
+        )
         if user_tokens or not segs:
             segs.append(
                 RoleSegment(
@@ -241,11 +312,149 @@ class ConversationReconstructor:
             )
 
         self._turn_index = 0
+        self._tool_turn_offset = 0
         del is_tool_result  # turn 0 has no preceding assistant to pair with
         self._segments = segs
         self._emitted_segment_count = 0
         self._last_disturbance_at = None
         self._assert_trailing_user()
+
+    def _init_turn_0_from_parent(
+        self,
+        parent: ParentPrefix,
+        *,
+        hash_ids: list[int],
+        in_tokens: int,
+        seed: str,
+        is_tool_result: bool,
+        turn_0_pullbacks: Collection[int],
+    ) -> bool:
+        """Split turn 0 into the parent's messages over the shared prefix.
+
+        Only roles and message starts come from the parent; the rest is one
+        user message, or the tool result for an inherited assistant's call.
+        The tokens are this request's own, as in the flat split.
+
+        Returns False and changes nothing when:
+        - the shared prefix ends inside the parent's first non-system message
+          (the flat split already matches the parent there);
+        - the child adds no tokens after a non-user parent message; or
+        - a later turn would cut back to the end of an inherited non-user
+          message and add nothing (``turn_0_pullbacks``).
+        A request cannot end with an assistant message.
+        """
+        geo = compute_turn_block_geometry(
+            list(parent.hash_ids), hash_ids, in_tokens, self.block_size
+        )
+        shared = min(geo.lcp, geo.m_curr_covered)
+        tool_turn = None
+        if self.tool_shaped_messages:
+            # Keep the assistant only if the child adds a tail and no later
+            # turn cuts back to its end.
+            answers_call = (
+                is_tool_result
+                and in_tokens > shared * self.block_size
+                and shared not in turn_0_pullbacks
+            )
+            shared, tool_turn = _shared_without_split_tool_pair(
+                parent, shared, answers_call
+            )
+        if shared <= _first_message_end(parent):
+            return False
+        if any(
+            0 < target <= shared and _role_at(parent, target - 1) != "user"
+            for target in turn_0_pullbacks
+        ):
+            return False
+
+        segs = self._inherited_segments(parent, hash_ids, shared)
+        new_tokens = self._own_tokens(
+            hash_ids,
+            start=shared,
+            covered=geo.m_curr_covered,
+            in_tokens=in_tokens,
+            seed=seed,
+        )
+        if not new_tokens and segs[-1].role != "user":
+            return False
+
+        if new_tokens:
+            segs.append(
+                RoleSegment(
+                    role="user",
+                    block_start=shared,
+                    block_count=geo.m_curr_covered - shared,
+                    tokens=new_tokens,
+                    content=self.decode_tokens_to_text(new_tokens),
+                    tool_result_turn=tool_turn,
+                )
+            )
+        self._segments = segs
+        self._turn_index = 0
+        self._tool_turn_offset = parent.next_tool_turn
+        self._emitted_segment_count = 0
+        self._last_disturbance_at = None
+        return True
+
+    def _inherited_segments(
+        self, parent: ParentPrefix, hash_ids: list[int], shared: int
+    ) -> list[RoleSegment]:
+        """Segments with the parent's roles that tile ``[0, shared)``, holding
+        this request's decoded ``hash_ids``."""
+        segs: list[RoleSegment] = []
+        cursor = 0
+        for seg, end in parent.spans():
+            if cursor >= shared:
+                break
+            stop = min(end, shared)
+            if stop == cursor:
+                continue
+            tokens = self.decode_block_tokens(hash_ids[cursor:stop])
+            segs.append(
+                RoleSegment(
+                    role=seg.role,
+                    block_start=cursor,
+                    block_count=stop - cursor,
+                    tokens=tokens,
+                    content=self.decode_tokens_to_text(tokens),
+                    tool_result_turn=seg.tool_result_turn,
+                )
+            )
+            cursor = stop
+        return segs
+
+    def _own_tokens(
+        self,
+        hash_ids: list[int],
+        *,
+        start: int,
+        covered: int,
+        in_tokens: int,
+        seed: str,
+    ) -> list[int]:
+        """Decoded ``hash_ids[start:covered]``, then a sampled tail for the
+        missing blocks and the partial block, so the prompt has ``in_tokens``."""
+        tokens = self.decode_block_tokens(hash_ids[start:covered])
+        tail_n = in_tokens - covered * self.block_size
+        if tail_n > 0:
+            tokens.extend(self.sample_partial_tail_tokens(tail_n, seed))
+        return tokens
+
+    def parent_prefix(self, hash_ids: list[int]) -> ParentPrefix:
+        """Capture the current turn's layout for a child's turn 0.
+
+        ``hash_ids`` are the current turn's hash ids. Call this after
+        :meth:`turn_delta`, so tool-result marks are in the state they were
+        sent with.
+        """
+        return ParentPrefix(
+            hash_ids=tuple(hash_ids),
+            segments=tuple(
+                LayoutSegment(seg.role, seg.block_start, seg.tool_result_turn)
+                for seg in self._segments
+            ),
+            next_tool_turn=self._turn_index + self._tool_turn_offset + 1,
+        )
 
     def advance_turn(
         self,
@@ -396,7 +605,11 @@ class ConversationReconstructor:
                     # assistant, assistant emitted in an earlier delta), so
                     # the shape a turn is first sent with is the shape every
                     # reset re-emission reproduces.
-                    tool_result_turn=self._turn_index if is_tool_result else None,
+                    tool_result_turn=(
+                        self._turn_index + self._tool_turn_offset
+                        if is_tool_result
+                        else None
+                    ),
                 )
             )
 
@@ -497,6 +710,47 @@ class ConversationReconstructor:
         return [{"role": s.role, "content": s.content} for s in self._segments]
 
 
+def _first_message_end(parent: ParentPrefix) -> int:
+    for seg, end in parent.spans():
+        if seg.role != "system":
+            return end
+    return len(parent.hash_ids)
+
+
+def _shared_without_split_tool_pair(
+    parent: ParentPrefix, shared: int, answers_call: bool
+) -> tuple[int, int | None]:
+    """Move ``shared`` back to the start of an assistant segment it cuts or
+    ends at, when the next segment is that assistant's tool result.
+
+    The parent sent that assistant with ``tool_calls`` because the tool result
+    followed it. Without the tool result, the child would send the assistant
+    without ``tool_calls``, a message the parent never sent. Its blocks go to
+    the child's new user message instead.
+
+    When ``answers_call`` and ``shared`` ends exactly at the assistant, the
+    child's tail is the tool result instead: ``shared`` stays and the parent's
+    call turn is returned, so the assistant keeps the parent's call id.
+    """
+    spans = parent.spans()
+    for (seg, end), (nxt, _) in zip(spans, spans[1:], strict=False):
+        if seg.block_start < shared <= end:
+            if seg.role == "assistant" and nxt.tool_result_turn is not None:
+                if answers_call and shared == end:
+                    return shared, nxt.tool_result_turn
+                return seg.block_start, None
+            break
+    return shared, None
+
+
+def _role_at(parent: ParentPrefix, block: int) -> _Role:
+    """Defaults to user when no parent segment covers ``block``."""
+    for seg, end in parent.spans():
+        if seg.block_start <= block < end:
+            return seg.role
+    return "user"
+
+
 def longest_common_prefix(prev_hash_ids: list[int], curr_hash_ids: list[int]) -> int:
     """Return the index of the first differing element of the two sequences.
 
@@ -568,6 +822,7 @@ def compute_turn_block_geometry(
 def compute_asst_block_caps(
     turns: list[tuple[list[int], int]],
     block_size: int,
+    turn_0_pullbacks: set[int] | None = None,
 ) -> list[int | None]:
     """Pass-1 planner: per-turn upper bounds on assistant block count.
 
@@ -591,7 +846,9 @@ def compute_asst_block_caps(
     buffer. A turn that appends nothing (``new_blocks_count == 0`` and
     ``synth_tail_n == 0``) truncates onto block ``T-1`` (``T = eff_lcp``); its
     owning turn ``j = tile[T-1]`` must keep that block in its user segment, so
-    ``cap_j = min((T-1) - eff_lcp_j)``. Turn-0 owners are skipped (no assistant).
+    ``cap_j = min((T-1) - eff_lcp_j)``. Turn-0 owners are skipped (no
+    assistant); their targets ``T`` are added to ``turn_0_pullbacks`` when given
+    (a forked turn 0 must not leave an inherited assistant there).
     """
     n_turns = len(turns)
     caps: list[int | None] = [None] * n_turns
@@ -632,6 +889,8 @@ def compute_asst_block_caps(
                     if bound >= 0:
                         prev = caps[owner]
                         caps[owner] = bound if prev is None else min(prev, bound)
+                elif turn_0_pullbacks is not None:
+                    turn_0_pullbacks.add(target)
 
         # Mutate the tile suffix in place (O(new)) instead of rebuilding it.
         del tile[eff_lcp:]
