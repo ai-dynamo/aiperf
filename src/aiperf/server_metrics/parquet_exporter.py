@@ -24,6 +24,7 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models.server_metrics_models import TimeRangeFilter
 from aiperf.config.phases import get_phase_rate
 from aiperf.exporters.exporter_config import FileExportInfo
+from aiperf.server_metrics.array_store import run_history_io
 from aiperf.server_metrics.storage import (
     HistogramTimeSeries,
     ScalarTimeSeries,
@@ -128,6 +129,10 @@ class ServerMetricsParquetExporter(AIPerfLoggerMixin):
         )
 
     async def export(self) -> FileExportInfo:
+        """Stream Parquet writes off the service heartbeat event loop."""
+        return await run_history_io(self._export)
+
+    def _export(self) -> FileExportInfo:
         """Export server metrics to Parquet file with normalized schema using streaming writes.
 
         Performs schema discovery (label keys), collects rows in batches with delta calculations,

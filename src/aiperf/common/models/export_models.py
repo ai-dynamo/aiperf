@@ -292,8 +292,8 @@ class JsonExportData(AIPerfBaseModel):
     #       but we are setting it here to guard against base model changes.
     model_config = ConfigDict(extra="allow")
 
-    # Increment on breaking changes to the export structure
-    SCHEMA_VERSION: ClassVar[str] = "1.5"
+    # Increment when the export structure changes.
+    SCHEMA_VERSION: ClassVar[str] = "1.6"
 
     schema_version: str | None = Field(
         default=None,
@@ -369,6 +369,12 @@ class JsonExportData(AIPerfBaseModel):
     incomplete_reason: str | None = Field(
         default=None,
         description="Human-readable cause when is_complete is False, else None.",
+    )
+    server_metrics_error_summary: list[ErrorDetailsCount] | None = Field(
+        default=None,
+        description="Server-metrics collection failures, independent of inference "
+        "request errors. Present when collection reports errors or its container "
+        "restarted; completed inference measurements remain available.",
     )
     error_summary: list[ErrorDetailsCount] | None = None
     start_time: datetime | None = None
