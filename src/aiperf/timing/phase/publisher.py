@@ -7,6 +7,7 @@ Publishes phase events (start, progress, complete) to message bus.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
@@ -41,6 +42,7 @@ class PhasePublisher:
         pub_client: PubClientProtocol,
         service_id: str,
         profile_cancel_sender: Callable[[ProfileCancelReason | None], Awaitable[None]],
+        warmup_boundary_ready: asyncio.Event | None = None,
     ):
         """Initialize publisher with message bus client.
 
@@ -49,10 +51,21 @@ class PhasePublisher:
         a command to the controller, which relays it to the peer services. The
         publisher stays transport-agnostic and the owning service supplies its
         own control-channel send.
+
+        ``warmup_boundary_ready`` is set by TimingManager when
+        ServerMetricsManager publishes the warmup boundary acknowledgment.
+
+        Runtime server-metrics status (``server_metrics_runtime_active`` /
+        ``server_metrics_collector_count``) is updated from
+        ``ServerMetricsStatusMessage`` so PhaseRunner can skip the warmup
+        flush/ack barrier when collection is inactive.
         """
         self._pub_client = pub_client
         self._service_id = service_id
         self._profile_cancel_sender = profile_cancel_sender
+        self._warmup_boundary_ready = warmup_boundary_ready
+        self._server_metrics_runtime_active = False
+        self._server_metrics_collector_count = 0
 
     async def publish_phases_configured(self, configs: list[CreditPhaseConfig]) -> None:
         """Publish phases configured event."""
@@ -152,3 +165,63 @@ class PhasePublisher:
                 dedicated ``ProfileCancelReason`` member yet).
         """
         await self._profile_cancel_sender(reason)
+
+    @property
+    def server_metrics_runtime_active(self) -> bool:
+        """True when ServerMetricsManager reported reachable collectors."""
+        return self._server_metrics_runtime_active
+
+    @property
+    def server_metrics_collector_count(self) -> int:
+        """Reachable collector count from the latest status message."""
+        return self._server_metrics_collector_count
+
+    def update_server_metrics_runtime_status(
+        self,
+        *,
+        enabled: bool,
+        endpoints_reachable: list[str] | None = None,
+    ) -> None:
+        """Record runtime collection status from ServerMetricsStatusMessage.
+
+        The warmup flush/ack barrier is active only when ``enabled`` is True and
+        at least one Prometheus endpoint is reachable. Missing or disabled
+        status defaults to inactive so PhaseRunner does not wait for an ack
+        that no living manager will publish.
+        """
+        reachable = list(endpoints_reachable or [])
+        active = bool(enabled and reachable)
+        self._server_metrics_runtime_active = active
+        self._server_metrics_collector_count = len(reachable) if active else 0
+
+    def clear_warmup_boundary_ready(self) -> None:
+        """Reset before publishing CREDIT_PHASE_COMPLETE for a warmup phase."""
+        if self._warmup_boundary_ready is not None:
+            self._warmup_boundary_ready.clear()
+
+    async def wait_for_warmup_boundary_ready(
+        self, timeout: float, cancel_event: asyncio.Event | None = None
+    ) -> bool:
+        """Wait for ServerMetricsManager's warmup boundary acknowledgment.
+
+        Returns True when the ready event fires, False on timeout or when
+        ``cancel_event`` fires first; callers passing ``cancel_event`` should
+        check their own cancel state afterwards. Returns True when no event was
+        wired (server metrics disabled / tests without TimingManager).
+        """
+        if self._warmup_boundary_ready is None:
+            return True
+        ready_task = asyncio.ensure_future(self._warmup_boundary_ready.wait())
+        waiters = {ready_task}
+        if cancel_event is not None:
+            waiters.add(asyncio.ensure_future(cancel_event.wait()))
+        try:
+            await asyncio.wait(
+                waiters, timeout=timeout, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            for task in waiters:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*waiters, return_exceptions=True)
+        return self._warmup_boundary_ready.is_set()

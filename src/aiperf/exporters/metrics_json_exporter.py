@@ -84,6 +84,11 @@ class MetricsJsonExporter(MetricsBaseExporter):
             is_complete=self._results.is_complete,
             incomplete_reason=self._results.incomplete_reason,
             error_summary=self._results.error_summary,
+            server_metrics_error_summary=(
+                self._server_metrics_results.error_summary or None
+                if self._server_metrics_results is not None
+                else None
+            ),
             start_time=start_time,
             end_time=end_time,
             telemetry_data=self._telemetry_results,

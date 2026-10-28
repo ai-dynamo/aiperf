@@ -409,6 +409,34 @@ def _combined_log_text(result: AIPerfResults) -> str:
     return "\n".join(parts)
 
 
+def _idle_cap_diagnostics(
+    result: AIPerfResults, root_corr: str, records: list[MetricRecordMetadata]
+) -> str:
+    """Explain a tree-idle gap failure from what the CI job left behind.
+
+    The gap flaked only on CI, so the failure message carries the play's
+    request timeline and the root's watchdog decisions (DEBUG lines) to show
+    which decision let the gap through without a local repro.
+    """
+    t0 = records[0].request_start_ns
+    timeline = "\n".join(
+        f"  {md.conversation_id}#{md.turn_index}: "
+        f"start={(md.request_start_ns - t0) / 1e6:.1f}ms "
+        f"dur={(md.request_end_ns - md.request_start_ns) / 1e6:.1f}ms"
+        for md in records
+    )
+    watchdog = "\n".join(
+        f"  {line.strip()}"
+        for line in dict.fromkeys(_combined_log_text(result).splitlines())
+        if root_corr in line
+        and ("Idle watchdog" in line or "Per-trace idle cap" in line)
+    )
+    return (
+        f"play root={root_corr} timeline:\n{timeline}\n"
+        f"idle watchdog log:\n{watchdog or '  (no lines)'}"
+    )
+
+
 def _profiling_metadata(result: AIPerfResults) -> list[MetricRecordMetadata]:
     """Successful PROFILING-phase record metadata (errors/cancels excluded)."""
     return [
@@ -787,7 +815,8 @@ async def test_runtime_idle_cap_handles_independent_stream_clock_drift(
                 gap_seconds = (current.request_start_ns - latest_end_ns) / 1e9
                 assert gap_seconds <= cap_seconds + 0.15, (
                     f"runtime tree was completely idle for {gap_seconds:.3f}s "
-                    f"despite a {cap_seconds:.3f}s trace cap"
+                    f"despite a {cap_seconds:.3f}s trace cap\n"
+                    + _idle_cap_diagnostics(result, play.root_corr, records)
                 )
             latest_end_ns = max(latest_end_ns, current.request_end_ns)
 
