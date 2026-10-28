@@ -685,10 +685,14 @@ class PhaseRunner(TaskManagerMixin):
         (idempotent no-op if ``finalize_phase`` already ran it on the normal
         completion path) so an exception raised mid-phase doesn't leave a
         dangling idle-watchdog timer or scheduler drain observer armed.
+        Logs the per-trace idle-cap summary here because this teardown runs
+        once per phase on both the normal and the exception path.
         """
         cleanup_on_abort = getattr(strategy, "cleanup_on_abort", None)
         if cleanup_on_abort is not None:
             cleanup_on_abort()
+        if self._replay_barrier is not None:
+            self._replay_barrier.log_root_idle_summary()
         if self._branch_orchestrator is not None:
             self._callback_handler.set_branch_orchestrator(
                 None,
