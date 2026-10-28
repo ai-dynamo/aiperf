@@ -16,6 +16,7 @@ import math
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from aiperf.config.dataset import SyntheticDataset
 from aiperf.config.distributions import SamplingDistribution
 
 _DIST = TypeAdapter(SamplingDistribution)
@@ -68,3 +69,16 @@ def test_normal_distribution_accepts_positive_mean() -> None:
     dist = _DIST.validate_python({"mean": 512, "stddev": 50})
     assert dist.mean == 512.0
     assert dist.stddev == 50.0
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+def test_empirical_distribution_rejects_non_finite_values(value: float) -> None:
+    with pytest.raises(ValidationError, match="finite"):
+        _DIST.validate_python({"points": [{"value": value}]})
+
+
+def test_synthetic_dataset_rejects_non_finite_turn_delay_ratio() -> None:
+    with pytest.raises(ValidationError, match="finite"):
+        SyntheticDataset.model_validate(
+            {"name": "test", "type": "synthetic", "turn_delay_ratio": math.inf}
+        )

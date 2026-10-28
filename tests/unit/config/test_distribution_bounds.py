@@ -13,6 +13,7 @@ import pytest
 from pydantic import TypeAdapter, ValidationError
 
 from aiperf.common import random_generator as rng
+from aiperf.config.dataset import SyntheticDataset
 from aiperf.config.distributions import (
     NormalDistribution,
     SamplingDistribution,
@@ -109,6 +110,43 @@ def test_sample_int_respects_bounds():
     for _ in range(50):
         v = dist.sample_int(gen)
         assert 100 <= v <= 400
+
+
+@pytest.mark.parametrize(
+    "payload, expected",
+    [
+        ({"value": 2.9, "max": 2.5}, 2),
+        ({"value": 5, "min": 2.4, "max": 3.1}, 3),
+        ({"value": 0, "min": 1.5, "max": 3.5}, 2),
+    ],
+)
+def test_sample_int_respects_fractional_bounds(
+    payload: dict[str, float], expected: int
+) -> None:
+    dist = _DIST.validate_python(payload)
+    assert dist.sample_int(_get_rng()) == expected
+
+
+@pytest.mark.parametrize(
+    "turns",
+    [
+        {"value": 2.9, "max": 0.5},
+        {"value": 2.9, "min": 2.4, "max": 2.5},
+    ],
+)
+def test_synthetic_turns_reject_bounds_without_positive_integer(
+    turns: dict[str, float],
+) -> None:
+    with pytest.raises(ValidationError, match="positive integer"):
+        SyntheticDataset.model_validate(
+            {"name": "test", "type": "synthetic", "turns": turns}
+        )
+
+
+def test_sample_int_rejects_bounds_without_positive_integer() -> None:
+    dist = _DIST.validate_python({"value": 2.9, "min": 2.4, "max": 2.5})
+    with pytest.raises(ValueError, match="positive integer"):
+        dist.sample_int(_get_rng())
 
 
 def test_explicit_type_with_bounds_works():

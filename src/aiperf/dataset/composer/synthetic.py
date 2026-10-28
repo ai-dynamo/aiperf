@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 from aiperf.common import random_generator as rng
@@ -46,15 +47,11 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         self._turn_sampler_rng = rng.derive("composer.conversation.turn_count")
         self._delay_sampler_rng = rng.derive("composer.conversation.turn_delay")
 
-        # Cache the dataset shape and derived counts. Dataset sub-shapes
-        # (prompts/images/audio/video/turns/turn_delay) may be None when the
-        # user didn't configure them — apply the canonical defaults
-        # (turn=1, batch=1, delay=0) explicitly here.
+        # Missing payload configurations default to a batch size of one;
+        # turn count and delay defaults are applied when generating conversations and turns.
         self._num_entries = dataset.entries
-        self._turn_mean = max(1, int(_expected(dataset.turns)))
-        self._turn_stddev = _stddev_int(dataset.turns)
-        self._turn_delay_mean = _expected(dataset.turn_delay)
-        self._turn_delay_stddev = _stddev_int(dataset.turn_delay)
+        self._turn_distribution = dataset.turns
+        self._turn_delay_distribution = dataset.turn_delay
         self._turn_delay_ratio = dataset.turn_delay_ratio
         self._prompt_batch_size = (
             dataset.prompts.batch_size if dataset.prompts is not None else 1
@@ -135,9 +132,10 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         for _ in range(self._num_entries):
             conversation = Conversation(session_id=self.session_id_generator.next())
 
-            num_turns = self._turn_sampler_rng.sample_positive_normal_integer(
-                self._turn_mean,
-                self._turn_stddev,
+            num_turns = (
+                self._turn_distribution.sample_int(self._turn_sampler_rng)
+                if self._turn_distribution is not None
+                else 1
             )
             self.logger.debug("Creating conversation with %d turns", num_turns)
 
@@ -177,12 +175,16 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         if self.include_video:
             turn.videos.append(self._generate_video_payloads())
 
-        if not is_first and self._turn_delay_mean > 0:
-            delay = self._delay_sampler_rng.sample_positive_normal_integer(
-                int(self._turn_delay_mean),
-                self._turn_delay_stddev,
-            )
-            turn.delay = delay * self._turn_delay_ratio
+        if not is_first and self._turn_delay_distribution is not None:
+            sample = self._turn_delay_distribution.sample(self._delay_sampler_rng)
+            if not math.isfinite(sample):
+                raise ValueError(f"turn_delay sample must be finite, got {sample!r}")
+            delay = max(0.0, sample)
+            if delay > 0:
+                scaled_delay = delay * self._turn_delay_ratio
+                if not math.isfinite(scaled_delay):
+                    raise ValueError("turn_delay after scaling must be finite")
+                turn.delay = scaled_delay
 
         if not turn.texts and not turn.images and not turn.audios and not turn.videos:
             self.logger.warning(
