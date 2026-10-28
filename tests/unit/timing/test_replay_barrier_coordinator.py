@@ -624,6 +624,31 @@ async def test_idle_watchdog_debug_logs_fire_that_advances_nothing(
     await coordinator.cancel_pending(notify_refused=False)
 
 
+@pytest.mark.asyncio
+async def test_idle_cap_jump_logs_at_debug_not_info(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A capped run jumps once per idle gap per trace; INFO would flood the log."""
+    caplog.set_level(logging.DEBUG, logger=replay_dependencies.__name__)
+    scheduler = MagicMock()
+    scheduler.cap_pending_delay_for_group.return_value = 4.5
+    coordinator = _watchdog_coordinator(scheduler)
+    coordinator.observe_idle_root("root")
+
+    coordinator._enforce_root_idle_cap("root")
+
+    jumps = [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("Per-trace idle cap advanced")
+    ]
+    assert [(r.levelno, r.getMessage()) for r in jumps] == [
+        (logging.DEBUG, "Per-trace idle cap advanced replay root root by 4.500s"),
+    ]
+    assert coordinator._root_idle_jumps == 1
+    await coordinator.cancel_pending(notify_refused=False)
+
+
 async def _control_timer() -> None:
     """A grouped timer that issues no request, like an unsatisfied join deadline."""
 
