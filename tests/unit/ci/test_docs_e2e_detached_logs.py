@@ -17,16 +17,14 @@ setup pipe. Following those as well prints the whole boot twice under one
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "tests/ci/test_docs_end_to_end"))
-
-from test_runner import EndToEndTestRunner  # noqa: E402
 
 
 def _runner_with(monkeypatch, running: set[str], attached: set[str] = frozenset()):
+    from test_runner import EndToEndTestRunner
+
     runner = EndToEndTestRunner()
     followed: list[tuple[str, str]] = []
     monkeypatch.setattr(runner, "_known_container_ids", lambda: running)
@@ -79,6 +77,8 @@ def test_a_foreground_container_does_not_mask_a_detached_sibling(monkeypatch) ->
 
 def test_an_unanswerable_inspect_still_follows(monkeypatch) -> None:
     """A duplicated log beats a missing boot traceback, so docker failure follows."""
+    from test_runner import EndToEndTestRunner
+
     runner = EndToEndTestRunner()
     monkeypatch.setattr(
         "test_runner.subprocess.run",

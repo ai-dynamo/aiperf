@@ -17,13 +17,12 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
 HARNESS = REPO / "tests/ci/test_docs_end_to_end"
-sys.path.insert(0, str(HARNESS))
-
-import main as harness_main  # noqa: E402
-import parser as harness_parser  # noqa: E402
 
 
 def _run(monkeypatch, discovered: dict, *argv: str) -> int:
+    import main as harness_main
+    import parser as harness_parser
+
     monkeypatch.setattr(
         harness_parser.MarkdownParser, "parse_directory", lambda self, root: discovered
     )

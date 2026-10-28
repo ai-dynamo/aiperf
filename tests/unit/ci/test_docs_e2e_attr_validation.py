@@ -11,16 +11,13 @@ via an `or`, and `timeout=-1` kills the command the instant it starts.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 from pytest import param
 
 HARNESS = Path(__file__).resolve().parents[3] / "tests/ci/test_docs_end_to_end"
-sys.path.insert(0, str(HARNESS))
 
-from parser import MarkdownParser  # noqa: E402
 
 GOOD = """\
 <!-- setup-demo-endpoint-server -->
@@ -48,6 +45,8 @@ aiperf profile --model bad
 
 
 def _parse(tmp_path: Path, *docs: str) -> dict:
+    from parser import MarkdownParser
+
     for n, text in enumerate(docs):
         (tmp_path / f"doc{n}.md").write_text(text)
     result = MarkdownParser().parse_directory(tmp_path)

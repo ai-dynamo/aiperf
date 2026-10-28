@@ -17,7 +17,6 @@ is why no tagged guide ever tripped this. A runtime reader does trip it, and
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -25,9 +24,7 @@ import pytest
 from aiperf.common.constants import IS_WINDOWS
 
 REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "tests/ci/test_docs_end_to_end"))
 
-from test_runner import build_command_exec_argv  # noqa: E402
 
 # A block whose first command reads stdin, followed by one that must still run.
 SWALLOWING_BLOCK = "cat\necho AFTER_RAN"
@@ -39,7 +36,12 @@ needs_bash = pytest.mark.skipif(
 
 def test_the_command_is_an_argv_element_not_a_shell_string() -> None:
     """Interpolating it into a shell string is what mangles quoted JSON."""
-    argv = build_command_exec_argv("container", """--extra-inputs '{"a": 0}'""")
+    from constants import AIPERF_COMMAND_TIMEOUT
+    from test_runner import build_command_exec_argv
+
+    argv = build_command_exec_argv(
+        "container", """--extra-inputs '{"a": 0}'""", AIPERF_COMMAND_TIMEOUT
+    )
 
     assert argv[-2:] == ["-c", """--extra-inputs '{"a": 0}'"""]
     assert "-s" not in argv, "a script on stdin is readable by the commands it runs"
@@ -47,13 +49,21 @@ def test_the_command_is_an_argv_element_not_a_shell_string() -> None:
 
 def test_stdin_is_not_attached_to_the_exec() -> None:
     """``-i`` is what would hand the commands an open stdin to consume."""
-    assert "-i" not in build_command_exec_argv("container", "aiperf profile")
+    from constants import AIPERF_COMMAND_TIMEOUT
+    from test_runner import build_command_exec_argv
+
+    assert "-i" not in build_command_exec_argv(
+        "container", "aiperf profile", AIPERF_COMMAND_TIMEOUT
+    )
 
 
 @needs_bash
 def test_a_command_that_reads_stdin_does_not_swallow_the_block() -> None:
     """The real shell, invoked the way the runner invokes it."""
-    argv = build_command_exec_argv("unused", SWALLOWING_BLOCK)
+    from constants import AIPERF_COMMAND_TIMEOUT
+    from test_runner import build_command_exec_argv
+
+    argv = build_command_exec_argv("unused", SWALLOWING_BLOCK, AIPERF_COMMAND_TIMEOUT)
     # Drop the docker prefix; the shell behaviour is what is under test.
     proc = subprocess.run(
         argv[argv.index("bash") :],
@@ -84,8 +94,13 @@ def test_stdin_delivery_is_what_broke() -> None:
 @needs_bash
 def test_a_heredoc_still_works() -> None:
     """The pattern most tagged guides actually use; resolved while parsing."""
+    from constants import AIPERF_COMMAND_TIMEOUT
+    from test_runner import build_command_exec_argv
+
     argv = build_command_exec_argv(
-        "unused", "cat << 'EOF'\nline one\nline two\nEOF\necho DONE"
+        "unused",
+        "cat << 'EOF'\nline one\nline two\nEOF\necho DONE",
+        AIPERF_COMMAND_TIMEOUT,
     )
     proc = subprocess.run(
         argv[argv.index("bash") :],
@@ -96,3 +111,42 @@ def test_a_heredoc_still_works() -> None:
 
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.split() == ["line", "one", "line", "two", "DONE"]
+
+
+def test_the_deadline_is_enforced_inside_the_container() -> None:
+    """Killing the host-side `docker exec` client leaves its in-container child
+    running: verified with real containers, the exec'd process survived
+    `killpg(SIGKILL)` and kept the port and artifact paths busy for the next
+    command. The deadline has to travel into the container with the command."""
+    from test_runner import build_command_exec_argv
+
+    argv = build_command_exec_argv("container", "aiperf profile", 900)
+    assert "timeout" in argv, "no in-container deadline"
+    deadline = argv.index("timeout")
+    assert argv[deadline + 2] == "900"
+    assert any(a.startswith("--kill-after=") for a in argv), (
+        "a command that ignores SIGTERM would outlive its own deadline"
+    )
+    # The command still arrives as one argv element after `bash -c`.
+    assert argv[-1] == "aiperf profile"
+    assert argv[-2] == "-c"
+
+
+def test_a_per_command_timeout_reaches_the_container() -> None:
+    """`timeout=` on a run tag must move the in-container deadline too, or the
+    guide's override applies only to the host watchdog."""
+    from data_types import Command
+    from test_runner import build_command_exec_argv, resolve_command_timeout
+
+    cmd = Command(
+        tag_name="aiperf-run-demo-endpoint-server",
+        command="aiperf profile",
+        file_path="g.md",
+        start_line=1,
+        end_line=3,
+        timeout=42,
+    )
+    argv = build_command_exec_argv(
+        "container", cmd.command, resolve_command_timeout(cmd)
+    )
+    assert argv[argv.index("timeout") + 2] == "42"

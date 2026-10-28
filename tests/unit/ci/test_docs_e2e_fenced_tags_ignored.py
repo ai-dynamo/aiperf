@@ -10,13 +10,10 @@ never asked for.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "tests/ci/test_docs_end_to_end"))
 
-from parser import MarkdownParser  # noqa: E402
 
 EXAMPLE_DOC = """\
 # How to tag a guide
@@ -64,6 +61,8 @@ aiperf profile --model m
 
 
 def _parse(tmp_path: Path, **docs: str) -> dict:
+    from parser import MarkdownParser
+
     for name, text in docs.items():
         (tmp_path / f"{name}.md").write_text(text)
     return MarkdownParser().parse_directory(str(tmp_path))

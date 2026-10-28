@@ -9,22 +9,25 @@ A ``setup-file-`` tag materializes that block before the guide's commands run.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from pytest import param
 
-HARNESS = Path(__file__).resolve().parents[3] / "tests/ci/test_docs_end_to_end"
-sys.path.insert(0, str(HARNESS))
+if TYPE_CHECKING:
+    from parser import MarkdownParser
 
-from parser import MarkdownParser  # noqa: E402
-from test_runner import is_unsafe_fixture_path  # noqa: E402
+
+HARNESS = Path(__file__).resolve().parents[3] / "tests/ci/test_docs_end_to_end"
+
 
 SERVER = "vllm-default-openai"
 
 
 def _parse(tmp_path: Path, body: str) -> MarkdownParser:
+    from parser import MarkdownParser
+
     doc = tmp_path / "guide.md"
     doc.write_text(body, encoding="utf-8")
     parser = MarkdownParser()
@@ -222,6 +225,8 @@ aiperf profile --config config.yaml
 
 
 def _parse_docs(tmp_path, **docs):
+    from parser import MarkdownParser
+
     for name, text in docs.items():
         (tmp_path / f"{name}.md").write_text(text)
     return MarkdownParser().parse_directory(str(tmp_path))
@@ -281,6 +286,8 @@ def test_unsafe_fixture_paths_are_recognised(path: str, unsafe: bool) -> None:
     Validating only at write time meant a guide with an unwritable path still
     built an image and booted a server before anything objected.
     """
+    from test_runner import is_unsafe_fixture_path
+
     assert is_unsafe_fixture_path(path) is unsafe
 
 

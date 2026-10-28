@@ -9,23 +9,20 @@ untestable or forces the global ceiling up for every other command.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 from pytest import param
 
 HARNESS = Path(__file__).resolve().parents[3] / "tests/ci/test_docs_end_to_end"
-sys.path.insert(0, str(HARNESS))
 
-from constants import AIPERF_COMMAND_TIMEOUT  # noqa: E402
-from parser import MarkdownParser  # noqa: E402
-from test_runner import resolve_command_timeout  # noqa: E402
 
 SERVER = "vllm-default-openai"
 
 
 def _cmd(tmp_path: Path, tag_attrs: str):
+    from parser import MarkdownParser
+
     doc = tmp_path / "g.md"
     doc.write_text(
         f"""
@@ -79,6 +76,8 @@ def test_the_runner_uses_the_per_command_timeout() -> None:
     to pass `AIPERF_COMMAND_TIMEOUT` to `threading.Timer` regardless, which no
     parser-level test can detect.
     """
+    from constants import AIPERF_COMMAND_TIMEOUT
+    from test_runner import resolve_command_timeout
 
     class _Cmd:
         timeout = 5400

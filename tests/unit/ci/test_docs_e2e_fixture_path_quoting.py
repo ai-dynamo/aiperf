@@ -13,7 +13,6 @@ stdin); the path was not.
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path, PurePosixPath
 
 import pytest
@@ -22,12 +21,7 @@ from pytest import param
 from aiperf.common.constants import IS_WINDOWS
 
 HARNESS = Path(__file__).resolve().parents[3] / "tests/ci/test_docs_end_to_end"
-sys.path.insert(0, str(HARNESS))
 
-from test_runner import (  # noqa: E402
-    build_fixture_write_command,
-    is_unsafe_fixture_path,
-)
 
 pytestmark = pytest.mark.skipif(
     IS_WINDOWS, reason="docs-e2e fixtures are written inside a Linux container"
@@ -35,6 +29,8 @@ pytestmark = pytest.mark.skipif(
 
 
 def _fixture_shell_command(path: str) -> str:
+    from test_runner import build_fixture_write_command
+
     return build_fixture_write_command(PurePosixPath(path))
 
 
@@ -89,5 +85,7 @@ def test_a_directory_shaped_path_is_rejected(path) -> None:
 
     ``sub/`` is included as the control: it names a file, so it stays safe.
     """
+    from test_runner import is_unsafe_fixture_path
+
     expected = path in (".", "..")
     assert is_unsafe_fixture_path(path) is expected

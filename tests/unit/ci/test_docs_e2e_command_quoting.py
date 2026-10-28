@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import shlex
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -22,9 +21,7 @@ from pytest import param
 from aiperf.common.constants import IS_WINDOWS
 
 REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "tests/ci/test_docs_end_to_end"))
 
-from test_runner import build_command_exec_argv  # noqa: E402
 
 # The docs-e2e runner only ever executes inside a Linux container, and these
 # tests assert on real shell behaviour, so there is nothing to verify on a
@@ -47,7 +44,12 @@ QUOTED = """aiperf profile --model m --extra-inputs '{"temperature": 0}'"""
 )  # fmt: skip
 def test_command_reaches_the_shell_unmodified(command: str) -> None:
     """argv delivery is byte-exact; `bash -c '<cmd>'` interpolation is not."""
-    argv = build_command_exec_argv("unused", f"printf '%s' {shlex.quote(command)}")
+    from constants import AIPERF_COMMAND_TIMEOUT
+    from test_runner import build_command_exec_argv
+
+    argv = build_command_exec_argv(
+        "unused", f"printf '%s' {shlex.quote(command)}", AIPERF_COMMAND_TIMEOUT
+    )
     proc = subprocess.run(
         argv[argv.index("bash") :],
         stdin=subprocess.DEVNULL,

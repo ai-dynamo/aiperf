@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from constants import (
     AIPERF_RUN_TAG_PREFIX,
     AIPERF_RUN_TAG_PREFIX_LEN,
+    BASH_INFO_STRING,
     FILE_TAG_ATTRS,
     HEALTH_CHECK_TAG_PREFIX,
     HEALTH_CHECK_TAG_PREFIX_LEN,
@@ -104,15 +105,10 @@ class MarkdownParser:
             # only on opening tags; closing tags are filtered out by the
             # categorizer anyway.
             if line.startswith("<!--") and line.endswith("-->"):
-                # The attribute region is captured loosely and validated
-                # afterwards, never matched strictly. Requiring it to be
-                # well-formed to match at all meant a tag the author got
-                # slightly wrong -- ``timeout=`` with no value, ``weight =
-                # 300`` with spaces, a hyphen in the name -- failed the regex
-                # and was read as ordinary prose, so the command left the
-                # suite with no error recorded and the run stayed green. That
-                # is the failure the attribute checking below exists to
-                # prevent, and it cannot run on a tag that was never matched.
+                # Captured loosely and validated afterwards: a tag matched
+                # strictly would fall through to prose when its attributes are
+                # malformed, and the validation below cannot run on a tag that
+                # was never matched.
                 tag_match = re.match(r"<!--\s*(\S+)(.*?)-->", line)
                 if tag_match:
                     tag_name = tag_match.group(1).strip()
@@ -207,6 +203,11 @@ class MarkdownParser:
                             self._categorize_command(command)
                         else:
                             logger.warning(f"No bash block found after tag {tag_name}")
+                            self._record_parse_error(
+                                tag_name,
+                                f"dropped the command at {file_path}:{i + 1} "
+                                f"over a missing or unterminated bash block",
+                            )
             i += 1
 
     @staticmethod
@@ -508,30 +509,41 @@ class MarkdownParser:
         )
 
     def _extract_bash_block(self, lines: list[str], start_idx: int) -> str | None:
-        """Extract bash code block starting from the given index"""
-        i = start_idx
+        """Extract the ```bash block a command tag introduces.
 
-        # Find ```bash
+        Only ``bash`` is accepted: a tagged command is shell, and a guide that
+        labels the block anything else is not describing something this
+        harness runs. Fence matching goes through ``_next_fence_state`` so
+        this reader cannot disagree with the tag scanner about where a block
+        ends, and a harness tag inside the body means the opener was never
+        closed -- the same refusal ``_extract_fenced_block`` makes. Returning
+        None is a read failure the caller records as a parse error; a command
+        never leaves the suite silently.
+        """
+        i = start_idx
+        fence: tuple[str, int] | None = None
         while i < len(lines):
-            line = lines[i].strip()
-            if line == "```bash":
+            fence = self._next_fence_state(None, lines[i])
+            if fence is not None:
                 break
-            elif line and not line.startswith("#"):
+            line = lines[i].strip()
+            if line and not line.startswith("#"):
                 return None
             i += 1
-        else:
+        if fence is None:
+            return None
+        if lines[i].strip().lstrip("`~").strip() != BASH_INFO_STRING:
             return None
 
-        # Extract content until closing ```
-        bash_lines = []
+        body: list[str] = []
         i += 1
         while i < len(lines):
-            line = lines[i]
-            if line.strip() == "```":
-                return "".join(bash_lines).strip()
-            bash_lines.append(line)
+            if self._next_fence_state(fence, lines[i]) is None:
+                return "".join(body).strip()
+            if self._looks_like_tag(lines[i].strip()):
+                return None
+            body.append(lines[i])
             i += 1
-
         return None
 
     def _categorize_command(self, command: Command):

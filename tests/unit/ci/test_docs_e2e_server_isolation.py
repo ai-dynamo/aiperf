@@ -11,26 +11,30 @@ result. The broken server is reported and skipped; the run still fails.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from pytest import param
 
-REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "tests/ci/test_docs_end_to_end"))
+if TYPE_CHECKING:
+    from data_types import Command, Server
 
-from data_types import Command, Server  # noqa: E402
-from test_runner import EndToEndTestRunner  # noqa: E402
+
+REPO = Path(__file__).resolve().parents[3]
 
 
 def _command(tag: str) -> Command:
+    from data_types import Command
+
     return Command(
         tag_name=tag, command="echo hi", file_path="doc.md", start_line=1, end_line=2
     )
 
 
 def _server(name: str, *, with_runs: bool = True) -> Server:
+    from data_types import Server
+
     return Server(
         name=name,
         setup_command=_command(f"setup-{name}-endpoint-server"),
@@ -51,6 +55,8 @@ def _server(name: str, *, with_runs: bool = True) -> Server:
     ],
 )  # fmt: skip
 def test_only_the_incomplete_server_is_reported(missing: str) -> None:
+    from test_runner import EndToEndTestRunner
+
     broken = _server("broken")
     if missing == "aiperf_commands":
         broken.aiperf_commands = []
@@ -67,6 +73,8 @@ def test_only_the_incomplete_server_is_reported(missing: str) -> None:
 
 
 def test_a_fully_valid_set_reports_nothing_invalid() -> None:
+    from test_runner import EndToEndTestRunner
+
     servers = {"a": _server("a"), "b": _server("b")}
 
     assert EndToEndTestRunner()._validate_servers(servers) == []
@@ -81,6 +89,8 @@ def test_a_rejected_command_fails_the_run_without_skipping_the_server(
     real coverage and should execute. But the run as a whole must fail, or a
     documented command silently stops being tested.
     """
+    from test_runner import EndToEndTestRunner
+
     degraded = _server("degraded")
     degraded.parse_errors.append("dropped the command at doc.md:1")
     servers = {"good": _server("good"), "degraded": degraded}
@@ -103,6 +113,8 @@ def test_a_rejected_command_fails_the_run_without_skipping_the_server(
 
 
 def test_a_clean_set_still_passes(monkeypatch) -> None:
+    from test_runner import EndToEndTestRunner
+
     runner = EndToEndTestRunner()
     monkeypatch.setattr(runner, "_cleanup_all_containers", lambda: None)
     monkeypatch.setattr(runner, "_cleanup", lambda: None)
@@ -181,6 +193,8 @@ def test_a_conflicted_server_is_skipped_and_the_run_fails(tmp_path, kind) -> Non
     Running either would benchmark a server booted in a way no guide
     documents, so the server is skipped rather than degraded.
     """
+    from test_runner import EndToEndTestRunner
+
     second = SECOND_SETUP.format(name="dup")
     if kind == "health-check":
         second = second.replace("setup-dup", "health-check-dup").replace(

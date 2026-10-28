@@ -13,17 +13,12 @@ abort every later server's run.
 from __future__ import annotations
 
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 from pytest import param
 
 REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "tests/ci/test_docs_end_to_end"))
-
-from data_types import FileFixture, Server  # noqa: E402
-from test_runner import EndToEndTestRunner  # noqa: E402
 
 
 @pytest.mark.parametrize(
@@ -35,6 +30,8 @@ from test_runner import EndToEndTestRunner  # noqa: E402
 )  # fmt: skip
 def test_a_failed_snapshot_is_unavailable_not_empty(monkeypatch, outcome) -> None:
     """An empty set would read as a valid baseline of zero containers."""
+    from test_runner import EndToEndTestRunner
+
     runner = EndToEndTestRunner()
 
     def _boom(*args, **kwargs):
@@ -47,6 +44,8 @@ def test_a_failed_snapshot_is_unavailable_not_empty(monkeypatch, outcome) -> Non
 def test_a_nonzero_docker_ps_is_unavailable_not_empty(monkeypatch) -> None:
     """``check=False`` meant a failing docker ps returned empty stdout, which
     is indistinguishable from a host with no containers."""
+    from test_runner import EndToEndTestRunner
+
     runner = EndToEndTestRunner()
     monkeypatch.setattr(
         subprocess,
@@ -67,6 +66,8 @@ def test_an_unavailable_snapshot_follows_nothing(monkeypatch, before, after) -> 
     """With a failed pre-snapshot read as empty, every container already on the
     host looked newly started and picked up a follower under this server's
     name."""
+    from test_runner import EndToEndTestRunner
+
     runner = EndToEndTestRunner()
     followed: list[str] = []
     monkeypatch.setattr(runner, "_known_container_ids", lambda: after)
@@ -84,6 +85,8 @@ def test_an_unavailable_snapshot_follows_nothing(monkeypatch, before, after) -> 
 
 def test_a_successful_snapshot_still_follows_new_containers(monkeypatch) -> None:
     """The sentinel must not suppress the case this capture exists for."""
+    from test_runner import EndToEndTestRunner
+
     runner = EndToEndTestRunner()
     followed: list[str] = []
     monkeypatch.setattr(runner, "_known_container_ids", lambda: {"pre-existing", "new"})
@@ -110,6 +113,9 @@ def test_a_successful_snapshot_still_follows_new_containers(monkeypatch) -> None
 def test_a_fixture_write_failure_returns_false(monkeypatch, outcome) -> None:
     """Raising here escapes the per-server loop, so one guide's unwritable
     fixture takes every later server's commands down with it."""
+    from data_types import FileFixture, Server
+    from test_runner import EndToEndTestRunner
+
     runner = EndToEndTestRunner()
     runner.aiperf_container_id = "abc123"
     server = Server(

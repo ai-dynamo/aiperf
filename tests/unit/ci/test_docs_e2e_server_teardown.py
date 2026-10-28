@@ -13,21 +13,23 @@ it. CI's single-server shards hide the interaction entirely.
 from __future__ import annotations
 
 import subprocess
-import sys
 import threading
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from pytest import param
 
-REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "tests/ci/test_docs_end_to_end"))
+if TYPE_CHECKING:
+    from data_types import Command
 
-import test_runner as TR  # noqa: E402
-from data_types import Command, Server  # noqa: E402
+
+REPO = Path(__file__).resolve().parents[3]
 
 
 def _command(text: str) -> Command:
+    from data_types import Command
+
     return Command(tag_name="t", command=text, file_path="f", start_line=1, end_line=2)
 
 
@@ -50,6 +52,9 @@ class _FakeProcess:
 
 def _issued_commands(monkeypatch, *, health_rc: int, fixtures_ok: bool) -> list[str]:
     """Run one server end to end against fakes, returning the shell commands."""
+    import test_runner as TR
+    from data_types import Server
+
     issued: list[str] = []
     runner = TR.EndToEndTestRunner()
     runner.aiperf_container_id = "aiperf-test-probe"

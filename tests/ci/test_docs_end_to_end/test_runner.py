@@ -12,7 +12,7 @@ import signal
 import subprocess
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from contextlib import suppress
 from pathlib import PurePosixPath
 from types import SimpleNamespace
@@ -22,6 +22,7 @@ from constants import (
     AIPERF_COMMAND_TIMEOUT,
     AIPERF_UI_TYPE,
     CONTAINER_DISCOVERY_TIMEOUT,
+    CONTAINER_TIMEOUT_KILL_GRACE,
     FIXTURE_WRITE_TIMEOUT,
     SETUP_MONITOR_TIMEOUT,
 )
@@ -37,7 +38,7 @@ logger = logging.getLogger(__name__)
 _UI_FLAG_RE = re.compile(r"(?<!\S)--ui(-type)?(=|\s)")
 
 
-def _scan(command: str):
+def _scan(command: str) -> Iterator[tuple[int, str | None, bool]]:
     """Walk a shell command, tracking quoting, comments and escapes.
 
     Yields ``(index, quote, in_comment)`` per character, where ``quote`` is the
@@ -169,7 +170,9 @@ def inject_ui_type(command: str, ui_type: str = AIPERF_UI_TYPE) -> str:
     return result
 
 
-def build_command_exec_argv(container_id: str, command: str) -> list[str]:
+def build_command_exec_argv(
+    container_id: str, command: str, timeout_seconds: int
+) -> list[str]:
     """Build the ``docker exec`` argv that runs one tagged command.
 
     The command is an argv element, never interpolated into a shell string.
@@ -181,8 +184,24 @@ def build_command_exec_argv(container_id: str, command: str) -> list[str]:
     Note the absence of ``-i``: the caller runs this with stdin closed. A
     script delivered over stdin shares that stream with the commands it runs,
     so the first one to read stdin consumes the rest of the block.
+
+    The deadline is enforced inside the container as well as by the host
+    watchdog: killing the ``docker exec`` client kills only the client, and
+    its in-container child keeps loading the server and writing artifacts
+    into the next command's run. ``--kill-after`` covers a command that
+    ignores SIGTERM.
     """
-    return ["docker", "exec", container_id, "bash", "-c", command]
+    return [
+        "docker",
+        "exec",
+        container_id,
+        "timeout",
+        f"--kill-after={CONTAINER_TIMEOUT_KILL_GRACE}",
+        str(timeout_seconds),
+        "bash",
+        "-c",
+        command,
+    ]
 
 
 def resolve_command_timeout(aiperf_cmd: Command) -> int:
@@ -661,14 +680,11 @@ class EndToEndTestRunner:
     def _stop_server_containers(self, server_name: str) -> None:
         """Stop this server's containers, leaving the AIPerf container up.
 
-        Called from a ``finally`` rather than inline at the end of the run:
-        every early exit from ``_test_server`` -- a setup that dies, a health
-        check that never passes, a fixture that cannot be written -- used to
-        skip this and leave the engine holding its port. The next server in
-        an ``--all-servers`` run then failed to bind, reporting a docker
-        networking error that named neither the real failure nor the server
-        that caused it. Every documented group binds 8000, so the collision
-        is certain rather than possible.
+        Called from a ``finally``: every early exit from ``_test_server``
+        otherwise leaves the engine holding its port, and the next server in
+        an ``--all-servers`` run fails to bind with a docker networking error
+        naming neither the real failure nor the server that caused it. Every
+        documented group binds 8000, so the collision is certain.
         """
         logger.info(
             f"Stopping containers for {server_name}, preserving the AIPerf container"
@@ -790,8 +806,11 @@ class EndToEndTestRunner:
 
                 # Execute aiperf command in the container with verbose output
                 aiperf_command_with_ui = inject_ui_type(aiperf_cmd.command)
+                command_timeout = resolve_command_timeout(aiperf_cmd)
                 exec_argv = build_command_exec_argv(
-                    self.aiperf_container_id, aiperf_command_with_ui
+                    self.aiperf_container_id,
+                    aiperf_command_with_ui,
+                    command_timeout,
                 )
 
                 logger.info(
@@ -813,7 +832,6 @@ class EndToEndTestRunner:
                     start_new_session=True,
                 )
                 kill_guard = _ProcessGroupKillGuard()
-                command_timeout = resolve_command_timeout(aiperf_cmd)
                 watchdog = threading.Timer(
                     command_timeout,
                     _make_process_group_timeout_killer(

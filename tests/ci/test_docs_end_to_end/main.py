@@ -136,14 +136,9 @@ def main():
     servers = md_parser.parse_directory(str(repo_root))
 
     if not servers:
-        # A pass here is the largest version of the failure this harness
-        # exists to prevent: a green GPU job that booted a runner, built the
-        # image and executed not one documented command. Every narrower case
-        # -- a command dropped over a bad attribute, a server skipped over a
-        # duplicate tag, a tag swallowed by an unterminated fence -- already
-        # fails the run, and discovering nothing at all is each of those at
-        # once. Nothing legitimately parses to zero servers: the tags live in
-        # the repository this script resolves its own root from.
+        # Nothing legitimately parses to zero servers: the tags live in the
+        # repository this script resolves its own root from. Discovering none
+        # means the parse failed, not that there is nothing to run.
         logger.error("No servers found; the docs-e2e suite would test nothing")
         return 1
 

@@ -60,20 +60,15 @@ class Server:
     # Files written into the AIPerf container's working directory before any
     # of this server's commands run, in document order.
     files: list[FileFixture] = field(default_factory=list)
-    # Paths two guides declared with different content. All fixtures are
-    # written before any command, so the later one would silently overwrite the
-    # earlier and the first guide would benchmark the wrong file while still
-    # reporting a pass. Recorded here so validation rejects the server.
+    # Paths two guides declared with different content. Fixtures are written
+    # before any command runs, so the later would overwrite the earlier and
+    # one guide would benchmark the wrong file. Validation rejects the server.
     fixture_conflicts: list[str] = field(default_factory=list)
     # Kinds of command two guides both claim (``setup``, ``health-check``).
-    # Unlike a dropped command this is not recoverable by skipping one of
-    # them: the guides disagree about how to boot the server, and running
-    # either would benchmark against something no guide documents. The server
-    # is skipped and the run fails, exactly as for a fixture conflict.
+    # The guides disagree about how to boot the server, so neither is safe to
+    # run: the server is skipped and the run fails.
     command_conflicts: list[str] = field(default_factory=list)
-    # Commands the parser rejected and dropped (a malformed ``weight=`` or
-    # ``timeout=``). The server itself stays runnable -- one typo must not take
-    # every other guide down -- but a documented command was not executed, so
-    # the run must not report a pass. Recorded here rather than globally so the
-    # ``--server`` filter scopes the failure the same way it scopes commands.
+    # Commands the parser rejected and dropped. The server stays runnable --
+    # one typo must not take every other guide down -- but a documented command
+    # did not run, so the run must fail. Per-server so ``--server`` scopes it.
     parse_errors: list[str] = field(default_factory=list)
