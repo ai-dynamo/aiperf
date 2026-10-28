@@ -15,6 +15,31 @@ aiperf profile --model my-model --url localhost:8000 --endpoint-type chat \
     --input-file hf://<org>/<repo>
 ```
 
+To try it without publishing anything, serve a small trace over HTTP from your machine and
+run it by URL. Its records carry timestamps, so it replays on the recorded schedule:
+
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+```bash
+mkdir -p remote-demo
+cat > remote-demo/trace.jsonl << 'EOF'
+{"timestamp": 0, "input_length": 1200, "output_length": 52, "hash_ids": [0, 1, 2]}
+{"timestamp": 105, "input_length": 1800, "output_length": 26, "hash_ids": [0, 3, 4, 5]}
+{"timestamp": 274, "input_length": 1300, "output_length": 52, "hash_ids": [1, 4, 6]}
+EOF
+python3 -m http.server 8099 --bind 127.0.0.1 --directory remote-demo > /dev/null 2>&1 &
+trap "kill $!" EXIT
+sleep 1
+
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
+    --input-file http://127.0.0.1:8099/trace.jsonl \
+    --custom-dataset-type mooncake_trace
+```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+
 Remote references are for local runs. Kubernetes runs (`aiperf kube` commands, and
 `AIPerfJob`/`AIPerfSweep` resources applied to the operator) reject them before anything is
 scheduled, with "Remote dataset references (hf://, s3://, https://) are not yet supported for
