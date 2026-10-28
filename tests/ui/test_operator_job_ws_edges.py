@@ -21,6 +21,7 @@ def test_job_ws_encodes_namespace_and_name_in_websocket_url() -> None:
           close() {{}}
         }};
         globalThis.window = {{ location: {{ protocol: 'https:', host: 'dash.example.test' }} }};
+        globalThis.document = {{ baseURI: 'https://dash.example.test/' }};
         const {{ openJobWs }} = await import({JOB_WS!r});
         const handle = openJobWs('team/a b', 'job/name?x y', () => {{}});
         console.log(JSON.stringify({{ url: sockets[0].url }}));
@@ -43,6 +44,7 @@ def test_job_ws_ignores_malformed_json_and_parses_message_type_alias() -> None:
           close() {{}}
         }};
         globalThis.window = {{ location: {{ protocol: 'http:', host: 'dash.example.test' }} }};
+        globalThis.document = {{ baseURI: 'http://dash.example.test/' }};
         const {{ openJobWs }} = await import({JOB_WS!r});
         const updates = [];
         const handle = openJobWs('ns', 'job', snap => updates.push(snap));
@@ -82,6 +84,7 @@ def test_job_ws_merges_live_snapshots_without_mutating_previous_snapshot() -> No
           close() {{}}
         }};
         globalThis.window = {{ location: {{ protocol: 'http:', host: 'dash.example.test' }} }};
+        globalThis.document = {{ baseURI: 'http://dash.example.test/' }};
         const {{ openJobWs }} = await import({JOB_WS!r});
         const updates = [];
         const handle = openJobWs('ns', 'job', snap => updates.push(snap));
@@ -131,6 +134,7 @@ def test_job_ws_merges_server_summary_and_timeseries_snapshot_shape() -> None:
           close() {{}}
         }};
         globalThis.window = {{ location: {{ protocol: 'http:', host: 'dash.example.test' }} }};
+        globalThis.document = {{ baseURI: 'http://dash.example.test/' }};
         const {{ openJobWs }} = await import({JOB_WS!r});
         let last = null;
         const handle = openJobWs('ns', 'job', snap => {{ last = snap; }});
@@ -184,6 +188,7 @@ def test_job_ws_schedules_reconnect_and_close_cancels_pending_timer() -> None:
           close(code, reason) {{ this.closedWith = [code, reason]; this.onclose(); }}
         }};
         globalThis.window = {{ location: {{ protocol: 'http:', host: 'dash.example.test' }} }};
+        globalThis.document = {{ baseURI: 'http://dash.example.test/' }};
         const {{ openJobWs }} = await import({JOB_WS!r});
         const updates = [];
         const handle = openJobWs('ns', 'job', snap => updates.push(snap.connected));
@@ -220,6 +225,7 @@ def test_job_ws_close_live_socket_does_not_schedule_reconnect() -> None:
           close(code, reason) {{ this.closedWith = [code, reason]; this.onclose(); }}
         }};
         globalThis.window = {{ location: {{ protocol: 'http:', host: 'dash.example.test' }} }};
+        globalThis.document = {{ baseURI: 'http://dash.example.test/' }};
         const {{ openJobWs }} = await import({JOB_WS!r});
         const updates = [];
         const handle = openJobWs('ns', 'job', snap => updates.push(snap.connected));

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, TypeAlias
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, PrivateAttr
 
 from aiperf.common.models import AIPerfBaseModel
 
@@ -24,7 +24,8 @@ class WekaNormalRequest(AIPerfBaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     t: float = Field(
-        description="Request timestamp in seconds from conversation start."
+        description="Request timestamp in seconds. Top-level requests use root-trace "
+        "time; nested requests use the corpus-selected Weka timestamp basis."
     )
     type: Literal["n"] = Field(description="Discriminator: normal API call.")
     model: str = Field(description="Model identifier for this request.")
@@ -61,7 +62,8 @@ class WekaStreamingRequest(AIPerfBaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     t: float = Field(
-        description="Request timestamp in seconds from conversation start."
+        description="Request timestamp in seconds. Top-level requests use root-trace "
+        "time; nested requests use the corpus-selected Weka timestamp basis."
     )
     type: Literal["s"] = Field(description="Discriminator: streaming API call.")
     model: str = Field(description="Model identifier for this request.")
@@ -139,10 +141,55 @@ WekaRequest: TypeAlias = Annotated[
 ]
 
 
+class WekaTimestampResolution(AIPerfBaseModel):
+    """Round-trip metadata for one corpus timestamp canonicalization."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    basis: Literal["absolute", "relative"] = Field(
+        description="Resolved interpretation of the raw nested timestamps."
+    )
+    reason: Literal[
+        "auto_heuristic", "not_applicable", "ambiguous_but_equivalent", "configured"
+    ] = Field(description="Rule that selected the resolved basis.")
+    trace_count: int = Field(ge=0, description="Number of traces validated.")
+    subagent_count: int = Field(ge=0, description="Number of subagents validated.")
+    inner_request_count: int = Field(
+        ge=0, description="Number of nested requests validated."
+    )
+    clamped_request_count: int = Field(
+        ge=0, description="Number of within-epsilon timestamps clamped to their marker."
+    )
+    heuristic_evidence_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of requests that supported the relative auto heuristic.",
+    )
+    first_relative_evidence: str | None = Field(
+        default=None,
+        description="Location of the first request supporting relative auto selection.",
+    )
+    warning: str | None = Field(
+        default=None, description="Optional diagnostic for the selected interpretation."
+    )
+
+
 class WekaTrace(AIPerfBaseModel):
     """A single Weka trace file."""
 
     model_config = ConfigDict(extra="forbid")
+
+    _weka_timestamp_resolution: WekaTimestampResolution | None = PrivateAttr(
+        default=None
+    )
+
+    weka_timestamp_resolution: WekaTimestampResolution | None = Field(
+        default=None,
+        alias="_aiperf_weka_timestamp_resolution",
+        exclude_if=lambda value: value is None,
+        description="Internal round-trip metadata attached after AIPerf canonicalizes "
+        "nested timestamps. Raw producer traces omit this field.",
+    )
 
     id: str = Field(description="Trace identifier (session ID).")
     models: list[str] = Field(description="Models used in the trace.")

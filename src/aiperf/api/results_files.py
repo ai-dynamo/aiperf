@@ -76,6 +76,8 @@ def build_result_file_response(file_path: Path, request: Request) -> StreamingRe
     encoding = select_encoding(
         request.headers.get("accept-encoding"), default=CompressionEncoding.IDENTITY
     )
+    if encoding is None:
+        raise HTTPException(status_code=406, detail="No acceptable content encoding")
 
     headers: dict[str, str] = {
         "Content-Disposition": f'attachment; filename="{file_path.name}"',

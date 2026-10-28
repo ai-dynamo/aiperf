@@ -12,7 +12,12 @@ from aiperf.common.enums.baseline_enums import (
     make_result_producer_capability,
     parse_result_producer_capability,
 )
-from aiperf.common.enums.dataset_enums import SweepType as SweepType
+from aiperf.common.enums.dataset_enums import (
+    AssistantResponseMode as AssistantResponseMode,
+)
+from aiperf.common.enums.dataset_enums import (
+    SweepType as SweepType,
+)
 from aiperf.common.enums.enums import (
     AIPerfLogLevel,
     AudioFormat,
@@ -41,6 +46,7 @@ from aiperf.common.enums.enums import (
     ModelSelectionStrategy,
     OptimizationDirection,
     PrerequisiteKind,
+    ProfileCancelReason,
     PrometheusMetricType,
     PromptCorpus,
     PromptSource,
@@ -98,6 +104,7 @@ from aiperf.plugin.enums import DatasetFormat
 
 __all__ = [
     "AIPerfLogLevel",
+    "AssistantResponseMode",
     "AudioFormat",
     "BaseMetricUnit",
     "BaseMetricUnitInfo",
@@ -155,6 +162,7 @@ __all__ = [
     "PowerMetricUnit",
     "PowerMetricUnitInfo",
     "PrerequisiteKind",
+    "ProfileCancelReason",
     "PrometheusMetricType",
     "PromptCorpus",
     "PromptSource",

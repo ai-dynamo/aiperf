@@ -8,9 +8,11 @@ from collections.abc import Awaitable, Callable
 from typing import Protocol, runtime_checkable
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+from aiperf.auth.base_signer import SignedRequest
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
+    AwsEventStreamMessage,
     RequestInfo,
     RequestRecord,
     SSEMessage,
@@ -18,15 +20,24 @@ from aiperf.common.models import (
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.common.protocols import AIPerfLifecycleProtocol
 from aiperf.common.types import RequestInputT
+from aiperf.plugin import plugins
+from aiperf.plugin.enums import PluginType
 from aiperf.plugin.schema.schemas import TransportMetadata
 
-FirstTokenCallback = Callable[[int, SSEMessage], Awaitable[bool]]
+FirstTokenCallback = Callable[
+    [int, SSEMessage | AwsEventStreamMessage], Awaitable[bool]
+]
 """
-Type alias for a callback that is called with the ttft_ns and the first SSE message:
+Type alias for a callback called with the ttft_ns and the first streamed message.
+
+The message type depends on the response framing the transport decoded: an
+``SSEMessage`` for ``text/event-stream``, an ``AwsEventStreamMessage`` for AWS
+binary eventstream. Callbacks read it through the ``InferenceServerResponse``
+protocol, so they do not branch on which one arrived.
 
 Args:
     ttft_ns: duration from request start
-    message: the first SSE message
+    message: the first streamed message
 
 Returns:
     True if this is meaningful content (stop looking for first token), False otherwise
@@ -62,6 +73,9 @@ class TransportProtocol(AIPerfLifecycleProtocol, Protocol):
 
     def get_url(self, request_info: RequestInfo) -> str: ...
 
+    @property
+    def stream_chunks_received(self) -> int: ...
+
     async def send_request(
         self, request_info: RequestInfo, payload: RequestInputT
     ) -> RequestRecord: ...
@@ -82,6 +96,14 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
         self.base_headers: dict[str, str] = {
             "User-Agent": self.user_agent,
         }
+
+        auth_type = self.model_endpoint.endpoint.auth_type
+        if auth_type:
+            SignerClass = plugins.get_class(PluginType.REQUEST_SIGNER, auth_type)
+            self.request_signer = SignerClass(model_endpoint=self.model_endpoint)
+            self.attach_child_lifecycle(self.request_signer)
+        else:
+            self.request_signer = None
 
     @classmethod
     @abstractmethod
@@ -105,6 +127,16 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
             Dictionary of transport-specific HTTP headers
         """
         return {}
+
+    @property
+    def stream_chunks_received(self) -> int:
+        """Running count of streamed response chunks received by this transport.
+
+        Reported in worker health so the progress-stall watchdog can tell a
+        request that is still streaming from one that is stuck. Transports that
+        do not stream report 0, which leaves the watchdog on completions alone.
+        """
+        return 0
 
     def build_headers(self, request_info: RequestInfo) -> dict[str, str]:
         """Compose final headers from universal, endpoint, and transport sources.
@@ -204,6 +236,34 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
             return urlunparse(parsed._replace(query=urlencode(params)))
 
         return base_url
+
+    async def _sign_if_needed(
+        self,
+        method: str,
+        url: str,
+        headers: dict[str, str],
+        body: bytes | None = None,
+    ) -> SignedRequest:
+        """Apply request signer if configured. Returns a resolved SignedRequest
+        with all fields populated (no Nones for url/body unless body was None).
+
+        Args:
+            method: Request method (GET, POST, etc.)
+            url: Request URL
+            headers: Request headers
+            body: Request body
+
+        Returns:
+            SignedRequest with resolved url, headers, and body
+        """
+        if self.request_signer:
+            signed = await self.request_signer.sign(method, url, headers, body)
+            return SignedRequest(
+                url=signed.url if signed.url is not None else url,
+                headers=signed.headers,
+                body=signed.body if signed.body is not None else body,
+            )
+        return SignedRequest(url=url, headers=headers, body=body)
 
     @abstractmethod
     def get_url(self, request_info: RequestInfo) -> str:

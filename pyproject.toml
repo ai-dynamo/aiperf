@@ -43,7 +43,7 @@ dependencies = [
   "optuna>=3.6",
   "orjson~=3.11.7",
   "pandas~=2.3.3",
-  "pillow~=12.2.0",
+  "pillow~=12.3.0",
   "plotly~=6.4.0",
   "dash~=3.1.0",
   "dash-bootstrap-components~=2.0.0",
@@ -72,7 +72,6 @@ dependencies = [
   "uvicorn[standard]>=0.34,<1",
   "uvloop>=0.22.1; platform_system != 'Windows'",
   "zstandard>=0.25.0",
-  "crick~=0.0.8",
   "kubernetes_asyncio>=32.0,<33.0",
   "kopf>=1.42.0",
   "aiosqlite>=0.19.0",
@@ -88,6 +87,13 @@ aiperf = "aiperf.cli:app"
 aiperf = "aiperf.plugin:plugins.yaml"
 
 [project.optional-dependencies]
+# crick ships an sdist only on Linux aarch64, so requiring it unconditionally
+# forces a C toolchain on every arm64 install. It backs the non-default
+# 'tdigest' list-metric backend only; the default 'ragged' backend does not
+# need it.
+tdigest = [
+  "crick~=0.0.8",
+]
 mlflow = [
   "mlflow>=3.10.0,<4.0.0",
 ]
@@ -98,7 +104,18 @@ otel = [
   "opentelemetry-exporter-otlp-proto-http>=1.24.0,<2.0.0",
   "opentelemetry-sdk>=1.24.0,<2.0.0",
 ]
+aws = [
+  "botocore>=1.34.0",
+]
 test = [
+  # test_sigv4_signer.py self-skips via pytest.importorskip("botocore"), and the
+  # Windows-on-ARM job installs "--extra test --no-dev". Without botocore here
+  # that job skips all 18 signer tests and still reports green. botocore is a
+  # pure-Python (py3-none-any) wheel, so unlike the deps `dev` pulls it installs
+  # there fine.
+  "aiperf[aws]",
+  # tdigest backend tests exercise crick directly.
+  "crick~=0.0.8",
   "httpx>=0.27.0",
   # hypothesis 6.156+ ships native (non-universal) wheels with no win_arm64
   # build and no sdist, so it can't install on Windows-on-ARM. Cap it there to
@@ -108,7 +125,7 @@ test = [
   "jsonschema>=4.0.0",
   "looptime>=0.5",
   "pytest>=7.0.0",
-  "pytest-asyncio",
+  "pytest-asyncio>=1.4.0",
   "pytest-cov",
   "pytest-rerunfailures>=15.0",
   "pytest-timeout>=2.0.0",
@@ -119,7 +136,7 @@ test = [
   "trustme>=1.0.0; platform_system != 'Windows' or platform_machine != 'ARM64'",
 ]
 dev = [
-  "aiperf[mlflow,otel,test,wandb]",
+  "aiperf[aws,mlflow,otel,test,wandb]",
   "black>=25.1.0",
   "pre-commit>=4.2.0",
   "ruff>=0.14.0,<0.15.0",
@@ -163,6 +180,7 @@ dev = [
 # both shipped without cp313/linux wheels and broke cold builds).
 # Sdist counts as installable — crick ships only sdist on Linux
 # aarch64 and is unaffected (env-builder compiles it from source).
+# crick is an optional extra, so a default arm64 install skips it.
 [tool.uv]
 required-environments = [
   "sys_platform == 'linux' and platform_machine == 'x86_64'",
@@ -182,7 +200,13 @@ explicit = true
 # Base settings for ruff
 line-length = 88
 indent-width = 4
-exclude = ["__pycache__", "build", "dist", ".venv", "venv", "notebooks/TCO_calculator.ipynb"]
+exclude = ["__pycache__", "build", "dist", ".venv", "venv", "notebooks/TCO_calculator.ipynb",
+           # Verbatim third-party sources; see src/aiperf/dataset/loader/vendor/README.md.
+           # Linting them would pressure us to edit files whose value is being unmodified.
+           "src/aiperf/dataset/loader/vendor"]
+# Honor `exclude` even when a path is passed explicitly (pre-commit passes
+# changed files by name), so formatting cannot rewrite vendored sources.
+force-exclude = true
 
 [tool.ruff.lint]
 select = [
@@ -235,6 +259,15 @@ max-complexity = 10
 "json.loads".msg = "Use orjson.loads instead."
 "json.dump".msg = "Use orjson.dumps instead (no stdlib-style file writing — serialize then write bytes)."
 "json.load".msg = "Use orjson.loads on file bytes instead."
+
+[tool.coverage.run]
+omit = [
+    # Verbatim third-party sources: see src/aiperf/dataset/loader/vendor/README.md.
+    # Measuring coverage of an unmodified upstream file is meaningless -- AIPerf
+    # exercises a narrow entry point into it, and the number would only ever
+    # invite edits to a file whose value is being byte-identical to upstream.
+    "src/aiperf/dataset/loader/vendor/*",
+]
 
 [tool.pytest.ini_options]
 # Basic pytest configuration

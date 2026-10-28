@@ -18,6 +18,45 @@ Each trace file is a single JSON object describing one coding conversation:
 - `requests` is an ordered list of normal API calls (`type: "n"`), streaming API calls (`type: "s"`), and subagent markers (`type: "subagent"`).
 - Each normal/streaming request carries `hash_ids` (KV-cache block identifiers) used to simulate cache reuse during replay.
 - Subagent markers point at nested sub-conversations — AIPerf replays them as separate concurrent child sessions that the parent waits on before resuming.
+- Weka producers use two nested timestamp conventions. Raw
+  `kv-cache-tester` traces store subagent request `t` values relative to the
+  subagent marker, while SemiAnalysis-published AgentX traces store them as
+  absolute root-trace timestamps. AIPerf resolves one convention for the whole
+  input corpus and canonicalizes every nested request to root-absolute time
+  before reconstruction.
+
+The default `--weka-nested-timestamp-basis auto` scans every trace before any
+conversation is emitted. If any nested request has `t` more than one
+microsecond before its marker, AIPerf interprets every nested timestamp in the
+corpus as `relative`; otherwise it interprets the corpus as `absolute`. This is
+a compatibility heuristic, not proof of the producer format: a sufficiently
+delayed relative request can look absolute, mixed producer conventions are not
+always detectable from timestamp values alone, and one malformed absolute
+request before its marker makes the heuristic select relative for the whole
+corpus. Use
+`--weka-nested-timestamp-basis absolute` or `relative` when the producer is
+known. AIPerf logs one INFO summary naming the resolved basis, the heuristic or
+configured decision, and the number of traces, subagents, and inner requests
+validated. When auto selects `relative` while also observing best-effort
+absolute-looking anchor evidence, AIPerf warns and names the first conflicting
+witness without changing the corpus-wide decision. In explicit `absolute`
+mode, an inner request more than one
+microsecond before its marker is rejected; smaller floating-point jitter is
+clamped to the marker so replay never starts a child before spawn.
+
+All top-level and nested request timestamps must be finite, non-negative, and
+representable in milliseconds. This validation covers the complete input before
+context filtering or entry caps because those selectors must not change how a
+source corpus is interpreted.
+
+Canonicalization metadata is attached to each trace object and survives
+`model_dump`/validation round trips, so copied, reordered, serialized, or
+reparsed canonical traces are not shifted a second time. Raw producer traces
+omit this internal metadata and always run the configured or automatic
+interpretation. If a caller explicitly selects `absolute` or `relative` for a
+reloaded canonical corpus whose metadata records the other basis, AIPerf rejects
+the conflict instead of silently ignoring the explicit setting or applying a
+second timestamp transform.
 
 AIPerf maps the format directly onto its DAG datastructure:
 
@@ -37,6 +76,7 @@ aiperf profile \
     --endpoint-type chat \
     --streaming \
     --input-file artifacts/kv-cache-tester/traces/ \
+    --weka-nested-timestamp-basis auto \
     --fixed-schedule
 ```
 
@@ -74,7 +114,7 @@ If you don't already have the trace corpus on disk, SemiAnalysis-published Huggi
 - [`semianalysisai/cc-traces-weka-061526`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-061526) — pinned historical full-context corpus (alias `semianalysis_cc_traces_weka_061526`): 233 v7 traces with full subagent fan-out.
 - [`semianalysisai/cc-traces-weka-061526-256k`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-061526-256k) — 232-trace historical 256k-capped sibling (alias `semianalysis_cc_traces_weka_061526_256k`).
 - [`semianalysisai/cc-traces-weka-062126`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126) — pinned current full-context corpus (alias `semianalysis_cc_traces_weka_062126`): 393 v7 traces with full subagent fan-out (parent + child SPAWN/JOIN topology). This is the canonical AgentX MVP corpus.
-- [`semianalysisai/cc-traces-weka-062126-256k`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126-256k) — 393-trace 256k-capped sibling (alias `semianalysis_cc_traces_weka_062126_256k`). Requests over the cap are filtered while surviving relative timestamps and subagent overlap are preserved.
+- [`semianalysisai/cc-traces-weka-062126-256k`](https://huggingface.co/datasets/semianalysisai/cc-traces-weka-062126-256k) — 393-trace 256k-capped sibling (alias `semianalysis_cc_traces_weka_062126_256k`). Requests over the cap are filtered while surviving recorded timing and subagent overlap are preserved.
 
 ```bash
 aiperf profile \
@@ -104,7 +144,7 @@ The HuggingFace path and the file-based `--input-file` path produce **byte-ident
 | `--public-dataset semianalysis_cc_traces_weka` (HuggingFace, legacy/default no-subagents alias) | Legacy/default pinned alias for the same current no-subagents corpus as `semianalysis_cc_traces_weka_no_subagents`. |
 | `--public-dataset semianalysis_cc_traces_weka_with_subagents` (HuggingFace, with subagents) | Rolling with-subagents alias tracking the current default corpus (062126) for zero-setup runs with full subagent SPAWN/JOIN topology. 393 traces. |
 
-Existing Weka tunables work identically in both paths: `--synthesis-max-isl`, `--synthesis-max-osl`, `--inter-turn-delay-cap-seconds`, `--trace-idle-gap-cap-seconds`, `--ignore-trace-delays`, `--use-think-time-only`, `--cache-bust`, the per-trace model rewriting rules below — same flags, same behavior, same output bytes on the wire. For `--scenario inferencex-agentx-mvp`, the validator accepts a with-subagents `--public-dataset` alias or `weka_hf` constrained to `semianalysisai/cc-traces-weka-062126` for `submission_valid: true`; a local `weka_trace` directory requires `--unsafe-override` (stamps `submission_valid: false`) because corpus identity is not fingerprintable; it does not accept the no-subagents aliases. That scenario forbids per-turn and per-trace delay caps, preserves the original Weka timeline, and uses only the global `--system-idle-gap-cap-seconds` guard.
+Existing Weka tunables work identically in both paths: `--synthesis-max-isl`, `--synthesis-max-osl`, `--inter-turn-delay-cap-seconds`, `--trace-idle-gap-cap-seconds`, `--ignore-trace-delays`, `--use-think-time-only`, `--cache-bust`, the per-trace model rewriting rules below — same flags, same behavior, same output bytes on the wire. `--trace-idle-gap-cap-seconds` is a runtime AgentX watchdog and does not rewrite either loader's dataset timestamps. For `--scenario inferencex-agentx-mvp`, the validator accepts a with-subagents `--public-dataset` alias or `weka_hf` constrained to `semianalysisai/cc-traces-weka-062126` for `submission_valid: true`; a local `weka_trace` directory requires `--unsafe-override` (stamps `submission_valid: false`) because corpus identity is not fingerprintable; it does not accept the no-subagents aliases. That scenario permits an explicit `--trace-idle-gap-cap-seconds`, forbids the per-turn `--inter-turn-delay-cap-seconds`, and retains the global `--system-idle-gap-cap-seconds` guard.
 
 For newly published compatible HuggingFace Weka trace corpora, pass `--hf-weka-dataset <repo>` — it auto-selects the neutral `weka_hf` loader (passing `--public-dataset weka_hf` explicitly is equivalent):
 
@@ -133,10 +173,12 @@ If you need different replay pacing, several flags are available (recent additio
 |---|---|
 | `--no-fixed-schedule` | Opt out of the auto-enabled fixed-schedule. Turns dispatch at whatever pace your other timing flags imply (concurrency, request rate, `agentic_replay`, etc.) instead of the recorded `t` timestamps. |
 | `--ignore-trace-delays` | Strip per-turn timestamps and inter-turn delays at load time — every turn becomes back-to-back. Mutually exclusive with `--use-think-time-only`. |
-| `--use-think-time-only` | Inter-turn delay uses only the trace's recorded `think_time` (client-side wait before each request), not `t_curr - t_prev` (which would include the original server's response time). Useful when your server is faster or slower than the recording — you don't want it punished or rewarded for the *previous* server's latency. Mutually exclusive with `--ignore-trace-delays`. |
+| `--use-think-time-only` | Inter-turn delay uses only the trace's recorded `think_time` (client-side wait before each request), not `t_curr - t_prev` (which would include the original server's response time). Useful when your server is faster or slower than the recording — you don't want it punished or rewarded for the *previous* server's latency. Mutually exclusive with `--ignore-trace-delays`. Has no effect under fixed schedule (recorded timestamps drive dispatch), so passing it suppresses auto-promotion; an explicit `--fixed-schedule` still wins. |
 | `--inter-turn-delay-cap-seconds <S>` | Clamp any single inter-turn delay to at most `S` seconds. Defaults to `None` (no clamp); pass `60` to cap "coffee-break" gaps in real coding traces. |
 
-`--no-fixed-schedule` only opts out of auto-promotion of fixed schedule for
+`--no-fixed-schedule` is the opt-out from the auto-promotion described above:
+pass it to replay the trace under `--concurrency` or `--request-rate` instead
+of the recorded timestamps. It only opts out of auto-promotion for
 trace datasets. If you also pass explicit `--fixed-schedule`, fixed schedule
 still wins (both flags can be set; there is no startup mutex error).
 
@@ -215,9 +257,9 @@ Per turn:
 - **Prompt** is synthesized deterministically from the recorded `hash_ids` via the shared `hash_ids -> token sequence -> decoded prompt` pipeline, so cache structure is preserved across runs.
 - **Model** is rewritten via a per-trace mapping (see [Per-Trace Model Rewriting](#per-trace-model-rewriting)) — the trace's per-request `model` field is used to *pick which* configured model gets sent for that request, not as the routing model itself.
 - **Max tokens** comes from the `out` field (after `--synthesis-max-osl` capping).
-- **Timing** preserves the recorded `t` field for `--fixed-schedule`. By default, inter-turn `delay` is computed as `t_n - t_{n-1}`. With `--use-think-time-only`, `delay` instead uses the recorded per-request `think_time`. With `--ignore-trace-delays`, both `timestamp` and `delay` are stripped at load time. See [Replay Timing Controls](#replay-timing-controls) above.
+- **Timing** preserves the recorded `t` field for `--fixed-schedule`. By default, inter-turn `delay` is computed as `t_n - t_{n-1}`. With `--use-think-time-only`, `delay` instead uses the recorded per-request `think_time`. With `--ignore-trace-delays`, both `timestamp` and `delay` are stripped at load time; note this flag (and `--use-think-time-only`) opts the run out of fixed-schedule auto-promotion, since both say the recorded timeline should not be replayed — under fixed schedule the recorded timestamps drive dispatch and neither flag could take effect. See [Replay Timing Controls](#replay-timing-controls) above.
 - **Input kind** classifies what produced each turn's new input, surfaced as `Turn.input_kind` (`tool_result` or `user_input`). The own-turn `input_types` field decides when recorded (a `tool_result` membership marks a machine-paced agentic-loop continuation; `text`/multimodal marks genuine user/agent input); otherwise the previous request's `stop` reason is the fallback (`tool_use` is always answered by a tool result). Traces recorded before these fields existed classify as `None` and replay exactly as before.
-- **Tool-shaped messages** (opt-in, `AIPERF_DATASET_WEKA_TOOL_SHAPED_MESSAGES=true`): turns classified `tool_result` are sent in the OpenAI tool-call wire shape -- the same-delta assistant message carries a synthetic `tool_calls` entry and the turn's new input becomes a `role: "tool"` message (content text unchanged). Exercises the server's tool-message chat-template path at the cost of exact ISL fidelity, since tool messages tokenize differently than plain user text. Turn 0 falls back to the plain user shape automatically; legacy traces without the tool signal are unaffected. Shaping is decided once, at the turn's first emission: a `reset_context` full re-emission reproduces exactly the shape (and synthetic call id) each turn was first sent with, never reshaping already-sent context.
+- **Tool-shaped messages** (opt-in, `AIPERF_DATASET_WEKA_TOOL_SHAPED_MESSAGES=true`): turns classified `tool_result` are sent in the OpenAI tool-call wire shape -- the same-delta assistant message carries a synthetic `tool_calls` entry and the turn's new input becomes a `role: "tool"` message (content text unchanged). Exercises the server's tool-message chat-template path at the cost of exact ISL fidelity, since tool messages tokenize differently than plain user text. A conversation's own turn 0 falls back to the plain user shape automatically (a forked child's turn 0 keeps the parent's message layout in the shape it was sent); legacy traces without the tool signal are unaffected. Shaping is decided once, at the turn's first emission: a `reset_context` full re-emission reproduces exactly the shape (and synthetic call id) each turn was first sent with, never reshaping already-sent context.
 
 The trace's recorded `type: "s"` (streaming) vs `type: "n"` (non-streaming) is independent of how AIPerf sends the request — the transport is controlled by `--streaming`. Both types are replayed identically.
 
@@ -266,6 +308,7 @@ Details worth knowing:
 
 - **One hash namespace per trace file.** `hash_id_scope: "local"` is enforced for everything in a file — root, subagent children, and detected chains share one decode scope, so the same `hash_id` yields identical tokens everywhere and the server observes the genuine shared prefixes. The theoretical prefix-cache metric uses one shared per-trace seen-set in global time order for the same reason.
 - **Setup prefix ("keep the longer one").** The latest captures declare `tool_tokens: 0` / `system_tokens: 0`, so the system-segment boundary is derived empirically per namespace group (the LCP over member chains' first requests) and the longer of declared vs observed wins. Every turn 0 in a group places the system|user boundary at the same block offset, which keeps rendered prompts byte-shared across conversations.
+- **Child turn 0 keeps the parent's message layout.** A child's first request splits the hash prefix it shares with the parent turn it forked from (a detected chain from its fork point, a subagent from the root turn that spawns it) into the same roles and message boundaries, then adds the rest as one user message. Each message holds the child's own decoded blocks, so the tokens and their count are the same as in the flat form; only the message boundaries change. So the shared rendered prefix ends at the first parent message that ends in a partial block: the parent sent sampled filler for that block's tail, and the child sends its own block. When the parent's messages hold whole blocks and its recorded hashes fit its input budget, the rendered prompt keeps the parent's whole prefix, as in the recorded traffic. Turn 0 keeps the flat form when the shared prefix ends inside the parent's first message, or when inheriting could end a request with an assistant message. `AIPERF_DATASET_WEKA_FORK_PARENT_MESSAGES=false` restores the old flattened form.
 - **Same-model rule.** A chain is only ever continued by requests of the same model; cross-model attachment is always a spawn (a Haiku worker reading Opus context is a different agent).
 - **Escape hatch.** `AIPERF_DATASET_WEKA_SPLIT_FLATTENED_AGENTS=false` disables detection at **both** layers: all top-level requests serialize into one root conversation, and each subagent entry emits exactly one child with its inner requests in time order.
 

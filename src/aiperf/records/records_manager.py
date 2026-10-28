@@ -35,6 +35,7 @@ from aiperf.common.enums import (
     CommandType,
     CreditPhase,
     MessageType,
+    ProfileCancelReason,
     make_result_producer_capability,
 )
 from aiperf.common.environment import Environment
@@ -52,11 +53,15 @@ from aiperf.common.messages import (
     RecordsMessage,
     RecordsProcessingStatsMessage,
     TelemetryRecordsMessage,
+    WorkerGroupStatsMessage,
+    WorkerHealthMessage,
 )
 from aiperf.common.messages.inference_messages import MetricRecordsData
 from aiperf.common.mixins import PullClientMixin
 from aiperf.common.models import (
+    BasePhaseStats,
     BranchStats,
+    CreditPhaseStats,
     ErrorDetails,
     ErrorDetailsCount,
     MetricResult,
@@ -64,11 +69,13 @@ from aiperf.common.models import (
     PhaseRecordsStats,
     ProcessRecordsResult,
     ProcessTelemetryResult,
+    ProfileMetricDurationCoverage,
     ProfileResults,
     TimesliceResult,
     WorkerProcessingStats,
 )
 from aiperf.common.results_markers import CHECKPOINTS_DIR_NAME
+from aiperf.common.scenario.registry import get_scenario
 from aiperf.common.types import MetricTagT
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.config.comm import ZMQDualBindConfig
@@ -121,6 +128,24 @@ ERROR_FATAL_DETAIL_KEY = "fatal"
 failure; ``False`` (or absent) means the error is diagnostic only -- report it,
 but never suppress an otherwise valid export because of it.
 """
+
+_PROFILE_METRIC_COVERAGE_ERROR = "ProfileMetricCoverageError"
+_PROFILE_METRIC_COVERAGE_VALIDATION_ERROR = "ProfileMetricCoverageValidationError"
+_PROFILE_METRIC_COVERAGE_REASON = "insufficient_profile_metric_coverage"
+_PROFILE_METRIC_COVERAGE_VALIDATION_REASON = "profile_metric_coverage_validation_failed"
+
+
+def _profile_metric_coverage_reasons(
+    fatal_errors: Sequence[ErrorDetails],
+) -> list[str]:
+    """Translate coverage failures to stable runtime submission reason tags."""
+    error_types = {error.type for error in fatal_errors}
+    reasons: list[str] = []
+    if _PROFILE_METRIC_COVERAGE_ERROR in error_types:
+        reasons.append(_PROFILE_METRIC_COVERAGE_REASON)
+    if _PROFILE_METRIC_COVERAGE_VALIDATION_ERROR in error_types:
+        reasons.append(_PROFILE_METRIC_COVERAGE_VALIDATION_REASON)
+    return reasons
 
 
 def build_failed_request_abort_config(
@@ -501,6 +526,162 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Check record completion for a phase kind."""
         return self._records_tracker.check_and_set_all_records_received_for_phase(phase)
 
+    def _remember_profiling_credit_stats(self, stats: BasePhaseStats) -> None:
+        """Keep the newest profiling credit-phase snapshot for the watchdog.
+
+        ``RecordsTracker.create_aggregate_stats_for_phase`` returns a
+        ``PhaseRecordsStats``, which counts *records* and has no
+        ``in_flight_requests``/``requests_completed``. Only the credit side
+        tracks what was sent versus what came back, so the watchdog reads this
+        snapshot instead.
+
+        Keyed by ``phase_index`` rather than held in a single slot: under
+        ``seamless`` a later profiling phase starts while the previous one
+        drains, and both keep publishing every interval. Sharing one slot let
+        the two interleave, and because each carries its own
+        ``requests_completed`` the count moved on nearly every tick -- which
+        reads as progress and resets the stall clock, so a stuck request in
+        either phase was never caught.
+        """
+        if isinstance(stats, CreditPhaseStats) and stats.phase == CreditPhase.PROFILING:
+            self._latest_profiling_credit_stats[stats.phase_index] = stats
+
+    def _stream_activity_since_last_check(self) -> bool:
+        """Whether any worker's streamed-chunk count changed since the previous tick.
+
+        A long generation completes nothing for minutes while it streams, so
+        completions alone cannot tell it from a request that will never
+        return. Compared per worker, not as a sum, so a restarted worker's
+        drop cannot cancel out another worker's gain; any change, including
+        that drop, means the run is not frozen. A worker that stops reporting
+        keeps its last value and so never reads as activity.
+        """
+        current = self._worker_stream_chunks
+        last = self._progress_stall_last_stream_chunks
+        if all(count == last.get(worker_id, 0) for worker_id, count in current.items()):
+            return False
+        self._progress_stall_last_stream_chunks = dict(current)
+        return True
+
+    def _longest_stalled_phase(
+        self, now: float, *, streaming: bool = False
+    ) -> tuple[int | None, CreditPhaseStats, float] | None:
+        """The profiling phase stuck longest, or ``None`` if all are moving.
+
+        Each phase is judged on its own counters, and advances its own clock as
+        a side effect. A single shared clock cannot work here: under
+        ``seamless`` two profiling phases publish concurrently, and either one
+        alone failing to complete is enough to hang the run.
+
+        ``streaming`` is process-wide, not attributable to a request or a
+        phase, so it resets every phase's clock. A request stuck alongside one
+        that is still streaming, in any phase, is therefore caught once that
+        streaming stops, not before.
+        """
+        worst: tuple[int | None, CreditPhaseStats, float] | None = None
+        for phase_index, stats in self._latest_profiling_credit_stats.items():
+            # A missing entry reads as "never seen", so the first sight of a
+            # phase starts its clock rather than judging it.
+            progressed = streaming or (
+                stats.requests_completed
+                != self._progress_stall_last_total.get(phase_index)
+            )
+            if stats.in_flight_requests <= 0 or progressed:
+                # Nothing outstanding, or progress since the last tick. Reset
+                # this phase's clock so a quiet stretch does not accumulate
+                # toward a later, unrelated stall.
+                self._progress_stall_last_total[phase_index] = stats.requests_completed
+                self._progress_stall_since[phase_index] = now
+                continue
+            stalled_for = now - self._progress_stall_since.get(phase_index, now)
+            if worst is None or stalled_for > worst[2]:
+                worst = (phase_index, stats, stalled_for)
+        return worst
+
+    @background_task(
+        interval=lambda self: Environment.RECORD.PROGRESS_STALL_CHECK_INTERVAL,
+        immediate=False,
+    )
+    async def _watch_for_progress_stall(self) -> None:
+        """Fail a run whose in-flight requests stop completing.
+
+        Distinct from :meth:`_watch_for_record_stall`, which handles aggregation
+        falling behind *after* every credit has come back and finalizes with
+        partial results. Here no credit ever comes back: a request that is
+        dispatched and never completes leaves ``final_requests_completed``
+        unset, so the completion barrier is not merely unmet but unevaluable,
+        and nothing downstream can re-trigger it.
+        ``--request-timeout-seconds`` is not a backstop -- it defaults to six
+        hours and never applies to a request that was never dispatched.
+
+        The condition is "requests are in flight and none are completing", not
+        "no records arrived". Zero records is normal and expected whenever
+        nothing is pending: a low request rate, a fixed-schedule replay sitting
+        in a recorded idle gap, a slow dataset build. Only an outstanding
+        request that never lands is a stall, and that is what makes the run
+        unable to finish on its own.
+
+        That also removes the need to gate on phase completion. A completed
+        phase has nothing in flight, and ``_complete_credit_phases`` holds the
+        phase *kind*, so gating on it would have disarmed the watchdog for
+        every profiling phase after the first in a multi-phase run.
+        """
+        timeout = Environment.RECORD.PROGRESS_STALL_TIMEOUT
+        if timeout <= 0:
+            raise asyncio.CancelledError("progress stall watchdog disabled")
+        if not self._profiling_started:
+            return
+
+        if not self._latest_profiling_credit_stats:
+            # No profiling progress has been reported yet; there is nothing to
+            # judge, and no clock may start before the first snapshot.
+            return
+
+        worst = self._longest_stalled_phase(
+            time.monotonic(), streaming=self._stream_activity_since_last_check()
+        )
+        if worst is None:
+            return
+        stalled_index, stats, stalled_for = worst
+        in_flight = stats.in_flight_requests
+        total = stats.requests_completed
+        phase_label = "" if stalled_index is None else f" in phase {stalled_index}"
+
+        if stalled_for < timeout:
+            # Stay quiet until a full check interval has genuinely elapsed:
+            # the tick right after the clock resets would otherwise report
+            # "0s with no completion", which reads as alarming and is not.
+            if stalled_for >= Environment.RECORD.PROGRESS_STALL_CHECK_INTERVAL:
+                self.warning(
+                    f"{in_flight:,} request(s) in flight{phase_label} with no "
+                    f"completion or streamed response data for {stalled_for:.0f}s "
+                    f"({total:,} completed so far). "
+                    f"Failing at {timeout:.0f}s "
+                    "(AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to wait "
+                    "indefinitely)."
+                )
+            return
+
+        # Raising here would only be logged: @background_task defaults to
+        # stop_on_error=False, so the task would retry forever and the run
+        # would still hang -- the exact outcome this watchdog exists to end.
+        # Cancel rather than publish a terminal result directly: a terminal
+        # result fills only the profile domain, and the controller would still
+        # wait on server_metrics, which cannot arrive until the profiling phase
+        # completes -- which the stuck request is what prevents.
+        if self._progress_stall_triggered:
+            return
+        self._progress_stall_triggered = True
+        await self._request_profile_cancel(
+            ProfileCancelReason.PROGRESS_STALL,
+            f"Benchmark stalled: {in_flight:,} request(s) in flight"
+            f"{phase_label} with no completion or streamed response data for "
+            f"{stalled_for:.0f}s ({total:,} completed). A "
+            f"request was dispatched but never returned, so the phase can "
+            f"never report complete. Set "
+            f"AIPERF_RECORD_PROGRESS_STALL_TIMEOUT=0 to disable this check.",
+        )
+
     @background_task(
         interval=lambda self: Environment.RECORD.CHECKPOINT_INTERVAL,
         immediate=False,
@@ -708,6 +889,23 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         # last advanced. Only consulted once credits are complete.
         self._stall_last_total_records: int = -1
         self._stall_last_progress_ns: int = 0
+        self._profiling_started = False
+        # Keyed by phase_index: under `seamless` a later profiling phase starts
+        # while the previous one drains, and both keep publishing.
+        self._progress_stall_last_total: dict[int | None, int] = {}
+        self._progress_stall_since: dict[int | None, float] = {}
+        # Latest profiling CreditPhaseStats per phase. The credit side is the
+        # only source of sent/completed/cancelled counts; the records tracker's
+        # PhaseRecordsStats carries record counts and has no notion of what is
+        # still in flight.
+        self._latest_profiling_credit_stats: dict[int | None, CreditPhaseStats] = {}
+        # Latest streamed-chunk count per worker, from WORKER_HEALTH and
+        # WORKER_GROUP_STATS. Keyed by worker id so a worker reported through
+        # both sources counts once.
+        self._worker_stream_chunks: dict[str, int] = {}
+        self._progress_stall_last_stream_chunks: dict[str, int] = {}
+        # Latch so a stalled run requests cancellation once, not every tick.
+        self._progress_stall_triggered: bool = False
         # Set to a human-readable reason when the run is finalized without every
         # expected record. Propagated onto ProfileResults.incomplete_reason.
         self._incomplete_reason: str | None = None
@@ -950,23 +1148,47 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             f"(grace floor {grace_floor}, phase_index {phase_index}). "
             "Requesting PROFILE_CANCEL to terminate the run."
         )
-        payload = orjson.dumps({"origin_service_id": self.service_id})
+        if not await self._request_profile_cancel(
+            ProfileCancelReason.FAILED_REQUEST_THRESHOLD,
+            f"{error_records}/{total} profiling requests failed "
+            f"({rate:.1%}), exceeding the --failed-request-threshold "
+            f"limit of {threshold:.1%}. Check inference server logs.",
+        ):
+            self._failed_request_abort_triggered = False
+            return
+
+    async def _request_profile_cancel(
+        self, reason: ProfileCancelReason, reason_detail: str
+    ) -> bool:
+        """End the run through the cancel path. True if the request went out.
+
+        Publishing a terminal result alone is not enough to stop a benchmark:
+        it fills only the ``profile`` result domain, and the controller keeps
+        waiting on the others (``server_metrics`` is on by default whenever the
+        endpoint exposes ``/metrics``, and its result only arrives once the
+        profiling phase completes). Cancelling finalizes every domain.
+
+        Both halves are required. The command tells the controller, and the
+        local handler must be run directly because the controller's relay
+        excludes the originator -- without it the phase is never marked
+        cancelled and the run waits on the profile domain forever. Ctrl+C does
+        not hit this, because that command originates elsewhere.
+        """
+        payload = orjson.dumps(
+            {
+                "origin_service_id": self.service_id,
+                "reason": reason,
+                "reason_detail": reason_detail,
+            }
+        )
         try:
             await self.send_command_to_controller(
                 CommandType.PROFILE_CANCEL, payload=payload
             )
         except Exception as exc:
-            self.warning(
-                f"Failed to request PROFILE_CANCEL for threshold abort: {exc!r}"
-            )
-            self._failed_request_abort_triggered = False
-            return
+            self.warning(f"Failed to request PROFILE_CANCEL for {reason}: {exc!r}")
+            return False
 
-        # The controller's relay excludes the originator, so the local
-        # PROFILE_CANCEL handler -- which marks the phase cancelled and
-        # aggregates partial results -- would never run for a self-originated
-        # abort, and the run would wait on the profile result domain forever.
-        # Ctrl+C does not hit this because the command originates elsewhere.
         self._cancel_finalize_task = self.execute_async(
             self._self_cancel_and_finalize(
                 Command(
@@ -976,6 +1198,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 )
             )
         )
+        return True
 
     async def _self_cancel_and_finalize(self, command: Command) -> None:
         """Run the local cancel handler with failure-safe result publishing.
@@ -1240,7 +1463,10 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             await self._publish_terminal_failure_result(phase, cancelled, e)
 
     async def _publish_terminal_failure_result(
-        self, phase: CreditPhase, cancelled: bool, error: BaseException
+        self,
+        phase: CreditPhase,
+        cancelled: bool,
+        error: BaseException,
     ) -> ProcessRecordsResult:
         """Publish an explicitly-failed, empty result so the run can terminate.
 
@@ -1403,6 +1629,8 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         """Handle a credit phase start message in order to track the total number of expected requests."""
         self._records_tracker.update_phase_info(phase_start_msg.stats)
         await self._dispatch_record(phase_start_msg.stats, warn_if_unrouted=False)
+        if phase_start_msg.config.phase == CreditPhase.PROFILING:
+            self._profiling_started = True
         self.info(f"Credit phase start: {phase_start_msg.config.phase}")
 
     @on_message(MessageType.CREDIT_PHASE_PROGRESS)
@@ -1410,8 +1638,24 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self, message: CreditPhaseProgressMessage
     ) -> None:
         """Handle a credit phase progress message to track and stream live timing snapshots."""
+        self._remember_profiling_credit_stats(message.stats)
         self._records_tracker.update_phase_info(message.stats)
         await self._dispatch_record(message.stats, warn_if_unrouted=False)
+
+    @on_message(MessageType.WORKER_HEALTH)
+    async def _on_worker_health_for_stall(self, message: WorkerHealthMessage) -> None:
+        """Track the worker's streamed-chunk count for the progress-stall watchdog."""
+        self._worker_stream_chunks[message.service_id] = (
+            message.task_stats.stream_chunks_received
+        )
+
+    @on_message(MessageType.WORKER_GROUP_STATS)
+    async def _on_worker_group_stats_for_stall(
+        self, message: WorkerGroupStatsMessage
+    ) -> None:
+        """Track per-worker streamed-chunk counts relayed by a WorkerGroupManager."""
+        for worker_id, task_stats in message.worker_task_stats.items():
+            self._worker_stream_chunks[worker_id] = task_stats.stream_chunks_received
 
     @on_message(MessageType.CREDIT_PHASE_SENDING_COMPLETE)
     async def _on_credit_phase_sending_complete(
@@ -1422,6 +1666,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             self.info(
                 f"Sent {message.stats.final_requests_sent:,} requests. Waiting for all to complete..."
             )
+        self._remember_profiling_credit_stats(message.stats)
         self._records_tracker.update_phase_info(message.stats)
         await self._dispatch_record(message.stats, warn_if_unrouted=False)
 
@@ -1430,6 +1675,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         self, message: CreditPhaseCompleteMessage
     ) -> None:
         """Handle a credit phase complete message in order to track the end time, and check if all records have been received."""
+        self._remember_profiling_credit_stats(message.stats)
         self._records_tracker.update_phase_info(message.stats)
         await self._dispatch_record(message.stats, warn_if_unrouted=False)
         self._complete_credit_phases.add(message.stats.phase)
@@ -2125,6 +2371,126 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             )
         return records_results, error_results
 
+    def _validate_profile_metric_duration_coverage(
+        self,
+        phase: CreditPhase,
+        cancelled: bool,
+    ) -> tuple[list[ProfileMetricDurationCoverage], list[ErrorDetails]]:
+        """Apply a scenario's post-run latency-signal coverage requirement."""
+        if phase != CreditPhase.PROFILING or cancelled:
+            return [], []
+
+        scenario_name = self.run.cfg.scenario
+        if scenario_name is None:
+            return [], []
+        # Scenario resolution validates the name before services start.
+        scenario_spec = get_scenario(scenario_name)
+        required_ratio = scenario_spec.minimum_profile_metric_coverage_ratio
+        if required_ratio is None:
+            return [], []
+
+        accumulator = self._accumulators.get(AccumulatorType.METRIC_RESULTS)
+        calculate = getattr(accumulator, "profile_metric_duration_coverage", None)
+        if not callable(calculate):
+            error = ErrorDetails(
+                type=_PROFILE_METRIC_COVERAGE_VALIDATION_ERROR,
+                message=(
+                    "Profiling metric coverage could not be validated because the "
+                    "metrics accumulator does not expose coverage timestamps."
+                ),
+            )
+            return [], [error]
+
+        phase_configs = self.run.cfg.get_profiling_phases()
+        concrete_stats = self._iter_concrete_phase_stats(CreditPhase.PROFILING)
+        aggregate_stats = RecordsManager._create_result_stats_for_phase(
+            self, CreditPhase.PROFILING
+        )
+        coverage_results: list[ProfileMetricDurationCoverage] = []
+        fatal_errors: list[ErrorDetails] = []
+
+        for profiling_index, phase_config in enumerate(phase_configs):
+            if phase_config.duration is None:
+                continue
+            if phase_config.duration < scenario_spec.min_benchmark_duration_seconds:
+                self.info(
+                    "Skipping profiling metric coverage validation for "
+                    f"{phase_config.name!r}: configured duration "
+                    f"{float(phase_config.duration):.1f}s is below scenario minimum "
+                    f"{scenario_spec.min_benchmark_duration_seconds}s."
+                )
+                continue
+            stats = next(
+                (
+                    item
+                    for item in concrete_stats
+                    if item.phase_name == phase_config.name
+                    or item.profiling_index == profiling_index
+                ),
+                aggregate_stats if len(phase_configs) == 1 else None,
+            )
+            if stats is None or stats.start_ns is None:
+                fatal_errors.append(
+                    ErrorDetails(
+                        type=_PROFILE_METRIC_COVERAGE_VALIDATION_ERROR,
+                        message=(
+                            "Profiling metric coverage could not be validated for "
+                            f"phase {phase_config.name!r} because its start time is "
+                            "unavailable."
+                        ),
+                    )
+                )
+                continue
+
+            ctx = ExportContext(
+                start_ns=stats.start_ns,
+                end_ns=stats.requests_end_ns,
+                phase=CreditPhase.PROFILING,
+                phase_index=stats.phase_index,
+                phase_name=phase_config.name,
+                phase_kind="profiling",
+                is_phase_scoped=True,
+                cancelled=False,
+            )
+            coverage = calculate(
+                ctx,
+                phase_name=phase_config.name,
+                expected_duration_seconds=float(phase_config.duration),
+                required_ratio=required_ratio,
+            )
+            coverage_results.append(coverage)
+            if coverage.passed:
+                self.info(
+                    "Profiling metric coverage passed for "
+                    f"{phase_config.name!r}: TTFT={coverage.ttft_ratio:.1%}, "
+                    "inter-token latency="
+                    f"{coverage.inter_token_latency_ratio:.1%} "
+                    f"(required={required_ratio:.1%})."
+                )
+                continue
+
+            allowed_tail_seconds = float(phase_config.duration) * (1.0 - required_ratio)
+            message = (
+                f"Profiling metric coverage below the required {required_ratio:.1%} "
+                f"for phase {phase_config.name!r}: TTFT={coverage.ttft_ratio:.1%}, "
+                "inter-token latency="
+                f"{coverage.inter_token_latency_ratio:.1%} over the configured "
+                f"{float(phase_config.duration):.1f}s duration. Neither latency "
+                f"signal extended into the final {allowed_tail_seconds:.1f}s before "
+                "the nominal profiling end; check inference server logs for a stalled "
+                "or unavailable server."
+            )
+            self.error(message)
+            fatal_errors.append(
+                ErrorDetails(
+                    type=_PROFILE_METRIC_COVERAGE_ERROR,
+                    message=message,
+                    details=coverage.model_dump(mode="json"),
+                )
+            )
+
+        return coverage_results, fatal_errors
+
     async def _phase_telemetry_results(
         self,
         stats: PhaseRecordsStats,
@@ -2406,9 +2772,9 @@ class RecordsManager(PullClientMixin, BaseComponentService):
         phase_records = await RecordsManager._build_phase_profile_results(
             self, phase, cancelled
         )
-        # Snapshot count BEFORE extending with derived aggregates (efficiency,
-        # analyzers) — `completed` reports request-derived records only.
-        records_completed = len(records_results)
+        metric_duration_coverage, fatal_errors = (
+            self._validate_profile_metric_duration_coverage(phase, cancelled)
+        )
 
         # Cross-accumulator analyzer plugins (e.g. energy efficiency) run after
         # all accumulators have summarized, reading peers via the SummaryContext.
@@ -2425,7 +2791,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 records=records_results,
                 warmup_records=warmup_records_results,
                 timeslices=timeslices or None,
-                completed=records_completed,
+                completed=phase_stats.total_records,
                 start_ns=phase_stats.start_ns or time.time_ns(),
                 end_ns=phase_stats.requests_end_ns or time.time_ns(),
                 error_summary=self._error_tracker.get_error_summary_for_phase(phase),
@@ -2440,12 +2806,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 context_overflow_count=self._skipped_context_overflow_counts_by_phase.get(
                     phase, 0
                 ),
+                metric_duration_coverage=metric_duration_coverage,
+                runtime_submission_invalid_reasons=_profile_metric_coverage_reasons(
+                    fatal_errors
+                ),
                 phase_records=phase_records,
                 pooled_spec_decode_acceptance_histogram=_pooled_spec_decode_histogram(
                     summary_ctx
                 ),
             ),
             errors=error_results,
+            fatal_errors=fatal_errors,
         )
         self.debug(lambda: f"Process records result: {result}")
         self.debug("Publishing ProcessRecordsResultMessage...")

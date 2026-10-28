@@ -12,7 +12,7 @@ This document provides attribution information for public domain assets used in 
 ### Shakespeare Complete Works
 
 **Asset Information:**
-- **File(s)**: [`aiperf/dataset/generator/assets/shakespeare.txt`](aiperf/dataset/generator/assets/shakespeare.txt)
+- **File(s)**: [`src/aiperf/dataset/generator/assets/shakespeare.txt`](src/aiperf/dataset/generator/assets/shakespeare.txt)
 - **Author**: William Shakespeare (1564-1616)
 - **License**: Public Domain
 - **Status**: Works created before copyright law; no restrictions apply
@@ -27,10 +27,10 @@ This document provides attribution information for public domain assets used in 
 
 **Asset Information:**
 - **Files**:
-  - [`aiperf/dataset/generator/assets/source_images/0bfd8fdf-457f-43c8-9253-a2346d37d26a_1024.jpg`](aiperf/dataset/generator/assets/source_images/0bfd8fdf-457f-43c8-9253-a2346d37d26a_1024.jpg) - [Object 103QTD](https://www.getty.edu/art/collection/object/103QTD)
-  - [`aiperf/dataset/generator/assets/source_images/119544eb-9bbf-47d1-8d93-a51de6370295_861.jpg`](aiperf/dataset/generator/assets/source_images/119544eb-9bbf-47d1-8d93-a51de6370295_861.jpg) - [Object 103SNG](https://www.getty.edu/art/collection/object/103SNG)
-  - [`aiperf/dataset/generator/assets/source_images/1ba066e0-7291-4ef4-8a6e-e8724af7f046_865.jpg`](aiperf/dataset/generator/assets/source_images/1ba066e0-7291-4ef4-8a6e-e8724af7f046_865.jpg) - [Object 10962M](https://www.getty.edu/art/collection/object/10962M)
-  - [`aiperf/dataset/generator/assets/source_images/c946f826-4a9a-4ca2-b891-9f791d38092b_1024.jpg`](aiperf/dataset/generator/assets/source_images/c946f826-4a9a-4ca2-b891-9f791d38092b_1024.jpg) - [Object 103RQ6](https://www.getty.edu/art/collection/object/103RQ6)
+  - [`src/aiperf/dataset/generator/assets/source_images/0bfd8fdf-457f-43c8-9253-a2346d37d26a_1024.jpg`](src/aiperf/dataset/generator/assets/source_images/0bfd8fdf-457f-43c8-9253-a2346d37d26a_1024.jpg) - [Object 103QTD](https://www.getty.edu/art/collection/object/103QTD)
+  - [`src/aiperf/dataset/generator/assets/source_images/119544eb-9bbf-47d1-8d93-a51de6370295_861.jpg`](src/aiperf/dataset/generator/assets/source_images/119544eb-9bbf-47d1-8d93-a51de6370295_861.jpg) - [Object 103SNG](https://www.getty.edu/art/collection/object/103SNG)
+  - [`src/aiperf/dataset/generator/assets/source_images/1ba066e0-7291-4ef4-8a6e-e8724af7f046_865.jpg`](src/aiperf/dataset/generator/assets/source_images/1ba066e0-7291-4ef4-8a6e-e8724af7f046_865.jpg) - [Object 10962M](https://www.getty.edu/art/collection/object/10962M)
+  - [`src/aiperf/dataset/generator/assets/source_images/c946f826-4a9a-4ca2-b891-9f791d38092b_1024.jpg`](src/aiperf/dataset/generator/assets/source_images/c946f826-4a9a-4ca2-b891-9f791d38092b_1024.jpg) - [Object 103RQ6](https://www.getty.edu/art/collection/object/103RQ6)
 - **License**: CC0 1.0 Universal (Public Domain Dedication)
 - **Attribution** (recommended): Digital image courtesy of Getty's Open Content Program
 
@@ -556,6 +556,39 @@ This document provides attribution information for public domain assets used in 
 > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
+
+### PrismJS (syntax highlighting)
+
+**Asset Information:**
+- **File(s)**: [`src/aiperf/api/static/vendor/prism-core.js`](src/aiperf/api/static/vendor/prism-core.js), [`prism-python.js`](src/aiperf/api/static/vendor/prism-python.js), [`prism-bash.js`](src/aiperf/api/static/vendor/prism-bash.js), [`prism-tomorrow.css`](src/aiperf/api/static/vendor/prism-tomorrow.css) (vendored builds, v1.30.0)
+- **Source**: [PrismJS/prism](https://github.com/PrismJS/prism) (npm: `prismjs`)
+- **Author**: Lea Verou
+- **License**: MIT License
+- **Usage**: Same-origin syntax highlighting (Python/Bash) for the local `aiperf profile` HTML dashboard.
+
+**License Text:**
+
+> MIT LICENSE
+>
+> Copyright (c) 2012 Lea Verou
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in
+> all copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+> THE SOFTWARE.
 
 ## Usage Summary
 

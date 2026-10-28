@@ -6,14 +6,19 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import math
+import re
 import time
 from collections.abc import Mapping
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urljoin, urlsplit, urlunsplit
 
 import aiohttp
 import orjson
+from yarl import URL
 
+from aiperf.auth.base_signer import SignedRequest
+from aiperf.common.endpoint_auth import no_redirect_kwargs
 from aiperf.common.enums import (
     ConnectionReuseStrategy,
     RequestContentType,
@@ -33,12 +38,160 @@ from aiperf.common.models import (
 from aiperf.common.redact import redact_headers
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import TransportType
-from aiperf.transports.aiohttp_client import AioHttpClient, create_tcp_connector
+from aiperf.transports.aiohttp_client import (
+    VIDEO_DOWNLOAD_REDIRECT_STATUSES,
+    AioHttpClient,
+    create_tcp_connector,
+)
 from aiperf.transports.base_transports import (
     BaseTransport,
     FirstTokenCallback,
     TransportMetadata,
 )
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+# Only these survive a hop to an origin the benchmarked server chose. An
+# allowlist rather than a denylist because nothing marks "X-Acme-Token" as a
+# secret -- a name-based denylist can only catch the names it thought of. The
+# natural content_url is a presigned S3 URL, which authenticates through its own
+# query signature and needs no inherited headers at all.
+_FOREIGN_ORIGIN_HEADER_ALLOWLIST = frozenset({"user-agent"})
+
+_NON_ASCII = re.compile(r"[^\x00-\x7f]+")
+
+
+class _VideoDownloadPolicyError(ValueError):
+    """A download policy failure with a fixed, credential-free diagnostic."""
+
+
+def _validate_video_url_reference(url: str) -> None:
+    """Reject characters URL parsers can silently discard or reinterpret."""
+    if not url or any(
+        ord(char) <= 32 or ord(char) == 127 or char.isspace() for char in url
+    ):
+        raise ValueError("Empty URL or URL containing whitespace/control characters")
+    if "\\" in url or re.search(r"%(?![0-9a-fA-F]{2})", url):
+        raise ValueError("Malformed URL encoding")
+
+
+def _validated_video_url(url: str) -> str:
+    """Validate an absolute HTTP(S) download URL without decoding signed bytes."""
+    _validate_video_url_reference(url)
+    parts = urlsplit(url)
+    if (
+        parts.scheme not in _DEFAULT_PORTS
+        or not parts.hostname
+        or parts.username is not None
+    ):
+        raise ValueError("Download URL must be absolute HTTP(S) without userinfo")
+    port = parts.port
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("Invalid download port")
+    # urlsplit accepts empty ports and trailing text after an IPv6 bracket.
+    authority = parts.netloc
+    if authority.startswith("["):
+        suffix = authority[authority.index("]") + 1 :]
+        if suffix and (not suffix.startswith(":") or not suffix[1:].isdigit()):
+            raise ValueError("Malformed IPv6 authority")
+    elif "[" in authority or "]" in authority or authority.count(":") > 1:
+        raise ValueError("Malformed download authority")
+    elif ":" in authority and not authority.rsplit(":", 1)[1].isdigit():
+        raise ValueError("Invalid download port")
+    if "%" in parts.hostname:
+        raise ValueError("Encoded download hostname is unsupported")
+    if not url.isascii():
+        # Requests go out with encoded=True, which sends text verbatim. Encode
+        # non-ASCII here, before signing, leaving existing %XX escapes intact.
+        parts = parts._replace(
+            netloc=URL(f"{parts.scheme}://{parts.netloc}").raw_authority,
+            path=_NON_ASCII.sub(lambda match: quote(match[0]), parts.path),
+            query=_NON_ASCII.sub(lambda match: quote(match[0]), parts.query),
+        )
+    return urlunsplit(parts._replace(fragment=""))
+
+
+def _split_configured_auth(url: str) -> tuple[str, str | None]:
+    """Separate configured Basic authentication from URLs selected by the server."""
+    _validate_video_url_reference(url)
+    parts = urlsplit(url)
+    poll_url = _validated_video_url(
+        urlunsplit(parts._replace(netloc=parts.netloc.rsplit("@", 1)[-1]))
+    )
+    configured = URL(url, encoded=True)
+    if configured.raw_user is None and configured.raw_password is None:
+        return poll_url, None
+    # latin1 matches the BasicAuth.from_url encoding aiohttp applied to URL auth.
+    return poll_url, aiohttp.encode_basic_auth(
+        configured.user or "", configured.password or "", "latin1"
+    )
+
+
+def _resolve_video_redirect(requested_url: str, location: str) -> str:
+    """Resolve a valid reference without repairing malformed absolute authorities."""
+    _validate_video_url_reference(location)
+    parts = urlsplit(location)
+    if parts.scheme:
+        _validated_video_url(location)
+    elif location.startswith("//"):
+        _validated_video_url(f"{urlsplit(requested_url).scheme}:{location}")
+    return _validated_video_url(urljoin(requested_url, location))
+
+
+def _video_redirect_target(
+    record: RequestRecord, requested_url: str, remaining: int
+) -> str:
+    """Enforce the redirect budget and the single-Location contract before resolving."""
+    if remaining <= 0:
+        raise _VideoDownloadPolicyError("Redirect limit exceeded")
+    if len(record._redirect_locations) != 1:
+        raise _VideoDownloadPolicyError("Expected exactly one Location header")
+    return _resolve_video_redirect(requested_url, record._redirect_locations[0])
+
+
+def _strip_credentials_for_foreign_origin(headers: dict[str, str]) -> dict[str, str]:
+    """Keep only allowlisted headers, matching names case-insensitively.
+
+    HTTP header names are case-insensitive but these live in a plain dict, so a
+    lowercase ``authorization`` would otherwise slip past a literal comparison.
+    """
+    return {
+        name: value
+        for name, value in headers.items()
+        if name.lower() in _FOREIGN_ORIGIN_HEADER_ALLOWLIST
+    }
+
+
+def _origin_of(url: str) -> tuple[str, str | None, int | None] | None:
+    """Scheme, host and normalized port, or None when the URL will not parse.
+
+    ``urlsplit`` accepts a malformed port and only raises when ``.port`` is
+    read, so the read happens here inside the guard; leaving it to the caller
+    lets ``ValueError`` escape the fail-closed contract.
+
+    An omitted port is normalized to the scheme default, so ``https://host``
+    and ``https://host:443`` compare equal. The scheme stays part of the tuple,
+    so ``http://host:443`` is still a different origin from ``https://host``.
+    """
+    try:
+        parts = urlsplit(url)
+        port = parts.port or _DEFAULT_PORTS.get(parts.scheme)
+        return parts.scheme, parts.hostname, port
+    except ValueError:
+        return None
+
+
+def _same_origin(url: str, reference: str) -> bool:
+    """Whether ``url`` targets the same scheme, host, and port as ``reference``.
+
+    Used to decide whether a URL the benchmarked server handed us may be signed
+    with the endpoint's AWS credentials, so it fails closed: a URL that does not
+    parse counts as foreign rather than raising into the caller.
+    """
+    origin = _origin_of(url)
+    # Explicit None check: two unparseable URLs must not compare equal and be
+    # read as "same origin".
+    return origin is not None and origin == _origin_of(reference)
 
 
 def _has_http_scheme(url: str) -> bool:
@@ -137,6 +290,12 @@ class AioHttpTransport(BaseTransport):
         self.tcp_kwargs = tcp_kwargs or {}
         self.aiohttp_client: AioHttpClient | None = None
         self.lease_manager: ConnectionLeaseManager | None = None
+
+    @property
+    def stream_chunks_received(self) -> int:
+        if self.aiohttp_client is None:
+            return 0
+        return self.aiohttp_client.stream_chunks_received
 
     @on_init
     async def _init_aiohttp_client(self) -> None:
@@ -325,12 +484,28 @@ class AioHttpTransport(BaseTransport):
             )
             # Pre-encoded bytes (PAYLOAD_BYTES fast path / raw payload replay)
             # are sent verbatim; dicts are encoded here.
+            body: bytes | aiohttp.FormData
             if isinstance(payload, bytes):
-                body: bytes | aiohttp.FormData = payload
+                body = payload
             elif use_form_data:
                 body = self._build_form_data(payload)
             else:
                 body = orjson.dumps(payload)
+
+            # Request signers (SigV4) sign a fixed byte payload; multipart
+            # form-data bodies aren't signed. EndpointConfig rejects
+            # auth_type + multipart at config time, so an unsigned FormData
+            # body means no signer is configured.
+            if not isinstance(body, aiohttp.FormData):
+                signed = await self._sign_if_needed("POST", url, headers, body)
+                url, headers, body = signed.url, signed.headers, signed.body
+            elif self.request_signer is not None:
+                raise RuntimeError(
+                    "FormData body with a configured request_signer: signers "
+                    "sign a fixed byte payload and can't sign multipart "
+                    "form-data. EndpointConfig should have rejected "
+                    "auth_type + multipart at config time."
+                )
 
             match reuse_strategy:
                 case ConnectionReuseStrategy.NEVER:
@@ -367,6 +542,8 @@ class AioHttpTransport(BaseTransport):
                         f"Invalid connection reuse strategy: {self.model_endpoint.endpoint.connection_reuse_strategy}"
                     )
 
+            redirect_kwargs = no_redirect_kwargs(self.request_signer)
+
             record = await self.aiohttp_client.post_request(
                 url,
                 body,
@@ -375,8 +552,30 @@ class AioHttpTransport(BaseTransport):
                 first_token_callback=first_token_callback,
                 connector=connector,
                 connector_owner=connector_owner,
+                **redirect_kwargs,
             )
             record.request_headers = redact_headers(headers)
+
+            # SignatureDoesNotMatch is the most common SigV4 failure and AWS's
+            # own message never says why. The usual cause is --aws-service: the
+            # value is the signing name, not the API id, so SageMaker Runtime
+            # signs as 'sagemaker' rather than 'sagemaker-runtime'. Point at that
+            # here rather than only in a tutorial the user has to know to read.
+            if (
+                self.request_signer is not None
+                and record.error is not None
+                and "SignatureDoesNotMatch" in (record.error.message or "")
+            ):
+                record.error.message = (
+                    f"{record.error.message} "
+                    "(AWS rejected the signature. The most common cause is "
+                    "--aws-service: it takes the service's SigV4 signing name, "
+                    "which is not always its API id -- 'sagemaker-runtime' signs "
+                    "as 'sagemaker' and 'bedrock-runtime' as 'bedrock'. Also check "
+                    "that --aws-region matches the endpoint's region, and that the "
+                    "system clock is accurate: AWS rejects signatures more than "
+                    "five minutes out.)"
+                ).strip()
 
             # Release lease for sticky-user-sessions strategy if it's the final turn of the conversation,
             # or the request was cancelled (connection is now dirty/closed), or there was an error.
@@ -467,6 +666,9 @@ class AioHttpTransport(BaseTransport):
         "content_type": <str>}``. Keeping bytes base64-encoded in the payload
         lets it stay JSON-serialisable upstream; decoding happens here.
 
+        List values become repeated fields using the supplied key verbatim
+        (e.g., ``timestamp_granularities[]`` for transcription timestamps).
+
         ``default_to_multipart=True`` forces multipart/form-data even when the
         payload happens to be text-only (e.g., image_edit with a `url` field
         instead of an inline image), so the wire format always matches the
@@ -491,8 +693,10 @@ class AioHttpTransport(BaseTransport):
                     or "application/octet-stream",
                 )
                 continue
-            str_value = str(value).lower() if isinstance(value, bool) else str(value)
-            form_data.add_field(key, str_value)
+            values = value if isinstance(value, list) else [value]
+            for item in values:
+                str_value = str(item).lower() if isinstance(item, bool) else str(item)
+                form_data.add_field(key, str_value)
         return form_data
 
     async def _submit_video_job(
@@ -509,13 +713,27 @@ class AioHttpTransport(BaseTransport):
         """
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
+        body: bytes | aiohttp.FormData
         if isinstance(payload, bytes):
-            body: bytes | aiohttp.FormData = payload
+            body = payload
         elif use_form_data:
             body = self._build_form_data(payload)
         else:
             body = orjson.dumps(payload)
-        record = await self.aiohttp_client.post_request(url, body, headers)
+
+        if not isinstance(body, aiohttp.FormData):
+            signed = await self._sign_if_needed("POST", url, headers, body)
+            url, headers, body = signed.url, signed.headers, signed.body
+        elif self.request_signer is not None:
+            raise RuntimeError(
+                "FormData body with a configured request_signer: signers "
+                "sign a fixed byte payload and can't sign multipart "
+                "form-data. EndpointConfig should have rejected "
+                "auth_type + multipart at config time."
+            )
+        record = await self.aiohttp_client.post_request(
+            url, body, headers, **no_redirect_kwargs(self.request_signer)
+        )
         result = self._parse_video_response(record, "submit")
         if isinstance(result, ErrorDetails):
             return result
@@ -548,7 +766,12 @@ class AioHttpTransport(BaseTransport):
         poll_start = time.perf_counter_ns()
 
         while (time.perf_counter_ns() - poll_start) / 1e9 < timeout:
-            record = await self.aiohttp_client.get_request(poll_url, headers)
+            signed = await self._sign_if_needed("GET", poll_url, headers)
+            record = await self.aiohttp_client.get_request(
+                signed.url,
+                signed.headers,
+                **no_redirect_kwargs(self.request_signer),
+            )
             result = self._parse_video_response(record, "poll")
             if isinstance(result, ErrorDetails):
                 return result
@@ -584,43 +807,125 @@ class AioHttpTransport(BaseTransport):
             code=504,
         )
 
+    async def _prepare_video_download_request(
+        self,
+        url: str,
+        poll_url: str,
+        headers: dict[str, str],
+        authorization: str | None,
+    ) -> SignedRequest:
+        """Rebuild headers for each hop and constrain signer URL changes to the origin."""
+        if not _same_origin(url, poll_url):
+            return SignedRequest(
+                url=url, headers=_strip_credentials_for_foreign_origin(headers)
+            )
+        signed = await self._sign_if_needed("GET", url, dict(headers))
+        signed.url = _validated_video_url(signed.url)
+        if not _same_origin(signed.url, poll_url):
+            raise _VideoDownloadPolicyError("Signer changed the request origin")
+        if authorization is not None:
+            # Added after signing, so a signer's Authorization conflicts too.
+            if any(name.lower() == "authorization" for name in signed.headers):
+                raise _VideoDownloadPolicyError(
+                    "Configured URL credentials conflict with an Authorization header"
+                )
+            signed.headers = {**signed.headers, "Authorization": authorization}
+        return signed
+
     async def _download_video_content(
         self,
         job_id: str,
-        content_url: str,
+        content_url: str | None,
         headers: dict[str, str],
+        *,
+        signing_origin_url: str,
     ) -> bytes | ErrorDetails:
-        """Download video content via GET /v1/videos/{id}/content.
-
-        Returns video bytes on success, ErrorDetails on failure.
-        Used when --download-video-content is enabled.
-        """
+        """Download video bytes, checking the original credential origin at every hop."""
         if self.aiohttp_client is None:
             raise NotInitializedError("AioHttpClient not initialized")
+
+        max_redirects = Environment.HTTP.VIDEO_DOWNLOAD_MAX_REDIRECTS
+        total = self.aiohttp_client.timeout.total
+        timeout = (
+            total
+            if isinstance(total, (int, float)) and total > 0 and math.isfinite(total)
+            else None
+        )
+        hops = 0
+        stage = "URL validation"
+        status = 500
+
+        def failure(reason: str, code: int = 500) -> ErrorDetails:
+            # Response errors and exception strings can contain presigned URLs.
+            return ErrorDetails(
+                type="VideoDownloadError",
+                message=f"Failed to download video {job_id} at {stage} after {hops} redirects: {reason}",
+                code=code,
+            )
+
         try:
-            record = await self.aiohttp_client.get_request(content_url, headers)
-            if record.error:
-                return ErrorDetails(
-                    type="VideoDownloadError",
-                    message=f"Failed to download video {job_id}: {record.error}",
-                    code=record.status or 500,
+            async with asyncio.timeout(timeout):
+                poll_url, authorization = _split_configured_auth(signing_origin_url)
+                current_url = _validated_video_url(
+                    content_url if content_url is not None else f"{poll_url}/content"
                 )
-            if record.responses and isinstance(record.responses[0], BinaryResponse):
-                self.info(
-                    f"Video {job_id} downloaded ({len(record.responses[0].raw_bytes)} bytes)"
-                )
-                return record.responses[0].raw_bytes
-            return ErrorDetails(
-                type="VideoDownloadError",
-                message=f"No content returned for video {job_id}",
-                code=500,
+                while True:
+                    stage = "signing"
+                    signed = await self._prepare_video_download_request(
+                        current_url, poll_url, headers, authorization
+                    )
+                    requested_url = signed.url
+                    same_origin = _same_origin(requested_url, poll_url)
+
+                    stage = "request"
+                    record = await self.aiohttp_client.get_request(
+                        URL(requested_url, encoded=True),
+                        signed.headers,
+                        allow_redirects=False,
+                        capture_redirects=True,
+                        # netrc can otherwise add BasicAuth after header filtering.
+                        trust_env=None if same_origin else False,
+                    )
+                    status = record.status or 500
+                    if status in VIDEO_DOWNLOAD_REDIRECT_STATUSES and not record.error:
+                        stage = "redirect validation"
+                        current_url = _video_redirect_target(
+                            record, requested_url, max_redirects - hops
+                        )
+                        hops += 1
+                        continue
+                    stage = "request" if record.error else "content"
+                    if (
+                        not record.error
+                        and 200 <= status < 300
+                        and record.responses
+                        and isinstance(record.responses[0], BinaryResponse)
+                    ):
+                        video_bytes = record.responses[0].raw_bytes
+                        self.info(
+                            f"Video {job_id} downloaded ({len(video_bytes)} bytes)"
+                        )
+                        return video_bytes
+                    return failure(
+                        "HTTP or network request failed"
+                        if record.error
+                        else "No binary content returned",
+                        status if record.error else 500,
+                    )
+        except _VideoDownloadPolicyError as error:
+            return failure(
+                str(error),
+                status if stage == "redirect validation" else 500,
             )
-        except Exception as e:
-            return ErrorDetails(
-                type="VideoDownloadError",
-                message=f"Failed to download video {job_id}: {e!r}",
-                code=500,
+        except ValueError:
+            return failure(
+                "Invalid download URL",
+                status if stage == "redirect validation" else 500,
             )
+        except TimeoutError:
+            return failure("Download timeout exceeded")
+        except Exception:
+            return failure("Download request failed")
 
     async def _send_video_request_with_polling(
         self,
@@ -691,9 +996,9 @@ class AioHttpTransport(BaseTransport):
 
             # Optional: download video content if requested
             if download_content:
-                content_url = data.get("url") or f"{poll_url}/content"
+                content_url = data.get("url") or None
                 download_result = await self._download_video_content(
-                    job_id, content_url, headers
+                    job_id, content_url, headers, signing_origin_url=poll_url
                 )
                 if isinstance(download_result, ErrorDetails):
                     return make_record(error=download_result)

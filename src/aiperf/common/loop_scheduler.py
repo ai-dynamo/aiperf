@@ -60,15 +60,24 @@ class LoopScheduler:
         """
         self._loop: asyncio.AbstractEventLoop = loop or asyncio.get_running_loop()
         self._tasks: set[asyncio.Task] = set()
+        # Logical group of each running task started for a grouped timer (or a
+        # grouped zero-delay schedule). Lets callers ask whether a group still
+        # has a coroutine in progress after its timers have all fired.
+        self._task_groups: dict[asyncio.Task, str] = {}
         # Maps handle ID → (handle, coroutine) so we can close() coroutines when handles are cancelled.
         # Use id(handle) as key to avoid recursion when handles contain circular refs (handle_container).
         self._handles: dict[
             HandleId, tuple[asyncio.TimerHandle | asyncio.Handle, Coroutine]
         ] = {}
+        # Optional logical replay-tree ownership for pending timers. Kept in a
+        # parallel map so the long-standing ``_handles`` tuple contract remains
+        # stable for tests and diagnostics.
+        self._handle_groups: dict[HandleId, str] = {}
         self._exception_handler: Callable[[asyncio.Task], None] | None = (
             exception_handler
         )
         self._drain_observer: Callable[[], None] | None = None
+        self._group_task_observer: Callable[[str], None] | None = None
 
     def set_exception_handler(self, handler: Callable[[asyncio.Task], None]) -> None:
         """Set callback for unhandled task exceptions."""
@@ -78,10 +87,34 @@ class LoopScheduler:
         """Observe transitions from running work to no running work."""
         self._drain_observer = observer
 
+    def set_group_task_observer(self, observer: Callable[[str], None] | None) -> None:
+        """Observe each grouped timer's coroutine finishing (not when cancelled).
+
+        The observer receives the timer's ``group_id``. It runs after the
+        coroutine has returned, so anything the coroutine issued is already
+        visible to the observer.
+        """
+        self._group_task_observer = observer
+
+    def _notify_group_task_done(self, group_id: str, task: asyncio.Task) -> None:
+        if task.cancelled() or self._group_task_observer is None:
+            return
+        try:
+            self._group_task_observer(group_id)
+        except Exception as exc:  # noqa: BLE001
+            self._loop.call_exception_handler(
+                {
+                    "message": "LoopScheduler group task observer failed",
+                    "exception": exc,
+                    "task": task,
+                }
+            )
+
     def _done_callback(self, task: asyncio.Task) -> None:
         """Remove completed task from tracking; invoke exception handler if failed."""
         was_tracked = task in self._tasks
         self._tasks.discard(task)  # discard() is safe if already removed by cancel_all
+        self._task_groups.pop(task, None)
         # Must check cancelled() first - calling exception() on a cancelled task raises CancelledError
         if (
             not task.cancelled()
@@ -114,14 +147,19 @@ class LoopScheduler:
         but the handle doesn't exist until call_later() returns. We pass a
         mutable list, then populate it after call_later() returns.
         """
+        group_id = None
         if handle_container[0] is not None:
-            self._handles.pop(id(handle_container[0]), None)
-        task = self._loop.create_task(coro)
-        self._tasks.add(task)
-        task.add_done_callback(self._done_callback)
+            handle_id = id(handle_container[0])
+            self._handles.pop(handle_id, None)
+            group_id = self._handle_groups.pop(handle_id, None)
+        self.execute_async(coro, group_id=group_id)
 
     def _track_handle_and_return_id(
-        self, handle: asyncio.TimerHandle | asyncio.Handle, coro: Coroutine
+        self,
+        handle: asyncio.TimerHandle | asyncio.Handle,
+        coro: Coroutine,
+        *,
+        group_id: str | None = None,
     ) -> HandleId:
         """Track a handle and coroutine and return the handle ID.
 
@@ -132,9 +170,13 @@ class LoopScheduler:
         """
         handle_id = id(handle)
         self._handles[handle_id] = (handle, coro)
+        if group_id is not None:
+            self._handle_groups[handle_id] = group_id
         return handle_id
 
-    def execute_async(self, coro: Coroutine) -> asyncio.Task:
+    def execute_async(
+        self, coro: Coroutine, *, group_id: str | None = None
+    ) -> asyncio.Task:
         """Execute coroutine asynchronously (creates a task and returns it immediately).
 
         Returns:
@@ -144,10 +186,22 @@ class LoopScheduler:
         task = self._loop.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._done_callback)
+        if group_id is not None:
+            self._task_groups[task] = group_id
+        if group_id is not None and self._group_task_observer is not None:
+            task.add_done_callback(
+                lambda done, group_id=group_id: self._notify_group_task_done(
+                    group_id, done
+                )
+            )
         return task
 
     def schedule_later(
-        self, delay_sec: float, coro: Coroutine
+        self,
+        delay_sec: float,
+        coro: Coroutine,
+        *,
+        group_id: str | None = None,
     ) -> HandleId | asyncio.Task:
         """
         Schedule coroutine after a relative delay (seconds).
@@ -162,16 +216,22 @@ class LoopScheduler:
             Handle for cancellation. Cancelled coroutines are properly closed.
         """
         if delay_sec <= 0:
-            return self.execute_async(coro)
+            return self.execute_async(coro, group_id=group_id)
 
         handle_container = [None]
         handle = self._loop.call_later(
             delay_sec, self._safe_callback, handle_container, coro
         )
         handle_container[0] = handle
-        return self._track_handle_and_return_id(handle, coro)
+        return self._track_handle_and_return_id(handle, coro, group_id=group_id)
 
-    def schedule_at(self, loop_time: float, coro: Coroutine) -> HandleId | asyncio.Task:
+    def schedule_at(
+        self,
+        loop_time: float,
+        coro: Coroutine,
+        *,
+        group_id: str | None = None,
+    ) -> HandleId | asyncio.Task:
         """
         Schedule coroutine at an absolute loop.time() timestamp.
 
@@ -189,10 +249,14 @@ class LoopScheduler:
             loop_time, self._safe_callback, handle_container, coro
         )
         handle_container[0] = handle
-        return self._track_handle_and_return_id(handle, coro)
+        return self._track_handle_and_return_id(handle, coro, group_id=group_id)
 
     def schedule_at_perf_sec(
-        self, perf_sec: float, coro: Coroutine
+        self,
+        perf_sec: float,
+        coro: Coroutine,
+        *,
+        group_id: str | None = None,
     ) -> HandleId | asyncio.Task:
         """
         Schedule coroutine at an absolute perf_counter seconds timestamp.
@@ -217,11 +281,15 @@ class LoopScheduler:
         offset_sec = perf_sec - cur_perf_sec
 
         if offset_sec <= 0:
-            return self.execute_async(coro)
-        return self.schedule_at(cur_loop_time + offset_sec, coro)
+            return self.execute_async(coro, group_id=group_id)
+        return self.schedule_at(cur_loop_time + offset_sec, coro, group_id=group_id)
 
     def schedule_at_perf_ns(
-        self, perf_time_ns: int, coro: Coroutine
+        self,
+        perf_time_ns: int,
+        coro: Coroutine,
+        *,
+        group_id: str | None = None,
     ) -> HandleId | asyncio.Task:
         """
         Schedule coroutine at an absolute perf_counter_ns timestamp.
@@ -246,8 +314,8 @@ class LoopScheduler:
         offset_sec = (perf_time_ns - cur_perf_ns) / NANOS_PER_SECOND
 
         if offset_sec <= 0:
-            return self.execute_async(coro)
-        return self.schedule_at(cur_loop_time + offset_sec, coro)
+            return self.execute_async(coro, group_id=group_id)
+        return self.schedule_at(cur_loop_time + offset_sec, coro, group_id=group_id)
 
     def cancel_handle_id(self, handle_id: HandleId) -> bool:
         """Cancel a scheduled coroutine by its handle ID.
@@ -261,6 +329,7 @@ class LoopScheduler:
         handle_data = self._handles.pop(handle_id, None)
         if handle_data is None:
             return False
+        self._handle_groups.pop(handle_id, None)
         handle, coro = handle_data
         handle.cancel()
         coro.close()
@@ -275,6 +344,7 @@ class LoopScheduler:
         """
         items = list(self._handles.values())
         self._handles.clear()
+        self._handle_groups.clear()
 
         # Cancel handles first, then close coroutines
         for handle, coro in items:
@@ -292,6 +362,7 @@ class LoopScheduler:
         """
         tasks = list(self._tasks)
         self._tasks.clear()
+        self._task_groups.clear()
         for task in tasks:
             task.cancel()
         return tasks
@@ -320,22 +391,118 @@ class LoopScheduler:
             return 0.0
 
         now = self._loop.time()
-        earliest = min(handle.when() for handle, _ in self._handles.values())
+        # ``cap_pending_delay(0)`` deliberately moves due work into the
+        # event loop's ready queue with ``call_soon``.  A second cap may run
+        # before that callback gets a turn.  Such an asyncio.Handle has no
+        # ``when()`` and already represents the minimum possible delay, so
+        # it is excluded from the shift computation rather than aborting
+        # the whole batch -- the other pending timers still need capping.
+        # Use the timer protocol rather than ``isinstance(TimerHandle)``:
+        # uvloop supplies its own compatible timer-handle implementation.
+        timed = [
+            (handle_id, handle, coro)
+            for handle_id, (handle, coro) in self._handles.items()
+            if callable(getattr(handle, "when", None))
+        ]
+        if not timed:
+            return 0.0
+        earliest = min(handle.when() for _, handle, _ in timed)
         shift_sec = earliest - now - max_delay_sec
         if shift_sec <= 0:
             return 0.0
 
-        items = list(self._handles.values())
-        self._handles.clear()
-        for handle, coro in items:
+        items = [
+            (handle, coro, self._handle_groups.get(handle_id))
+            for handle_id, handle, coro in timed
+        ]
+        for handle_id, _, _ in timed:
+            self._handles.pop(handle_id, None)
+            self._handle_groups.pop(handle_id, None)
+        for handle, coro, group_id in items:
             target = max(now, handle.when() - shift_sec)
             handle.cancel()
             handle_container = [None]
-            replacement = self._loop.call_at(
-                target, self._safe_callback, handle_container, coro
-            )
+            if target <= now:
+                # A timer advanced exactly to ``loop.time()`` can be stranded
+                # in some event-loop implementations until another timed wake
+                # occurs. Queue it as ready work explicitly; this also states
+                # the max_delay_sec=0 contract directly.
+                replacement = self._loop.call_soon(
+                    self._safe_callback, handle_container, coro
+                )
+            else:
+                replacement = self._loop.call_at(
+                    target, self._safe_callback, handle_container, coro
+                )
             handle_container[0] = replacement
-            self._track_handle_and_return_id(replacement, coro)
+            self._track_handle_and_return_id(replacement, coro, group_id=group_id)
+        return shift_sec
+
+    def pending_count_for_group(self, group_id: str) -> int:
+        """Count ``group_id`` timers still waiting to fire.
+
+        An entry is dropped when its timer fires or is cancelled, so a timer
+        whose coroutine is already running is not counted.
+        """
+        return sum(1 for group in self._handle_groups.values() if group == group_id)
+
+    def running_count_for_group(self, group_id: str) -> int:
+        """Count ``group_id`` coroutines that have started and not finished.
+
+        The counterpart of ``pending_count_for_group``: a grouped timer moves
+        from that count to this one when it fires. A task is removed in the
+        scheduler's first done callback, so by the time a group task observer
+        runs for it, the finished task is no longer counted.
+        """
+        return sum(1 for group in self._task_groups.values() if group == group_id)
+
+    def cap_pending_delay_for_group(self, group_id: str, max_delay_sec: float) -> float:
+        """Uniformly advance one logical group's pending replay timers.
+
+        Other groups are untouched. Relative ordering and spacing among the
+        selected group's timers are preserved exactly.
+        """
+        if max_delay_sec < 0:
+            raise ValueError("max_delay_sec must be non-negative")
+        selected = [
+            (handle_id, handle, coro)
+            for handle_id, (handle, coro) in self._handles.items()
+            if self._handle_groups.get(handle_id) == group_id
+        ]
+        if not selected:
+            return 0.0
+
+        now = self._loop.time()
+        # Exclude handles mid-transition (no ``when()``, see cap_pending_delay)
+        # from the shift computation rather than aborting the whole group.
+        timed = [
+            (handle_id, handle, coro)
+            for handle_id, handle, coro in selected
+            if callable(getattr(handle, "when", None))
+        ]
+        if not timed:
+            return 0.0
+        earliest = min(handle.when() for _, handle, _ in timed)
+        shift_sec = earliest - now - max_delay_sec
+        if shift_sec <= 0:
+            return 0.0
+
+        for handle_id, handle, coro in timed:
+            self._handles.pop(handle_id, None)
+            self._handle_groups.pop(handle_id, None)
+            target = max(now, handle.when() - shift_sec)
+            handle.cancel()
+            handle_container = [None]
+            if target <= now:
+                replacement = self._loop.call_soon(
+                    self._safe_callback, handle_container, coro
+                )
+            else:
+                replacement = self._loop.call_at(
+                    target, self._safe_callback, handle_container, coro
+                )
+            handle_container[0] = replacement
+            self._track_handle_and_return_id(replacement, coro, group_id=group_id)
         return shift_sec
 
     @property
