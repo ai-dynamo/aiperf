@@ -448,7 +448,8 @@ class SystemController(
         source = (
             "explicitly set"
             if dataset.end_conversation_on_truncation is not None
-            else f"default for {getattr(dataset, 'dataset', dataset.type)}"
+            else "default for "
+            f"{getattr(dataset, 'dataset', None) or getattr(dataset, 'format', None)}"
         )
         self.info(
             f"end_conversation_on_truncation enabled ({source}): a conversation "

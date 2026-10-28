@@ -1903,3 +1903,30 @@ class TestStickyCreditRouterEndedOnTruncation:
         )
 
         assert "corr-t" in router._sticky_sessions
+
+    async def test_handle_router_message_ended_without_sticky_entry_is_noop(
+        self, benchmark_run
+    ) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._register_worker("worker-A")
+        credit = make_credit(id=1, conv_id="s", turn=0, corr_id="corr-t", num_turns=3)
+
+        await router._handle_router_message(
+            "worker-A", CreditReturn(credit=credit, ended_on_truncation=True)
+        )
+
+        assert router._sticky_sessions == {}
+        assert router._workers["worker-A"].active_sessions == 0
+
+    async def test_release_sticky_for_early_end_owner_worker_gone_pops_entry(
+        self, benchmark_run
+    ) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._sticky_sessions["corr-t"] = _StickyEntry(
+            worker_id="worker-gone", root_key="corr-t"
+        )
+        credit = make_credit(id=1, conv_id="s", turn=0, corr_id="corr-t", num_turns=3)
+
+        router._release_sticky_for_early_end(credit)
+
+        assert "corr-t" not in router._sticky_sessions

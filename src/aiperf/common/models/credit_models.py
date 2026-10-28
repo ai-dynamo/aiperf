@@ -133,7 +133,6 @@ class BasePhaseStats(AIPerfBaseModel):
         default=False, description="Whether the credit phase was cancelled."
     )
 
-    # end_conversation_on_truncation fields
     sessions_ended_on_truncation: int = Field(
         default=0,
         ge=0,

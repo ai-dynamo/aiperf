@@ -406,6 +406,15 @@ class CustomDatasetLoaderMetadata(BaseModel):
             "coverage biases the result."
         ),
     )
+    end_conversation_on_truncation: bool = Field(
+        default=False,
+        description=(
+            "Default for the dataset's end_conversation_on_truncation option "
+            "(--end-conversation-on-truncation) when the user leaves it unset. "
+            "True for multi-turn benchmark suites whose follow-up prompts assume "
+            "a complete prior answer (SPEED-Bench, spec_al_mtbench)."
+        ),
+    )
 
 
 class PublicDatasetLoaderMetadata(BaseModel):

@@ -1090,6 +1090,11 @@ class PhaseRunner(TaskManagerMixin):
                 f"sessions: completed={stats.final_completed_sessions:,}, "
                 f"cancelled={stats.final_cancelled_sessions:,}"
             )
+        if stats.sessions_ended_on_truncation:
+            parts.append(
+                f"ended_on_truncation={stats.sessions_ended_on_truncation:,} "
+                f"(skipped_turns={stats.turns_skipped_on_truncation:,})"
+            )
         elapsed = stats.requests_elapsed_time
         parts.append(f"elapsed={elapsed:.2f}s")
         if stats.grace_period_timeout_triggered:
@@ -1350,13 +1355,6 @@ class PhaseRunner(TaskManagerMixin):
                 )
             stats = self._create_final_stats()
             self.notice(self._format_phase_complete(stats))
-            if stats.sessions_ended_on_truncation:
-                self.notice(
-                    f"{stats.sessions_ended_on_truncation:,} conversations ended "
-                    f"early after a turn was truncated at the output-token cap; "
-                    f"{stats.turns_skipped_on_truncation:,} remaining turns were "
-                    f"skipped (end_conversation_on_truncation)"
-                )
             await self._phase_publisher.publish_progress(stats)
             await self._publish_phase_complete_with_server_metrics_gate(stats)
 

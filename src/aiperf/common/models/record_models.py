@@ -531,8 +531,9 @@ class ProfileResults(AIPerfBaseModel):
     conversations_ended_on_truncation: int | None = Field(
         default=None,
         ge=0,
-        description="Conversations ended early because a turn was truncated by "
-        "the output-token cap. None when end_conversation_on_truncation is off.",
+        description="Conversation sessions ended early because a turn was truncated "
+        "by the output-token cap; a conversation replayed to fill --request-count "
+        "counts once per replay. None when end_conversation_on_truncation is off.",
     )
     turns_skipped_on_truncation: int | None = Field(
         default=None,

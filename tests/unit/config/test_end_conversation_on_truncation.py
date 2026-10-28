@@ -54,6 +54,11 @@ def _benchmark_config(dataset: dict[str, Any], **overrides: Any) -> BenchmarkCon
 _SPEED_BENCH = {"type": "public", "dataset": "speed_bench_coding"}
 _SHAREGPT = {"type": "public", "dataset": "sharegpt"}
 _SYNTHETIC = {"type": "synthetic", "entries": 4, "prompts": {"isl": 32}}
+_SPEED_BENCH_FILE = {
+    "type": "file",
+    "path": "sb.jsonl",
+    "format": "speed_bench_qualitative",
+}
 
 
 class TestCliRouting:
@@ -112,6 +117,10 @@ class TestEnabledHelper:
             param({"type": "public", "dataset": "spec_al_mtbench"}, True, id="mtbench-default-on"),
             param(_SHAREGPT, False, id="other-public-default-off"),
             param(_SYNTHETIC, False, id="synthetic-default-off"),
+            param(_SPEED_BENCH_FILE, True, id="custom-speed-bench-default-on"),
+            param({**_SPEED_BENCH_FILE, "format": "multi_turn"}, False, id="other-custom-format-default-off"),
+            param({"type": "file", "path": "sb.jsonl"}, False, id="auto-detected-format-default-off"),
+            param({**_SPEED_BENCH_FILE, "end_conversation_on_truncation": False}, False, id="custom-explicit-off-wins"),
             param({**_SPEED_BENCH, "end_conversation_on_truncation": False}, False, id="explicit-off-wins"),
             param({**_SYNTHETIC, "end_conversation_on_truncation": True}, True, id="explicit-on-wins"),
         ],
@@ -161,6 +170,22 @@ class TestSystemControllerLogging:
         controller = self._log(_SPEED_BENCH, {})
         assert "default for speed_bench_coding" in controller.info.call_args.args[0]
         controller.warning.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "dataset,expected",
+        [
+            param({**_SYNTHETIC, "prompts": {"isl": 32, "osl": 100}}, True, id="option-off-warns"),
+            param({**_SYNTHETIC, "prompts": {"isl": 32, "osl": 100}, "end_conversation_on_truncation": True}, False, id="option-on-suppressed"),
+        ],
+    )  # fmt: skip
+    def test_should_warn_osl_without_ignore_eos_respects_option(
+        self, dataset: dict[str, Any], expected: bool
+    ) -> None:
+        controller = MagicMock()
+        controller.run.cfg = _benchmark_config(dataset)
+        assert (
+            SystemController._should_warn_osl_without_ignore_eos(controller) is expected
+        )
 
     def test_log_disabled_is_silent(self) -> None:
         controller = self._log(_SHAREGPT, {"ignore_eos": True})

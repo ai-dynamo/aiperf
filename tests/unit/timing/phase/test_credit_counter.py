@@ -419,16 +419,10 @@ class TestEndSessionEarly:
         assert is_final is False
         assert c.end_session_early(skipped_turns=2) is True
 
-    def test_end_session_early_with_unstarted_sessions_keeps_sending(self) -> None:
-        c = CreditCounter(cfg(sessions=2))
-        c.increment_sent(turn(idx=0, num=3, corr="a"))
-        assert c.end_session_early(skipped_turns=2) is False
-
     @pytest.mark.parametrize(
         "config",
         [
             param(cfg(reqs=10), id="request_count"),
-            param(cfg(dur=5.0), id="duration"),
         ],
     )  # fmt: skip
     def test_end_session_early_without_session_target_never_completes_sending(

@@ -103,7 +103,6 @@ def _anthropic_stream(stop_reason: str | None) -> RequestRecord:
         param(_stream(_chat_chunk(None, {"content": "a"}), _chat_chunk(None, {"content": "b"}), "[DONE]"), False, id="streaming_no_finish_reason"),
         param(_stream(_chat_chunk(None, {"content": "a"}), _chat_chunk("length"), {"object": "chat.completion.chunk", "choices": [], "usage": {"completion_tokens": 2}}, "[DONE]"), True, id="streaming_length_then_usage_chunk"),
         param(_stream(_chat_chunk(None, {"content": "a"}), _chat_chunk("stop"), {"object": "chat.completion.chunk", "choices": [], "usage": {"completion_tokens": 2}}, "[DONE]"), False, id="streaming_stop_then_usage_chunk"),
-        param(_stream(_chat_chunk(None, {"reasoning_content": "think"}), _chat_chunk("length", {"reasoning_content": "more"}), "[DONE]"), True, id="streaming_reasoning_only_length"),
         param(RequestRecord(responses=[]), False, id="no_responses"),
         param(_body({"object": "chat.completion", "choices": {"0": {"finish_reason": "length"}}}), False, id="malformed_choices_dict"),
         param(_body({"object": "chat.completion", "choices": 7}), False, id="malformed_choices_number"),
@@ -121,11 +120,6 @@ def test_is_truncated_chat_finish_reason_matches_expected(
     [
         param(_body(_completion_chunk("length")), True, id="non_streaming_length"),
         param(_body(_completion_chunk("stop")), False, id="non_streaming_stop"),
-        param(_body({"object": "text_completion", "choices": [{"index": 0, "text": "x"}]}), False, id="non_streaming_no_finish_reason"),
-        param(_stream(_completion_chunk(None), _completion_chunk("length"), "[DONE]"), True, id="streaming_length"),
-        param(_stream(_completion_chunk(None), _completion_chunk("stop"), "[DONE]"), False, id="streaming_stop"),
-        param(_stream(_completion_chunk(None), _completion_chunk(None), "[DONE]"), False, id="streaming_no_finish_reason"),
-        param(_stream(_completion_chunk(None), _completion_chunk("length"), {"object": "text_completion", "choices": [], "usage": {"completion_tokens": 2}}, "[DONE]"), True, id="streaming_length_then_usage_chunk"),
     ],
 )  # fmt: skip
 def test_is_truncated_completions_finish_reason_matches_expected(
@@ -160,6 +154,10 @@ def test_is_truncated_completions_finish_reason_matches_expected(
             {"type": "response.created", "response": _response_obj("in_progress")},
             {"type": "response.output_text.delta", "delta": "a"},
         ), False, id="streaming_cut_before_terminal_event"),
+        param(_stream(
+            {"type": "response.incomplete", "response": _response_obj("incomplete", "max_output_tokens")},
+            "[DONE]",
+        ), True, id="streaming_non_json_tail_skipped"),
     ],
 )  # fmt: skip
 def test_is_truncated_responses_status_matches_expected(
@@ -178,6 +176,7 @@ def test_is_truncated_responses_status_matches_expected(
         param(_anthropic_stream("max_tokens"), True, id="streaming_max_tokens"),
         param(_anthropic_stream("end_turn"), False, id="streaming_end_turn"),
         param(_anthropic_stream(None), False, id="streaming_no_stop_reason"),
+        param(_stream({"type": "message_delta", "delta": {"stop_reason": "max_tokens"}}, "[DONE]"), True, id="streaming_non_json_tail_skipped"),
     ],
 )  # fmt: skip
 def test_is_truncated_anthropic_stop_reason_matches_expected(

@@ -700,6 +700,7 @@ custom_dataset_loader:
       11 semantic domains for measuring speculative decoding acceptance rates.
     metadata:
       full_pass_by_default: true
+      end_conversation_on_truncation: true
 
 
   speed_bench_throughput_1k:

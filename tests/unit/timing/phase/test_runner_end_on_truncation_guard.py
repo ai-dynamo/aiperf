@@ -8,6 +8,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from pytest import param
 
+from aiperf.common.enums import CreditPhase
+from aiperf.common.models import CreditPhaseStats
 from aiperf.plugin.enums import TimingMode
 from aiperf.timing.phase.runner import PhaseRunner
 
@@ -49,3 +51,30 @@ def test_construct_branch_orchestrator_non_dag_option_on_is_noop() -> None:
     runner = _runner(enabled=True, is_dag=False, timing_mode=TimingMode.REQUEST_RATE)
     PhaseRunner._maybe_construct_branch_orchestrator(runner, MagicMock())
     assert runner._branch_orchestrator is None
+
+
+@pytest.mark.parametrize(
+    "ended,skipped,expected_fragment",
+    [
+        param(3, 5, "ended_on_truncation=3 (skipped_turns=5)", id="ended"),
+        param(0, 0, None, id="none-ended"),
+    ],
+)  # fmt: skip
+def test_format_phase_complete_reports_truncation_counts(
+    ended: int, skipped: int, expected_fragment: str | None
+) -> None:
+    stats = CreditPhaseStats(
+        phase=CreditPhase.PROFILING,
+        start_ns=1,
+        requests_end_ns=2,
+        final_requests_completed=4,
+        final_requests_cancelled=0,
+        final_request_errors=0,
+        sessions_ended_on_truncation=ended,
+        turns_skipped_on_truncation=skipped,
+    )
+    message = PhaseRunner._format_phase_complete(MagicMock(), stats)
+    if expected_fragment is None:
+        assert "ended_on_truncation" not in message
+    else:
+        assert expected_fragment in message
