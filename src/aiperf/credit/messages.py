@@ -147,6 +147,8 @@ class CreditReturn(
             between independently anchored wall clocks.
         clock_offset_ns: Worker-to-controller wall-clock correction sampled at
             the EOF event. Finite replay only.
+        clock_offset_spread_ns: Range of worker clock-offset samples at EOF;
+            bounds correction uncertainty in finite replay.
     """
 
     credit: Credit

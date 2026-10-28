@@ -101,6 +101,10 @@ aiperf profile \
     --export-level raw
 ```
 
+`--dataset-sampling-strategy sequential` admits roots in dataset order;
+`shuffle` admits them in the sampler's shuffled order. `random` uses a seeded
+random order without replacement so every eligible root still runs once.
+
 Finite mode uses the first HTTP request in each root as its timeline origin.
 Subsequent requests wait for their root-relative timestamp floor and any
 recorded predecessor transport events. The Weka loader currently infers

@@ -145,6 +145,18 @@ def _credit_task_key(credit: Credit) -> tuple[str, int | None, int]:
     return (credit.phase, credit.phase_index, credit.id)
 
 
+def _clear_transport_eof_on_error(
+    record: RequestRecord, context: CreditContext
+) -> None:
+    if record.error is None:
+        return
+    record.response_body_eof_perf_ns = None
+    context.transport_eof_wall_ns = None
+    context.transport_eof_perf_ns = None
+    context.transport_eof_correction_ns = None
+    context.transport_eof_clock_offset_spread_ns = None
+
+
 def _error_message(error: str | ErrorDetails | None) -> str | None:
     """Extract the human error text for overflow substring matching.
 
@@ -1138,19 +1150,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _measure_baseline_rtt(self, probe_count: int | None = None) -> None:
         """Probe credit-channel RTT under a hard total time budget.
 
-        Launched fire-and-forget from the startup path, so it runs concurrently
-        with the dispatchability handshake and its pings can end up queued
-        behind real credits, slightly inflating the baseline. The ROUTER learns
-        this DEALER's identity from the ping itself, so no prior registration
-        is needed.
+        In steady-state mode, the startup probe runs in the background and may
+        overlap with dispatchability. In finite mode, startup awaits the probe
+        before readiness and requires a calibrated clock. The ROUTER learns
+        this DEALER's identity from the ping, so no prior registration is needed.
 
         The budget bounds the whole sequence, so a router that never echoes
         cannot outlive the service registration window. Within the budget the
         probes retry on a short per-probe timeout, because on a real cluster the
         credit ROUTER is routinely not echoing yet when the worker container
         starts; a single long probe would burn the budget before it is. On
-        expiry the worker proceeds with whatever RTTs already landed (possibly
-        none), which costs a diagnostic, not correctness.
+        expiry steady-state mode continues; finite mode checks calibration and
+        fails readiness if it is unavailable.
 
         Serialized against itself: the periodic re-measurement can fire while a
         startup probe is still burning its budget, and two concurrent rounds
@@ -1178,12 +1189,17 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     timeout=budget,
                 )
             except TimeoutError:
-                self.warning(
-                    f"Clock-offset RTT probe exceeded its "
-                    f"{Environment.WORKER.CLOCK_PROBE_BUDGET}s budget; announcing "
-                    "readiness without a baseline RTT (offset tracking still runs "
-                    "off credit receipts)"
-                )
+                if self._finite_replay_enabled:
+                    self.warning(
+                        "Finite replay clock-offset RTT probe exceeded its "
+                        f"{budget}s budget; calibration is required before readiness"
+                    )
+                else:
+                    self.warning(
+                        f"Clock-offset RTT probe exceeded its {budget}s budget; "
+                        "announcing readiness without a baseline RTT "
+                        "(offset tracking still runs off credit receipts)"
+                    )
 
     @background_task(
         immediate=False,
@@ -1795,6 +1811,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 await start_task
             except Exception as exc:
                 context.error = f"Finite transport-start notification failed: {exc}"
+        successful_eof = context.error is None and not context.cancelled
         credit_return = CreditReturn(
             credit=credit,
             cancelled=context.cancelled,
@@ -1805,24 +1822,16 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             output_sequence_length=context.output_sequence_length,
             worker_id=self.service_id,
             transport_eof_wall_ns=(
-                context.transport_eof_wall_ns
-                if context.error is None and not context.cancelled
-                else None
+                context.transport_eof_wall_ns if successful_eof else None
             ),
             transport_eof_perf_ns=(
-                context.transport_eof_perf_ns
-                if context.error is None and not context.cancelled
-                else None
+                context.transport_eof_perf_ns if successful_eof else None
             ),
             clock_offset_ns=(
-                context.transport_eof_correction_ns
-                if context.error is None and not context.cancelled
-                else None
+                context.transport_eof_correction_ns if successful_eof else None
             ),
             clock_offset_spread_ns=(
-                context.transport_eof_clock_offset_spread_ns
-                if context.error is None and not context.cancelled
-                else None
+                context.transport_eof_clock_offset_spread_ns if successful_eof else None
             ),
         )
         await self.credit_return_push_client.send(credit_return)
@@ -1952,12 +1961,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             ),
             transport_eof_callback=self._make_transport_eof_callback(credit_context),
         )
-        if record.error is not None:
-            record.response_body_eof_perf_ns = None
-            credit_context.transport_eof_wall_ns = None
-            credit_context.transport_eof_perf_ns = None
-            credit_context.transport_eof_correction_ns = None
-            credit_context.transport_eof_clock_offset_spread_ns = None
+        _clear_transport_eof_on_error(record, credit_context)
         self._populate_response_metrics(credit_context, record)
         await self._send_inference_result_message(record)
         credit_context.record_emitted = True
@@ -2272,12 +2276,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             ),
             transport_eof_callback=self._make_transport_eof_callback(credit_context),
         )
-        if record.error is not None:
-            record.response_body_eof_perf_ns = None
-            credit_context.transport_eof_wall_ns = None
-            credit_context.transport_eof_perf_ns = None
-            credit_context.transport_eof_correction_ns = None
-            credit_context.transport_eof_clock_offset_spread_ns = None
+        _clear_transport_eof_on_error(record, credit_context)
         await self._send_inference_result_message(record)
         credit_context.record_emitted = True
         if record.error is not None:

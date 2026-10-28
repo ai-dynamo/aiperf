@@ -1427,14 +1427,12 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         return rebuilt
 
     async def _execute_profiling(self) -> None:
-        """Resume each trajectory at ``k_i + 1`` to seed the steady state.
+        """Start finite roots or resume steady-state trajectories at ``k_i + 1``.
 
-        All trajectories are dispatched concurrently so the full concurrency
-        target is reached as fast as slot limits allow, rather than
-        serializing over N credit round-trips. Subsequent turns and
-        recycle-pool sessions are dispatched from handle_credit_return.
+        Initial credits are dispatched concurrently up to the lane limit.
+        Subsequent turns and newly admitted roots are dispatched from
+        handle_credit_return.
         """
-        phase_t0_offset_ms = self._profiling_phase_t0_offset_ms()
         if self.config.finite_replay:
             lane_count = min(self.config.concurrency or 0, len(self._finite_roots))
             if lane_count == 0:
@@ -1447,6 +1445,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             )
             return
 
+        phase_t0_offset_ms = self._profiling_phase_t0_offset_ms()
         spread_s = self._profiling_spread_seconds()
         mode = "burst" if self._burst_phase_starts else "spread"
         self.info(
