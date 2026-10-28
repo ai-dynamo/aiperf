@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -20,15 +20,22 @@ from aiperf.metrics._column_store_handlers import (
 from aiperf.metrics._column_store_handlers import (
     make_string_handler as _make_string_handler,
 )
-from aiperf.metrics.list_metric_aggregation import TDigestListMetricAggregator
 from aiperf.metrics.ragged_series import RaggedSeries
-
-_logger = AIPerfLogger(__name__)
 
 # Backends both implement: ``add_for_record(idx, values)``,
 # ``to_result(tag, header, unit)`` (only on TDigest) or per-record accessors
 # (only on RaggedSeries), plus ``SUPPORTS_PER_RECORD_REPLAY`` class flag.
-ListMetricBackendT = RaggedSeries | TDigestListMetricAggregator
+#
+# ``TDigestListMetricAggregator`` pulls in the optional ``crick`` dependency,
+# so both it and the union alias stay behind ``TYPE_CHECKING``. Every use of
+# ``ListMetricBackendT`` is an annotation, and this module has
+# ``from __future__ import annotations``, so none of them evaluate at runtime.
+if TYPE_CHECKING:
+    from aiperf.metrics.list_metric_aggregation import TDigestListMetricAggregator
+
+    ListMetricBackendT = RaggedSeries | TDigestListMetricAggregator
+
+_logger = AIPerfLogger(__name__)
 
 
 def _resolve_list_backend_class() -> type[ListMetricBackendT]:
@@ -43,6 +50,23 @@ def _resolve_list_backend_class() -> type[ListMetricBackendT]:
     from aiperf.common.environment import Environment
 
     if Environment.METRICS.LIST_BACKEND == "tdigest":
+        # crick is optional, so import it only when this backend is selected.
+        try:
+            from aiperf.metrics.list_metric_aggregation import (
+                TDigestListMetricAggregator,
+            )
+        except ModuleNotFoundError as exc:
+            # Only a genuinely absent crick gets the friendly message. A crick
+            # that is installed but fails to import is a different problem, and
+            # telling the user to install it would send them the wrong way.
+            if exc.name != "crick":
+                raise
+            raise ImportError(
+                "AIPERF_METRICS_LIST_BACKEND='tdigest' needs the optional "
+                "'crick' package, which is not installed. Install it with "
+                '`pip install "aiperf[tdigest]"`, or leave the default '
+                "'ragged' backend in place."
+            ) from exc
         return TDigestListMetricAggregator
     return RaggedSeries
 
