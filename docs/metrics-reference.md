@@ -20,9 +20,12 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Time to Second Token (TTST)](#time-to-second-token-ttst)
     - [Time to First Output Token (TTFO)](#time-to-first-output-token-ttfo)
     - [Decode Duration](#decode-duration)
+    - [Full Decode Duration](#full-decode-duration)
     - [Inter Token Latency (ITL)](#inter-token-latency-itl)
+    - [Full-Response Inter Token Latency](#full-response-inter-token-latency)
     - [Inter Chunk Latency (ICL)](#inter-chunk-latency-icl)
     - [Output Token Throughput Per User](#output-token-throughput-per-user)
+    - [Full-Response Output Token Throughput Per User](#full-response-output-token-throughput-per-user)
     - [Prefill Throughput Per User](#prefill-throughput-per-user)
   - [Token Based Metrics](#token-based-metrics)
     - [Output Token Count](#output-token-count)
@@ -55,6 +58,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Overall Draft Acceptance Rate](#overall-draft-acceptance-rate)
     - [Accepted per Verified](#accepted-per-verified)
     - [Spec Decode Steps](#spec-decode-steps)
+    - [Zero-Step Requests](#zero-step-requests)
     - [Accepted / Draft Token Counts](#accepted--draft-token-counts)
     - [Pooled Acceptance Histogram](#pooled-acceptance-histogram)
   - [Usage Field Metrics](#usage-field-metrics)
@@ -303,6 +307,28 @@ decode_duration_ms = decode_duration_ns / 1e6
 
 ---
 
+### Full Decode Duration
+
+**Type:** [Record Metric](#record-metrics)
+
+Measures the client-observed wall-clock interval from the first non-empty parsed
+content response until the HTTP response is fully consumed. Unlike Decode
+Duration, it includes time after the last parsed content chunk, such as generation
+that a structured-output parser suppresses before the terminal usage response.
+
+**Formula:**
+```python
+full_decode_duration_ns = request.end_perf_ns - first_content_response.perf_ns
+```
+
+**Notes:**
+- This is a client-observed full-response duration, not server kernel execution time.
+- It includes terminal serialization, transport, and client-processing overhead.
+- It requires an explicit request-end timestamp and at least one non-empty content response.
+- It cannot be reconstructed from existing profile exports. The exported `request_end_ns` is stamped at the last streamed response chunk, whereas this metric anchors on the request's own completion timestamp, so `(request_end_ns - request_start_ns) - time_to_first_token_ns` omits exactly the post-final-chunk tail that Full Decode Duration is meant to capture.
+
+---
+
 ### Inter Token Latency (ITL)
 
 **Type:** [Record Metric](#record-metrics)
@@ -330,6 +356,37 @@ inter_token_latency_ms = inter_token_latency_ns / 1e6
 - Compare runs at equivalent output lengths, or inspect Decode Duration and Output Sequence Length alongside ITL.
 - Streaming chunks can contain multiple tokens. ITL uses token count, while ICL uses chunk arrival timestamps.
 - Result is in seconds when used for throughput calculations (Output Token Throughput Per User).
+- Assumes the output token count describes the parsed-content interval. If a server reports tokens that its response parser suppresses, use Full-Response Inter Token Latency.
+
+---
+
+### Full-Response Inter Token Latency
+
+**Type:** [Record Metric](#record-metrics)
+
+Measures the average token interval over the full client-observed decode window,
+from the first non-empty parsed content response through explicit HTTP request
+completion.
+
+**Formula:**
+```python
+# Default: assume one token in the first content chunk.
+full_response_inter_token_latency_ns = (
+    full_decode_duration_ns / (output_sequence_length - 1)
+)
+
+# With --per-chunk-usage and a valid server-reported first-content-chunk count:
+full_response_inter_token_latency_ns = (
+    full_decode_duration_ns / (output_sequence_length - tokens_in_first_content_chunk)
+)
+```
+
+**Notes:**
+- Requires an output sequence length of at least 2 tokens and a valid Full Decode Duration.
+- Uses the same conditional divisor as Inter Token Latency while extending the interval through HTTP response completion: `output_sequence_length - tokens_in_first_content_chunk` when `--per-chunk-usage` reports a positive first-content-chunk count smaller than OSL, otherwise `output_sequence_length - 1`.
+- With server-reported token counting, it keeps the duration and token count aligned when a response parser suppresses generated tokens.
+- This remains a client-observed average, not a distribution of raw engine token-to-token timestamps.
+- Streaming chunks can contain multiple tokens. A response delivered entirely in one content chunk may not expose a meaningful post-first-content decode interval.
 
 ---
 
@@ -370,6 +427,31 @@ output_token_throughput_per_user = 1.0 / inter_token_latency_seconds
 - Computes the inverse of ITL to show tokens per second from an individual user's perspective.
 - Differs from Output Token Throughput (aggregate across all concurrent requests) by focusing on single-request experience.
 - Useful for understanding the user experience independent of concurrency effects.
+- Assumes the output token count describes the content-delivery interval. If a server reports tokens that its response parser suppresses, compare it with the full-response metric pair.
+
+---
+
+### Full-Response Output Token Throughput Per User
+
+**Type:** [Record Metric](#record-metrics)
+
+Measures a per-request output token rate over the full client-observed decode
+window, including time after the final parsed content response.
+
+**Formula:**
+```python
+full_response_output_token_throughput_per_user = (
+    1.0 / full_response_inter_token_latency_seconds
+)
+```
+
+**Notes:**
+- Computes the inverse of Full-Response Inter Token Latency, mirroring the relationship between Output Token Throughput Per User and Inter Token Latency.
+- Excludes TTFT but measures through full HTTP response completion.
+- With server-reported token counting, this approximates raw engine decode TPS when the response parser suppresses generated tokens.
+- It remains a client-observed approximation because AIPerf does not have raw engine first/last-token timestamps.
+- Aggregate latency percentiles and throughput percentiles are not interchangeable: `1 / p75(latency)` describes the slow tail, while `p75(throughput)` describes the fast side of the reciprocal distribution.
+- Compare the full-response metric pair with the existing metric pair to detect a gap between parsed content delivery and full response completion.
 
 ---
 
@@ -690,7 +772,7 @@ video_peak_memory = response.data.peak_memory_mb
 Per-request input audio duration in seconds. Hidden from the console summary; available in JSON / CSV record exports for characterizing dataset shape and verifying RTFx calculations.
 
 **Notes:**
-- Only computed when the request carries `audio_duration_seconds` (e.g., ASR datasets such as LibriSpeech).
+- Only computed when the request carries `audio_duration_seconds` (e.g., ASR datasets such as LibriSpeech, or a `--custom-dataset-type single_turn` entry with an explicit `audio_duration_seconds` field).
 - Aggregate stats (avg, p50, p99) are computed automatically.
 
 ### Inverse Real-Time Factor (RTFx)
@@ -757,7 +839,9 @@ total_reasoning_tokens = sum(r.reasoning_token_count for r in records if r.valid
 > each record. They are fully engine-agnostic: any engine whose adapter fills the
 > record lights them up unchanged, and none of them branch on the engine. When
 > spec decode is off (or a request had no verify steps) the record is absent and
-> every metric here drops out cleanly -- nothing is shown or exported.
+> every metric here drops out cleanly -- nothing is shown or exported. The one
+> exception is [Zero-Step Requests](#zero-step-requests), which counts the
+> requests that reported stats but never ran a verify step.
 
 <!-- -->
 
@@ -849,6 +933,24 @@ spec_decode_accepted_per_verified = (num_accepted_draft_tokens + num_spec_steps)
 **Type:** [Record Metric](#record-metrics) · **Unit:** count
 
 Per-request number of speculative verification steps (`num_spec_steps`). Equals the sum of the request's acceptance-histogram counts. The run-level `total_spec_decode_steps` is its sum across requests.
+
+---
+
+### Zero-Step Requests
+
+**Type:** [Aggregate Metric](#aggregate-metrics) · **Unit:** requests
+
+The number of requests whose engine reported spec-decode stats but that ran no verify step (`num_spec_steps == 0`), e.g. `max_tokens: 1`, EOS as the first token, or an NGram drafter that never matched. These requests have no acceptance record, so none of the per-request metrics above include them; this count says how many were excluded.
+
+**Formula:**
+```python
+spec_decode_zero_step_requests = sum(1 for r in records if r.spec_decode_zero_step)
+```
+
+**Notes:**
+- Absent when no request was zero-step. A Spec Decode section showing only this row means speculation never fired, as opposed to spec decode being off, which shows no section at all.
+- Only vLLM reports zero-step requests; TensorRT-LLM omits the payload for them, so they are indistinguishable from spec decode being off.
+- Aggregate only (`NO_INDIVIDUAL_RECORDS`): not written to the per-record JSONL.
 
 ---
 
@@ -1714,7 +1816,8 @@ total_error_isl = sum(r.error_isl for r in records if not r.valid)
 
 **Type:** [Record Metric](#record-metrics)
 
-Measures the total end-to-end time from sending a request until receiving the final response. For streaming requests with multiple responses, this measures until the last response is received. This is the complete time experienced by the client for a single request.
+Measures the time from request start until the final non-empty parsed content
+response. Usage-only and terminal responses are excluded.
 
 **Formula:**
 ```python
@@ -1722,8 +1825,9 @@ request_latency_ns = request.content_responses[-1].perf_ns - request.start_perf_
 ```
 
 **Notes:**
-- Includes all components: network time, queuing, prompt processing, token generation, and response transmission.
-- For streaming requests, measures from request start to the final chunk received.
+- Includes network time, queuing, prompt processing, and content delivery through the final parsed content chunk.
+- It can be shorter than the HTTP lifecycle when a response parser suppresses generated content or terminal usage arrives later.
+- Use `http_req_duration` for the complete HTTP exchange and Full Decode Duration for the post-TTFT interval through request completion.
 
 ---
 
@@ -2154,7 +2258,9 @@ http_req_chunks_received = trace.response_chunks_count
 > [!NOTE]
 > Each vendor's metrics render in their own console section — `GPU Power Efficiency (NVIDIA)` (`console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_NVIDIA`) and `GPU Power Efficiency (AMD)` (`MetricConsoleGroup.GPU_POWER_EFFICIENCY_AMD`) — separate from the main metrics table. A section is omitted entirely when no GPU of that vendor reported.
 
-**Energy source.** Per-vendor total GPU energy is taken from the vendor's energy counter delta when available (`source = dcgm_counter` for NVIDIA; `source = power_integration` fallback for amdsmi when only the power gauge is exposed), and the time-averaged fleet power is derived from it as `total_gpu_energy / profiling_duration_s`. If neither signal is present the family is skipped for that vendor.
+**Energy source.** Per-vendor total GPU energy is taken from that vendor's energy counter delta when available (`source = dcgm_counter`), and the time-averaged fleet power is derived from it as `total_gpu_energy / profiling_duration_s`. When only the power gauge is exposed, energy is integrated from it instead (`source = power_integration`, energy = fleet power * duration). If neither signal is present the family is skipped for that vendor.
+
+The `power_integration` fallback is vendor-agnostic: `EnergyEfficiencyAnalyzer._resolve_energy` selects on whether the energy counter reported, not on which vendor asked. It therefore covers AMD GPUs exposing only the power gauge and NVIDIA GPUs without the NVML total-energy counter alike, so a pre-Volta card still reports power efficiency metrics, integrated from power rather than counted, provided no GPU on that platform reported the counter. The choice is fleet-wide, not per GPU: in a mixed-generation fleet one reporting GPU sends the whole platform down the counter branch, and the GPUs without a counter then contribute power but no energy, so `total_gpu_energy` is short by their share while still labelled `dcgm_counter`.
 
 The family is skipped entirely when GPU telemetry is not collected. Each tag is independently omitted when its underlying signal is unavailable (e.g. `nvidia_energy_per_user` only appears for concurrency runs; `nvidia_goodput_per_watt` only when goodput SLOs are configured). NVIDIA tags: `nvidia_energy_delay_product`, `nvidia_performance_per_watt`, `nvidia_output_tps_per_watt`, `nvidia_goodput_per_watt`, `nvidia_average_gpu_power`, `nvidia_total_gpu_energy`, `nvidia_total_gpu_power`, `nvidia_energy_per_total_token`, `nvidia_energy_per_output_token`, `nvidia_energy_per_request`, `nvidia_output_tokens_per_joule`, `nvidia_energy_per_user`. AMD tags follow the same pattern with the `amd_` prefix.
 

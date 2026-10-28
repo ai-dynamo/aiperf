@@ -115,16 +115,20 @@ AIPerfJob recovery callbacks also pin the parent resource version and accept
 JobSet state only when its controller owner API version, kind, name, and UID
 match the callback's immutable parent UID. Timeout, startup-failure, and result
 salvage cleanup re-read that ownership and delete with the JobSet UID as a
-precondition. A stable startup-blocker deadline first atomically adds
-`aiperf.nvidia.com/startup-failure-claimed` with JSON Patch tests for the
-parent UID, resource version, spec cancellation state, phase, exact
-`status.startupIssue`, and annotation map. The annotation-map test makes this
-failure-cleanup claim mutually exclusive with the durable completion claim;
-only the winner may enter JobSet deletion. A matching persisted failure claim
-resumes cleanup after an operator restart. Pod watches and stale-heartbeat
-recovery only persist critical startup diagnosis; the cached-state deadline is
-the sole path that may claim, delete, and terminalize that blocker. JobSet
-failure events use the same ownership fence before a direct status patch.
+precondition. A stable startup-blocker deadline first re-reads the live parent
+and requires a matching UID, a non-terminal phase, no spec or in-process
+cancellation, no completion claim, no foreign failure claim, and a
+`status.startupIssue` fingerprint matching the cached blocker. It then
+atomically adds `aiperf.nvidia.com/startup-failure-claimed` with JSON Patch
+tests for the parent UID, the resource version of that live read, and phase.
+The resource-version test fences every other write, including the durable
+completion claim, so the failure-cleanup claim and completion claim are
+mutually exclusive; only the winner may enter JobSet deletion. A matching
+persisted failure claim resumes cleanup after an operator restart. Pod watches
+and stale-heartbeat recovery only persist critical startup diagnosis; the
+cached-state deadline is the sole path that may claim, delete, and terminalize
+that blocker. JobSet failure events use the same ownership fence before a
+direct status patch.
 Event status changes are rebased onto the fenced live status so every condition
 type not demonstrably changed by the event survives concurrent controller
 writes. Pod events resolve the full Pod to batch Job to JobSet to AIPerfJob
@@ -943,7 +947,7 @@ The kopf operator registers sweep-lifecycle handlers in `src/aiperf/operator/mai
 - `@kopf.on.field AIPerfSweep field=status.aggregation.phase new=Complete` plus `@kopf.on.resume` — triggers `handlers/sweep/_aggregate_fetch.fetch_sweep_aggregate_to_disk` to pull the cross-variation aggregate off the sweep-controller's `emptyDir` results-sidecar before the JobSet is reaped, and resumes an interrupted harvest after an operator restart. The fetch reports `(downloaded, listed)` counts; a partial harvest (`downloaded < listed`) or a missing/unparsable `aggregate.json` raises `kopf.TemporaryError` so the JobSet — and with it the only other copy of the artifacts — stays alive for re-harvest. During commit, the operator materializes every child `sweep.json` backlink on its PVC from the canonical `children.json` manifest before status publication. Delayed callbacks carry the parent CR's immutable UID, verify the live parent and exact JobSet owner API version/kind/name/UID with `controller: true`, and publish status with a JSON Patch UID test before advancing `latest.txt` or the runs index. Only a full harvest with a parseable `aggregate.json` and durable child lineage on the PVC publishes the operator-backed `aggregateRef`, flips `resultsAvailable` to true, and deletes that exact JobSet with its resource UID as a delete precondition. A same-name replacement makes the old callback a no-op; transient reads and status-validation failures against the current owner retry.
 - `@kopf.on.delete AIPerfSweep` — cooperatively cancels only AIPerfJobs whose exact owner kind/name/UID matches the deleting sweep; sweep labels narrow discovery but never establish ownership. Kubernetes owner-reference GC tears down the sweep-controller JobSet and RBAC.
 - `@kopf.timer` `cleanup_old_sweeps` — TTL reaper for terminal `AIPerfSweep`s, evaluated at the operator monitor cadence rather than the daily result-retention cadence. A completed aggregate is not eligible until the operator-backed result reference is published, so even `ttlSecondsAfterFinished: 0` cannot delete the only `emptyDir` copy during harvest. Parent deletion uses the timer body's immutable UID as a Kubernetes delete precondition, so a stale timer cannot reap a same-name replacement.
-- `@kopf.on.field AIPerfJob field=status.phase` (handler in `handlers/sweep/child_rollup.py`) — this one is on **child AIPerfJobs**, not the AIPerfSweep CRD: for AIPerfJob children whose `ownerReferences` include an `AIPerfSweep`, it recomputes the parent's `runStates`/`currentChildRef`/`lastChildEvent`. The rollup step is a no-op for a standalone AIPerfJob, but the same registration always also mirrors the new phase into the runs index (`handlers/lifecycle.record_phase_transition`).
+- `@kopf.on.field AIPerfJob field=status.phase` (handler in `handlers/sweep/child_rollup.py`) — this one is on **child AIPerfJobs**, not the AIPerfSweep CRD: for AIPerfJob children whose `ownerReferences` include an `AIPerfSweep`, it recomputes the parent's `runStates`/`currentChildRef`/`lastChildEvent`. The rollup step is a no-op for a standalone AIPerfJob, but the same registration always also mirrors the new phase into the runs index (`handlers/lifecycle.record_phase_transition`). The ownership fence (`_child_phase_buckets._is_owned_child`) type-guards with `collections.abc.Mapping`, not `dict`, because kopf delivers `body` as a `kopf.Body` view.
 
 Sweep **result** retention is process-level rather than a CR timer. After the
 runs-index bootstrap and once per day, the operator scans durable sweep epoch

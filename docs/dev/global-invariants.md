@@ -237,7 +237,7 @@ Every field on `CLIConfig` must be classified in
 | `ROUTED_UNDER_CONFIG` | Reaches `AIPerfConfig`. Derived from the resolver's own routing tables where possible, so it cannot drift from them. |
 | `UNROUTED_UNDER_CONFIG` | Known not to route. Raises `ConfigurationError` naming the flag. |
 | `EXEMPT_FROM_CONFIG_ROUTING` | Not benchmark config at all (`--config` itself). Each entry needs a stated reason. |
-| `COMPANION_ROUTED` | Routes only alongside another flag (`--model-selection-strategy` needs `--model-names`). Rejected when the companion is absent. |
+| `COMPANION_ROUTED` | Reserved hook for the invariant suite's companion test inputs; currently empty. It does not reject anything. Sweep flags that act only beside a companion are rejected by the guards in [Companion-required flags](#companion-required-flags). |
 | `MAGIC_LIST_ONLY_UNDER_CONFIG` | Routes in list form only (`--isl 128 256` becomes a sweep parameter; scalar `--isl 128` goes to the dataset). Decided per value. |
 
 ### Why the guarantee holds
@@ -293,16 +293,51 @@ covers the dataset block specifically.
 
 ### Known gaps
 
-`--sweep-type` and `--disable-auto-fixed-schedule` are unrouted and
-loud: the first needs a sweep block to attach to, the second is
-consumed during phase construction, which this path does not rebuild.
+`--no-fixed-schedule` (`disable_auto_fixed_schedule`) is unrouted and loud:
+it is consumed during phase construction, which this path does not rebuild.
 
-The flags in `SWEEP_FIELDS_NOT_ROUTED` (`--concurrency-min/max/steps`,
-`--isl-*`/`--osl-*`, the `*-sla-ms` filters, `--parameter-sweep-*`)
-resolve cleanly and change nothing, so they are rejected. Verified
-individually — notably `--ttft-sla-ms` does **not** take effect even
-alongside `--search-recipe` and `--streaming`. Routing them is
-follow-up work; until then the failure is loud.
+### Companion-required flags
+
+Some routed flags only mean something beside another flag. Under `--config`
+a missing companion raises instead of resolving to a silent no-op:
+
+- Recipe inputs (`RECIPE_INPUT_FIELDS`: `--concurrency-min/max/steps`,
+  `--isl-*`, `--osl-*`, `--degradation-*`, the `*-sla-ms` targets,
+  `--error-rate-sla`, `--slo-attainment-fraction`, `--search-style`,
+  `--isl-osl-pairs`) need `--search-recipe`.
+- `--convergence-mode/stat/threshold` need `--convergence-metric` or a
+  `multi_run.convergence` block in the config file.
+- `--sweep-type` needs list-valued CLI flags and no `sweep:` in the file.
+- `--search-sla` needs `--search-recipe` or `--search-space`, and is not
+  applied to a scenario recipe. `--search-sla-tier` needs an adaptive search:
+  `--search-space`, or a recipe that expands to one.
+- `--search-recipe` and `--search-space` each build their own sweep, so
+  either one beside a `sweep:` in the file raises.
+- `--parameter-sweep-*` need a final sweep to write to, and
+  `--parameter-sweep-mode/same-seed` a non-adaptive one.
+- `--variant` keys cannot set flags the resolver applies to the whole sweep
+  after the merge (`--parameter-sweep-*`, `--convergence-mode/stat/threshold`,
+  `--sweep-type`), cannot be unrouted or miss a companion, and cannot change
+  anything outside `benchmark:` (e.g. `--num-profile-runs`); each raises.
+- `aiperf kube sweep` rejects only the flags that define a sweep
+  (`--search-recipe`, `--search-space`, `--sweep-type`, `--variant`) against a
+  file `sweep:` (`reject_cli_flags_against_hoisted_blocks`).
+  `--parameter-sweep-*` and `--convergence-mode/stat/threshold` apply to the
+  file's `sweep:` / `multiRun.convergence` blocks as they do under `--config`.
+
+The pre-merge rules live in `reject_missing_sweep_companions`
+(`_config_flag_routing.py`), the recipe-kind rule for the search filters in
+`reject_search_filters_for_recipe`, and the final-sweep rules in the
+resolver's `_apply_parameter_sweep_overrides`. The CLI-only path does not
+enforce them yet. `SWEEP_FLAG_COMPANIONS` in the invariant test maps each of
+these flags to a companion that reads it, so
+`test_routed_field_never_silently_no_ops` checks them for real.
+
+This list is what is enforced, not every sweep flag. The rest of the
+`--search-*` / `--optuna-*` family and the multi-run trial flags
+(`--confidence-level`, `--profile-run-*`, ...) are routed, but their
+invariant probes still fail to parse on their own, so the no-op test passes
+them without exercising routing.
 
 ## Extending the suite
 

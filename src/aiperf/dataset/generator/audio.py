@@ -168,11 +168,10 @@ class AudioGenerator(BaseGenerator):
             self._data_rng, num_samples, self.config.channels
         )
 
-        # Scale to the appropriate bit depth range
-        # Note: For 8-bit, we use int16 input and let soundfile convert to PCM_U8
+        # soundfile scales integer samples by their dtype, including int32
+        # input for PCM_24 and int16 input for PCM_U8.
         numpy_type, _ = SUPPORTED_BIT_DEPTHS[bit_depth]
-        scale_depth = 16 if bit_depth == 8 else bit_depth
-        max_val = 2 ** (scale_depth - 1) - 1
+        max_val = np.iinfo(numpy_type).max
         audio_data = (signal * max_val).astype(numpy_type)
 
         # Write audio using soundfile

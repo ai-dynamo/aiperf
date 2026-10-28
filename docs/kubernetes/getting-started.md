@@ -156,6 +156,20 @@ kubectl get pods -n dynamo-system
 
 ### Install the AIPerf Operator
 
+The chart is published to GitHub Container Registry with every AIPerf release:
+
+```bash
+helm install aiperf-operator \
+  oci://ghcr.io/ai-dynamo/charts/aiperf-operator \
+  --version X.Y.Z \
+  --namespace aiperf-system \
+  --create-namespace
+```
+
+Set `X.Y.Z` to match your local `aiperf` CLI. Omitting `--version` installs the latest stable release; prereleases and suffixed releases such as `X.Y.Z-post.1` need an explicit `--version`. The chart's default operator and benchmark image is `nvcr.io/nvidia/aiperf:<chart version>`. The chart installs both CRDs itself. The packaged chart and standalone CRD manifests attached to each [GitHub Release](https://github.com/ai-dynamo/aiperf/releases) are for GitOps pipelines; do not `kubectl apply` them before `helm install`.
+
+From a source checkout, install the local chart instead:
+
 ```bash
 helm install aiperf-operator deploy/helm/aiperf-operator \
   --namespace aiperf-system \

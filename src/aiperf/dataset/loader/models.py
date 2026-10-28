@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from pydantic import ConfigDict, Field, model_validator
 
 from aiperf.common.enums import AssistantResponseMode
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.models import AIPerfBaseModel, Audio, Image, Text, Video
 from aiperf.plugin.enums import CustomDatasetType
 
@@ -114,6 +115,13 @@ class SingleTurn(AIPerfBaseModel):
         gt=0,
         description="Maximum number of output tokens to generate for this request. Overrides the global --osl setting when specified.",
     )
+    audio_duration_seconds: FiniteFloat | None = Field(
+        default=None,
+        gt=0,
+        description="Duration of the audio content in seconds, self-reported by the caller. "
+        "Used to compute RTFx (Inverse Real-Time Factor) for ASR benchmarks when audio "
+        "duration cannot be derived automatically (e.g. custom/concatenated audio files).",
+    )
     extra: dict[str, Any] | None = Field(
         default=None,
         description="Per-turn extra fields shallow-merged into the request body at dispatch time. Keys override formatter defaults on collision.",
@@ -162,6 +170,33 @@ class SingleTurn(AIPerfBaseModel):
         """Ensure at least one modality is provided"""
         if not _has_any_modality(self):
             raise ValueError("At least one modality must be provided")
+        return self
+
+    @model_validator(mode="after")
+    def validate_audio_duration_describes_one_audio(self) -> "SingleTurn":
+        """Ensure audio_duration_seconds unambiguously describes a single clip.
+
+        The transcription endpoint only ever sends the first clip, so a duration
+        paired with more than one clip would not describe what is actually
+        transmitted and would silently skew RTFx. Clips are counted across both
+        the `audios` list and each `Audio` object's `contents` batch.
+        """
+        if self.audio_duration_seconds is None:
+            return self
+        clip_count = 1 if self.audio else 0
+        for audio in self.audios or []:
+            clip_count += 1 if isinstance(audio, str) else len(audio.contents)
+        if clip_count == 0:
+            raise ValueError(
+                "audio_duration_seconds requires audio or audios to be set"
+            )
+        if clip_count > 1:
+            raise ValueError(
+                f"audio_duration_seconds describes a single audio clip, but "
+                f"{clip_count} were given. Only the first is sent, so the "
+                f"duration would not match the request. Split these into one "
+                f"entry per clip."
+            )
         return self
 
 
@@ -406,7 +441,11 @@ class BailianTrace(AIPerfBaseModel):
 
     Examples:
     - Root request:  ``{"chat_id": 159, "parent_chat_id": -1, "timestamp": 61.114, "input_length": 521, "output_length": 132, "type": "text", "turn": 1, "hash_ids": [1089, 1090, 1091]}``
-    - Follow-up:     ``{"chat_id": 160, "parent_chat_id": 159, "timestamp": 62.5, "input_length": 400, "output_length": 80, "type": "text", "turn": 2, "hash_ids": [1089, 1090]}``
+    - Follow-up:     ``{"chat_id": 160, "parent_chat_id": 159, "timestamp": 62.5, "input_length": 676, "output_length": 80, "type": "text", "turn": 2, "hash_ids": [1089, 1090, 1091, 1092]}``
+
+    The ``hash_ids`` lists above are abbreviated. A real row carries one id per
+    16-token block, so 521 and 676 input tokens give 33 and 43 ids respectively,
+    and a follow-up's list typically starts with its parent's full blocks.
 
     Note:
     The ``type`` field in Bailian JSONL is the request type (text/search/image/file),

@@ -22,6 +22,7 @@ from pydantic import (
     model_validator,
 )
 
+from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import (
     ConnectionReuseStrategy,
     ModelSelectionStrategy,
@@ -36,6 +37,7 @@ from aiperf.config.control_hooks import (
     require_relative_path,
 )
 from aiperf.config.loader.parsing import normalize_http_urls
+from aiperf.config.sagemaker import SageMakerConfig
 from aiperf.plugin.enums import (
     EndpointType,
     RequestSignerType,
@@ -48,6 +50,8 @@ __all__ = [
     "EndpointDefaults",
     "TemplateConfig",
 ]
+
+_logger = AIPerfLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -102,6 +106,139 @@ class TemplateConfig(BaseConfig):
             "Use dot notation for nested fields: 'choices.0.message.content'.",
         ),
     ]
+
+
+def _missing_endpoint_name_error() -> ValueError:
+    """The SageMaker transport with nothing to put in its request path.
+
+    Raised from both validators so a YAML input without ``urls`` -- where field
+    validation would otherwise fail first with "urls: Field required" -- names the
+    same missing flag as the CLI path does.
+    """
+    return ValueError(
+        "The SageMaker transport requires --sagemaker-endpoint-name (or an "
+        "explicit --endpoint path to use instead); without it the request path "
+        "would be /endpoints//invocations."
+    )
+
+
+_SAGEMAKER_ROUTING_FLAGS = {
+    "target_model": "--sagemaker-target-model",
+    "inference_component_name": "--sagemaker-inference-component-name",
+    "target_variant": "--sagemaker-target-variant",
+}
+
+
+def _reject_orphaned_sagemaker_routing(
+    sagemaker: SageMakerConfig, transport: TransportType | None
+) -> None:
+    """Refuse SageMaker routing options that no transport will send.
+
+    Only the SageMaker transport reads them, so under any other transport the
+    benchmark would hit the endpoint's default model, component or traffic
+    split while the exported config says otherwise.
+    """
+    flags = [
+        flag
+        for field, flag in _SAGEMAKER_ROUTING_FLAGS.items()
+        if getattr(sagemaker, field)
+    ]
+    if flags:
+        selected = f"--transport {transport}" if transport else "the http transport"
+        raise ValueError(
+            f"SageMaker routing options require the SageMaker transport, but "
+            f"{selected} is selected and would silently ignore "
+            f"{', '.join(flags)}. Set --sagemaker-endpoint-name (or --transport "
+            f"sagemaker), or drop those flags."
+        )
+
+
+def _missing_region_error() -> ValueError:
+    """A SageMaker endpoint with no region to derive its host and scope from.
+
+    Raised by the before-validator when it would derive the URL and by the
+    after-validator when an explicit ``--url`` skipped that, so the CLI and YAML
+    paths report the same message.
+    """
+    return ValueError(
+        "SageMaker endpoints require --aws-region: it selects both the "
+        "runtime hostname and the SigV4 credential scope, and there is "
+        "no safe default to guess."
+    )
+
+
+def _canonical_transport(value: Any) -> Any:
+    """``value`` as a TransportType when it names one, in any casing.
+
+    The raw mapping is compared here, before field validation, and the field
+    itself accepts any casing (YAML `transport: SageMaker`).
+    """
+    try:
+        return TransportType(value)
+    except (ValueError, TypeError):
+        return value
+
+
+def _apply_sagemaker_before_validation(data: dict) -> None:
+    """Resolve what ``--sagemaker-endpoint-name`` implies about transport and URL.
+
+    Runs as part of the before-validator rather than an after-validator because
+    ``urls`` is a required field: an after-validator never runs, so the user
+    would get "urls: Field required" instead of anything about SageMaker.
+
+    Separate from ``normalize_before_validation``, which calls it, to keep that
+    method under the repo's complexity guardrail; everything here is one concern.
+    """
+    sagemaker = data.get("sagemaker") or {}
+    if isinstance(sagemaker, dict):
+        # Both spellings: this runs on the raw mapping, before alias
+        # resolution, and the input may use either. BaseConfig accepts both
+        # (alias_generator=to_camel, populate_by_name), and the generated CRDs
+        # and JSON schema use camelCase.
+        endpoint_name = sagemaker.get("endpoint_name") or sagemaker.get("endpointName")
+    else:
+        endpoint_name = getattr(sagemaker, "endpoint_name", None)
+    if not endpoint_name:
+        if (
+            _canonical_transport(data.get("transport")) == TransportType.SAGEMAKER
+            and data.get("path") is None
+        ):
+            raise _missing_endpoint_name_error()
+        return
+
+    # Checked before the URL derivation below, and before any after-validator,
+    # so the diagnostic names the real conflict. Otherwise whichever guard
+    # happens to fire first blames an unrelated flag: with a region,
+    # "--aws-region has no effect unless --auth-type is set to 'sigv4'";
+    # without one, "SageMaker endpoints require --aws-region".
+    transport = data.get("transport")
+    if (
+        transport is not None
+        and _canonical_transport(transport) != TransportType.SAGEMAKER
+    ):
+        raise ValueError(
+            f"--sagemaker-endpoint-name selects the SageMaker transport, but "
+            f"--transport {transport} was set explicitly. Drop --transport to "
+            f"benchmark the SageMaker endpoint, or drop "
+            f"--sagemaker-endpoint-name to use {transport} against --url."
+        )
+
+    if data.get("urls"):
+        return
+
+    region = data.get("aws_region") or data.get("awsRegion")
+    if not region:
+        raise _missing_region_error()
+    from aiperf.transports.aws.regions import dns_suffix, is_region_id
+
+    if not isinstance(region, str) or not is_region_id(region):
+        raise ValueError(
+            f"--aws-region {region!r} is not an AWS region id such as us-west-2. "
+            f"It becomes part of the derived SageMaker hostname, so anything else "
+            f"could send signed requests to a host outside AWS. To use a custom "
+            f"host, pass it with --url."
+        )
+    data["urls"] = [f"https://runtime.sagemaker.{region}.{dns_suffix(region)}"]
 
 
 def _transport_signs(transport: TransportType) -> bool:
@@ -263,9 +400,11 @@ class EndpointConfig(BaseConfig):
         TransportType | None,
         Field(
             default=None,
-            description="Transport plugin name. Currently only 'http' (aiohttp-based "
-            "HTTP/1.1) is shipped. Auto-detected from URL when unset; explicit "
-            "setting overrides auto-detection.",
+            description="Transport plugin name. 'http' (aiohttp-based HTTP/1.1) and "
+            "'sagemaker' (AWS SageMaker Runtime, normally derived from "
+            "sagemaker.endpoint_name) are shipped. Auto-detected from the URL when "
+            "unset, which always selects 'http'; explicit setting overrides "
+            "auto-detection.",
         ),
     ]
 
@@ -306,6 +445,15 @@ class EndpointConfig(BaseConfig):
             "'bedrock-runtime' as 'bedrock'. Required when auth_type='sigv4', unless "
             "the selected transport declares which AWS API it speaks, in which case "
             "the scope is resolved from botocore's service model.",
+        ),
+    ]
+
+    sagemaker: Annotated[
+        SageMakerConfig,
+        Field(
+            default_factory=SageMakerConfig,
+            description="SageMaker Runtime routing options. Setting "
+            "sagemaker.endpoint_name selects the SageMaker transport.",
         ),
     ]
 
@@ -534,6 +682,8 @@ class EndpointConfig(BaseConfig):
             if "urls" not in data:
                 data["urls"] = [url] if isinstance(url, str) else url
 
+        _apply_sagemaker_before_validation(data)
+
         # Auto-detect template type
         if "template" in data and data["template"] is not None and "type" not in data:
             data["type"] = EndpointType.TEMPLATE
@@ -570,6 +720,50 @@ class EndpointConfig(BaseConfig):
         underscore flag for the scenario resolver's defensive ``getattr``.
         """
         self._streaming_explicitly_set = "streaming" in self.model_fields_set
+        return self
+
+    @model_validator(mode="after")
+    def _derive_sagemaker_settings(self) -> Self:
+        """Fill in everything ``--sagemaker-endpoint-name`` implies.
+
+        Defined above ``_validate_endpoint_boundaries`` because that validator
+        inspects ``urls``, and the derived URL has to exist by then
+        (``mode="after"`` validators run in definition order).
+
+        Only ever fills unset values: anything the user set explicitly wins, so
+        an explicit ``--url`` still points at a VPC/PrivateLink endpoint or a
+        custom domain.
+        """
+        if self.sagemaker.endpoint_name and self.transport is None:
+            self.transport = TransportType.SAGEMAKER
+
+        if self.transport != TransportType.SAGEMAKER:
+            _reject_orphaned_sagemaker_routing(self.sagemaker, self.transport)
+            return self
+
+        # An explicit --endpoint path is the exception: get_url() uses it verbatim
+        # and never builds the /endpoints/{name}/ route.
+        if self.path is None and not self.sagemaker.endpoint_name:
+            raise _missing_endpoint_name_error()
+
+        # The readiness probe only knows OpenAI routes (/v1/models, the endpoint
+        # type's path), so here it would sign and send a request to a route the
+        # endpoint does not serve: a 401/403 aborts pre-flight, any other 4xx is
+        # read as "ready".
+        if self.wait_for_model_timeout > 0:
+            raise ValueError(
+                "--wait-for-model-timeout is not supported with the SageMaker "
+                "transport: the readiness probe targets OpenAI routes such as "
+                "/v1/models, but a SageMaker endpoint serves only "
+                "/endpoints/{name}/invocations. Drop --wait-for-model-timeout."
+            )
+
+        if self.auth_type is None:
+            self.auth_type = RequestSignerType.SIGV4
+
+        if not self.aws_region:
+            raise _missing_region_error()
+
         return self
 
     @model_validator(mode="after")
@@ -863,5 +1057,20 @@ class EndpointConfig(BaseConfig):
                 "token into the request headers; sending those over plain HTTP "
                 f"would disclose them: {', '.join(insecure)}. Use https:// URLs, "
                 "or drop --auth-type."
+            )
+
+        # A warning, not an error: rejecting this stops anyone who keeps a key in
+        # a shared config from enabling signing. The endpoints drop the key
+        # whenever auth_type is set (base_endpoint, anthropic_messages). The
+        # serialized placeholder is skipped: Kubernetes service containers
+        # validate before the real key is injected, and sweep subprocesses
+        # revalidate per variation, so it would repeat in every log.
+        from aiperf.common.redact import REDACTED_VALUE
+
+        if self.api_key and self.api_key != REDACTED_VALUE:
+            _logger.warning(
+                f"--api-key is ignored when --auth-type {self.auth_type} is set: "
+                "request signing replaces API-key auth, so the key is not sent. "
+                "Drop --api-key to silence this warning."
             )
         return self
