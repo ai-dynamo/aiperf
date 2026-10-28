@@ -51,10 +51,8 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         # user didn't configure them — apply the canonical defaults
         # (turn=1, batch=1, delay=0) explicitly here.
         self._num_entries = dataset.entries
-        self._turn_mean = max(1, int(_expected(dataset.turns)))
-        self._turn_stddev = _stddev_int(dataset.turns)
-        self._turn_delay_mean = _expected(dataset.turn_delay)
-        self._turn_delay_stddev = _stddev_int(dataset.turn_delay)
+        self._turn_distribution = dataset.turns
+        self._turn_delay_distribution = dataset.turn_delay
         self._turn_delay_ratio = dataset.turn_delay_ratio
         self._prompt_batch_size = (
             dataset.prompts.batch_size if dataset.prompts is not None else 1
@@ -135,9 +133,10 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         for _ in range(self._num_entries):
             conversation = Conversation(session_id=self.session_id_generator.next())
 
-            num_turns = self._turn_sampler_rng.sample_positive_normal_integer(
-                self._turn_mean,
-                self._turn_stddev,
+            num_turns = (
+                self._turn_distribution.sample_int(self._turn_sampler_rng)
+                if self._turn_distribution is not None
+                else 1
             )
             self.logger.debug("Creating conversation with %d turns", num_turns)
 
@@ -177,12 +176,12 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         if self.include_video:
             turn.videos.append(self._generate_video_payloads())
 
-        if not is_first and self._turn_delay_mean > 0:
-            delay = self._delay_sampler_rng.sample_positive_normal_integer(
-                int(self._turn_delay_mean),
-                self._turn_delay_stddev,
+        if not is_first and self._turn_delay_distribution is not None:
+            delay = max(
+                0.0, self._turn_delay_distribution.sample(self._delay_sampler_rng)
             )
-            turn.delay = delay * self._turn_delay_ratio
+            if delay > 0:
+                turn.delay = delay * self._turn_delay_ratio
 
         if not turn.texts and not turn.images and not turn.audios and not turn.videos:
             self.logger.warning(

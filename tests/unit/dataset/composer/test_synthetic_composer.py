@@ -7,6 +7,13 @@ import pytest
 
 from aiperf.common import random_generator as rng
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
+from aiperf.common.tokenizer import Tokenizer
+from aiperf.config.dataset import SyntheticDataset
+from aiperf.config.distributions import (
+    EmpiricalDistribution,
+    FixedDistribution,
+    LogNormalDistribution,
+)
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.synthetic import SyntheticDatasetComposer
 from tests.harness.optional_deps import HAS_SOUNDFILE
@@ -215,6 +222,103 @@ class TestSyntheticDatasetComposer:
             assert len(conversation.turns) == 2
             assert conversation.turns[0].delay is None  # first turn has no delay
             assert conversation.turns[1].delay == 1500  # subsequent turns have delays
+
+    def test_empirical_turn_counts_are_sampled(self, mock_tokenizer: Tokenizer) -> None:
+        run = make_run(
+            CLIConfig(
+                model_names=["test-model"],
+                conversation_num_dataset_entries=40,
+                prompt_input_tokens_mean=10,
+            )
+        )
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turns = EmpiricalDistribution(points=[{"value": 1}, {"value": 5}])
+        composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+
+        assert {
+            len(conversation.turns) for conversation in composer.create_dataset()
+        } == {
+            1,
+            5,
+        }
+
+    def test_empirical_turn_delays_are_sampled(self, mock_tokenizer: Tokenizer) -> None:
+        run = make_run(
+            CLIConfig(
+                model_names=["test-model"],
+                conversation_num_dataset_entries=40,
+                conversation_turn_mean=2,
+                prompt_input_tokens_mean=10,
+            )
+        )
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turn_delay = EmpiricalDistribution(
+            points=[{"value": 0}, {"value": 500}]
+        )
+        dataset.turn_delay_ratio = 0.5
+        composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        assert all(
+            conversation.turns[0].delay is None for conversation in conversations
+        )
+        assert {conversation.turns[1].delay or 0 for conversation in conversations} == {
+            0,
+            250,
+        }
+
+    def test_turn_distribution_bounds_are_applied(
+        self, mock_tokenizer: Tokenizer
+    ) -> None:
+        run = make_run(
+            CLIConfig(
+                model_names=["test-model"],
+                conversation_num_dataset_entries=3,
+                prompt_input_tokens_mean=10,
+            )
+        )
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turns = FixedDistribution(value=6, max=2)
+        dataset.turn_delay = FixedDistribution(value=0, min=20)
+        composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        assert {len(conversation.turns) for conversation in conversations} == {2}
+        assert {conversation.turns[1].delay for conversation in conversations} == {20}
+
+    def test_lognormal_delays_are_bounded_and_reproducible(
+        self, mock_tokenizer: Tokenizer
+    ) -> None:
+        run = make_run(
+            CLIConfig(
+                model_names=["test-model"],
+                conversation_num_dataset_entries=40,
+                conversation_turn_mean=2,
+                prompt_input_tokens_mean=10,
+            )
+        )
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turn_delay = LogNormalDistribution(
+            mean=600, median=500, min=100, max=1200
+        )
+
+        def sample_delays() -> list[float | None]:
+            rng.reset()
+            rng.init(42)
+            composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+            return [
+                conversation.turns[1].delay
+                for conversation in composer.create_dataset()
+            ]
+
+        first = sample_delays()
+        assert first == sample_delays()
+        assert all(delay is not None and 100 <= delay <= 1200 for delay in first)
+        assert len(set(first)) > 1
 
     # ============================================================================
     # Create Turn Method Tests
