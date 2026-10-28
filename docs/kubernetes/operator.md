@@ -48,9 +48,15 @@ config:
   theme: base
   look: classic
   themeVariables:
-    lineColor: '#183153'
+    lineColor: '#6B7C99'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
+    textColor: '#183153'
+    clusterBorder: '#6B7C99'
+    transitionColor: '#6B7C99'
+    transitionLabelColor: '#183153'
+    labelBackgroundColor: '#FFFFFF'
+    specialStateColor: '#6B7C99'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
@@ -106,9 +112,15 @@ config:
   theme: base
   look: classic
   themeVariables:
-    lineColor: '#183153'
+    lineColor: '#6B7C99'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
+    textColor: '#183153'
+    clusterBorder: '#6B7C99'
+    transitionColor: '#6B7C99'
+    transitionLabelColor: '#183153'
+    labelBackgroundColor: '#FFFFFF'
+    specialStateColor: '#6B7C99'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
@@ -205,9 +217,15 @@ config:
   theme: base
   look: classic
   themeVariables:
-    lineColor: '#183153'
+    lineColor: '#6B7C99'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
+    textColor: '#183153'
+    clusterBorder: '#6B7C99'
+    transitionColor: '#6B7C99'
+    transitionLabelColor: '#183153'
+    labelBackgroundColor: '#FFFFFF'
+    specialStateColor: '#6B7C99'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
@@ -239,9 +257,15 @@ config:
   theme: base
   look: classic
   themeVariables:
-    lineColor: '#183153'
+    lineColor: '#6B7C99'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
+    textColor: '#183153'
+    clusterBorder: '#6B7C99'
+    transitionColor: '#6B7C99'
+    transitionLabelColor: '#183153'
+    labelBackgroundColor: '#FFFFFF'
+    specialStateColor: '#6B7C99'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
@@ -517,17 +541,23 @@ config:
   theme: base
   look: classic
   themeVariables:
-    lineColor: '#183153'
+    lineColor: '#6B7C99'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
+    textColor: '#183153'
+    clusterBorder: '#6B7C99'
+    transitionColor: '#6B7C99'
+    transitionLabelColor: '#183153'
+    labelBackgroundColor: '#FFFFFF'
+    specialStateColor: '#6B7C99'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
     actorBkg: '#E9F0FF'
     actorBorder: '#3468D4'
     actorTextColor: '#183153'
-    actorLineColor: '#183153'
-    signalColor: '#183153'
+    actorLineColor: '#6B7C99'
+    signalColor: '#6B7C99'
     signalTextColor: '#183153'
     labelBoxBkgColor: '#E9F0FF'
     labelBoxBorderColor: '#3468D4'
@@ -543,6 +573,7 @@ sequenceDiagram
   participant C as Controller pod
   participant K as Kubernetes API server
   participant O as Operator
+  rect rgb(255, 255, 255)
   rect rgb(233, 240, 255)
   loop Every heartbeat interval (10 s) or on a state change
     C->>K: patch heartbeat annotation (UID-tested)
@@ -554,6 +585,7 @@ sequenceDiagram
   rect rgb(231, 247, 239)
   loop Every JobSet patch interval (10 s), when values change
     C->>K: patch progress annotations on JobSet and AIPerfJob
+  end
   end
   end
 ```
@@ -622,9 +654,15 @@ config:
   theme: base
   look: classic
   themeVariables:
-    lineColor: '#183153'
+    lineColor: '#6B7C99'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
+    textColor: '#183153'
+    clusterBorder: '#6B7C99'
+    transitionColor: '#6B7C99'
+    transitionLabelColor: '#183153'
+    labelBackgroundColor: '#FFFFFF'
+    specialStateColor: '#6B7C99'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
@@ -785,17 +823,23 @@ config:
   theme: base
   look: classic
   themeVariables:
-    lineColor: '#183153'
+    lineColor: '#6B7C99'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
+    textColor: '#183153'
+    clusterBorder: '#6B7C99'
+    transitionColor: '#6B7C99'
+    transitionLabelColor: '#183153'
+    labelBackgroundColor: '#FFFFFF'
+    specialStateColor: '#6B7C99'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
     actorBkg: '#E9F0FF'
     actorBorder: '#3468D4'
     actorTextColor: '#183153'
-    actorLineColor: '#183153'
-    signalColor: '#183153'
+    actorLineColor: '#6B7C99'
+    signalColor: '#6B7C99'
     signalTextColor: '#183153'
     labelBoxBkgColor: '#E9F0FF'
     labelBoxBorderColor: '#3468D4'
@@ -812,6 +856,7 @@ sequenceDiagram
   participant K as Kubernetes API server
   participant O as Operator
   participant V as Results volume
+  rect rgb(255, 255, 255)
   C->>K: patch benchmark-complete annotation (UID-tested)
   K-)O: deliver annotation change (watch event)
   O->>K: patch completion claim (tests UID and resourceVersion)
@@ -832,6 +877,7 @@ sequenceDiagram
     O->>K: patch terminal phase and ResultsAvailable
     O->>C: request shutdown
     end
+  end
   end
 ```
 
@@ -974,9 +1020,15 @@ config:
   theme: base
   look: classic
   themeVariables:
-    lineColor: '#183153'
+    lineColor: '#6B7C99'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
+    textColor: '#183153'
+    clusterBorder: '#6B7C99'
+    transitionColor: '#6B7C99'
+    transitionLabelColor: '#183153'
+    labelBackgroundColor: '#FFFFFF'
+    specialStateColor: '#6B7C99'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
