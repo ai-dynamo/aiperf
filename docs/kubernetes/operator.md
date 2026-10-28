@@ -179,7 +179,7 @@ stateDiagram-v2
 | `Queued` | JobSet carries a `kueue.x-k8s.io/queue-name` label and is `spec.suspend: true` | monitor reconcile |
 | `Initializing` | At least one worker pod ready or succeeded, or the controller has started reporting a `subPhase` | JobSet progress handler, `on_controller_subphase` |
 | `Running` | Controller `subPhase` is `profiling`, `processing`, `stopping`, or `shutdown` | `on_controller_subphase` |
-| `Completed` | Result files downloaded, validated, and indexed | completion handler |
+| `Completed` | Result files downloaded and validated (a runs-index failure only sets `IndexUpdated=False`) | completion handler |
 | `Failed` | Any terminal error; `status.error` carries the reason | many (see [Failure detection](#failure-detection)) |
 | `Cancelled` | User set `spec.cancel: true` | `on_cancel` |
 
@@ -219,8 +219,8 @@ whether the job has been cancelled before it continues.
 6. **Credential transport check.** Endpoint credentials must reach pods through
    Secret-backed env vars (`valueFrom.secretKeyRef`). `api_key` needs
    `AIPERF_INJECTED_API_KEY` or `OPENAI_API_KEY`, sensitive headers need
-   `AIPERF_INJECTED_HEADERS`, and URLs with userinfo need
-   `AIPERF_INJECTED_ENDPOINT_URLS`. A plaintext credential fails the job.
+   `AIPERF_INJECTED_HEADERS`, and URLs with userinfo or sensitive query
+   parameters need `AIPERF_INJECTED_ENDPOINT_URLS`. A plaintext credential fails the job.
 7. **Preflight.** Cluster checks run under a total budget of
    `AIPERF_PREFLIGHT_TIMEOUT` (see [Operator preflight](#operator-preflight)).
    Any FAIL leads to `PreflightPassed=False` and phase `Failed`. WARNs set
@@ -261,7 +261,7 @@ reading the existing object:
 |---|---|
 | Owned by this exact CR UID, not terminating | Adopted |
 | Owned by an older CR with the same name (different UID), or terminating | Retry after `AIPERF_OPERATOR_RECONCILE_CREATE_HARVEST_RETRY_DELAY_SECONDS` (30 s) until garbage collection removes it |
-| Controlled by a foreign owner | Permanent `Failed` |
+| Controlled by a foreign owner, or by no controller at all | Permanent `Failed` (never adopted) |
 
 **Cancellation during creation.** If the JobSet already exists when a cancel
 arrives, `on_create` deletes it itself, using a UID-fenced delete. `on_cancel`
@@ -399,8 +399,8 @@ Three independent lifetimes apply:
 
 | Setting | Applies to | Default |
 |---|---|---|
-| `spec.ttlSecondsAfterFinished` | The **JobSet** and its pods (enforced by the JobSet controller) | 300 s |
-| `spec.resultsTtlDays` / `AIPERF_RESULTS_TTL_DAYS` | Result epochs on the PVC | 30 days; `0` = never |
+| `spec.ttlSecondsAfterFinished` | The **JobSet** and its pods (enforced by the JobSet controller); not set at all when `keepFailedPods: true` | 300 s |
+| `spec.resultsTtlDays` / `AIPERF_RESULTS_TTL_DAYS` | Result epochs on the PVC | 30 days. The spec accepts 1-365; only the env var accepts `0` (never) |
 | `AIPERF_RESULTS_RETAIN_RUNS` / `AIPERF_RESULTS_RETAIN_DAYS` | Count/age trim per job after each completion | 10 runs / disabled |
 
 The operator does not delete AIPerfJob CRs on its own. AIPerfSweep CRs are
@@ -438,8 +438,9 @@ sequenceDiagram
   service error).
 - **Identity fencing.** Annotation patches carry an atomic
   `test /metadata/uid` op. Status pushes re-read the CR and compare the UID
-  first, then send a phase-tested JSON patch, or a merge patch before any
-  phase exists. Either way, a controller left over from a deleted CR does not
+  first, then send a phase-tested JSON patch. Before any phase exists they
+  send a merge patch instead, or an untested JSON patch when `serverMetrics` is
+  included. Once the CR is terminal, pushes stop. Either way, a controller left over from a deleted CR does not
   write to a new CR that reuses its name.
 - **Heartbeat.** The annotation `aiperf.nvidia.com/controller-heartbeat` holds
   an RFC 3339 timestamp. The [heartbeat watchdog](#heartbeat-watchdog-and-recovery-engine)
@@ -448,8 +449,10 @@ sequenceDiagram
 - **JobSet annotations.** `aiperf.nvidia.com/progress-phase`,
   `progress-percent`, `progress-requests`, `progress-status`, and
   `system-state` are written to the JobSet and mirrored onto the AIPerfJob.
-  They are patched only when their value changes, and the `progress-*` keys
-  appear only once credit phases exist.
+  They are patched only when their value changes. Before any credit phase
+  exists, only `progress-status=initializing` and `system-state` are written.
+  `progress-phase` appears once a phase exists. `progress-percent` and
+  `progress-requests` appear once a percentage or a positive total is known.
 - **Operator writes.** The operator converts JobSet `replicatedJobsStatus` into
   `status.workers` (scaled by workers per pod) until the controller's richer
   `workers` object appears; the presence of `totalPods` marks the controller
@@ -471,8 +474,11 @@ The operator also calls these controller endpoints on
 | 9090 / 9091 (sidecar) | `GET /api/results/list`, `GET /api/results/files/<path>` | Result discovery and download |
 | 9090 (API) | `POST /api/shutdown` | Release the controller after harvest |
 
-Requests retry on 408, 429, 500, 502, 503, and 504 with exponential backoff
-(`AIPERF_OPERATOR_PROGRESS_*`).
+The JSON `GET` calls (`/api/progress`, `/api/metrics`, `/api/results/list`)
+retry on 408, 429, 500, 502, 503, and 504 with exponential backoff
+(`AIPERF_OPERATOR_PROGRESS_*`). `POST /api/shutdown` and individual file
+downloads are sent once, with no retry; the result fetch loop retries
+downloads as a whole.
 
 ---
 
@@ -491,7 +497,8 @@ flowchart LR
 
 ### Pod restarts
 
-When any container in a JobSet pod reaches `AIPERF_POD_RESTART_THRESHOLD`
+When any regular container (`containerStatuses`; init and native sidecar
+containers are not counted) in a JobSet pod reaches `AIPERF_POD_RESTART_THRESHOLD`
 restarts (default 3), the operator follows the owner chain Pod → Job → JobSet →
 AIPerfJob, checking the owner UID at every hop. It then posts one `PodRestarts`
 Warning per pod and restart count. The message carries the waiting reason or
@@ -508,8 +515,8 @@ Each pod event is classified for blockers that stop startup:
 | `ErrImagePull`, `ImagePullBackOff`, `ErrImageNeverPull`, `InvalidImageName` | `ImagePull` | Yes |
 | `CreateContainerConfigError`, `CreateContainerError`, `RunContainerError` | `ContainerConfig` | Yes |
 | `CrashLoopBackOff` | `CrashLoop` | Only once `restartCount >= AIPERF_K8S_WATCHDOG_CRASHLOOP_RESTART_THRESHOLD` (2) |
-| `PodScheduled=False` with a structural message (node selector/affinity mismatch, untolerated taint, volume node-affinity conflict) | `SchedulingConstraint` | Yes |
-| `PodScheduled=False` for capacity (`Insufficient cpu`, too many pods, unbound PVC, ...) | `SchedulingDelay` | **Never**; it may simply be waiting for capacity |
+| `PodScheduled=False`, reason `Unschedulable`, with a structural message (node selector/affinity mismatch, untolerated taint, volume node-affinity conflict) and no capacity signal | `SchedulingConstraint` | Yes |
+| Any other `Unschedulable` message, including any that mentions capacity (`Insufficient cpu`, too many pods, unbound PVC, ...) even alongside a structural mismatch | `SchedulingDelay` | **Never**; it may simply be waiting for capacity |
 
 The highest-priority blocker is recorded in `status.startupIssue`, with these
 fields: `fingerprint` (`category:pod:container`), `podName`, `containerName`,
@@ -519,7 +526,9 @@ and `warningEmitted`.
 What happens next depends on how long the same blocker stays in place:
 
 1. **First observation.** The operator writes `status.startupIssue` and sets
-   `WorkersReady=False/PodStartupBlocked` (or `SchedulingDelayed`) right away.
+   `WorkersReady=False` right away. The reason is `PodStartupBlocked` when the
+   blocker can become terminal. It is `SchedulingDelayed` when it cannot: a
+   capacity delay, or a crash loop still below the restart threshold.
    **Stable for `AIPERF_K8S_WATCHDOG_PENDING_THRESHOLD_SECONDS` (30 s):** it
    posts one `PodStartupBlocked` Warning event.
 2. **Terminal-capable and stable for
@@ -590,9 +599,9 @@ The recovery engine runs these steps in order:
 
    | Recovered | Phase | `ResultsAvailable` |
    |---|---|---|
-   | Key exports | Normal completion path (may end `Completed`) | `True / ResultsStored` |
-   | Checkpoint files | `Failed` | `True / PartialCheckpointRecovered` |
-   | Only live metrics | `Failed` | `True / PartialLiveMetricsRecovered` |
+   | Any final export files | Normal completion path: `Completed`, or `Failed / ResultsFetchFailed` if key exports are missing | as in [Validating and publishing](#validating-and-publishing) |
+   | No final files, checkpoint files | `Failed` | `True / PartialCheckpointRecovered` |
+   | No final files, only live metrics | `Failed` | `True / PartialLiveMetricsRecovered` |
    | Nothing | `Failed` | `False / ControllerTerminated` |
 6. **Sidecar export recovery.** While the job is `Initializing` or `Running`,
    if key exports are listed on the sidecar but no completion annotation ever
@@ -674,8 +683,8 @@ dashboard sidecar, when it is enabled.
 Results go to `<AIPERF_RESULTS_DIR>/<namespace>/<job>/<epoch>/`. Each attempt
 runs these steps:
 
-1. `GET /api/metrics` on the controller API port. Done once and cached across
-   attempts.
+1. `GET /api/metrics` on the controller API port. It is retried on each
+   attempt until it succeeds; after that the payload is cached.
 2. List and download all result files from the API port (9090).
 3. If no key export arrived, repeat from the `results-sidecar` port (9091).
    The sidecar outlives the control-plane process, which lets salvage work
@@ -689,7 +698,8 @@ Download behavior:
   parallel, each with an `AIPERF_RESULTS_DOWNLOAD_TIMEOUT_SECONDS` (300 s)
   total timeout.
 - Files are written to `.part` and atomically renamed into place.
-- Path traversal and unsafe `X-Filename` headers are rejected.
+- Listed names containing path traversal are skipped. An unsafe `X-Filename`
+  header is ignored, and the file is saved under its listed name.
 - With `AIPERF_RESULTS_COMPRESS_ON_DISK=true` (default), non-JSON files are
   stored as `<name>.zst`. zstd responses pass through without recompression.
   `.json` files stay raw so they remain greppable.
@@ -743,9 +753,11 @@ the final phase.
 
 **Shutdown.** The completion handler does not stop the controller itself.
 After a completion triggered by the annotation, `on_benchmark_complete` sends
-`POST /api/shutdown` to release the controller. If that fails, the only effect
-is a `ShutdownSignalFailed` event. Orphan claim recovery also sends the
-shutdown, and logs a failure without posting an event.
+`POST /api/shutdown` to release the controller, best-effort. A transport
+exception posts a `ShutdownSignalFailed` Warning event. A non-2xx reply, or a
+connection error handled inside the client, is only logged. Orphan claim
+recovery also sends the shutdown and only logs failures. In no case is the
+completion result affected.
 
 The final completion status patch is not resourceVersion-fenced, for the same
 reason as cancellation: a concurrent heartbeat write must not strand the CR in
@@ -794,7 +806,7 @@ flowchart TB
    sweep names are rejected (reason `SweepRejected`, with a Warning event).
    The initial status is staged at this point: `phase=Pending`,
    `totalVariations`, `maxTotalRuns`, `completedRuns=0`, `failedRuns=0`,
-   `runEpoch`, `startedAt`, `apiUrl`, and `observedGeneration`.
+   `runEpoch`, `startedAt`, and `apiUrl`.
 4. **Provision RBAC.** ServiceAccount, Role, and RoleBinding are all named
    `aiperf-sweep-controller-<name>`. The Role grants:
    - create/get/list/watch/patch/update/delete on `aiperfjobs` and
@@ -809,7 +821,8 @@ flowchart TB
      resources come from the `AIPERF_K8S_SWEEP_CONTROLLER_*` defaults
      (75m / 512Mi). These are sized for the torch/BoTorch footprint of
      adaptive search.
-6. **Add `runtimeRef`** (JobSet name and controller host) to the staged status.
+6. **Add `runtimeRef`** (JobSet name and controller host) and
+   `observedGeneration` to the staged status.
 
 `AIPERF_OPERATOR_MANAGED=1` also makes the in-process CLI refuse to run its own
 sweep, so the two layers never both sweep.
@@ -880,8 +893,10 @@ Child phases are bucketed into `runStates` like this:
 | `Profiling`/`Processing`/`Running` | `running` |
 | Anything else | `pending` |
 
-Once the parent is terminal, the rollup stops writing, so children reaped by
-their own TTL cannot zero out the final counts.
+Once the parent is terminal, the rollup stops patching the counts
+(`completedRuns`, `failedRuns`, `runStates`, `lastChildEvent`), so children
+reaped by their own TTL cannot zero out the final counts. It still appends
+terminal children to `status.runs[]`.
 
 On each terminal child, a compact entry is appended to `status.runs[]` through a
 compare-and-swap patch (up to `AIPERF_OPERATOR_RECONCILE_RUNS_CAS_MAX_ATTEMPTS`).
@@ -1012,8 +1027,10 @@ browsable.
 ### Runs index
 
 The runs index is a SQLite database (WAL mode) that the API uses for listing,
-leaderboards, and analytics. It is a **cache**: every read falls back to a
-filesystem scan, and anything missing is backfilled.
+leaderboards, and analytics. It is a **cache**: listings, leaderboard,
+and history fall back to a filesystem scan and lazily backfill missing rows.
+The scatter endpoint is the exception; it returns an empty result while the
+index is unavailable.
 
 - **Writer.** Only the `operator` container writes to it. The results-server
   opens it read-only and refuses to open a database whose schema version is
@@ -1060,12 +1077,13 @@ The results-server serves on `AIPERF_RESULTS_SERVER_PORT` (8081):
 |---|---|
 | `GET /healthz` | Liveness/readiness |
 | `/api/v1/jobs...` | Live and archived jobs, epochs, events, logs, WebSocket proxy to the controller |
+| `GET /api/v1/cluster` | Cluster capacity and version |
 | `/api/v1/sweeps...` | Sweeps, epochs, cells, children, artifacts, diagnostics |
 | `/api/v1/results...` | Epoch-pinned file listing, download, zip bundles |
 | `/api/v1/analytics/...`, `/api/v1/index` | Index-backed leaderboard, history, scatter, compare |
 | `/api/v1/config/...` | Retention and feature flags; `GET /api/v1/config/{ns}/{job}` returns a run's config |
 | `/api/v1/validate` | Manifest validation |
-| `/admin/index/...` | Index stats |
+| `/admin/index/...` | Index stats, per-run index row lookup, rebuild (always 503) |
 | `/dashboard/*` | Reverse proxy to the dashboard sidecar (when `AIPERF_DASHBOARD_PROXY_ENABLED`) |
 | `/` | Web dashboard SPA |
 
@@ -1080,12 +1098,15 @@ These routes are **mutating**: `POST /api/v1/jobs`,
 | Valid token | Route runs |
 
 The chart sets neither variable, so in a stock install every mutating route
-returns 403. `POST /admin/index/rebuild` returns 503 on the results-server even
-with a valid token, because only the writer process can rebuild the index.
+returns 403. `POST /admin/index/rebuild` always returns 503 once auth passes:
+it is only mounted in the read-only results-server, and no HTTP path rebuilds
+the index. The operator process rebuilds it in-process at startup.
 
 If the Kubernetes client cannot initialize within
-`AIPERF_RESULTS_K8S_INIT_TIMEOUT_SEC` (10 s), the jobs and sweeps routes return
-503. PVC-backed results and analytics routes keep serving.
+`AIPERF_RESULTS_K8S_INIT_TIMEOUT_SEC` (10 s), the live-cluster jobs and sweeps
+routes (list, detail, create, cancel, events, logs, cluster, WebSocket) return
+503 until the pod restarts. Job epoch listings, sweep artifact downloads, and
+the results and analytics routes keep serving from the PVC.
 
 Full endpoint documentation: [Results Server API Reference](results-api.md) and
 [Web Dashboard](dashboard-ui.md).
@@ -1200,12 +1221,12 @@ See [Debug Command](debug-command.md) and the
 
 | Key | On | Written by | Meaning |
 |---|---|---|---|
-| `aiperf.nvidia.com/finalizer` | AIPerfJob | kopf | Finalizer that runs `on_delete` |
+| `aiperf.nvidia.com/finalizer` | AIPerfJob, AIPerfSweep | kopf | Finalizer that runs the matching `on_delete` handler |
 | `aiperf.nvidia.com/controller-heartbeat` | AIPerfJob | Controller | Liveness timestamp |
 | `aiperf.nvidia.com/benchmark-complete` | AIPerfJob | Controller | `"true"` when results are exported |
 | `aiperf.nvidia.com/completion-claimed` | AIPerfJob | Operator | Exactly-once completion claim |
 | `aiperf.nvidia.com/startup-failure-claimed` | AIPerfJob | Operator | Exactly-once startup-failure claim |
-| `aiperf.nvidia.com/progress-*`, `aiperf.nvidia.com/system-state` | JobSet | Controller | Progress for JobSet watchers |
+| `aiperf.nvidia.com/progress-*`, `aiperf.nvidia.com/system-state` | JobSet, AIPerfJob | Controller | Progress for kubectl watchers |
 | `aiperf.nvidia.com/job-id` (label) | Role, RoleBinding, ConfigMap, JobSet, benchmark pods | Operator | Owning job |
 | `aiperf.nvidia.com/sweep`, `sweep-uid`, `sweep-run-epoch`, `variation-index`, `variation-label`, `trial-index` | Child AIPerfJob | Sweep-controller | Sweep membership |
 | `aiperf.nvidia.com/variation-values`, `aiperf.nvidia.com/run-identity` | Child AIPerfJob | Sweep-controller | Variation values and spec hash |
@@ -1220,7 +1241,9 @@ are user-writable, but forging one still delays failure detection.
 Set these on the operator Deployment. The chart exposes the most common ones
 under `operator.env`; for the rest, add `env` entries with
 `kubectl set env` or a chart overlay. The generated, authoritative list is in
-[Environment Variables](../environment-variables.md#operator-environment).
+[Environment Variables](../environment-variables.md), under the OPERATOR
+ENVIRONMENT, OPERATOR, OPERATORMONITOR, OPERATORRECONCILE, OPERATORPROGRESS,
+and RESULTS sections.
 
 ### Reconcile cadence and retries
 
