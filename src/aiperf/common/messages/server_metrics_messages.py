@@ -82,6 +82,12 @@ class ServerMetricsWarmupBoundaryReadyMessage(BaseServiceMessage):
 
     message_type: MessageTypeT = MessageType.SERVER_METRICS_WARMUP_BOUNDARY_READY
 
+    request_ns: int | None = Field(
+        default=None,
+        ge=0,
+        description="Timestamp of the request in nanoseconds",
+    )
+
     phase_name: str | None = Field(
         default=None,
         description="Warmup phase name that completed its server-metrics boundary",
