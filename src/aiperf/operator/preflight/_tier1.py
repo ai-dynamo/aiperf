@@ -10,7 +10,10 @@ import aiohttp
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
 
-from aiperf.kubernetes.constants import JOBSET_INSTALL_HINT
+from aiperf.kubernetes.constants import (
+    JOBSET_INSTALL_HINT,
+    NATIVE_SIDECAR_MIN_K8S_MINOR,
+)
 from aiperf.kubernetes.cr_refs import JOBSET_GROUP, JOBSET_PLURAL, JOBSET_VERSION
 from aiperf.kubernetes.preflight import CheckResult, CheckStatus
 from aiperf.kubernetes.preflight_utils import check_rbac_access
@@ -25,27 +28,37 @@ class _Tier1ChecksMixin:
     """Tier 1 (cluster compatibility) and Tier 2 (RBAC) blocking checks."""
 
     async def _check_kubernetes_version(self) -> CheckResult:
-        """Verify Kubernetes version >= 1.24."""
+        """Require native-sidecar support when optional server metrics are enabled."""
         vinfo = await client.VersionApi(self.api).get_code()
         major_str = re.sub(r"[^0-9]", "", vinfo.major or "0")
         minor_str = re.sub(r"[^0-9]", "", vinfo.minor or "0")
         major = int(major_str) if major_str else 0
         minor = int(minor_str) if minor_str else 0
         git_version = vinfo.git_version or "unknown"
+        minimum_minor = (
+            NATIVE_SIDECAR_MIN_K8S_MINOR
+            if self.config.benchmark.server_metrics.enabled
+            else MIN_K8S_MINOR
+        )
 
-        if major > MIN_K8S_MAJOR or (major == MIN_K8S_MAJOR and minor >= MIN_K8S_MINOR):
+        if major > MIN_K8S_MAJOR or (major == MIN_K8S_MAJOR and minor >= minimum_minor):
             return CheckResult(
                 name="Kubernetes Version",
                 status=CheckStatus.PASS,
-                message=f"Kubernetes {git_version} (>= {MIN_K8S_MAJOR}.{MIN_K8S_MINOR} required)",
+                message=f"Kubernetes {git_version} (>= {MIN_K8S_MAJOR}.{minimum_minor} required)",
             )
         return CheckResult(
             name="Kubernetes Version",
             status=CheckStatus.FAIL,
             message=(
                 f"Kubernetes {git_version} is below minimum "
-                f"{MIN_K8S_MAJOR}.{MIN_K8S_MINOR}. "
-                f"Upgrade your cluster to {MIN_K8S_MAJOR}.{MIN_K8S_MINOR}+."
+                f"{MIN_K8S_MAJOR}.{minimum_minor}. "
+                f"Upgrade your cluster to {MIN_K8S_MAJOR}.{minimum_minor}+"
+                + (
+                    " or set serverMetrics.enabled=false to run without native server-metrics sidecars."
+                    if self.config.benchmark.server_metrics.enabled
+                    else "."
+                )
             ),
         )
 
