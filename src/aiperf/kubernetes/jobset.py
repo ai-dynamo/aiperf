@@ -405,7 +405,8 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
     remote_dataset: bool = Field(
         default=False,
         description="Whether the run reads a remote dataset. The dataset-manager then "
-        "downloads before its health server starts, so its startup probe allows "
+        "downloads before its health server starts and before it registers, so its "
+        "startup probe and the controller's registration wait both allow "
         "AIPERF_K8S_HEALTH_DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS.",
     )
 
@@ -556,6 +557,7 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
             controller_host=controller_host,
             include_pod_index=include_pod_index,
             controller_pod=controller_pod,
+            remote_dataset=self.remote_dataset,
         )
 
     # ------------------------------------------------------------------ container factories

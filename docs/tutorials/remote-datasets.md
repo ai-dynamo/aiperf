@@ -333,7 +333,9 @@ as long as the download runs. When the run reads a remote dataset, the dataset-m
 container (and only that container) gets a startup probe that allows
 `AIPERF_K8S_HEALTH_DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS` (default 3600, one hour): its
 failure threshold becomes that budget divided by `AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS`,
-rounded up. A download that runs longer is killed by the kubelet, possibly in the middle of the
+rounded up. The dataset-manager also registers with the controller only after the download,
+so the controller-pod containers wait for registration for that budget on top of
+`AIPERF_SERVICE_REGISTRATION_TIMEOUT`. A download that runs longer is killed by the kubelet, possibly in the middle of the
 transfer and before AIPerf can write its termination message; the job then fails without the
 `[dataset-manager pod]` line or the `DatasetReady` condition described below.
 

@@ -163,6 +163,8 @@ class _HealthProbeSettings(BaseSettings):
         "run reads a remote dataset (hf://, s3://, http(s)://): it downloads before its "
         "health server starts. Its startup probe failure threshold becomes "
         "ceil(budget / STARTUP_PERIOD_SECONDS), never below STARTUP_FAILURE_THRESHOLD. "
+        "It registers only after the download, so the budget is also added to the "
+        "registration timeout of the controller-pod containers. "
         "Read by the process that renders the JobSet (the operator, or the CLI in direct mode)",
     )
 

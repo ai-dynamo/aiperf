@@ -304,6 +304,37 @@ def test_dataset_manager_startup_probe_remote_dataset_covers_download_budget(
             assert container["startupProbe"]["failureThreshold"] == 30, name
 
 
+def _env(job_name: str, remote_dataset: bool) -> dict[str, dict[str, str]]:
+    spec = AIPerfJobSetSpec(
+        name="ts", namespace="ns", job_id="ts-1", image="aiperf:ci",
+        remote_dataset=remote_dataset,
+    )  # fmt: skip
+    job = next(
+        j
+        for j in spec.to_k8s_manifest()["spec"]["replicatedJobs"]
+        if j["name"] == job_name
+    )
+    return {
+        c["name"]: {e["name"]: e.get("value") for e in c.get("env", [])}
+        for c in job["template"]["spec"]["template"]["spec"]["containers"]
+    }
+
+
+def test_remote_dataset_controller_registration_wait_covers_download_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(K8sEnvironment.HEALTH, "DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS", 3600)  # fmt: skip
+    local = _env("controller", remote_dataset=False)
+    remote = _env("controller", remote_dataset=True)
+    base = float(local[Containers.CONTROL_PLANE]["AIPERF_SERVICE_REGISTRATION_TIMEOUT"])  # fmt: skip
+    wait = base + 3600
+    for name, env in remote.items():
+        if "AIPERF_SERVICE_REGISTRATION_TIMEOUT" in env:
+            assert float(env["AIPERF_SERVICE_REGISTRATION_TIMEOUT"]) == wait, name
+            assert int(env["AIPERF_SERVICE_REGISTRATION_MAX_ATTEMPTS"]) > wait, name
+    assert _env("workers", remote_dataset=True) == _env("workers", remote_dataset=False)
+
+
 def test_dataset_manager_startup_probe_local_dataset_keeps_default_threshold() -> None:
     containers = _controller_containers()
     assert (
