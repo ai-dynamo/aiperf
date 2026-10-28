@@ -92,7 +92,13 @@ class LognormalParams(AIPerfBaseModel):
     mean: float = Field(gt=0.0, description="Real-space mean (derived)")
     median: float = Field(gt=0.0, description="Real-space median (derived)")
     min: float | None = Field(
-        default=None, gt=0.0, description="Hard lower bound (rejection sampled)"
+        default=None,
+        gt=0.0,
+        description=(
+            "Hard lower bound (rejection sampled). For inter-turn delays, "
+            "values below this bound after context scaling are clamped, "
+            "subject to the global delay maximum."
+        ),
     )
     max: float | None = Field(
         default=None, gt=0.0, description="Hard upper bound (rejection sampled)"
@@ -149,7 +155,7 @@ class MixtureDelayConfig(AIPerfBaseModel):
         description=(
             "Shorten delays as context fills using max(0.2, 1 - 0.8 * "
             "previous_input / max_prompt_tokens); disable to keep sampled delays. "
-            "Component minima are enforced after scaling, with the global max "
+            "Delays are clamped to component minima after scaling, with the global max "
             "taking precedence. Enabled by default for workload compatibility."
         ),
     )

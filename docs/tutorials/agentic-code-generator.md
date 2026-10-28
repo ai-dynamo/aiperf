@@ -111,10 +111,12 @@ inference-latency measurement. Set `"context_scaling": false` inside the
 and generated config schema, and appears as 0/1 in the quality config summary.
 
 Component `min`/`max` bounds apply during rejection sampling. After context
-scaling, the selected component's `min` is enforced again. The global
-`inter_turn_delay.max` is the final upper cap and takes precedence if it is
-lower than that component's minimum; a global maximum of zero permits zero
-delay. Turn 0 always has zero delay.
+scaling, delays below the selected component's `min` are clamped to exactly
+that minimum, without redrawing. This can concentrate probability at the
+minimum; the final distribution differs from rejection sampling after scaling.
+The global `inter_turn_delay.max` is the final upper cap and takes precedence
+if it is lower than that component's minimum; a global maximum of zero permits
+zero delay. Turn 0 always has zero delay.
 
 The random draws and cap-before-scaling order are unchanged. With scaling
 enabled and no component minima, an existing config and seed produce the same

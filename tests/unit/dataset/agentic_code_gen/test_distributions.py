@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import math
+from statistics import NormalDist
 
 import numpy as np
 import pytest
@@ -151,6 +152,37 @@ class TestSampleLognormal:
 
 
 class TestSampleMixtureDelay:
+    @pytest.mark.parametrize(
+        "delay_scale",
+        [param(0.2, id="full-context"), param(0.4, id="partial-context")],
+    )  # fmt: skip
+    def test_scaled_lognormal_has_clamped_probability_at_minimum(
+        self, delay_scale: float
+    ) -> None:
+        """The floor collects the truncated lognormal's sub-threshold mass."""
+        config = MixtureDelayConfig(
+            agentic_fraction=0.0,
+            human_delay=LognormalParams(
+                mean=450_000, median=84_000, min=30_000, max=1_800_000
+            ),
+        )
+        log_distribution = NormalDist(
+            mu=math.log(84_000), sigma=math.sqrt(2 * math.log(450_000 / 84_000))
+        )
+        cdf_min = log_distribution.cdf(math.log(30_000))
+        cdf_max = log_distribution.cdf(math.log(1_800_000))
+        cdf_threshold = log_distribution.cdf(math.log(30_000 / delay_scale))
+        expected_floor_fraction = (cdf_threshold - cdf_min) / (cdf_max - cdf_min)
+
+        samples = sample_mixture_delay(
+            config, np.random.default_rng(42), size=20_000, delay_scale=delay_scale
+        )
+
+        assert samples.min() == 30_000
+        assert samples.max() <= 1_800_000 * delay_scale
+        floor_fraction = np.count_nonzero(samples == 30_000) / len(samples)
+        assert floor_fraction == pytest.approx(expected_floor_fraction, abs=0.015)
+
     def test_scaled_mixture_applies_each_selected_component_minimum(self) -> None:
         config = MixtureDelayConfig(
             agentic_fraction=0.5,

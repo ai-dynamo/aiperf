@@ -99,7 +99,9 @@ def sample_mixture_delay(
     For each sample, a Bernoulli draw selects agentic (fast) vs human (slow),
     then the corresponding lognormal is sampled. The global cap is applied
     before scaling to preserve historical workloads. Component minima are
-    restored after scaling; the global cap overrides a conflicting minimum.
+    reapplied by clamping after scaling, without additional random draws.
+    This can concentrate probability at a component's minimum. The global cap
+    overrides a conflicting minimum.
     """
     if not 0 < delay_scale <= 1:
         raise ValueError("delay_scale must be in (0, 1]")
