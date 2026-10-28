@@ -175,8 +175,8 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         context. Endpoints whose responses carry structured fields beyond
         plain text (e.g. chat ``tool_calls`` / ``function_call``) should
         override this to preserve those fields verbatim by returning a Turn
-        whose ``raw_messages`` re-renders as the same assistant message - that way ``build_messages`` extends
-        them back into the wire body unchanged.
+        whose ``raw_messages`` re-renders as the same assistant message - that
+        way ``build_messages`` extends them back into the wire body unchanged.
 
         Returns ``None`` when the record has no replayable assistant content
         (error response, empty body, etc.).
@@ -204,9 +204,7 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
                 answer_texts.append(response.data.get_text())
         # Decided once per reply, not per parsed response: a streamed reply
         # splits reasoning and answer across chunks, and replaying both glues
-        # the thinking into the answer. The reasoning-only fallback keeps a
-        # non-empty parent context for FORK children of a reply truncated
-        # mid-thinking (or of the mock server's Qwen3-style output).
+        # the thinking into the answer.
         resp_text = "".join(answer_texts) or "".join(reasoning_texts)
         if not resp_text:
             return None
