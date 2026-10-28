@@ -215,6 +215,7 @@ class SyntheticDataset(SystemPromptMixin):
         float,
         Field(
             ge=0.0,
+            allow_inf_nan=False,
             default=1.0,
             description="Multiplier for scaling all turn delays. "
             "Applied after sampling: actual_delay = sampled_delay * ratio. "
@@ -281,6 +282,8 @@ class SyntheticDataset(SystemPromptMixin):
                 f"(got {self.turns.expected_value}); set --conversation-turn-mean "
                 "to at least 1 or omit it for single-turn conversations."
             )
+        if self.turns is not None:
+            self.turns.positive_integer_bounds()
         return self
 
 

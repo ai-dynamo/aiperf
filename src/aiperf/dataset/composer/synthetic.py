@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 from aiperf.common import random_generator as rng
@@ -175,11 +176,15 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
             turn.videos.append(self._generate_video_payloads())
 
         if not is_first and self._turn_delay_distribution is not None:
-            delay = max(
-                0.0, self._turn_delay_distribution.sample(self._delay_sampler_rng)
-            )
+            sample = self._turn_delay_distribution.sample(self._delay_sampler_rng)
+            if not math.isfinite(sample):
+                raise ValueError(f"turn_delay sample must be finite, got {sample!r}")
+            delay = max(0.0, sample)
             if delay > 0:
-                turn.delay = delay * self._turn_delay_ratio
+                scaled_delay = delay * self._turn_delay_ratio
+                if not math.isfinite(scaled_delay):
+                    raise ValueError("turn_delay after scaling must be finite")
+                turn.delay = scaled_delay
 
         if not turn.texts and not turn.images and not turn.audios and not turn.videos:
             self.logger.warning(

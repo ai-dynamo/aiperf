@@ -126,8 +126,18 @@ class Distribution(BaseConfig):
             f"{type(self).__name__} must implement _sample_raw(rng) to generate one unclamped sample."
         )
 
+    def positive_integer_bounds(self) -> tuple[int, int | None]:
+        """Return feasible positive integer bounds for integer-valued samples."""
+        minimum = max(1, math.ceil(self.min)) if self.min is not None else 1
+        maximum = math.floor(self.max) if self.max is not None else None
+        if maximum is not None and minimum > maximum:
+            raise ValueError("Distribution bounds must contain a positive integer")
+        return minimum, maximum
+
     def sample_int(self, rng: RandomGenerator) -> int:
-        return max(1, math.ceil(self.sample(rng)))
+        minimum, maximum = self.positive_integer_bounds()
+        value = max(minimum, math.ceil(self.sample(rng)))
+        return min(value, maximum) if maximum is not None else value
 
     @property
     def expected_value(self) -> float:
@@ -389,6 +399,14 @@ class EmpiricalPoint(BaseConfig):
             gt=0.0, default=1.0, description="Relative weight (normalized internally)."
         ),
     ]
+
+    @model_validator(mode="after")
+    def validate_finite_value(self) -> Self:
+        if not math.isfinite(self.value):
+            raise ValueError(
+                f"Empirical point value must be finite, got {self.value!r}"
+            )
+        return self
 
 
 class EmpiricalDistribution(Distribution):

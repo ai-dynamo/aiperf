@@ -289,6 +289,46 @@ class TestSyntheticDatasetComposer:
         assert {len(conversation.turns) for conversation in conversations} == {2}
         assert {conversation.turns[1].delay for conversation in conversations} == {20}
 
+    def test_fractional_turn_max_is_a_hard_limit(
+        self, synthetic_config: CLIConfig, mock_tokenizer: Tokenizer
+    ) -> None:
+        run = make_run(synthetic_config)
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turns = FixedDistribution(value=2.9, max=2.5)
+        composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+
+        assert {
+            len(conversation.turns) for conversation in composer.create_dataset()
+        } == {2}
+
+    def test_overflowing_turn_delay_is_rejected(
+        self, multiturn_config: CLIConfig, mock_tokenizer: Tokenizer
+    ) -> None:
+        run = make_run(multiturn_config)
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turn_delay = FixedDistribution(value=1e308)
+        dataset.turn_delay_ratio = 10.0
+        composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+
+        with pytest.raises(ValueError, match="turn_delay.*finite"):
+            composer.create_dataset()
+
+    def test_non_finite_turn_delay_sample_is_rejected(
+        self, multiturn_config: CLIConfig, mock_tokenizer: Tokenizer
+    ) -> None:
+        run = make_run(multiturn_config)
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turn_delay = LogNormalDistribution(
+            mean=float("inf"), median=float("inf")
+        )
+        composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+
+        with pytest.raises(ValueError, match="turn_delay sample.*finite"):
+            composer.create_dataset()
+
     def test_lognormal_delays_are_bounded_and_reproducible(
         self, mock_tokenizer: Tokenizer
     ) -> None:
