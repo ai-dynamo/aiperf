@@ -21,7 +21,7 @@ If you already have a Kubernetes cluster with GPU nodes and `kubectl` configured
 
 ### Option A: Use an Existing Cluster
 
-Any Kubernetes v1.24+ cluster with NVIDIA GPUs works. You need:
+Use Kubernetes v1.29+ for the default server-metrics collection, which runs as a restartable native sidecar. Kubernetes v1.24–1.28 requires `benchmark.serverMetrics.enabled: false` (or `--no-server-metrics`). You need:
 
 - `kubectl` configured to talk to the cluster
 - GPU nodes with the NVIDIA device plugin installed
