@@ -225,6 +225,8 @@ navigation:
     path: kubernetes/init-and-generate.md
   - page: Kubernetes Configuration Reference
     path: kubernetes/configuration.md
+  - page: Operator Reference
+    path: kubernetes/operator.md
   - page: Production Deployment
     path: kubernetes/production.md
   - page: RBAC and Security
