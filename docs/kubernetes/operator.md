@@ -68,7 +68,9 @@ flowchart LR
   classDef stage fill:#E9F0FF,stroke:#3468D4,color:#183153
   classDef store fill:#FFF1DC,stroke:#CC7000,color:#183153
   classDef out fill:#F0EDFF,stroke:#7254D6,color:#183153
-  api["Kubernetes API server (control plane)"]:::src
+  subgraph cp["Control plane"]
+    api["Kubernetes API server (control plane)"]:::src
+  end
   subgraph pod["Operator pod"]
     rec["Reconciler (kopf container)"]:::stage
     rs["Results API (HTTP container)"]:::out
