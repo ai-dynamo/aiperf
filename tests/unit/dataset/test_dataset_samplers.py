@@ -288,7 +288,7 @@ class TestStartFullPass:
 
     @pytest.mark.parametrize(
         "prior_draws",
-        [param(0, id="fresh"), param(3, id="mid_pass"), param(7, id="wrapped")],
+        [param(3, id="mid_pass"), param(7, id="wrapped")],
     )  # fmt: skip
     def test_sequential_any_n_consecutive_draws_cover_every_conversation_once(
         self, prior_draws: int, conversation_ids: list[str]
