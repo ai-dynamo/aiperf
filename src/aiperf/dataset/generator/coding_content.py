@@ -27,7 +27,10 @@ from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
 from aiperf.dataset.generator.base import BaseGenerator
-from aiperf.dataset.generator.prompt import sample_tokens_from_corpus
+from aiperf.dataset.generator.prompt import (
+    reject_separator_only_blocks,
+    sample_tokens_from_corpus,
+)
 
 # fmt: off
 # -- Vocabulary tuples for template fills --
@@ -966,6 +969,10 @@ class CodingContentGenerator(BaseGenerator):
 
         if not hash_ids:
             return self._sample_tokens(num_tokens, self._tool_pool)
+
+        reject_separator_only_blocks(
+            block_size, self.tokenizer.block_separation_token_id
+        )
 
         m = len(hash_ids)
         total_hashed = m * block_size

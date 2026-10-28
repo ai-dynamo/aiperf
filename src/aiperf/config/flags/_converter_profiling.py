@@ -603,9 +603,10 @@ def _maybe_auto_promote_trace(
         # --fixed-schedule conflicts with a scenario; the auto-derived
         # promotion is simply skipped so the phase keeps its default shape.
         or cli.scenario is not None
+        or _timeline_opt_out_suppresses_promotion(cli, dataset_type)
         or prof["type"] == PhaseType.FIXED_SCHEDULE
         or not plugins.is_trace_dataset(str(dataset_type))
-        or not _first_record_has_timestamp(file_path)
+        or not _trace_carries_timing(dataset_type, file_path)
     ):
         return
 
@@ -667,16 +668,39 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
     _maybe_auto_promote_trace(prof, cli, file_path)
 
     # fixed_schedule autodefault: dataset entry count -> requests.
+    #
+    # Skipped for formats whose record count is not a line count.
+    # ``_count_dataset_records`` counts non-blank lines for a non-JSONL file, so
+    # a weka trace -- one JSON object per ``.json`` file, holding N requests --
+    # yields the file's line count: the same 3-request trace resolves to 1
+    # minified, 59 pretty-printed, and None as a directory. That number is not
+    # merely cosmetic; the resolved config is exported into
+    # ``profile_export_aiperf.json``, so the artifact would claim a bound the
+    # run never had. ``PhaseRunner`` overrides the real total from
+    # ``metadata.total_turn_count`` for fixed schedule anyway, so leaving it
+    # unset is both honest and sufficient.
     if (
         prof["type"] == PhaseType.FIXED_SCHEDULE
         and "requests" not in prof
         and file_path is not None
+        and not _line_count_misreports_records(cli.custom_dataset_type)
     ):
         records = _count_dataset_records(file_path)
         if records > 0:
             prof["requests"] = records
 
     _maybe_set_dag_root_sessions(prof, cli, file_path)
+
+
+def _line_count_misreports_records(dataset_type: object) -> bool:
+    """Whether counting lines would misreport this format's record count.
+
+    A weka trace nests its requests inside a single JSON object per file, so a
+    line count measures formatting, not workload.
+    """
+    from aiperf.plugin.enums import CustomDatasetType
+
+    return str(dataset_type) == str(CustomDatasetType.WEKA_TRACE)
 
 
 def _columnar_file_has_timestamp(path: Path) -> bool | None:
@@ -708,6 +732,56 @@ def _has_timing_events_timestamp(data: dict) -> bool:
         and isinstance(events[0], dict)
         and events[0].get("timestamp") is not None
     )
+
+
+def _timeline_opt_out_suppresses_promotion(
+    cli: CLIConfig, dataset_type: object
+) -> bool:
+    """Whether a timing opt-out should block auto-promotion for this format.
+
+    Only for weka_trace. Its loader lets fixed schedule win over
+    ``--ignore-trace-delays``, so promoting a run that passed the flag would
+    accept it and then quietly ignore it -- the silent no-op CLAUDE.md's
+    flag-routing rule exists to prevent.
+
+    Applying it to every format instead is a regression: a 50-row timestamped
+    mooncake trace with either flag drops from fixed_schedule/50 to
+    concurrency/10, silently replacing most of the workload. Those loaders do
+    not suppress the flags under fixed schedule, and ``--use-think-time-only``
+    documents no effect on non-Weka loaders, so there is no no-op to prevent
+    there -- only workload to lose.
+    """
+    from aiperf.plugin.enums import CustomDatasetType
+
+    if str(dataset_type) != str(CustomDatasetType.WEKA_TRACE):
+        return False
+    return bool(cli.ignore_trace_delays or cli.use_think_time_only)
+
+
+def _trace_carries_timing(dataset_type: object, file_path: object) -> bool:
+    """Whether a trace dataset has timing worth auto-promoting on.
+
+    ``_first_record_has_timestamp`` looks for a top-level ``timestamp`` key and
+    refuses directories outright. A weka_trace keeps its timing in
+    ``requests[].t`` and is documented as a *directory* of files, so neither is
+    visible to that probe, and ``docs/tutorials/weka-trace.md`` documents
+    auto-promotion as the default for trace datasets.
+
+    Scoped to weka_trace on purpose. The resolver's ``_implicit_timing_types``
+    is the natural shared source of truth, and routing through it reads better,
+    but it also holds burst_gpt_trace, sagemaker_data_capture, baseten_trace and
+    tracelab -- none of which auto-promote today. Promoting them here would
+    silently change their default timing mode, and would turn
+    ``--custom-dataset-type burst_gpt_trace --request-rate 10`` from a working
+    command into a hard error, because the rate/fixed-schedule conflict check
+    below only fires once promotion is decided. Widening the set is a
+    deliberate compatibility decision per format, not a side effect of this fix.
+    """
+    from aiperf.plugin.enums import CustomDatasetType
+
+    if str(dataset_type) == str(CustomDatasetType.WEKA_TRACE):
+        return True
+    return _first_record_has_timestamp(file_path)
 
 
 def _first_record_has_timestamp(file_path: object) -> bool:
