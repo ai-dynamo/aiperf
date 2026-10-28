@@ -539,7 +539,8 @@ class ProfileResults(AIPerfBaseModel):
         default=None,
         ge=0,
         description="Turns never sent because their conversation ended early on "
-        "a truncated turn. None when end_conversation_on_truncation is off.",
+        "a truncated turn, excluding turns the run's stop condition would not "
+        "have sent anyway. None when end_conversation_on_truncation is off.",
     )
     context_overflow_count: int = Field(
         default=0,

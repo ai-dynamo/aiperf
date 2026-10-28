@@ -176,6 +176,36 @@ class TestEndedOnTruncation:
         assert progress.counter.final_requests_sent == 2
         assert progress.all_credits_returned_event.is_set()
 
+    async def test_on_credit_return_request_cap_reached_not_counted_as_skipped(
+        self, concurrency: MagicMock, strategy: MagicMock
+    ) -> None:
+        progress = PhaseProgressTracker(
+            CreditPhaseConfig(
+                phase=CreditPhase.PROFILING,
+                timing_mode=TimingMode.REQUEST_RATE,
+                total_expected_requests=1,
+            )
+        )
+        handler = CreditCallbackHandler(concurrency)
+        handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            progress=progress,
+            lifecycle=MagicMock(is_complete=False),
+            stop_checker=MagicMock(can_send_any_turn=MagicMock(return_value=False)),
+            strategy=strategy,
+        )
+        credit = _credit(turn_index=0, num_turns=3)
+        _send(progress, credit)
+
+        await handler.on_credit_return(
+            "w1", CreditReturn(credit=credit, ended_on_truncation=True)
+        )
+
+        assert progress.counter.completed_sessions == 1
+        assert progress.counter.sessions_ended_on_truncation == 0
+        assert progress.counter.turns_skipped_on_truncation == 0
+        concurrency.release_session_slot.assert_called_once()
+
     async def test_on_credit_return_unstarted_sessions_keep_sending_open(
         self, handler: CreditCallbackHandler, progress: PhaseProgressTracker
     ) -> None:

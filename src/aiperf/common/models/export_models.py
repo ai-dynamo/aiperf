@@ -399,7 +399,8 @@ class JsonExportData(AIPerfBaseModel):
         default=None,
         ge=0,
         description="Turns never sent because their conversation ended early on "
-        "a truncated turn. Absent when end_conversation_on_truncation is off.",
+        "a truncated turn, excluding turns the run's stop condition would not "
+        "have sent anyway. Absent when end_conversation_on_truncation is off.",
     )
     warmup_metrics: dict[str, JsonMetricResult] | None = Field(
         default=None,

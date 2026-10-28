@@ -825,8 +825,8 @@ class StickyCreditRouter(CommunicationMixin):
         whose dispatch normally drops the entry, so without this the owning
         worker keeps counting the session in ``active_sessions`` for the rest
         of the run and loses load-balancing ties it should win. Mirrors the
-        final-turn arm of ``send_credit``, including keeping the entry for a turn
-        that forks so ``register_child_routing`` can still find it.
+        final-turn arm of ``send_credit`` for a root that declares no forks (the
+        option is rejected for DAG datasets, so an early-ended turn never forks).
         """
         key = credit.x_correlation_id
         entry = self._sticky_sessions.get(key)
@@ -834,7 +834,7 @@ class StickyCreditRouter(CommunicationMixin):
             return
         entry.parent_final_seen = True
         entry.ref_count -= 1
-        if entry.ref_count > 0 or credit.has_forks:
+        if entry.ref_count > 0:
             return
         self._pop_entry(key, entry)
         load = self._workers.get(entry.worker_id)

@@ -1870,25 +1870,6 @@ class TestStickyCreditRouterEndedOnTruncation:
         assert router._sticky_sessions["corr-t"].worker_id == "worker-A"
         assert router._workers["worker-A"].active_sessions == 1
 
-    async def test_handle_router_message_ended_on_forking_turn_keeps_sticky(
-        self, benchmark_run
-    ) -> None:
-        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
-        router._router_client.send_to = AsyncMock()
-        router._register_worker("worker-A")
-        credit = make_credit(
-            id=1, conv_id="s", turn=0, corr_id="corr-t", num_turns=3, has_forks=True
-        )
-        await router.send_credit(credit)
-
-        await router._handle_router_message(
-            "worker-A", CreditReturn(credit=credit, ended_on_truncation=True)
-        )
-
-        entry = router._sticky_sessions["corr-t"]
-        assert entry.parent_final_seen
-        assert entry.ref_count == 0
-
     async def test_handle_router_message_cancelled_return_keeps_sticky(
         self, benchmark_run
     ) -> None:

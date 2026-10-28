@@ -437,3 +437,22 @@ class TestEndSessionEarly:
         c.increment_sent(turn(idx=0, num=3))
         c.freeze_sent_counts()
         assert c.end_session_early(skipped_turns=2) is False
+
+    @pytest.mark.parametrize(
+        "config,freeze",
+        [
+            param(cfg(reqs=1), False, id="request_cap_reached"),
+            param(cfg(dur=5.0), True, id="sending_complete"),
+        ],
+    )  # fmt: skip
+    def test_end_session_early_after_sending_stops_not_attributed_to_truncation(
+        self, config: CreditPhaseConfig, freeze: bool
+    ) -> None:
+        c = CreditCounter(config)
+        c.increment_sent(turn(idx=0, num=3))
+        if freeze:
+            c.freeze_sent_counts()
+        c.end_session_early(skipped_turns=2)
+        assert c.sessions_ended_on_truncation == 0
+        assert c.turns_skipped_on_truncation == 0
+        assert c.total_session_turns == 1

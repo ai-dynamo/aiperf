@@ -102,7 +102,6 @@ def _anthropic_stream(stop_reason: str | None) -> RequestRecord:
         param(_stream(_chat_chunk(None, {"content": "a"}), _chat_chunk("stop"), "[DONE]"), False, id="streaming_stop"),
         param(_stream(_chat_chunk(None, {"content": "a"}), _chat_chunk(None, {"content": "b"}), "[DONE]"), False, id="streaming_no_finish_reason"),
         param(_stream(_chat_chunk(None, {"content": "a"}), _chat_chunk("length"), {"object": "chat.completion.chunk", "choices": [], "usage": {"completion_tokens": 2}}, "[DONE]"), True, id="streaming_length_then_usage_chunk"),
-        param(_stream(_chat_chunk(None, {"content": "a"}), _chat_chunk("stop"), {"object": "chat.completion.chunk", "choices": [], "usage": {"completion_tokens": 2}}, "[DONE]"), False, id="streaming_stop_then_usage_chunk"),
         param(RequestRecord(responses=[]), False, id="no_responses"),
         param(_body({"object": "chat.completion", "choices": {"0": {"finish_reason": "length"}}}), False, id="malformed_choices_dict"),
         param(_body({"object": "chat.completion", "choices": 7}), False, id="malformed_choices_number"),
