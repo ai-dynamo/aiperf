@@ -1960,6 +1960,10 @@ These metrics appear only when network latency calibration is enabled (with
 taken from different client network locations comparable by removing the client-to-endpoint
 network round-trip from the reported latencies.
 
+YAML configurations can enable calibration with `benchmark.networkLatency.enabled: true`.
+These settings are preserved when `--config` is used unless a network-latency CLI flag
+is explicitly supplied.
+
 With `--network-latency-automatic`, AIPerf opens a fresh TCP connection to the endpoint
 host:port on an interval throughout profiling (`--network-latency-ping-interval`, default 1s)
 and records the handshake RTT. The handshake is one network round-trip with no server compute,
