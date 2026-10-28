@@ -93,10 +93,10 @@ On the CLI, a run with none of these is bounded automatically, and AIPerf logs t
 | Trace dataset (fixed schedule) | Every record in the trace |
 | `dag_jsonl` dataset | Every root session (`--num-sessions` = root count) |
 | Benchmark suite (`speed_bench_*`, `spec_al_*`, `spec_bench`) | One full pass over every loaded conversation |
-| `--concurrency` | `max(10, 2 x concurrency)` requests; a `--concurrency` sweep uses its largest value for every variation |
+| `--concurrency` | `max(10, 2 x concurrency)` requests; a `--concurrency` sweep, or a `--search-space` concurrency dimension, uses its largest value for every variation |
 | `--request-rate`, `--user-centric-rate`, `--scenario` | 10 requests |
 
-YAML configs have no automatic default: set `requests`, `duration`, or `sessions` on each phase. `sessions: all` runs one full pass over the dataset.
+YAML configs have no automatic default: set `requests`, `duration`, or `sessions` on each phase. `sessions: all` runs one full pass over the dataset (see [YAML config](../tutorials/yaml-config.md) for its limits).
 
 ### Arrival Pattern Options
 

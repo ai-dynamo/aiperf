@@ -46,6 +46,9 @@ def _stop_fields(prof: dict[str, Any]) -> dict[str, Any]:
         param({"concurrency": 4}, {"requests": 10}, id="low_concurrency_floor"),
         param({"concurrency": 80}, {"requests": 160}, id="concurrency_scales"),
         param({"concurrency": [10, 20]}, {"requests": 40}, id="sweep_uses_largest_value"),
+        param({"search_space": ["concurrency:64,128:int"]}, {"requests": 256}, id="search_uses_upper_bound"),
+        param({"search_space": ["phases.profiling.concurrency:8,20.5"]}, {"requests": 42}, id="search_real_upper_bound_rounds_up"),
+        param({"search_space": ["rate:1,50"]}, {"requests": 10}, id="search_rate_flat"),
         param({"request_rate": 5.0}, {"requests": 10}, id="request_rate_flat"),
         param({"request_rate": 5.0, "concurrency": 80}, {"requests": 10}, id="request_rate_with_concurrency_cap"),
         param({"public_dataset": "sharegpt", "concurrency": 80}, {"requests": 160}, id="non_suite_public_dataset"),
@@ -132,18 +135,17 @@ def test_phase_config_sessions_rejects_invalid_values(sessions: object) -> None:
         )
 
 
-def test_phase_config_user_centric_accepts_sessions_all() -> None:
-    phase = TypeAdapter(PhaseConfig).validate_python(
-        {
-            "name": "profiling",
-            "type": "user_centric",
-            "rate": 5.0,
-            "users": 4,
-            "sessions": "all",
-        }
-    )
-
-    assert phase.sessions == FULL_PASS_SESSIONS
+def test_phase_config_user_centric_rejects_sessions_all() -> None:
+    with pytest.raises(ValidationError, match="not supported for user-centric"):
+        TypeAdapter(PhaseConfig).validate_python(
+            {
+                "name": "profiling",
+                "type": "user_centric",
+                "rate": 5.0,
+                "users": 4,
+                "sessions": "all",
+            }
+        )
 
 
 def test_full_pass_by_default_set_on_every_spec_decode_suite() -> None:

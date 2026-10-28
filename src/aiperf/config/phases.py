@@ -651,7 +651,17 @@ class UserCentricPhase(RatePhaseConfig):
         if self.rate_series is not None:
             raise ValueError("user-centric phases do not support rate_series")
 
-        if isinstance(self.sessions, int) and self.sessions < self.users:
+        if self.sessions == FULL_PASS_SESSIONS:
+            # User-centric runs can end before the last sessions' later turns
+            # are sent, so a full pass can't be honored there.
+            raise ValueError(
+                f"Phase '{self.name}': sessions: all (one full pass) is not "
+                "supported for user-centric phases. Set sessions to a number "
+                ">= users, or use a concurrency or request-rate phase for a "
+                "full pass."
+            )
+
+        if self.sessions is not None and self.sessions < self.users:
             raise ValueError(
                 f"Phase '{self.name}': --num-sessions ({self.sessions}) must be "
                 f">= --num-users ({self.users}). Each user needs at least one session."

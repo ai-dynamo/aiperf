@@ -2383,7 +2383,7 @@ class CLIConfig(BaseConfig):
             "or `--benchmark-duration` is set, the run is bounded automatically: trace datasets replay every record, "
             "`dag_jsonl` runs every root session, benchmark suites (SPEED-Bench, `spec_al_*`, `spec_bench`) run one full "
             "pass over every loaded conversation, concurrency runs send `max(10, 2 * concurrency)` requests (the largest "
-            "value for a `--concurrency` sweep), and request-rate and user-centric runs send 10. "
+            "value for a `--concurrency` sweep or `--search-space` concurrency range), and request-rate and user-centric runs send 10. "
             "Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple "
             "request counts; the converter promotes the list to a sweep on phases.profiling.requests "
             "before AIPerfConfig validation.",

@@ -538,6 +538,7 @@ def _detect_cli_magic_sweep(cli: CLIConfig) -> tuple[str, list] | None:
 
 
 def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
+    """Reject invalid mode combinations, then apply dataset-aware and stop-condition defaults."""
     from aiperf.config.phases import PhaseType
 
     # `--conversation-turn-mean` may be a list when used as a magic-list
@@ -611,13 +612,17 @@ def _apply_default_stop_condition(prof: dict[str, Any], cli: CLIConfig) -> None:
     requests = _MIN_DEFAULT_REQUESTS
     reason = ""
     if prof["type"] == PhaseType.CONCURRENCY and not keeps_flat_floor:
-        # A magic-list sweep leaves a list here; size every variation for the
-        # largest value so the busiest variation still saturates its slots.
+        # Sweeps and searches size every variation for the largest value so
+        # the busiest variation still saturates its slots.
         concurrency = prof.get("concurrency") or 1
         label = "concurrency"
         if isinstance(concurrency, list):
             concurrency = max(concurrency)
             label = "largest swept concurrency"
+        searched = _search_space_upper_bound(cli, "concurrency")
+        if searched is not None:
+            concurrency = math.ceil(searched)
+            label = "largest searched concurrency"
         requests = max(
             _MIN_DEFAULT_REQUESTS,
             concurrency * _DEFAULT_REQUESTS_PER_CONCURRENCY_SLOT,
@@ -632,6 +637,20 @@ def _apply_default_stop_condition(prof: dict[str, Any], cli: CLIConfig) -> None:
         "Pass --request-count, --num-conversations, or --benchmark-duration "
         "to change it."
     )
+
+
+def _search_space_upper_bound(cli: CLIConfig, field: str) -> float | None:
+    """Upper bound of the ``--search-space`` dimension on ``phases.profiling.<field>``."""
+    for raw in cli.search_space or []:
+        parsed = _parse_shape_dimension(raw)
+        if parsed is None or parsed[0] != field:
+            continue
+        # Grammar is path:lo,hi[:kind]; the real parser reports malformed bounds.
+        try:
+            return float(raw.split(":")[1].split(",", 1)[1])
+        except (IndexError, ValueError):
+            return None
+    return None
 
 
 def _is_full_pass_dataset(cli: CLIConfig) -> bool:

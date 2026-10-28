@@ -189,12 +189,15 @@ class PhaseRunner(TaskManagerMixin):
                     )
 
         if config.sessions_from_dataset and metadata:
+            # Count only sampleable roots: the stop condition counts root
+            # sessions, and DAG children run inside their root's session.
+            num_sessions = len(metadata.sampleable_conversation_ids)
             self._config = self._config.model_copy(
-                update={"expected_num_sessions": len(metadata.conversations)}
+                update={"expected_num_sessions": num_sessions}
             )
             self.info(
                 f"Phase {config.phase_name or config.phase}: sessions=all, running "
-                f"one full pass over {len(metadata.conversations):,} conversations"
+                f"one full pass over {num_sessions:,} conversations"
             )
 
         self._phase_publisher = phase_publisher

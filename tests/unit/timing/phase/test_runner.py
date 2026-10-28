@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pytest import param
 
 from aiperf.common.enums import BaselineKind, CreditPhase
 from aiperf.common.environment import Environment
@@ -1206,16 +1205,8 @@ class TestFixedScheduleConfigCorrection:
         # Config should remain unchanged for USER_CENTRIC_RATE
         assert r._config.total_expected_requests == 100
 
-    @pytest.mark.parametrize(
-        "mode",
-        [
-            param(TimingMode.REQUEST_RATE, id="request_rate"),
-            param(TimingMode.USER_CENTRIC_RATE, id="user_centric"),
-        ],
-    )  # fmt: skip
     async def test_sessions_from_dataset_resolves_to_conversation_count(
         self,
-        mode: TimingMode,
         pub: MagicMock,
         router: MagicMock,
         conc: MagicMock,
@@ -1223,9 +1214,7 @@ class TestFixedScheduleConfigCorrection:
         cb: MagicMock,
     ) -> None:
         """``sessions: all`` targets every loaded conversation, not the turn count."""
-        config = cfg(mode=mode, reqs=None).model_copy(
-            update={"sessions_from_dataset": True}
-        )
+        config = cfg(reqs=None).model_copy(update={"sessions_from_dataset": True})
 
         conv_src = MagicMock()
         conv_src.dataset_metadata = make_dataset_metadata(
@@ -1236,6 +1225,29 @@ class TestFixedScheduleConfigCorrection:
 
         assert r._config.expected_num_sessions == 3
         assert r._config.total_expected_requests is None
+
+    async def test_sessions_from_dataset_counts_only_root_conversations(
+        self,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """DAG children run inside their root's session, so only roots count."""
+        config = cfg(reqs=None).model_copy(update={"sessions_from_dataset": True})
+        metadata = make_dataset_metadata(
+            [("root", 1), ("branch_a", 2), ("branch_b", 2)]
+        )
+        for child in metadata.conversations[1:]:
+            child.is_root = False
+
+        conv_src = MagicMock()
+        conv_src.dataset_metadata = metadata
+
+        r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
+
+        assert r._config.expected_num_sessions == 1
 
     async def test_sessions_from_dataset_without_metadata_leaves_config(
         self,
