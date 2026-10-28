@@ -131,8 +131,8 @@ async def remote_first_record_has_timestamp(probe: ProbeResult) -> bool:
     read the cached download instead.
     """
     if probe.data_is_dir and probe.data_files is None:
-        # A folder with no parquet shards (e.g. Weka per-conversation JSON) reads
-        # as a directory locally, which never promotes; skip the download.
+        # A folder with no parquet shards reads as a directory locally, which has no
+        # first record; skip the download. The preflight promotes weka_trace by format.
         return False
     if (
         probe.data_files is not None

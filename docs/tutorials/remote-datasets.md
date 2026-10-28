@@ -135,7 +135,9 @@ see [Publishing traces](publishing-traces.md#publishing-with-datasetspush_to_hub
    timestamps, the run replays on the recorded schedule (`--no-fixed-schedule` opts out), just
    like a local trace. To decide this it reads only the leading bytes of the file, in steps of
    64 KiB, 1 MiB, and 8 MiB, and downloads the whole file only when the first record is longer
-   than that. Columnar files (Parquet, Arrow) are always read from the downloaded copy.
+   than that. Columnar files (Parquet, Arrow) are always read from the downloaded copy. A
+   `weka_trace` needs no check: it replays on its recorded schedule unless you pass
+   `--ignore-trace-delays` or `--use-think-time-only`, as for a local Weka trace.
 3. **Download** into the cache, verified against the manifest's `sha256` when present. The
    first record is then checked against the chosen format, so a file that does not look like
    its declared format fails with a clear error instead of during the run.

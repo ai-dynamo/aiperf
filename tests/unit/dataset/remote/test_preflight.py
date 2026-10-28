@@ -6,6 +6,7 @@ from pathlib import Path
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
@@ -118,6 +119,35 @@ def test_manifest_format_drives_promotion_and_block_size(monkeypatch) -> None:
     assert str(ds.format) == "mooncake_trace" and "format" in ds.model_fields_set
     assert ds.block_size == 16
     assert _profiling_type(cfg) == str(PhaseType.FIXED_SCHEDULE)
+
+
+WEKA_MANIFEST = {"aiperf_manifest_version": 1, "format": "weka_trace"}
+
+
+def test_manifest_weka_trace_stays_promoted_without_a_first_record_timestamp(
+    monkeypatch,
+) -> None:
+    resolver = _install(monkeypatch, FakeResolver(NO_TS_ROWS, manifest=WEKA_MANIFEST))
+    cfg = _cfg()
+    preflight.preflight_remote_access([cfg])
+    assert _profiling_type(cfg) == str(PhaseType.FIXED_SCHEDULE)
+    assert resolver.prefix_sizes == []
+
+
+@pytest.mark.parametrize(
+    "opt_out",
+    [
+        param({"ignore_trace_delays": True}, id="ignore-trace-delays"),
+        param({"use_think_time_only": True}, id="use-think-time-only"),
+    ],
+)  # fmt: skip
+def test_manifest_weka_trace_with_timing_opt_out_is_demoted(
+    monkeypatch, opt_out: dict
+) -> None:
+    _install(monkeypatch, FakeResolver(NO_TS_ROWS, manifest=WEKA_MANIFEST))
+    cfg = _cfg(**opt_out)
+    preflight.preflight_remote_access([cfg])
+    assert _profiling_type(cfg) == str(PhaseType.CONCURRENCY)
 
 
 def test_cli_block_size_wins_over_manifest(monkeypatch) -> None:

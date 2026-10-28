@@ -205,12 +205,29 @@ async def _access(groups: dict[str, list[BenchmarkConfig]]) -> None:
             _require_parquet_format(probe, fmt)
             if check is None:
                 continue
-            is_trace = fmt is not None and plugins.is_trace_dataset(str(fmt))
-            if is_trace and has_timestamp is None:
-                has_timestamp = await remote_first_record_has_timestamp(probe)
-            finalize_remote_fixed_schedule(
-                cfg, check, promote=is_trace and bool(has_timestamp)
-            )
+            if fmt is None or not plugins.is_trace_dataset(str(fmt)):
+                promote = False
+            elif (weka := _weka_promotion(fmt, ds)) is not None:
+                promote = weka
+            else:
+                if has_timestamp is None:
+                    has_timestamp = await remote_first_record_has_timestamp(probe)
+                promote = has_timestamp
+            finalize_remote_fixed_schedule(cfg, check, promote=promote)
+
+
+def _weka_promotion(fmt: CustomDatasetType, ds: FileDataset) -> bool | None:
+    """The converter's weka_trace rule, or None for any other format.
+
+    A weka trace keeps its timing in ``requests[].t``, so it always promotes unless
+    a timing opt-out was passed (see ``_timeline_opt_out_suppresses_promotion``).
+    The CLI applies the opt-out for a typed run; this covers a manifest-declared one.
+    """
+    from aiperf.plugin.enums import CustomDatasetType
+
+    if fmt != CustomDatasetType.WEKA_TRACE:
+        return None
+    return not (ds.ignore_trace_delays or ds.use_think_time_only)
 
 
 def preflight_remote_access(configs: Sequence[BenchmarkConfig]) -> None:
