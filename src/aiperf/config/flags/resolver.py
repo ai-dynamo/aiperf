@@ -884,12 +884,13 @@ def build_cli_overrides(
     _apply_optional_section(
         out, "wandb", build_wandb(cli, base_enabled=wandb_base_enabled)
     )
-    # These three builders already existed and are used by the CLI-only
-    # converter; this path simply never called them, so --mlflow-*,
-    # --otel-url, and the network-latency flags were dropped whenever a
-    # config file was supplied. They gate on model_fields_set, so an unset
-    # flag leaves the YAML block alone.
-    _apply_optional_section(out, "network_latency", build_network_latency(cli))
+    # The CLI-only builder emits disabled defaults even when no flags were set.
+    if cli.model_fields_set & {
+        "network_latency_automatic",
+        "network_latency_mean",
+        "network_latency_ping_interval",
+    }:
+        _apply_optional_section(out, "network_latency", build_network_latency(cli))
     otel_base_url = benchmark_config is not None and bool(
         benchmark_config.otel.metrics_url
     )

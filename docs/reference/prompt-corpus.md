@@ -41,6 +41,19 @@ Honored only where content is **synthesized**:
 
 Verbatim formats (`single_turn`, `multi_turn`, `baseten_trace`, …) ignore it.
 
+Hash-based prompts, including those using the `coding` corpus, use ordinary
+single-newline separators counted within each block's token budget. The separator
+is omitted if the tokenizer cannot represent it as a lossless, non-special single
+token. Synthesized text can change between versions; use the same AIPerf version
+and tokenizer when comparing runs.
+Llama-2-style SentencePiece tokenizers encode a newline with a separate leading
+prefix-space token, so they currently run without a separator. Concatenated
+blocks can therefore change token count when the generated text is re-tokenized.
+Newline-separated hash blocks require a block size of at least 2; one-token final
+partial blocks are still supported. When present, the newline separator occupies
+the entire partial block and can merge with preceding content when the generated
+text is re-tokenized, causing a one-token count discrepancy at that boundary.
+
 ## Defaults
 
 When omitted, the active loader's ``default_prompt_corpus`` from the plugin
