@@ -296,6 +296,7 @@ def build_env_vars(
     controller_host: str | None = None,
     include_pod_index: bool = True,
     controller_pod: bool = False,
+    remote_dataset: bool = False,
 ) -> list[dict[str, Any]]:
     """Create environment variables for a container.
 
@@ -304,6 +305,9 @@ def build_env_vars(
             pod (api / dataset-manager / etc.): emit AIPERF_CONTROLLER_POD=1 and
             the controller-only settings below. Nothing toggles HF offline mode
             from this marker, here or in bootstrap.py.
+        remote_dataset: The run reads a remote dataset. The dataset-manager
+            registers only after its download, so controller-pod containers
+            wait for registration as long as the download startup budget allows.
     """
     datasets_path = K8sEnvironment.JOBSET.DATASETS_PATH
     config_mount_path = K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH
@@ -314,6 +318,10 @@ def build_env_vars(
         Environment.SERVICE.REGISTRATION_TIMEOUT,
         K8sEnvironment.JOBSET.WORKER_CONNECTION_PROBE_TIMEOUT * 2,
     )
+    if controller_pod and remote_dataset:
+        registration_timeout += (
+            K8sEnvironment.HEALTH.DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS
+        )
     env: list[dict[str, Any]] = [
         # Shared dataset path: dataset-manager writes mmap files here,
         # API service serves them to workers via HTTP
