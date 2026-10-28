@@ -26,6 +26,12 @@ Any field in a YAML config typed as a sampling distribution accepts the full set
 
 Wherever you see `{mean: ..., stddev: ...}` in a template, you can swap in any other shape from this page.
 
+For synthetic conversations, `turns` is sampled once per conversation and rounded
+up to at least one turn. `turn_delay` is sampled for each subsequent turn and
+scaled by `turn_delay_ratio`; a non-positive delay means no wait. Bounds apply
+before these conversions. Seeded workloads that previously used the mean-only
+approximation may generate different conversations after this fix.
+
 ## The five distribution types
 
 AIPerf supports five distribution shapes, and **figures out which one you mean from the keys you wrote** — you don't have to add a `type:` key. The discriminator is purely structural:
