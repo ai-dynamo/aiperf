@@ -168,6 +168,28 @@ async def test_pinned_version_deleted_is_changed_after_pin() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reprobe_of_pinned_version_reads_it_after_a_newer_upload() -> None:
+    client = _client()
+    pinned = RemoteRef(ref="s3://bucket/t.jsonl").with_version("v:v1")
+    with Stubber(client) as s:
+        s.add_response("head_object", {"ETag": '"e1"', "VersionId": "v1"}, {"Bucket": "bucket", "Key": "t.jsonl", "VersionId": "v1"})  # fmt: skip
+        _missing(s, "get_object", {"Bucket": "bucket", "Key": "t.jsonl.aiperf.json"})
+        probe = await S3SourceResolver(client=client).probe(pinned)
+    assert probe.ref.resolved_version == "v:v1"
+    assert probe.pinned_ref == "s3://bucket/t.jsonl?versionId=v1"
+
+
+@pytest.mark.asyncio
+async def test_reprobe_of_deleted_pinned_version_is_changed_after_pin() -> None:
+    client = _client()
+    pinned = RemoteRef(ref="s3://bucket/t.jsonl").with_version("v:v1")
+    with Stubber(client) as s:
+        _missing(s, "head_object", {"Bucket": "bucket", "Key": "t.jsonl", "VersionId": "v1"})  # fmt: skip
+        with pytest.raises(RemoteSourceError, match="changed after AIPerf pinned"):
+            await S3SourceResolver(client=client).probe(pinned)
+
+
+@pytest.mark.asyncio
 async def test_missing_version_id_is_revision_not_found() -> None:
     client = _client()
     with Stubber(client) as s:

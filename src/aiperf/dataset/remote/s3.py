@@ -497,12 +497,18 @@ class S3SourceResolver:
         if parsed.is_container:
             return await self._probe_root(ref, bucket, key)
         params = {"Bucket": bucket, "Key": key}
-        if parsed.revision:
-            params["VersionId"] = parsed.revision
+        # A re-probe of a pinned ref (the dataset-manager pod) asks for the
+        # pinned version, which stays readable after a newer one is uploaded.
+        version_id = (
+            parsed.revision
+            or _version_params(ref.resolved_version).get("VersionId")
+        )  # fmt: skip
+        if version_id:
+            params["VersionId"] = version_id
         head = await self._head(ref, params, RemoteStage.ACCESS)
         if head is not None:
             return await self._probe_object(ref, bucket, key, head)
-        if parsed.revision:
+        if version_id:
             raise _revision_missing(ref, RemoteStage.ACCESS)
         return await self._probe_root(ref, bucket, f"{key}/")
 
