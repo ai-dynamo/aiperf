@@ -49,6 +49,8 @@ def _stop_fields(prof: dict[str, Any]) -> dict[str, Any]:
         param({"search_space": ["concurrency:64,128:int"]}, {"requests": 256}, id="search_uses_upper_bound"),
         param({"search_space": ["phases.profiling.concurrency:8,20.5"]}, {"requests": 42}, id="search_real_upper_bound_rounds_up"),
         param({"search_space": ["rate:1,50"]}, {"requests": 10}, id="search_rate_flat"),
+        param({"search_space": ["phases.warmup.concurrency:1,2", "prefill_concurrency:1,4:int", "concurrency:8,32:int"]}, {"requests": 64}, id="search_skips_other_dimensions"),
+        param({"search_space": ["concurrency:64:int"]}, {"requests": 10}, id="search_malformed_bounds_left_to_real_parser"),
         param({"request_rate": 5.0}, {"requests": 10}, id="request_rate_flat"),
         param({"request_rate": 5.0, "concurrency": 80}, {"requests": 10}, id="request_rate_with_concurrency_cap"),
         param({"public_dataset": "sharegpt", "concurrency": 80}, {"requests": 160}, id="non_suite_public_dataset"),
