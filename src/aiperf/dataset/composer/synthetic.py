@@ -46,10 +46,8 @@ class SyntheticDatasetComposer(BaseDatasetComposer):
         self._turn_sampler_rng = rng.derive("composer.conversation.turn_count")
         self._delay_sampler_rng = rng.derive("composer.conversation.turn_delay")
 
-        # Cache the dataset shape and derived counts. Dataset sub-shapes
-        # (prompts/images/audio/video/turns/turn_delay) may be None when the
-        # user didn't configure them — apply the canonical defaults
-        # (turn=1, batch=1, delay=0) explicitly here.
+        # Missing payload configurations default to a batch size of one;
+        # turn count and delay defaults are applied when generating conversations and turns.
         self._num_entries = dataset.entries
         self._turn_distribution = dataset.turns
         self._turn_delay_distribution = dataset.turn_delay
