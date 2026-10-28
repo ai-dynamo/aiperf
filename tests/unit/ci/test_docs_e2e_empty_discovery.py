@@ -13,9 +13,6 @@ runner, built the image and executed nothing, reported green.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
-
-REPO = Path(__file__).resolve().parents[3]
 
 
 def _run(monkeypatch, discovered: dict, *argv: str) -> int:

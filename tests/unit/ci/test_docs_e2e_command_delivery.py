@@ -118,8 +118,12 @@ def test_the_deadline_is_enforced_inside_the_container() -> None:
 
     argv = build_command_exec_argv("container", "aiperf profile", 900)
     assert "timeout" in argv, "no in-container deadline"
-    deadline = argv.index("timeout")
-    assert argv[deadline + 2] == "900"
+    # Indexed from the end: a container literally named "timeout" would
+    # otherwise make argv.index() find the wrong element.
+    deadline = int(argv[-4])
+    # Strictly later than the host watchdog's, or the two race and a timeout
+    # reports as a bare exit 124 instead of "exceeded 900s timeout".
+    assert deadline > 900, "the in-container deadline must not race the watchdog"
     assert any(a.startswith("--kill-after=") for a in argv), (
         "a command that ignores SIGTERM would outlive its own deadline"
     )
@@ -145,4 +149,32 @@ def test_a_per_command_timeout_reaches_the_container() -> None:
     argv = build_command_exec_argv(
         "container", cmd.command, resolve_command_timeout(cmd)
     )
-    assert argv[argv.index("timeout") + 2] == "42"
+    assert int(argv[-4]) > 42, (
+        "a per-command timeout= must move the in-container deadline with it"
+    )
+
+
+def test_the_guard_reports_which_side_won_the_race() -> None:
+    """A watchdog kill leaves the command alive inside the container until its
+    own later deadline. The reader has to know that happened, or it starts the
+    next documented command against a server the previous one is still
+    loading, and blames the overlap on the wrong command."""
+    from test_runner import _ProcessGroupKillGuard
+
+    class _Running:
+        pid = 1
+
+        def poll(self):  # noqa: ANN201 - test double
+            return None
+
+    # Watchdog fired first: the reader must be told.
+    guard = _ProcessGroupKillGuard()
+    assert guard.mark_killing_if_running(_Running()) is True
+    assert guard.mark_finished() is True, "a watchdog kill was not reported"
+
+    # Command exited on its own: nothing is left running, so no wait.
+    guard = _ProcessGroupKillGuard()
+    assert guard.mark_finished() is False
+    assert guard.mark_killing_if_running(_Running()) is False, (
+        "the watchdog must not kill a process the reader already reaped"
+    )

@@ -28,10 +28,10 @@ FILE_TAG_ATTRS = frozenset({"path"})
 # would be accepted and never read.
 LIFECYCLE_TAG_ATTRS: frozenset[str] = frozenset()
 
-# The only fence language a command tag may introduce. The tagged block is a
-# shell command; a guide labelling it anything else is not describing one, and
-# the read fails loudly rather than dropping the command.
-BASH_INFO_STRING = "bash"
+# The exact fence a command block opens and closes with. Literal strings, not
+# CommonMark matching: see ``MarkdownParser._extract_bash_block``.
+BASH_FENCE_OPENER = "```bash"
+FENCE_CLOSER = "```"
 
 # AIPerf execution
 AIPERF_UI_TYPE = "simple"
@@ -43,6 +43,12 @@ CONTAINER_START_TIMEOUT = 60  # seconds for container startup
 CONTAINER_DISCOVERY_TIMEOUT = 30  # seconds for a `docker ps` snapshot
 FIXTURE_WRITE_TIMEOUT = 30  # seconds to pipe one fixture into the container
 AIPERF_COMMAND_TIMEOUT = 1200  # seconds for AIPerf commands
-# Grace between the in-container SIGTERM at the deadline and the SIGKILL that
-# follows it, for a command that traps or ignores SIGTERM.
+# The in-container deadline sits this far past the host watchdog's, so the
+# watchdog always fires first and keeps ownership of the timeout diagnostic
+# ("exceeded Ns timeout"). Reaching the in-container deadline at the same
+# moment would race it: the process would already be gone, the watchdog's
+# guard would short-circuit, and the run would report a bare exit 124.
+CONTAINER_DEADLINE_SLACK = 15  # seconds
+# Grace between the in-container SIGTERM and the SIGKILL that follows it, for
+# a command that traps or ignores SIGTERM.
 CONTAINER_TIMEOUT_KILL_GRACE = 10  # seconds

@@ -21,6 +21,7 @@ from typing import Any
 from constants import (
     AIPERF_COMMAND_TIMEOUT,
     AIPERF_UI_TYPE,
+    CONTAINER_DEADLINE_SLACK,
     CONTAINER_DISCOVERY_TIMEOUT,
     CONTAINER_TIMEOUT_KILL_GRACE,
     FIXTURE_WRITE_TIMEOUT,
@@ -185,11 +186,11 @@ def build_command_exec_argv(
     script delivered over stdin shares that stream with the commands it runs,
     so the first one to read stdin consumes the rest of the block.
 
-    The deadline is enforced inside the container as well as by the host
-    watchdog: killing the ``docker exec`` client kills only the client, and
-    its in-container child keeps loading the server and writing artifacts
-    into the next command's run. ``--kill-after`` covers a command that
-    ignores SIGTERM.
+    A second deadline is enforced inside the container, because killing the
+    ``docker exec`` client kills only the client: its in-container child keeps
+    loading the server and writing artifacts into the next command's run. It
+    is set past the host watchdog's so the watchdog still owns the timeout
+    diagnostic, and only reaps what the watchdog cannot reach.
     """
     return [
         "docker",
@@ -197,7 +198,7 @@ def build_command_exec_argv(
         container_id,
         "timeout",
         f"--kill-after={CONTAINER_TIMEOUT_KILL_GRACE}",
-        str(timeout_seconds),
+        str(timeout_seconds + CONTAINER_DEADLINE_SLACK),
         "bash",
         "-c",
         command,
@@ -241,19 +242,30 @@ def build_fixture_write_command(target: PurePosixPath) -> str:
 
 
 class _ProcessGroupKillGuard:
+    """Decides, once, whether the watchdog or the reader owns the process."""
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._finished = False
+        self._killed = False
 
-    def mark_finished(self) -> None:
+    def mark_finished(self) -> bool:
+        """Close the race from the reader's side.
+
+        Returns whether the watchdog got there first, which the caller needs:
+        a watchdog kill leaves the in-container command running until its own
+        deadline, and the next command must not start inside that window.
+        """
         with self._lock:
             self._finished = True
+            return self._killed
 
     def mark_killing_if_running(self, proc: Any) -> bool:
         with self._lock:
             if self._finished or proc.poll() is not None:
                 return False
             self._finished = True
+            self._killed = True
             return True
 
 
@@ -858,8 +870,22 @@ class EndToEndTestRunner:
 
                     aiperf_process.wait()
                 finally:
-                    kill_guard.mark_finished()
+                    killed_by_watchdog = kill_guard.mark_finished()
                     watchdog.cancel()
+
+                # The watchdog kills the host-side client; the in-container
+                # command outlives it until its own deadline. Starting the
+                # next documented command before then would run it against a
+                # server still loaded by a command already reported as timed
+                # out, and blame the overlap on the wrong command. Only ever
+                # reached on a command that has already failed.
+                if killed_by_watchdog:
+                    overlap = CONTAINER_DEADLINE_SLACK + CONTAINER_TIMEOUT_KILL_GRACE
+                    logger.error(
+                        f"Waiting {overlap}s for the timed-out command to be "
+                        f"reaped inside the container before continuing"
+                    )
+                    time.sleep(overlap)
 
                 if aiperf_process.returncode != 0:
                     logger.error("=" * 60)

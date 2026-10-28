@@ -12,9 +12,13 @@ Both left a green run that executed fewer commands than the guides document.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from pytest import param
+
+if TYPE_CHECKING:
+    from data_types import Server
 
 GOOD = """
 <!-- setup-demo-endpoint-server -->
@@ -45,7 +49,22 @@ assert SHELL_FENCE != GOOD, "the non-bash-fence edit no longer applies to GOOD"
 assert UNTERMINATED != GOOD, "the unterminated-fence edit no longer applies to GOOD"
 
 
-def _parse(tmp_path: Path, markdown: str) -> dict:
+def _guide(opener: str, closer: str) -> str:
+    """A complete one-server guide whose single run block uses this fence."""
+    return f"""
+<!-- setup-demo-endpoint-server -->
+```bash
+docker run demo
+```
+
+<!-- aiperf-run-demo-endpoint-server -->
+{opener}
+aiperf profile --x
+{closer}
+"""
+
+
+def _parse(tmp_path: Path, markdown: str) -> dict[str, Server]:
     from parser import MarkdownParser
 
     (tmp_path / "guide.md").write_text(markdown)
@@ -88,7 +107,7 @@ def test_an_unterminated_fence_does_not_register_a_swallowed_tag(
     assert not any("aiperf-run-demo-endpoint-server" in b for b in bodies)
 
 
-def test_the_real_guides_still_parse_clean(tmp_path: Path) -> None:
+def test_the_real_guides_still_parse_clean() -> None:
     """The refusals above must not reject anything the repository documents."""
     from parser import MarkdownParser
 
@@ -97,3 +116,65 @@ def test_the_real_guides_still_parse_clean(tmp_path: Path) -> None:
     assert servers, "no servers discovered in the repository"
     for name, server in servers.items():
         assert server.parse_errors == [], f"{name} newly rejects a documented command"
+
+
+@pytest.mark.parametrize(
+    "opener,closer",
+    [
+        param("````bash", "````", id="four-backtick-opener"),
+        param("```bash", "````", id="four-backtick-closer"),
+        param("~~~bash", "~~~", id="tilde-fence"),
+        param("```bash title=x", "```", id="extra-info-string"),
+        param("```BASH", "```", id="uppercase"),
+        param("``` bash", "```", id="space-before-info-string"),
+        param("```\tbash", "```", id="tab-before-info-string"),
+        param("```", "```", id="no-info-string"),
+    ],
+)  # fmt: skip
+def test_a_fence_this_harness_never_ran_stays_unrun_and_is_recorded(
+    tmp_path: Path, opener: str, closer: str
+) -> None:
+    """Recording the read failure must not widen what *runs*.
+
+    Every form here was dropped silently before this change. Each must still
+    be dropped -- accepting any of them would start executing a command that
+    has never executed, on a GPU runner, which is a far worse outcome than
+    failing loudly -- and each must now leave a parse error behind.
+    """
+    servers = _parse(tmp_path, _guide(opener, closer))
+    demo = servers["demo"]
+    assert demo.aiperf_commands == [], f"{opener!r} must not open a command block"
+    assert demo.parse_errors, f"{opener!r} was dropped with no parse error"
+
+
+@pytest.mark.parametrize(
+    "opener,closer",
+    [
+        param("```bash", "    ```", id="indented-closer"),
+        param("    ```bash", "    ```", id="indented-opener"),
+    ],
+)  # fmt: skip
+def test_a_fence_this_harness_always_ran_keeps_running(
+    tmp_path: Path, opener: str, closer: str
+) -> None:
+    """The other half of the same invariant: nothing that ran may stop running.
+
+    Both forms are read by stripping each line, so an indented fence has
+    always opened and closed a command block. Routing this reader through the
+    CommonMark fence tracker would silently drop them, because CommonMark
+    treats four spaces as an indented code block rather than a fence.
+    """
+    servers = _parse(tmp_path, _guide(opener, closer))
+    demo = servers["demo"]
+    assert [c.command.strip() for c in demo.aiperf_commands] == ["aiperf profile --x"]
+    assert demo.parse_errors == []
+
+
+def test_the_drop_reason_names_the_actual_cause(tmp_path: Path) -> None:
+    """The recorded reason is the deliverable: it is what sends the guide
+    author to the right line. A non-bash fence is neither missing nor
+    unterminated, so it must not be reported as either."""
+    servers = _parse(tmp_path, _guide("```shell", "```"))
+    (problem,) = servers["demo"].parse_errors
+    assert "never closed" not in problem, f"wrong cause reported: {problem}"
+    assert "```bash" in problem, f"reason does not name the expected fence: {problem}"

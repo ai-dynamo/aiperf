@@ -12,7 +12,8 @@ from pathlib import Path, PurePosixPath
 from constants import (
     AIPERF_RUN_TAG_PREFIX,
     AIPERF_RUN_TAG_PREFIX_LEN,
-    BASH_INFO_STRING,
+    BASH_FENCE_OPENER,
+    FENCE_CLOSER,
     FILE_TAG_ATTRS,
     HEALTH_CHECK_TAG_PREFIX,
     HEALTH_CHECK_TAG_PREFIX_LEN,
@@ -167,7 +168,9 @@ class MarkdownParser:
                         logger.info(f"Found target tag: {tag_name}")
 
                         # Extract the bash command
-                        bash_content = self._extract_bash_block(lines, i + 1)
+                        bash_content, drop_reason = self._extract_bash_block(
+                            lines, i + 1
+                        )
 
                         if bash_content:
                             command_kwargs = dict(
@@ -205,8 +208,8 @@ class MarkdownParser:
                             logger.warning(f"No bash block found after tag {tag_name}")
                             self._record_parse_error(
                                 tag_name,
-                                f"dropped the command at {file_path}:{i + 1} "
-                                f"over a missing or unterminated bash block",
+                                f"dropped the command at {file_path}:{i + 1}: "
+                                f"{drop_reason}",
                             )
             i += 1
 
@@ -508,43 +511,47 @@ class MarkdownParser:
             and not tag_name.startswith("/")
         )
 
-    def _extract_bash_block(self, lines: list[str], start_idx: int) -> str | None:
+    def _extract_bash_block(
+        self, lines: list[str], start_idx: int
+    ) -> tuple[str | None, str]:
         """Extract the ```bash block a command tag introduces.
 
-        Only ``bash`` is accepted: a tagged command is shell, and a guide that
-        labels the block anything else is not describing something this
-        harness runs. Fence matching goes through ``_next_fence_state`` so
-        this reader cannot disagree with the tag scanner about where a block
-        ends, and a harness tag inside the body means the opener was never
-        closed -- the same refusal ``_extract_fenced_block`` makes. Returning
-        None is a read failure the caller records as a parse error; a command
-        never leaves the suite silently.
+        Returns ``(command, reason)``; on failure ``command`` is None and
+        ``reason`` names the cause for the parse error the caller records.
+
+        Fence handling is deliberately literal: the opener must strip to
+        BASH_FENCE_OPENER and the closer to FENCE_CLOSER. Routing this reader
+        through ``_next_fence_state`` instead would read a *different* set of
+        blocks than the harness has ever run -- a four-backtick closer would
+        close a three-backtick block, an indented opener would stop opening
+        one, and a space before the info string would start running. Recording
+        a read failure must not change which commands execute.
         """
         i = start_idx
-        fence: tuple[str, int] | None = None
         while i < len(lines):
-            fence = self._next_fence_state(None, lines[i])
-            if fence is not None:
-                break
             line = lines[i].strip()
+            if line == BASH_FENCE_OPENER:
+                break
             if line and not line.startswith("#"):
-                return None
+                return None, f"the block after it is not a {BASH_FENCE_OPENER} block"
             i += 1
-        if fence is None:
-            return None
-        if lines[i].strip().lstrip("`~").strip() != BASH_INFO_STRING:
-            return None
+        else:
+            return None, f"no {BASH_FENCE_OPENER} block follows it"
 
         body: list[str] = []
         i += 1
         while i < len(lines):
-            if self._next_fence_state(fence, lines[i]) is None:
-                return "".join(body).strip()
+            if lines[i].strip() == FENCE_CLOSER:
+                return "".join(body).strip(), ""
+            # A harness tag inside the body means the opener was never closed
+            # and this reader has run past the end of the command. The tag it
+            # ate never registers, so the command that tag introduced leaves
+            # the suite with nothing recorded against it. Refuse both.
             if self._looks_like_tag(lines[i].strip()):
-                return None
+                return None, "its fence is never closed and swallows the next tag"
             body.append(lines[i])
             i += 1
-        return None
+        return None, "its fence is never closed"
 
     def _categorize_command(self, command: Command):
         """Categorize command and add to appropriate server"""
