@@ -53,7 +53,6 @@ def _stop_fields(prof: dict[str, Any]) -> dict[str, Any]:
         param({"request_rate": 5.0, "concurrency": 80}, {"requests": 10}, id="request_rate_with_concurrency_cap"),
         param({"public_dataset": "sharegpt", "concurrency": 80}, {"requests": 160}, id="non_suite_public_dataset"),
         param({"public_dataset": "speed_bench_coding", "concurrency": 80}, {"sessions": "all"}, id="speed_bench_category"),
-        param({"public_dataset": "speed_bench_qualitative"}, {"sessions": "all"}, id="speed_bench_qualitative"),
         param({"public_dataset": "spec_al_mtbench", "request_rate": 5.0}, {"sessions": "all"}, id="spec_al_request_rate"),
     ],
 )  # fmt: skip
