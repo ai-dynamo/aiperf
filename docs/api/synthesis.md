@@ -7,6 +7,8 @@ sidebar-title: Prefix Synthesis API Reference
 
 Complete API documentation for the prefix synthesis module.
 
+Initialize the global random generator once before constructing an `EmpiricalSampler` or `Synthesizer` directly. The standalone examples below use `rng.init(42)` for reproducible results; when combining examples in one process, initialize it only once.
+
 ## Module: `aiperf.dataset.synthesis`
 
 ### Classes
@@ -182,7 +184,10 @@ EmpiricalSampler(data: list[int] | list[float]) -> None
 
 **Example:**
 ```python
+from aiperf.common import random_generator as rng
 from aiperf.dataset.synthesis import EmpiricalSampler, EmpiricalSamplerStats
+
+rng.init(42)
 
 # Create sampler from observed data
 data = [100, 200, 150, 300, 250, 100, 200]
@@ -279,8 +284,11 @@ Synthesizer(params: SynthesisParams | None = None) -> None
 
 **Example:**
 ```python
+from aiperf.common import random_generator as rng
 from aiperf.dataset.synthesis import Synthesizer
 from aiperf.dataset.synthesis.models import SynthesisParams
+
+rng.init(42)
 
 # Create synthesizer with custom parameters
 params = SynthesisParams(
@@ -295,8 +303,8 @@ synthetic_traces = synthesizer.synthesize_from_file("input.jsonl")
 
 # Synthesize from list
 synthetic_traces = synthesizer.synthesize_traces([
-    {"input_length": 512, "output_length": 64, "hash_ids": [1, 2, 3]},
-    {"input_length": 768, "output_length": 128, "hash_ids": [1, 2, 4]},
+    {"input_length": 1536, "output_length": 64, "hash_ids": [1, 2, 3]},
+    {"input_length": 2048, "output_length": 128, "hash_ids": [1, 2, 4]},
 ])
 
 # Get statistics
@@ -484,7 +492,8 @@ aiperf profile \
 
 **Via SynthesisConfig:**
 ```python
-from aiperf.config.flags._input import SynthesisConfig
+from aiperf.config.dataset.trace import SynthesisConfig
+from aiperf.dataset.synthesis.models import SynthesisParams
 
 config = SynthesisConfig(
     speedup_ratio=2.0,
@@ -493,15 +502,16 @@ config = SynthesisConfig(
     max_isl=4096,
 )
 
-# Check if synthesis would be triggered
-if config.should_synthesize():
-    print("Synthesis will be applied")
+params = SynthesisParams.from_synthesis_config(config)
 ```
 
 **Direct Instantiation:**
 ```python
+from aiperf.common import random_generator as rng
 from aiperf.dataset.synthesis import Synthesizer
 from aiperf.dataset.synthesis.models import SynthesisParams
+
+rng.init(42)
 
 params = SynthesisParams(
     speedup_ratio=2.0,

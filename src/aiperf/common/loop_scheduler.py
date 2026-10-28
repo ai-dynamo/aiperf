@@ -60,6 +60,10 @@ class LoopScheduler:
         """
         self._loop: asyncio.AbstractEventLoop = loop or asyncio.get_running_loop()
         self._tasks: set[asyncio.Task] = set()
+        # Logical group of each running task started for a grouped timer (or a
+        # grouped zero-delay schedule). Lets callers ask whether a group still
+        # has a coroutine in progress after its timers have all fired.
+        self._task_groups: dict[asyncio.Task, str] = {}
         # Maps handle ID → (handle, coroutine) so we can close() coroutines when handles are cancelled.
         # Use id(handle) as key to avoid recursion when handles contain circular refs (handle_container).
         self._handles: dict[
@@ -73,6 +77,7 @@ class LoopScheduler:
             exception_handler
         )
         self._drain_observer: Callable[[], None] | None = None
+        self._group_task_observer: Callable[[str], None] | None = None
 
     def set_exception_handler(self, handler: Callable[[asyncio.Task], None]) -> None:
         """Set callback for unhandled task exceptions."""
@@ -82,10 +87,34 @@ class LoopScheduler:
         """Observe transitions from running work to no running work."""
         self._drain_observer = observer
 
+    def set_group_task_observer(self, observer: Callable[[str], None] | None) -> None:
+        """Observe each grouped timer's coroutine finishing (not when cancelled).
+
+        The observer receives the timer's ``group_id``. It runs after the
+        coroutine has returned, so anything the coroutine issued is already
+        visible to the observer.
+        """
+        self._group_task_observer = observer
+
+    def _notify_group_task_done(self, group_id: str, task: asyncio.Task) -> None:
+        if task.cancelled() or self._group_task_observer is None:
+            return
+        try:
+            self._group_task_observer(group_id)
+        except Exception as exc:  # noqa: BLE001
+            self._loop.call_exception_handler(
+                {
+                    "message": "LoopScheduler group task observer failed",
+                    "exception": exc,
+                    "task": task,
+                }
+            )
+
     def _done_callback(self, task: asyncio.Task) -> None:
         """Remove completed task from tracking; invoke exception handler if failed."""
         was_tracked = task in self._tasks
         self._tasks.discard(task)  # discard() is safe if already removed by cancel_all
+        self._task_groups.pop(task, None)
         # Must check cancelled() first - calling exception() on a cancelled task raises CancelledError
         if (
             not task.cancelled()
@@ -118,13 +147,12 @@ class LoopScheduler:
         but the handle doesn't exist until call_later() returns. We pass a
         mutable list, then populate it after call_later() returns.
         """
+        group_id = None
         if handle_container[0] is not None:
             handle_id = id(handle_container[0])
             self._handles.pop(handle_id, None)
-            self._handle_groups.pop(handle_id, None)
-        task = self._loop.create_task(coro)
-        self._tasks.add(task)
-        task.add_done_callback(self._done_callback)
+            group_id = self._handle_groups.pop(handle_id, None)
+        self.execute_async(coro, group_id=group_id)
 
     def _track_handle_and_return_id(
         self,
@@ -146,7 +174,9 @@ class LoopScheduler:
             self._handle_groups[handle_id] = group_id
         return handle_id
 
-    def execute_async(self, coro: Coroutine) -> asyncio.Task:
+    def execute_async(
+        self, coro: Coroutine, *, group_id: str | None = None
+    ) -> asyncio.Task:
         """Execute coroutine asynchronously (creates a task and returns it immediately).
 
         Returns:
@@ -156,6 +186,14 @@ class LoopScheduler:
         task = self._loop.create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._done_callback)
+        if group_id is not None:
+            self._task_groups[task] = group_id
+        if group_id is not None and self._group_task_observer is not None:
+            task.add_done_callback(
+                lambda done, group_id=group_id: self._notify_group_task_done(
+                    group_id, done
+                )
+            )
         return task
 
     def schedule_later(
@@ -178,7 +216,7 @@ class LoopScheduler:
             Handle for cancellation. Cancelled coroutines are properly closed.
         """
         if delay_sec <= 0:
-            return self.execute_async(coro)
+            return self.execute_async(coro, group_id=group_id)
 
         handle_container = [None]
         handle = self._loop.call_later(
@@ -243,7 +281,7 @@ class LoopScheduler:
         offset_sec = perf_sec - cur_perf_sec
 
         if offset_sec <= 0:
-            return self.execute_async(coro)
+            return self.execute_async(coro, group_id=group_id)
         return self.schedule_at(cur_loop_time + offset_sec, coro, group_id=group_id)
 
     def schedule_at_perf_ns(
@@ -276,7 +314,7 @@ class LoopScheduler:
         offset_sec = (perf_time_ns - cur_perf_ns) / NANOS_PER_SECOND
 
         if offset_sec <= 0:
-            return self.execute_async(coro)
+            return self.execute_async(coro, group_id=group_id)
         return self.schedule_at(cur_loop_time + offset_sec, coro, group_id=group_id)
 
     def cancel_handle_id(self, handle_id: HandleId) -> bool:
@@ -324,6 +362,7 @@ class LoopScheduler:
         """
         tasks = list(self._tasks)
         self._tasks.clear()
+        self._task_groups.clear()
         for task in tasks:
             task.cancel()
         return tasks
@@ -398,6 +437,24 @@ class LoopScheduler:
             handle_container[0] = replacement
             self._track_handle_and_return_id(replacement, coro, group_id=group_id)
         return shift_sec
+
+    def pending_count_for_group(self, group_id: str) -> int:
+        """Count ``group_id`` timers still waiting to fire.
+
+        An entry is dropped when its timer fires or is cancelled, so a timer
+        whose coroutine is already running is not counted.
+        """
+        return sum(1 for group in self._handle_groups.values() if group == group_id)
+
+    def running_count_for_group(self, group_id: str) -> int:
+        """Count ``group_id`` coroutines that have started and not finished.
+
+        The counterpart of ``pending_count_for_group``: a grouped timer moves
+        from that count to this one when it fires. A task is removed in the
+        scheduler's first done callback, so by the time a group task observer
+        runs for it, the finished task is no longer counted.
+        """
+        return sum(1 for group in self._task_groups.values() if group == group_id)
 
     def cap_pending_delay_for_group(self, group_id: str, max_delay_sec: float) -> float:
         """Uniformly advance one logical group's pending replay timers.

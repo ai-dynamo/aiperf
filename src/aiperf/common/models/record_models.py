@@ -45,6 +45,7 @@ from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.models.spec_decode_models import SpecDecodeAcceptanceRecord
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
+from aiperf.common.monotonic_clock import process_clock
 from aiperf.common.types import JsonObject, MetricTagT, PhaseKind
 from aiperf.common.utils import load_json_str
 
@@ -52,6 +53,9 @@ _logger = AIPerfLogger(__name__)
 _SSE_COMMENT_FIELD_NAME = "comment"
 _SSE_DATA_FIELD_NAME = "data"
 _SSE_DATA_PREFIX = "data:"
+# ASCII padding only: str.strip() would also eat U+0085/U+2028/U+2029 and
+# \x0b-\x0c/\x1c-\x1f, which are data, not SSE whitespace.
+_SSE_PADDING = " \t"
 
 
 class MetricResult(JsonMetricResult):
@@ -760,14 +764,17 @@ class SSEMessage:
                 packets=[
                     SSEField(
                         name=_SSE_DATA_FIELD_NAME,
-                        value=raw_message[len(_SSE_DATA_PREFIX) :].strip(),
+                        value=raw_message[len(_SSE_DATA_PREFIX) :].strip(_SSE_PADDING),
                     )
                 ],
             )
 
         message = cls(perf_ns=perf_ns)
-        for line in raw_message.splitlines():
-            if not (line := line.strip()):
+        # SSE fields end at CR/LF; Unicode line separators belong to the data.
+        if "\r" in raw_message:
+            raw_message = raw_message.replace("\r\n", "\n").replace("\r", "\n")
+        for line in raw_message.split("\n"):
+            if not (line := line.strip(_SSE_PADDING)):
                 continue
 
             prev_value = message.packets[-1].value if message.packets else None
@@ -790,7 +797,9 @@ class SSEMessage:
             parts = line.split(":", 1)
             if len(parts) < 2:
                 # Fields without a colon have no value, so the whole line is the field name
-                message.packets.append(SSEField(name=parts[0].strip(), value=None))
+                message.packets.append(
+                    SSEField(name=parts[0].strip(_SSE_PADDING), value=None)
+                )
                 continue
 
             field_name, value = parts
@@ -799,11 +808,14 @@ class SSEMessage:
                 # Field name is empty, so this is a comment
                 field_name = _SSE_COMMENT_FIELD_NAME
 
-            # Spec says strip only one leading space; we strip() all whitespace
+            # Spec says strip only one leading space; we strip all ASCII padding
             # to normalize inconsistent servers for downstream exact comparisons
             # (e.g. "[DONE]", "error").
             message.packets.append(
-                SSEField(name=field_name.strip(), value=value.strip())
+                SSEField(
+                    name=field_name.strip(_SSE_PADDING),
+                    value=value.strip(_SSE_PADDING),
+                )
             )
 
         return message
@@ -1162,10 +1174,31 @@ class RequestInfo(RecordContext):
         description="Response ID from the previous turn (e.g. 'resp_<hash>') "
         "used for stateful chaining in the Responses API.",
     )
+    system_prompt_in_stored_history: bool = Field(
+        default=False,
+        description="Whether the stored server-side history behind "
+        "previous_response_id already contains the system prompt as an input "
+        "item. Only meaningful when previous_response_id is set.",
+    )
+
+
+def _wall_ns_at_start_perf(data: dict[str, Any]) -> int:
+    """Wall time of the record's own ``start_perf_ns``, via the per-process anchor.
+
+    A wall read at construction would describe when the record was built, not
+    when the request started; for records built after a timeout or a poll loop
+    that is seconds late. Being a default factory rather than an after-validator
+    keeps the field out of ``model_fields_set``: assigning it there grows every
+    record's fields set past CPython's resize threshold (+512 B per record).
+    """
+    return process_clock().wall_ns_at(data["start_perf_ns"])
 
 
 class RequestRecord(AIPerfBaseModel):
     """Record of a request with its associated responses."""
+
+    _redirect_locations: tuple[str, ...] = PrivateAttr(default=())
+    """Download redirect metadata, local to the transport and never serialized."""
 
     _parsed_responses_cache: list[ParsedResponse] | None = PrivateAttr(default=None)
     """Memoized endpoint-final parsed responses, local to this process and never
@@ -1188,13 +1221,14 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         description="The name of the model targeted by the request.",
     )
-    timestamp_ns: int = Field(
-        default_factory=time.time_ns,
-        description="The wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns).",
-    )
+    # Declared before ``timestamp_ns``: its default factory reads this value.
     start_perf_ns: int = Field(
         default_factory=time.perf_counter_ns,
         description="The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).",
+    )
+    timestamp_ns: int = Field(
+        default_factory=_wall_ns_at_start_perf,
+        description="The wall clock timestamp of the request start in nanoseconds: the wall time of ``start_perf_ns``. When omitted it is derived from ``start_perf_ns`` through the per-process anchor (``process_clock``). DO NOT USE FOR LATENCY CALCULATIONS.",
     )
     end_perf_ns: int | None = Field(
         default=None,
@@ -1258,9 +1292,12 @@ class RequestRecord(AIPerfBaseModel):
         "Kubernetes mode, where both clocks are the same clock and no "
         "correction is meaningful. Signed, so no bounds apply. Measured in the "
         "tracker's anchored clock domain (a wall-clock anchor advanced by "
-        "perf_counter deltas) while ``timestamp_ns`` is raw ``time.time_ns``, "
-        "so an NTP step mid-run leaves the correction carrying that step as "
-        "residual error - bounded by the step size, typically sub-millisecond.",
+        "perf_counter deltas). ``timestamp_ns`` is anchored the same way but "
+        "through ``process_clock``, a separate anchor, so a wall-clock step "
+        "after both anchors exist moves neither; a step between their two "
+        "initializations leaves the anchors differing by that step, which the "
+        "correction carries as residual error - bounded by the step size, "
+        "typically sub-millisecond.",
     )
 
     @property
@@ -1713,9 +1750,16 @@ class ParsedResponseRecord:
     """Engine-neutral per-request speculative-decoding acceptance record, filled
     by a ``SpecDecodeAdapterProtocol`` when the response carried spec-decode
     stats. ``None`` when: spec decode is off or the request had no verify steps
-    (no payload); the request produced multiple sequences (``n > 1``, which is
-    suppressed); no registered adapter recognized the payload; or the payload
-    was malformed and the adapter rejected it."""
+    (no payload, or a zero-step payload the parser drops); the request produced
+    multiple sequences (``n > 1``, which is suppressed); no registered adapter
+    recognized the payload; or the payload was malformed and the adapter
+    rejected it."""
+
+    spec_decode_zero_step: bool = False
+    """True when the engine reported spec-decode stats for this request but it
+    ran no verify step (``num_spec_steps == 0``). Its record is dropped, so
+    ``spec_decode_acceptance`` is None; this flag lets the run count such
+    requests separately from runs where spec decode is off."""
 
     @cached_property
     def final_usage(self) -> Usage | None:
