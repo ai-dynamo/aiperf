@@ -40,6 +40,8 @@ from aiperf.common.enums import (
     parse_result_producer_capability,
 )
 from aiperf.common.exceptions import NotInitializedError
+from aiperf.common.models import ErrorDetails, ErrorDetailsCount, ServerMetricsResults
+from aiperf.common.models.error_models import ExitErrorInfo
 from aiperf.common.service_registry import ServiceRegistry, liveness_clock_ns
 from aiperf.plugin.enums import ServiceType
 
@@ -79,16 +81,12 @@ class SystemControllerDispatchMixin:
         return None
 
     def _on_registration(self, message: Registration) -> RegistrationAck:
-        """Register a service and return its ack.
-
-        Mirrors the former ``@on_command(REGISTER_SERVICE)`` handler exactly;
-        only the transport changed.
-        """
         self.debug(
             lambda: f"Processing registration from {message.stype} with ID: {message.sid}"
         )
         service_type = ServiceType(message.stype)
         state = LifecycleState(message.state)
+        self._track_service_instance(message, service_type)
 
         prior_info = ServiceRegistry.get_service(message.sid)
         was_registered = ServiceRegistry.is_registered(message.sid)
@@ -108,10 +106,6 @@ class SystemControllerDispatchMixin:
             raise RuntimeError(
                 f"Service registry lost registration for '{message.sid}'"
             )
-
-        # A replacement pod reusing a deterministic service ID is alive again,
-        # so it must stop being excluded from command fan-out.
-        self._reaped_service_ids.discard(message.sid)
 
         previous = self.service_manager.service_id_map.get(message.sid)
         if previous is not None and previous.service_type != service_type:
@@ -138,7 +132,10 @@ class SystemControllerDispatchMixin:
         # disabled via its status message, which unregisters the domain again.
         for capability in message.capabilities:
             domain = parse_result_producer_capability(capability)
-            if domain is not None:
+            if (
+                domain is not None
+                and message.sid not in self._retired_result_producer_ids
+            ):
                 self._result_join_coordinator.register(domain, message.sid)
 
         try:
@@ -156,6 +153,61 @@ class SystemControllerDispatchMixin:
             self.execute_async(self._configure_replacement_worker_group(message.sid))
 
         return RegistrationAck(rid=message.rid)
+
+    def _track_service_instance(
+        self, message: Registration, service_type: ServiceType
+    ) -> None:
+        """Distinguish reconnects from restarts that lost optional telemetry."""
+        previous_instance = self._service_instance_ids.get(message.sid)
+        if (
+            service_type == ServiceType.SERVER_METRICS_MANAGER
+            and previous_instance is not None
+            and message.instance_id is not None
+            and previous_instance != message.instance_id
+            and self._system_state != SystemState.INITIALIZING
+        ):
+            self._retire_restarted_server_metrics(message.sid)
+        if message.instance_id is not None:
+            self._service_instance_ids[message.sid] = message.instance_id
+        if message.sid not in self._retired_result_producer_ids:
+            self._reaped_service_ids.discard(message.sid)
+
+    def _retire_restarted_server_metrics(self, service_id: str) -> None:
+        """A restarted optional sidecar cannot recover its predecessor's samples."""
+        if service_id in self._retired_result_producer_ids:
+            return
+        reason = "server metrics container restarted during the benchmark"
+        self._retired_result_producer_ids.add(service_id)
+        self._reaped_service_ids.add(service_id)
+        self._result_join_coordinator.evict_service(service_id, reason)
+        if service_id in self._result_join_coordinator.evicted:
+            error = ErrorDetails(
+                type="ServerMetricsRestarted",
+                message="The server metrics container restarted and its telemetry is incomplete. Inference request processing and final export continue.",
+            )
+            self.warning(error.message)
+            self._exit_errors.append(
+                ExitErrorInfo(
+                    error_details=error,
+                    operation="server_metrics_restarted",
+                    service_id=service_id,
+                )
+            )
+            self._record_missing_server_metrics(error)
+        self.execute_async(self._check_and_trigger_shutdown())
+
+    def _record_missing_server_metrics(self, error: ErrorDetails) -> None:
+        """Keep optional telemetry failures visible in the primary inference export."""
+        if self._server_metrics_results is None:
+            self._server_metrics_results = ServerMetricsResults(
+                benchmark_id=self.run.benchmark_id,
+                start_ns=0,
+                end_ns=0,
+            )
+        self._server_metrics_results.error_summary.append(
+            ErrorDetailsCount(error_details=error, count=1)
+        )
+        self._server_metrics_result_arrived.set()
 
     def _is_replacement_worker_group_registration(
         self,

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import NamedTuple, Self
 
@@ -10,12 +11,18 @@ from numpy.typing import NDArray
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase, PrometheusMetricType
+from aiperf.common.growable_array import (
+    ArrayAccessCallback,
+    ArrayFactory,
+    GrowableArray,
+)
 from aiperf.common.models import (
     MetricFamily,
     MetricSample,
     ServerMetricsRecord,
     TimeRangeFilter,
 )
+from aiperf.server_metrics.array_store import ServerMetricsStorageError
 
 # =============================================================================
 # Aggregation (Multi-metric time series container)
@@ -63,22 +70,41 @@ class ServerMetricsTimeSeries:
         1
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        array_factory: ArrayFactory = np.empty,
+        on_access: ArrayAccessCallback | None = None,
+    ) -> None:
+        self._array_factory = array_factory
+        self._on_access = on_access
         self.metrics: dict[ServerMetricKey, ServerMetricEntry] = {}
         # Timestamps for unique updates only (when metrics changed)
         self.first_update_ns: int = 0
         self.last_update_ns: int = 0
         self._unique_update_count: int = 0
-        self._unique_update_timestamps: list[
-            int
-        ] = []  # All unique update timestamps (for interval calc)
+        self._unique_update_timestamps = GrowableArray(
+            dtype=np.int64, array_factory=array_factory, on_access=on_access
+        )
         # Timestamps for all fetches (including duplicates)
         self.first_fetch_ns: int = 0
         self.last_fetch_ns: int = 0
         self._total_fetch_count: int = 0
-        self._fetch_timestamps_ns: list[int] = []
-        self._fetch_latencies_ns: list[int] = []
-        self._fetch_latency_records_ns: list[tuple[int, int]] = []
+        self._fetch_timestamps_ns = GrowableArray(
+            dtype=np.int64, array_factory=array_factory, on_access=on_access
+        )
+        self._fetch_latencies_ns = GrowableArray(
+            dtype=np.int64, array_factory=array_factory, on_access=on_access
+        )
+        self._fetch_latency_timestamps_ns = GrowableArray(
+            dtype=np.int64, array_factory=array_factory, on_access=on_access
+        )
+
+    @property
+    def _fetch_latency_records_ns(self) -> Iterator[tuple[int, int]]:
+        return zip(
+            self._fetch_latency_timestamps_ns, self._fetch_latencies_ns, strict=True
+        )
 
     @property
     def _update_intervals_ns(self) -> list[int]:
@@ -134,6 +160,8 @@ class ServerMetricsTimeSeries:
         if not record.metrics:
             return
 
+        self._reserve_snapshot_metadata(record)
+
         # Always track fetch timestamps and latencies
         if self._total_fetch_count == 0 or timestamp_ns < self.first_fetch_ns:
             self.first_fetch_ns = timestamp_ns
@@ -143,9 +171,7 @@ class ServerMetricsTimeSeries:
         self._fetch_timestamps_ns.append(timestamp_ns)
         if record.endpoint_latency_ns is not None:
             self._fetch_latencies_ns.append(record.endpoint_latency_ns)
-            self._fetch_latency_records_ns.append(
-                (timestamp_ns, record.endpoint_latency_ns)
-            )
+            self._fetch_latency_timestamps_ns.append(timestamp_ns)
 
         # Track unique updates (only for non-duplicates) for metadata/statistics
         # But store ALL samples (including duplicates) for consistent timeslice boundaries
@@ -170,7 +196,9 @@ class ServerMetricsTimeSeries:
 
                 if key not in self.metrics:
                     self.metrics[key] = ServerMetricEntry.from_metric_family(
-                        metric_family
+                        metric_family,
+                        array_factory=self._array_factory,
+                        on_access=self._on_access,
                     )
                 self.metrics[key].data.append(
                     timestamp_ns,
@@ -182,6 +210,16 @@ class ServerMetricsTimeSeries:
                         else storage_phase_index
                     ),
                 )
+
+    def _reserve_snapshot_metadata(self, record: ServerMetricsRecord) -> None:
+        """Keep paired histories aligned if any later reservation exhausts the budget."""
+        arrays = [self._fetch_timestamps_ns]
+        if record.endpoint_latency_ns is not None:
+            arrays.extend((self._fetch_latencies_ns, self._fetch_latency_timestamps_ns))
+        if not record.is_duplicate:
+            arrays.append(self._unique_update_timestamps)
+        for array in arrays:
+            array.reserve(1)
 
     def __len__(self) -> int:
         """Number of unique metric updates (excluding duplicates).
@@ -227,7 +265,17 @@ class ServerMetricsHierarchy:
         2
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        array_factory: ArrayFactory = np.empty,
+        max_series: int | None = None,
+        on_access: ArrayAccessCallback | None = None,
+    ) -> None:
+        self._array_factory = array_factory
+        self._on_access = on_access
+        self._max_series = max_series
+        self._series_count = 0
         self.endpoints: dict[str, ServerMetricsTimeSeries] = {}
 
     def add_record(
@@ -243,8 +291,30 @@ class ServerMetricsHierarchy:
         """
         url = record.endpoint_url
 
+        if self._max_series is not None:
+            existing = self.endpoints.get(url)
+            keys = {
+                ServerMetricKey.from_name_and_labels(name, sample.labels)
+                for name, family in record.metrics.items()
+                for sample in family.samples
+            }
+            added = (
+                len(keys - existing.metrics.keys())
+                if existing is not None
+                else len(keys)
+            )
+            if self._series_count + added > self._max_series:
+                raise ServerMetricsStorageError(
+                    f"Server metrics exceeded the {self._max_series}-series limit; "
+                    "increase AIPERF_SERVER_METRICS_MAX_SERIES. Server metrics "
+                    "collection is incomplete; inference results are retained."
+                )
+            self._series_count += added
+
         if url not in self.endpoints:
-            self.endpoints[url] = ServerMetricsTimeSeries()
+            self.endpoints[url] = ServerMetricsTimeSeries(
+                array_factory=self._array_factory, on_access=self._on_access
+            )
 
         self.endpoints[url].append_snapshot(
             record,
@@ -307,11 +377,18 @@ class ScalarTimeSeries:
         array([42.5, 43.1, 41.8])
     """
 
-    def __init__(self) -> None:
-        self._timestamps: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int64)
-        self._values: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.float64)
-        self._phase_codes: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int8)
-        self._phase_indices: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int32)
+    def __init__(
+        self,
+        *,
+        array_factory: ArrayFactory = np.empty,
+        on_access: ArrayAccessCallback | None = None,
+    ) -> None:
+        self._array_factory = array_factory
+        self._on_access = on_access
+        self._timestamps: np.ndarray = array_factory(_INITIAL_CAPACITY, np.int64)
+        self._values: np.ndarray = array_factory(_INITIAL_CAPACITY, np.float64)
+        self._phase_codes: np.ndarray = array_factory(_INITIAL_CAPACITY, np.int8)
+        self._phase_indices: np.ndarray = array_factory(_INITIAL_CAPACITY, np.int32)
         self._size: int = 0
 
     def append(
@@ -350,10 +427,11 @@ class ScalarTimeSeries:
         # Ensure capacity
         if self._size >= len(self._values):
             new_cap = len(self._values) * 2
-            new_ts = np.empty(new_cap, dtype=np.int64)
-            new_val = np.empty(new_cap, dtype=np.float64)
-            new_phase_codes = np.empty(new_cap, dtype=np.int8)
-            new_phase_indices = np.empty(new_cap, dtype=np.int32)
+            new_ts = self._array_factory(new_cap, np.int64)
+            new_val = self._array_factory(new_cap, np.float64)
+            new_phase_codes = self._array_factory(new_cap, np.int8)
+            new_phase_indices = self._array_factory(new_cap, np.int32)
+            self._note_access(0, self._size)
             new_ts[: self._size] = self._timestamps[: self._size]
             new_val[: self._size] = self._values[: self._size]
             new_phase_codes[: self._size] = self._phase_codes[: self._size]
@@ -364,6 +442,7 @@ class ScalarTimeSeries:
                 new_phase_codes,
                 new_phase_indices,
             )
+            self._note_access(0, self._size)
 
         phase_code = _phase_code(phase)
         concrete_phase_index = (
@@ -376,6 +455,7 @@ class ScalarTimeSeries:
             self._values[self._size] = sample.value
             self._phase_codes[self._size] = phase_code
             self._phase_indices[self._size] = concrete_phase_index
+            self._note_access(max(0, self._size - 1), self._size + 1)
             self._size += 1
             return
 
@@ -400,7 +480,19 @@ class ScalarTimeSeries:
         self._values[idx] = sample.value
         self._phase_codes[idx] = phase_code
         self._phase_indices[idx] = concrete_phase_index
+        self._note_access(max(0, idx - 1), self._size + 1)
         self._size += 1
+
+    def _note_access(self, start: int, stop: int) -> None:
+        """Report compared, appended, shifted, or copied rows to the backing store."""
+        if self._on_access is not None:
+            for array in (
+                self._timestamps,
+                self._values,
+                self._phase_codes,
+                self._phase_indices,
+            ):
+                self._on_access(array[start:stop])
 
     @property
     def timestamps(self) -> NDArray[np.int64]:
@@ -569,12 +661,19 @@ class HistogramTimeSeries:
         100.0
     """
 
-    def __init__(self) -> None:
-        self._timestamps: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int64)
-        self._sums: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.float64)
-        self._counts: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.float64)
-        self._phase_codes: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int8)
-        self._phase_indices: np.ndarray = np.empty(_INITIAL_CAPACITY, dtype=np.int32)
+    def __init__(
+        self,
+        *,
+        array_factory: ArrayFactory = np.empty,
+        on_access: ArrayAccessCallback | None = None,
+    ) -> None:
+        self._array_factory = array_factory
+        self._on_access = on_access
+        self._timestamps: np.ndarray = array_factory(_INITIAL_CAPACITY, np.int64)
+        self._sums: np.ndarray = array_factory(_INITIAL_CAPACITY, np.float64)
+        self._counts: np.ndarray = array_factory(_INITIAL_CAPACITY, np.float64)
+        self._phase_codes: np.ndarray = array_factory(_INITIAL_CAPACITY, np.int8)
+        self._phase_indices: np.ndarray = array_factory(_INITIAL_CAPACITY, np.int32)
         self._size: int = 0
         self._bucket_les: tuple[str, ...] | None = None
         self._bucket_counts: np.ndarray | None = None
@@ -620,8 +719,8 @@ class HistogramTimeSeries:
                 sorted(sample.buckets.keys(), key=_bucket_sort_key)
             )
             n_buckets = len(self._bucket_les)
-            self._bucket_counts = np.empty(
-                (_INITIAL_CAPACITY, n_buckets), dtype=np.float64
+            self._bucket_counts = self._array_factory(
+                (_INITIAL_CAPACITY, n_buckets), np.float64
             )
 
         # Validate bucket schema consistency
@@ -639,12 +738,15 @@ class HistogramTimeSeries:
         # Ensure capacity for all arrays
         if self._size >= len(self._timestamps):
             new_cap = len(self._timestamps) * 2
-            new_ts = np.empty(new_cap, dtype=np.int64)
-            new_sums = np.empty(new_cap, dtype=np.float64)
-            new_counts = np.empty(new_cap, dtype=np.float64)
-            new_phase_codes = np.empty(new_cap, dtype=np.int8)
-            new_phase_indices = np.empty(new_cap, dtype=np.int32)
-            new_buckets = np.empty((new_cap, len(self._bucket_les)), dtype=np.float64)
+            new_ts = self._array_factory(new_cap, np.int64)
+            new_sums = self._array_factory(new_cap, np.float64)
+            new_counts = self._array_factory(new_cap, np.float64)
+            new_phase_codes = self._array_factory(new_cap, np.int8)
+            new_phase_indices = self._array_factory(new_cap, np.int32)
+            new_buckets = self._array_factory(
+                (new_cap, len(self._bucket_les)), np.float64
+            )
+            self._note_access(0, self._size)
             new_ts[: self._size] = self._timestamps[: self._size]
             new_sums[: self._size] = self._sums[: self._size]
             new_counts[: self._size] = self._counts[: self._size]
@@ -657,6 +759,7 @@ class HistogramTimeSeries:
             self._phase_codes = new_phase_codes
             self._phase_indices = new_phase_indices
             self._bucket_counts = new_buckets
+            self._note_access(0, self._size)
 
         phase_code = _phase_code(phase)
         concrete_phase_index = (
@@ -671,6 +774,7 @@ class HistogramTimeSeries:
             self._phase_codes[self._size] = phase_code
             self._phase_indices[self._size] = concrete_phase_index
             self._bucket_counts[self._size] = bucket_row
+            self._note_access(max(0, self._size - 1), self._size + 1)
             self._size += 1
             return
 
@@ -700,7 +804,21 @@ class HistogramTimeSeries:
         self._phase_codes[idx] = phase_code
         self._phase_indices[idx] = concrete_phase_index
         self._bucket_counts[idx] = bucket_row
+        self._note_access(max(0, idx - 1), self._size + 1)
         self._size += 1
+
+    def _note_access(self, start: int, stop: int) -> None:
+        """Report compared, appended, shifted, or copied rows to the backing store."""
+        if self._on_access is not None:
+            for array in (
+                self._timestamps,
+                self._sums,
+                self._counts,
+                self._phase_codes,
+                self._phase_indices,
+                self._bucket_counts,
+            ):
+                self._on_access(array[start:stop])
 
     def _warn_on_bucket_schema_mismatch(
         self, sample_bucket_keys: set[str], expected_bucket_keys: set[str]
@@ -1012,7 +1130,13 @@ class ServerMetricEntry:
     data: ScalarTimeSeries | HistogramTimeSeries
 
     @classmethod
-    def from_metric_family(cls, metric_family: MetricFamily) -> Self:
+    def from_metric_family(
+        cls,
+        metric_family: MetricFamily,
+        *,
+        array_factory: ArrayFactory = np.empty,
+        on_access: ArrayAccessCallback | None = None,
+    ) -> Self:
         """Create a ServerMetricEntry from a MetricFamily.
 
         Factory method that automatically selects the appropriate time series
@@ -1029,7 +1153,7 @@ class ServerMetricEntry:
         return cls(
             metric_type=metric_family.type,
             description=metric_family.description,
-            data=HistogramTimeSeries()
+            data=HistogramTimeSeries(array_factory=array_factory, on_access=on_access)
             if metric_family.type == PrometheusMetricType.HISTOGRAM
-            else ScalarTimeSeries(),
+            else ScalarTimeSeries(array_factory=array_factory, on_access=on_access),
         )

@@ -39,6 +39,7 @@ from aiperf.common.models import (
     ErrorDetailsCount,
     ProcessServerMetricsResult,
     ServerMetricsRecord,
+    ServerMetricsResults,
 )
 from aiperf.common.redact import redact_url
 from aiperf.common.types import PhaseKind
@@ -47,7 +48,9 @@ from aiperf.credit.messages import (
     CreditPhaseStartMessage,
 )
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import AccumulatorType, PluginType
+from aiperf.plugin.enums import AccumulatorType, PluginType, ServiceRunType
+from aiperf.server_metrics.array_store import ServerMetricsStorageError, run_history_io
+from aiperf.server_metrics.constants import SERVER_METRICS_COLLECTION_STOPPED
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
 from aiperf.server_metrics.discovery import is_running_in_kubernetes
 from aiperf.server_metrics.protocols import ServerMetricsAccumulatorProtocol
@@ -57,6 +60,7 @@ if TYPE_CHECKING:
 
 
 _SERVER_METRICS_RECORD_TYPE = "server_metrics"
+_MAX_DISTINCT_COLLECTION_ERRORS = 100
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -120,6 +124,15 @@ class _ErrorState:
 
     def record(self, error: ErrorDetails) -> None:
         """Increment the count for one error shape."""
+        if (
+            error.type != SERVER_METRICS_COLLECTION_STOPPED
+            and error not in self.error_counts
+            and len(self.error_counts) >= _MAX_DISTINCT_COLLECTION_ERRORS
+        ):
+            error = ErrorDetails(
+                type="AdditionalServerMetricsErrors",
+                message="Additional distinct server metrics collection errors were suppressed",
+            )
         self.error_counts[error] += 1
 
 
@@ -186,6 +199,8 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         self._phase_started_after_profiling = False
         self._last_realtime_publish_ns = 0
         self._profile_complete_lock = asyncio.Lock()
+        self._ingest_lock = asyncio.Lock()
+        self._collection_failure: ErrorDetails | None = None
         self._scrape_timeout = Environment.SERVER_METRICS.SCRAPE_TIMEOUT
         self._load_server_metrics_processors()
 
@@ -792,6 +807,8 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
 
     async def _capture_profile_complete_scrape(self, end_ns: int | None) -> None:
         """Scrape every endpoint one last time, attributed to the final profile."""
+        if self._collection_failure is not None:
+            return
         if not self._collectors:
             self.debug("Server Metrics: Already stopped, skipping final scrape")
             return
@@ -976,6 +993,17 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                 self.exception(f"Failed to export server metrics results: {exc!r}")
                 self._error_state.record(ErrorDetails.from_exception(exc))
 
+        if result is None and self._error_state.error_counts:
+            result = ServerMetricsResults(
+                benchmark_id=self.run.benchmark_id,
+                start_ns=start_ns or 0,
+                end_ns=end_ns or time.time_ns(),
+                error_summary=[
+                    ErrorDetailsCount(error_details=error, count=count)
+                    for error, count in self._error_state.error_counts.items()
+                ],
+            )
+
         await self.publish(
             ProcessServerMetricsResultMessage(
                 service_id=self.service_id,
@@ -1010,6 +1038,8 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         Waits before calling stop() to ensure the command response
         has time to be published and transmitted to the SystemController.
         """
+        if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
+            return
         await asyncio.sleep(Environment.SERVER_METRICS.SHUTDOWN_DELAY)
         await asyncio.shield(self.stop())
 
@@ -1023,8 +1053,10 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         )
         if now_ns - self._last_realtime_publish_ns < publish_interval_ns:
             return
-        endpoint_summaries = self._accumulator.compute_endpoint_summaries(
-            self._profiling_start_ns or 0, now_ns
+        endpoint_summaries = await run_history_io(
+            self._accumulator.compute_endpoint_summaries,
+            self._profiling_start_ns or 0,
+            now_ns,
         )
         snapshot = self._accumulator.realtime_snapshot(
             start_ns=self._profiling_start_ns
@@ -1114,8 +1146,18 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                     endpoint returned no metrics.
             collector_id: Unique identifier of the collector (typically endpoint URL)
         """
-        if not records:
+        if not records or self._collection_failure is not None:
             return
+
+        async with self._ingest_lock:
+            if self._collection_failure is not None:
+                return
+            await self._process_server_metrics_records(records, collector_id)
+
+    async def _process_server_metrics_records(
+        self, records: list[ServerMetricsRecord], collector_id: str
+    ) -> None:
+        """Serialize history writes against the off-thread realtime reader."""
 
         scrape_phase = _SERVER_METRICS_SCRAPE_PHASE.get() or self._active_phase
         if scrape_phase is not None:
@@ -1147,8 +1189,21 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                     f"Failed to process server metrics record from {collector_id}: {result!r}"
                 )
                 self._error_state.record(ErrorDetails.from_exception(result))
+                if isinstance(
+                    result, (ServerMetricsStorageError, OSError, MemoryError)
+                ):
+                    self._collection_failure = ErrorDetails(
+                        type=SERVER_METRICS_COLLECTION_STOPPED,
+                        message=f"Server metrics collection stopped after a resource failure: {result}. Inference request processing and export continue; server metrics are incomplete.",
+                    )
+                    self._error_state.record(self._collection_failure)
+                    self.warning(self._collection_failure.message)
+                    for collector in self._collectors.values():
+                        collector.disable()
+                    self.execute_async(self._stop_all_collectors())
 
-        await self._publish_realtime_server_metrics()
+        if self._collection_failure is None:
+            await self._publish_realtime_server_metrics()
 
     async def _on_server_metrics_error(
         self, error: ErrorDetails, collector_id: str
