@@ -8,8 +8,9 @@ from aiperf.dataset.loader.weka_synth_buf import (
     ConversationReconstructor,
     RoleSegment,
     TurnDelta,
-    truncate_synth_buf_at_block,
+    truncate_segments_at,
 )
+from tests.unit.dataset.loader.conftest import make_segments
 
 BLOCK_SIZE = 16
 
@@ -65,7 +66,7 @@ def test_turn_delta_case_0_baseline_emits_all_segments_no_reset():
 def test_turn_delta_case_0_with_system_prefix():
     """Baseline with tool+system prefix yields system + user messages."""
     r = _make_recon()
-    # in=4*16=64, tool=16, sys=0 -> system block_count=1, user block_count=3.
+    # in=4*16=64, tool=16, sys=0 -> system holds 1 block, user 3 blocks.
     r.init_turn_0(
         hash_ids=[1, 2, 3, 4],
         in_tokens=4 * BLOCK_SIZE,
@@ -96,7 +97,7 @@ def test_turn_delta_case_1_strict_append_emits_only_new_segments():
     n_after_t0 = len(r._segments)
 
     # Turn 1: extend with 3 new blocks (curr_hash_ids prev is full prefix).
-    # prev_in=32, prev_partial_tail=0 -> boundary cut at LCP=2 strips nothing.
+    # cut = min(2*16, 32, 80) = 32 == prev_in, so nothing is cut.
     # advance appends asst + user_k.
     r.advance_turn(
         prev_hash_ids=[1, 2],
@@ -195,11 +196,9 @@ def test_turn_delta_case_1_strict_append_three_turns_chain():
 
 
 def test_turn_delta_case_2_boundary_cut_resets_context():
-    """Boundary cut strips partial-tail of a previously-emitted segment."""
+    """A cut that drops filler tokens of a previously-emitted segment resets the context."""
     r = _make_recon()
-    # Turn 0: 2 full blocks + partial tail of 5 -> 37 tokens.
-    # block_count=2, len(tokens)=37. We pass exactly 2 hash_ids so total
-    # block_count == LCP boundary at advance time.
+    # Turn 0: 2 full blocks + an unhashed partial tail of 5 -> 37 tokens.
     r.init_turn_0(
         hash_ids=[1, 2],
         in_tokens=2 * BLOCK_SIZE + 5,
@@ -212,10 +211,9 @@ def test_turn_delta_case_2_boundary_cut_resets_context():
     n_after_t0 = len(r._segments)
     assert n_after_t0 >= 1
 
-    # Turn 1: prev_hash_ids=[1, 2], curr extends. LCP=2, prev_partial_tail=5.
-    # Boundary cut on segment 0 strips the 5 tail tokens (segment block_count=2,
-    # cumulative cursor=0, cursor+block_count==2==target_blocks). Disturbance
-    # recorded at index 0 -> reset.
+    # Turn 1: prev_hash_ids=[1, 2], curr extends. LCP=2, so the cut at token
+    # 32 drops the 5 tail tokens of segment 0. Disturbance recorded at
+    # index 0 -> reset.
     r.advance_turn(
         prev_hash_ids=[1, 2],
         prev_in_tokens=2 * BLOCK_SIZE + 5,
@@ -238,11 +236,45 @@ def test_turn_delta_case_2_boundary_cut_resets_context():
     assert r._last_disturbance_at is None
 
 
+def test_turn_delta_reused_partial_block_appends_without_reset():
+    """A later turn that reuses the previous request's partial last block cuts at the previous ``in``: nothing is removed and the delta is a strict append."""
+    r = _make_recon()
+    prev_in = 2 * BLOCK_SIZE + 5
+    r.init_turn_0(
+        hash_ids=[1, 2, 3],
+        in_tokens=prev_in,
+        tool_tokens=0,
+        system_tokens=0,
+        seed="t:0",
+    )
+    d0 = r.turn_delta()
+    before = list(r._segments[0].tokens)
+
+    # cut = min(3*16, 37, 80) = 37: the new region continues hash 3.
+    r.advance_turn(
+        prev_hash_ids=[1, 2, 3],
+        prev_in_tokens=prev_in,
+        prev_out_tokens=BLOCK_SIZE,
+        curr_hash_ids=[1, 2, 3, 4, 5],
+        curr_in_tokens=5 * BLOCK_SIZE,
+        seed="t:1",
+    )
+    assert r._last_disturbance_at is None
+    assert r._segments[0].tokens == before
+    assert r._segments[1].start == prev_in
+    assert [t for s in r._segments for t in s.tokens] == _stub_decode_block_tokens(
+        [1, 2, 3, 4, 5]
+    )
+
+    d1 = r.turn_delta()
+    assert d1.reset_context is False
+    assert d0.delta_messages + d1.delta_messages == r.snapshot_messages()
+
+
 def test_turn_delta_case_3_mid_segment_cut_resets_context():
     """LCP lands inside a previously-emitted segment -> reset_context."""
     r = _make_recon()
     # Turn 0: 5 blocks, block-aligned (80 tokens, no partial tail).
-    # The user segment has block_count=5.
     r.init_turn_0(
         hash_ids=[1, 2, 3, 4, 5],
         in_tokens=5 * BLOCK_SIZE,
@@ -275,168 +307,52 @@ def test_turn_delta_case_3_mid_segment_cut_resets_context():
         assert msg == {"role": seg.role, "content": seg.content}
 
 
-def test_truncate_returns_index_when_boundary_cut_drops_segments_past_boundary():
-    """A boundary cut that deletes a following segment must report the first deleted segment index so turn_delta can reset the context."""
-    segs = [
-        RoleSegment(
-            role="user",
-            block_start=0,
-            block_count=2,
-            tokens=list(range(2 * BLOCK_SIZE)),
-            content="usr",
-        ),
-        RoleSegment(
-            role="assistant",
-            block_start=2,
-            block_count=1,
-            tokens=list(range(BLOCK_SIZE)),
-            content="ast",
-        ),
-    ]
-    result = truncate_synth_buf_at_block(
-        segs,
-        target_blocks=2,
-        block_size=BLOCK_SIZE,
-        decode_tokens_to_text=_stub_decode_tokens_to_text,
+def _cut(segs: list[RoleSegment], cut: int) -> int | None:
+    return truncate_segments_at(
+        segs, cut, decode_tokens_to_text=_stub_decode_tokens_to_text
     )
-    assert result == 1
+
+
+def test_truncate_returns_index_when_cut_at_segment_end_drops_segments_past_it():
+    """A cut at a segment end that deletes a following segment must report the first deleted segment index so turn_delta can reset the context."""
+    segs = make_segments(("user", 2 * BLOCK_SIZE), ("assistant", BLOCK_SIZE))
+    assert _cut(segs, 2 * BLOCK_SIZE) == 1
     assert len(segs) == 1
 
 
-def test_truncate_returns_none_on_clean_boundary_with_no_segments_past():
-    """A boundary cut at the end of the trailing segment with no partial tail and nothing past it is a true no-op and returns None."""
-    segs = [
-        RoleSegment(
-            role="user",
-            block_start=0,
-            block_count=2,
-            tokens=list(range(2 * BLOCK_SIZE)),
-            content="usr",
-        ),
-    ]
-    result = truncate_synth_buf_at_block(
-        segs,
-        target_blocks=2,
-        block_size=BLOCK_SIZE,
-        decode_tokens_to_text=_stub_decode_tokens_to_text,
-    )
-    assert result is None
-    assert len(segs) == 1
+def test_truncate_returns_none_at_the_end_of_the_buffer():
+    """A cut at the end of the trailing segment is a true no-op and returns None."""
+    segs = make_segments(("user", 2 * BLOCK_SIZE))
+    assert _cut(segs, 2 * BLOCK_SIZE) is None
+    assert [len(s.tokens) for s in segs] == [2 * BLOCK_SIZE]
 
 
 def test_truncate_returns_segment_index_when_cut_lands_at_segment_start():
     """Truncation landing exactly at the start of segment i deletes segments[i:] and reports i as the earliest disturbed index."""
-    segs = [
-        RoleSegment(
-            role="user",
-            block_start=0,
-            block_count=2,
-            tokens=list(range(2 * BLOCK_SIZE)),
-            content="usr",
-        ),
-        RoleSegment(
-            role="assistant",
-            block_start=2,
-            block_count=1,
-            tokens=list(range(BLOCK_SIZE)),
-            content="ast0",
-        ),
-        RoleSegment(
-            role="user",
-            block_start=3,
-            block_count=1,
-            tokens=list(range(BLOCK_SIZE)),
-            content="usr1",
-        ),
-    ]
-    # target_blocks=3 means the cut lands exactly at the start of segment 2
-    # (cumulative cursor reaches 3 after processing segments 0..1, no segment
-    # straddles the boundary). The trailing-user segment is deleted.
-    result = truncate_synth_buf_at_block(
-        segs,
-        target_blocks=3,
-        block_size=BLOCK_SIZE,
-        decode_tokens_to_text=_stub_decode_tokens_to_text,
+    segs = make_segments(
+        ("user", 2 * BLOCK_SIZE), ("assistant", BLOCK_SIZE), ("user", BLOCK_SIZE)
     )
-    assert result == 2
+    assert _cut(segs, 3 * BLOCK_SIZE) == 2
     assert [s.role for s in segs] == ["user", "assistant"]
-
-
-def test_truncate_returns_segment_index_on_boundary_strip():
-    """Boundary cut with prev_partial_tail>0 returns the stripped seg index."""
-    segs = [
-        RoleSegment(
-            role="system",
-            block_start=0,
-            block_count=1,
-            tokens=list(range(BLOCK_SIZE)),
-            content="sys",
-        ),
-        RoleSegment(
-            role="user",
-            block_start=1,
-            block_count=2,
-            tokens=list(range(2 * BLOCK_SIZE + 5)),  # tail of 5
-            content="usr",
-        ),
-    ]
-    result = truncate_synth_buf_at_block(
-        segs,
-        target_blocks=3,
-        block_size=BLOCK_SIZE,
-        decode_tokens_to_text=_stub_decode_tokens_to_text,
-    )
-    assert result == 1
 
 
 def test_truncate_returns_segment_index_on_mid_segment_cut():
     """Mid-segment cut returns the re-sliced seg index."""
-    segs = [
-        RoleSegment(
-            role="system",
-            block_start=0,
-            block_count=2,
-            tokens=list(range(2 * BLOCK_SIZE)),
-            content="sys",
-        ),
-        RoleSegment(
-            role="user",
-            block_start=2,
-            block_count=4,
-            tokens=list(range(4 * BLOCK_SIZE)),
-            content="usr",
-        ),
-    ]
-    result = truncate_synth_buf_at_block(
-        segs,
-        target_blocks=4,  # cuts inside the user segment at kept_blocks=2
-        block_size=BLOCK_SIZE,
-        decode_tokens_to_text=_stub_decode_tokens_to_text,
-    )
-    assert result == 1
+    segs = make_segments(("system", 2 * BLOCK_SIZE), ("user", 4 * BLOCK_SIZE))
+    assert _cut(segs, 4 * BLOCK_SIZE) == 1
 
 
 def test_truncate_returns_zero_when_clearing_non_empty_buffer():
-    """target_blocks<=0 with a non-empty buffer clears every segment and reports the disturbance at index 0."""
-    segs = [
-        RoleSegment(
-            role="user",
-            block_start=0,
-            block_count=1,
-            tokens=list(range(BLOCK_SIZE)),
-            content="x",
-        ),
-    ]
-    result = truncate_synth_buf_at_block(segs, target_blocks=0, block_size=BLOCK_SIZE)
-    assert result == 0
+    """A cut at 0 with a non-empty buffer clears every segment and reports the disturbance at index 0."""
+    segs = make_segments(("user", BLOCK_SIZE))
+    assert _cut(segs, 0) == 0
     assert segs == []
 
 
 def test_truncate_returns_none_when_zeroes_empty_buffer():
-    """target_blocks<=0 with an already-empty buffer has nothing to disturb."""
+    """A cut at 0 with an already-empty buffer has nothing to disturb."""
     segs: list[RoleSegment] = []
-    result = truncate_synth_buf_at_block(segs, target_blocks=0, block_size=BLOCK_SIZE)
-    assert result is None
+    assert _cut(segs, 0) is None
     assert segs == []
 
 
@@ -485,7 +401,7 @@ def test_turn_delta_resets_when_lcp_zero_after_emitted_turn():
 def test_turn_delta_resets_when_boundary_cut_deletes_emitted_segments():
     """A boundary cut deleting previously-emitted segments (without slicing the boundary segment) resets context, since the earliest deleted segment was emitted."""
     r = _make_recon()
-    # Turn 0: 3 blocks, block-aligned (prev_partial_tail will be 0 on turn 1).
+    # Turn 0: 3 blocks, block-aligned (48 tokens).
     r.init_turn_0(
         hash_ids=[1, 2, 3],
         in_tokens=3 * BLOCK_SIZE,
@@ -514,9 +430,8 @@ def test_turn_delta_resets_when_boundary_cut_deletes_emitted_segments():
     n_emitted = r._emitted_segment_count
     assert n_emitted == len(r._segments)
 
-    # Turn 2: LCP=3 again. Truncate target_blocks=3 lands at the boundary of
-    # segment 0 (block_count=3, cursor=0). prev_partial_tail=0 means no
-    # in-place strip. The boundary path then deletes segments[1:] (the asst
+    # Turn 2: LCP=3 again. The cut at token 48 lands at the end of
+    # segment 0, so nothing is sliced. The cut then deletes segments[1:] (the asst
     # and user from turn 1) -- both already emitted. The fix must report the
     # earliest deleted index (1) so turn_delta resets context.
     r.advance_turn(
