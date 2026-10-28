@@ -165,7 +165,6 @@ class TestBuildAssistantTurnDefault:
         assert turn.texts[0].contents == ["XY"]
 
     def test_streaming_reasoning_only_chunks_fall_back_to_joined_reasoning(self):
-        # A turn truncated mid-thinking has no answer at all.
         canned = {
             10: ParsedResponse(perf_ns=10, data=ReasoningResponseData(reasoning="a")),
             20: ParsedResponse(perf_ns=20, data=ReasoningResponseData(reasoning="b")),
