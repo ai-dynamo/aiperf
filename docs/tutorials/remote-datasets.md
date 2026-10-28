@@ -305,7 +305,7 @@ aiperf kube profile ... \
 ```
 
 The dataset-manager pod matches each URL to its dataset by the URL without its signing
-parameters. A resource applied with `kubectl` must not contain the signature: the operator
+parameters, so list one URL per dataset: when you re-sign a URL, replace the old one. A resource applied with `kubectl` must not contain the signature: the operator
 rejects it, because the API server has already stored it, so rotate the URL. Write the path
 as `aiperf kube generate --operator` does, with the credential values replaced by
 `<redacted>`. `aiperf kube validate` catches a raw signature before you apply.
