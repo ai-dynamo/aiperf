@@ -13,15 +13,12 @@ stdin); the path was not.
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 
 import pytest
 from pytest import param
 
 from aiperf.common.constants import IS_WINDOWS
-
-HARNESS = Path(__file__).resolve().parents[3] / "tests/ci/test_docs_end_to_end"
-
 
 pytestmark = pytest.mark.skipif(
     IS_WINDOWS, reason="docs-e2e fixtures are written inside a Linux container"

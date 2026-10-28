@@ -16,10 +16,8 @@ import pytest
 from pytest import param
 
 if TYPE_CHECKING:
+    from data_types import Server
     from parser import MarkdownParser
-
-
-HARNESS = Path(__file__).resolve().parents[3] / "tests/ci/test_docs_end_to_end"
 
 
 SERVER = "vllm-default-openai"
@@ -224,7 +222,7 @@ aiperf profile --config config.yaml
 """
 
 
-def _parse_docs(tmp_path, **docs):
+def _parse_docs(tmp_path: Path, **docs: str) -> dict[str, Server]:
     from parser import MarkdownParser
 
     for name, text in docs.items():

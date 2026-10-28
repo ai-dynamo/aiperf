@@ -13,15 +13,11 @@ from __future__ import annotations
 
 import shlex
 import subprocess
-from pathlib import Path
 
 import pytest
 from pytest import param
 
 from aiperf.common.constants import IS_WINDOWS
-
-REPO = Path(__file__).resolve().parents[3]
-
 
 # The docs-e2e runner only ever executes inside a Linux container, and these
 # tests assert on real shell behaviour, so there is nothing to verify on a

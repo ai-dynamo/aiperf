@@ -21,9 +21,6 @@ if TYPE_CHECKING:
     from data_types import Command, Server
 
 
-REPO = Path(__file__).resolve().parents[3]
-
-
 def _command(tag: str) -> Command:
     from data_types import Command
 

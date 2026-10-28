@@ -16,7 +16,6 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-HARNESS = REPO / "tests/ci/test_docs_end_to_end"
 
 
 def _run(monkeypatch, discovered: dict, *argv: str) -> int:

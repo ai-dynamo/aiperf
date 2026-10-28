@@ -13,12 +13,9 @@ abort every later server's run.
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 import pytest
 from pytest import param
-
-REPO = Path(__file__).resolve().parents[3]
 
 
 @pytest.mark.parametrize(

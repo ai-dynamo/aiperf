@@ -10,17 +10,19 @@ untestable or forces the global ceiling up for every other command.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 from pytest import param
 
-HARNESS = Path(__file__).resolve().parents[3] / "tests/ci/test_docs_end_to_end"
+if TYPE_CHECKING:
+    from data_types import Command
 
 
 SERVER = "vllm-default-openai"
 
 
-def _cmd(tmp_path: Path, tag_attrs: str):
+def _cmd(tmp_path: Path, tag_attrs: str) -> Command:
     from parser import MarkdownParser
 
     doc = tmp_path / "g.md"

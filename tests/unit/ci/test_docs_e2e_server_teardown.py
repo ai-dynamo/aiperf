@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import subprocess
 import threading
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -22,9 +21,6 @@ from pytest import param
 
 if TYPE_CHECKING:
     from data_types import Command
-
-
-REPO = Path(__file__).resolve().parents[3]
 
 
 def _command(text: str) -> Command:

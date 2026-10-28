@@ -17,12 +17,15 @@ setup pipe. Following those as well prints the whole boot twice under one
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-REPO = Path(__file__).resolve().parents[3]
+if TYPE_CHECKING:
+    from test_runner import EndToEndTestRunner
 
 
-def _runner_with(monkeypatch, running: set[str], attached: set[str] = frozenset()):
+def _runner_with(
+    monkeypatch, running: set[str], attached: set[str] = frozenset()
+) -> EndToEndTestRunner:
     from test_runner import EndToEndTestRunner
 
     runner = EndToEndTestRunner()

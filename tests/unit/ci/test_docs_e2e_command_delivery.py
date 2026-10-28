@@ -17,14 +17,10 @@ is why no tagged guide ever tripped this. A runtime reader does trip it, and
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
 
 import pytest
 
 from aiperf.common.constants import IS_WINDOWS
-
-REPO = Path(__file__).resolve().parents[3]
-
 
 # A block whose first command reads stdin, followed by one that must still run.
 SWALLOWING_BLOCK = "cat\necho AFTER_RAN"

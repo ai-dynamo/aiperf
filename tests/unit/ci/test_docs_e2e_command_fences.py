@@ -38,8 +38,14 @@ SHELL_FENCE = GOOD.replace(
 )
 UNTERMINATED = GOOD.replace("aiperf profile --one\n```\n", "aiperf profile --one\n")
 
+# Each variant is GOOD with one edit. If an edit to GOOD stops either pattern
+# matching, the "broken" guide silently becomes a copy of the good one and the
+# case below stops testing anything it claims to.
+assert SHELL_FENCE != GOOD, "the non-bash-fence edit no longer applies to GOOD"
+assert UNTERMINATED != GOOD, "the unterminated-fence edit no longer applies to GOOD"
 
-def _parse(tmp_path: Path, markdown: str):
+
+def _parse(tmp_path: Path, markdown: str) -> dict:
     from parser import MarkdownParser
 
     (tmp_path / "guide.md").write_text(markdown)

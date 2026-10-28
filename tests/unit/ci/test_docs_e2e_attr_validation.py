@@ -16,9 +16,6 @@ from pathlib import Path
 import pytest
 from pytest import param
 
-HARNESS = Path(__file__).resolve().parents[3] / "tests/ci/test_docs_end_to_end"
-
-
 GOOD = """\
 <!-- setup-demo-endpoint-server -->
 ```bash

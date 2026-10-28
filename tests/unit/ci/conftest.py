@@ -15,6 +15,7 @@ fixture is active.
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,7 @@ HARNESS = REPO_ROOT / "tests/ci/test_docs_end_to_end"
 
 
 @pytest.fixture(autouse=True)
-def _contain_import_side_effects():
+def _contain_import_side_effects() -> Iterator[None]:
     saved_path = list(sys.path)
     saved_modules = set(sys.modules)
     sys.path.insert(0, str(HARNESS))

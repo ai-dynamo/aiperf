@@ -10,12 +10,8 @@ much of ``docs/`` can ever be covered by the end-to-end test.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from pytest import param
-
-HARNESS = Path(__file__).resolve().parents[3] / "tests/ci/test_docs_end_to_end"
 
 
 @pytest.mark.parametrize(
