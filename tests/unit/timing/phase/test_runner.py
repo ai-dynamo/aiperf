@@ -1225,6 +1225,7 @@ class TestFixedScheduleConfigCorrection:
 
         assert r._config.expected_num_sessions == 3
         assert r._config.total_expected_requests is None
+        conv_src.start_full_pass.assert_called_once_with()
 
     async def test_sessions_from_dataset_counts_only_root_conversations(
         self,

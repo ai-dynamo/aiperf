@@ -192,6 +192,9 @@ class PhaseRunner(TaskManagerMixin):
             # Count only sampleable roots: the stop condition counts root
             # sessions, and DAG children run inside their root's session.
             num_sessions = len(metadata.sampleable_conversation_ids)
+            # A shared sampler an earlier phase (e.g. warmup) already advanced
+            # could otherwise repeat or skip conversations within this pass.
+            conversation_source.start_full_pass()
             self._config = self._config.model_copy(
                 update={"expected_num_sessions": num_sessions}
             )
