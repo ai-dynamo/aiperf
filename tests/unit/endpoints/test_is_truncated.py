@@ -105,6 +105,8 @@ def _anthropic_stream(stop_reason: str | None) -> RequestRecord:
         param(_stream(_chat_chunk(None, {"content": "a"}), _chat_chunk("stop"), {"object": "chat.completion.chunk", "choices": [], "usage": {"completion_tokens": 2}}, "[DONE]"), False, id="streaming_stop_then_usage_chunk"),
         param(_stream(_chat_chunk(None, {"reasoning_content": "think"}), _chat_chunk("length", {"reasoning_content": "more"}), "[DONE]"), True, id="streaming_reasoning_only_length"),
         param(RequestRecord(responses=[]), False, id="no_responses"),
+        param(_body({"object": "chat.completion", "choices": {"0": {"finish_reason": "length"}}}), False, id="malformed_choices_dict"),
+        param(_body({"object": "chat.completion", "choices": 7}), False, id="malformed_choices_number"),
     ],
 )  # fmt: skip
 def test_is_truncated_chat_finish_reason_matches_expected(

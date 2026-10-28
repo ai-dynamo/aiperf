@@ -117,7 +117,11 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
             if not isinstance(json_obj, dict):
                 continue
             choices = json_obj.get("choices")
-            if not choices or not isinstance(choices[0], dict):
+            if (
+                not isinstance(choices, list)
+                or not choices
+                or not isinstance(choices[0], dict)
+            ):
                 continue
             finish_reason = choices[0].get("finish_reason")
             if finish_reason is not None:
