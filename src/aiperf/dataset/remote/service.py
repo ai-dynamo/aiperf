@@ -137,18 +137,43 @@ def _offline_probe(ref: RemoteRef) -> ProbeResult:
     return source.probe.model_copy(update={"ref": ref.with_version(version)})
 
 
+def _declared_sha256(probe: ProbeResult) -> str | None:
+    if probe.manifest is None or probe.data_is_dir:
+        return None
+    return probe.manifest.sha256
+
+
 def _verify_checksum(source: ResolvedSource) -> None:
-    manifest = source.probe.manifest
-    if manifest is None or manifest.sha256 is None or source.probe.data_is_dir:
-        return
+    declared = _declared_sha256(source.probe)
     actual = source.files[0].sha256
-    if actual != manifest.sha256:
+    if declared is not None and actual != declared:
         raise RemoteSourceError(
             ref=source.probe.ref.display, kind=RemoteErrorKind.CHECKSUM_MISMATCH,
             stage=RemoteStage.MATERIALIZE,
-            what=f"the downloaded file's sha256 is {actual}, but its manifest declares {manifest.sha256}",
+            what=f"the downloaded file's sha256 is {actual}, but its manifest declares {declared}",
             hint="Retry; if it persists, the publisher's file or manifest is wrong",
         )  # fmt: skip
+
+
+def _cached_for(probe: ProbeResult) -> ResolvedSource | None:
+    """The intact cached copy of ``probe``, if it has the sha256 the manifest declares now.
+
+    A version pins only the data file for HTTP and single S3 objects, so a
+    sidecar can change its checksum while the cache key stays the same.
+    """
+    source = _usable_entry(probe.ref)
+    declared = _declared_sha256(probe)
+    if (
+        source is not None
+        and declared is not None
+        and source.files[0].sha256 != declared
+    ):
+        _logger.warning(
+            f"Cached copy of {probe.ref.display} does not match the sha256 its "
+            "manifest declares; downloading it again"
+        )
+        return None
+    return source
 
 
 async def materialize_probe(probe: ProbeResult) -> ResolvedSource:
@@ -162,7 +187,7 @@ async def materialize_probe(probe: ProbeResult) -> ResolvedSource:
     # An unversioned URL can change without notice, so online it is always
     # re-downloaded; offline, the last copy is the best there is.
     reusable = offline or ref.resolved_version != UNVERSIONED
-    if reusable and (cached := await asyncio.to_thread(_usable_entry, ref)):
+    if reusable and (cached := await asyncio.to_thread(_cached_for, probe)):
         return cached
     if offline:
         raise _offline_error(ref, RemoteStage.MATERIALIZE)
@@ -194,7 +219,7 @@ async def _download(probe: ProbeResult, *, reusable: bool) -> ResolvedSource:
                 hint=f"If no other AIPerf run is downloading it, delete the lock file {entry}.lock and retry",
             ) from e
         # Another process may have finished this download while we waited.
-        if reusable and (cached := await asyncio.to_thread(_usable_entry, ref)):
+        if reusable and (cached := await asyncio.to_thread(_cached_for, probe)):
             return cached
         source = await with_transient_retry(lambda: resolver.materialize(probe))
         _verify_checksum(source)

@@ -172,6 +172,28 @@ async def test_checksum_mismatch_is_reported(http_server, tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_cache_hit_is_checked_against_a_changed_sidecar_checksum(
+    http_server, tmp_path: Path
+) -> None:
+    root = tmp_path / "srv"
+    root.mkdir()
+    (root / "t.jsonl").write_bytes(BODY)
+    sidecar = root / "t.jsonl.aiperf.json"
+    sidecar.write_bytes(orjson.dumps({"aiperf_manifest_version": 1, "sha256": hashlib.sha256(BODY).hexdigest()}))  # fmt: skip
+    app = web.Application()
+    app.router.add_static("/", root)
+    ref = RemoteRef(ref=f"{await http_server(app)}/t.jsonl")
+    first = await service.probe_ref(ref)
+    await service.materialize_probe(first)
+    sidecar.write_bytes(orjson.dumps({"aiperf_manifest_version": 1, "sha256": "0" * 64}))  # fmt: skip
+    second = await service.probe_ref(ref)
+    assert second.ref.resolved_version == first.ref.resolved_version
+    with pytest.raises(RemoteSourceError) as exc:
+        await service.materialize_probe(second)
+    assert exc.value.kind == RemoteErrorKind.CHECKSUM_MISMATCH
+
+
+@pytest.mark.asyncio
 async def test_materialize_failure_writes_no_index(
     http_server, tmp_path: Path, monkeypatch
 ) -> None:
