@@ -877,6 +877,21 @@ stopping its message bus. After the durable marker commits, the still-running
 API service can therefore receive `ResultsExportedMessage`; the marker remains
 the authoritative recovery signal if that live notification is lost.
 
+On the operator side, `on_benchmark_complete` claims completion durably
+(`try_claim_completion`) before running `handle_completion`. When the results
+fetch looks like a transient shutdown race (key exports missing, claim younger
+than `AIPERF_RESULTS_TRANSIENT_FETCH_RETRY_BUDGET_SEC`), `handle_completion`
+raises `TransientCompletionFetchError` before writing any terminal status and
+kopf retries the handler. The retry loses `try_claim_completion` because the
+claim is already held, so `resume_owned_completion_claim` lets it re-enter only
+when this operator process recorded a pending transient retry for that job, won
+the claim itself, and the live CR's claim annotation still carries the
+timestamp it wrote. A process that lost the claim race never re-enters. After an
+operator restart the in-process mark is gone, so orphan-claim recovery in the
+monitor handles convergence instead. Once the budget expires the fetch failure
+is no longer retried: the CR reaches a terminal phase and the controller is
+shut down.
+
 ### Cleanup Options
 
 ```bash
