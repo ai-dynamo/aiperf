@@ -68,5 +68,5 @@ class FakeTokenizer:
         return None
 
     @property
-    def block_separation_token_id(self) -> int:
-        return 1
+    def block_separation_token_id(self) -> int | None:
+        return None
