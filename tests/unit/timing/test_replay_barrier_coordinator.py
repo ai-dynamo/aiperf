@@ -649,6 +649,69 @@ async def test_idle_cap_jump_logs_at_debug_not_info(
     await coordinator.cancel_pending(notify_refused=False)
 
 
+def _summary_records(caplog: pytest.LogCaptureFixture) -> list[tuple[int, str]]:
+    return [
+        (record.levelno, record.getMessage())
+        for record in caplog.records
+        if record.getMessage().startswith("Per-trace idle cap summary")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_idle_cap_summary_logs_phase_totals_once_at_info(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Per-jump lines are DEBUG, so the phase total is the default-level signal."""
+    caplog.set_level(logging.INFO, logger=replay_dependencies.__name__)
+    scheduler = MagicMock()
+    scheduler.cap_pending_delay_for_group.side_effect = [4.5, 1.25]
+    coordinator = _watchdog_coordinator(scheduler)
+    coordinator.observe_idle_root("one")
+    coordinator.observe_idle_root("two")
+    coordinator._enforce_root_idle_cap("one")
+    coordinator._enforce_root_idle_cap("two")
+
+    coordinator.log_root_idle_summary()
+    coordinator.log_root_idle_summary()
+
+    assert _summary_records(caplog) == [
+        (
+            logging.INFO,
+            "Per-trace idle cap summary: limit=0.05s, jumps=2, skipped=5.750s",
+        ),
+    ]
+    await coordinator.cancel_pending(notify_refused=False)
+
+
+@pytest.mark.asyncio
+async def test_idle_cap_summary_reports_zero_jumps(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A configured cap that never fired is still worth one line."""
+    caplog.set_level(logging.INFO, logger=replay_dependencies.__name__)
+    coordinator = _watchdog_coordinator(MagicMock())
+
+    coordinator.log_root_idle_summary()
+
+    assert _summary_records(caplog) == [
+        (
+            logging.INFO,
+            "Per-trace idle cap summary: limit=0.05s, jumps=0, skipped=0.000s",
+        ),
+    ]
+
+
+def test_idle_cap_summary_is_silent_without_a_cap(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG, logger=replay_dependencies.__name__)
+    coordinator = ReplayBarrierCoordinator(_metadata(), scheduler=MagicMock())
+
+    coordinator.log_root_idle_summary()
+
+    assert _summary_records(caplog) == []
+
+
 async def _control_timer() -> None:
     """A grouped timer that issues no request, like an unsatisfied join deadline."""
 
