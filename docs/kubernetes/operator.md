@@ -47,16 +47,17 @@ containers sharing the results volume:
 config:
   theme: base
   look: classic
+  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
   themeVariables:
-    lineColor: '#6B7C99'
+    lineColor: '#8494AE'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
     textColor: '#183153'
-    clusterBorder: '#6B7C99'
-    transitionColor: '#6B7C99'
+    clusterBorder: '#8494AE'
+    transitionColor: '#8494AE'
     transitionLabelColor: '#183153'
     labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#6B7C99'
+    specialStateColor: '#8494AE'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
@@ -113,16 +114,17 @@ all capabilities dropped, and seccomp `RuntimeDefault`. See
 config:
   theme: base
   look: classic
+  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
   themeVariables:
-    lineColor: '#6B7C99'
+    lineColor: '#8494AE'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
     textColor: '#183153'
-    clusterBorder: '#6B7C99'
-    transitionColor: '#6B7C99'
+    clusterBorder: '#8494AE'
+    transitionColor: '#8494AE'
     transitionLabelColor: '#183153'
     labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#6B7C99'
+    specialStateColor: '#8494AE'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
@@ -218,16 +220,17 @@ benchmark namespaces.
 config:
   theme: base
   look: classic
+  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
   themeVariables:
-    lineColor: '#6B7C99'
+    lineColor: '#8494AE'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
     textColor: '#183153'
-    clusterBorder: '#6B7C99'
-    transitionColor: '#6B7C99'
+    clusterBorder: '#8494AE'
+    transitionColor: '#8494AE'
     transitionLabelColor: '#183153'
     labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#6B7C99'
+    specialStateColor: '#8494AE'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
@@ -258,16 +261,17 @@ stateDiagram-v2
 config:
   theme: base
   look: classic
+  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
   themeVariables:
-    lineColor: '#6B7C99'
+    lineColor: '#8494AE'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
     textColor: '#183153'
-    clusterBorder: '#6B7C99'
-    transitionColor: '#6B7C99'
+    clusterBorder: '#8494AE'
+    transitionColor: '#8494AE'
     transitionLabelColor: '#183153'
     labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#6B7C99'
+    specialStateColor: '#8494AE'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
@@ -542,24 +546,25 @@ The controller pod pushes progress; the operator does not poll for it.
 config:
   theme: base
   look: classic
+  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
   themeVariables:
-    lineColor: '#6B7C99'
+    lineColor: '#8494AE'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
     textColor: '#183153'
-    clusterBorder: '#6B7C99'
-    transitionColor: '#6B7C99'
+    clusterBorder: '#8494AE'
+    transitionColor: '#8494AE'
     transitionLabelColor: '#183153'
     labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#6B7C99'
+    specialStateColor: '#8494AE'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
     actorBkg: '#E9F0FF'
     actorBorder: '#3468D4'
     actorTextColor: '#183153'
-    actorLineColor: '#6B7C99'
-    signalColor: '#6B7C99'
+    actorLineColor: '#8494AE'
+    signalColor: '#8494AE'
     signalTextColor: '#183153'
     labelBoxBkgColor: '#E9F0FF'
     labelBoxBorderColor: '#3468D4'
@@ -655,16 +660,17 @@ downloads as a whole.
 config:
   theme: base
   look: classic
+  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
   themeVariables:
-    lineColor: '#6B7C99'
+    lineColor: '#8494AE'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
     textColor: '#183153'
-    clusterBorder: '#6B7C99'
-    transitionColor: '#6B7C99'
+    clusterBorder: '#8494AE'
+    transitionColor: '#8494AE'
     transitionLabelColor: '#183153'
     labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#6B7C99'
+    specialStateColor: '#8494AE'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
@@ -824,24 +830,25 @@ detection paths, and user-editable annotations.
 config:
   theme: base
   look: classic
+  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
   themeVariables:
-    lineColor: '#6B7C99'
+    lineColor: '#8494AE'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
     textColor: '#183153'
-    clusterBorder: '#6B7C99'
-    transitionColor: '#6B7C99'
+    clusterBorder: '#8494AE'
+    transitionColor: '#8494AE'
     transitionLabelColor: '#183153'
     labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#6B7C99'
+    specialStateColor: '#8494AE'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
     actorBkg: '#E9F0FF'
     actorBorder: '#3468D4'
     actorTextColor: '#183153'
-    actorLineColor: '#6B7C99'
-    signalColor: '#6B7C99'
+    actorLineColor: '#8494AE'
+    signalColor: '#8494AE'
     signalTextColor: '#183153'
     labelBoxBkgColor: '#E9F0FF'
     labelBoxBorderColor: '#3468D4'
@@ -1021,16 +1028,17 @@ for Bayesian optimization see [Adaptive Search on Kubernetes](adaptive-search.md
 config:
   theme: base
   look: classic
+  themeCSS: '.flowchart-link, .transition, .messageLine0, .messageLine1, .actor-line { stroke-width: 2.5px !important; }'
   themeVariables:
-    lineColor: '#6B7C99'
+    lineColor: '#8494AE'
     nodeTextColor: '#183153'
     edgeLabelBackground: '#FFFFFF'
     textColor: '#183153'
-    clusterBorder: '#6B7C99'
-    transitionColor: '#6B7C99'
+    clusterBorder: '#8494AE'
+    transitionColor: '#8494AE'
     transitionLabelColor: '#183153'
     labelBackgroundColor: '#FFFFFF'
-    specialStateColor: '#6B7C99'
+    specialStateColor: '#8494AE'
     clusterBkg: '#FFFFFF'
     titleColor: '#183153'
     fontFamily: 'Arial, Helvetica, sans-serif'
