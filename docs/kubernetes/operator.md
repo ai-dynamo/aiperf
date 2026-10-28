@@ -805,7 +805,7 @@ sequenceDiagram
   O->>K: patch completion claim (tests UID and resourceVersion)
   alt Claim lost
     K-->>O: 409 conflict, live claim present
-    Note over O: Stops, the claim owner harvests
+    Note over O: Stops; the claim owner harvests
   else Claim won
     K-->>O: claim accepted
     rect rgb(231, 247, 239)
