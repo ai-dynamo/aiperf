@@ -14,6 +14,7 @@ does.
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -62,13 +63,19 @@ def _parse_kube_options(*tokens: str) -> KubeOptions:
 
 
 def _run_generate(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]:
-    """Render an AIPerfJob through the real CLI in a subprocess."""
+    """Render an AIPerfJob through the real CLI in a subprocess.
+
+    Invoked as ``sys.executable -m aiperf``, never ``uv run aiperf``: ``uv run``
+    re-syncs the project ``.venv`` to ``uv.lock`` before executing, so a suite
+    running against a venv that has drifted from the lock would have its
+    dependencies rewritten underneath it mid-session.
+    """
     config_file = tmp_path / "config.yaml"
     config_file.write_text(_MIN_CONFIG)
     return subprocess.run(
         [
-            "uv",
-            "run",
+            sys.executable,
+            "-m",
             "aiperf",
             "kube",
             "generate",

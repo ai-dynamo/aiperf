@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from pathlib import Path
 
 import orjson
@@ -37,14 +38,20 @@ _LONG_IMAGE = (
 def _run_sweep_dry_run(
     tmp_path: Path, *placement_args: str, image: str = "aiperf:test"
 ) -> dict:
-    """Run the public CLI and decode the dry-run AIPerfSweep JSON."""
+    """Run the public CLI and decode the dry-run AIPerfSweep JSON.
+
+    Invoked as ``sys.executable -m aiperf``, never ``uv run aiperf``: ``uv run``
+    re-syncs the project ``.venv`` to ``uv.lock`` before executing, so a suite
+    running against a venv that has drifted from the lock would have its
+    dependencies rewritten underneath it mid-session.
+    """
     config_file = tmp_path / "sweep-config.yaml"
     config_file.write_text(_MIN_SWEEP_CONFIG)
 
     result = subprocess.run(
         [
-            "uv",
-            "run",
+            sys.executable,
+            "-m",
             "aiperf",
             "kube",
             "sweep",
