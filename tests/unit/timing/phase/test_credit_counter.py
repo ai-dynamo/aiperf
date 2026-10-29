@@ -456,3 +456,13 @@ class TestEndSessionEarly:
         assert c.sessions_ended_on_truncation == 0
         assert c.turns_skipped_on_truncation == 0
         assert c.total_session_turns == 1
+
+    def test_end_session_early_caps_skipped_turns_at_remaining_request_budget(
+        self,
+    ) -> None:
+        c = CreditCounter(cfg(reqs=2))
+        c.increment_sent(turn(idx=0, num=5))
+        c.end_session_early(skipped_turns=4)
+        assert c.sessions_ended_on_truncation == 1
+        assert c.turns_skipped_on_truncation == 1
+        assert c.total_session_turns == 1

@@ -238,10 +238,10 @@ class CreditCounter:
         all-returned check.
 
         The early end is attributed to truncation (``sessions_ended_on_truncation``
-        / ``turns_skipped_on_truncation``) only while sending is still open. Once
-        the request cap is reached or sending is otherwise complete, the
-        remaining turns would never have been sent, so counting them as skipped
-        would overstate what truncation cost the run.
+        / ``turns_skipped_on_truncation``) only while sending is still open, and
+        under a request cap the skipped turns are capped at the remaining request
+        budget. Turns the stop condition would never have sent are not a cost of
+        truncation, so counting them would overstate it.
 
         Lock-free: no async calls.
 
@@ -251,13 +251,15 @@ class CreditCounter:
             time, and there may be no further send, so the caller must then mark
             sending complete itself.
         """
-        hit_request_cap = (
-            self._config.total_expected_requests is not None
-            and self._requests_sent >= self._config.total_expected_requests
+        request_cap = self._config.total_expected_requests
+        attributable_turns = (
+            skipped_turns
+            if request_cap is None
+            else min(skipped_turns, request_cap - self._requests_sent)
         )
-        if self._final_requests_sent is None and not hit_request_cap:
+        if self._final_requests_sent is None and attributable_turns > 0:
             self._sessions_ended_on_truncation += 1
-            self._turns_skipped_on_truncation += skipped_turns
+            self._turns_skipped_on_truncation += attributable_turns
         self._total_session_turns -= skipped_turns
         return (
             self._final_requests_sent is None
