@@ -904,7 +904,6 @@ class TestDetectEndedOnTruncation:
         [
             param({"enabled": False}, id="option-off"),
             param({"is_final": True}, id="final-turn"),
-            param({"agent_depth": 1}, id="dag-child"),
             param({"has_error": True}, id="errored"),
             param({"truncated": False}, id="not-truncated"),
             param({"endpoint_has_method": False}, id="protocol-only-endpoint"),

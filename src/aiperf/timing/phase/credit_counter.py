@@ -47,6 +47,10 @@ class CreditCounter:
         self._total_session_turns: int = 0
         self._sessions_ended_on_truncation: int = 0
         self._turns_skipped_on_truncation: int = 0
+        # Request-cap budget claimed by truncation attribution and not yet
+        # consumed by a later send, so truncations returning back-to-back cannot
+        # both claim the same remaining request.
+        self._truncation_reserved_requests: int = 0
         self._prefills_released: int = 0  # TTFTs received + returns without TTFT
 
         # Final count fields (frozen when phase transitions)
@@ -240,8 +244,9 @@ class CreditCounter:
         The early end is attributed to truncation (``sessions_ended_on_truncation``
         / ``turns_skipped_on_truncation``) only while sending is still open, and
         under a request cap the skipped turns are capped at the remaining request
-        budget. Turns the stop condition would never have sent are not a cost of
-        truncation, so counting them would overstate it.
+        budget, net of budget already claimed by earlier truncations that no send
+        has consumed yet. Turns the stop condition would never have sent are not
+        a cost of truncation, so counting them would overstate it.
 
         Lock-free: no async calls.
 
@@ -255,11 +260,16 @@ class CreditCounter:
         attributable_turns = (
             skipped_turns
             if request_cap is None
-            else min(skipped_turns, request_cap - self._requests_sent)
+            else min(
+                skipped_turns,
+                request_cap - self._requests_sent - self._truncation_reserved_requests,
+            )
         )
         if self._final_requests_sent is None and attributable_turns > 0:
             self._sessions_ended_on_truncation += 1
             self._turns_skipped_on_truncation += attributable_turns
+            if request_cap is not None:
+                self._truncation_reserved_requests += attributable_turns
         self._total_session_turns -= skipped_turns
         return (
             self._final_requests_sent is None
@@ -313,6 +323,8 @@ class CreditCounter:
         # forever and hang the phase. This gate MUST precede the child branch: a
         # nested orchestrator's turns are BOTH ``no_request`` and ``agent_depth > 0``.
         counts_as_request = not turn_to_send.no_request
+        if counts_as_request and self._truncation_reserved_requests > 0:
+            self._truncation_reserved_requests -= 1
         hit_request_cap = (
             counts_as_request
             and self._config.total_expected_requests is not None

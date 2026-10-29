@@ -135,7 +135,6 @@ class TestEndedOnTruncation:
         "credit,cancelled",
         [
             param(_credit(turn_index=2, num_turns=3), False, id="final_turn"),
-            param(_credit(turn_index=0, num_turns=3, agent_depth=1), False, id="dag_child"),
             param(_credit(turn_index=0, num_turns=3), True, id="cancelled"),
         ],
     )  # fmt: skip

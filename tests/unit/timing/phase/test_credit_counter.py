@@ -457,6 +457,31 @@ class TestEndSessionEarly:
         assert c.turns_skipped_on_truncation == 0
         assert c.total_session_turns == 1
 
+    def test_end_session_early_back_to_back_returns_share_remaining_budget(
+        self,
+    ) -> None:
+        c = CreditCounter(cfg(reqs=6))
+        for i in range(5):
+            c.increment_sent(turn(idx=0, num=3, corr=f"s{i}"))
+        c.end_session_early(skipped_turns=2)
+        c.end_session_early(skipped_turns=2)
+        assert c.sessions_ended_on_truncation == 1
+        assert c.turns_skipped_on_truncation == 1
+
+    def test_end_session_early_replacement_sends_release_reserved_budget(
+        self,
+    ) -> None:
+        c = CreditCounter(cfg(reqs=20))
+        for i in range(4):
+            c.increment_sent(turn(idx=0, num=2, corr=f"s{i}"))
+        for i in range(4, 20):
+            c.end_session_early(skipped_turns=1)
+            c.increment_sent(turn(idx=0, num=2, corr=f"s{i}"))
+        for _ in range(4):
+            c.end_session_early(skipped_turns=1)
+        assert c.sessions_ended_on_truncation == 16
+        assert c.turns_skipped_on_truncation == 16
+
     def test_end_session_early_caps_skipped_turns_at_remaining_request_budget(
         self,
     ) -> None:
