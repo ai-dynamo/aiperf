@@ -141,15 +141,15 @@ def test_job_archives_and_sweep_aggregate_artifacts_use_distinct_routes() -> Non
     sweep_file = _method_body(api, "sweepArtifactFileUrl")
 
     assert (
-        "`${BASE}/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}.zip`"
+        "`${API_BASE}/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}.zip`"
         in job_bundle
     )
     assert (
-        "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts.zip`"
+        "`${API_BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts.zip`"
         in sweep_bundle
     )
     assert (
-        "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/${fileSeg}`"
+        "`${API_BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/${fileSeg}`"
         in sweep_file
     )
     assert "api.sweepArtifactBundleUrl(namespace, name, resolvedEpoch)" in sweep_detail

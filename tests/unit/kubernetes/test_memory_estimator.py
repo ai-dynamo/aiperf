@@ -2024,6 +2024,65 @@ class TestPhaseRequestRateTracksAvgSecPerRequest:
         )
 
     @pytest.mark.parametrize(
+        "full_pass_requests,expected",
+        [
+            param(None, None, id="unknown_dataset_size_uses_default"),
+            param(4000, 4000, id="declared_dataset_size"),
+        ],
+    )  # fmt: skip
+    def test_estimate_phase_requests_sessions_all(
+        self, full_pass_requests: int | None, expected: int | None
+    ) -> None:
+        from aiperf.kubernetes._memory_estimator.constants import (
+            _DEFAULT_PHASE_REQUEST_COUNT,
+            _PHASE_AVG_SEC_PER_REQUEST,
+        )
+        from aiperf.kubernetes._memory_estimator.params import (
+            _estimate_phase_duration,
+            _estimate_phase_requests,
+        )
+
+        phase = SimpleNamespace(duration=None, requests=None, rate=None, sessions="all")
+        requests = expected or _DEFAULT_PHASE_REQUEST_COUNT
+
+        assert (
+            _estimate_phase_requests(phase, 5, full_pass_requests=full_pass_requests)
+            == requests
+        )
+        assert (
+            _estimate_phase_duration(phase, 5, full_pass_requests=full_pass_requests)
+            == requests * _PHASE_AVG_SEC_PER_REQUEST / 5
+        )
+
+    def test_from_config_sessions_all_sizes_from_declared_entries(self) -> None:
+        from aiperf.config.config import AIPerfConfig
+
+        config = AIPerfConfig(
+            benchmark={
+                "models": "test-model",
+                "endpoint": {"urls": ["http://localhost:8000"]},
+                "datasets": [
+                    {
+                        "name": "main",
+                        "type": "synthetic",
+                        "entries": 400,
+                        "turns": {"mean": 3},
+                    }
+                ],
+                "phases": [
+                    {
+                        "name": "profiling",
+                        "type": "concurrency",
+                        "concurrency": 8,
+                        "sessions": "all",
+                    }
+                ],
+            }
+        )
+
+        assert MemoryEstimationParams.from_config(config).total_requests == 1200
+
+    @pytest.mark.parametrize(
         "requests,concurrency",
         [
             param(1000, 1, id="serial"),

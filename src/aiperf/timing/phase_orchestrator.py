@@ -24,12 +24,12 @@ from aiperf.common.control_hooks import (
     stop_server_profiler,
 )
 from aiperf.common.control_plane_http import ControlPlaneHttpError
-from aiperf.common.enums import CacheBustTarget, CreditPhase
+from aiperf.common.enums import CacheBustTarget, CreditPhase, ProfileCancelReason
 from aiperf.common.hooks import on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.credit.callback_handler import CreditCallbackHandler
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType, TimingMode
+from aiperf.plugin.enums import DatasetSamplingStrategy, PluginType, TimingMode
 from aiperf.timing.concurrency import ConcurrencyManager
 from aiperf.timing.conversation_source import ConversationSource
 from aiperf.timing.phase.runner import PhaseRunner
@@ -189,27 +189,15 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._control_headers = control_headers or {}
         self._control_signer = control_signer
         self._run = run
+        self._reject_full_pass_with_random_sampling()
 
         # Create dataset sampler
         SamplerClass = plugins.get_class(
             PluginType.DATASET_SAMPLER,
             self._dataset_metadata.sampling_strategy,
         )
-        # Only root conversations are sampled by the strategy. DAG
-        # children belong to their root's session and are dispatched by
-        # the BranchOrchestrator on credit return — sampling them as
-        # roots would create duplicate root sessions. Filter on
-        # ``is_root`` rather than ``agent_depth == 0`` so SPAWN-mode
-        # children (which keep ``agent_depth == 0`` for fresh-context
-        # semantics but carry ``is_root=False``) are also excluded.
-        root_conv_ids = [
-            c.conversation_id
-            for c in self._dataset_metadata.conversations
-            if getattr(c, "is_root", True)
-        ]
         self._dataset_sampler = SamplerClass(
-            conversation_ids=root_conv_ids
-            or [c.conversation_id for c in self._dataset_metadata.conversations]
+            conversation_ids=self._dataset_metadata.sampleable_conversation_ids
         )
 
         # Long-lived components (shared across phases).
@@ -289,7 +277,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._callback_handler = CreditCallbackHandler(
             self._concurrency_manager,
             session_tree_registry=self._session_tree_registry,
-            on_warmup_abort=self._phase_publisher.request_profile_cancel,
+            on_warmup_abort=lambda: self._phase_publisher.request_profile_cancel(
+                ProfileCancelReason.WARMUP_FAILURE
+            ),
         )
         self._credit_router.set_return_callback(self._callback_handler.on_credit_return)
         self._credit_router.set_first_token_callback(
@@ -309,6 +299,27 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         # First fatal failure surfaced by a seamless phase's detached return-wait
         # task; re-raised by _execute_phases so the run fails (not reports success).
         self._seamless_phase_error: BaseException | None = None
+        # Set by cancel(); stops _execute_phases from starting any later phase.
+        self._cancelled = False
+
+    def _reject_full_pass_with_random_sampling(self) -> None:
+        """Refuse ``sessions: all`` under random sampling, which draws with replacement.
+
+        A full pass stops after one session per conversation; drawing with
+        replacement would repeat some conversations and skip others while the
+        run still reports a full pass.
+        """
+        if self._dataset_metadata.sampling_strategy != DatasetSamplingStrategy.RANDOM:
+            return
+        for pc in self._config.phase_configs:
+            if pc.sessions_from_dataset:
+                raise ValueError(
+                    f"Phase '{pc.phase_name or pc.phase}' sets sessions: all (one "
+                    "full pass over every conversation), but the dataset uses random "
+                    "sampling, which can repeat some conversations and skip others. "
+                    "Use --dataset-sampling-strategy sequential or shuffle, or bound "
+                    "the run with --num-conversations (sessions: N in YAML)."
+                )
 
     def _record_control_fatal_error(self, error: BaseException) -> None:
         """Record a fatal request-free control-node failure.
@@ -381,6 +392,8 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
             sends).
         """
         for i, phase_config in enumerate(self._ordered_phase_configs):
+            if self._cancelled:
+                break
             is_final_phase = i == len(self._ordered_phase_configs) - 1
             seamless_to_next = (
                 not is_final_phase and self._ordered_phase_configs[i + 1].seamless
@@ -471,8 +484,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 raise e
 
             # Remove from active runners when fully complete
-            # For seamless phases, this happens after returns complete (background task)
-            if not seamless_to_next:
+            # For seamless phases, this happens after returns complete (background task).
+            # cancel() may already have cleared the list while run() was awaited.
+            if not seamless_to_next and runner in self._active_runners:
                 self._active_runners.remove(runner)
 
         # Barrier: a seamless phase's return-wait runs detached and
@@ -623,6 +637,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         Called when user requests cancellation (e.g., Ctrl+C).
         """
         self.warning("Cancelling phase orchestrator")
+        self._cancelled = True
 
         # Cancel all in-flight credits first
         await self._credit_router.cancel_all_credits()

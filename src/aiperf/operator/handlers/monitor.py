@@ -315,6 +315,14 @@ def _container_startup_issues(pod: Any) -> list[PodStartupIssue]:
     pod_status = _resource_field(pod, "status")
     metadata = _resource_field(pod, "metadata")
     pod_name = _resource_field(metadata, "name", default="") or "unknown"
+    pod_spec = _resource_field(pod, "spec")
+    restartable_metrics = any(
+        _resource_field(container, "name") == Containers.SERVER_METRICS_MANAGER
+        and _resource_field(container, "restartPolicy", "restart_policy") == "Always"
+        for container in (
+            _resource_field(pod_spec, "initContainers", "init_containers") or []
+        )
+    )
     statuses = [
         *(
             _resource_field(
@@ -336,6 +344,12 @@ def _container_startup_issues(pod: Any) -> list[PodStartupIssue]:
             category = "ContainerConfig"
             terminal = True
         elif reason in CRASH_LOOP_WAITING_REASONS:
+            if (
+                restartable_metrics
+                and _resource_field(container_status, "name")
+                == Containers.SERVER_METRICS_MANAGER
+            ):
+                continue
             category = "CrashLoop"
             restarts = int(
                 _resource_field(container_status, "restartCount", "restart_count", 0)
@@ -1976,7 +1990,6 @@ def _startup_failure_claim_ops(
     """Build the atomic parent preconditions for stable-blocker cleanup."""
     metadata = body.get("metadata") or {}
     status = body.get("status") or {}
-    annotations = metadata.get("annotations")
     operations: list[dict[str, Any]] = [
         {"op": "test", "path": "/metadata/uid", "value": metadata.get("uid")},
         {
@@ -1984,24 +1997,10 @@ def _startup_failure_claim_ops(
             "path": "/metadata/resourceVersion",
             "value": metadata.get("resourceVersion"),
         },
-        {"op": "test", "path": "/spec", "value": deepcopy(body.get("spec") or {})},
         {"op": "test", "path": "/status/phase", "value": status.get("phase")},
-        {
-            "op": "test",
-            "path": f"/status/{STARTUP_ISSUE_STATUS_KEY}",
-            "value": deepcopy(status.get(STARTUP_ISSUE_STATUS_KEY)),
-        },
     ]
-    if annotations is None:
+    if metadata.get("annotations") is None:
         operations.append({"op": "add", "path": "/metadata/annotations", "value": {}})
-    else:
-        operations.append(
-            {
-                "op": "test",
-                "path": "/metadata/annotations",
-                "value": deepcopy(annotations),
-            }
-        )
     operations.append(
         {
             "op": "add",

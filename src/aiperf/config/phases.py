@@ -10,7 +10,7 @@ making invalid states unrepresentable.
 
 from __future__ import annotations
 
-from typing import Annotated, ClassVar, Literal, Self
+from typing import Annotated, ClassVar, Final, Literal, Self
 
 from pydantic import (
     ConfigDict,
@@ -34,7 +34,11 @@ from aiperf.config.rate_series import RateSeriesConfig
 from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin.enums import PhaseType, PhaseTypeStr, RampType, TimingMode
 
+FULL_PASS_SESSIONS: Final = "all"
+"""``sessions`` value that runs every loaded conversation exactly once."""
+
 __all__ = [
+    "FULL_PASS_SESSIONS",
     "BasePhaseConfig",
     "CancellationConfig",
     "ConcurrencyPhase",
@@ -153,11 +157,12 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     ]
 
     sessions: Annotated[
-        int | None,
+        Annotated[int, Field(ge=1)] | Literal["all"] | None,
         Field(
-            ge=1,
             default=None,
-            description="Stop after this many sessions completed (must be >= 1).",
+            description="Stop after this many sessions completed (must be >= 1). "
+            "'all' runs one full pass: the session count resolves at run time "
+            "to the number of conversations the dataset loaded.",
         ),
     ]
 
@@ -321,17 +326,14 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
             default=False,
             description="AGENTIC_REPLAY only: collapse the WARMUP-start and "
             "PROFILING-start dispatches into synchronized bursts instead of "
-            "spreading them by each request's recorded offset from t*. By "
-            "default (False) the phase starts are SPREAD: WARMUP requests are "
-            "aligned globally so every trajectory reaches its t* at the same "
-            "instant (the warmup end), and each lane's first PROFILING request "
-            "waits out its recorded gap after t* -- reproducing the recorded "
-            "arrival pattern at both phase boundaries. The rest of the replay "
-            "(inter-turn delays) is timing-faithful regardless of this flag; "
-            "it governs ONLY the burst-vs-spread of the two phase starts. Pass "
-            "--burst-phase-starts to fire each phase's first requests together "
-            "(faster concurrency ramp, synchronized start), e.g. for a "
-            "throughput-oriented run rather than a faithful arrival replay.",
+            "preserving recorded spacing. By default (False), WARMUP requests "
+            "are aligned globally so every trajectory reaches t* together. "
+            "PROFILING subtracts one phase-wide minimum from every first "
+            "request offset: the earliest request starts immediately and all "
+            "other trajectories retain their recorded spacing. Pass "
+            "--burst-phase-starts to subtract a separate minimum per lane, "
+            "making every lane start immediately. Subsequent inter-turn "
+            "delays are timing-faithful in either mode.",
         ),
     ]
 
@@ -360,7 +362,22 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
             "continues the live trajectories without recorded idle delays and with "
             "one-token outputs for this long, then drains and resumes profiling "
             "from the resulting trajectory state. Read off the profiling phase by "
-            "``timing.config._build_agentic_warmup_config``. None disables it.",
+            "``timing.config._build_agentic_warmup_config``. Mutually exclusive "
+            "with warmup_requests_per_lane. None disables it.",
+        ),
+    ]
+
+    warmup_requests_per_lane: Annotated[
+        int | None,
+        Field(
+            default=None,
+            gt=0,
+            description="AGENTIC_REPLAY only: deterministic cache-pressure "
+            "warmup request budget per concurrency lane, additional to "
+            "mandatory snapshot primers. The total warmup request target is "
+            "the primer count plus this value multiplied by the number of live "
+            "trajectory lanes. Mutually exclusive with "
+            "agentic_cache_warmup_duration.",
         ),
     ]
 
@@ -633,6 +650,16 @@ class UserCentricPhase(RatePhaseConfig):
         """Validate user-centric mode constraints."""
         if self.rate_series is not None:
             raise ValueError("user-centric phases do not support rate_series")
+
+        if self.sessions == FULL_PASS_SESSIONS:
+            # User-centric runs can end before the last sessions' later turns
+            # are sent, so a full pass can't be honored there.
+            raise ValueError(
+                f"Phase '{self.name}': sessions: all (one full pass) is not "
+                "supported for user-centric phases. Set sessions to a number "
+                ">= users, or use a concurrency or request-rate phase for a "
+                "full pass."
+            )
 
         if self.sessions is not None and self.sessions < self.users:
             raise ValueError(

@@ -576,6 +576,15 @@ class _DatasetSettings(BaseSettings):
         "legacy traces are unaffected. Default False keeps the byte-exact "
         "plain-user replay shape.",
     )
+    WEKA_FORK_PARENT_MESSAGES: bool = Field(
+        default=True,
+        description="When True (default), a child conversation's first turn "
+        "splits the hash_id prefix it shares with its parent turn into the "
+        "parent's roles and message boundaries, then adds the rest as one user "
+        "message, so its rendered prompt keeps the parent's message layout. The "
+        "tokens are the same as with False. Set to False for the previous behavior: one "
+        "flattened user message, which shares only the parent's first message.",
+    )
     WEKA_SEAM_MAX_GAP_SECONDS: float = Field(
         ge=0.0,
         default=3600.0,
@@ -1008,6 +1017,14 @@ class _HTTPSettings(BaseSettings):
         "Lower values provide faster completion detection but increase server load. "
         "Applies to the aiohttp transport.",
     )
+    VIDEO_DOWNLOAD_MAX_REDIRECTS: int = Field(
+        default=5,
+        ge=0,
+        le=100,
+        description="Maximum redirects followed when downloading generated video content. "
+        "Each hop re-checks the original endpoint origin before sending credentials. "
+        "Set to 0 to refuse redirects. Applies to the aiohttp transport.",
+    )
 
 
 class _LoggingSettings(BaseSettings):
@@ -1069,7 +1086,7 @@ class _MetricsSettings(BaseSettings):
     )
     LIST_BACKEND: Literal["ragged", "tdigest"] = Field(
         default="ragged",
-        description="Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (at most 0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint.",
+        description="Storage backend for list-valued RECORD metrics (today: only inter_chunk_latency). 'ragged' (default) keeps every value, enabling exact percentiles and ICL-aware throughput / tokens-in-flight sweep curves. 'tdigest' uses a bounded-memory crick.TDigest sketch (~4 KB regardless of sample count) — percentiles are approximate (at most 0.05% relative error at default compression), and ICL-aware sweep curves silently fall back to their non-ICL equivalents that use only request-level (start_ns, generation_start_ns, end_ns) timing. 'tdigest' requires the optional crick dependency: install with `pip install \"aiperf[tdigest]\"`. Choose tdigest when records-manager pod memory at 1M+ request scale is the binding constraint.",
     )
 
 
@@ -1174,6 +1191,41 @@ class _RecordSettings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="AIPERF_RECORD_",
+    )
+
+    PROGRESS_STALL_TIMEOUT: float = Field(
+        ge=0.0,
+        le=86400.0,
+        default=600.0,
+        description="Seconds during which a profiling phase has requests in "
+        "flight, none of them complete, and no worker receives streamed "
+        "response data, after which the run fails instead "
+        "of waiting indefinitely. A phase completes only once the credit "
+        "phase reports its final count, so a credit that is never returned "
+        "leaves that condition unevaluable and the run waits forever with no "
+        "output. Per-request timeouts do not cover this: they default to 6 "
+        "hours and never apply to a request that was not dispatched. "
+        "Streamed response data counts as progress for the whole process, not "
+        "per request or per phase: while any worker is still receiving chunks, "
+        "no phase's stall clock advances. A long streaming generation is "
+        "therefore never cut short, but a request stuck alongside one that "
+        "keeps streaming is only caught once that streaming stops. A single "
+        "legitimately long non-streaming request will fail the run if it "
+        "exceeds this timeout while nothing else completes or streams, so "
+        "raise this value for such workloads. Completions are judged per "
+        "profiling phase, so an overlapping `seamless` phase that keeps "
+        "completing work does not mask a stall in another. Set to 0 to "
+        "disable and restore the previous unbounded wait.",
+    )
+
+    PROGRESS_STALL_CHECK_INTERVAL: float = Field(
+        ge=1.0,
+        le=600.0,
+        default=30.0,
+        description="Seconds between stall checks. Each check with no "
+        "completions also logs how many requests are still in flight and "
+        "which phase they belong to, so a stalled run is diagnosable from the "
+        "log rather than silent.",
     )
 
     CHECKPOINT_INTERVAL: float = Field(
@@ -1336,12 +1388,57 @@ class _ServerMetricsSettings(BaseSettings):
         env_parse_enums=True,
     )
 
+    STORAGE_MAX_BYTES: int = Field(
+        default=16 * 1024**3,
+        ge=1024 * 1024,
+        description="Maximum backing-file size in bytes for disk-backed "
+        "server-metrics histories, including array-growth allocations. Disk blocks "
+        "are consumed only as samples arrive. Exhaustion stops server metrics "
+        "with an explicit collection error while inference results still export.",
+    )
+    STORAGE_FLUSH_BYTES: int = Field(
+        default=8 * 1024**2,
+        ge=4096,
+        description="Bytes of server-metrics writes between disk flushes and "
+        "page-cache releases. Numeric histories use the artifact filesystem, "
+        "limiting the resident write working set instead of retaining all "
+        "numeric history in memory.",
+    )
+    MAX_SERIES: int = Field(
+        default=20_000,
+        ge=1,
+        description="Maximum distinct endpoint/name/label server-metrics series "
+        "per run. Bounds in-memory series metadata, including dynamically changing "
+        "labels. Exceeding the limit stops collection with an explicit error "
+        "while inference results still export.",
+    )
+
     COLLECTION_FLUSH_PERIOD: float = Field(
         ge=0.0,
         le=30.0,
         default=2.0,
-        description="Time in seconds to continue collecting metrics after profiling completes, "
-        "allowing server-side metrics to flush/finalize before shutting down (default: 2.0s)",
+        description=(
+            "Time in seconds to wait for server-side metrics to flush/finalize "
+            "at phase boundaries: after warmup completes (before profiling "
+            "starts) and after profiling completes (before shutdown). "
+            "The warmup flush/ack barrier runs only when server metrics "
+            "collection is runtime-active (reachable collectors). "
+            "Default: 2.0s."
+        ),
+    )
+    WARMUP_BOUNDARY_TIMEOUT: float | None = Field(
+        ge=0.0,
+        le=3600.0,
+        default=None,
+        description=(
+            "Optional override in seconds for PhaseRunner's wait for "
+            "SERVER_METRICS_WARMUP_BOUNDARY_READY after warmup completes. "
+            "When unset or 0, the timeout is derived as "
+            "COLLECTION_FLUSH_PERIOD + SCRAPE_TIMEOUT * (N + 2) + 5, where N "
+            "is the reachable collector count from ServerMetricsStatusMessage. "
+            "The wait and fail-closed abort on timeout apply only when "
+            "collection is runtime-active."
+        ),
     )
     PROFILE_COMPLETE_RELAY_TIMEOUT: float = Field(
         ge=1.0,

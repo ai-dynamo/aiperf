@@ -13,7 +13,7 @@ from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.control_hooks import prepare_endpoint_control_hooks
 from aiperf.common.control_structs import Command
 from aiperf.common.endpoint_auth import auth_headers_for_endpoint
-from aiperf.common.enums import CommandType, MessageType
+from aiperf.common.enums import CommandType, MessageType, ProfileCancelReason
 from aiperf.common.environment import Environment
 from aiperf.common.event_loop_monitor import EventLoopMonitor
 from aiperf.common.exceptions import InvalidStateError
@@ -26,6 +26,8 @@ from aiperf.common.messages import (
     DatasetConfigurationFailedNotification,
     DatasetConfiguredNotification,
     HeartbeatMessage,
+    ServerMetricsStatusMessage,
+    ServerMetricsWarmupBoundaryReadyMessage,
 )
 from aiperf.common.models import DatasetMetadata
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
@@ -68,10 +70,13 @@ class TimingManager(BaseComponentService):
         self.debug("Timing manager __init__")
         self.config = TimingConfig.from_run(self.run)
 
+        self._server_metrics_warmup_boundary_ready = asyncio.Event()
+        self._server_metrics_status_received = asyncio.Event()
         self.phase_publisher = PhasePublisher(
             pub_client=self.pub_client,
             service_id=self.service_id,
             profile_cancel_sender=self._request_profile_cancel,
+            warmup_boundary_ready=self._server_metrics_warmup_boundary_ready,
         )
 
         self._dataset_configured_event = asyncio.Event()
@@ -112,6 +117,30 @@ class TimingManager(BaseComponentService):
         """
         if message.service_type == ServiceType.WORKER:
             self.sticky_router.note_worker_heartbeat(message.service_id)
+
+    @on_message(MessageType.SERVER_METRICS_STATUS)
+    async def _on_server_metrics_status(
+        self, message: ServerMetricsStatusMessage
+    ) -> None:
+        """Track whether collection is actually running for the warmup barrier.
+
+        Configure publishes this before phases start. When no Prometheus
+        endpoints are reachable the manager shuts down at PROFILE_START and
+        never publishes SERVER_METRICS_WARMUP_BOUNDARY_READY, so PhaseRunner
+        must skip the flush/ack wait unless status reports active collectors.
+        """
+        self.phase_publisher.update_server_metrics_runtime_status(
+            enabled=message.enabled,
+            endpoints_reachable=message.endpoints_reachable,
+        )
+        self._server_metrics_status_received.set()
+
+    @on_message(MessageType.SERVER_METRICS_WARMUP_BOUNDARY_READY)
+    async def _on_server_metrics_warmup_boundary_ready(
+        self, _message: ServerMetricsWarmupBoundaryReadyMessage
+    ) -> None:
+        """Release PhaseRunner's wait after the warmup metrics boundary settles."""
+        self._server_metrics_warmup_boundary_ready.set()
 
     @on_message(MessageType.DATASET_CONFIGURED_NOTIFICATION)
     async def _on_dataset_configured_notification(
@@ -257,8 +286,33 @@ class TimingManager(BaseComponentService):
         self._worker_floor_abort_started = False
 
         self.debug("Starting profiling")
-        task = self.execute_async(self._phase_orchestrator.start())
+        task = self.execute_async(self._start_phase_orchestrator())
         task.add_done_callback(self._on_phase_orchestrator_done)
+
+    async def _start_phase_orchestrator(self) -> None:
+        """Start phases once server metrics status has been applied.
+
+        PROFILE_START and SERVER_METRICS_STATUS travel on different channels,
+        so the command can win the race. Without the status, PhaseRunner sees
+        collection as inactive and skips the warmup barrier while warmup tagged
+        scrapes are still running. Wait a bounded time for the status when
+        server metrics are enabled; on timeout fall back to the inactive path.
+        """
+        if (
+            self.run.cfg.server_metrics.enabled
+            and not self._server_metrics_status_received.is_set()
+        ):
+            timeout = min(Environment.SERVER_METRICS.SCRAPE_TIMEOUT, 5.0)
+            try:
+                await asyncio.wait_for(
+                    self._server_metrics_status_received.wait(), timeout=timeout
+                )
+            except TimeoutError:
+                self.warning(
+                    f"No server metrics status after {timeout:.1f}s; "
+                    "starting phases with the warmup barrier disabled"
+                )
+        await self._phase_orchestrator.start()
 
     def _on_phase_orchestrator_done(self, task: asyncio.Task) -> None:
         """Surface phase-orchestrator failures to the SystemController.
@@ -354,7 +408,9 @@ class TimingManager(BaseComponentService):
                 )
             )
 
-    async def _request_profile_cancel(self) -> None:
+    async def _request_profile_cancel(
+        self, reason: ProfileCancelReason | None = None
+    ) -> None:
         """Ask the controller to relay PROFILE_CANCEL to the peer services.
 
         The ROUTER is the only path between two non-controller services, so a
@@ -365,11 +421,19 @@ class TimingManager(BaseComponentService):
 
         Best effort: every caller is already on a terminal abort path and must
         continue to its own teardown even if the control channel is gone.
+
+        Args:
+            reason: Why the run is being aborted, surfaced by the controller's
+                relay as an exit error. ``None`` for callers with no dedicated
+                ``ProfileCancelReason`` member yet (e.g. worker-loss aborts).
         """
+        payload: dict[str, str] = {"origin_service_id": self.service_id}
+        if reason is not None:
+            payload["reason"] = reason
         try:
             await self.send_command_to_controller(
                 CommandType.PROFILE_CANCEL,
-                payload=orjson.dumps({"origin_service_id": self.service_id}),
+                payload=orjson.dumps(payload),
             )
         except Exception as e:  # noqa: BLE001 - abort path must not be blocked by transport failure
             self.warning(f"Failed to request PROFILE_CANCEL from controller: {e!r}")

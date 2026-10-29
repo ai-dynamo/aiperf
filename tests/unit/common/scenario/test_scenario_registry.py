@@ -31,12 +31,13 @@ def test_inferencex_agentx_mvp_registered():
         "semianalysis_cc_traces_weka_062126_256k",
         "weka_trace",
         "weka_hf",
+        "mooncake_trace",
     )
     assert spec.min_benchmark_duration_seconds == 900
     assert spec.inter_turn_delay_cap_seconds is None
     assert spec.trace_idle_gap_cap_seconds is None
     assert spec.system_idle_gap_cap_seconds == 10.0
-    assert spec.forbid_trace_idle_gap_cap is True
+    assert spec.minimum_profile_metric_coverage_ratio == 0.95
     assert spec.forbid_inter_turn_delay_cap is True
 
 

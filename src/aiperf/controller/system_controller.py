@@ -34,11 +34,12 @@ from aiperf.common.enums import (
     ExportLevel,
     LifecycleState,
     MessageType,
+    ProfileCancelReason,
     ServiceRegistrationStatus,
     SystemState,
 )
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import LifecycleOperationError
+from aiperf.common.exceptions import AIPerfError, LifecycleOperationError
 from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_stop
 from aiperf.common.logging import cleanup_global_log_queue, get_global_log_queue
 from aiperf.common.messages import (
@@ -63,6 +64,7 @@ from aiperf.common.models.error_models import ExitErrorInfo
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.results_markers import (
+    remove_committed_request_checkpoint,
     write_processing_marker,
     write_ready_marker,
 )
@@ -70,6 +72,7 @@ from aiperf.common.service_registry import ServiceRegistry
 from aiperf.common.types import ServiceTypeT
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.comm import ZMQDualBindConfig
+from aiperf.config.dataset.truncation import end_conversation_on_truncation_enabled
 from aiperf.controller.controller_utils import print_exit_errors
 from aiperf.controller.protocols import (
     KubernetesServiceManagerProtocol,
@@ -90,6 +93,7 @@ from aiperf.exporters.exporter_manager import ExporterFailure, ExporterManager
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType, UIType
 from aiperf.records.records_manager import ERROR_FATAL_DETAIL_KEY
+from aiperf.server_metrics.constants import SERVER_METRICS_COLLECTION_STOPPED
 from aiperf.ui.protocols import AIPerfUIProtocol
 from aiperf.zmq.streaming_router_client import PEER_GONE_ERRNOS
 
@@ -101,6 +105,16 @@ _PRE_BENCHMARK_STATES = frozenset(
     {SystemState.INITIALIZING, SystemState.CONFIGURING, SystemState.READY}
 )
 """States in which no benchmark result can legitimately have been produced yet."""
+
+_WORKER_START_WATCH_INTERVAL = 0.5
+_WORKER_SILENT_DEATH_TICKS = 4
+"""Polls a worker must be seen dead before it counts as a silent death.
+
+A failing worker publishes SERVICE_ERROR and then exits, so the watch can see it
+dead before that report lands; acting on the first sighting would replace the
+real cause with "exited before registering". Counted in polls rather than wall
+time, like the heartbeat watchdog's confirmation ticks.
+"""
 
 
 class SystemController(
@@ -156,6 +170,8 @@ class SystemController(
         # EOS may cause server to stop early, producing misleading OSL results
         if self._should_warn_osl_without_ignore_eos():
             warn_osl_without_ignore_eos()
+
+        self._log_end_conversation_on_truncation()
 
         if self._should_warn_accuracy_temperature():
             warn_accuracy_temperature()
@@ -221,6 +237,19 @@ class SystemController(
         self._stop_tasks: set[asyncio.Task] = set()
         self._profile_results: ProcessRecordsResult | None = None
         self._exit_errors: list[ExitErrorInfo] = []
+        # Start-up failures reported by workers that never registered, keyed by
+        # service ID. The first report per worker is kept: it is the cause, and
+        # a later one (``_kill``'s "entered FAILED state") is a consequence.
+        self._worker_startup_failures: dict[str, ErrorDetails] = {}
+        self._all_workers_failed_to_start = False
+        # Set when every worker failed while _start_services was still running;
+        # that task aborts at its next checkpoint (see _on_worker_startup_failure).
+        self._startup_abort_reason: str | None = None
+        # Workers that have ever registered. Kept past reaping, which drops a
+        # worker from service_id_map, so a reaped worker is never mistaken for
+        # one that failed before registering.
+        self._registered_worker_ids: set[str] = set()
+        self._worker_start_watch_task: asyncio.Task | None = None
         self._export_failed = False
         self._failed_exporters: list[str] = []
         self._raw_artifacts_finalized = False
@@ -239,6 +268,8 @@ class SystemController(
         # because command fan-out targets must exclude them even after the
         # barrier has released.
         self._reaped_service_ids: set[str] = set()
+        self._service_instance_ids: dict[str, str] = {}
+        self._retired_result_producer_ids: set[str] = set()
         # A producer that dies abruptly never sends SERVICE_ERROR, so the
         # heartbeat/pod reapers are the only signal. Without this hook they mark
         # the service failed in the registry but leave it in the barrier, and
@@ -384,8 +415,14 @@ class SystemController(
         )
 
     def _should_warn_osl_without_ignore_eos(self) -> bool:
-        """Check if --osl is used without ignore_eos or min_tokens in extra inputs."""
+        """Check if --osl is used without ignore_eos or min_tokens in extra inputs.
+
+        Suppressed when end_conversation_on_truncation is on: ignore_eos would
+        truncate every turn and end every conversation after its first turn.
+        """
         dataset = self.run.cfg.get_default_dataset()
+        if end_conversation_on_truncation_enabled(dataset):
+            return False
         prompts = getattr(dataset, "prompts", None)
         osl = getattr(prompts, "osl", None) if prompts else None
         if osl is None:
@@ -398,6 +435,34 @@ class SystemController(
         # Check if ignore_eos or min_tokens is set with a truthy value
         extra_dict = dict(extra_inputs)
         return not (extra_dict.get("ignore_eos") or extra_dict.get("min_tokens"))
+
+    def _log_end_conversation_on_truncation(self) -> None:
+        """Report the resolved end_conversation_on_truncation setting once.
+
+        Warns when ignore_eos is also set: it runs every turn to the output-token
+        cap, so every multi-turn conversation would end after its first turn.
+        """
+        dataset = self.run.cfg.get_default_dataset()
+        if not end_conversation_on_truncation_enabled(dataset):
+            return
+        source = (
+            "explicitly set"
+            if dataset.end_conversation_on_truncation is not None
+            else "default for "
+            f"{getattr(dataset, 'dataset', None) or getattr(dataset, 'format', None)}"
+        )
+        self.info(
+            f"end_conversation_on_truncation enabled ({source}): a conversation "
+            "ends after any turn truncated by the output-token cap, and its "
+            "remaining turns are skipped"
+        )
+        if dict(self.run.cfg.endpoint.extra or {}).get("ignore_eos"):
+            self.warning(
+                "ignore_eos is set while end_conversation_on_truncation is "
+                "enabled: every turn will run to the output-token cap, so every "
+                "multi-turn conversation ends after its first turn. Drop ignore_eos "
+                "or pass --no-end-conversation-on-truncation."
+            )
 
     def _should_warn_accuracy_temperature(self) -> bool:
         """Check if accuracy mode is active without temperature=0 in extra inputs."""
@@ -532,9 +597,11 @@ class SystemController(
         # meaningful once every one of them has registered.
         self.service_manager.activate_heartbeat_monitoring()
 
+        self._raise_if_startup_aborted()
         await self._set_system_state(SystemState.CONFIGURING)
         self.info("AIPerf System is CONFIGURING")
         await self._profile_configure_all_services()
+        self._raise_if_startup_aborted()
         await self._set_system_state(SystemState.READY)
         self.info("AIPerf System is CONFIGURED")
         await self._verify_pods_healthy()
@@ -543,9 +610,15 @@ class SystemController(
             self._pod_failure_watcher_task = self.execute_async(
                 self._watch_pod_failure_abort()
             )
+        self._raise_if_startup_aborted()
         await self._start_profiling_all_services()
         await self._set_system_state(SystemState.PROFILING)
         self.info("AIPerf System is PROFILING")
+        # Every worker failed while PROFILE_START was in flight: no checkpoint
+        # remains, and the handler deferred to this task, so cancel from here.
+        if self._startup_abort_reason is not None:
+            await self._cancel_profiling()
+            return
         # A very short run can publish its terminal result while PROFILE_START
         # acknowledgements are still being collected. Re-check after leaving
         # the startup states so an earlier, deliberately ignored readiness
@@ -852,6 +925,10 @@ class SystemController(
         an hour-long benchmark that could have completed with rows missing.
         A sender we cannot identify is treated as required.
         """
+        if self._is_unregistered_local_worker(message.service_id):
+            await self._on_worker_startup_failure(message.service_id, message.error)
+            return
+
         self.error(
             f"Received service error from '{message.service_id}': "
             f"{message.error.message}"
@@ -865,7 +942,22 @@ class SystemController(
         )
         # A dead producer can no longer join its result domain; drop it from the
         # barrier so shutdown isn't blocked forever, then re-check readiness.
-        self._result_join_coordinator.unregister_service(message.service_id)
+        service_info = self.service_manager.service_id_map.get(message.service_id)
+        if (
+            service_info is not None
+            and service_info.service_type == ServiceType.SERVER_METRICS_MANAGER
+        ):
+            self._result_join_coordinator.evict_service(
+                message.service_id, "service error"
+            )
+            if (
+                message.service_id in self._result_join_coordinator.evicted
+                and message.service_id not in self._retired_result_producer_ids
+            ):
+                self._record_missing_server_metrics(message.error)
+            self._retired_result_producer_ids.add(message.service_id)
+        else:
+            self._result_join_coordinator.unregister_service(message.service_id)
         if self._is_required_service(message.service_id) and (
             self._system_state not in {SystemState.STOPPING, SystemState.SHUTDOWN}
         ):
@@ -873,14 +965,145 @@ class SystemController(
             return
         await self._check_and_trigger_shutdown()
 
+    def _is_unregistered_local_worker(self, service_id: str) -> bool:
+        """Whether the sender is a worker spawned here that has not registered.
+
+        Workers report a start-up failure before registering, so they are
+        absent from ``service_id_map`` and ``_is_required_service`` would count
+        them as required -- cancelling the run over a single flaky worker.
+        ``_registered_worker_ids`` covers workers that registered and were then
+        reaped, which drops them from ``service_id_map``.
+        """
+        return (
+            service_id in self.service_manager.spawned_worker_ids()
+            and service_id not in self.service_manager.service_id_map
+            and service_id not in self._registered_worker_ids
+        )
+
+    async def _on_worker_startup_failure(
+        self, service_id: str, error: ErrorDetails
+    ) -> None:
+        """Cancel once no spawned worker can still start; tolerate a partial loss.
+
+        In multi-process mode workers are not required services, so one failing
+        while another can still start is a degraded run that continues. But
+        with none left nothing will ever send a request, and
+        waiting out PhaseOrchestrator's credit-router timeout would only bury
+        the workers' own error under "No workers registered with the credit
+        router". Liveness is ground truth here, so a worker that died without
+        reporting does not hold the run open either.
+        """
+        self._worker_startup_failures.setdefault(service_id, error)
+        self._result_join_coordinator.unregister_service(service_id)
+        if self._all_workers_failed_to_start:
+            return
+
+        viable = (
+            self.service_manager.spawned_worker_ids()
+            & self.service_manager.live_worker_ids()
+        ) - self._worker_startup_failures.keys()
+        if viable:
+            self.warning(
+                f"Worker '{service_id}' failed to start: "
+                f"{error.message} Continuing with {len(viable)} other "
+                f"worker(s)."
+            )
+            await self._check_and_trigger_shutdown()
+            return
+
+        self._all_workers_failed_to_start = True
+        self.error(
+            f"Every worker failed to start ({len(self._worker_startup_failures)}), "
+            f"so no worker is left to send requests. '{service_id}': "
+            f"{error.message}"
+        )
+        # One entry per worker; the exit-errors panel groups identical errors
+        # across services, so N workers failing the same way render once.
+        self._exit_errors.extend(
+            ExitErrorInfo(
+                error_details=error,
+                operation="worker_startup",
+                service_id=service_id,
+            )
+            for service_id, error in self._worker_startup_failures.items()
+        )
+        if self._system_state in _PRE_BENCHMARK_STATES:
+            # _start_services is still running on its own task. Tearing down
+            # from here would race it: start-up carries on after the teardown
+            # begins, then fails, and that failure can reach runner shutdown
+            # before the in-flight stop reaches os._exit, hanging the process.
+            # Start-up aborts at its next checkpoint instead.
+            self._startup_abort_reason = (
+                f"Every worker failed to start "
+                f"({len(self._worker_startup_failures)}); see the worker errors."
+            )
+            return
+        if self._system_state not in {SystemState.STOPPING, SystemState.SHUTDOWN}:
+            await self._cancel_profiling()
+
+    def _raise_if_startup_aborted(self) -> None:
+        """Abort ``_start_services`` at a checkpoint once every worker has failed.
+
+        Raised on the start-up task itself, so the run ends through the ordinary
+        start-up failure path rather than a second, concurrent teardown.
+        """
+        if self._startup_abort_reason is not None:
+            raise AIPerfError(self._startup_abort_reason)
+
+    async def _watch_workers_until_registered(self) -> None:
+        """Catch workers that die before registering without reporting why.
+
+        A worker killed by a signal, or crashing before its comms are up, sends
+        no SERVICE_ERROR. Workers may start after the registration-wait reaper
+        has finished, in which case nothing else sees such a death before
+        PhaseOrchestrator's credit-router timeout. Such a death feeds the same
+        decision as a reported one, with the exit code as its only evidence.
+        """
+        dead_ticks: dict[str, int] = {}
+        while not self._all_workers_failed_to_start and self._system_state not in {
+            SystemState.STOPPING,
+            SystemState.SHUTDOWN,
+        }:
+            pending = (
+                self.service_manager.spawned_worker_ids()
+                - self.service_manager.service_id_map.keys()
+                - self._registered_worker_ids
+                - self._worker_startup_failures.keys()
+            )
+            if not pending:
+                return
+            live = self.service_manager.live_worker_ids()
+            for service_id in sorted(pending - live):
+                dead_ticks[service_id] = dead_ticks.get(service_id, 0) + 1
+                if dead_ticks[service_id] < _WORKER_SILENT_DEATH_TICKS:
+                    continue
+                exit_code = self.service_manager.get_service_exit_code(service_id)
+                await self._on_worker_startup_failure(
+                    service_id,
+                    ErrorDetails(
+                        type="WorkerExitedBeforeRegistering",
+                        message=(
+                            "Worker exited before registering without reporting "
+                            f"an error (exit code {exit_code})."
+                        ),
+                    ),
+                )
+                if self._all_workers_failed_to_start:
+                    return
+            await asyncio.sleep(_WORKER_START_WATCH_INTERVAL)
+
     def _is_required_service(self, service_id: str) -> bool:
         """Whether losing this service invalidates the run.
 
+        Reaped services retain their type in the registry after command-map
+        cleanup, so queued errors must still recognize optional collectors.
         Unknown senders count as required: an unidentifiable failure is more
         likely a control-plane service that died before or after its registry
         entry existed than an optional collector.
         """
-        info = self.service_manager.service_id_map.get(service_id)
+        info = self.service_manager.service_id_map.get(
+            service_id
+        ) or ServiceRegistry.get_service(service_id)
         if info is None:
             return True
         return info.service_type in self.required_services
@@ -932,6 +1155,11 @@ class SystemController(
                         service_id=service_id,
                     )
                 )
+                if info.service_type == ServiceType.SERVER_METRICS_MANAGER:
+                    self._retired_result_producer_ids.add(service_id)
+                    self._record_missing_server_metrics(
+                        self._exit_errors[-1].error_details
+                    )
                 self._forget_reaped_service(service_id)
                 # A producer that is also a required service (RecordsManager)
                 # still owed results here, so barrier eviction alone must not
@@ -1066,6 +1294,13 @@ class SystemController(
         num_workers = int(orjson.loads(message.payload)["num_workers"])
         # Spawn the workers
         await self.service_manager.run_service(ServiceType.WORKER, num_workers)
+        if self.service_manager.spawned_worker_ids() and (
+            self._worker_start_watch_task is None
+            or self._worker_start_watch_task.done()
+        ):
+            self._worker_start_watch_task = self.execute_async(
+                self._watch_workers_until_registered()
+            )
         # If we are scaling the record processor service count with the number of workers, spawn the record processors
         if self.scale_record_processors_with_workers:
             await self.service_manager.run_service(
@@ -1247,7 +1482,25 @@ class SystemController(
             try:
                 payload = orjson.loads(message.payload)
                 origin_service_id = payload.get("origin_service_id", "")
-            except (orjson.JSONDecodeError, AttributeError) as e:
+                reason = payload.get("reason")
+                if reason is not None and ProfileCancelReason(reason).is_abort:
+                    reason_detail = payload.get("reason_detail")
+                    message_text = (
+                        reason_detail
+                        if reason_detail is not None
+                        else f"Run aborted by '{origin_service_id}': {reason}."
+                    )
+                    self._exit_errors.append(
+                        ExitErrorInfo(
+                            error_details=ErrorDetails(
+                                message=message_text,
+                                type="ProfileCancelAbort",
+                            ),
+                            operation="profile_cancel_abort",
+                            service_id=origin_service_id or None,
+                        )
+                    )
+            except (orjson.JSONDecodeError, AttributeError, ValueError) as e:
                 self.warning(
                     f"Ignoring unreadable {CommandType.PROFILE_CANCEL} payload; "
                     f"relaying to every handler: {e!r}"
@@ -1370,13 +1623,13 @@ class SystemController(
             # to finalize). Announcing those as exported would publish a partial
             # result set as if it were whole, so they set ``_export_failed``,
             # which withholds ResultsExportedMessage on every run type.
-            fatal_errors = [
+            flagged_fatal_errors = [
                 error
                 for error in message.results.errors
                 if isinstance(error.details, dict)
                 and error.details.get(ERROR_FATAL_DETAIL_KEY)
             ]
-            if fatal_errors:
+            if flagged_fatal_errors:
                 self._export_failed = True
 
             # Under Kubernetes these entries also reach ``print_exit_errors``
@@ -1395,7 +1648,7 @@ class SystemController(
                     or error.details.get(ERROR_FATAL_DETAIL_KEY, True)
                 ]
                 if self._is_kubernetes()
-                else fatal_errors
+                else flagged_fatal_errors
             )
             self._exit_errors.extend(
                 ExitErrorInfo(
@@ -1404,6 +1657,19 @@ class SystemController(
                     service_id=message.service_id,
                 )
                 for error in reportable_errors
+            )
+
+        for fatal_error in message.results.fatal_errors:
+            self.error(
+                "Received fatal profile-results validation error: "
+                f"{fatal_error.message}"
+            )
+            self._exit_errors.append(
+                ExitErrorInfo(
+                    error_details=fatal_error,
+                    operation="profile_results_validation",
+                    service_id=message.service_id,
+                )
             )
 
         self.debug(
@@ -1463,6 +1729,9 @@ class SystemController(
         self, message: ProcessServerMetricsResultMessage
     ) -> None:
         """Handle a server metrics results message."""
+        if self._retired_result_producer_ids:
+            self.debug("Ignoring late server metrics from a retired producer")
+            return
         try:
             self.trace_or_debug(
                 lambda: f"Received server metrics results message: {message}",
@@ -1492,6 +1761,16 @@ class SystemController(
                 )
 
             self._server_metrics_results = server_metrics_results
+            if server_metrics_results is not None:
+                for error in server_metrics_results.error_summary:
+                    if error.error_details.type == SERVER_METRICS_COLLECTION_STOPPED:
+                        self._exit_errors.append(
+                            ExitErrorInfo(
+                                error_details=error.error_details,
+                                operation="server_metrics_collection",
+                                service_id=message.service_id,
+                            )
+                        )
             self._merge_server_metric_phase_results(server_metrics_results)
         except Exception as e:
             self.exception(f"Error processing server metrics results message: {e!r}")
@@ -2247,18 +2526,7 @@ class SystemController(
         # point all result domains and the RAW artifact barrier are complete,
         # but the API and event bus remain live for the export notification.
         try:
-            # "Degraded but has results" and "no results at all" are different
-            # outcomes and must not share a gate. Any recorded error used to
-            # skip the export entirely, so a single aggregation diagnostic or a
-            # reaped producer threw away profile_export.csv/.json, the console
-            # summary, auto-plot, the Kubernetes ready marker and
-            # ResultsExportedMessage for a run that had complete records in
-            # hand. Export whenever there is something to export; the errors are
-            # still printed below and still drive the non-zero exit code.
-            if self._has_exportable_results() or not self._exit_errors:
-                await self._print_post_benchmark_info_and_metrics()
-            if self._exit_errors:
-                self._print_exit_errors_and_log_file()
+            await self._report_post_shutdown_results_and_errors()
 
             if Environment.DEV.MODE:
                 print_developer_mode_warning()
@@ -2295,6 +2563,23 @@ class SystemController(
         exportable record set.
         """
         return bool(self._profile_results and self._profile_results.results.records)
+
+    async def _report_post_shutdown_results_and_errors(self) -> None:
+        """Print benchmark results and/or exit errors before final shutdown.
+
+        "Degraded but has results" and "no results at all" are different
+        outcomes and must not share a gate. Any recorded error used to skip
+        the export entirely, so a single aggregation diagnostic or a reaped
+        producer threw away profile_export.csv/.json, the console summary,
+        auto-plot, the Kubernetes ready marker and ResultsExportedMessage for
+        a run that had complete records in hand. Export whenever there is
+        something to export; the errors are still printed below and still
+        drive the non-zero exit code.
+        """
+        if self._has_exportable_results() or not self._exit_errors:
+            await self._print_post_benchmark_info_and_metrics()
+        if self._exit_errors:
+            self._print_exit_errors_and_log_file()
 
     def _print_degraded_producers(self, console: Console) -> None:
         """Name the producers whose results are missing from this export.
@@ -2534,6 +2819,10 @@ class SystemController(
                 f"{e!r}; withholding ResultsExportedMessage"
             )
             return
+        await asyncio.to_thread(
+            remove_committed_request_checkpoint,
+            self.run.cfg.artifacts.profile_export_jsonl_file,
+        )
         try:
             await self.publish(
                 ResultsExportedMessage(

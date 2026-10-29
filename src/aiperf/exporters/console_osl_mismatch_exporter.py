@@ -7,6 +7,7 @@ from rich.panel import Panel
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import MetricResult
+from aiperf.config.dataset.truncation import end_conversation_on_truncation_enabled
 from aiperf.exporters.exporter_config import ExporterConfig
 from aiperf.metrics.types.osl_mismatch_metrics import (
     OSLMismatchCountMetric,
@@ -28,6 +29,9 @@ class ConsoleOSLMismatchExporter(AIPerfLoggerMixin):
     def __init__(self, exporter_config: ExporterConfig, **kwargs) -> None:
         super().__init__(**kwargs)
         self._results = exporter_config.results
+        self._end_conversation_on_truncation = end_conversation_on_truncation_enabled(
+            exporter_config.cfg.get_default_dataset()
+        )
         self._pct_threshold = Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD
         self._max_token_threshold = Environment.METRICS.OSL_MISMATCH_MAX_TOKEN_THRESHOLD
 
@@ -98,6 +102,14 @@ class ConsoleOSLMismatchExporter(AIPerfLoggerMixin):
     ) -> str:
         """Create the formatted warning text with details and recommendations."""
         avg_diff_str = f"{avg_diff:.1f}%" if avg_diff is not None else "N/A"
+        ignore_eos_option = (
+            "  - [dim]--extra-inputs ignore_eos:true is not suggested: with "
+            "--end-conversation-on-truncation on, it would end every conversation "
+            "after its first turn[/dim]"
+            if self._end_conversation_on_truncation
+            else "  - [green]--extra-inputs ignore_eos:true[/green] - Generate until "
+            "max_tokens (vLLM, TensorRT-LLM)"
+        )
         return f"""\
 [bold]{mismatch_count:,} of {total_records:,} requests ({percentage:.1f}%) have output length differing from requested by more than the threshold.[/bold]
 [bold]Threshold (tokens):[/bold] min(requested x {self._pct_threshold:g}%, {self._max_token_threshold})
@@ -106,7 +118,7 @@ class ConsoleOSLMismatchExporter(AIPerfLoggerMixin):
 [bold]Why:[/bold] Server hit EOS token before reaching requested output length.
 
 [bold]Fix Options:[/bold]
-  - [green]--extra-inputs ignore_eos:true[/green] - Generate until max_tokens (vLLM, TensorRT-LLM)
+{ignore_eos_option}
   - [green]--extra-inputs min_tokens:<N>[/green] - Set minimum output length (vLLM, TensorRT-LLM, SGLang)
   - [green]--use-server-token-count[/green] - Use server-reported token counts if tokenizer mismatch suspected
 

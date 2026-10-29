@@ -10,6 +10,7 @@ import pytest
 
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.custom import CustomDatasetComposer
+from aiperf.dataset.loader.weka_synth_buf import RoleSegment
 
 
 @pytest.fixture(autouse=True)
@@ -89,9 +90,9 @@ def make_weka_run(
     required -- a MagicMock no longer satisfies the loader's reads.
 
     ``block_size`` has no FileDataset home in v2 (only synthetic prompts carry
-    it), so it is forwarded to the loader via ``default_block_size`` by callers,
-    not through config. It is accepted here for signature compatibility but
-    ignored at the config layer.
+    it); weka traces declare their own ``block_size``, which the loader honors
+    over the plugin ``default_block_size``. It is accepted here for signature
+    compatibility but ignored at the config layer.
     """
     from aiperf.config import BenchmarkConfig, BenchmarkRun
 
@@ -193,6 +194,17 @@ def stub_hash_id_corpus_rng(prompt_generator) -> None:
     prompt_generator._hash_id_corpus_rng.randrange.side_effect = lambda n: (
         state["h"] % n
     )
+
+
+def make_segments(*spec: tuple[str, int]) -> list[RoleSegment]:
+    """Contiguous weka segments from (role, token count) pairs."""
+    segs, start = [], 0
+    for role, n in spec:
+        segs.append(
+            RoleSegment(role=role, start=start, tokens=list(range(n)), content=role)
+        )
+        start += n
+    return segs
 
 
 @pytest.fixture
