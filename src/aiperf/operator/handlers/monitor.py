@@ -3224,35 +3224,38 @@ async def _salvage_terminated_controller_results(
     """Dispatch the claimed salvage branches for a terminated controller.
 
     Tries, in order: partial checkpoint files, live CR status metrics, and
-    finally the unrecoverable-failure path. Exactly one branch runs; every
-    branch stamps a terminal FAILED phase and deletes the JobSet. Callers
-    MUST hold the durable completion claim before invoking.
+    finally the unrecoverable-failure path. A dataset failure goes straight to
+    the last: no request ran, and only that path reports the pod's message.
+    Exactly one branch runs; every branch stamps a terminal FAILED phase and
+    deletes the JobSet. Callers MUST hold the durable completion claim before
+    invoking.
     """
     custom = client.CustomObjectsApi(api)
-    if result.checkpoints:
-        await _recover_from_partial_checkpoints(
+    if not _is_dataset_failure(reason):
+        if result.checkpoints:
+            await _recover_from_partial_checkpoints(
+                body=body,
+                result=result,
+                namespace=namespace,
+                jobset_name=jobset_name,
+                job_id=job_id,
+                sb=sb,
+                custom=custom,
+                status=status,
+            )
+            return
+
+        if await _recover_from_live_status(
             body=body,
-            result=result,
+            status=status,
             namespace=namespace,
             jobset_name=jobset_name,
             job_id=job_id,
+            reason=reason,
             sb=sb,
             custom=custom,
-            status=status,
-        )
-        return
-
-    if await _recover_from_live_status(
-        body=body,
-        status=status,
-        namespace=namespace,
-        jobset_name=jobset_name,
-        job_id=job_id,
-        reason=reason,
-        sb=sb,
-        custom=custom,
-    ):
-        return
+        ):
+            return
 
     await _fail_unrecoverable_controller(
         body=body,
