@@ -144,6 +144,41 @@ class TestBuildAssistantTurnDefault:
         assert turn is not None
         assert turn.texts[0].contents == ["HelloWorld"]
 
+    def test_streaming_reasoning_chunks_replay_answer_only(self):
+        # Streaming splits a reasoning reply across chunks that each carry
+        # only ``reasoning`` or only ``content``; the answer-else-reasoning
+        # rule must be decided once per reply, not per chunk.
+        canned = {
+            10: ParsedResponse(perf_ns=10, data=ReasoningResponseData(reasoning="a")),
+            20: ParsedResponse(perf_ns=20, data=ReasoningResponseData(reasoning="b")),
+            30: ParsedResponse(perf_ns=30, data=ReasoningResponseData(content="X")),
+            40: ParsedResponse(perf_ns=40, data=TextResponseData(text="Y")),
+        }
+        ep = _StubEndpoint(canned)
+        record = RequestRecord(
+            responses=[_text_response(ns) for ns in canned],
+            start_perf_ns=0,
+            end_perf_ns=40,
+        )
+        turn = ep.build_assistant_turn(record)
+        assert turn is not None
+        assert turn.texts[0].contents == ["XY"]
+
+    def test_streaming_reasoning_only_chunks_fall_back_to_joined_reasoning(self):
+        canned = {
+            10: ParsedResponse(perf_ns=10, data=ReasoningResponseData(reasoning="a")),
+            20: ParsedResponse(perf_ns=20, data=ReasoningResponseData(reasoning="b")),
+        }
+        ep = _StubEndpoint(canned)
+        record = RequestRecord(
+            responses=[_text_response(ns) for ns in canned],
+            start_perf_ns=0,
+            end_perf_ns=20,
+        )
+        turn = ep.build_assistant_turn(record)
+        assert turn is not None
+        assert turn.texts[0].contents == ["ab"]
+
     def test_empty_record_returns_none(self):
         ep = _StubEndpoint()
         record = RequestRecord(
