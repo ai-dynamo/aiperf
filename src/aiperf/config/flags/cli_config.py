@@ -740,6 +740,40 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    hf_mooncake_dataset: Annotated[
+        str | None,
+        Field(
+            description="HuggingFace repository for the Mooncake trajectory loader. "
+            "Auto-selects --public-dataset mooncake_hf. Cannot be combined with "
+            "another public dataset or a custom dataset. With --config, set the repository in YAML."
+        ),
+        CLIParameter(name=("--hf-mooncake-dataset",), group=Groups.INPUT),
+    ] = None
+
+    hf_mooncake_split: Annotated[
+        str | None,
+        Field(
+            description="HuggingFace split for mooncake_hf (e.g. train or test). "
+            "Defaults to test. Only supported by --public-dataset mooncake_hf.",
+        ),
+        CLIParameter(name=("--hf-mooncake-split",), group=Groups.INPUT),
+    ] = None
+
+    mooncake_trace_to_hf_mapping: Annotated[
+        list[str],
+        Field(
+            default_factory=list,
+            description="Map a Mooncake trace field to a dotted HuggingFace column path: MOONCAKE_FIELD=HF_COLUMN. "
+            "Repeat for messages, session_id, tools, output_length, extra, or extra.PARAMETER. "
+            "Only supported by mooncake_hf. Unmapped fields use canonical column names.",
+        ),
+        CLIParameter(
+            name=("--mooncake-trace-to-hf-mapping",),
+            consume_multiple=True,
+            group=Groups.INPUT,
+        ),
+    ]
+
     hf_weka_dataset: Annotated[
         str | None,
         Field(
