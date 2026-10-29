@@ -430,3 +430,5 @@ replay; partial structured output items, such as unfinished tool calls, are
 not passed to FORK children. `response.incomplete` remains a non-error event,
 including responses that reach `max_output_tokens`.
 
+For non-streaming responses, AIPerf reads content from the response's `output[]` items: `reasoning_text` parts of `reasoning` items (matching `response.reasoning_text.delta`), `output_text` parts of `message` items, and `name` and `arguments` of `function_call` items. A `reasoning` item without `reasoning_text` parts contributes its `summary_text` parts instead; the two are never combined, since a summary restates the same reasoning. The first non-empty source in the order reasoning, message, function call populates the parsed response (the same precedence as chat completions): message text is kept alongside reasoning, but function-call arguments are not counted when reasoning is present.
+

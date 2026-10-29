@@ -192,7 +192,11 @@ class BenchmarkPlan(BaseModel):
     ]
     export_level: str = Field(
         default="summary",
-        description="Export level for record-level data (summary, records, raw).",
+        description=(
+            "Export level from the base benchmark configuration before sweep expansion "
+            "(summary, records, raw). Each resolved config's artifacts.export_level "
+            "is authoritative for that config."
+        ),
     )
     export_jsonl_file: str | None = Field(
         default=None,

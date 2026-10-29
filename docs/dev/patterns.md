@@ -246,6 +246,18 @@ single ROUTER. The wire format is the `msgspec` tagged-union structs in
 channel also carries registration (`Registration` / `RegistrationAck`),
 `Heartbeat`, and `StatusUpdate`.
 
+`Registration.instance_id` identifies the process, independently of the service
+ID and per-request correlation ID. Generate it once at service construction and
+reuse it on reconnects. A different instance ID lets the controller retire an
+optional server-metrics producer that lost its history during a container
+restart, even when its heartbeat has not expired yet.
+
+Server-metrics mapped-array operations run through
+`aiperf.server_metrics.array_store.run_history_io` while holding the owning
+history lock. Unlike an unshielded `asyncio.to_thread` await, this helper waits
+for an in-flight write to finish even if cancellation repeats, so another
+reader, writer, or close cannot race the worker thread.
+
 Every other message type still goes over the event bus with `publish()` /
 `@on_message`.
 

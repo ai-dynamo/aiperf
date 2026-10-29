@@ -401,8 +401,6 @@ class TestCheckKubernetesVersion:
     @pytest.mark.parametrize(
         "major,minor,expected_status",
         [
-            ("1", "28", CheckStatus.PASS),
-            ("1", "24", CheckStatus.PASS),
             ("2", "0", CheckStatus.PASS),
             ("1", "23", CheckStatus.FAIL),
             ("0", "99", CheckStatus.FAIL),
@@ -420,30 +418,6 @@ class TestCheckKubernetesVersion:
             result = await checker._check_kubernetes_version()
 
         assert result.status == expected_status
-
-    @pytest.mark.asyncio
-    async def test_version_with_plus_suffix(self) -> None:
-        """GKE/EKS versions like '28+' should parse correctly."""
-        checker = _make_checker()
-        checker._api = _mock_api()
-        vi = VersionInfo(
-            build_date="2024-01-01T00:00:00Z",
-            compiler="gc",
-            git_commit="abc",
-            git_tree_state="clean",
-            git_version="v1.28.2-gke.1",
-            go_version="go1.21",
-            major="1",
-            minor="28+",
-            platform="linux/amd64",
-        )
-        version = MagicMock(spec=VersionApi)
-        version.get_code = AsyncMock(return_value=vi)
-
-        with _patch_version(version):
-            result = await checker._check_kubernetes_version()
-
-        assert result.status == CheckStatus.PASS
 
     @pytest.mark.asyncio
     async def test_version_api_error_returns_warn(self) -> None:

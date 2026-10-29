@@ -298,6 +298,32 @@ class TestPodStartupIssue:
         assert issue is not None
         assert issue.category == "ContainerConfig"
 
+    def test_restartable_metrics_crash_loop_does_not_fail_controller(self) -> None:
+        """Optional native sidecar recovery must not delete the benchmark JobSet."""
+        pod = self._pod(
+            container_name="server-metrics-manager",
+            reason="CrashLoopBackOff",
+            restarts=100,
+            init=True,
+        )
+        pod.spec = SimpleNamespace(
+            init_containers=[
+                SimpleNamespace(name="server-metrics-manager", restart_policy="Always")
+            ]
+        )
+        assert _get_pod_startup_issue([pod]) is None
+
+    def test_regular_metrics_crash_loop_is_still_a_job_failure(self) -> None:
+        """Legacy ordinary-container failures remain visible to recovery."""
+        pod = self._pod(
+            container_name="server-metrics-manager",
+            reason="CrashLoopBackOff",
+            restarts=100,
+        )
+        issue = _get_pod_startup_issue([pod])
+        assert issue is not None
+        assert issue.terminal_after_threshold
+
     def test_crash_loop_requires_configured_restart_threshold(self) -> None:
         """A single startup restart remains recoverable; a stable loop is fatal."""
         below = _get_pod_startup_issue(
