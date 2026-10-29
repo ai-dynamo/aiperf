@@ -66,13 +66,56 @@ def _uv_option_region(head: list[str]) -> list[str]:
     return options
 
 
+def _literal_bindings(tree: ast.Module) -> dict[str, ast.List | ast.Tuple]:
+    """Names bound to a list or tuple literal anywhere in the module.
+
+    Lets ``cmd = ["uv", "run", "aiperf"]`` followed by ``subprocess.run(cmd)`` be
+    inspected. Last literal binding wins; a name later rebound to something that
+    is not a literal keeps its earlier literal, which can only over-report.
+    """
+    bindings: dict[str, ast.List | ast.Tuple] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+        else:
+            continue
+        if not isinstance(node.value, ast.List | ast.Tuple):
+            continue
+        for target in targets:
+            if isinstance(target, ast.Name):
+                bindings[target.id] = node.value
+    return bindings
+
+
+def _argv_of(
+    node: ast.Call, bindings: dict[str, ast.List | ast.Tuple]
+) -> ast.List | ast.Tuple | None:
+    """The argv literal of a call, from its first positional arg or ``args``.
+
+    Deliberately callee-agnostic: any call handed a list headed ``uv run`` is
+    worth flagging, whether it goes through ``subprocess.run``,
+    ``subprocess.Popen`` or a wrapper.
+    """
+    candidates = list(node.args[:1])
+    candidates += [kw.value for kw in node.keywords if kw.arg == "args"]
+    for candidate in candidates:
+        if isinstance(candidate, ast.List | ast.Tuple):
+            return candidate
+        if isinstance(candidate, ast.Name) and candidate.id in bindings:
+            return bindings[candidate.id]
+    return None
+
+
 def _offending_lines(tree: ast.Module) -> list[int]:
+    bindings = _literal_bindings(tree)
     lines: list[int] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not node.args:
+        if not isinstance(node, ast.Call):
             continue
-        argv = node.args[0]
-        if not isinstance(argv, ast.List | ast.Tuple):
+        argv = _argv_of(node, bindings)
+        if argv is None:
             continue
         head = _leading_literals(argv)
         if len(head) < 2 or head[0] != "uv" or head[1] not in SYNCING_SUBCOMMANDS:
@@ -113,12 +156,19 @@ def test_offending_lines_rejects_a_flag_owned_by_the_child() -> None:
     assert _offending_lines(ast.parse(misplaced)) == [1]
 
 
-def test_offending_lines_accepts_no_sync_and_plain_interpreter() -> None:
+def test_offending_lines_accepts_the_no_sync_option() -> None:
     guarded = 'subprocess.run(["uv", "run", "--no-sync", "aiperf"])'
     assert _offending_lines(ast.parse(guarded)) == []
 
-    plain = 'subprocess.run([sys.executable, "-m", "aiperf", "kube"])'
-    assert _offending_lines(ast.parse(plain)) == []
+
+def test_offending_lines_resolves_a_command_variable() -> None:
+    source = 'cmd = ["uv", "run", "aiperf"]\nsubprocess.run(cmd, cwd=ROOT)'
+    assert _offending_lines(ast.parse(source)) == [2]
+
+
+def test_offending_lines_reads_the_args_keyword() -> None:
+    source = 'subprocess.run(args=["uv", "run", "aiperf"])'
+    assert _offending_lines(ast.parse(source)) == [1]
 
 
 def test_offending_lines_ignores_non_syncing_uv_subcommands() -> None:
