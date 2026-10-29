@@ -49,6 +49,8 @@ and the round-trip in
 [`test_dump_config_roundtrip.py`](https://github.com/ai-dynamo/aiperf/tree/main/tests/unit/property/test_dump_config_roundtrip.py).
 The Kubernetes patch content-type invariant lives alongside them in
 [`test_kube_patch_invariants.py`](https://github.com/ai-dynamo/aiperf/tree/main/tests/unit/property/test_kube_patch_invariants.py).
+The test-suite venv integrity invariant lives in
+[`test_no_venv_resync.py`](https://github.com/ai-dynamo/aiperf/tree/main/tests/unit/property/test_no_venv_resync.py).
 
 ### `test_every_json_exporter_calls_scrub_non_finite`
 
@@ -160,6 +162,18 @@ runtime half of the same rule lives in
 so a mismatch — or an unadvertised media type, which raises 415 —
 fails locally instead of only against a real cluster. A bare
 `AsyncMock` accepts every shape and hides both.
+
+### Test-suite venv integrity: `test_no_venv_resync.py`
+
+Walks the AST of every `.py` file under `tests/unit/` and fails on any
+call handed an argv headed `uv run` or `uv sync` without `--no-sync` in
+uv's own option region. Those subcommands reconcile the project `.venv`
+with `uv.lock` before executing, so a test that shells out to one
+rewrites the dependencies of the process that spawned it: modules
+already imported stay at the old version while freshly imported ones
+come from the new one, and the suite fails in import-order-dependent
+ways. Invoke the CLI as `sys.executable -m aiperf` instead — same
+interpreter, same environment, no reconciliation.
 
 ## The baseline-ratchet pattern
 
