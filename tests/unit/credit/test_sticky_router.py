@@ -9,7 +9,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import ConversationBranchMode, CreditPhase
-from aiperf.credit.messages import FirstToken
+from aiperf.credit.messages import CreditReturn, FirstToken
 from aiperf.credit.sticky_router import StickyCreditRouter, _StickyEntry
 from aiperf.credit.structs import Credit
 from tests.unit.timing.conftest import make_credit
@@ -1829,3 +1829,85 @@ class TestStickyRoutingAtDagDepth:
         assert "child-1" not in router._sticky_sessions
         assert router._workers["worker-1"].active_sessions == 0
         assert router._workers["worker-1"].active_session_ids == set()
+
+
+class TestStickyCreditRouterEndedOnTruncation:
+    """A conversation ended early on truncation never sends its final turn, so
+    the return itself must release the sticky entry."""
+
+    async def _send_first_turn(self, router: StickyCreditRouter) -> Credit:
+        credit = make_credit(id=1, conv_id="s", turn=0, corr_id="corr-t", num_turns=3)
+        await router.send_credit(credit)
+        return credit
+
+    async def test_handle_router_message_ended_on_truncation_releases_sticky(
+        self, benchmark_run
+    ) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-A")
+        credit = await self._send_first_turn(router)
+        assert router._workers["worker-A"].active_sessions == 1
+
+        await router._handle_router_message(
+            "worker-A", CreditReturn(credit=credit, ended_on_truncation=True)
+        )
+
+        assert "corr-t" not in router._sticky_sessions
+        assert router._workers["worker-A"].active_sessions == 0
+        assert "corr-t" not in router._workers["worker-A"].active_session_ids
+
+    async def test_handle_router_message_plain_return_keeps_sticky(
+        self, benchmark_run
+    ) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-A")
+        credit = await self._send_first_turn(router)
+
+        await router._handle_router_message("worker-A", CreditReturn(credit=credit))
+
+        assert router._sticky_sessions["corr-t"].worker_id == "worker-A"
+        assert router._workers["worker-A"].active_sessions == 1
+
+    async def test_handle_router_message_cancelled_return_keeps_sticky(
+        self, benchmark_run
+    ) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._router_client.send_to = AsyncMock()
+        router._register_worker("worker-A")
+        credit = await self._send_first_turn(router)
+
+        await router._handle_router_message(
+            "worker-A",
+            CreditReturn(credit=credit, cancelled=True, ended_on_truncation=True),
+        )
+
+        assert "corr-t" in router._sticky_sessions
+
+    async def test_handle_router_message_ended_without_sticky_entry_is_noop(
+        self, benchmark_run
+    ) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._register_worker("worker-A")
+        credit = make_credit(id=1, conv_id="s", turn=0, corr_id="corr-t", num_turns=3)
+
+        await router._handle_router_message(
+            "worker-A", CreditReturn(credit=credit, ended_on_truncation=True)
+        )
+
+        assert router._sticky_sessions == {}
+        assert router._workers["worker-A"].active_sessions == 0
+
+    async def test_release_sticky_for_early_end_owner_worker_gone_pops_entry(
+        self, benchmark_run
+    ) -> None:
+        router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+        router._sticky_sessions["corr-t"] = _StickyEntry(
+            worker_id="worker-gone", root_key="corr-t"
+        )
+        credit = make_credit(id=1, conv_id="s", turn=0, corr_id="corr-t", num_turns=3)
+
+        router._release_sticky_for_early_end(credit)
+
+        assert "corr-t" not in router._sticky_sessions

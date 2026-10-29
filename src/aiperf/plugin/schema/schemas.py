@@ -406,6 +406,15 @@ class CustomDatasetLoaderMetadata(BaseModel):
             "coverage biases the result."
         ),
     )
+    end_conversation_on_truncation: bool = Field(
+        default=False,
+        description=(
+            "Default for the dataset's end_conversation_on_truncation option "
+            "(--end-conversation-on-truncation) when the user leaves it unset. "
+            "True for multi-turn benchmark suites whose follow-up prompts assume "
+            "a complete prior answer (SPEED-Bench, spec_al_mtbench)."
+        ),
+    )
 
 
 class PublicDatasetLoaderMetadata(BaseModel):
@@ -525,6 +534,15 @@ class PublicDatasetLoaderMetadata(BaseModel):
     prompt_template: str | None = Field(
         default=None,
         description="Python str.format() template for constructing the prompt from multiple columns (e.g. '{code}\\n\\n{change_request}'). When set, overrides prompt_column. All referenced column names must exist in the dataset.",
+    )
+    end_conversation_on_truncation: bool = Field(
+        default=False,
+        description=(
+            "Default for the dataset's end_conversation_on_truncation option "
+            "(--end-conversation-on-truncation) when the user leaves it unset. "
+            "True for multi-turn benchmark suites whose follow-up prompts assume "
+            "a complete prior answer (SPEED-Bench, spec_al_mtbench)."
+        ),
     )
 
 
