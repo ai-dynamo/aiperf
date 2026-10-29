@@ -51,8 +51,22 @@ def _leading_literals(sequence: ast.List | ast.Tuple) -> list[str]:
     return literals
 
 
+def _uv_option_region(head: list[str]) -> list[str]:
+    """The run of uv's own options immediately after the subcommand.
+
+    ``uv run`` stops parsing its own options at the command name, so a
+    ``--no-sync`` placed after the command is passed through to the command and
+    does not stop the reconciliation. Only the leading option run counts.
+    """
+    options: list[str] = []
+    for token in head[2:]:
+        if not token.startswith("-"):
+            break
+        options.append(token)
+    return options
+
+
 def _offending_lines(tree: ast.Module) -> list[int]:
-    """Line numbers of subprocess argv lists that re-sync the venv."""
     lines: list[int] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not node.args:
@@ -63,14 +77,13 @@ def _offending_lines(tree: ast.Module) -> list[int]:
         head = _leading_literals(argv)
         if len(head) < 2 or head[0] != "uv" or head[1] not in SYNCING_SUBCOMMANDS:
             continue
-        if NO_SYNC_FLAG in head:
+        if NO_SYNC_FLAG in _uv_option_region(head):
             continue
         lines.append(node.lineno)
     return lines
 
 
 def _syncing_subprocess_calls() -> list[str]:
-    """Every ``uv run`` / ``uv sync`` subprocess call under ``tests/unit``."""
     offenders: list[str] = []
     for path in sorted(UNIT_ROOT.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -90,13 +103,17 @@ def test_unit_tests_do_not_resync_the_venv() -> None:
 
 
 def test_offending_lines_flags_a_syncing_subprocess_call() -> None:
-    """Positive control: the scan sees an unguarded ``uv run`` argv."""
     source = 'subprocess.run(["uv", "run", "aiperf", "kube"], cwd=ROOT)'
     assert _offending_lines(ast.parse(source)) == [1]
 
 
+def test_offending_lines_rejects_a_flag_owned_by_the_child() -> None:
+    """A trailing ``--no-sync`` reaches the child, so uv still reconciles."""
+    misplaced = 'subprocess.run(["uv", "run", "aiperf", "--no-sync"])'
+    assert _offending_lines(ast.parse(misplaced)) == [1]
+
+
 def test_offending_lines_accepts_no_sync_and_plain_interpreter() -> None:
-    """Negative controls: the two spellings the invariant accepts."""
     guarded = 'subprocess.run(["uv", "run", "--no-sync", "aiperf"])'
     assert _offending_lines(ast.parse(guarded)) == []
 
