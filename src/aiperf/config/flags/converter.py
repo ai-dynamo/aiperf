@@ -507,8 +507,6 @@ def _apply_scenario_defaults(cli: CLIConfig) -> CLIConfig:
     if not cli.scenario:
         return cli
     spec = get_scenario(cli.scenario)
-    if not spec.cli_defaults:
-        return cli
     defaults = {
         "benchmark_duration": spec.default_benchmark_duration_seconds,
         "trajectory_start_min_ratio": spec.default_trajectory_start_min_ratio,

@@ -88,6 +88,15 @@ def test_scenario_duration_prevents_fallback_request_limit(preset: str) -> None:
     assert phase.requests is None
 
 
+def test_registered_scenario_duration_prevents_fallback_request_limit() -> None:
+    config = resolve_config(
+        CLIConfig(scenario="inferencex-agentx-mvp", model_names=["test-model"])
+    )
+    phase = config.benchmark.get_profiling_phases()[0]
+    assert phase.duration == 1800
+    assert phase.requests is None
+
+
 def test_scenario_defaults_parse_model_names(preset: str) -> None:
     SCENARIOS[preset] = SCENARIOS[preset].model_copy(
         update={"cli_defaults": {"model_names": "foo"}}
