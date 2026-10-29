@@ -135,7 +135,7 @@ GPU_TELEMETRY_METRICS_CONFIG: list[tuple[str, str, MetricUnitT]] = [
     ("AMD Memory Temperature", "amd_memory_temperature", TemperatureMetricUnit.CELSIUS),
     ("AMD ECC Uncorrectable", "amd_ecc_uncorrectable", GenericMetricUnit.COUNT),
     ("AMD Throttle Status", "amd_throttle_status", GenericMetricUnit.COUNT),
-    ("AMD SM Clock Frequency", "amd_sm_clock", FrequencyMetricUnit.MEGAHERTZ),
+    ("AMD GFX Clock Frequency", "amd_gfx_clock", FrequencyMetricUnit.MEGAHERTZ),
     ("AMD Memory Clock Frequency", "amd_mem_clock", FrequencyMetricUnit.MEGAHERTZ),
 ]
 

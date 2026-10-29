@@ -70,7 +70,7 @@ def test_records_carry_the_amd_platform(collector) -> None:
 def test_clocks_route_by_label_and_unmapped_clocks_are_dropped(collector) -> None:
     record = _by_index(collector._parse_metrics_to_records(EXPOSITION))[0]
 
-    assert record.telemetry_data.amd_sm_clock == 1533.0
+    assert record.telemetry_data.amd_gfx_clock == 1533.0
     assert record.telemetry_data.amd_mem_clock == 1292.0
 
 
@@ -78,7 +78,11 @@ def test_scaling_converts_exporter_units(collector) -> None:
     record = _by_index(collector._parse_metrics_to_records(EXPOSITION))[0]
 
     assert record.telemetry_data.amd_energy_consumption == pytest.approx(1.4e17 * 1e-12)
-    assert record.telemetry_data.amd_memory_used == pytest.approx(183265 / 1024)
+    # DME labels gpu_used_vram "MB" but reports mebibytes, and the field is
+    # documented in GB, so the factor is 2**20 / 1e9 rather than 1/1024.
+    assert record.telemetry_data.amd_memory_used == pytest.approx(
+        183265 * (1024.0 * 1024.0) / 1e9
+    )
     assert record.telemetry_data.amd_temperature == 76.0
 
 
@@ -185,7 +189,7 @@ def test_current_dme_clock_labels_are_read(collector) -> None:
     )
     telemetry = collector._parse_metrics_to_records(payload)[0].telemetry_data
 
-    assert telemetry.amd_sm_clock == 1533.0
+    assert telemetry.amd_gfx_clock == 1533.0
     assert telemetry.amd_mem_clock == 1292.0
 
 
@@ -205,7 +209,7 @@ def test_the_first_clock_of_each_type_wins(collector, lowest_index_first: bool) 
     lines = lowest + later if lowest_index_first else later + lowest
     telemetry = collector._parse_metrics_to_records(_one_gpu(*lines))[0].telemetry_data
 
-    assert telemetry.amd_sm_clock == 1533.0
+    assert telemetry.amd_gfx_clock == 1533.0
     assert telemetry.amd_mem_clock == 1292.0
 
 
@@ -260,3 +264,64 @@ def test_endpoint_credentials_stay_out_of_the_record() -> None:
 
     assert "s3cr3t" not in record.telemetry_source_url
     assert "node-a:5000" in record.telemetry_source_url
+
+
+# Partitioned cards: DME gives every partition of one physical GPU the parent
+# card's serial_number, so the serial alone is not a unique identity. See
+# ROCm/device-metrics-exporter gpuagent_gpu_metrics.go, where gpu_partition_id
+# is a default label and reads "NA" on an unpartitioned card.
+PARTITIONED_EXPOSITION = """
+# TYPE gpu_package_power gauge
+gpu_package_power{gpu_id="0",card_model="MI300X",serial_number="SN-SHARED",gpu_partition_id="0"} 300
+gpu_package_power{gpu_id="1",card_model="MI300X",serial_number="SN-SHARED",gpu_partition_id="1"} 310
+"""
+
+
+def test_partitions_of_one_card_keep_distinct_uuids(collector) -> None:
+    records = _by_index(collector._parse_metrics_to_records(PARTITIONED_EXPOSITION))
+
+    assert set(records) == {0, 1}
+    uuids = {records[0].gpu_uuid, records[1].gpu_uuid}
+    assert uuids == {"SN-SHARED-p0", "SN-SHARED-p1"}, (
+        "partitions sharing a parent serial must not collapse onto one uuid"
+    )
+
+
+def test_unpartitioned_card_keeps_the_bare_serial(collector) -> None:
+    """gpu_partition_id reads NA off a partitioned card, so the uuid must not move."""
+    exposition = (
+        "# TYPE gpu_package_power gauge\n"
+        'gpu_package_power{gpu_id="0",serial_number="SN-0",gpu_partition_id="NA"} 700\n'
+    )
+
+    records = collector._parse_metrics_to_records(exposition)
+
+    assert [r.gpu_uuid for r in records] == ["SN-0"]
+
+
+def test_metric_names_carrying_an_exporter_prefix_are_still_mapped(collector) -> None:
+    """A deployment may namespace DME's metric names; the mapping is unprefixed."""
+    exposition = (
+        "# TYPE amd_gpu_package_power gauge\n"
+        'amd_gpu_package_power{gpu_id="0",serial_number="SN-0"} 742\n'
+        "# TYPE amd_gpu_clock gauge\n"
+        'amd_gpu_clock{gpu_id="0",serial_number="SN-0",clock_type="system",clock_index="0"} 1533\n'
+    )
+
+    records = collector._parse_metrics_to_records(exposition)
+
+    assert len(records) == 1
+    assert records[0].telemetry_data.amd_power == 742.0
+    assert records[0].telemetry_data.amd_gfx_clock == 1533.0
+
+
+def test_an_unrelated_metric_that_merely_contains_a_known_name_is_ignored(
+    collector,
+) -> None:
+    """The suffix match is on an underscore boundary, not a bare substring."""
+    exposition = (
+        "# TYPE gpu_used_vram_bytes gauge\n"
+        'gpu_used_vram_bytes{gpu_id="0",serial_number="SN-0"} 123\n'
+    )
+
+    assert collector._parse_metrics_to_records(exposition) == []

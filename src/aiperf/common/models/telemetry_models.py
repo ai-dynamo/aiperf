@@ -148,8 +148,9 @@ class TelemetryMetrics(AIPerfBaseModel):
         description="AMD GPU throttle status snapshot (1.0 if any throttle "
         "indicator is active, 0.0 otherwise)",
     )
-    amd_sm_clock: FiniteFloat | None = Field(
-        default=None, description="AMD GPU system clock frequency in MHz"
+    amd_gfx_clock: FiniteFloat | None = Field(
+        default=None,
+        description="AMD GPU graphics (sclk) clock frequency in MHz",
     )
     amd_mem_clock: FiniteFloat | None = Field(
         default=None, description="AMD GPU memory clock frequency in MHz"

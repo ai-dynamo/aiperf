@@ -580,13 +580,13 @@ AMD DME collects metrics from the Prometheus exporter and emits them under vendo
 | `amd_energy_consumption` (MJ) | `gpu_energy_consumed` | Cumulative energy consumption (µJ → MJ). Accumulator computes delta against pre-profile baseline. |
 | `amd_gfx_activity` (%) | `gpu_gfx_activity` | Graphics engine activity percentage. |
 | `amd_umc_activity` (%) | `gpu_umc_activity` | Memory controller activity percentage. |
-| `amd_memory_used` (GB) | `gpu_used_vram` | VRAM memory used (MB → GB). |
-| `amd_memory_free` (GB) | `gpu_free_vram` | VRAM memory free (MB → GB). |
-| `amd_memory_total` (GB) | `gpu_total_vram` | Total VRAM capacity (MB → GB). |
+| `amd_memory_used` (GB) | `gpu_used_vram` | VRAM memory used. DME labels these gauges MB, but the values are mebibytes, so the conversion is MiB → GB. |
+| `amd_memory_free` (GB) | `gpu_free_vram` | VRAM memory free (MiB → GB). |
+| `amd_memory_total` (GB) | `gpu_total_vram` | Total VRAM capacity (MiB → GB). |
 | `amd_temperature` (°C) | `gpu_junction_temperature` | GPU junction/hotspot temperature. |
 | `amd_memory_temperature` (°C) | `gpu_memory_temperature` | Memory temperature. |
 | `amd_ecc_uncorrectable` (count) | `gpu_ecc_uncorrect_total` | Total uncorrectable ECC error count. |
-| `amd_sm_clock` (MHz) | `gpu_clock{clock_type="system"}` | System clock frequency, from the lowest `clock_index` of that type. Older DME releases label the type `GPU_CLOCK_TYPE_SYSTEM`; both are read. |
+| `amd_gfx_clock` (MHz) | `gpu_clock{clock_type="system"}` | System clock frequency, from the lowest `clock_index` of that type. Older DME releases label the type `GPU_CLOCK_TYPE_SYSTEM`; both are read. |
 | `amd_mem_clock` (MHz) | `gpu_clock{clock_type="memory"}` | Memory clock frequency, read the same way. |
 
 **Example Console Output:**

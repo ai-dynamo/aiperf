@@ -24,12 +24,25 @@ if TYPE_CHECKING:
 
 __all__ = ["AMDDMETelemetryCollector"]
 
+# DME labels its VRAM gauges "MB", but the values are mebibytes: gpu.proto
+# reports them straight from the SMI, which counts 1024*1024-byte units. The
+# telemetry fields are documented in GB, so the factor is 2**20 / 1e9 rather
+# than 1/1024. The two differ by 7.4%, which is the whole reason this is not
+# left as a tidy-up.
+_MIB_TO_GB = (1024.0 * 1024.0) / 1e9
+
 SCALING_FACTORS = {
     "amd_energy_consumption": 1e-12,
-    "amd_memory_used": 1.0 / 1024.0,
-    "amd_memory_free": 1.0 / 1024.0,
-    "amd_memory_total": 1.0 / 1024.0,
+    "amd_memory_used": _MIB_TO_GB,
+    "amd_memory_free": _MIB_TO_GB,
+    "amd_memory_total": _MIB_TO_GB,
 }
+
+# DME gives every partition of a partitioned card the parent card's serial
+# number, so the serial alone is not unique per reported GPU. gpu_partition_id
+# is a default DME label and reads "NA" on an unpartitioned card.
+_PARTITION_LABEL = "gpu_partition_id"
+_NO_PARTITION = "NA"
 
 
 class AMDDMETelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
@@ -109,10 +122,28 @@ class AMDDMETelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
     # is taken rather than a fixed index. Current DME normalises clock_type to
     # lower case without the GPU_CLOCK_TYPE_ prefix; older releases did not.
     _CLOCK_FIELDS: dict[str, str] = {
-        "system": "amd_sm_clock",
+        "system": "amd_gfx_clock",
         "memory": "amd_mem_clock",
     }
     _CLOCK_TYPE_PREFIX = "GPU_CLOCK_TYPE_"
+
+    @staticmethod
+    def _gpu_uuid_from(labels: dict, gpu_index: int) -> str:
+        """A UUID that stays distinct across the partitions of one card.
+
+        Every partition of a partitioned GPU carries the parent card's
+        ``serial_number``, so the serial alone collapses CPX, DPX and QPX
+        partitions onto a single identity. The partition id disambiguates them
+        and is absent, or reads ``NA``, on an unpartitioned card, where the
+        bare serial is kept so existing identities do not move.
+        """
+        serial = labels.get("serial_number")
+        if not serial:
+            return f"amd-gpu-{gpu_index}"
+        partition = labels.get(_PARTITION_LABEL)
+        if partition and partition != _NO_PARTITION:
+            return f"{serial}-p{partition}"
+        return serial
 
     @staticmethod
     def _gpu_index_from(labels: dict) -> int | None:
@@ -125,12 +156,31 @@ class AMDDMETelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
             return None
 
     @classmethod
+    def _canonical_metric_name(cls, name: str) -> str | None:
+        """The DME metric this sample name reports, allowing an exporter prefix.
+
+        A deployment may namespace its metric names (``amd_gpu_package_power``
+        for ``gpu_package_power``). An exact match wins; otherwise the longest
+        known name that the sample name ends with, on an underscore boundary,
+        is used. Matching on the boundary keeps ``gpu_used_vram`` from claiming
+        a hypothetical ``x_gpu_used_vram_bytes``, which does not end with it.
+        """
+        if name in cls._METRIC_FIELDS or name == "gpu_clock":
+            return name
+        candidates = [*cls._METRIC_FIELDS, "gpu_clock"]
+        matches = [c for c in candidates if name.endswith(f"_{c}")]
+        return max(matches, key=len) if matches else None
+
+    @classmethod
     def _resolve(cls, sample: Sample) -> tuple[str, int] | None:
         """The (field, rank) this sample would set, or None if nothing uses it."""
-        mapped = cls._METRIC_FIELDS.get(sample.name)
+        name = cls._canonical_metric_name(sample.name)
+        if name is None:
+            return None
+        mapped = cls._METRIC_FIELDS.get(name)
         if mapped is not None:
             return mapped
-        if sample.name != "gpu_clock":
+        if name != "gpu_clock":
             return None
         labels = sample.labels
         clock_type = labels.get("clock_type", "")
@@ -176,7 +226,7 @@ class AMDDMETelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
             gpu_metadata[gpu_index] = GpuMetadata(
                 gpu_index=gpu_index,
                 gpu_model_name=labels.get("card_model", "Unknown AMD GPU"),
-                gpu_uuid=labels.get("serial_number", f"amd-gpu-{gpu_index}"),
+                gpu_uuid=self._gpu_uuid_from(labels, gpu_index),
                 pci_bus_id=None,
                 device=None,
                 hostname=labels.get("hostname"),
@@ -233,7 +283,7 @@ class AMDDMETelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
         return records
 
     def _apply_scaling_factors(self, metrics: dict) -> dict:
-        """Convert DME's native units: energy uJ -> MJ, VRAM MB -> GB."""
+        """Convert DME's native units: energy uJ -> MJ, VRAM MiB -> GB."""
         scaled_metrics = metrics.copy()
         for metric, factor in self._scaling_factors.items():
             if metric in scaled_metrics and scaled_metrics[metric] is not None:
