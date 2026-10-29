@@ -353,6 +353,13 @@ Registration is deliberately the *second* readiness proof a service gives: it
 runs after the event-bus connection probe succeeds, so a registered service has
 demonstrated both planes are live.
 
+The registration's `instance_id` remains stable across reconnects and changes
+when the service process restarts. The controller uses it to detect optional
+server-metrics history loss promptly, release the failed producer from the
+result barrier, and export inference results with an explicit telemetry error.
+Server-metrics numeric histories live on the artifact filesystem with finite
+disk and series budgets; see [long-run collection behavior](server-metrics/server-metrics.md#long-runs-and-collection-failures).
+
 **Heartbeats are sent on both planes, on purpose.** Every service emits a
 `Heartbeat` struct on the control channel *and* a `HeartbeatMessage` on the event
 bus each interval. These are not duplicates and neither may be removed as one:

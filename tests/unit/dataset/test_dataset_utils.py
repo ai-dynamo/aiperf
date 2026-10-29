@@ -42,6 +42,24 @@ class TestOpenImage:
         finally:
             Path(tmp_path).unlink()  # Clean up
 
+    def test_open_multi_picture_jpeg(self, tmp_path):
+        """Test that a JPEG carrying an MPF secondary image opens as JPEG."""
+        path = tmp_path / "photo.jpg"
+        primary = Image.new("RGB", (64, 48), color="red")
+        secondary = Image.new("RGB", (32, 24), color="blue")
+        primary.save(path, format="MPO", save_all=True, append_images=[secondary])
+        with Image.open(path) as raw:
+            assert raw.format == "MPO"
+
+        opened_img = utils.open_image(str(path))
+        assert opened_img.format == "JPEG"
+
+        encoded = utils.encode_image(opened_img, opened_img.format)
+        decoded_img = Image.open(BytesIO(base64.b64decode(encoded)))
+        assert decoded_img.format == "JPEG"
+        assert decoded_img.size == (64, 48)
+        opened_img.close()
+
     def test_open_non_existing_image(self):
         """Test that FileNotFoundError is raised for non-existing image."""
         with pytest.raises(FileNotFoundError):
