@@ -55,7 +55,7 @@ named `train` fails the access check, so publish one split or name it `train`.
   "path": "data/chat-2026-08.jsonl.gz",
   "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "block_size": 512,
-  "requires": {"aiperf": ">=0.14.0.dev0", "endpoint_types": ["chat"], "max_context_tokens": 131072},
+  "requires": {"aiperf": ">=0.13", "endpoint_types": ["chat"], "max_context_tokens": 131072},
   "description": "Anonymized chat traffic, Aug 2026",
   "license": "cc-by-4.0",
   "tokenizer": "Qwen/Qwen3-32B"
@@ -69,7 +69,7 @@ named `train` fails the access check, so publish one split or name it `train`.
 | `path` | root manifests | One file or one folder, relative to the root. No `..`, no absolute paths, no backslashes. |
 | `sha256` | no | Lowercase hex digest, checked after download. Single files only; ignored for folders. |
 | `block_size` | no | Hash block size the trace was recorded with. A `--prompt-input-tokens-block-size` (`--isl-block-size`) on the command line still wins. |
-| `requires.aiperf` | no | A [PEP 440](https://peps.python.org/pep-0440/) version specifier, such as `>=0.14`. |
+| `requires.aiperf` | no | A [PEP 440](https://peps.python.org/pep-0440/) version specifier, such as `>=0.13`. |
 | `requires.endpoint_types` | no | Allowed `--endpoint-type` values. Other endpoint types fail before the download. |
 | `requires.max_context_tokens` | no | Peak input+output tokens of any request. AIPerf warns if it exceeds `--max-context-length`. |
 | `description`, `license`, `tokenizer` | no | Informational. |
@@ -79,9 +79,11 @@ Notes:
 - The `sha256` above is a placeholder of 64 zeros: replace it with the file's real digest, from
   `sha256sum data/chat-2026-08.jsonl.gz` (`shasum -a 256` on macOS). A mismatch fails the run
   with a sha256 mismatch error.
-- `requires.aiperf` follows PEP 440, so development builds sort below the release:
-  `0.14.0.dev12` does not satisfy `>=0.14`. Write `>=0.14.0.dev0` if you want development
-  builds to qualify.
+- `requires.aiperf` is checked against the installed AIPerf version. An install from source
+  reports the version in `pyproject.toml`, which stays at the last release until the next
+  release bumps it, so require the oldest release your dataset works with (`>=0.13` above),
+  not a release that is still in progress. Pre-release builds sort below their release under
+  PEP 440: `0.14.0.dev12` does not satisfy `>=0.14`.
 - The `max_context_tokens` check is a warning only, and it only runs for formats that accept
   `--max-context-length`, which today is Weka. For other formats the field is informational.
 - Unknown fields, including unknown `requires` keys, are ignored with a warning, so newer
