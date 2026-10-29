@@ -97,6 +97,25 @@ def test_orphan_phase_tracker_does_not_block_aggregate_completion() -> None:
     assert tracker.check_and_set_all_records_received_for_phase(CreditPhase.PROFILING)
 
 
+def test_aggregate_stats_sums_truncation_early_end_counts() -> None:
+    tracker = RecordsTracker()
+    for phase_index, ended, skipped in ((1, 2, 3), (2, 1, 4)):
+        tracker.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=phase_index,
+                start_ns=100,
+                sessions_ended_on_truncation=ended,
+                turns_skipped_on_truncation=skipped,
+            )
+        )
+
+    aggregate = tracker.create_aggregate_stats_for_phase(CreditPhase.PROFILING)
+
+    assert aggregate.sessions_ended_on_truncation == 3
+    assert aggregate.turns_skipped_on_truncation == 7
+
+
 def test_indexed_phase_counter_accessors_aggregate_without_creating_orphan() -> None:
     """Counter reads must observe named phases without creating ``(phase, None)``."""
     tracker = RecordsTracker()

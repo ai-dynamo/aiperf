@@ -84,3 +84,19 @@ class ShuffleSampler(BaseDatasetSampler):
         conversation_id = self._conversation_ids[self._index]
         self._index += 1
         return conversation_id
+
+    def start_full_pass(self) -> None:
+        """Make the next ``len(conversation_ids)`` draws cover every conversation once.
+
+        Called before a ``sessions: all`` phase, after an earlier phase (e.g.
+        warmup) may have advanced the sampler mid-shuffle. Rotates so the pass
+        starts here, like sequential wrap-around: conversations the earlier
+        phase already drew come last, and the next reshuffle waits until this
+        pass completes.
+        """
+        if 0 < self._index < len(self._conversation_ids):
+            self._conversation_ids = (
+                self._conversation_ids[self._index :]
+                + self._conversation_ids[: self._index]
+            )
+            self._index = 0

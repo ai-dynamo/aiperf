@@ -87,6 +87,7 @@ from aiperf.common.scenario.context_overflow import is_context_overflow_response
 from aiperf.config.adaptive_scale_phase import (
     sla_filters_require_first_token_observation,
 )
+from aiperf.config.dataset.truncation import end_conversation_on_truncation_enabled
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
@@ -802,6 +803,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # high concurrency — the misconfiguration is the same for every credit.
         self._cache_bust_warning_shown: bool = False
 
+        self._end_conversation_on_truncation: bool = (
+            end_conversation_on_truncation_enabled(self.run.cfg.get_default_dataset())
+        )
+
         # Only used as a fallback when dataset client is not initialized
         # or was not available when the credit was dropped. Must be created here
         # so it can be attached to the worker lifecycle.
@@ -1408,6 +1413,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             request_latency_ns=credit_context.request_latency_ns,
             inter_token_latency_ns=credit_context.inter_token_latency_ns,
             output_sequence_length=credit_context.output_sequence_length,
+            ended_on_truncation=credit_context.ended_on_truncation,
             worker_id=self.service_id,
         )
         self.execute_async(self.credit_return_push_client.send(credit_return))
@@ -1508,6 +1514,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 request_latency_ns=credit_context.request_latency_ns,
                 inter_token_latency_ns=credit_context.inter_token_latency_ns,
                 output_sequence_length=credit_context.output_sequence_length,
+                ended_on_truncation=credit_context.ended_on_truncation,
                 worker_id=self.service_id,
             )
             await self.credit_return_push_client.send(credit_return)
@@ -1704,6 +1711,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         )
 
         self._finalize_session_response(session, credit_context, record, request_info)
+        self._detect_ended_on_truncation(credit_context, record)
 
     async def _try_payload_bytes_fast_path(
         self,
@@ -1764,6 +1772,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             request_info, first_token_callback=first_token_callback
         )
         self._populate_response_metrics(credit_context, record)
+        self._detect_ended_on_truncation(credit_context, record)
         await self._send_inference_result_message(record)
         credit_context.record_emitted = True
         if record.error is not None:
@@ -1846,6 +1855,29 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 ),
             )
         self._populate_response_metrics(credit_context, record, parsed_responses)
+
+    def _detect_ended_on_truncation(
+        self, credit_context: CreditContext, record: RequestRecord
+    ) -> None:
+        """Flag a truncated non-final root turn as the end of its conversation.
+
+        Follow-up prompts assume a complete prior answer, so once a turn is cut
+        off at the output-token cap the remaining turns would be measured
+        off-distribution (SPEED-Bench convention). DAG children are excluded:
+        their lifecycle belongs to the branch orchestrator.
+        """
+        credit = credit_context.credit
+        if (
+            not self._end_conversation_on_truncation
+            or credit.agent_depth != 0
+            or credit.is_final_turn
+            or record.has_error
+        ):
+            return
+        is_truncated = getattr(self.inference_client.endpoint, "is_truncated", None)
+        credit_context.ended_on_truncation = bool(
+            callable(is_truncated) and is_truncated(record)
+        )
 
     def _populate_response_metrics(
         self,
@@ -1986,15 +2018,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     def _handle_terminal_disposition(
         self, credit: Credit, credit_context: CreditContext, x_correlation_id: str
     ) -> None:
-        """Evict on final turn, cancellation, or terminal context overflow.
+        """Evict on final turn, cancellation, terminal context overflow, or a
+        conversation ended early by a truncated turn.
 
         Context overflow on a non-final, non-cancelled turn is terminal for
         agentic_replay (lane recycled, no final/cancel credit follows), so it
-        must take the same eviction path.
+        must take the same eviction path. So must a truncation-ended
+        conversation: no further credit for the session will arrive.
         """
         if (
             credit.is_final_turn
             or credit_context.cancelled
+            or credit_context.ended_on_truncation
             or _is_terminal_context_overflow(credit, credit_context)
         ):
             self._release_and_evict_for_terminal(credit, x_correlation_id)
