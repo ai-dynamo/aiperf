@@ -122,6 +122,5 @@ def test_offending_lines_accepts_no_sync_and_plain_interpreter() -> None:
 
 
 def test_offending_lines_ignores_non_syncing_uv_subcommands() -> None:
-    """``uv pip install`` is out of scope; only run/sync reconcile the venv."""
     source = 'subprocess.run(["uv", "pip", "install", "x"])'
     assert _offending_lines(ast.parse(source)) == []
