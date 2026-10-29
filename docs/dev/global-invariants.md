@@ -166,14 +166,16 @@ fails locally instead of only against a real cluster. A bare
 ### Test-suite venv integrity: `test_no_venv_resync.py`
 
 Walks the AST of every `.py` file under `tests/unit/` and fails on any
-call handed an argv headed `uv run` or `uv sync` without `--no-sync` in
-uv's own option region. Those subcommands reconcile the project `.venv`
-with `uv.lock` before executing, so a test that shells out to one
-rewrites the dependencies of the process that spawned it: modules
-already imported stay at the old version while freshly imported ones
-come from the new one, and the suite fails in import-order-dependent
-ways. Invoke the CLI as `sys.executable -m aiperf` instead — same
-interpreter, same environment, no reconciliation.
+call handed an argv headed `uv run` or `uv sync`. Those subcommands
+reconcile the project `.venv` with `uv.lock` before executing, so a test
+that shells out to one rewrites the dependencies of the process that
+spawned it: modules already imported stay at the old version while
+freshly imported ones come from the new one, and the suite fails in
+import-order-dependent ways. Invoke the CLI as `sys.executable -m
+aiperf` instead — same interpreter, same environment, no reconciliation.
+There is no flag-based exemption: the guard flags the subcommand
+itself, rather than reasoning about which of its options would make it
+safe.
 
 ## The baseline-ratchet pattern
 

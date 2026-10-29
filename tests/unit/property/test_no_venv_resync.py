@@ -16,7 +16,10 @@ import name 'GGUF_TOKENIZER_MAPPING' from 'transformers.integrations'`` —
 because the in-memory 5.21.x ``transformers.integrations`` lazy module does not
 export a name the 5.15.1 module on disk asks for.
 
-Subprocess CLI tests invoke the CLI as ``sys.executable -m aiperf`` instead.
+Subprocess CLI tests invoke the CLI as ``sys.executable -m aiperf`` instead:
+same interpreter, same environment, no reconciliation. There is no
+flag-based exemption: the guard flags the subcommand itself rather than
+reasoning about which of its options would make it safe.
 """
 
 from __future__ import annotations
@@ -33,50 +36,6 @@ UNIT_ROOT = PROJECT_ROOT / "tests" / "unit"
 # project-sync path this invariant is about.
 SYNCING_SUBCOMMANDS = frozenset({"run", "sync"})
 
-# The only flag that stops the reconciliation. ``--frozen`` and ``--locked``
-# constrain the lockfile, not the environment, so they still sync.
-NO_SYNC_FLAG = "--no-sync"
-
-# ``uv run`` options that consume the next token as their value, so the command
-# boundary sits one token further along. Anything not listed is assumed
-# valueless, which errs toward flagging: a missed ``--no-sync`` is the bug this
-# guard exists to catch, whereas a false positive is visible and resolved by
-# reordering the options.
-UV_RUN_VALUE_OPTIONS = frozenset(
-    {
-        "--allow-insecure-host",
-        "--cache-dir",
-        "--color",
-        "--config-file",
-        "--constraint",
-        "--directory",
-        "--env-file",
-        "--exclude-newer",
-        "--extra-index-url",
-        "--find-links",
-        "--fork-strategy",
-        "--group",
-        "--index",
-        "--index-url",
-        "--keyring-provider",
-        "--link-mode",
-        "--module",
-        "--no-binary",
-        "--only-binary",
-        "--override",
-        "--package",
-        "--prerelease",
-        "--project",
-        "--python",
-        "--python-platform",
-        "--python-preference",
-        "--resolution",
-        "--script",
-        "--with",
-        "--with-requirements",
-    }
-)
-
 
 def _leading_literals(sequence: ast.List | ast.Tuple) -> list[str]:
     """The run of string constants at the head of a sequence literal.
@@ -90,26 +49,6 @@ def _leading_literals(sequence: ast.List | ast.Tuple) -> list[str]:
             break
         literals.append(element.value)
     return literals
-
-
-def _uv_option_region(head: list[str]) -> list[str]:
-    """The run of uv's own options immediately after the subcommand.
-
-    Walks past each option's value where the option is known to take one, so
-    ``--python 3.12`` does not end the region and hide a later ``--no-sync``.
-    ``uv run`` stops parsing its own options at the command name, so a
-    ``--no-sync`` placed after the command is passed through to the command and
-    does not stop the reconciliation.
-    """
-    options: list[str] = []
-    index = 2
-    while index < len(head):
-        token = head[index]
-        if not token.startswith("-"):
-            break
-        options.append(token)
-        index += 2 if token in UV_RUN_VALUE_OPTIONS else 1
-    return options
 
 
 @dataclass(frozen=True)
@@ -217,8 +156,6 @@ def _offending_lines(tree: ast.Module) -> list[int]:
         head = _leading_literals(argv)
         if len(head) < 2 or head[0] != "uv" or head[1] not in SYNCING_SUBCOMMANDS:
             continue
-        if NO_SYNC_FLAG in _uv_option_region(head):
-            continue
         lines.append(node.lineno)
     return lines
 
@@ -238,7 +175,7 @@ def test_unit_tests_do_not_resync_the_venv() -> None:
         "These tests shell out to `uv run` or `uv sync`, which reconciles the "
         "project .venv with uv.lock before executing and so rewrites the "
         "dependencies of the running suite. Invoke the CLI as "
-        "`sys.executable -m aiperf`, or pass `--no-sync`:\n  " + "\n  ".join(offenders)
+        "`sys.executable -m aiperf`:\n  " + "\n  ".join(offenders)
     )
 
 
@@ -247,23 +184,10 @@ def test_offending_lines_flags_a_syncing_subprocess_call() -> None:
     assert _offending_lines(ast.parse(source)) == [1]
 
 
-def test_offending_lines_rejects_a_flag_owned_by_the_child() -> None:
-    """A trailing ``--no-sync`` reaches the child, so uv still reconciles."""
-    misplaced = 'subprocess.run(["uv", "run", "aiperf", "--no-sync"])'
-    assert _offending_lines(ast.parse(misplaced)) == [1]
-
-
-def test_offending_lines_accepts_the_no_sync_option() -> None:
-    guarded = 'subprocess.run(["uv", "run", "--no-sync", "aiperf"])'
-    assert _offending_lines(ast.parse(guarded)) == []
-
-
-def test_offending_lines_accepts_no_sync_after_an_option_value() -> None:
-    for source in (
-        'subprocess.run(["uv", "run", "--python", "3.12", "--no-sync", "aiperf"])',
-        'subprocess.run(["uv", "run", "--project", "path", "--no-sync", "aiperf"])',
-    ):
-        assert _offending_lines(ast.parse(source)) == []
+def test_offending_lines_flags_the_flag_owned_by_the_child() -> None:
+    """``--no-sync`` does not exempt the call; the subcommand is what is flagged."""
+    source = 'subprocess.run(["uv", "run", "aiperf", "--no-sync"])'
+    assert _offending_lines(ast.parse(source)) == [1]
 
 
 def test_offending_lines_resolves_a_command_variable() -> None:
