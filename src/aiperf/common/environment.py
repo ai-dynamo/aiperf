@@ -411,7 +411,9 @@ class _DatasetSettings(BaseSettings):
         description="If True, AIPerf reuses memory-mapped dataset files across runs whose "
         "input bytes, tokenizer identity, and prompt/input settings are byte-identical. "
         "Set to False to force every run to re-tokenize and re-write its mmap files. "
-        "Cache misses still produce byte-identical mmap files to a non-cached run.",
+        "Cache misses still produce byte-identical mmap files to a non-cached run. "
+        "Kubernetes pods default to False, since the default cache directory is on their "
+        "read-only root filesystem; podTemplate.env can turn it back on.",
     )
     MMAP_CACHE_DIR: Path | None = Field(
         default=None,

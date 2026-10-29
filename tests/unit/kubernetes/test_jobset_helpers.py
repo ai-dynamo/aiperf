@@ -20,6 +20,7 @@ from aiperf.config.deployment import PodTemplateConfig
 from aiperf.kubernetes import jobset_helpers
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset_helpers import (
+    MMAP_CACHE_ENABLED_ENV,
     _warn_once,
     build_container_args,
     build_container_ports,
@@ -457,6 +458,32 @@ class TestBuildEnvVars:
         by_name = {item["name"]: item for item in env}
         assert by_name["AIPERF_JOB_ID"]["value"] == "job-xyz"
         assert by_name["AIPERF_NAMESPACE"]["value"] == "ns-7"
+
+    @pytest.mark.parametrize("controller_pod", [True, False])
+    def test_mmap_cache_disabled_by_default(self, controller_pod: bool) -> None:
+        """~/.cache is on the read-only root filesystem, so pods skip the mmap cache."""
+        env = build_env_vars(
+            job_id="job-abc",
+            namespace="bench",
+            pod_template=PodTemplateConfig(),
+            controller_pod=controller_pod,
+        )
+        values = [e["value"] for e in env if e["name"] == MMAP_CACHE_ENABLED_ENV]
+        assert values == ["false"]
+
+    def test_mmap_cache_user_setting_wins(self) -> None:
+        """A user with persistent storage can turn the mmap cache back on."""
+        user_env = [
+            {"name": MMAP_CACHE_ENABLED_ENV, "value": "true"},
+            {"name": "AIPERF_DATASET_MMAP_CACHE_DIR", "value": "/mnt/cache"},
+        ]
+        env = build_env_vars(
+            job_id="job-abc",
+            namespace="bench",
+            pod_template=PodTemplateConfig(env=user_env),
+        )
+        values = [e["value"] for e in env if e["name"] == MMAP_CACHE_ENABLED_ENV]
+        assert values == ["true"]
 
     def test_config_mount_path_is_propagated_to_the_container_env(self) -> None:
         """[F19] The operator's config-mount path must reach every container.
