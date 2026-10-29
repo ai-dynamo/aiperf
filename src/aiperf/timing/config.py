@@ -271,6 +271,11 @@ class CreditPhaseConfig(AIPerfBaseModel):
     expected_num_sessions: int | None = Field(
         default=None, gt=0, description="The total number of expected sessions to send."
     )
+    sessions_from_dataset: bool = Field(
+        default=False,
+        description="Whether expected_num_sessions is resolved at run time to the "
+        "number of loaded conversations (phase ``sessions: all``, one full pass).",
+    )
     expected_duration_sec: float | None = Field(
         default=None,
         gt=0,
@@ -476,6 +481,15 @@ def _ramp_duration(ramp: object | None) -> float | None:
     return getattr(ramp, "duration", None)
 
 
+def _phase_session_fields(phase: PhaseConfig) -> dict[str, Any]:
+    """Session stop condition; ``sessions: all`` defers to the dataset size."""
+    from aiperf.config.phases import FULL_PASS_SESSIONS
+
+    if phase.sessions == FULL_PASS_SESSIONS:
+        return {"expected_num_sessions": None, "sessions_from_dataset": True}
+    return {"expected_num_sessions": phase.sessions}
+
+
 def _phase_request_rate(phase: PhaseConfig) -> float | None:
     """Return the configured request rate for a phase, if any."""
     # Lazy import: aiperf.config.phases is only a TYPE_CHECKING import here.
@@ -570,7 +584,7 @@ def _build_warmup_config(
         timing_mode=TimingMode.REQUEST_RATE,
         total_expected_requests=phase.requests,
         expected_duration_sec=phase.duration,
-        expected_num_sessions=phase.sessions,
+        **_phase_session_fields(phase),
         concurrency=phase.concurrency,
         prefill_concurrency=phase.prefill_concurrency,
         request_rate=_phase_request_rate(phase),
@@ -710,7 +724,7 @@ def _build_profiling_config(
         timing_mode=timing_mode,
         expected_duration_sec=phase.duration,
         total_expected_requests=phase.requests,
-        expected_num_sessions=phase.sessions,
+        **_phase_session_fields(phase),
         concurrency=phase.concurrency,
         prefill_concurrency=phase.prefill_concurrency,
         request_rate=_phase_request_rate(phase),

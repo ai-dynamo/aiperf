@@ -86,6 +86,18 @@ If measured QPS is consistently lower than `--request-rate`:
 | `--num-sessions` | ✅ | ✅ | ✅ | Mutually exclusive with `--request-count` |
 | `--benchmark-duration` | ✅ | ✅ | ✅ | Enables `--benchmark-grace-period` |
 
+On the CLI, a run with none of these is bounded automatically, and AIPerf logs the default it picked:
+
+| Run | Default |
+|-----|---------|
+| Trace dataset (fixed schedule) | Every record in the trace |
+| `dag_jsonl` dataset | Every root session (`--num-sessions` = root count) |
+| Benchmark suite (`speed_bench_*`, `spec_al_*`, `spec_bench`) | One full pass over every loaded conversation |
+| `--concurrency` | `max(10, 2 x concurrency)` requests; a `--concurrency` sweep, or a `--search-space` concurrency dimension, uses its largest value for every variation |
+| `--request-rate`, `--user-centric-rate`, `--scenario` | 10 requests |
+
+YAML configs have no automatic default: set `requests`, `duration`, or `sessions` on each phase. `sessions: all` runs one full pass over the dataset (see [YAML config](../tutorials/yaml-config.md) for its limits).
+
 ### Arrival Pattern Options
 
 | Option | `--request-rate` | `--fixed-schedule` | `--user-centric-rate` | Notes |
@@ -332,7 +344,7 @@ With `--num-users 15` and `--user-centric-rate 1.0`, each user has 15 seconds be
 |--------|------|---------|-------------|
 | `--benchmark-duration` | float | None | Max duration in seconds for benchmarking |
 | `--benchmark-grace-period` | float | 30.0 | Grace period after duration ends (requires `--benchmark-duration`) |
-| `--request-count` | int | Auto | Max requests to send |
+| `--request-count` | int | Auto | Max requests to send (see [Stop Conditions](#stop-conditions-at-least-one-required) for the automatic default) |
 | `--num-sessions` | int | None | Number of conversations to run |
 
 ### Request Cancellation

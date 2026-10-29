@@ -10,7 +10,7 @@ making invalid states unrepresentable.
 
 from __future__ import annotations
 
-from typing import Annotated, ClassVar, Literal, Self
+from typing import Annotated, ClassVar, Final, Literal, Self
 
 from pydantic import (
     ConfigDict,
@@ -34,7 +34,11 @@ from aiperf.config.rate_series import RateSeriesConfig
 from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin.enums import PhaseType, PhaseTypeStr, RampType, TimingMode
 
+FULL_PASS_SESSIONS: Final = "all"
+"""``sessions`` value that runs every loaded conversation exactly once."""
+
 __all__ = [
+    "FULL_PASS_SESSIONS",
     "BasePhaseConfig",
     "CancellationConfig",
     "ConcurrencyPhase",
@@ -153,11 +157,12 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     ]
 
     sessions: Annotated[
-        int | None,
+        Annotated[int, Field(ge=1)] | Literal["all"] | None,
         Field(
-            ge=1,
             default=None,
-            description="Stop after this many sessions completed (must be >= 1).",
+            description="Stop after this many sessions completed (must be >= 1). "
+            "'all' runs one full pass: the session count resolves at run time "
+            "to the number of conversations the dataset loaded.",
         ),
     ]
 
@@ -645,6 +650,16 @@ class UserCentricPhase(RatePhaseConfig):
         """Validate user-centric mode constraints."""
         if self.rate_series is not None:
             raise ValueError("user-centric phases do not support rate_series")
+
+        if self.sessions == FULL_PASS_SESSIONS:
+            # User-centric runs can end before the last sessions' later turns
+            # are sent, so a full pass can't be honored there.
+            raise ValueError(
+                f"Phase '{self.name}': sessions: all (one full pass) is not "
+                "supported for user-centric phases. Set sessions to a number "
+                ">= users, or use a concurrency or request-rate phase for a "
+                "full pass."
+            )
 
         if self.sessions is not None and self.sessions < self.users:
             raise ValueError(

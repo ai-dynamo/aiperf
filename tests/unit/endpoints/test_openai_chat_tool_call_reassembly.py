@@ -181,3 +181,65 @@ class TestBuildAssistantTurnReassemblesToolCallDeltas:
         assert tc["id"] == "call_1"
         assert tc["function"]["name"] == "get_weather"
         assert tc["function"]["arguments"] == '{"city":"SF"}'
+
+
+def _reasoning_reply_chunks() -> list[dict]:
+    """Streaming SSE chunks for one reasoning-model reply (vLLM/SGLang shape)."""
+    deltas = [
+        {"role": "assistant", "content": ""},
+        {"reasoning_content": "I should walk "},
+        {"reasoning_content": "the list."},
+        {"content": "def rev(head): "},
+        {"content": "..."},
+    ]
+    return [
+        {"object": "chat.completion.chunk", "choices": [{"delta": d}]} for d in deltas
+    ]
+
+
+def _record_from(json_objs: list[dict]) -> RequestRecord:
+    return RequestRecord(
+        responses=[
+            TextResponse(perf_ns=i, text=orjson.dumps(o).decode())
+            for i, o in enumerate(json_objs)
+        ]
+    )
+
+
+class TestBuildAssistantTurnReasoningReplay:
+    def test_streaming_reasoning_reply_replays_answer_only(self, chat_endpoint):
+        turn = chat_endpoint.build_assistant_turn(
+            _record_from(_reasoning_reply_chunks())
+        )
+        assert turn is not None
+        assert turn.texts[0].contents == ["def rev(head): ..."]
+
+    def test_streaming_reasoning_without_answer_replays_reasoning(self, chat_endpoint):
+        chunks = [
+            c
+            for c in _reasoning_reply_chunks()
+            if "content" not in c["choices"][0]["delta"]
+        ]
+        turn = chat_endpoint.build_assistant_turn(_record_from(chunks))
+        assert turn is not None
+        assert turn.texts[0].contents == ["I should walk the list."]
+
+    def test_streaming_and_non_streaming_replay_identical_turn(self, chat_endpoint):
+        non_streaming = {
+            "object": "chat.completion",
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "reasoning_content": "I should walk the list.",
+                        "content": "def rev(head): ...",
+                    }
+                }
+            ],
+        }
+        streamed = chat_endpoint.build_assistant_turn(
+            _record_from(_reasoning_reply_chunks())
+        )
+        whole = chat_endpoint.build_assistant_turn(_record_from([non_streaming]))
+        assert streamed is not None and whole is not None
+        assert streamed.model_dump() == whole.model_dump()
