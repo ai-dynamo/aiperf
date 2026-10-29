@@ -521,6 +521,7 @@ def _apply_scenario_defaults(cli: CLIConfig) -> CLIConfig:
     for enabled, disabled in (
         ("gpu_telemetry", "no_gpu_telemetry"),
         ("server_metrics", "no_server_metrics"),
+        ("request_rate", "request_rate_series"),
     ):
         if enabled in cli.model_fields_set:
             defaults.pop(disabled, None)

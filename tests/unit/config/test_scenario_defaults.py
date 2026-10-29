@@ -97,6 +97,28 @@ def test_registered_scenario_duration_prevents_fallback_request_limit() -> None:
     assert phase.requests is None
 
 
+def test_explicit_rate_series_overrides_rate_default(
+    preset: str, tmp_path: Path
+) -> None:
+    SCENARIOS[preset] = SCENARIOS[preset].model_copy(
+        update={"cli_defaults": {"request_rate": 5}}
+    )
+    series = tmp_path / "series.json"
+    series.write_text(
+        '[{"time_s": 0, "qps": 1}, {"time_s": 10, "qps": 2}]', encoding="utf-8"
+    )
+
+    config = resolve_config(
+        CLIConfig(
+            scenario=preset, model_names=["test-model"], request_rate_series=series
+        )
+    )
+
+    phase = config.benchmark.get_profiling_phases()[0]
+    assert phase.rate is None
+    assert phase.rate_series is not None
+
+
 def test_scenario_defaults_parse_model_names(preset: str) -> None:
     SCENARIOS[preset] = SCENARIOS[preset].model_copy(
         update={"cli_defaults": {"model_names": "foo"}}
