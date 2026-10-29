@@ -858,7 +858,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # bucket every record. Falls back to max(start_ns) if no end_ns is
         # recorded.
         max_start_ts = float(np.nanmax(filled_ts))
-        filled_end = ~np.isnan(end_ns)
+        filled_end = filled & ~np.isnan(end_ns)
         if filled_end.any():
             max_ts = max(max_start_ts, float(np.nanmax(end_ns[filled_end])))
         else:

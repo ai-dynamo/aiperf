@@ -396,6 +396,16 @@ class CustomDatasetLoaderMetadata(BaseModel):
             "When true, each row becomes one Conversation with multiple Turn objects."
         ),
     )
+    full_pass_by_default: bool = Field(
+        default=False,
+        description=(
+            "Whether a CLI run with no stop condition (no --request-count, "
+            "--num-conversations, or --benchmark-duration) runs one full pass "
+            "over every loaded conversation instead of the generic request-count "
+            "default. Set on benchmark suites (e.g. SPEED-Bench) where partial "
+            "coverage biases the result."
+        ),
+    )
 
 
 class PublicDatasetLoaderMetadata(BaseModel):
@@ -491,6 +501,17 @@ class PublicDatasetLoaderMetadata(BaseModel):
     has_timing_data: bool = Field(
         default=False,
         description="Whether the loader emits timestamps suitable for fixed-schedule replay.",
+    )
+    full_pass_by_default: bool = Field(
+        default=False,
+        description=(
+            "Whether a CLI run with no stop condition (no --request-count, "
+            "--num-conversations, or --benchmark-duration) runs one full pass "
+            "over every loaded conversation instead of the generic request-count "
+            "default. Set on benchmark suites (e.g. SPEED-Bench) where partial "
+            "coverage biases the result. "
+            "Mirrors the field of the same name on CustomDatasetLoaderMetadata."
+        ),
     )
     category: str | None = Field(
         default=None,

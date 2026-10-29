@@ -538,6 +538,7 @@ def _detect_cli_magic_sweep(cli: CLIConfig) -> tuple[str, list] | None:
 
 
 def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
+    """Reject invalid mode combinations, then apply dataset-aware and stop-condition defaults."""
     from aiperf.config.phases import PhaseType
 
     # `--conversation-turn-mean` may be a list when used as a magic-list
@@ -577,12 +578,94 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
         not any(k in prof for k in ("requests", "duration", "sessions"))
         and prof["type"] != PhaseType.FIXED_SCHEDULE
     ):
-        # Why: when no bound is given for an unbounded run, default to
-        # 10 requests so the run terminates in a reasonable time.
-        # Deliberate override of the PhaseConfig default (which would
-        # leave it unbounded).
-        prof.setdefault("requests", 10)
+        _apply_default_stop_condition(prof, cli)
     apply_cancellation(prof, cli)
+
+
+_MIN_DEFAULT_REQUESTS = 10
+_DEFAULT_REQUESTS_PER_CONCURRENCY_SLOT = 2
+
+
+def _apply_default_stop_condition(prof: dict[str, Any], cli: CLIConfig) -> None:
+    """Bound a CLI run that set no requests, sessions, or duration.
+
+    PhaseConfig itself requires an explicit stop condition (YAML users must
+    choose one); this is the CLI-only default.
+    """
+    from aiperf.config.phases import FULL_PASS_SESSIONS, PhaseType
+
+    # Scenarios lock their own timing mode and user-centric sizing is
+    # governed by users, so both keep the flat floor.
+    keeps_flat_floor = (
+        cli.scenario is not None or prof["type"] == PhaseType.USER_CENTRIC
+    )
+    if not keeps_flat_floor and _is_full_pass_dataset(cli):
+        prof["sessions"] = FULL_PASS_SESSIONS
+        _logger.warning(
+            "No stop condition given; running one full pass over every "
+            f"conversation in {cli.public_dataset or cli.custom_dataset_type}. "
+            "Pass --request-count, --num-conversations, or --benchmark-duration "
+            "to bound the run instead."
+        )
+        return
+
+    requests = _MIN_DEFAULT_REQUESTS
+    reason = ""
+    if prof["type"] == PhaseType.CONCURRENCY and not keeps_flat_floor:
+        # Sweeps and searches size every variation for the largest value so
+        # the busiest variation still saturates its slots.
+        concurrency = prof.get("concurrency") or 1
+        label = "concurrency"
+        if isinstance(concurrency, list):
+            concurrency = max(concurrency)
+            label = "largest swept concurrency"
+        searched = _search_space_upper_bound(cli, "concurrency")
+        if searched is not None:
+            concurrency = math.ceil(searched)
+            label = "largest searched concurrency"
+        requests = max(
+            _MIN_DEFAULT_REQUESTS,
+            concurrency * _DEFAULT_REQUESTS_PER_CONCURRENCY_SLOT,
+        )
+        reason = (
+            f" (max({_MIN_DEFAULT_REQUESTS}, "
+            f"{_DEFAULT_REQUESTS_PER_CONCURRENCY_SLOT} x {label} {concurrency}))"
+        )
+    prof["requests"] = requests
+    _logger.warning(
+        f"No stop condition given; defaulting to {requests} requests{reason}. "
+        "Pass --request-count, --num-conversations, or --benchmark-duration "
+        "to change it."
+    )
+
+
+def _search_space_upper_bound(cli: CLIConfig, field: str) -> float | None:
+    """Upper bound of the ``--search-space`` dimension on ``phases.profiling.<field>``."""
+    for raw in cli.search_space or []:
+        parsed = _parse_shape_dimension(raw)
+        if parsed is None or parsed[0] != field:
+            continue
+        # Grammar is path:lo,hi[:kind]; the real parser reports malformed bounds.
+        try:
+            return float(raw.split(":")[1].split(",", 1)[1])
+        except (IndexError, ValueError):
+            return None
+    return None
+
+
+def _is_full_pass_dataset(cli: CLIConfig) -> bool:
+    """Whether the selected dataset is a suite that defaults to one full pass."""
+    from aiperf.plugin import plugins
+
+    if cli.public_dataset is not None:
+        return plugins.get_public_dataset_loader_metadata(
+            str(cli.public_dataset)
+        ).full_pass_by_default
+    if cli.custom_dataset_type is not None:
+        return plugins.get_dataset_loader_metadata(
+            str(cli.custom_dataset_type)
+        ).full_pass_by_default
+    return False
 
 
 def _maybe_auto_promote_trace(

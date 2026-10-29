@@ -1384,12 +1384,57 @@ class _ServerMetricsSettings(BaseSettings):
         env_parse_enums=True,
     )
 
+    STORAGE_MAX_BYTES: int = Field(
+        default=16 * 1024**3,
+        ge=1024 * 1024,
+        description="Maximum backing-file size in bytes for disk-backed "
+        "server-metrics histories, including array-growth allocations. Disk blocks "
+        "are consumed only as samples arrive. Exhaustion stops server metrics "
+        "with an explicit collection error while inference results still export.",
+    )
+    STORAGE_FLUSH_BYTES: int = Field(
+        default=8 * 1024**2,
+        ge=4096,
+        description="Bytes of server-metrics writes between disk flushes and "
+        "page-cache releases. Numeric histories use the artifact filesystem, "
+        "limiting the resident write working set instead of retaining all "
+        "numeric history in memory.",
+    )
+    MAX_SERIES: int = Field(
+        default=20_000,
+        ge=1,
+        description="Maximum distinct endpoint/name/label server-metrics series "
+        "per run. Bounds in-memory series metadata, including dynamically changing "
+        "labels. Exceeding the limit stops collection with an explicit error "
+        "while inference results still export.",
+    )
+
     COLLECTION_FLUSH_PERIOD: float = Field(
         ge=0.0,
         le=30.0,
         default=2.0,
-        description="Time in seconds to continue collecting metrics after profiling completes, "
-        "allowing server-side metrics to flush/finalize before shutting down (default: 2.0s)",
+        description=(
+            "Time in seconds to wait for server-side metrics to flush/finalize "
+            "at phase boundaries: after warmup completes (before profiling "
+            "starts) and after profiling completes (before shutdown). "
+            "The warmup flush/ack barrier runs only when server metrics "
+            "collection is runtime-active (reachable collectors). "
+            "Default: 2.0s."
+        ),
+    )
+    WARMUP_BOUNDARY_TIMEOUT: float | None = Field(
+        ge=0.0,
+        le=3600.0,
+        default=None,
+        description=(
+            "Optional override in seconds for PhaseRunner's wait for "
+            "SERVER_METRICS_WARMUP_BOUNDARY_READY after warmup completes. "
+            "When unset or 0, the timeout is derived as "
+            "COLLECTION_FLUSH_PERIOD + SCRAPE_TIMEOUT * (N + 2) + 5, where N "
+            "is the reachable collector count from ServerMetricsStatusMessage. "
+            "The wait and fail-closed abort on timeout apply only when "
+            "collection is runtime-active."
+        ),
     )
     PROFILE_COMPLETE_RELAY_TIMEOUT: float = Field(
         ge=1.0,

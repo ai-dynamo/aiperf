@@ -167,16 +167,16 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         that inherit the parent's history - see what the model actually said.
 
         The default implementation captures plain text plus the ``content``
-        field of any ``ReasoningResponseData``. When a response carries only
-        ``reasoning`` (some servers and the mock return everything in that
-        field with empty ``content`` - e.g. Qwen3-style outputs), the
-        reasoning text is used as a fallback so FORK-mode DAG children
-        still inherit a non-empty parent context. Endpoints whose responses
-        carry structured fields beyond plain text (e.g. chat ``tool_calls``
-        / ``function_call``) should override this to preserve those fields
-        verbatim by returning a Turn whose ``raw_messages`` re-renders as
-        the same assistant message - that way ``build_messages`` extends
-        them back into the wire body unchanged.
+        field of any ``ReasoningResponseData``, dropping ``reasoning`` the
+        way chat templates drop prior-turn thinking. When the whole reply
+        carries only ``reasoning`` (a turn truncated mid-thinking, or the
+        mock server's Qwen3-style output), the reasoning text is used as a
+        fallback so FORK-mode DAG children still inherit a non-empty parent
+        context. Endpoints whose responses carry structured fields beyond
+        plain text (e.g. chat ``tool_calls`` / ``function_call``) should
+        override this to preserve those fields verbatim by returning a Turn
+        whose ``raw_messages`` re-renders as the same assistant message - that
+        way ``build_messages`` extends them back into the wire body unchanged.
 
         Returns ``None`` when the record has no replayable assistant content
         (error response, empty body, etc.).
@@ -190,21 +190,22 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         parsed_responses: list[ParsedResponse],
     ) -> Turn | None:
         """Build the default text-only assistant turn from parsed responses."""
-        output_texts: list[str] = []
+        answer_texts: list[str] = []
+        reasoning_texts: list[str] = []
         for response in parsed_responses:
             if not response.data:
                 continue
             if isinstance(response.data, ReasoningResponseData):
                 if response.data.content:
-                    output_texts.append(response.data.content)
-                elif response.data.reasoning:
-                    # Reasoning-only fallback: without this, FORK children
-                    # of a Qwen3-style/mock-server response would inherit
-                    # a parent context with no captured assistant turn.
-                    output_texts.append(response.data.reasoning)
+                    answer_texts.append(response.data.content)
+                if response.data.reasoning:
+                    reasoning_texts.append(response.data.reasoning)
             else:
-                output_texts.append(response.data.get_text())
-        resp_text = "".join(output_texts)
+                answer_texts.append(response.data.get_text())
+        # Decided once per reply, not per parsed response: a streamed reply
+        # splits reasoning and answer across chunks, and replaying both glues
+        # the thinking into the answer.
+        resp_text = "".join(answer_texts) or "".join(reasoning_texts)
         if not resp_text:
             return None
         return Turn(role="assistant", texts=[Text(contents=[resp_text])])

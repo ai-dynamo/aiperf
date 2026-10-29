@@ -64,6 +64,7 @@ from aiperf.common.models.error_models import ExitErrorInfo
 from aiperf.common.models.export_models import TelemetryExportData
 from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.results_markers import (
+    remove_committed_request_checkpoint,
     write_processing_marker,
     write_ready_marker,
 )
@@ -91,6 +92,7 @@ from aiperf.exporters.exporter_manager import ExporterFailure, ExporterManager
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType, UIType
 from aiperf.records.records_manager import ERROR_FATAL_DETAIL_KEY
+from aiperf.server_metrics.constants import SERVER_METRICS_COLLECTION_STOPPED
 from aiperf.ui.protocols import AIPerfUIProtocol
 from aiperf.zmq.streaming_router_client import PEER_GONE_ERRNOS
 
@@ -263,6 +265,8 @@ class SystemController(
         # because command fan-out targets must exclude them even after the
         # barrier has released.
         self._reaped_service_ids: set[str] = set()
+        self._service_instance_ids: dict[str, str] = {}
+        self._retired_result_producer_ids: set[str] = set()
         # A producer that dies abruptly never sends SERVICE_ERROR, so the
         # heartbeat/pod reapers are the only signal. Without this hook they mark
         # the service failed in the registry but leave it in the barrier, and
@@ -901,7 +905,22 @@ class SystemController(
         )
         # A dead producer can no longer join its result domain; drop it from the
         # barrier so shutdown isn't blocked forever, then re-check readiness.
-        self._result_join_coordinator.unregister_service(message.service_id)
+        service_info = self.service_manager.service_id_map.get(message.service_id)
+        if (
+            service_info is not None
+            and service_info.service_type == ServiceType.SERVER_METRICS_MANAGER
+        ):
+            self._result_join_coordinator.evict_service(
+                message.service_id, "service error"
+            )
+            if (
+                message.service_id in self._result_join_coordinator.evicted
+                and message.service_id not in self._retired_result_producer_ids
+            ):
+                self._record_missing_server_metrics(message.error)
+            self._retired_result_producer_ids.add(message.service_id)
+        else:
+            self._result_join_coordinator.unregister_service(message.service_id)
         if self._is_required_service(message.service_id) and (
             self._system_state not in {SystemState.STOPPING, SystemState.SHUTDOWN}
         ):
@@ -1039,11 +1058,15 @@ class SystemController(
     def _is_required_service(self, service_id: str) -> bool:
         """Whether losing this service invalidates the run.
 
+        Reaped services retain their type in the registry after command-map
+        cleanup, so queued errors must still recognize optional collectors.
         Unknown senders count as required: an unidentifiable failure is more
         likely a control-plane service that died before or after its registry
         entry existed than an optional collector.
         """
-        info = self.service_manager.service_id_map.get(service_id)
+        info = self.service_manager.service_id_map.get(
+            service_id
+        ) or ServiceRegistry.get_service(service_id)
         if info is None:
             return True
         return info.service_type in self.required_services
@@ -1095,6 +1118,11 @@ class SystemController(
                         service_id=service_id,
                     )
                 )
+                if info.service_type == ServiceType.SERVER_METRICS_MANAGER:
+                    self._retired_result_producer_ids.add(service_id)
+                    self._record_missing_server_metrics(
+                        self._exit_errors[-1].error_details
+                    )
                 self._forget_reaped_service(service_id)
                 # A producer that is also a required service (RecordsManager)
                 # still owed results here, so barrier eviction alone must not
@@ -1664,6 +1692,9 @@ class SystemController(
         self, message: ProcessServerMetricsResultMessage
     ) -> None:
         """Handle a server metrics results message."""
+        if self._retired_result_producer_ids:
+            self.debug("Ignoring late server metrics from a retired producer")
+            return
         try:
             self.trace_or_debug(
                 lambda: f"Received server metrics results message: {message}",
@@ -1693,6 +1724,16 @@ class SystemController(
                 )
 
             self._server_metrics_results = server_metrics_results
+            if server_metrics_results is not None:
+                for error in server_metrics_results.error_summary:
+                    if error.error_details.type == SERVER_METRICS_COLLECTION_STOPPED:
+                        self._exit_errors.append(
+                            ExitErrorInfo(
+                                error_details=error.error_details,
+                                operation="server_metrics_collection",
+                                service_id=message.service_id,
+                            )
+                        )
             self._merge_server_metric_phase_results(server_metrics_results)
         except Exception as e:
             self.exception(f"Error processing server metrics results message: {e!r}")
@@ -2741,6 +2782,10 @@ class SystemController(
                 f"{e!r}; withholding ResultsExportedMessage"
             )
             return
+        await asyncio.to_thread(
+            remove_committed_request_checkpoint,
+            self.run.cfg.artifacts.profile_export_jsonl_file,
+        )
         try:
             await self.publish(
                 ResultsExportedMessage(

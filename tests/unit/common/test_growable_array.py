@@ -84,6 +84,39 @@ class TestGrowableArray:
         assert len(arr) == 100
         assert arr.capacity == 128
 
+    def test_reserve_preserves_values_length_and_sum(self) -> None:
+        arr = GrowableArray(initial_capacity=2, dtype=np.int64, track_sum=True)
+        arr.extend(np.array([1, 2], dtype=np.int64))
+        arr.reserve(3)
+        assert arr.capacity >= 5
+        assert len(arr) == 2
+        assert arr.sum == 3
+        assert arr.data.dtype == np.int64
+        np.testing.assert_array_equal(arr.data, [1, 2])
+        arr.append(3)
+        assert arr.sum == 6
+        np.testing.assert_array_equal(arr.data, [1, 2, 3])
+
+    def test_access_callback_reports_writes_and_growth_copy_sources(self) -> None:
+        """Cache release needs the old read view as well as each new written view."""
+        touched: list[np.ndarray] = []
+        arr = GrowableArray(initial_capacity=2, on_access=touched.append)
+        arr.extend(np.array([10.0, 20.0]))
+        old = arr.data
+        touched.clear()
+
+        arr.append(30.0)
+
+        assert any(np.shares_memory(view, old) for view in touched)
+        assert any(
+            np.shares_memory(view, arr.data) and len(view) == 2 for view in touched
+        )
+        np.testing.assert_array_equal(touched[-1], [30.0])
+        arr[0] = 40.0
+        np.testing.assert_array_equal(touched[-1], [40.0])
+        arr.extend(np.array([50.0, 60.0]))
+        np.testing.assert_array_equal(touched[-1], [50.0, 60.0])
+
     def test_data_returns_view(self) -> None:
         arr = GrowableArray(initial_capacity=4)
         arr.append(1.0)
