@@ -212,6 +212,10 @@ class ChatEndpoint(BaseEndpoint):
 
         return None
 
+    def is_truncated(self, record: RequestRecord) -> bool:
+        """True when the final ``choices[0].finish_reason`` is ``"length"``."""
+        return self._choices_finish_reason_is_length(record)
+
     def process_responses(
         self,
         record: RequestRecord,

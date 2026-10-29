@@ -44,6 +44,7 @@ from aiperf.config.dataset.system_prompt import SystemPromptMixin
 from aiperf.config.dataset.trace import (
     SynthesisConfig,
 )
+from aiperf.config.dataset.truncation import EndOnTruncationMixin
 from aiperf.config.dataset.video import (
     VIDEO_AUDIO_CODEC_MAP,
     VideoAudioConfig,
@@ -88,7 +89,7 @@ _DatasetName = Annotated[
 
 
 # Dataset type variants using discriminated unions
-class SyntheticDataset(SystemPromptMixin):
+class SyntheticDataset(SystemPromptMixin, EndOnTruncationMixin):
     """
     Synthetic dataset configuration.
 
@@ -284,7 +285,7 @@ class SyntheticDataset(SystemPromptMixin):
         return self
 
 
-class FileDataset(SystemPromptMixin):
+class FileDataset(SystemPromptMixin, EndOnTruncationMixin):
     """
     File-based dataset configuration.
 
@@ -809,7 +810,7 @@ class FileDataset(SystemPromptMixin):
         return self
 
 
-class PublicDataset(SystemPromptMixin):
+class PublicDataset(SystemPromptMixin, EndOnTruncationMixin):
     """
     Public dataset configuration.
 

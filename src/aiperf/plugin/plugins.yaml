@@ -700,6 +700,7 @@ custom_dataset_loader:
       11 semantic domains for measuring speculative decoding acceptance rates.
     metadata:
       full_pass_by_default: true
+      end_conversation_on_truncation: true
 
 
   speed_bench_throughput_1k:
@@ -1295,6 +1296,13 @@ console_exporter:
       Console exporter for output sequence length mismatch warnings. Alerts when
       actual output length differs significantly from requested --osl value.
       Typically indicates ignore_eos is not set or not supported by the server.
+
+  truncation_notice:
+    class: aiperf.exporters.console_truncation_notice_exporter:ConsoleTruncationNoticeExporter
+    description: |
+      Console notice reporting how many multi-turn conversations ended early
+      after a turn was truncated at the output-token cap, and how many turns
+      were skipped (--end-conversation-on-truncation).
 
   accuracy:
     class: aiperf.accuracy.accuracy_console_exporter:AccuracyConsoleExporter
@@ -2007,6 +2015,7 @@ public_dataset_loader:
       hf_dataset_name: HuggingFaceH4/mt_bench_prompts
       hf_split: train
       full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   instruct_coder:
     class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
@@ -2490,6 +2499,7 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_coding:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2502,6 +2512,7 @@ public_dataset_loader:
       multi_turn: true
       category: coding
       full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_humanities:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2514,6 +2525,7 @@ public_dataset_loader:
       multi_turn: true
       category: humanities
       full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_math:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2526,6 +2538,7 @@ public_dataset_loader:
       multi_turn: true
       category: math
       full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_multilingual:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2538,6 +2551,7 @@ public_dataset_loader:
       multi_turn: true
       category: multilingual
       full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_qa:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2550,6 +2564,7 @@ public_dataset_loader:
       multi_turn: true
       category: qa
       full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_rag:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2562,6 +2577,7 @@ public_dataset_loader:
       multi_turn: true
       category: rag
       full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_reasoning:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2574,6 +2590,7 @@ public_dataset_loader:
       multi_turn: true
       category: reasoning
       full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_roleplay:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2586,6 +2603,7 @@ public_dataset_loader:
       multi_turn: true
       category: roleplay
       full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_stem:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2598,6 +2616,7 @@ public_dataset_loader:
       multi_turn: true
       category: stem
       full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_summarization:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2610,6 +2629,7 @@ public_dataset_loader:
       multi_turn: true
       category: summarization
       full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_writing:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2622,6 +2642,7 @@ public_dataset_loader:
       multi_turn: true
       category: writing
       full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_throughput_1k:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader

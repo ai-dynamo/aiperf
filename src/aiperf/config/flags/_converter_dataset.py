@@ -274,6 +274,7 @@ _VERBATIM_DATASET_FIELDS = (
     # synthetic-only subtables below they must NOT be popped per-type.
     ("system_prompt", "system_prompt", False),
     ("system_prompt_file", "system_prompt_file", False),
+    ("end_conversation_on_truncation", "end_conversation_on_truncation", False),
 )
 
 
