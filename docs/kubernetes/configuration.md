@@ -276,6 +276,12 @@ spec:
 `AIPERF_DATASET_REMOTE_CACHE_DIR` wins over AIPerf's, and a mount of yours at
 `/aiperf/remote-cache` replaces AIPerf's emptyDir there.
 
+Pods turn off the memory-mapped dataset cache (`AIPERF_DATASET_MMAP_CACHE_ENABLED=false`): its
+default directory, `~/.cache/aiperf/dataset_mmap`, is on the read-only root filesystem, and
+nothing would reuse it after the pod ends. With a PVC like the one above, you can keep it by
+setting `AIPERF_DATASET_MMAP_CACHE_ENABLED` to `true` and `AIPERF_DATASET_MMAP_CACHE_DIR` to a
+path on the claim (for example `/cache/mmap`) in `podTemplate.env`.
+
 A large download can outlast the dataset-manager's startup probe (about 150 s by default); see
 [Large datasets and the startup probe](../tutorials/remote-datasets.md#large-datasets-and-the-startup-probe).
 

@@ -27,6 +27,7 @@ _logger = AIPerfLogger(__name__)
 REMOTE_CACHE_VOLUME = "remote-cache"
 REMOTE_CACHE_MOUNT_PATH = "/aiperf/remote-cache"
 REMOTE_CACHE_ENV = "AIPERF_DATASET_REMOTE_CACHE_DIR"
+MMAP_CACHE_ENABLED_ENV = "AIPERF_DATASET_MMAP_CACHE_ENABLED"
 
 
 @lru_cache(maxsize=256)
@@ -401,9 +402,15 @@ def build_env_vars(
 
     reserved_names = {item["name"] for item in env}
     reserved_names.add("AIPERF_JOB_UID")
-    env.extend(
+    user_env = [
         item
         for item in pod_template.env
         if (item or {}).get("name") not in reserved_names
-    )
+    ]
+    # The cross-run mmap cache defaults to ~/.cache on the read-only root
+    # filesystem, and per-pod emptyDir volumes would not outlive the run anyway.
+    # A user who mounts persistent storage can turn it back on in podTemplate.env.
+    if not any((item or {}).get("name") == MMAP_CACHE_ENABLED_ENV for item in user_env):
+        env.append({"name": MMAP_CACHE_ENABLED_ENV, "value": "false"})
+    env.extend(user_env)
     return env
