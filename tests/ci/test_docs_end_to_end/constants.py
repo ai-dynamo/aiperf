@@ -43,12 +43,17 @@ CONTAINER_START_TIMEOUT = 60  # seconds for container startup
 CONTAINER_DISCOVERY_TIMEOUT = 30  # seconds for a `docker ps` snapshot
 FIXTURE_WRITE_TIMEOUT = 30  # seconds to pipe one fixture into the container
 AIPERF_COMMAND_TIMEOUT = 1200  # seconds for AIPerf commands
-# The in-container deadline sits this far past the host watchdog's, so the
-# watchdog always fires first and keeps ownership of the timeout diagnostic
-# ("exceeded Ns timeout"). Reaching the in-container deadline at the same
-# moment would race it: the process would already be gone, the watchdog's
-# guard would short-circuit, and the run would report a bare exit 124.
-CONTAINER_DEADLINE_SLACK = 15  # seconds
 # Grace between the in-container SIGTERM and the SIGKILL that follows it, for
 # a command that traps or ignores SIGTERM.
 CONTAINER_TIMEOUT_KILL_GRACE = 10  # seconds
+# The host watchdog sits this far past the point where the in-container
+# deadline has finished its own TERM-then-KILL sequence. The command's
+# deadline belongs inside the container: killing the host-side `docker exec`
+# client first would close the output stream while the child is still
+# shutting down, discarding exactly the output a timeout needs. The watchdog
+# only covers what that sequence cannot reach, such as a wedged `docker exec`.
+HOST_WATCHDOG_BACKSTOP_MARGIN = 15  # seconds
+# ``timeout`` signalled the command at its deadline.
+TIMEOUT_EXIT_CODE = 124
+# 128 + SIGKILL: ``--kill-after`` had to kill a command that ignored SIGTERM.
+TIMEOUT_SIGKILL_EXIT_CODE = 137

@@ -21,11 +21,13 @@ from typing import Any
 from constants import (
     AIPERF_COMMAND_TIMEOUT,
     AIPERF_UI_TYPE,
-    CONTAINER_DEADLINE_SLACK,
     CONTAINER_DISCOVERY_TIMEOUT,
     CONTAINER_TIMEOUT_KILL_GRACE,
     FIXTURE_WRITE_TIMEOUT,
+    HOST_WATCHDOG_BACKSTOP_MARGIN,
     SETUP_MONITOR_TIMEOUT,
+    TIMEOUT_EXIT_CODE,
+    TIMEOUT_SIGKILL_EXIT_CODE,
 )
 from data_types import Command, Server
 from utils import get_repo_root
@@ -186,11 +188,13 @@ def build_command_exec_argv(
     script delivered over stdin shares that stream with the commands it runs,
     so the first one to read stdin consumes the rest of the block.
 
-    A second deadline is enforced inside the container, because killing the
-    ``docker exec`` client kills only the client: its in-container child keeps
-    loading the server and writing artifacts into the next command's run. It
-    is set past the host watchdog's so the watchdog still owns the timeout
-    diagnostic, and only reaps what the watchdog cannot reach.
+    The deadline is enforced inside the container, and is the one that fires.
+    Killing the ``docker exec`` client kills only the client: its in-container
+    child keeps loading the server and writing artifacts into the next
+    command's run. Letting ``timeout`` signal the child instead leaves the
+    exec stream attached while the child shuts down, so whatever it reports on
+    the way out is still captured. The host watchdog is only a backstop for
+    what this cannot reach.
     """
     return [
         "docker",
@@ -198,11 +202,21 @@ def build_command_exec_argv(
         container_id,
         "timeout",
         f"--kill-after={CONTAINER_TIMEOUT_KILL_GRACE}",
-        str(timeout_seconds + CONTAINER_DEADLINE_SLACK),
+        str(timeout_seconds),
         "bash",
         "-c",
         command,
     ]
+
+
+def timed_out_in_container(returncode: int | None) -> bool:
+    """Whether ``timeout`` inside the container ended the command.
+
+    124 is what coreutils ``timeout`` returns when it signalled at the
+    deadline; 137 is 128+SIGKILL, which is what ``--kill-after`` produces for
+    a command that ignored SIGTERM.
+    """
+    return returncode in (TIMEOUT_EXIT_CODE, TIMEOUT_SIGKILL_EXIT_CODE)
 
 
 def resolve_command_timeout(aiperf_cmd: Command) -> int:
@@ -844,14 +858,23 @@ class EndToEndTestRunner:
                     start_new_session=True,
                 )
                 kill_guard = _ProcessGroupKillGuard()
+                # A backstop, not the deadline: the in-container ``timeout``
+                # owns that and fires first, so the child's shutdown output
+                # still reaches the attached stream. This only covers a
+                # ``docker exec`` that outlives the child it was running.
+                backstop_timeout = (
+                    command_timeout
+                    + CONTAINER_TIMEOUT_KILL_GRACE
+                    + HOST_WATCHDOG_BACKSTOP_MARGIN
+                )
                 watchdog = threading.Timer(
-                    command_timeout,
+                    backstop_timeout,
                     _make_process_group_timeout_killer(
                         proc=aiperf_process,
                         test_num=i + 1,
                         server_name=server.name,
                         guard=kill_guard,
-                        timeout=command_timeout,
+                        timeout=backstop_timeout,
                     ),
                 )
                 watchdog.daemon = True
@@ -873,19 +896,23 @@ class EndToEndTestRunner:
                     killed_by_watchdog = kill_guard.mark_finished()
                     watchdog.cancel()
 
-                # The watchdog kills the host-side client; the in-container
-                # command outlives it until its own deadline. Starting the
-                # next documented command before then would run it against a
-                # server still loaded by a command already reported as timed
-                # out, and blame the overlap on the wrong command. Only ever
-                # reached on a command that has already failed.
-                if killed_by_watchdog:
-                    overlap = CONTAINER_DEADLINE_SLACK + CONTAINER_TIMEOUT_KILL_GRACE
+                # ``timeout`` reports 124 when it had to signal the command
+                # at the deadline, and 137 when the command ignored SIGTERM
+                # and had to be SIGKILLed after the grace period. Reading the
+                # exit code keeps the diagnostic even though the watchdog no
+                # longer fires on an ordinary timeout.
+                if timed_out_in_container(aiperf_process.returncode):
                     logger.error(
-                        f"Waiting {overlap}s for the timed-out command to be "
-                        f"reaped inside the container before continuing"
+                        f"AIPerf test {i + 1} exceeded {command_timeout}s "
+                        f"timeout for {server.name} and was terminated inside "
+                        f"the container (exit {aiperf_process.returncode})"
                     )
-                    time.sleep(overlap)
+                elif killed_by_watchdog:
+                    logger.error(
+                        f"AIPerf test {i + 1} for {server.name} outlived its "
+                        f"own in-container deadline; the host watchdog killed "
+                        f"the docker exec client"
+                    )
 
                 if aiperf_process.returncode != 0:
                     logger.error("=" * 60)

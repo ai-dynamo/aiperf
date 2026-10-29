@@ -121,9 +121,10 @@ def test_the_deadline_is_enforced_inside_the_container() -> None:
     # Indexed from the end: a container literally named "timeout" would
     # otherwise make argv.index() find the wrong element.
     deadline = int(argv[-4])
-    # Strictly later than the host watchdog's, or the two race and a timeout
-    # reports as a bare exit 124 instead of "exceeded 900s timeout".
-    assert deadline > 900, "the in-container deadline must not race the watchdog"
+    # The command's deadline, unmodified. Padding it would let the host
+    # watchdog fire first and tear down the stream the child is still
+    # reporting its shutdown on.
+    assert deadline == 900, "the in-container deadline must be the command's"
     assert any(a.startswith("--kill-after=") for a in argv), (
         "a command that ignores SIGTERM would outlive its own deadline"
     )
@@ -149,7 +150,7 @@ def test_a_per_command_timeout_reaches_the_container() -> None:
     argv = build_command_exec_argv(
         "container", cmd.command, resolve_command_timeout(cmd)
     )
-    assert int(argv[-4]) > 42, (
+    assert int(argv[-4]) == 42, (
         "a per-command timeout= must move the in-container deadline with it"
     )
 
@@ -178,3 +179,33 @@ def test_the_guard_reports_which_side_won_the_race() -> None:
     assert guard.mark_killing_if_running(_Running()) is False, (
         "the watchdog must not kill a process the reader already reaped"
     )
+
+
+def test_the_host_watchdog_waits_out_the_in_container_deadline() -> None:
+    """The watchdog kills the `docker exec` client, which closes the stream the
+    child reports on while it shuts down. It must not fire until the container's
+    own TERM-then-KILL sequence has had its full run."""
+    from constants import (
+        CONTAINER_TIMEOUT_KILL_GRACE,
+        HOST_WATCHDOG_BACKSTOP_MARGIN,
+    )
+    from test_runner import build_command_exec_argv
+
+    deadline = int(build_command_exec_argv("container", "aiperf profile", 900)[-4])
+    backstop = 900 + CONTAINER_TIMEOUT_KILL_GRACE + HOST_WATCHDOG_BACKSTOP_MARGIN
+    assert backstop > deadline + CONTAINER_TIMEOUT_KILL_GRACE, (
+        "the watchdog must outlast the in-container SIGTERM/SIGKILL sequence"
+    )
+
+
+def test_an_in_container_timeout_is_still_reported_as_one() -> None:
+    """With the watchdog demoted to a backstop it no longer fires on an ordinary
+    timeout, so the exit code is what tells a timeout apart from a plain
+    failure. Losing this would report every timeout as a bare non-zero exit."""
+    from test_runner import timed_out_in_container
+
+    assert timed_out_in_container(124), "timeout signalled at the deadline"
+    assert timed_out_in_container(137), "--kill-after had to SIGKILL"
+    assert not timed_out_in_container(0)
+    assert not timed_out_in_container(1)
+    assert not timed_out_in_container(None)
