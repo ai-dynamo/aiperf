@@ -267,6 +267,12 @@ class MarkdownParser:
             pair = re.fullmatch(r"(\w+)=(\S+)", token)
             if pair is None:
                 malformed.append(token)
+            elif pair.group(1) in attrs:
+                # Last-wins would hide the earlier value, including an
+                # invalid one that never reaches validation. A tag carrying
+                # two deadlines has no unambiguous deadline, so treat the
+                # repeat the same as text that does not parse at all.
+                malformed.append(token)
             else:
                 attrs[pair.group(1)] = pair.group(2)
         return attrs, malformed

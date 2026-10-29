@@ -70,6 +70,27 @@ def test_malformed_attribute_drops_only_its_own_command(tmp_path, attr) -> None:
     assert [c.command.strip() for c in commands] == ["aiperf profile --model m"]
 
 
+@pytest.mark.parametrize(
+    "attr",
+    [
+        param("timeout=abc timeout=60", id="invalid-then-valid"),
+        param("timeout=60 timeout=abc", id="valid-then-invalid"),
+        param("timeout=30 timeout=90", id="both-valid-still-ambiguous"),
+    ],
+)  # fmt: skip
+def test_a_repeated_attribute_drops_its_command(tmp_path, attr) -> None:
+    """Last-wins silently picks one of two deadlines and discards the other,
+    including an invalid one that then never reaches validation. A tag with two
+    deadlines has no unambiguous deadline, so it is rejected like any other
+    unreadable attribute rather than guessed at."""
+    servers = _parse(tmp_path, GOOD, BAD_TEMPLATE.format(attr=attr))
+
+    assert [c.command.strip() for c in servers["demo"].aiperf_commands] == [
+        "aiperf profile --model m"
+    ]
+    assert len(servers["demo"].parse_errors) == 1
+
+
 def test_the_dropped_command_is_recorded_on_its_server(tmp_path) -> None:
     """Dropping the command must not also drop the fact that it was dropped.
 
