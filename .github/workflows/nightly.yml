@@ -323,13 +323,10 @@ jobs:
           python-version: '3.12'
 
       # ``ci-install``, not ``first-time-setup``: this job gates the release, so
-      # it must validate the dependency set ``uv.lock`` pins — the same set every
+      # it must test the dependency set ``uv.lock`` pins — the same set every
       # PR's unit-test job installs. ``first-time-setup`` runs an unpinned
       # ``uv pip install -e ".[dev]"``, which takes whatever PyPI released
-      # minutes ago; the 2026-10-29 nightly floated onto pytest 9.2.0 +
-      # transformers 5.21.x and failed 14 tokenizer tests with
-      # ``ImportError: cannot import name 'GGUF_TOKENIZER_MAPPING' from
-      # 'transformers.integrations'``, a combination no PR job ever installs.
+      # minutes ago and so tests versions the project never validated.
       - name: Install dependencies
         run: make ci-install PYTHON_VERSION=3.12
 
