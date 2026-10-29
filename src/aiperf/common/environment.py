@@ -46,6 +46,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, Self
 
+import orjson
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -2654,7 +2655,12 @@ class _Environment(BaseSettings):
                     )
                     setattr(self, group, normalized)
                 for env_key, (group, key) in inserted.items():
-                    os.environ[env_key] = str(getattr(getattr(self, group), key))
+                    value = getattr(getattr(self, group), key)
+                    os.environ[env_key] = (
+                        orjson.dumps(value, default=list).decode()
+                        if isinstance(value, list | set | dict)
+                        else str(value)
+                    )
             yield
         finally:
             for group, settings in previous.items():

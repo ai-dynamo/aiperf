@@ -3,6 +3,7 @@
 """Scoped environment defaults reach real child processes."""
 
 import asyncio
+import json
 import os
 import sys
 
@@ -151,3 +152,27 @@ async def test_defaults_normalize_parent_and_child_and_restore(
     assert settings.DEV.model_fields_set == original_fields_set
     assert "AIPERF_DEV_SHOW_INTERNAL_METRICS" not in os.environ
     assert "AIPERF_HTTP_TCP_KEEPIDLE" not in os.environ
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_defaults_export_collections_as_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AIPERF_GPU_DEFAULT_DCGM_ENDPOINTS", raising=False)
+    settings = _Environment()
+    endpoints = ["http://one:9400/metrics", "http://two:9400/metrics"]
+
+    with settings.defaults({"GPU": {"DEFAULT_DCGM_ENDPOINTS": ",".join(endpoints)}}):
+        assert endpoints == settings.GPU.DEFAULT_DCGM_ENDPOINTS
+        child = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-c",
+            "import json; from aiperf.common.environment import Environment as e; "
+            "print(json.dumps(e.GPU.DEFAULT_DCGM_ENDPOINTS))",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(child.communicate(), timeout=30)
+        assert child.returncode == 0, stderr.decode()
+        assert json.loads(stdout) == endpoints
