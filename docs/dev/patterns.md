@@ -246,6 +246,18 @@ single ROUTER. The wire format is the `msgspec` tagged-union structs in
 channel also carries registration (`Registration` / `RegistrationAck`),
 `Heartbeat`, and `StatusUpdate`.
 
+`Registration.instance_id` identifies the process, independently of the service
+ID and per-request correlation ID. Generate it once at service construction and
+reuse it on reconnects. A different instance ID lets the controller retire an
+optional server-metrics producer that lost its history during a container
+restart, even when its heartbeat has not expired yet.
+
+Server-metrics mapped-array operations run through
+`aiperf.server_metrics.array_store.run_history_io` while holding the owning
+history lock. Unlike an unshielded `asyncio.to_thread` await, this helper waits
+for an in-flight write to finish even if cancellation repeats, so another
+reader, writer, or close cannot race the worker thread.
+
 Every other message type still goes over the event bus with `publish()` /
 `@on_message`.
 
@@ -396,6 +408,17 @@ Canonical examples:
 - `src/aiperf/common/base_service.py` — force-kill path (`os._exit` on Windows vs SIGKILL on POSIX)
 
 For tests that exercise both branches from non-target hosts, patch the constant at its consumer site (not at the source) — see `tests/unit/common/test_bootstrap_windows.py` for the pattern.
+
+### Windows Event Loop
+
+Every process entrypoint calls `configure_event_loop_policy_for_platform()` (`src/aiperf/common/event_loop.py`) before its first loop exists. On Windows it selects a `SelectorEventLoop`, since pyzmq needs `add_reader()`, which `ProactorEventLoop` lacks. Windows timer precision has two halves, and aiperf fixes both:
+
+| Half | Problem on Windows | Fix |
+|---|---|---|
+| Waking up | Waits round to the 15.625 ms system timer interrupt | `timeBeginPeriod(1)` in `bootstrap.py` (services) |
+| Reading the clock | Before Python 3.13, `time.monotonic()` (the stock loop's clock) is `GetTickCount64()`, 15.625 ms ticks that `timeBeginPeriod` does not refine; asyncio fires timers due within one tick early | `PerfCounterSelectorEventLoop`: `loop.time()` reads `perf_counter()` (1 us), selected only on Python < 3.13 |
+
+Tests never go through an entrypoint, so `tests/conftest.py` implements pytest-asyncio's `pytest_asyncio_loop_factories` hook on Windows to run async tests on the same loop. Use that hook rather than overriding the `event_loop_policy` fixture, which pytest-asyncio deprecates.
 
 ## Logging Pattern
 

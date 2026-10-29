@@ -134,6 +134,8 @@ class CreditContext(
             adaptive records-pipeline semantics.
         output_sequence_length: Output sequence length in tokens from usage
             data, when available.
+        ended_on_truncation: True when this truncated root turn ends its
+            conversation early (end_conversation_on_truncation).
     """
 
     credit: Credit
@@ -146,6 +148,7 @@ class CreditContext(
     request_latency_ns: int | None = None
     inter_token_latency_ns: float | None = None
     output_sequence_length: int | None = None
+    ended_on_truncation: bool = False
 
 
 # =============================================================================

@@ -271,6 +271,11 @@ class CreditPhaseConfig(AIPerfBaseModel):
     expected_num_sessions: int | None = Field(
         default=None, gt=0, description="The total number of expected sessions to send."
     )
+    sessions_from_dataset: bool = Field(
+        default=False,
+        description="Whether expected_num_sessions is resolved at run time to the "
+        "number of loaded conversations (phase ``sessions: all``, one full pass).",
+    )
     expected_duration_sec: float | None = Field(
         default=None,
         gt=0,
@@ -368,6 +373,13 @@ class CreditPhaseConfig(AIPerfBaseModel):
         gt=0,
         description="Duration of the accelerated cache-pressure substage for "
         "agentic replay warmup.",
+    )
+    warmup_requests_per_lane: int | None = Field(
+        default=None,
+        gt=0,
+        description="Deterministic cache-pressure warmup wire-request budget "
+        "per live agentic replay lane. Mutually exclusive with "
+        "agentic_cache_warmup_duration_sec.",
     )
 
     artifact_dir: Path | None = Field(
@@ -469,6 +481,15 @@ def _ramp_duration(ramp: object | None) -> float | None:
     return getattr(ramp, "duration", None)
 
 
+def _phase_session_fields(phase: PhaseConfig) -> dict[str, Any]:
+    """Session stop condition; ``sessions: all`` defers to the dataset size."""
+    from aiperf.config.phases import FULL_PASS_SESSIONS
+
+    if phase.sessions == FULL_PASS_SESSIONS:
+        return {"expected_num_sessions": None, "sessions_from_dataset": True}
+    return {"expected_num_sessions": phase.sessions}
+
+
 def _phase_request_rate(phase: PhaseConfig) -> float | None:
     """Return the configured request rate for a phase, if any."""
     # Lazy import: aiperf.config.phases is only a TYPE_CHECKING import here.
@@ -563,7 +584,7 @@ def _build_warmup_config(
         timing_mode=TimingMode.REQUEST_RATE,
         total_expected_requests=phase.requests,
         expected_duration_sec=phase.duration,
-        expected_num_sessions=phase.sessions,
+        **_phase_session_fields(phase),
         concurrency=phase.concurrency,
         prefill_concurrency=phase.prefill_concurrency,
         request_rate=_phase_request_rate(phase),
@@ -632,6 +653,18 @@ def _build_agentic_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig | None
     concurrency = getattr(phase, "concurrency", None)
     grace_period = _agentic_warmup_grace_period(phase)
     cache_warmup_duration = getattr(phase, "agentic_cache_warmup_duration", None)
+    requests_per_lane = getattr(phase, "warmup_requests_per_lane", None)
+    cache_warmup_request_cap = (
+        concurrency * requests_per_lane
+        if concurrency is not None and requests_per_lane is not None
+        else None
+    )
+    if cache_warmup_request_cap is not None:
+        total_expected_requests = cache_warmup_request_cap
+    elif cache_warmup_duration is not None:
+        total_expected_requests = None
+    else:
+        total_expected_requests = concurrency
     return CreditPhaseConfig(
         phase=CreditPhase.WARMUP,
         # Identity is stamped explicitly rather than copied from a PhaseConfig:
@@ -644,12 +677,10 @@ def _build_agentic_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig | None
         phase_name=AGENTIC_WARMUP_PHASE_NAME,
         phase_kind="warmup",
         timing_mode=TimingMode.AGENTIC_REPLAY,
-        # An accelerated cache-pressure warmup is strategy-terminated (the
-        # strategy emits ``mark_sending_complete`` when the duration elapses),
-        # so leave the request cap open instead of sizing it to concurrency.
-        total_expected_requests=(
-            None if cache_warmup_duration is not None else concurrency
-        ),
+        # Duration mode is strategy-terminated by its timer. Count mode uses
+        # the generic request-count stop condition as a global backstop while
+        # the agentic strategy independently enforces each lane's quota.
+        total_expected_requests=total_expected_requests,
         expected_duration_sec=None,
         expected_num_sessions=None,
         concurrency=concurrency,
@@ -660,6 +691,7 @@ def _build_agentic_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig | None
         seamless=False,
         grace_period_sec=grace_period if grace_period is not None else float("inf"),
         agentic_cache_warmup_duration_sec=cache_warmup_duration,
+        warmup_requests_per_lane=requests_per_lane,
     )
 
 
@@ -692,7 +724,7 @@ def _build_profiling_config(
         timing_mode=timing_mode,
         expected_duration_sec=phase.duration,
         total_expected_requests=phase.requests,
-        expected_num_sessions=phase.sessions,
+        **_phase_session_fields(phase),
         concurrency=phase.concurrency,
         prefill_concurrency=phase.prefill_concurrency,
         request_rate=_phase_request_rate(phase),

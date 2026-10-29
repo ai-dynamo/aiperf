@@ -6,10 +6,11 @@ Unlike FORK mode (which inherits the parent's accumulated messages and pins
 the child to the parent's worker), SPAWN-mode children:
 
 - Start with an EMPTY accumulator (no parent context merged in).
-- Route freely (no sticky pin to the parent's worker).
+- Start on the parent's worker when its sticky entry is live, then pin
+  under their own correlation id (no parent refcount bump).
 
 This test drives the full aiperf subprocess over a minimal root+spawn-child
-fixture and asserts both invariants on the wire payloads and run stats.
+fixture and asserts the fresh-accumulator invariant on the wire payloads and run stats.
 """
 
 from __future__ import annotations

@@ -622,6 +622,19 @@ custom_dataset_loader:
       is_trace: true
       default_block_size: 512
 
+  h_cua_perf:
+    class: aiperf.dataset.loader.h_cua_perf_file:HCuaPerfFileLoader
+    description: |
+      H CUA Perf computer-use agent traces read from a local build: <name>.jsonl.zst
+      beside its <name>.meta.json manifest, e.g. a variant derived from
+      Hcompany/h_cua_perf with the dataset's trace_processor.py. Same records
+      and replay as the h_cua_perf public dataset, minus its --dataset-filter
+      knobs: a derived build already carries its shape. Never auto-detected;
+      select it by name.
+      Usage: --input-file ./build/h_cua.jsonl.zst --custom-dataset-type h_cua_perf
+    metadata:
+      is_trace: true
+
   raw_payload:
     class: aiperf.dataset.loader.raw_payload:RawPayloadDatasetLoader
     description: |
@@ -685,6 +698,9 @@ custom_dataset_loader:
     description: |
       SPEED-Bench qualitative split from HuggingFace (nvidia). 880 prompts across
       11 semantic domains for measuring speculative decoding acceptance rates.
+    metadata:
+      full_pass_by_default: true
+      end_conversation_on_truncation: true
 
 
   speed_bench_throughput_1k:
@@ -692,30 +708,40 @@ custom_dataset_loader:
     description: |
       SPEED-Bench throughput split at ~1K input tokens from HuggingFace (nvidia).
       1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      full_pass_by_default: true
 
   speed_bench_throughput_2k:
     class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput2KLoader
     description: |
       SPEED-Bench throughput split at ~2K input tokens from HuggingFace (nvidia).
       1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      full_pass_by_default: true
 
   speed_bench_throughput_8k:
     class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput8KLoader
     description: |
       SPEED-Bench throughput split at ~8K input tokens from HuggingFace (nvidia).
       1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      full_pass_by_default: true
 
   speed_bench_throughput_16k:
     class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput16KLoader
     description: |
       SPEED-Bench throughput split at ~16K input tokens from HuggingFace (nvidia).
       1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      full_pass_by_default: true
 
   speed_bench_throughput_32k:
     class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput32KLoader
     description: |
       SPEED-Bench throughput split at ~32K input tokens from HuggingFace (nvidia).
       1536 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      full_pass_by_default: true
 
   tracelab:
     class: aiperf.dataset.loader.tracelab_trace:TraceLabTraceDatasetLoader
@@ -1271,6 +1297,13 @@ console_exporter:
       actual output length differs significantly from requested --osl value.
       Typically indicates ignore_eos is not set or not supported by the server.
 
+  truncation_notice:
+    class: aiperf.exporters.console_truncation_notice_exporter:ConsoleTruncationNoticeExporter
+    description: |
+      Console notice reporting how many multi-turn conversations ended early
+      after a turn was truncated at the output-token cap, and how many turns
+      were skipped (--end-conversation-on-truncation).
+
   accuracy:
     class: aiperf.accuracy.accuracy_console_exporter:AccuracyConsoleExporter
     description: |
@@ -1461,6 +1494,21 @@ spec_decode_adapter:
       engine-neutral SpecDecodeAcceptanceRecord. Handles chat and completions,
       streaming and non-streaming; inflates the dense ``acceptance_histogram``
       list into the record's sparse map.
+    metadata: {}
+
+  tensorrt_llm:
+    class: aiperf.spec_decode.trtllm_adapter:TRTLLMSpecDecodeAdapter
+    description: |
+      Reads TensorRT-LLM's per-choice ``speculative_decoding`` object (emitted
+      when the server sets ``per_request_spec_decode_stats``) and fills the
+      engine-neutral
+      SpecDecodeAcceptanceRecord. Handles chat and completions, streaming and
+      non-streaming. Derives mean acceptance length from the counts, since
+      TRT-LLM does not report it (its ``avg_decoded_tokens_per_iter`` averages
+      over all decoding iterations, not just drafting steps).
+      Declaration order here is not a detection mechanism: adapters are
+      distinguished by disjoint payload signatures, and the parser rejects a
+      payload that more than one adapter claims.
     metadata: {}
 
 accuracy_grader:
@@ -1902,6 +1950,8 @@ public_dataset_loader:
     description: |
       SpecBench speculative decoding benchmark dataset from GitHub (hemingkx).
       Loads single-turn questions for evaluating speculative decoding methods.
+    metadata:
+      full_pass_by_default: true
 
   # ---------------------------------------------------------------------------
   # Speculative-decoding acceptance-length benchmarks (auto-downloaded from HF).
@@ -1922,6 +1972,7 @@ public_dataset_loader:
       hf_subset: main
       hf_split: test
       prompt_column: question
+      full_pass_by_default: true
 
   spec_al_math500:
     class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
@@ -1933,6 +1984,7 @@ public_dataset_loader:
       hf_dataset_name: HuggingFaceH4/MATH-500
       hf_split: test
       prompt_column: problem
+      full_pass_by_default: true
 
   spec_al_humaneval:
     class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
@@ -1947,6 +1999,7 @@ public_dataset_loader:
       hf_dataset_name: openai/openai_humaneval
       hf_split: test
       prompt_column: prompt
+      full_pass_by_default: true
 
   spec_al_mbpp:
     class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
@@ -1960,6 +2013,7 @@ public_dataset_loader:
       hf_subset: full
       hf_split: test
       prompt_column: text
+      full_pass_by_default: true
 
   spec_al_mtbench:
     class: aiperf.dataset.loader.mt_bench:MTBenchDatasetLoader
@@ -1970,6 +2024,8 @@ public_dataset_loader:
     metadata:
       hf_dataset_name: HuggingFaceH4/mt_bench_prompts
       hf_split: train
+      full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   instruct_coder:
     class: aiperf.dataset.loader.hf_instruction_response:HFInstructionResponseDatasetLoader
@@ -2083,6 +2139,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_no_subagents:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2103,6 +2160,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2127,6 +2185,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2147,6 +2206,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060226:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2166,6 +2226,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060226_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2185,6 +2246,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060526:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2203,6 +2265,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060526_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2223,6 +2286,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060826:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2241,6 +2305,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_with_subagents_060826_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2261,6 +2326,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_061326:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2284,6 +2350,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_061326_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2304,6 +2371,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_061526:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2326,6 +2394,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_061526_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2347,6 +2416,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_062126:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2367,6 +2437,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   semianalysis_cc_traces_weka_062126_256k:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2387,6 +2458,7 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
 
   weka_hf:
     class: aiperf.dataset.loader.semianalysis_cc_traces_weka:SemiAnalysisCCTracesWekaLoader
@@ -2402,6 +2474,22 @@ public_dataset_loader:
       is_trace: true
       default_block_size: 64
       default_prompt_corpus: coding
+      has_timing_data: true
+
+  mooncake_hf:
+    class: aiperf.dataset.loader.hf_mooncake_trace:HFMooncakeTraceDatasetLoader
+    description: |
+      Generic HuggingFace-backed Mooncake trajectory dataset loader. Use this for
+      compatible trajectory corpora without adding a pinned alias for each
+      dataset. Selected automatically when you pass --hf-mooncake-dataset
+      (which supplies the HuggingFace dataset repo name); passing
+      --public-dataset mooncake_hf explicitly is equivalent.
+      Use --mooncake-trace-to-hf-mapping to map source columns to Mooncake fields.
+      Usage: --hf-mooncake-dataset org/trajectory-dataset
+    metadata:
+      hf_split: test
+      streaming: true
+      is_trace: true
 
   # ---------------------------------------------------------------------------
   # SPEED-Bench. Prompt text for rows whose source datasets forbid
@@ -2420,6 +2508,8 @@ public_dataset_loader:
       hf_split: test
       hf_subset: qualitative
       multi_turn: true
+      full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_coding:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2431,6 +2521,8 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: coding
+      full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_humanities:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2442,6 +2534,8 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: humanities
+      full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_math:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2453,6 +2547,8 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: math
+      full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_multilingual:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2464,6 +2560,8 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: multilingual
+      full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_qa:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2475,6 +2573,8 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: qa
+      full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_rag:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2486,6 +2586,8 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: rag
+      full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_reasoning:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2497,6 +2599,8 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: reasoning
+      full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_roleplay:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2508,6 +2612,8 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: roleplay
+      full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_stem:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2519,6 +2625,8 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: stem
+      full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_summarization:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2530,6 +2638,8 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: summarization
+      full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_writing:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2541,6 +2651,8 @@ public_dataset_loader:
       hf_subset: qualitative
       multi_turn: true
       category: writing
+      full_pass_by_default: true
+      end_conversation_on_truncation: true
 
   speed_bench_throughput_1k:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2551,6 +2663,7 @@ public_dataset_loader:
       hf_split: test
       hf_subset: throughput_1k
       multi_turn: true
+      full_pass_by_default: true
 
   speed_bench_throughput_1k_low_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2562,6 +2675,7 @@ public_dataset_loader:
       hf_subset: throughput_1k
       multi_turn: true
       category: low_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_1k_mixed:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2573,6 +2687,7 @@ public_dataset_loader:
       hf_subset: throughput_1k
       multi_turn: true
       category: mixed
+      full_pass_by_default: true
 
   speed_bench_throughput_1k_high_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2584,6 +2699,7 @@ public_dataset_loader:
       hf_subset: throughput_1k
       multi_turn: true
       category: high_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_2k:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2594,6 +2710,7 @@ public_dataset_loader:
       hf_split: test
       hf_subset: throughput_2k
       multi_turn: true
+      full_pass_by_default: true
 
   speed_bench_throughput_2k_low_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2605,6 +2722,7 @@ public_dataset_loader:
       hf_subset: throughput_2k
       multi_turn: true
       category: low_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_2k_mixed:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2616,6 +2734,7 @@ public_dataset_loader:
       hf_subset: throughput_2k
       multi_turn: true
       category: mixed
+      full_pass_by_default: true
 
   speed_bench_throughput_2k_high_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2627,6 +2746,7 @@ public_dataset_loader:
       hf_subset: throughput_2k
       multi_turn: true
       category: high_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_8k:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2637,6 +2757,7 @@ public_dataset_loader:
       hf_split: test
       hf_subset: throughput_8k
       multi_turn: true
+      full_pass_by_default: true
 
   speed_bench_throughput_8k_low_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2648,6 +2769,7 @@ public_dataset_loader:
       hf_subset: throughput_8k
       multi_turn: true
       category: low_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_8k_mixed:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2659,6 +2781,7 @@ public_dataset_loader:
       hf_subset: throughput_8k
       multi_turn: true
       category: mixed
+      full_pass_by_default: true
 
   speed_bench_throughput_8k_high_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2670,6 +2793,7 @@ public_dataset_loader:
       hf_subset: throughput_8k
       multi_turn: true
       category: high_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_16k:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2680,6 +2804,7 @@ public_dataset_loader:
       hf_split: test
       hf_subset: throughput_16k
       multi_turn: true
+      full_pass_by_default: true
 
   speed_bench_throughput_16k_low_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2691,6 +2816,7 @@ public_dataset_loader:
       hf_subset: throughput_16k
       multi_turn: true
       category: low_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_16k_mixed:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2702,6 +2828,7 @@ public_dataset_loader:
       hf_subset: throughput_16k
       multi_turn: true
       category: mixed
+      full_pass_by_default: true
 
   speed_bench_throughput_16k_high_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2713,6 +2840,7 @@ public_dataset_loader:
       hf_subset: throughput_16k
       multi_turn: true
       category: high_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_32k:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2723,6 +2851,7 @@ public_dataset_loader:
       hf_split: test
       hf_subset: throughput_32k
       multi_turn: true
+      full_pass_by_default: true
 
   speed_bench_throughput_32k_low_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2734,6 +2863,7 @@ public_dataset_loader:
       hf_subset: throughput_32k
       multi_turn: true
       category: low_entropy
+      full_pass_by_default: true
 
   speed_bench_throughput_32k_mixed:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2745,6 +2875,7 @@ public_dataset_loader:
       hf_subset: throughput_32k
       multi_turn: true
       category: mixed
+      full_pass_by_default: true
 
   speed_bench_throughput_32k_high_entropy:
     class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
@@ -2756,6 +2887,7 @@ public_dataset_loader:
       hf_subset: throughput_32k
       multi_turn: true
       category: high_entropy
+      full_pass_by_default: true
 
   h_cua_perf:
     class: aiperf.dataset.loader.h_cua_perf:HCuaPerfDatasetLoader
@@ -2767,7 +2899,8 @@ public_dataset_loader:
       on CUA-Gym desktop tasks: full text history, 10 tool definitions and one
       screenshot per request. Delegates to the mooncake_trace loader, replaying
       the recorded inter-request delays. --dataset-filter reshapes the corpus in
-      place: n_screenshots, min_trace_length, max_trace_length, avg_trace_length.
+      place: n_screenshots, min_trace_length, max_trace_length, avg_trace_length,
+      uuid_cache, disable_structured_output.
       Usage: --public-dataset h_cua_perf --dataset-filter n_screenshots=3
     metadata:
       hf_dataset_name: Hcompany/h_cua_perf

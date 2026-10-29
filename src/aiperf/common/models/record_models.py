@@ -22,6 +22,7 @@ from pydantic import (
     field_validator,
     model_serializer,
 )
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic.functional_validators import AfterValidator
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -44,6 +45,7 @@ from aiperf.common.models.server_metrics_models import ServerMetricsResults
 from aiperf.common.models.spec_decode_models import SpecDecodeAcceptanceRecord
 from aiperf.common.models.trace_models import BaseTraceData, TraceDataExport
 from aiperf.common.models.usage_models import Usage
+from aiperf.common.monotonic_clock import process_clock
 from aiperf.common.types import JsonObject, MetricTagT, PhaseKind
 from aiperf.common.utils import load_json_str
 
@@ -51,6 +53,9 @@ _logger = AIPerfLogger(__name__)
 _SSE_COMMENT_FIELD_NAME = "comment"
 _SSE_DATA_FIELD_NAME = "data"
 _SSE_DATA_PREFIX = "data:"
+# ASCII padding only: str.strip() would also eat U+0085/U+2028/U+2029 and
+# \x0b-\x0c/\x1c-\x1f, which are data, not SSE whitespace.
+_SSE_PADDING = " \t"
 
 
 class MetricResult(JsonMetricResult):
@@ -424,6 +429,36 @@ class PhaseProfileResults(AIPerfBaseModel):
     )
 
 
+class ProfileMetricDurationCoverage(AIPerfBaseModel):
+    """Observed profiling-metric coverage relative to a configured phase duration."""
+
+    phase_name: str = Field(description="Name of the profiling phase checked.")
+    expected_duration_seconds: float = Field(
+        gt=0.0, description="Configured profiling duration in seconds."
+    )
+    required_ratio: float = Field(
+        gt=0.0, le=1.0, description="Minimum required metric coverage ratio."
+    )
+    ttft_ratio: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Fraction of the phase covered by TTFT observations.",
+    )
+    inter_token_latency_ratio: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Fraction of the phase covered by inter-token-latency observations.",
+    )
+
+    @property
+    def passed(self) -> bool:
+        """Return whether any latency signal proves late profiling activity."""
+        return (
+            self.ttft_ratio >= self.required_ratio
+            or self.inter_token_latency_ratio >= self.required_ratio
+        )
+
+
 class ProfileResults(AIPerfBaseModel):
     """The results of a profile run."""
 
@@ -493,12 +528,34 @@ class ProfileResults(AIPerfBaseModel):
         "runs. Forwarded to profile_export_aiperf.json under the "
         "``branch_stats`` key when present.",
     )
+    conversations_ended_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Conversation sessions ended early because a turn was truncated "
+        "by the output-token cap; a conversation replayed to fill --request-count "
+        "counts once per replay. None when end_conversation_on_truncation is off.",
+    )
+    turns_skipped_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Turns never sent because their conversation ended early on "
+        "a truncated turn, excluding turns the run's stop condition would not "
+        "have sent anyway. None when end_conversation_on_truncation is off.",
+    )
     context_overflow_count: int = Field(
         default=0,
         ge=0,
         description="Count of AGENTIC_REPLAY context-overflow records skipped from "
         "normal metric accumulation and stream export, retained only for "
         "aggregate runtime submission validation.",
+    )
+    metric_duration_coverage: list[ProfileMetricDurationCoverage] = Field(
+        default_factory=list,
+        description="Post-run latency-signal duration-coverage checks, when enabled.",
+    )
+    runtime_submission_invalid_reasons: list[str] = Field(
+        default_factory=list,
+        description="Runtime reason tags that invalidate a scenario submission.",
     )
     phase_records: list[PhaseProfileResults] | None = Field(
         default=None,
@@ -531,6 +588,10 @@ class ProcessRecordsResult(AIPerfBaseModel):
     errors: list[ErrorDetails] = Field(
         default_factory=list,
         description="Any error that occurred while processing the profile results",
+    )
+    fatal_errors: list[ErrorDetails] = Field(
+        default_factory=list,
+        description="Post-processing validation errors that require a non-zero exit.",
     )
 
     def get(self, tag: MetricTagT) -> MetricResult | None:
@@ -640,19 +701,20 @@ class TextResponse:
             return None
 
 
-@dataclass(slots=True)
+# Nested stdlib dataclasses ignore byte encoding settings; use Pydantic here.
+# Reject extra fields so response unions cannot select the wrong dataclass.
+@pydantic_dataclass(
+    slots=True,
+    config=ConfigDict(extra="forbid", ser_json_bytes="base64", val_json_bytes="base64"),
+)
 class BinaryResponse:
     """Raw binary response from an inference client for non-text content types."""
-
-    # Reject extra fields so Pydantic's union discrimination (e.g. in
-    # RequestRecord.responses) doesn't match the wrong dataclass type.
-    __pydantic_config__ = ConfigDict(extra="forbid")
 
     perf_ns: int
     """The performance timestamp of the response in nanoseconds (perf_counter_ns)."""
 
     raw_bytes: bytes
-    """The raw binary body of the response."""
+    """The original response bytes; JSON encodes them as URL-safe base64."""
 
     content_type: str | None = None
     """The content type of the response. e.g. 'video/mp4', 'application/octet-stream'."""
@@ -716,14 +778,17 @@ class SSEMessage:
                 packets=[
                     SSEField(
                         name=_SSE_DATA_FIELD_NAME,
-                        value=raw_message[len(_SSE_DATA_PREFIX) :].strip(),
+                        value=raw_message[len(_SSE_DATA_PREFIX) :].strip(_SSE_PADDING),
                     )
                 ],
             )
 
         message = cls(perf_ns=perf_ns)
-        for line in raw_message.splitlines():
-            if not (line := line.strip()):
+        # SSE fields end at CR/LF; Unicode line separators belong to the data.
+        if "\r" in raw_message:
+            raw_message = raw_message.replace("\r\n", "\n").replace("\r", "\n")
+        for line in raw_message.split("\n"):
+            if not (line := line.strip(_SSE_PADDING)):
                 continue
 
             prev_value = message.packets[-1].value if message.packets else None
@@ -746,7 +811,9 @@ class SSEMessage:
             parts = line.split(":", 1)
             if len(parts) < 2:
                 # Fields without a colon have no value, so the whole line is the field name
-                message.packets.append(SSEField(name=parts[0].strip(), value=None))
+                message.packets.append(
+                    SSEField(name=parts[0].strip(_SSE_PADDING), value=None)
+                )
                 continue
 
             field_name, value = parts
@@ -755,11 +822,14 @@ class SSEMessage:
                 # Field name is empty, so this is a comment
                 field_name = _SSE_COMMENT_FIELD_NAME
 
-            # Spec says strip only one leading space; we strip() all whitespace
+            # Spec says strip only one leading space; we strip all ASCII padding
             # to normalize inconsistent servers for downstream exact comparisons
             # (e.g. "[DONE]", "error").
             message.packets.append(
-                SSEField(name=field_name.strip(), value=value.strip())
+                SSEField(
+                    name=field_name.strip(_SSE_PADDING),
+                    value=value.strip(_SSE_PADDING),
+                )
             )
 
         return message
@@ -1118,10 +1188,31 @@ class RequestInfo(RecordContext):
         description="Response ID from the previous turn (e.g. 'resp_<hash>') "
         "used for stateful chaining in the Responses API.",
     )
+    system_prompt_in_stored_history: bool = Field(
+        default=False,
+        description="Whether the stored server-side history behind "
+        "previous_response_id already contains the system prompt as an input "
+        "item. Only meaningful when previous_response_id is set.",
+    )
+
+
+def _wall_ns_at_start_perf(data: dict[str, Any]) -> int:
+    """Wall time of the record's own ``start_perf_ns``, via the per-process anchor.
+
+    A wall read at construction would describe when the record was built, not
+    when the request started; for records built after a timeout or a poll loop
+    that is seconds late. Being a default factory rather than an after-validator
+    keeps the field out of ``model_fields_set``: assigning it there grows every
+    record's fields set past CPython's resize threshold (+512 B per record).
+    """
+    return process_clock().wall_ns_at(data["start_perf_ns"])
 
 
 class RequestRecord(AIPerfBaseModel):
     """Record of a request with its associated responses."""
+
+    _redirect_locations: tuple[str, ...] = PrivateAttr(default=())
+    """Download redirect metadata, local to the transport and never serialized."""
 
     _parsed_responses_cache: list[ParsedResponse] | None = PrivateAttr(default=None)
     """Memoized endpoint-final parsed responses, local to this process and never
@@ -1144,13 +1235,14 @@ class RequestRecord(AIPerfBaseModel):
         default=None,
         description="The name of the model targeted by the request.",
     )
-    timestamp_ns: int = Field(
-        default_factory=time.time_ns,
-        description="The wall clock timestamp of the request in nanoseconds. DO NOT USE FOR LATENCY CALCULATIONS. (time.time_ns).",
-    )
+    # Declared before ``timestamp_ns``: its default factory reads this value.
     start_perf_ns: int = Field(
         default_factory=time.perf_counter_ns,
         description="The start reference time of the request in nanoseconds used for latency calculations (perf_counter_ns).",
+    )
+    timestamp_ns: int = Field(
+        default_factory=_wall_ns_at_start_perf,
+        description="The wall clock timestamp of the request start in nanoseconds: the wall time of ``start_perf_ns``. When omitted it is derived from ``start_perf_ns`` through the per-process anchor (``process_clock``). DO NOT USE FOR LATENCY CALCULATIONS.",
     )
     end_perf_ns: int | None = Field(
         default=None,
@@ -1214,9 +1306,12 @@ class RequestRecord(AIPerfBaseModel):
         "Kubernetes mode, where both clocks are the same clock and no "
         "correction is meaningful. Signed, so no bounds apply. Measured in the "
         "tracker's anchored clock domain (a wall-clock anchor advanced by "
-        "perf_counter deltas) while ``timestamp_ns`` is raw ``time.time_ns``, "
-        "so an NTP step mid-run leaves the correction carrying that step as "
-        "residual error - bounded by the step size, typically sub-millisecond.",
+        "perf_counter deltas). ``timestamp_ns`` is anchored the same way but "
+        "through ``process_clock``, a separate anchor, so a wall-clock step "
+        "after both anchors exist moves neither; a step between their two "
+        "initializations leaves the anchors differing by that step, which the "
+        "correction carries as residual error - bounded by the step size, "
+        "typically sub-millisecond.",
     )
 
     @property
@@ -1669,9 +1764,16 @@ class ParsedResponseRecord:
     """Engine-neutral per-request speculative-decoding acceptance record, filled
     by a ``SpecDecodeAdapterProtocol`` when the response carried spec-decode
     stats. ``None`` when: spec decode is off or the request had no verify steps
-    (no payload); the request produced multiple sequences (``n > 1``, which is
-    suppressed); no registered adapter recognized the payload; or the payload
-    was malformed and the adapter rejected it."""
+    (no payload, or a zero-step payload the parser drops); the request produced
+    multiple sequences (``n > 1``, which is suppressed); no registered adapter
+    recognized the payload; or the payload was malformed and the adapter
+    rejected it."""
+
+    spec_decode_zero_step: bool = False
+    """True when the engine reported spec-decode stats for this request but it
+    ran no verify step (``num_spec_steps == 0``). Its record is dropped, so
+    ``spec_decode_acceptance`` is None; this flag lets the run count such
+    requests separately from runs where spec decode is off."""
 
     @cached_property
     def final_usage(self) -> Usage | None:

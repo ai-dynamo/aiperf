@@ -99,7 +99,7 @@ AnalyzerType = plugins.create_enum(PluginType.ANALYZER, "AnalyzerType", module=_
 
 SpecDecodeAdapterTypeStr: TypeAlias = str
 SpecDecodeAdapterType = plugins.create_enum(PluginType.SPEC_DECODE_ADAPTER, "SpecDecodeAdapterType", module=__name__)
-"""Dynamic enum for spec decode adapter. Example: SpecDecodeAdapterType.VLLM"""
+"""Dynamic enum for spec decode adapter. Example: SpecDecodeAdapterType.TENSORRT_LLM, SpecDecodeAdapterType.VLLM"""
 
 AccuracyGraderTypeStr: TypeAlias = str
 AccuracyGraderType = plugins.create_enum(PluginType.ACCURACY_GRADER, "AccuracyGraderType", module=__name__)
@@ -115,7 +115,7 @@ DataExporterType = plugins.create_enum(PluginType.DATA_EXPORTER, "DataExporterTy
 
 ConsoleExporterTypeStr: TypeAlias = str
 ConsoleExporterType = plugins.create_enum(PluginType.CONSOLE_EXPORTER, "ConsoleExporterType", module=__name__)
-"""Dynamic enum for console exporter. Example: ConsoleExporterType.ACCURACY, ConsoleExporterType.METRICS, ConsoleExporterType.USAGE_DISCREPANCY_WARNING"""
+"""Dynamic enum for console exporter. Example: ConsoleExporterType.ACCURACY, ConsoleExporterType.OSL_MISMATCH_WARNING, ConsoleExporterType.USAGE_DISCREPANCY_WARNING"""
 
 UITypeStr: TypeAlias = str
 UIType = plugins.create_enum(PluginType.UI, "UIType", module=__name__)
