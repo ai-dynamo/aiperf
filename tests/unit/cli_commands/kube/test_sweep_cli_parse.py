@@ -40,10 +40,9 @@ def _run_sweep_dry_run(
 ) -> dict:
     """Run the public CLI and decode the dry-run AIPerfSweep JSON.
 
-    Invoked as ``sys.executable -m aiperf``, never ``uv run aiperf``: ``uv run``
-    re-syncs the project ``.venv`` to ``uv.lock`` before executing, so a suite
-    running against a venv that has drifted from the lock would have its
-    dependencies rewritten underneath it mid-session.
+    Uses ``sys.executable -m aiperf``, not ``uv run aiperf``: ``uv run``
+    reconciles the project ``.venv`` with ``uv.lock`` first, which would leave
+    modules already imported at one version and the rest at another.
     """
     config_file = tmp_path / "sweep-config.yaml"
     config_file.write_text(_MIN_SWEEP_CONFIG)
