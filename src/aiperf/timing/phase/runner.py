@@ -187,6 +187,22 @@ class PhaseRunner(TaskManagerMixin):
                     self._config = config.model_copy(
                         update={"total_expected_requests": warmup_count}
                     )
+
+        if config.sessions_from_dataset and metadata:
+            # Count only sampleable roots: the stop condition counts root
+            # sessions, and DAG children run inside their root's session.
+            num_sessions = len(metadata.sampleable_conversation_ids)
+            # A shared sampler an earlier phase (e.g. warmup) already advanced
+            # could otherwise repeat or skip conversations within this pass.
+            conversation_source.start_full_pass()
+            self._config = self._config.model_copy(
+                update={"expected_num_sessions": num_sessions}
+            )
+            self.info(
+                f"Phase {config.phase_name or config.phase}: sessions=all, running "
+                f"one full pass over {num_sessions:,} conversations"
+            )
+
         self._phase_publisher = phase_publisher
         self._credit_router = credit_router
         self._concurrency_manager = concurrency_manager
