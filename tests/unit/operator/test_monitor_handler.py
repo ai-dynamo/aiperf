@@ -44,6 +44,7 @@ from aiperf.operator.handlers.monitor import (
     _reconcile_pod_startup_issue,
     _recover_from_live_status,
     _recover_from_partial_checkpoints,
+    _salvage_terminated_controller_results,
     _scheduling_issue_is_structural,
     _startup_issue_state,
     _update_worker_counts,
@@ -1719,6 +1720,58 @@ class TestDatasetFailureSurfacing:
         assert dataset["status"] == "False"
         assert dataset["reason"] == "DatasetUnavailable"
         assert dataset["message"] == error
+
+    @pytest.mark.parametrize(
+        "reason,expected_branch",
+        [
+            param(
+                "Error (container dataset-manager): [dataset-manager pod] Cannot use hf://org/repo: it is gated.",
+                "unrecoverable",
+                id="dataset-failure-skips-checkpoints",
+            ),
+            param("Error", "checkpoints", id="other-failure-recovers-checkpoints"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.asyncio
+    async def test_salvage_terminated_controller_dataset_failure_skips_partial_checkpoints(
+        self, reason: str, expected_branch: str
+    ) -> None:
+        """Checkpoints written before a dataset failure must not hide the pod's message."""
+        sb, _ = _make_status_builder()
+        result = SimpleNamespace(downloaded=True, checkpoints=[Path("ckpt.json")])
+        with (
+            patch(
+                "aiperf.operator.handlers.monitor._recover_from_partial_checkpoints",
+                new=AsyncMock(),
+            ) as recover_checkpoints,
+            patch(
+                "aiperf.operator.handlers.monitor._recover_from_live_status",
+                new=AsyncMock(return_value=True),
+            ) as recover_live,
+            patch(
+                "aiperf.operator.handlers.monitor._fail_unrecoverable_controller",
+                new=AsyncMock(),
+            ) as fail_unrecoverable,
+        ):
+            await _salvage_terminated_controller_results(
+                MagicMock(),
+                body=_owned_body(),
+                result=result,
+                status={},
+                namespace="ns",
+                jobset_name="js",
+                job_id="job",
+                reason=reason,
+                sb=sb,
+            )
+        recover_live.assert_not_awaited()
+        if expected_branch == "unrecoverable":
+            recover_checkpoints.assert_not_awaited()
+            fail_unrecoverable.assert_awaited_once()
+            assert fail_unrecoverable.await_args.kwargs["reason"] == reason
+        else:
+            recover_checkpoints.assert_awaited_once()
+            fail_unrecoverable.assert_not_awaited()
 
     @pytest.mark.parametrize(
         "reason",
