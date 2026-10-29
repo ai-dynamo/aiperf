@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from aiperf.common.constants import NANOS_PER_SECOND
-from aiperf.common.enums import CommAddress, CreditPhase
+from aiperf.common.enums import CommAddress, ConversationBranchMode, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task
 from aiperf.common.mixins import CommunicationMixin
@@ -55,9 +55,9 @@ if TYPE_CHECKING:
 
 @dataclass(slots=True)
 class _StickyEntry:
-    """Sticky-routing state for a root correlation id.
+    """Sticky-routing state for a root or SPAWN-child correlation id.
 
-    Tracks which worker owns the session and a refcount so DAG children that
+    Tracks which worker owns the session and a refcount so FORK children that
     pin themselves to the parent's worker can keep the entry alive past the
     parent's own final turn. ``parent_final_seen`` records whether the owning
     session has finished its final turn; the entry is popped only once both
@@ -102,8 +102,10 @@ class WorkerLoad:
 
     Note on active_sessions:
         - active_sessions and active_session_ids only represent the number of sticky sessions assigned
-          to the worker, which inherently means that it only tracks sessions with MORE turns left. This is
-          because sticky sessions are only created when more than 1 turn exists, and are removed when SENDING the final turn.
+          to the worker. An entry is held from the session's first non-final turn (or a final turn that
+          forks) until it is released: when SENDING the final turn, or, for a forking final turn, when its
+          FORK children release it.
+        - Roots and SPAWN children each count as a session; FORK children share their parent's.
     """
 
     worker_id: str
@@ -237,6 +239,9 @@ class StickyCreditRouter(CommunicationMixin):
         - First turn → least-loaded worker (creates sticky session).
         - Subsequent turns → same worker via sticky session lookup.
         - Final turn → cleanup sticky session.
+        - FORK children → parent's worker via the parent's refcounted entry.
+        - SPAWN children → parent's worker if its entry is live (else least-loaded),
+          then pinned under their own id until their final turn.
 
     Load Balancing:
         - Least-loaded worker selection for new sessions using fair load balancing
@@ -333,11 +338,12 @@ class StickyCreditRouter(CommunicationMixin):
         self._on_worker_count_changed: Callable[[int], None] | None = None
         self._on_worker_lost: Callable[[str], None] | None = None
 
-        # Sticky sessions: routing_key -> _StickyEntry
-        # Routes all turns of a conversation (and DAG children pinned to it) to the
-        # same worker. Required because workers cache UserSession state by
-        # x_correlation_id. The routing key is ``parent_correlation_id or
-        # x_correlation_id`` so FORK-mode children co-locate with their parent.
+        # Sticky sessions: owner correlation id (or alias) -> _StickyEntry
+        # Routes all turns of a session (and FORK children pinned to it) to the
+        # same worker, because workers cache UserSession state by
+        # x_correlation_id. Entries are keyed by the owning root's or SPAWN
+        # child's own id; FORK children route via their parent's key and are
+        # aliased onto that entry by ``register_child_routing``.
         self._sticky_sessions: dict[str, _StickyEntry] = {}
         self._terminally_lost_workers: set[str] = set()
         self._gracefully_shutdown_workers: set[str] = set()
@@ -513,10 +519,25 @@ class StickyCreditRouter(CommunicationMixin):
             self.execute_async(self._fire_virtual_return(credit_return))
             return
 
-        # DAG children pin to their parent's worker; otherwise pin to self.
-        routing_key = credit.parent_correlation_id or credit.x_correlation_id
+        # A SPAWN child pins under its own id from its first turn, so it keeps
+        # one worker even when the parent has no entry (parent finished, or
+        # gated or rootless at replay start). FORK children route via the
+        # parent's entry; roots pin to self.
+        is_final = credit.is_final_turn
         is_dag_child = credit.parent_correlation_id is not None
-        sticky_entry = self._sticky_sessions.get(routing_key)
+        # Identity check: CaseInsensitiveStrEnum.__eq__ is costly on this hot
+        # path, and every Credit is built with enum members.
+        is_spawn_child = (
+            is_dag_child and credit.branch_mode is ConversationBranchMode.SPAWN
+        )
+        own_key = credit.x_correlation_id
+        own_entry = self._sticky_sessions.get(own_key) if is_spawn_child else None
+        if own_entry is not None:
+            routing_key = own_key
+            sticky_entry = own_entry
+        else:
+            routing_key = credit.parent_correlation_id or own_key
+            sticky_entry = self._sticky_sessions.get(routing_key)
         sticky_worker_id = sticky_entry.worker_id if sticky_entry is not None else None
 
         if not self._workers:
@@ -560,22 +581,15 @@ class StickyCreditRouter(CommunicationMixin):
                 worker_id = best_worker_id
 
             # Create or rebind the sticky entry for non-final turns; also create
-            # it when the final turn declares DAG spawns so the orchestrator's
+            # it when the final turn declares FORK children so the orchestrator's
             # register_child_routing can find it.
             #
-            # DAG branch-children (parent_correlation_id set — FORK or SPAWN)
-            # must not auto-create when the parent's sticky entry is already
-            # gone. The auto-create path would mint a fresh entry keyed by the
-            # parent's id, bumping ``active_sessions`` with no path to evict it
-            # (final-turn eviction is gated on parent_correlation_id is None;
-            # release_child_routing only decrements an existing entry). That
-            # leaks active_sessions and biases load balancing. When the parent
-            # entry still exists, both FORK and SPAWN children co-locate via
-            # the sticky hit above (routing_key = parent_correlation_id).
-            # SPAWN differs only in refcount: the orchestrator does not call
-            # register_child_routing for SPAWN. When the parent entry is gone,
-            # children fall through to least-loaded without minting a leak.
-            if not credit.is_final_turn or credit.has_forks:
+            # DAG children never mint an entry keyed by the parent's id: nothing
+            # would release it (final-turn eviction is keyed by the owner's own
+            # id; release_child_routing only decrements an existing entry), so
+            # it would leak active_sessions and bias load balancing. SPAWN
+            # children get their own entry below instead.
+            if not is_final or credit.has_forks:
                 if sticky_entry is None and not is_dag_child:
                     sticky_entry = _StickyEntry(
                         worker_id=worker_id,
@@ -597,17 +611,27 @@ class StickyCreditRouter(CommunicationMixin):
                     # eviction paths only ever discard the root.
                     load.active_session_ids.add(sticky_entry.root_key or routing_key)
 
-        # Owning session's final turn: mark parent_final_seen and decrement the
-        # reservation. DAG children never touch the parent entry (managed via
-        # release_child_routing). If this turn has DAG spawns, leave the entry
-        # in place so register_child_routing lands on the same _StickyEntry.
-        if credit.is_final_turn and credit.parent_correlation_id is None:
-            entry = sticky_entry or self._sticky_sessions.get(routing_key)
+        if is_spawn_child and own_entry is None and (not is_final or credit.has_forks):
+            own_entry = self._sticky_sessions[own_key] = _StickyEntry(
+                worker_id=worker_id,
+                root_key=own_key,
+            )
+            load = self._workers[worker_id]
+            load.active_sessions += 1
+            load.active_session_ids.add(own_key)
+
+        # Owning session's final turn (a root or SPAWN child, keyed by its own
+        # id): mark parent_final_seen and decrement the reservation. FORK
+        # children never touch the parent entry (managed via
+        # release_child_routing). If this turn forks, leave the entry in place
+        # so register_child_routing lands on the same _StickyEntry.
+        if is_final and (not is_dag_child or is_spawn_child):
+            entry = own_entry if is_spawn_child else sticky_entry
             if entry is not None:
                 entry.parent_final_seen = True
                 entry.ref_count -= 1
                 if entry.ref_count <= 0 and not credit.has_forks:
-                    self._pop_entry(routing_key, entry)
+                    self._pop_entry(own_key, entry)
                     # Give the session back to the worker it was counted
                     # against, not to whoever this turn happened to route to.
                     # When the pinned worker died the two differ, and
@@ -617,7 +641,7 @@ class StickyCreditRouter(CommunicationMixin):
                     load = self._workers.get(entry.worker_id)
                     if load is not None:
                         load.active_sessions -= 1
-                        load.active_session_ids.discard(entry.root_key or routing_key)
+                        load.active_session_ids.discard(entry.root_key or own_key)
 
         self._track_credit_sent(worker_id, credit)
 
@@ -727,9 +751,9 @@ class StickyCreditRouter(CommunicationMixin):
     ) -> None:
         """Increment the sticky-routing refcount for a parent's entry.
 
-        Called by ``BranchOrchestrator`` before dispatching each DAG child so
+        Called by ``BranchOrchestrator`` before dispatching each FORK child so
         the parent's sticky entry survives past its own final turn until every
-        descendant child session has terminated. If the parent has no active
+        FORK child has terminated. If the parent has no active
         sticky entry we log a warning and continue without raising - the
         child will route via least-loaded selection rather than co-locating
         with the parent's worker, losing prefix-cache locality but not
@@ -753,7 +777,7 @@ class StickyCreditRouter(CommunicationMixin):
             )
 
     def release_child_routing(self, parent_correlation_id: str) -> None:
-        """Decrement the sticky-routing refcount when a DAG child terminates.
+        """Decrement the sticky-routing refcount when a FORK child terminates.
 
         Called by ``BranchOrchestrator`` when a child session reaches a leaf
         or errors out. If the refcount reaches zero and the parent's own final

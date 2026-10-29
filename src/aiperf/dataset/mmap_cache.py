@@ -59,8 +59,10 @@ from aiperf.common.environment import Environment
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.dataset.mmap_cache_lock import acquire_cache_lock as _acquire_cache_lock
 from aiperf.plugin import plugins
+from aiperf.plugin.types import TypeNotFoundError
 
 if TYPE_CHECKING:
+    from aiperf.config.config import AIPerfConfig
     from aiperf.config.resolution.plan import BenchmarkRun
 
 _logger = AIPerfLogger(__name__)
@@ -78,6 +80,15 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v29: a weka request's hashed partial last block now holds its own hash
+    # content instead of sampled filler, a later turn that reuses that hash
+    # keeps the earlier messages, and a forked child splits its first turn at
+    # the parent's token positions. raw_messages decode differently for the
+    # same trace, so bump per this file's contract.
+    # v28: a forked weka child's first turn now keeps the parent's message layout
+    # (AIPERF_DATASET_WEKA_FORK_PARENT_MESSAGES, default on), so its raw_messages
+    # decode differently for the same trace. The flag is in the key payload, but
+    # the content changed, so bump per this file's contract.
     # v27: streaming chat/completions payloads now always carry
     # stream_options.include_usage, not just when use_server_token_count is set
     # (vLLM only emits the trailing usage chunk -- which carries per-request
@@ -181,7 +192,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    27
+    29
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
@@ -216,10 +227,10 @@ def is_trace_or_verbatim_dataset(
     custom_dataset_type: object | None,
     public_dataset: object | None,
 ) -> bool:
-    """Whether a dataset is a trace / verbatim / weka type.
+    """Whether a dataset is a trace or verbatim type.
 
     True for the custom-dataset types in ``TRACE_VERBATIM_DATASET_TYPES`` and for
-    the HF-hosted weka public datasets (``weka_hf`` and the
+    the HF-hosted trace datasets (``mooncake_hf``, ``weka_hf``, and the
     ``semianalysis_cc_traces_weka*`` family). These are the datasets that use the
     mmap cache and skip inputs.json; everything else is treated as a cheap
     non-trace dataset that is never cached and always emits inputs.json.
@@ -231,7 +242,9 @@ def is_trace_or_verbatim_dataset(
         return True
     if public_dataset is not None:
         name = str(public_dataset)
-        if name == "weka_hf" or name.startswith("semianalysis_cc_traces_weka"):
+        if name in {"weka_hf", "mooncake_hf"} or name.startswith(
+            "semianalysis_cc_traces_weka"
+        ):
             return True
     return False
 
@@ -714,8 +727,10 @@ def _public_dataset_source_from_run(run: BenchmarkRun) -> dict[str, object] | No
 
     public_dataset = str(public_dataset_type)
     metadata = plugins.get_public_dataset_loader_metadata(public_dataset)
-    hf_dataset_name = getattr(dataset, "hf_weka_dataset", None) or (
-        metadata.hf_dataset_name
+    hf_dataset_name = (
+        getattr(dataset, "hf_mooncake_dataset", None)
+        or getattr(dataset, "hf_weka_dataset", None)
+        or metadata.hf_dataset_name
     )
     if hf_dataset_name is None:
         return {"plugin": public_dataset}
@@ -727,9 +742,86 @@ def _public_dataset_source_from_run(run: BenchmarkRun) -> dict[str, object] | No
     )
     source = metadata.model_dump(mode="json", exclude_none=True)
     source["hf_dataset_name"] = hf_dataset_name
-    source["hf_split"] = metadata.hf_split
+    source["hf_split"] = dataset.hf_mooncake_split or metadata.hf_split
     source["hf_subset"] = hf_subset
+    if mapping := dataset.mooncake_trace_to_hf_mapping:
+        source["mooncake_trace_to_hf_mapping"] = mapping
+    if public_dataset == "mooncake_hf":
+        source["max_profiling_requests"] = max(
+            (
+                phase.requests
+                for phase in run.cfg.get_profiling_phases()
+                if getattr(phase, "requests", None) is not None
+            ),
+            default=None,
+        )
     return source
+
+
+# Loaders that reconstruct through ``WekaTraceLoader`` and therefore honour
+# "fixed schedule wins over --ignore-trace-delays". The only other loader that
+# reads the flag (h_cua_perf) rejects it outright rather than honouring it
+# (``reject_ignore_trace_delays``), so no cache key there has an effective
+# value to track.
+_WEKA_RECONSTRUCTED_FORMATS = frozenset({"weka_trace", "tracelab"})
+
+
+def _is_weka_reconstructed(dataset: object) -> bool:
+    """Whether this dataset's turns are rebuilt by ``WekaTraceLoader``.
+
+    Covers all three routes into that loader: the ``weka_trace`` and
+    ``tracelab`` custom types, and the HuggingFace corpora, which reach it by
+    delegation rather than inheritance. ``PublicDataset`` carries no ``format``
+    field at all, so a format comparison alone silently misses every one of
+    them -- which is exactly the path the public-dataset timing metadata opens.
+    """
+    fmt = getattr(dataset, "format", None)
+    if fmt is not None:
+        return str(fmt) in _WEKA_RECONSTRUCTED_FORMATS
+
+    name = getattr(dataset, "dataset", None)
+    if name is None:
+        return False
+
+    from aiperf.dataset.loader.semianalysis_cc_traces_weka import (
+        SemiAnalysisCCTracesWekaLoader,
+    )
+
+    try:
+        loader = plugins.get_class("public_dataset_loader", str(name))
+    except (TypeNotFoundError, KeyError, ValueError):
+        # An unregistered public dataset cannot be weka-reconstructed.
+        # TypeNotFoundError is what the registry actually raises for an unknown
+        # name; KeyError/ValueError cover the plainer lookup shapes. Anything
+        # else (a broken plugin import) must surface rather than silently
+        # degrade the cache key into serving a warm entry built under the other
+        # timing mode.
+        return False
+    return issubclass(loader, SemiAnalysisCCTracesWekaLoader)
+
+
+def _effective_ignore_trace_delays(cfg: AIPerfConfig, dataset: object) -> bool:
+    """What the loader actually did with ``--ignore-trace-delays``.
+
+    ``WekaTraceLoader`` lets fixed-schedule replay win over the flag, so the raw
+    flag is not what bakes into the cached Turn timestamps. Keying on the raw flag lets a plain
+    ``--fixed-schedule`` run (which sets no start/end offsets, so every other
+    timing key matches) share an entry with a non-fixed run whose timestamps
+    were stripped, serving the wrong mode in either direction.
+
+    Reads the same phase set the loader does (``get_profiling_phases``) so the
+    two cannot disagree; a fixed-schedule *warmup* phase must not be mistaken
+    for a fixed-schedule run here.
+    """
+    from aiperf.plugin.enums import PhaseType
+
+    if not getattr(dataset, "ignore_trace_delays", False):
+        return False
+    if not _is_weka_reconstructed(dataset):
+        return True
+    return not any(
+        phase.type == PhaseType.FIXED_SCHEDULE for phase in cfg.get_profiling_phases()
+    )
 
 
 def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
@@ -849,7 +941,7 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         # Load-time timing knobs bake into the cached Turn timestamps/delays
         # (applied during reconstruction, not at request time), so they must
         # key the cache or a warm entry silently serves the other mode.
-        "ignore_trace_delays": getattr(dataset, "ignore_trace_delays", False),
+        "ignore_trace_delays": _effective_ignore_trace_delays(cfg, dataset),
         "use_think_time_only": getattr(dataset, "use_think_time_only", False),
         "inter_turn_delay_cap_seconds": getattr(
             dataset, "inter_turn_delay_cap_seconds", None
@@ -868,6 +960,8 @@ def _settings_payload_from_run(run: BenchmarkRun) -> dict[str, object]:
         "weka_aux_reduction_ratio": Environment.DATASET.WEKA_AUX_REDUCTION_RATIO,
         "weka_worker_group_min": Environment.DATASET.WEKA_WORKER_GROUP_MIN,
         "weka_tool_shaped_messages": (Environment.DATASET.WEKA_TOOL_SHAPED_MESSAGES),
+        # Changes a forked child's turn-0 messages baked into the cached mmap.
+        "weka_fork_parent_messages": (Environment.DATASET.WEKA_FORK_PARENT_MESSAGES),
         # Join-seam stitching knobs: gate whether a far-future continuation is
         # stitched onto an existing LCP chain vs spawned as a new conversation
         # (weka_trace.py -> detect_agent_chains), so they change session

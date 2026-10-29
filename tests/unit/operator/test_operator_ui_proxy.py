@@ -43,6 +43,55 @@ async def _client_without_watcher(app: web.Application) -> AsyncIterator[TestCli
         yield client
 
 
+@asynccontextmanager
+async def _fake_operator_api() -> AsyncIterator[str]:
+    """Serve a minimal Results API (one JSON route, one echo WebSocket)."""
+
+    async def jobs(request: web.Request) -> web.Response:
+        return web.json_response({"path": request.path, "query": request.query_string})
+
+    async def job_ws(request: web.Request) -> web.WebSocketResponse:
+        ws = web.WebSocketResponse()
+        await ws.prepare(request)
+        async for message in ws:
+            await ws.send_str(f"{request.path}:{message.data}")
+        return ws
+
+    upstream = web.Application()
+    upstream.router.add_get("/api/v1/jobs", jobs)
+    upstream.router.add_get("/api/v1/jobs/{ns}/{name}/ws", job_ws)
+    async with TestServer(upstream) as server:
+        yield str(server.make_url("")).rstrip("/")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mount", ["", "/live", "/snap-1"])
+async def test_api_http_and_websocket_are_proxied_under_ui_mounts(
+    tmp_path: Path, mount: str
+) -> None:
+    ui_dir = tmp_path / "ui"
+    ui_dir.mkdir()
+    (ui_dir / "index.html").write_text("<div>live ui</div>", encoding="utf-8")
+    snapshots_dir = tmp_path / "snapshots"
+    (snapshots_dir / "snap-1").mkdir(parents=True)
+    (snapshots_dir / "snap-1" / "index.html").write_text("snap", encoding="utf-8")
+
+    async with _fake_operator_api() as upstream:
+        app = create_app(ui_dir=ui_dir, upstream=upstream, snapshots_dir=snapshots_dir)
+        async with TestClient(TestServer(app)) as client:
+            response = await client.get(f"{mount}/api/v1/jobs?phase=Running")
+            body = await response.json()
+
+            ws = await client.ws_connect(f"{mount}/api/v1/jobs/ns/job/ws")
+            await ws.send_str("ping")
+            echoed = await asyncio.wait_for(ws.receive_str(), timeout=5)
+            await ws.close()
+
+    assert response.status == 200
+    assert body == {"path": "/api/v1/jobs", "query": "phase=Running"}
+    assert echoed == "/api/v1/jobs/ns/job/ws:ping"
+
+
 @pytest.mark.asyncio
 async def test_live_serves_index_with_no_store_cache(tmp_path: Path) -> None:
     ui_dir = tmp_path / "ui"

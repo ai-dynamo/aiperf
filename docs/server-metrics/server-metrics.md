@@ -8,6 +8,48 @@ sidebar-title: Server Metrics Collection
 
 AIPerf automatically collects metrics from Prometheus-compatible endpoints exposed by LLM inference servers and serving frontends (vLLM, SGLang, TRT-LLM, Dynamo, Triton, etc.).
 
+## Long runs and collection failures
+
+Numeric sample histories, including scrape timestamps and histogram buckets, are
+stored in an anonymous file on the artifact filesystem. All samples remain
+available for exact aggregation and Parquet export; collection does not retain
+the complete numeric history in resident memory. Use disk-backed artifact
+storage rather than a memory-backed `emptyDir` or tmpfs for long runs.
+Backing-file growth reserves disk space before exposing writable mappings.
+If reservation fails because the volume is full, collection stops with an
+explicit error and retains previously collected samples for export. Periodic
+flushes synchronize and release only recently accessed page ranges, including
+array-growth copies and out-of-order inserts, rather than scanning the full
+retained history.
+
+`AIPERF_SERVER_METRICS_STORAGE_MAX_BYTES` limits the backing file, including
+array-growth allocations (default 16 GiB).
+`AIPERF_SERVER_METRICS_STORAGE_FLUSH_BYTES` controls flush and page-cache release
+frequency (default 8 MiB). `AIPERF_SERVER_METRICS_MAX_SERIES` limits distinct
+endpoint/name/label combinations (default 20,000), including changing labels.
+Slow endpoints have at most one periodic scrape in flight; busy ticks are
+skipped. Phase-boundary scrapes can still overlap a periodic scrape.
+
+Exceeding a storage or series budget stops server-metrics collection and reports
+an explicit error. Already collected samples are exported where possible, while
+inference request processing and final client-metric exports continue. Terminal
+resource failures report a degraded run after export; recoverable scrape errors
+remain advisory. The
+primary `profile_export_aiperf.json` includes `server_metrics_error_summary` so
+missing telemetry cannot be mistaken for a complete server-metrics history.
+Fatal collector failures remain in this export even if the collector later
+reconnects or restarts.
+Delayed failure notifications from a stopped collector also leave inference
+processing and final export running.
+Aggregation and disk writes run outside the service heartbeat event loop.
+
+On Kubernetes, the optional metrics process runs as a restartable native
+sidecar. Its OOM kill or liveness restart does not terminate the controller job.
+A restarted process cannot recover its predecessor's anonymous sample store;
+the controller releases that result producer, reports incomplete telemetry,
+and exports the inference results with a degraded run status. Native sidecars
+require Kubernetes 1.29+; disable server metrics on older supported clusters.
+
 ## Quick Reference
 
 | Feature | Description | Default |
@@ -225,7 +267,7 @@ all-namespace mode and requires a cluster-scoped `pods: list` grant. To discover
 server in another named namespace, add that namespace to the operator chart's
 `serverMetricsDiscoveryNamespaces` value; if the benchmark pod uses a custom
 ServiceAccount, use the chart's `{namespace, serviceAccounts}` entry form. See
-[Kubernetes RBAC and security](../kubernetes/rbac-security.md#benchmark-pod-permissions).
+[Kubernetes RBAC and security](../kubernetes/rbac-security.md#benchmark-namespace-role-catalog).
 
 The built-in eligibility rules select Dynamo's
 `nvidia.com/metrics-enabled=true` pods, pods with
@@ -308,12 +350,27 @@ WARNING  Disabling server metrics collection for http://127.0.0.1:60000/metrics:
 
 **To suppress the warning entirely**, pass `--no-server-metrics` — collection is skipped, no probe is attempted, no warning is logged.
 
+## Warmup / profiling phase boundary
+
+When server metrics collection is **runtime-active** (configure found at least one reachable Prometheus endpoint), AIPerf coordinates the warmup-to-profiling transition so late histogram observations cannot leak into profiling deltas:
+
+1. Both `ServerMetricsManager` and `PhaseRunner` wait for `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` against the same absolute deadline.
+2. The manager suspends periodic scrapes, drains in-flight warmup-tagged scrapes, takes a final warmup scrape, then publishes `SERVER_METRICS_WARMUP_BOUNDARY_READY`.
+3. The runner does not return from warmup (so profiling credits cannot start) until that acknowledgement arrives.
+
+If the acknowledgement is missing while collection is active, the runner aborts with a `TimeoutError` before profiling credits start. That fail-closed contract protects attribution when collectors are live but slow. The status wait before phases start is deliberately fail-open: if `ServerMetricsStatusMessage` has not arrived within `min(SCRAPE_TIMEOUT, 5)` seconds, there is no evidence any collector is live (the common cause is an unreachable `/metrics` with the default `enabled=True`, where the manager has already shut down and would never ack), so phases start with the barrier off and a warning is logged rather than failing the run.
+
+When collection is **runtime-inactive** (no reachable `/metrics`, or `--no-server-metrics`), the flush and ack waits are skipped entirely. The benchmark proceeds without server-metrics exports, matching the behaviour when server metrics were never enabled.
+
+The ack wait budget defaults to `COLLECTION_FLUSH_PERIOD + SCRAPE_TIMEOUT * (N + 2) + 5`, where `N` is the reachable collector count from `ServerMetricsStatusMessage`; that covers the manager's worst case of one scrape timeout draining in-flight scrapes, one waiting on cancelled periodic scrapes, and `N` serial final scrapes. Set `AIPERF_SERVER_METRICS_WARMUP_BOUNDARY_TIMEOUT` to override that derived budget.
+
 ## Configuration
 
 | Environment Variable | Default | Description |
 |---------------------|---------|-------------|
 | `AIPERF_SERVER_METRICS_COLLECTION_INTERVAL` | 0.333s | Collection frequency (333ms, ~3Hz) |
-| `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` | 2.0s | Wait time for final metrics after benchmark |
+| `AIPERF_SERVER_METRICS_COLLECTION_FLUSH_PERIOD` | 2.0s | Wait time for metrics to settle at warmup/profiling boundaries when collection is active |
+| `AIPERF_SERVER_METRICS_WARMUP_BOUNDARY_TIMEOUT` | derived | Optional override for the warmup boundary ack wait; unset/0 uses flush + scrape budget from runtime collector count |
 | `AIPERF_SERVER_METRICS_PROFILE_COMPLETE_RELAY_TIMEOUT` | 60s | Maximum wait for the manager-owned final scrape and artifact flush command |
 | `AIPERF_SERVER_METRICS_REACHABILITY_TIMEOUT` | 10s | Timeout for endpoint reachability tests |
 | `AIPERF_SERVER_METRICS_EXPORT_BATCH_SIZE` | 100 | Batch size for JSONL writer |
