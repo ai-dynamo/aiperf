@@ -917,6 +917,13 @@ class BranchOrchestrator:
             self.stats.graphs_admitted += 1
 
         parent_corr = credit.x_correlation_id
+        if (
+            self._schedule_stopped.is_set()
+            and not self._issuer.can_dispatch_child_turn()
+        ):
+            self._discard_undispatchable_future_joins(parent_corr)
+            self._notify_drain()
+            return False
 
         async with self._parent_locks[parent_corr]:
             branch_ids = self.get_branch_ids(credit)
@@ -1732,7 +1739,17 @@ class BranchOrchestrator:
                 releasable.append(pending)
         for pending in releasable:
             await self._release_blocked_join(pending)
+        for parent_corr in list(self._future_joins):
+            self._discard_undispatchable_future_joins(parent_corr)
         self._notify_drain()
+
+    def _discard_undispatchable_future_joins(self, parent_corr: str) -> None:
+        for gated_idx, pending in list(self._future_joins.get(parent_corr, {}).items()):
+            if pending.total_outstanding == 0 and not self._issuer.can_dispatch_join(
+                pending.parent_agent_depth
+            ):
+                self._pop_future_join(parent_corr, gated_idx)
+        self._release_parent_slot_if_drained(parent_corr)
 
     async def _satisfy_prerequisite(
         self,
@@ -1776,6 +1793,11 @@ class BranchOrchestrator:
         if pending.is_blocked and pending.can_release:
             return self._active_joins.pop(parent_corr, None)
         if pending.is_blocked:
+            return None
+        if self._schedule_stopped.is_set() and not self._issuer.can_dispatch_join(
+            pending.parent_agent_depth
+        ):
+            self._pop_future_join(parent_corr, gated_idx)
             return None
         # Satisfied before the parent arrived. A request-free SPINE gate carries
         # between-round think-time, so leave it in place (marked satisfied) for
@@ -2058,8 +2080,10 @@ class BranchOrchestrator:
         """
         if self._cleaning_up:
             return
+        self._discard_undispatchable_future_joins(child_x_correlation_id)
         entries = self._child_to_join.get(child_x_correlation_id)
         if not entries:
+            self._notify_drain()
             return
         self.stats.children_truncated += 1
         await self._handle_child_done(child_x_correlation_id, entries)

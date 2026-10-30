@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
+from aiperf.common.enums import ConversationBranchMode, CreditPhase, PrerequisiteKind
 from aiperf.common.models import (
     ConversationBranchInfo,
     ConversationMetadata,
@@ -28,7 +28,11 @@ from aiperf.common.models import (
     TurnPrerequisite,
 )
 from aiperf.plugin.enums import DatasetSamplingStrategy
-from aiperf.timing.branch_orchestrator import BranchOrchestrator, PendingBranchJoin
+from aiperf.timing.branch_orchestrator import (
+    BranchOrchestrator,
+    PendingBranchJoin,
+    PrereqState,
+)
 
 RECORDED_TARGET_SEC = 20.0
 
@@ -115,6 +119,147 @@ async def test_duration_cutoff_does_not_wait_for_the_recorded_target(
         f"a stopped phase held for {recorded_holds} seconds waiting on a "
         f"recorded timestamp it can no longer dispatch at"
     )
+
+
+@pytest.mark.asyncio
+async def test_duration_cutoff_drops_undispatchable_future_join() -> None:
+    orch = _orchestrator()
+    pending = PendingBranchJoin(
+        parent_x_correlation_id="corr-1",
+        parent_conversation_id="r",
+        parent_num_turns=8,
+        gated_turn_index=7,
+    )
+    pending.outstanding["SPAWN_JOIN:r:0"] = PrereqState()
+    orch._future_joins["corr-1"] = {7: pending}
+    orch._issuer.can_dispatch_join.return_value = False
+
+    assert not pending.is_satisfied
+    await orch.expire_replay_deadlines()
+
+    assert not orch.has_pending_branch_work()
+    orch._issuer.dispatch_join_turn.assert_not_awaited()
+
+
+def _future_join_waiting_on_child(orch: BranchOrchestrator) -> PendingBranchJoin:
+    pending = PendingBranchJoin(
+        parent_x_correlation_id="corr-1",
+        parent_conversation_id="r",
+        parent_num_turns=8,
+        gated_turn_index=7,
+        parent_no_request_on_gated_turn=True,
+    )
+    pending.outstanding["SPAWN_JOIN:r:0"] = PrereqState(expected=1, registered=True)
+    orch._future_joins["corr-1"] = {7: pending}
+    return pending
+
+
+@pytest.mark.asyncio
+async def test_child_finishing_after_cutoff_drops_future_join() -> None:
+    orch = _orchestrator()
+    pending = _future_join_waiting_on_child(orch)
+    orch._issuer.can_dispatch_join.return_value = False
+
+    await orch.expire_replay_deadlines()
+
+    assert not pending.is_satisfied
+    assert orch.has_pending_branch_work()
+
+    await orch._satisfy_prerequisite("corr-1", 7, "SPAWN_JOIN:r:0", "child-1")
+
+    assert pending.is_satisfied
+    assert not orch.has_pending_branch_work()
+    orch._issuer.dispatch_join_turn.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stopped_parent_drops_undispatchable_future_join() -> None:
+    orch = _orchestrator()
+    pending = PendingBranchJoin(
+        parent_x_correlation_id="child-1",
+        parent_conversation_id="r",
+        parent_num_turns=8,
+        gated_turn_index=7,
+        parent_agent_depth=1,
+    )
+    orch._future_joins["child-1"] = {7: pending}
+    orch._issuer.can_dispatch_join.return_value = False
+
+    await orch.on_child_stopped("child-1")
+
+    assert not orch.has_pending_branch_work()
+
+
+@pytest.mark.asyncio
+async def test_stopped_parent_keeps_future_join_with_in_flight_child() -> None:
+    orch = _orchestrator()
+    pending = PendingBranchJoin(
+        parent_x_correlation_id="child-1",
+        parent_conversation_id="r",
+        parent_num_turns=8,
+        gated_turn_index=7,
+        parent_agent_depth=1,
+    )
+    pending.outstanding["SPAWN_JOIN:r:0"] = PrereqState(expected=1, registered=True)
+    orch._future_joins["child-1"] = {7: pending}
+    orch._issuer.can_dispatch_join.return_value = False
+
+    await orch.on_child_stopped("child-1")
+
+    assert orch._future_joins["child-1"][7] is pending
+
+
+@pytest.mark.asyncio
+async def test_cutoff_does_not_recreate_gate_from_late_parent_return() -> None:
+    orch = _orchestrator()
+    pending = PendingBranchJoin(
+        parent_x_correlation_id="corr-1",
+        parent_conversation_id="r",
+        parent_num_turns=8,
+        gated_turn_index=7,
+    )
+    pending.outstanding["SPAWN_JOIN:r:0"] = PrereqState()
+    orch._future_joins["corr-1"] = {7: pending}
+    credit = MagicMock(
+        phase=CreditPhase.PROFILING,
+        no_request=False,
+        turn_index=0,
+        x_correlation_id="corr-1",
+    )
+    orch.get_branch_ids = MagicMock(return_value=["r:0"])
+    orch._spawn_children_and_register_gates = AsyncMock()
+    orch._issuer.can_dispatch_join.return_value = False
+    orch._issuer.can_dispatch_child_turn.return_value = False
+
+    await orch.expire_replay_deadlines()
+    intercepted = await orch.intercept(credit)
+
+    assert not intercepted
+    assert not orch.has_pending_branch_work()
+    orch._spawn_children_and_register_gates.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "complete_after_cutoff",
+    [False, True],
+    ids=["complete-at-cutoff", "complete-after-cutoff"],
+)
+@pytest.mark.asyncio
+async def test_cutoff_keeps_future_join_that_can_still_dispatch(
+    complete_after_cutoff: bool,
+) -> None:
+    orch = _orchestrator()
+    pending = _future_join_waiting_on_child(orch)
+    orch._issuer.can_dispatch_join.return_value = True
+    if not complete_after_cutoff:
+        await orch._satisfy_prerequisite("corr-1", 7, "SPAWN_JOIN:r:0", "child-1")
+
+    await orch.expire_replay_deadlines()
+    if complete_after_cutoff:
+        await orch._satisfy_prerequisite("corr-1", 7, "SPAWN_JOIN:r:0", "child-1")
+
+    assert pending.is_satisfied
+    assert orch._future_joins["corr-1"][7] is pending
 
 
 @pytest.mark.asyncio
