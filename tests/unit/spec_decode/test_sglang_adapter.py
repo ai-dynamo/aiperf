@@ -74,6 +74,7 @@ def test_zero_steps_and_all_rejected_drafts(steps: int) -> None:
         param({"spec_num_proposed_drafts": True}, id="boolean_count"),
         param({"spec_num_proposed_drafts": "60"}, id="string_count"),
         param({"spec_verify_ct": 20.0}, id="float_count"),
+        param({"spec_num_correct_drafts": 10**309}, id="overflowing_count"),
         param({"spec_correct_drafts_histogram": None}, id="null_histogram"),
         param({"spec_correct_drafts_histogram": {}}, id="dict_histogram"),
         param({"spec_correct_drafts_histogram": []}, id="empty_histogram"),
