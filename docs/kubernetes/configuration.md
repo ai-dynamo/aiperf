@@ -282,7 +282,7 @@ nothing would reuse it after the pod ends. With a PVC like the one above, you ca
 setting `AIPERF_DATASET_MMAP_CACHE_ENABLED` to `true` and `AIPERF_DATASET_MMAP_CACHE_DIR` to a
 path on the claim (for example `/cache/mmap`) in `podTemplate.env`.
 
-A large download can outlast the dataset-manager's startup probe (about 150 s by default); see
+A large download can outlast the dataset-manager's download budget (3600 s by default); see
 [Large datasets and the startup probe](../tutorials/remote-datasets.md#large-datasets-and-the-startup-probe).
 
 ---
