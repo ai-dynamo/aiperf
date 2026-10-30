@@ -136,7 +136,7 @@ async def remote_first_record_has_timestamp(probe: ProbeResult) -> bool:
         return False
     if (
         probe.data_files is not None
-        or service.remote_offline()
+        or service.is_remote_offline()
         or PurePosixPath(probe.filename).suffix.lower() in COLUMNAR_SUFFIXES
     ):
         return await _downloaded_first_record_has_timestamp(probe)

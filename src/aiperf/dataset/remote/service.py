@@ -47,7 +47,7 @@ def get_resolver(scheme: str) -> SourceResolverProtocol:
     return plugins.get_class(PluginType.DATASET_SOURCE_RESOLVER, scheme)()
 
 
-def remote_offline() -> bool:
+def is_remote_offline() -> bool:
     """True when remote sources must be served from the cache with no network calls."""
     return bool(Environment.DATASET.REMOTE_OFFLINE) or (
         os.environ.get("HF_HUB_OFFLINE", "").strip().lower() in _TRUTHY
@@ -92,7 +92,7 @@ def _disk_path(source: ResolvedSource, file: RemoteFile) -> Path:
     return source.local_path.joinpath(*rel.parts)
 
 
-def _intact(source: ResolvedSource) -> bool:
+def _is_intact(source: ResolvedSource) -> bool:
     """Every recorded file is on disk with its recorded size.
 
     Cache writers do not fsync, so after an OS crash a file can survive truncated
@@ -112,7 +112,7 @@ def _usable_entry(ref: RemoteRef) -> ResolvedSource | None:
     source = read_index(ref)
     if source is None:
         return None
-    if not _intact(source):
+    if not _is_intact(source):
         _logger.warning(
             f"Cached copy of {ref.display} is missing or incomplete; ignoring it"
         )
@@ -122,7 +122,7 @@ def _usable_entry(ref: RemoteRef) -> ResolvedSource | None:
 
 async def probe_ref(ref: RemoteRef) -> ProbeResult:
     """Check access and pin the version of ``ref`` (from the cache when offline)."""
-    if remote_offline():
+    if is_remote_offline():
         probe = await asyncio.to_thread(_offline_probe, ref)
     else:
         resolver = get_resolver(ref.scheme)
@@ -201,7 +201,7 @@ async def materialize_probe(probe: ProbeResult) -> ResolvedSource:
     failure leaves no entry that later stages could mistake for a usable cache.
     """
     ref = probe.ref
-    offline = remote_offline()
+    offline = is_remote_offline()
     # An unversioned URL can change without notice, so online it is always
     # re-downloaded; offline, the last copy is the best there is.
     reusable = offline or ref.resolved_version != UNVERSIONED

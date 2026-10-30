@@ -72,7 +72,7 @@ def _same_version(current: str, pinned: str) -> bool:
     return _weak(current) == _weak(pinned)
 
 
-def _still_pinned(meta: HttpMetadata, pinned: str) -> bool:
+def _is_still_pinned(meta: HttpMetadata, pinned: str) -> bool:
     """Whether the headers of a full GET still match the version the probe pinned.
 
     A ``lm:`` pin also records the probe's Content-Length, which a chunked or
@@ -203,7 +203,7 @@ class HTTPSourceResolver:
                 session, probe.ref.ref, dest, headers={}, ref_display=probe.ref.display
             )
         pinned = probe.ref.resolved_version
-        if pinned not in (None, UNVERSIONED) and not _still_pinned(meta, pinned):
+        if pinned not in (None, UNVERSIONED) and not _is_still_pinned(meta, pinned):
             await asyncio.to_thread(dest.unlink, missing_ok=True)
             raise changed_after_pin(
                 probe.ref.display, RemoteStage.MATERIALIZE, "the file"

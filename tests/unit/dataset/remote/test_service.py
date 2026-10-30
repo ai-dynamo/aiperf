@@ -363,13 +363,13 @@ async def test_offline_uses_cache_and_errors_when_empty(
 
 
 def test_remote_offline_reads_setting_and_hf_env(monkeypatch) -> None:
-    assert service.remote_offline() is False
+    assert service.is_remote_offline() is False
     monkeypatch.setenv("HF_HUB_OFFLINE", "TRUE")
-    assert service.remote_offline() is True
+    assert service.is_remote_offline() is True
     monkeypatch.setenv("HF_HUB_OFFLINE", "0")
-    assert service.remote_offline() is False
+    assert service.is_remote_offline() is False
     monkeypatch.setattr(service.Environment.DATASET, "REMOTE_OFFLINE", True)
-    assert service.remote_offline() is True
+    assert service.is_remote_offline() is True
 
 
 def test_cached_source_requires_resolution_and_materialization() -> None:
