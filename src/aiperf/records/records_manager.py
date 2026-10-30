@@ -79,6 +79,7 @@ from aiperf.common.scenario.registry import get_scenario
 from aiperf.common.types import MetricTagT
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.config.comm import ZMQDualBindConfig
+from aiperf.config.dataset.truncation import end_conversation_on_truncation_enabled
 from aiperf.credit.messages import (
     CreditPhaseCompleteMessage,
     CreditPhaseProgressMessage,
@@ -2509,6 +2510,17 @@ class RecordsManager(PullClientMixin, BaseComponentService):
             return None, []
         return results, []
 
+    def _truncation_early_end_counts(self, stats: PhaseRecordsStats) -> dict[str, int]:
+        """Early-end counts for ProfileResults, omitted when the option is off."""
+        if not end_conversation_on_truncation_enabled(
+            self.run.cfg.get_default_dataset()
+        ):
+            return {}
+        return {
+            "conversations_ended_on_truncation": stats.sessions_ended_on_truncation,
+            "turns_skipped_on_truncation": stats.turns_skipped_on_truncation,
+        }
+
     def _create_phase_profile_result(
         self,
         *,
@@ -2806,6 +2818,7 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 context_overflow_count=self._skipped_context_overflow_counts_by_phase.get(
                     phase, 0
                 ),
+                **self._truncation_early_end_counts(phase_stats),
                 metric_duration_coverage=metric_duration_coverage,
                 runtime_submission_invalid_reasons=_profile_metric_coverage_reasons(
                     fatal_errors
