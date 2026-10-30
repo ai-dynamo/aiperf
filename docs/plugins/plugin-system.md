@@ -32,6 +32,8 @@ The plugin system enables:
 
 ### Terminology
 
+Decision endpoint plugins `decisions` and `systemone` replay complete text evaluation payloads and retain structured non-text responses. Their metadata sets `produces_tokens: false`, `tokenizes_input: false` and `requires_request_payload: true`. The last field is an opt-in for any endpoint whose record-time response validation reads the original payload; the worker's default retention policy honors it even when client tokenization and raw export are disabled. Explicit payload stripping still takes precedence and can make such validation fail. See [structured decision replay](../tutorials/raw-payload-replay.md#structured-decision-apis) for commands and boundaries.
+
 | Term | Description | Code Type |
 |------|-------------|-----------|
 | **Registry** | Global singleton holding all plugins | `_PluginRegistry` |

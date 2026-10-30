@@ -5,7 +5,7 @@
 slim ``RecordContext`` after dispatch.
 
 Stripping ``payload_bytes`` substantially reduces record-pipeline memory for
-very large prompts, but the record pipeline has exactly three consumers that
+very large prompts, but the record pipeline has four consumers that
 read it:
 
 1. Client-side input tokenization -- ``InferenceResultParser`` decodes the
@@ -15,6 +15,8 @@ read it:
    the payload.
 3. Raw payload export -- ``raw_record_writer_processor`` splices the bytes into
    the exported JSONL.
+4. Endpoint response validation -- adapters can reconcile answers with the
+   exact request through ``requires_request_payload`` metadata.
 
 ``record_payload_bytes_required`` returns True when *any* of those is active for
 the run; a worker may strip the bytes whenever it returns False without changing
@@ -112,8 +114,8 @@ def record_payload_bytes_required(
 ) -> bool:
     """True when a downstream record consumer reads ``payload_bytes``.
 
-    The three consumers are client-side input tokenization, media counting from
-    request bodies, and raw payload export. When all three are inert, a worker
+    The consumers are client-side input tokenization, media counting from
+    request bodies, raw payload export, and endpoint validation. When all are inert, a worker
     may drop ``payload_bytes`` from the record without changing any observable
     metric.
 
@@ -133,7 +135,12 @@ def record_payload_bytes_required(
     needs_client_isl = not resolve_disable_tokenization(cfg, endpoint_meta)
     needs_media_counts = _run_has_synthetic_media(cfg)
     needs_raw_export = cfg.artifacts.export_level == ExportLevel.RAW
-    return needs_client_isl or needs_media_counts or needs_raw_export
+    return (
+        needs_client_isl
+        or needs_media_counts
+        or needs_raw_export
+        or endpoint_meta.requires_request_payload
+    )
 
 
 def resolve_strip_record_payload_bytes(
