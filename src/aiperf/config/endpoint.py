@@ -18,6 +18,7 @@ from pydantic import (
     AfterValidator,
     ConfigDict,
     Field,
+    PrivateAttr,
     field_serializer,
     model_validator,
 )
@@ -405,7 +406,7 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
-    _streaming_explicitly_set: bool = False
+    _streaming_explicitly_set: bool = PrivateAttr(default=False)
 
     transport: Annotated[
         TransportType | None,

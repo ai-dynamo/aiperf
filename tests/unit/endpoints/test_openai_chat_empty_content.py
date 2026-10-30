@@ -35,29 +35,38 @@ def _chunk(delta: dict[str, object], *, finish_reason: str | None = None) -> SSE
 
 
 @pytest.mark.parametrize(
-    ("delta", "expected_type"),
+    ("delta", "expected"),
     [
-        param({"content": ""}, TextResponseData, id="empty-content"),
+        param({"content": ""}, TextResponseData(text=""), id="empty-content"),
         param(
             {"reasoning_content": ""},
-            ReasoningResponseData,
+            ReasoningResponseData(content=None, reasoning=""),
             id="empty-reasoning-content",
         ),
-        param({"reasoning": ""}, ReasoningResponseData, id="empty-reasoning-alias"),
+        param(
+            {"reasoning": ""},
+            ReasoningResponseData(content=None, reasoning=""),
+            id="empty-reasoning-alias",
+        ),
         param(
             {"content": "", "reasoning_content": ""},
-            ReasoningResponseData,
+            ReasoningResponseData(content="", reasoning=""),
             id="both-empty",
+        ),
+        param(
+            {"content": "", "reasoning": ""},
+            ReasoningResponseData(content="", reasoning=""),
+            id="both-empty-reasoning-alias",
         ),
     ],
 )  # fmt: skip
 def test_enabled_retains_explicit_empty_strings(
-    delta: dict[str, object], expected_type: type[BaseResponseData]
+    delta: dict[str, object], expected: BaseResponseData
 ) -> None:
     parsed = _endpoint(enabled=True).parse_response(_chunk(delta))
 
     assert parsed is not None
-    assert isinstance(parsed.data, expected_type)
+    assert parsed.data == expected
 
 
 @pytest.mark.parametrize(
@@ -109,6 +118,21 @@ def test_non_streaming_empty_content_remains_excluded() -> None:
     assert endpoint.parse_response(response) is None
 
 
+def test_non_streaming_message_ignores_stray_empty_delta() -> None:
+    """Empty-string retention is scoped to stream chunks, not any payload carrying a delta."""
+    payload = {
+        "object": "chat.completion",
+        "choices": [
+            {"message": {"role": "assistant"}, "delta": {"content": ""}},
+        ],
+    }
+    response = SSEMessage.parse(
+        b"data: " + orjson.dumps(payload) + b"\n\n", perf_ns=100
+    )
+
+    assert _endpoint(enabled=True).parse_response(response) is None
+
+
 def test_non_empty_reasoning_alias_wins_over_empty_reasoning_content() -> None:
     parsed = _endpoint(enabled=True).parse_response(
         _chunk({"content": "", "reasoning_content": "", "reasoning": "thinking"})
@@ -150,6 +174,7 @@ def test_enabled_done_marker_remains_excluded() -> None:
     )
 
 
+@pytest.mark.parametrize("enabled", [True, False])
 @pytest.mark.parametrize(
     "payload",
     [
@@ -164,13 +189,20 @@ def test_enabled_done_marker_remains_excluded() -> None:
             },
             id="non-object-delta",
         ),
+        param(
+            {
+                "object": "chat.completion.chunk",
+                "choices": {"delta": {"content": ""}},
+            },
+            id="non-list-choices",
+        ),
     ],
 )  # fmt: skip
-def test_enabled_discards_malformed_stream_events(
-    payload: dict[str, object],
+def test_malformed_stream_events_are_discarded(
+    payload: dict[str, object], enabled: bool
 ) -> None:
     response = SSEMessage.parse(
         b"data: " + orjson.dumps(payload) + b"\n\n", perf_ns=100
     )
 
-    assert _endpoint(enabled=True).parse_response(response) is None
+    assert _endpoint(enabled=enabled).parse_response(response) is None
