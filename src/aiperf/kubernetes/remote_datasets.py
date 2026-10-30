@@ -76,9 +76,15 @@ def pin_remote_datasets_for_kubernetes(
         reason = f"This machine cannot read {ref.display} (its credential is redacted)"
         _defer_to_pod(benchmark, reason, sweep=sweep, quiet_when_pinned=True)
         return
+    # The access stage replaces the dataset (pinned, marker cleared) and the phase
+    # one at a time, before it reads the first record. A failure part-way must not
+    # hand the pod a run that only looks settled.
+    datasets, phases = list(benchmark.datasets), list(benchmark.phases)
     try:
         preflight_remote_access([benchmark])
     except RemoteSourceError as e:
+        benchmark.datasets[:] = datasets
+        benchmark.phases[:] = phases
         if not _pod_may_read(ref, e):
             hinted = _with_host_token_hint(ref, e)
             if hinted is None:
