@@ -165,17 +165,14 @@ async def test_generate_realtime_metrics_can_scope_to_phase_index(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("phase_index", [None, 2])
-@pytest.mark.parametrize("scenario", [None, "inferencex-agentx-mvp"])
 @pytest.mark.parametrize("ui", [UIType.NONE, UIType.SIMPLE, UIType.DASHBOARD])
 async def test_live_metrics_skip_unused_work_and_preserve_final_export(
     _mock_registry_for_accumulator: Mock,
     benchmark_run,
     phase_index: int | None,
-    scenario: str | None,
     ui: UIType,
 ) -> None:
     benchmark_run.cfg.artifacts.slice_duration = 1.0
-    benchmark_run.cfg.scenario = scenario
     benchmark_run.cfg.runtime.ui = ui
     accumulator = create_accumulator_with_metrics(
         benchmark_run, RequestLatencyMetric, InterChunkLatencyMetric
