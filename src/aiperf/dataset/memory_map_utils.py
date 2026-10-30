@@ -29,6 +29,7 @@ import asyncio
 import mmap
 import os
 import tempfile
+import threading
 import types
 import weakref
 from contextlib import suppress
@@ -57,6 +58,7 @@ from aiperf.common.models import (
     MemoryMapClientMetadata,
     Turn,
 )
+from aiperf.dataset.json_stream import iter_concatenated_json_bytes
 
 _logger = AIPerfLogger(__name__)
 
@@ -120,6 +122,8 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         self._data_file = None
         self._raw_data_file = None
         self._stream_writer = None
+        # A cancelled await does not stop an executor write; serialize close with it.
+        self._stream_lock = threading.Lock()
         self._current_offset = 0
         self._offsets: dict[str, ConversationOffset] = {}
         self._payload_offsets: dict[str, list[PayloadOffset]] = {}
@@ -165,9 +169,24 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
     async def _write_bytes(self, data: bytes) -> None:
         """Write bytes to the active output (compressed stream or async file)."""
         if self._compress_only:
-            self._stream_writer.write(data)
+            await asyncio.to_thread(self._write_compressed, data)
         else:
             await self._data_file.write(data)
+
+    def _write_compressed(self, data: bytes) -> None:
+        """Write through the zstd stream without racing shutdown."""
+        with self._stream_lock:
+            self._stream_writer.write(data)
+
+    def _close_compressed(self) -> None:
+        """Flush and close after any outstanding executor write finishes."""
+        with self._stream_lock:
+            try:
+                if self._stream_writer is not None:
+                    self._stream_writer.close()
+            finally:
+                if self._raw_data_file is not None:
+                    self._raw_data_file.close()
 
     async def add_conversation(
         self, conversation_id: str, conversation: Conversation
@@ -190,24 +209,31 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             # turn scalars in the index so metric enrichment can restore
             # max_tokens / scheduled_send_ms / source_kind / audio_duration_seconds
             # without the full Conversation.
+            sizes: list[int] = []
+            start_offset = self._current_offset
+            async for chunk in iter_concatenated_json_bytes(
+                (turn.raw_payload for turn in conversation.turns), sizes
+            ):
+                await self._write_bytes(chunk)
+                self._current_offset += len(chunk)
             turn_offsets: list[PayloadOffset] = []
-            for turn in conversation.turns:
-                payload_bytes = orjson.dumps(turn.raw_payload)
+            for turn, size in zip(conversation.turns, sizes, strict=True):
                 turn_offsets.append(
                     PayloadOffset(
-                        offset=self._current_offset,
-                        size=len(payload_bytes),
+                        offset=start_offset,
+                        size=size,
                         max_tokens=_resolve_turn_max_tokens(turn),
                         timestamp=turn.timestamp,
                         source_kind=turn.source_kind,
                         audio_duration_seconds=turn.audio_duration_seconds,
                     )
                 )
-                self._current_offset += len(payload_bytes)
-                await self._write_bytes(payload_bytes)
+                start_offset += size
             self._payload_offsets[conversation_id] = turn_offsets
         else:
-            conv_bytes = conversation.model_dump_json().encode("utf-8")
+            conv_bytes = await asyncio.to_thread(
+                lambda: conversation.model_dump_json().encode("utf-8")
+            )
             # Track uncompressed offset (workers need this after decompression)
             self._offsets[conversation_id] = ConversationOffset(
                 offset=self._current_offset, size=len(conv_bytes)
@@ -248,14 +274,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
                 "and index are already written and cannot be re-finalized."
             )
 
-        index = MemoryMapDatasetIndex(
-            conversation_ids=self._session_ids,
-            format=self._format,
-            offsets=self._offsets,
-            payload_offsets=self._payload_offsets,
-            total_size=self._current_offset,
-        )
-        index_bytes = index.model_dump_json(by_alias=True).encode("utf-8")
+        index_bytes = await asyncio.to_thread(self._serialize_index)
 
         if self._compress_only:
             await self._finalize_compressed(index_bytes)
@@ -264,11 +283,23 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
 
         self._finalized = True
 
+    def _serialize_index(self) -> bytes:
+        """Build and serialize the index off the event loop."""
+        index = MemoryMapDatasetIndex(
+            conversation_ids=self._session_ids,
+            format=self._format,
+            offsets=self._offsets,
+            payload_offsets=self._payload_offsets,
+            total_size=self._current_offset,
+        )
+        return index.model_dump_json(by_alias=True).encode("utf-8")
+
     async def _finalize_compressed(self, index_bytes: bytes) -> None:
         """Close zstd stream and write compressed index."""
-        self._stream_writer.close()
-        self._raw_data_file.close()
-        compressed_data_size = self._compressed_data_path.stat().st_size
+        await asyncio.to_thread(self._close_compressed)
+        compressed_data_size = (
+            await asyncio.to_thread(self._compressed_data_path.stat)
+        ).st_size
 
         self.info(
             f"Compressed data file finalized: {len(self._session_ids)} conversations, "
@@ -366,12 +397,8 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
     @on_stop
     async def _cleanup(self) -> None:
         """Close file handles and delete temp files."""
-        if self._stream_writer is not None:
-            with suppress(Exception):
-                self._stream_writer.close()
-        if self._raw_data_file is not None:
-            with suppress(Exception):
-                self._raw_data_file.close()
+        with suppress(Exception):
+            await asyncio.to_thread(self._close_compressed)
         if self._data_file is not None and not self._data_file.closed:
             await self._data_file.close()
 
@@ -414,7 +441,9 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
         self.debug(
             lambda: f"Opening memory-mapped files: data={self._data_path}, index={self._index_path}"
         )
-        self._client = MemoryMapDatasetClient(self._data_path, self._index_path)
+        self._client = await asyncio.to_thread(
+            MemoryMapDatasetClient, self._data_path, self._index_path
+        )
         self.debug(
             lambda: f"Memory-mapped client store initialized with "
             f"{len(self._client.index.conversation_ids)} conversations"

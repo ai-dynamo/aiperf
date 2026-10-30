@@ -55,6 +55,7 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset import FileDataset, PublicDataset
 from aiperf.dataset import mmap_cache
+from aiperf.dataset.json_stream import iter_json_bytes
 from aiperf.dataset.memory_map_utils import turn_from_payload_turn
 from aiperf.dataset.utils import encode_image, normalize_image_format
 from aiperf.plugin import plugins
@@ -531,15 +532,19 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             await asyncio.to_thread(file_path.parent.mkdir, parents=True, exist_ok=True)
 
             model_endpoint = ModelEndpointInfo.from_run(self.run)
-            inputs = self._generate_input_payloads(model_endpoint)
 
-            async with aiofiles.open(temp_file_path, "wb") as f:
-                await f.write(
-                    orjson.dumps(
-                        inputs.model_dump(exclude_none=True, mode="json"),
-                        option=orjson.OPT_INDENT_2,
-                    )
+            inputs = await asyncio.to_thread(
+                self._generate_input_payloads, model_endpoint
+            )
+            data = {
+                "data": (
+                    session.model_dump(exclude_none=True, mode="json")
+                    for session in inputs.data
                 )
+            }
+            async with aiofiles.open(temp_file_path, "wb") as f:
+                async for chunk in iter_json_bytes(data, pretty=True):
+                    await f.write(chunk)
             temp_file_path.replace(file_path)
 
             duration = time.perf_counter() - start_time
@@ -1136,8 +1141,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         Re-announcing is safe because every consumer is idempotent on the
         repeat: the WorkerGroupManager short-circuits once the dataset is
         downloaded, and a Kubernetes Worker defers to the pod-local download.
-        Restricted to Kubernetes precisely because the local-mode Worker path
-        re-opens its dataset client on each notification.
         """
         if not self._is_kubernetes_run():
             return

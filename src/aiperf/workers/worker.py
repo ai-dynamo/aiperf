@@ -106,6 +106,7 @@ from aiperf.dataset.memory_map_utils import (
 from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType
+from aiperf.records.dataset_gate import DatasetConfigCatchUp
 from aiperf.records.payload_retention import resolve_strip_record_payload_bytes
 from aiperf.workers.clock_offset_tracker import ClockOffsetTracker
 from aiperf.workers.inference_client import InferenceClient
@@ -772,19 +773,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
 
-        # Dispatchability gate. The worker announces WorkerConnected as soon as
-        # its return path is up. In group-managed (Kubernetes) mode it defers
-        # WorkerDispatchable until a pod-local dataset is actually open: the
-        # dataset arrives via two one-shot broadcasts (DATASET_CONFIGURED then
-        # DATASET_DOWNLOADED), and a pod whose containers subscribe after those
-        # fire would otherwise sit in the routing pool failing every credit.
-        # _dataset_state_retry_task polls the pod's WorkerGroupManager so a
-        # missed broadcast self-heals instead of wedging the run.
-        #
-        # Locally there is no such deferral -- both announcements go out at
-        # @on_start, because credits cannot arrive before PROFILE_CONFIGURE,
-        # which itself blocks on _dataset_configured_event. The event below
-        # exists so the transition is sent exactly once on either path.
+        # Keep initializing workers out of routing and stale-worker eviction.
+        # Group-managed workers also poll for missed dataset broadcasts.
         self._worker_ready_event = asyncio.Event()
         self._worker_ready_lock = asyncio.Lock()
         self._dataset_state_retry_task: asyncio.Task[None] | None = None
@@ -825,14 +815,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         to distinguish "worker pod still coming up" from "worker pod wedged";
         in single-node mode they are two extra bus publishes at startup.
 
-        WorkerConnected and WorkerDispatchable are separate messages so the
-        router can distinguish "identity registered" from "in the routing
-        pool". In group-managed (Kubernetes) mode the pod-local dataset does
-        not exist yet at this point, and a worker without a dataset fails
-        every credit routed to it, so dispatchability is deferred until the
-        dataset opens. Locally both are sent here, because credits cannot
-        reach a worker before PROFILE_CONFIGURE, which itself blocks on
-        ``_dataset_configured_event``.
+        WorkerConnected announces connectivity. WorkerDispatchable is deferred
+        until the dataset opens in every mode, so dataset initialization cannot
+        make an idle worker look stale to the credit router.
         """
         await self._publish_startup_state(WorkerStartupState.STARTING)
         await self.credit_dealer_client.send(WorkerConnected(worker_id=self.service_id))
@@ -870,7 +855,26 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             )
             return
 
-        await self._mark_worker_ready()
+        if self._dataset_configured_event.is_set():
+            await self._mark_worker_ready()
+        else:
+            await self._publish_startup_state(WorkerStartupState.WAITING_FOR_DATASET)
+
+            async def catch_up_dataset() -> None:
+                while (
+                    not self.stop_requested
+                    and not self._dataset_configured_event.is_set()
+                ):
+                    # Each poll needs a fresh one-shot query.
+                    await DatasetConfigCatchUp(
+                        self.conversation_request_client,
+                        self._on_dataset_configured,
+                        self.service_id,
+                    ).try_once(self._dataset_configured_event)
+                    if not self._dataset_configured_event.is_set():
+                        await asyncio.sleep(Environment.DATASET.STATE_POLL_INTERVAL)
+
+            self.start_background_task(catch_up_dataset, stop_on_error=True)
 
     def _is_group_managed_mode(self) -> bool:
         """Check if a WorkerGroupManager owns this worker's startup lifecycle."""
@@ -1235,7 +1239,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 "Kubernetes mode: deferring dataset open until pod-local download"
             )
             return
-        await self._open_dataset_client(msg.client_metadata)
+        async with self._worker_ready_lock:
+            if not self._dataset_configured_event.is_set():
+                await self._open_dataset_client(msg.client_metadata, mark_ready=False)
+            await self._mark_worker_ready_locked()
 
     async def _open_dataset_client(
         self, client_metadata: DatasetClientMetadata, mark_ready: bool = True
@@ -1272,12 +1279,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         self.debug(
             lambda: f"Dataset client initialized: type={client_metadata.client_type}"
         )
-        # A worker in group-managed mode is held out of the routing pool until
-        # a dataset is open. This is the broadcast path reaching that point;
-        # the poll in _retry_group_dataset_state_until_ready is the fallback
-        # for when the broadcast was missed. Both converge on the same latch,
-        # which is idempotent.
-        if self._is_group_managed_mode() and mark_ready:
+        if mark_ready:
             await self._mark_worker_ready()
 
     @on_stop
@@ -2378,8 +2380,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _on_profile_configure_command(self, message: Command) -> None:
         """Configure the worker."""
         self.debug("Waiting for dataset to be configured before starting profiling")
+        # Locally, the dataset opens before WorkerDispatchable is sent; acking
+        # in between lets the router pin sessions to earlier workers only.
         await asyncio.wait_for(
-            self._dataset_configured_event.wait(),
+            (
+                self._dataset_configured_event
+                if self._is_kubernetes
+                else self._worker_ready_event
+            ).wait(),
             timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
         )
         if self.is_debug_enabled:
