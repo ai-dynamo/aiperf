@@ -307,3 +307,18 @@ def test_sglang_malformed_or_multi_sequence_extension_is_ignored(
     extension: Any,
 ) -> None:
     assert BaseEndpoint.extract_spec_decode_stats({"sglext": extension}) is None
+
+
+def test_sglang_multi_prompt_completion_is_suppressed(
+    completions_endpoint: CompletionsEndpoint,
+) -> None:
+    """Two prompts with ``n=1``: SGLang reports the first prompt's details as an
+    object, which cannot be attributed to the usage of both prompts."""
+    body = {
+        "object": "text_completion",
+        "choices": [{"index": 0, "text": "a"}, {"index": 1, "text": "b"}],
+        "sglext": {"spec_tokens_details": SUMMARY_PAYLOAD},
+    }
+    parsed = completions_endpoint.parse_response(_mock_response(body))
+    assert parsed is not None
+    assert parsed.spec_decode_stats is None
