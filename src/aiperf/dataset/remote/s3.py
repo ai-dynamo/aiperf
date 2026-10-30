@@ -142,6 +142,19 @@ def _is_within(path: Path, root: Path) -> bool:
     return path.resolve().is_relative_to(root.resolve())
 
 
+def _local_name(ref: RemoteRef, key: str) -> str:
+    """The cache file name for one object's key, rejected before any download when it
+    could not be stored inside the cache entry (on Windows: a drive or ``:``)."""
+    name = PurePosixPath(key).name
+    if not _is_safe_relpath(name):
+        raise _error(
+            ref, kind=RemoteErrorKind.MANIFEST_INVALID, stage=RemoteStage.ACCESS,
+            what=f"S3 key {key!r} cannot be stored as a local file on this platform",
+            hint="Ask the publisher to rename that object",
+        )  # fmt: skip
+    return name
+
+
 def _revision_missing(ref: RemoteRef, stage: RemoteStage) -> RemoteSourceError:
     if ref.resolved_version is not None:
         return changed_after_pin(ref.display, stage, "the object")
@@ -528,7 +541,7 @@ class S3SourceResolver:
             else pinned.display,
             data_relpath=key,
             data_is_dir=False,
-            filename=PurePosixPath(key).name,
+            filename=_local_name(ref, key),
             manifest=manifest,
             manifest_sha256=manifest_sha,
             needs_auth=True,
@@ -565,7 +578,7 @@ class S3SourceResolver:
         pinned = ref.with_version(version)
         return ProbeResult(
             ref=pinned, pinned_ref=pinned.display, data_relpath=data_key,
-            data_is_dir=data_is_dir, filename=PurePosixPath(data_key).name,
+            data_is_dir=data_is_dir, filename=_local_name(ref, data_key),
             manifest=manifest, manifest_sha256=manifest_sha, needs_auth=True,
             data_files=_folder_shards(ref, data_key, objects) if data_is_dir else None,
         )  # fmt: skip
@@ -628,6 +641,14 @@ class S3SourceResolver:
         if not version.startswith("list:"):
             # One object pinned by VersionId or ETag; S3 enforces the pin on the GET.
             dest = entry / probe.filename
+            # One safe path segment stays inside the entry; a probe read back from the
+            # cache index is checked again here, without a thread hop before the GET.
+            if "/" in probe.filename or not _is_safe_relpath(probe.filename):
+                raise _error(
+                    ref, kind=RemoteErrorKind.MANIFEST_INVALID, stage=RemoteStage.MATERIALIZE,
+                    what=f"S3 key {data_key!r} would be stored outside the cache entry",
+                    hint="Ask the publisher to rename that object",
+                )  # fmt: skip
             params = {"Bucket": bucket, "Key": data_key, **_version_params(version)}
             return ResolvedSource(
                 probe=probe, local_path=dest, files=[await self._download(ref, params, dest)]

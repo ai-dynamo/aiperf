@@ -519,6 +519,61 @@ async def test_directory_key_with_colon_is_downloaded_off_windows() -> None:
     assert [f.path for f in source.files] == [key]
 
 
+@pytest.mark.parametrize(
+    "key",
+    [
+        param("dir/C:trace.jsonl", id="drive-relative"),
+        param("dir/trace.jsonl:stream", id="alternate-data-stream"),
+    ],
+)  # fmt: skip
+@pytest.mark.asyncio
+async def test_single_object_name_unsafe_on_windows_fails_access_before_download(
+    key: str,
+) -> None:
+    """``entry / "C:trace.jsonl"`` resets to drive C on Windows, outside the cache."""
+    client = _client()
+    with (
+        Stubber(client) as s,
+        patch("aiperf.dataset.remote.s3.IS_WINDOWS", True),
+        pytest.raises(RemoteSourceError) as exc,
+    ):
+        s.add_response("head_object", {"ETag": '"e1"'}, {"Bucket": "bucket", "Key": key})  # fmt: skip
+        _missing(s, "get_object", {"Bucket": "bucket", "Key": key + ".aiperf.json"})
+        await S3SourceResolver(client=client).probe(RemoteRef(ref=f"s3://bucket/{key}"))
+    assert exc.value.kind == RemoteErrorKind.MANIFEST_INVALID
+    assert exc.value.stage == RemoteStage.ACCESS
+    assert repr(key) in str(exc.value)
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="':' is not valid in a Windows file name")
+@pytest.mark.asyncio
+async def test_single_object_with_colon_downloads_off_windows() -> None:
+    client = _client()
+    key = "dir/C:trace.jsonl"
+    with Stubber(client) as s, patch("aiperf.dataset.remote.s3.IS_WINDOWS", False):
+        s.add_response("head_object", {"ETag": '"e1"'}, {"Bucket": "bucket", "Key": key})  # fmt: skip
+        _missing(s, "get_object", {"Bucket": "bucket", "Key": key + ".aiperf.json"})
+        s.add_response("get_object", {"Body": _body(BODY)}, {"Bucket": "bucket", "Key": key, "IfMatch": '"e1"'})  # fmt: skip
+        resolver = S3SourceResolver(client=client)
+        source = await resolver.materialize(
+            await resolver.probe(RemoteRef(ref=f"s3://bucket/{key}"))
+        )
+    assert source.local_path.name == "C:trace.jsonl"
+    assert source.local_path.read_bytes() == BODY
+
+
+@pytest.mark.asyncio
+async def test_single_object_resolving_outside_the_entry_is_rejected() -> None:
+    probe = _object_probe('etag:"e"').model_copy(
+        update={"filename": "../../escape.jsonl"}
+    )
+    client = MagicMock()
+    with pytest.raises(RemoteSourceError, match="outside") as exc:
+        await S3SourceResolver(client=client).materialize(probe)
+    assert exc.value.kind == RemoteErrorKind.MANIFEST_INVALID
+    client.get_object.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_directory_marker_keys_are_ignored() -> None:
     client = _client()
