@@ -14,6 +14,7 @@ from functools import lru_cache
 from typing import Any
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.endpoint_credentials import AIPERF_INJECTED_DATASET_URLS
 from aiperf.common.environment import Environment
 from aiperf.config.deployment import (
     PodTemplateConfig,
@@ -300,6 +301,7 @@ def build_env_vars(
     include_pod_index: bool = True,
     controller_pod: bool = False,
     remote_dataset: bool = False,
+    dataset_downloader: bool = False,
 ) -> list[dict[str, Any]]:
     """Create environment variables for a container.
 
@@ -311,6 +313,10 @@ def build_env_vars(
         remote_dataset: The run reads a remote dataset. The dataset-manager
             registers only after its download, so controller-pod containers
             wait for registration as long as the download startup budget allows.
+        dataset_downloader: This is the dataset-manager container, the only one
+            that downloads datasets. Every other container is rendered without
+            AIPERF_INJECTED_DATASET_URLS, so the presigned URLs' Secret is not
+            readable there (for example through ``kubectl exec``).
     """
     datasets_path = K8sEnvironment.JOBSET.DATASETS_PATH
     config_mount_path = K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH
@@ -404,6 +410,8 @@ def build_env_vars(
 
     reserved_names = {item["name"] for item in env}
     reserved_names.add("AIPERF_JOB_UID")
+    if not dataset_downloader:
+        reserved_names.add(AIPERF_INJECTED_DATASET_URLS)
     user_env = [
         item
         for item in pod_template.env
