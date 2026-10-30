@@ -136,6 +136,8 @@ class CreditContext(
             data, when available.
         last_streaming_content_ns: Wall-clock timestamp of the latest parsed
             content chunk, retained even if the request is cancelled.
+        ended_on_truncation: True when this truncated root turn ends its
+            conversation early (end_conversation_on_truncation).
     """
 
     credit: Credit
@@ -149,6 +151,7 @@ class CreditContext(
     inter_token_latency_ns: float | None = None
     output_sequence_length: int | None = None
     last_streaming_content_ns: int | None = None
+    ended_on_truncation: bool = False
 
 
 # =============================================================================

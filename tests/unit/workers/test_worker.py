@@ -871,17 +871,69 @@ class TestTerminalContextOverflowClassifier:
         assert _is_terminal_context_overflow(credit, ctx) is expected
 
 
+class TestDetectEndedOnTruncation:
+    """``_detect_ended_on_truncation`` flags only a truncated, successful,
+    non-final root turn, and only when the option is enabled."""
+
+    def _detect(
+        self,
+        *,
+        enabled: bool = True,
+        is_final: bool = False,
+        agent_depth: int = 0,
+        has_error: bool = False,
+        truncated: bool = True,
+        endpoint_has_method: bool = True,
+    ) -> bool:
+        worker = MagicMock()
+        worker._end_conversation_on_truncation = enabled
+        endpoint = MagicMock(spec=["is_truncated"] if endpoint_has_method else [])
+        if endpoint_has_method:
+            endpoint.is_truncated.return_value = truncated
+        worker.inference_client.endpoint = endpoint
+        ctx = CreditContext(
+            credit=MagicMock(is_final_turn=is_final, agent_depth=agent_depth),
+            drop_perf_ns=0,
+        )
+        record = MagicMock(has_error=has_error)
+        Worker._detect_ended_on_truncation.__get__(worker)(ctx, record)
+        return ctx.ended_on_truncation
+
+    def test_detect_truncated_nonfinal_root_sets_flag(self) -> None:
+        assert self._detect() is True
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            param({"enabled": False}, id="option-off"),
+            param({"is_final": True}, id="final-turn"),
+            param({"has_error": True}, id="errored"),
+            param({"truncated": False}, id="not-truncated"),
+            param({"endpoint_has_method": False}, id="protocol-only-endpoint"),
+        ],
+    )  # fmt: skip
+    def test_detect_not_applicable_leaves_flag_unset(self, kwargs: dict) -> None:
+        assert self._detect(**kwargs) is False
+
+
 class TestTerminalDisposition:
     """Every terminal disposition (final turn, cancellation, terminal context overflow) routes to ``_release_and_evict_for_terminal``; a non-final plain error does not."""
 
     def _dispatch_terminal(
-        self, *, is_final: bool, cancelled: bool, error
+        self,
+        *,
+        is_final: bool,
+        cancelled: bool,
+        error,
+        ended_on_truncation: bool = False,
     ) -> MagicMock:
         """Drive the real terminal-disposition gate on a mock worker."""
         worker = MagicMock()
         worker._release_and_evict_for_terminal = Mock()
         credit = MagicMock(is_final_turn=is_final)
-        ctx = MagicMock(cancelled=cancelled, error=error)
+        ctx = MagicMock(
+            cancelled=cancelled, error=error, ended_on_truncation=ended_on_truncation
+        )
         Worker._handle_terminal_disposition.__get__(worker)(credit, ctx, "conv-X")
         return worker
 
@@ -903,6 +955,16 @@ class TestTerminalDisposition:
         worker = self._dispatch_terminal(
             is_final=False, cancelled=False, error="connection reset by peer"
         )
+        worker._release_and_evict_for_terminal.assert_not_called()
+
+    def test_nonfinal_ended_on_truncation_evicts(self) -> None:
+        worker = self._dispatch_terminal(
+            is_final=False, cancelled=False, error=None, ended_on_truncation=True
+        )
+        worker._release_and_evict_for_terminal.assert_called_once()
+
+    def test_nonfinal_success_does_not_evict(self) -> None:
+        worker = self._dispatch_terminal(is_final=False, cancelled=False, error=None)
         worker._release_and_evict_for_terminal.assert_not_called()
 
 
@@ -1037,7 +1099,7 @@ class TestPayloadBytesFastPath:
     async def test_fast_path_turn_carries_max_tokens_and_timestamp(
         self, mock_worker, sample_credit_context
     ):
-        """PAYLOAD_BYTES fast path must hoist turn scalars (max_tokens, timestamp, source_kind) for metric enrichment, else OSL-mismatch and schedule-lag metrics go silent and every record is attributed to the run-level label."""
+        """PAYLOAD_BYTES fast path must hoist turn scalars (max_tokens, timestamp, source_kind, audio_duration_seconds) for metric enrichment, else OSL-mismatch, schedule-lag, and audio-duration/RTFx metrics go silent and every record is attributed to the run-level label."""
         mock_worker._is_payload_bytes = True
         mock_worker._dataset_client = AsyncMock()
         payload = b'{"messages":[{"role":"user","content":"hi"}],"max_tokens":64}'
@@ -1046,6 +1108,7 @@ class TestPayloadBytesFastPath:
             max_tokens=64,
             timestamp=1234.5,
             source_kind="coding",
+            audio_duration_seconds=30.0,
         )
 
         success_record = RequestRecord(
@@ -1069,12 +1132,13 @@ class TestPayloadBytesFastPath:
         assert sent_request_info.turns[0].max_tokens == 64
         assert sent_request_info.turns[0].timestamp == 1234.5
         assert sent_request_info.turns[0].source_kind == "coding"
+        assert sent_request_info.turns[0].audio_duration_seconds == 30.0
         assert sent_request_info.source_kind == "coding"
 
     async def test_retrieve_conversation_for_session_restores_scalars(
         self, mock_worker, sample_credit_context
     ):
-        """Session-path reconstruction must restore max_tokens, timestamp, and source_kind."""
+        """Session-path reconstruction must restore max_tokens, timestamp, source_kind, and audio_duration_seconds."""
         mock_worker._is_payload_bytes = True
         mock_worker._dataset_client = AsyncMock()
         mock_worker._dataset_client.get_payload_turn.return_value = PayloadTurnData(
@@ -1082,6 +1146,7 @@ class TestPayloadBytesFastPath:
             max_tokens=32,
             timestamp=99,
             source_kind="math",
+            audio_duration_seconds=45.0,
         )
         mock_worker.session_manager = MagicMock()
         mock_worker.session_manager.default_context_mode = None
@@ -1094,6 +1159,7 @@ class TestPayloadBytesFastPath:
         assert conversation.turns[0].max_tokens == 32
         assert conversation.turns[0].timestamp == 99
         assert conversation.turns[0].source_kind == "math"
+        assert conversation.turns[0].audio_duration_seconds == 45.0
         assert conversation.turns[0].raw_payload == {
             "max_completion_tokens": 32,
             "messages": [],

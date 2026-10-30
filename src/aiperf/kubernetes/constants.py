@@ -173,6 +173,8 @@ class KueueLabels:
 # for chart-default installs.
 DEFAULT_OPERATOR_NAMESPACE = "aiperf-system"
 
+NATIVE_SIDECAR_MIN_K8S_MINOR = 29
+
 OPERATOR_POD_LABEL_SELECTOR = "app.kubernetes.io/name=aiperf-operator"
 """Label selector identifying an aiperf-operator controller pod."""
 
