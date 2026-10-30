@@ -12,10 +12,9 @@ AIPerf captures this as an **engine-neutral per-request record** so the metrics
 layer can reason about acceptance without knowing which engine produced it.
 
 This page documents the record, the adapter interface that fills it, and the
-two supported engines: vLLM and TensorRT-LLM. They emit genuinely different
+supported engines: vLLM, TensorRT-LLM, and SGLang. They emit genuinely different
 payloads -- different field names and different placement in the response -- and
 the adapter layer is what keeps that difference from reaching the metrics layer.
-An SGLang adapter is future work and reuses the same record.
 
 ## The engine-neutral record
 
@@ -28,7 +27,7 @@ drafting such as DSpark-style adaptive verification.
 
 | Field | Description |
 | --- | --- |
-| `engine` | Serving engine that produced the stats: `vllm` or `tensorrt_llm`. Set by the adapter for provenance; no metric branches on it. |
+| `engine` | Serving engine that produced the stats: `vllm`, `tensorrt_llm`, or `sglang`. Set by the adapter for provenance; no metric branches on it. |
 | `mean_acceptance_length` | Mean tokens per verify step including the bonus token: `1 + num_accepted_draft_tokens / num_spec_steps`. Ranges `1.0` … `num_spec_tokens + 1`. |
 | `draft_acceptance_rate` | `num_accepted_draft_tokens / num_draft_tokens`. Draft-only. |
 | `acceptance_histogram` | Sparse `{accepted_draft_count: num_steps}` map with **integer** keys. Zero-count buckets omitted. Excludes the bonus token. |
@@ -58,12 +57,13 @@ stateless).
 
 Detection therefore depends on those signatures being **disjoint**, and each
 adapter's signature must contain at least one key the other engines do not emit.
-The two current signatures are:
+The current signatures are:
 
 | Adapter | Signature keys |
 | --- | --- |
 | vLLM | `acceptance_histogram`, `num_spec_steps`, `mean_acceptance_length` |
 | TensorRT-LLM | `total_accepted_draft_tokens`, `total_draft_tokens` |
+| SGLang | `spec_num_correct_drafts`, `spec_num_proposed_drafts`, `spec_verify_ct` |
 
 `mean_acceptance_length` is load-bearing: the other two vLLM keys are also
 emitted by TensorRT-LLM, so a signature without it lets the vLLM adapter claim
@@ -88,7 +88,7 @@ class SpecDecodeAdapterProtocol(Protocol):
 
 ```mermaid
 flowchart LR
-    R["Raw response<br/>root metrics.speculative_decoding (vLLM)<br/>or choices[].speculative_decoding (TRT-LLM)"]
+    R["Raw response<br/>root metrics.speculative_decoding (vLLM)<br/>or choices[].speculative_decoding (TRT-LLM)<br/>or sglext.spec_tokens_details (SGLang)"]
     P["ParsedResponse<br/>.spec_decode_stats (raw dict)"]
     A["Engine adapter<br/>(auto-detected)"]
     N["SpecDecodeAcceptanceRecord<br/>(engine-neutral)"]
@@ -258,3 +258,40 @@ Prometheus endpoint.
 - **Tree drafting** (EAGLE3 dynamic-tree, Medusa) works unchanged: the histogram
   counts how many steps produced each output length and encodes no
   parent/child structure.
+
+## The SGLang adapter
+
+SGLang v0.5.19+ supports `return_spec_tokens_details: true` on OpenAI chat and
+completions requests. Add `--extra-inputs return_spec_tokens_details:true` to
+`aiperf profile`, or set `benchmark.endpoint.extra.return_spec_tokens_details: true`
+in the YAML configuration. The server needs speculative decoding enabled.
+
+The response contains `sglext.spec_tokens_details`. Streaming responses send it
+on a separate chunk with empty `choices`, independently of the usage chunk.
+AIPerf retains that chunk and reads these fields:
+
+| SGLang field | Record field |
+| --- | --- |
+| `spec_num_correct_drafts` | `num_accepted_draft_tokens` |
+| `spec_num_proposed_drafts` | `num_draft_tokens` |
+| `spec_verify_ct` | `num_spec_steps` |
+| `spec_correct_drafts_histogram` | `acceptance_histogram`, converted from a dense list to a sparse map |
+
+AIPerf derives acceptance length as `1 + accepted / steps` and acceptance rate
+as `accepted / proposed`. SGLang's `spec_accept_length` uses completion tokens,
+which include the prefill output token. Copying that average changes the metric.
+The response reports no fixed draft bound or ordered per-step arrays, so those
+optional record fields remain `None`.
+
+Multi-sequence responses contain a list of detail objects. AIPerf excludes that
+list because one record cannot attribute request-level usage to one sequence.
+A completions request with several prompts and `n=1` returns one object for the
+first prompt only. AIPerf also excludes it, because the request generates one
+sequence for each prompt. Missing counters, malformed histograms, and inconsistent totals produce no
+acceptance record. SGLang v0.5.19 omits the details when no verify step ran.
+
+Without valid per-request acceptance data, SPEED-Bench uses its existing
+`auto` fallback: records, then summary, then server metrics. Keep server scraping
+enabled for that fallback. For a category matrix from server metrics, run each
+category separately. The legacy SGLang gauge average remains sensitive to idle
+scrapes. Use `--source records` to require per-request data without fallback.

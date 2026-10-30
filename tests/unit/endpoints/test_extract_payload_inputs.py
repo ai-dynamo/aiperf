@@ -14,6 +14,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+from pytest import param
+
 from aiperf.common.models import (
     ExtractedPayload,
     InferenceServerResponse,
@@ -153,6 +156,22 @@ class TestFlatFieldFallbacks:
     def test_completions_prompt_list(self):
         result = _chat().extract_payload_inputs({"prompt": ["a", "b"]})
         assert result.texts == ["a", "b"]
+
+    @pytest.mark.parametrize(
+        "payload, expected",
+        [
+            param({"prompt": "a"}, 1, id="single_prompt"),
+            param({"prompt": [1, 2, 3]}, 1, id="token_id_prompt"),
+            param({"prompt": ["a", "b"]}, 2, id="two_prompts"),
+            param({"prompt": [[1, 2], [3]]}, 2, id="two_token_prompts"),
+            param({"prompt": ["a", "b"], "n": 3}, 6, id="two_prompts_n3"),
+            param({"prompt": [], "n": 2}, 2, id="empty_prompt_list_n2"),
+        ],
+    )  # fmt: skip
+    def test_completions_num_choices(self, payload: dict[str, Any], expected: int):
+        """SGLang reports one prompt's spec-decode details for a batched
+        ``n=1`` request, so every batched prompt must count as a sequence."""
+        assert _chat().extract_payload_inputs(payload).num_choices == expected
 
     def test_embeddings_input_string(self):
         result = _chat().extract_payload_inputs({"input": "to embed"})

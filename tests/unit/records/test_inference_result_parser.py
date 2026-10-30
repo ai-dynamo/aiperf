@@ -1137,6 +1137,17 @@ class TestSpecDecodeRequestCardinality:
         )
         assert result.spec_decode_acceptance is None
 
+    async def test_multi_prompt_request_with_one_payload_yields_none(
+        self, server_token_parser, request_record, spy_tokenizer
+    ):
+        """SGLang streams one prompt's details for a batched ``n=1`` request."""
+        payload = orjson.loads(request_record.request_info.payload_bytes)
+        payload.pop("n", None)
+        payload["prompt"] = ["first prompt", "second prompt"]
+        request_record.request_info.payload_bytes = orjson.dumps(payload)
+        result = await self._parse(server_token_parser, request_record, spy_tokenizer)
+        assert result.spec_decode_acceptance is None
+
 
 @pytest.mark.asyncio
 class TestSpecDecodeZeroStepRecords:
