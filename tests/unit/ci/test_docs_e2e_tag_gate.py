@@ -21,8 +21,12 @@ TOOL = REPO_ROOT / "tools/check_docs_e2e_tags.py"
 
 
 @pytest.fixture(autouse=True)
-def _contain_import_side_effects():
+def _contain_tools_import_side_effects():
     """Undo what importing the gate does to this interpreter.
+
+    Distinct from the shared conftest fixture, which guards the harness
+    directory: this one guards ``tools/``. A same-named fixture here would
+    shadow that one rather than run alongside it.
 
     The gate puts the docs-e2e harness directory on ``sys.path`` so it can
     import the harness's flat modules (``parser``, ``utils``, ``constants``).
