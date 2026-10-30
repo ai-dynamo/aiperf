@@ -515,8 +515,10 @@ class ReplayBarrierCoordinator:
             # already taken ownership of the turn for the profiling handoff, so
             # it is neither refused nor lost.
             _logger.debug(
-                lambda: f"Barrier-released replay dispatch deferred for "
-                f"{pending.turn!r}; admission retained it for phase handoff"
+                lambda: (
+                    f"Barrier-released replay dispatch deferred for "
+                    f"{pending.turn!r}; admission retained it for phase handoff"
+                )
             )
 
 

@@ -65,7 +65,9 @@ def create_proxy_socket_class(
                 # explicitly (the ZMQ default) to make intent unambiguous.
                 self.socket.setsockopt(zmq.XPUB_VERBOSE, 0)
                 self.debug(
-                    lambda: "XPUB socket configured with XPUB_VERBOSE=0 (de-duplicated subscription forwarding) to avoid event-bus-proxy CPU/memory blow-up"
+                    lambda: (
+                        "XPUB socket configured with XPUB_VERBOSE=0 (de-duplicated subscription forwarding) to avoid event-bus-proxy CPU/memory blow-up"
+                    )
                 )
 
     # Dynamically set the class name and qualname based on the socket and end type
