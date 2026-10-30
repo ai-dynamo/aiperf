@@ -734,7 +734,7 @@ class TestSummarize:
         )
         await processor.process_record(msg)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
 
         assert isinstance(summary, AccumulatorMetricsSummary)
         assert RequestLatencyMetric.tag in summary.results
@@ -800,12 +800,12 @@ class TestSummarize:
             mock_warning.assert_called()
 
 
-class TestTimesliceSummarize:
+class TestTimesliceExport:
     @pytest.mark.asyncio
-    async def test_summarize_with_timeslices(
+    async def test_export_with_timeslices(
         self, mock_metric_registry: Mock, mock_run
     ) -> None:
-        """Test summarize produces timeslice results when slice_duration is set."""
+        """Test export produces timeslice results when slice_duration is set."""
         mock_run.cfg.artifacts.slice_duration = 1.0
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
@@ -830,7 +830,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg2)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
 
         assert isinstance(summary, AccumulatorMetricsSummary)
         assert summary.timeslices is not None
@@ -840,10 +840,10 @@ class TestTimesliceSummarize:
         assert len(summary.timeslices[1].metric_results) > 0
 
     @pytest.mark.asyncio
-    async def test_summarize_no_timeslices_without_config(
+    async def test_export_no_timeslices_without_config(
         self, mock_metric_registry: Mock, mock_run
     ) -> None:
-        """Test summarize returns None timeslices when slice_duration is not set."""
+        """Test export returns None timeslices when slice_duration is not set."""
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
         processor._metric_classes = {"test_record": RequestLatencyMetric}
@@ -855,7 +855,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
         assert summary.timeslices is None
 
     @pytest.mark.asyncio
@@ -885,7 +885,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg2)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
         assert summary.timeslices is not None
         # Both should be in the same timeslice
         assert len(summary.timeslices) == 1
@@ -932,7 +932,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg3)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
         assert summary.timeslices is not None
         assert len(summary.timeslices) == 2
 
@@ -969,7 +969,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg2)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
         assert summary.timeslices is not None
         ts0_results = summary.timeslices[0].metric_results
         assert ts0_results["max_ts"].avg == 300.0  # MAX of 100, 300
@@ -1001,7 +1001,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg2)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
         assert summary.timeslices is not None
         ts0_results = summary.timeslices[0].metric_results
         assert ts0_results["min_ts"].avg == 200.0  # MIN of 500, 200
@@ -1034,7 +1034,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg2)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
 
         assert summary.timeslices is not None
         assert len(summary.timeslices) == 2
@@ -1064,7 +1064,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
         assert summary.timeslices is None
 
     @pytest.mark.asyncio
@@ -1099,7 +1099,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg2)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
         assert summary.timeslices is not None
         assert len(summary.timeslices) == 2
 
@@ -1461,7 +1461,7 @@ class TestTimesliceSweepMetrics:
         )
         await acc.process_record(msg)
 
-        summary = await acc.summarize()
+        summary = await acc.export_results(ExportContext())
         assert summary.timeslices is not None
         for ts in summary.timeslices:
             ts_results = ts.metric_results
@@ -1508,7 +1508,7 @@ class TestTimesliceSweepMetrics:
             )
             await acc.process_record(msg)
 
-        summary = await acc.summarize()
+        summary = await acc.export_results(ExportContext())
         assert summary.timeslices is not None
         ts0 = summary.timeslices[0].metric_results
         assert ts0["effective_concurrency"].avg > 1.0
@@ -1538,7 +1538,7 @@ class TestTimesliceSweepMetrics:
         )
         await acc.process_record(msg)
 
-        summary = await acc.summarize()
+        summary = await acc.export_results(ExportContext())
         assert summary.timeslices is not None
         ts0 = summary.timeslices[0].metric_results
         assert ts0["effective_decode_throughput"].avg > 0.0
@@ -1560,7 +1560,7 @@ class TestTimesliceSweepMetrics:
         )
         await acc.process_record(msg)
 
-        summary = await acc.summarize()
+        summary = await acc.export_results(ExportContext())
         assert summary.timeslices is not None
         ts0 = summary.timeslices[0].metric_results
         assert ts0["effective_decode_throughput"].avg == 0.0
@@ -1598,7 +1598,7 @@ class TestTimesliceSweepMetrics:
             )
             await acc.process_record(msg)
 
-        summary = await acc.summarize()
+        summary = await acc.export_results(ExportContext())
         assert summary.timeslices is not None
         assert len(summary.timeslices) == 3
 
