@@ -843,28 +843,71 @@ class TestIssuedAtTimestamp:
     """Tests for credit timestamp accuracy."""
 
     async def test_issued_at_ns_is_recent(self, credit_issuer, mock_router):
-        """Issued timestamp should be very recent (within 1 second).
+        """Issued timestamp must be taken from the current clock at issue time.
 
         Production code derives ``issued_at_ns`` from ``started_at_ns +
         (perf_counter_ns - started_at_perf_ns)`` — mixing wall clock with a
         monotonic delta. On Windows the two clocks can drift by a few
         microseconds, so allow a small slack window on either side instead
         of strict ``before <= ts <= after``.
+
+        The invariant asserted here is that the timestamp lands inside the
+        wall-clock bracket of the call that produced it: fresh within the
+        platform slack and not from the future. There is deliberately no
+        fixed bound on ``after - issued_at_ns``: that would assert the
+        test's own execution speed, and on a loaded CI runner the event
+        loop can stall for over a second between the in-call timestamp and
+        the post-await clock read (Nightly 2026-10-16 failed at 1.02 s),
+        which says nothing about timestamp freshness.
+
+        This real-clock smoke cannot fully reject a cached timestamp: on
+        Windows the 50 ms slack can still contain the previous call's
+        reading. The deterministic cached-timestamp guard is
+        ``test_issued_at_ns_uses_the_clock_at_each_issue`` below.
         """
         import sys
 
         slack_ns = 50_000_000 if sys.platform == "win32" else 0  # 50ms on Windows
-        before = time.time_ns()
-        turn = make_turn()
+        issued: list[int] = []
+        for _ in range(2):
+            before = time.time_ns()
+            await credit_issuer.issue_credit(make_turn())
+            after = time.time_ns()
+            sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+            assert (before - slack_ns) <= sent_credit.issued_at_ns <= (after + slack_ns)
+            issued.append(sent_credit.issued_at_ns)
 
-        await credit_issuer.issue_credit(turn)
+        # Two consecutive issues narrow where a cached timestamp could hide,
+        # but do not rule one out: on Windows the 50 ms slack can still
+        # contain the previous call's reading (cached T satisfies
+        # [before - slack, after + slack], and T >= T passes the ordering
+        # check). Exact rejection of caching is the controlled-clock test
+        # below; here we only assert non-decreasing ordering.
+        assert issued[1] >= issued[0]
 
-        after = time.time_ns()
-        sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+    async def test_issued_at_ns_uses_the_clock_at_each_issue(
+        self, credit_issuer, mock_router, mock_lifecycle
+    ):
+        """Each credit carries the clock value read during its own issue.
 
-        assert (before - slack_ns) <= sent_credit.issued_at_ns <= (after + slack_ns)
-        # Should be within 1 second
-        assert (after - sent_credit.issued_at_ns) < 1_000_000_000
+        Deterministic cached-timestamp regression guard: stub the lifecycle
+        clock with distinct per-call readings and require each issued credit
+        to carry exactly its own call's reading. Reusing an earlier reading
+        (cached across calls) fails here regardless of platform clock slack,
+        which the real-clock bracket test above cannot guarantee: with the
+        Windows slack window, a value cached from the immediately preceding
+        call could still land inside the next call's bracket.
+        """
+        readings = [1_700_000_000_000_000_000, 1_700_000_123_456_789_000]
+        mock_lifecycle.now_ns = MagicMock(side_effect=iter(readings))
+
+        for expected in readings:
+            await credit_issuer.issue_credit(make_turn())
+            sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
+            assert sent_credit.issued_at_ns == expected
+
+        # Exactly one clock read per issue; no more, no fewer.
+        assert mock_lifecycle.now_ns.call_count == len(readings)
 
 
 # =============================================================================
