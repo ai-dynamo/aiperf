@@ -51,3 +51,27 @@ def test_parse_search_space_valid(raw, expected):
 def test_parse_search_space_errors(raw, fragment):
     with pytest.raises(TypeError, match=fragment):
         parse_search_space(raw)
+
+
+@pytest.mark.parametrize(
+    "raw,message",
+    [
+        param("rate:0,10", r"lower bound must be > 0 \(got 0.0\)", id="rate"),
+        param("phases.warmup.smoothness:-1,10", "lower bound must be > 0", id="warmup"),
+        param("phases.measured.rate_ramp.duration:0,10", "lower bound must be > 0", id="nested"),
+        param("phases.warmup.users:0,10:int", "lower bound must be >= 1", id="users-bound"),
+        param("users:1,10", "users:1,50:int", id="users-kind"),
+        param("rate_series:1,10", "piecewise-linear", id="rate-series"),
+        param("phases.profiling.cancellation.rate:0,101", r"within \[0, 100\]", id="cancellation"),
+        param("rate:nan,10", "must be finite", id="non-finite"),
+        param("sweep.rate:1,10", "sweep config itself", id="path-validation"),
+    ],
+)  # fmt: skip
+def test_parse_search_space_enforces_field_constraints(raw: str, message: str) -> None:
+    with pytest.raises(TypeError, match=message) as excinfo:
+        parse_search_space([raw])
+    diagnostic = str(excinfo.value)
+    assert f"--search-space {raw!r}" in diagnostic
+    assert "validation error" not in diagnostic
+    assert "input_value" not in diagnostic
+    assert "errors.pydantic.dev" not in diagnostic
