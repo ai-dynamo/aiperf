@@ -70,7 +70,7 @@ class SGLangSpecDecodeAdapter:
                 num_spec_steps=steps,
                 completion_tokens=usage.completion_tokens if usage else None,
             )
-        except (KeyError, TypeError, ValueError, ValidationError) as e:
+        except (KeyError, TypeError, ValueError, OverflowError, ValidationError) as e:
             # Exception variables are cleared before a deferred log call.
             error = e
             _logger.warning(
