@@ -24,6 +24,7 @@ from kubernetes_asyncio.client.exceptions import ApiException
 from aiperf.common.redact import redact_url
 from aiperf.kubernetes.constants import (
     JOBSET_INSTALL_HINT,
+    NATIVE_SIDECAR_MIN_K8S_MINOR,
     OPERATOR_POD_LABEL_SELECTOR,
 )
 from aiperf.kubernetes.cr_refs import (
@@ -133,6 +134,15 @@ async def check_kubernetes_version(api: ApiClient) -> CheckResult:
         minor = int(minor_str) if minor_str else 0
         git_version = version.git_version or "unknown"
 
+        if major == 1 and 24 <= minor < NATIVE_SIDECAR_MIN_K8S_MINOR:
+            return CheckResult(
+                name="Kubernetes Version",
+                status=CheckStatus.WARN,
+                message=f"Kubernetes {git_version} supports runs with server metrics disabled; server metrics failure isolation requires Kubernetes 1.{NATIVE_SIDECAR_MIN_K8S_MINOR}+.",
+                hints=[
+                    f"Upgrade to Kubernetes 1.{NATIVE_SIDECAR_MIN_K8S_MINOR}+ or set serverMetrics.enabled=false"
+                ],
+            )
         if major > 1 or (major == 1 and minor >= 24):
             return CheckResult(
                 name="Kubernetes Version",

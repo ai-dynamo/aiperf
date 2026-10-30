@@ -23,6 +23,20 @@ def check_file_exists(filename: Path) -> None:
         raise FileNotFoundError(f"The file '{filename}' does not exist.")
 
 
+def normalize_image_format(img: Image) -> None:
+    """Reports a multi-picture JPEG as plain JPEG.
+
+    Pillow opens a JPEG whose MPF segment lists more than one image (an Ultra
+    HDR gain map, a stereo pair) as ``MPO``. The primary frame is a regular
+    JPEG and ``encode_image`` only re-encodes that frame.
+
+    Args:
+        img: The PIL Image object to update in place.
+    """
+    if img.format == "MPO":
+        img.format = "JPEG"
+
+
 def open_image(filename: str) -> Image:
     """Opens an image file.
 
@@ -37,6 +51,7 @@ def open_image(filename: str) -> Image:
     """
     check_file_exists(Path(filename))
     img = Image.open(filename)
+    normalize_image_format(img)
 
     if img.format is None:
         raise RuntimeError(f"Failed to determine image format of '{filename}'.")
