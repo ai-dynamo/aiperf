@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import gzip
+import math
 import zlib
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from aiperf.config.flags import CLIConfig
+    from aiperf.config.sweep.adaptive import SearchSpaceDimension
 
 
 _PROF_FIELD_ROUTES: tuple[tuple[str, str], ...] = (
@@ -92,15 +94,23 @@ _RATE_SHAPE_SEARCH_FIELDS: frozenset[str] = frozenset(
 )
 
 
-def _search_space_dimensions(cli: CLIConfig) -> dict[str, float]:
+def _profiling_search_dimensions(cli: CLIConfig) -> dict[str, SearchSpaceDimension]:
+    """Field name -> dimension for each ``--search-space`` entry on ``phases.profiling.<field>``."""
     from aiperf.orchestrator.search_planner.parsing import parse_search_space
 
-    dims: dict[str, float] = {}
+    dims: dict[str, SearchSpaceDimension] = {}
     for dimension in parse_search_space(list(cli.search_space or [])):
         segments = dimension.path.split(".")
         if len(segments) == 3 and segments[:2] == ["phases", "profiling"]:
-            dims[segments[-1]] = dimension.lo
+            dims[segments[-1]] = dimension
     return dims
+
+
+def _search_space_dimensions(cli: CLIConfig) -> dict[str, float]:
+    return {
+        field: dimension.lo
+        for field, dimension in _profiling_search_dimensions(cli).items()
+    }
 
 
 def _profiling_phase_type(cli: CLIConfig, search_dims: dict[str, float]) -> Any:
@@ -495,16 +505,8 @@ def _apply_default_stop_condition(prof: dict[str, Any], cli: CLIConfig) -> None:
 
 def _search_space_upper_bound(cli: CLIConfig, field: str) -> float | None:
     """Upper bound of the ``--search-space`` dimension on ``phases.profiling.<field>``."""
-    for raw in cli.search_space or []:
-        parsed = _parse_shape_dimension(raw)
-        if parsed is None or parsed[0] != field:
-            continue
-        # Grammar is path:lo,hi[:kind]; the real parser reports malformed bounds.
-        try:
-            return float(raw.split(":")[1].split(",", 1)[1])
-        except (IndexError, ValueError):
-            return None
-    return None
+    dimension = _profiling_search_dimensions(cli).get(field)
+    return None if dimension is None else dimension.hi
 
 
 def _is_full_pass_dataset(cli: CLIConfig) -> bool:
