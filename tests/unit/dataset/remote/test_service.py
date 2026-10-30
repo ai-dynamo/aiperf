@@ -193,6 +193,49 @@ async def test_cache_hit_is_checked_against_a_changed_sidecar_checksum(
     assert exc.value.kind == RemoteErrorKind.CHECKSUM_MISMATCH
 
 
+async def _serve_with_sidecar(
+    http_server, tmp_path: Path, sidecar: dict
+) -> tuple[RemoteRef, Path]:
+    root = tmp_path / "srv"
+    root.mkdir()
+    (root / "t.jsonl").write_bytes(BODY)
+    (root / "t.jsonl.aiperf.json").write_bytes(orjson.dumps(sidecar))
+    app = web.Application()
+    app.router.add_static("/", root)
+    return RemoteRef(
+        ref=f"{await http_server(app)}/t.jsonl"
+    ), root / "t.jsonl.aiperf.json"
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_records_the_sidecar_this_run_accepted(
+    http_server, tmp_path: Path
+) -> None:
+    """Provenance reads the index, so a hit must not keep describing the old sidecar."""
+    ref, sidecar = await _serve_with_sidecar(http_server, tmp_path, {"aiperf_manifest_version": 1, "block_size": 16})  # fmt: skip
+    await service.materialize_probe(await service.probe_ref(ref))
+    sidecar.write_bytes(orjson.dumps({"aiperf_manifest_version": 1, "block_size": 64}))  # fmt: skip
+    second = await service.probe_ref(ref)
+    source = await service.materialize_probe(second)
+    assert source.probe.manifest.block_size == 64
+    indexed = read_index(second.ref)
+    assert indexed.probe.manifest_sha256 == second.manifest_sha256
+    assert indexed.probe.manifest.block_size == 64
+
+
+@pytest.mark.asyncio
+async def test_cache_hit_rehashes_a_file_whose_manifest_declares_sha256(
+    http_server, tmp_path: Path
+) -> None:
+    """A same-size corruption passes the size check; the declared sha256 catches it."""
+    sha = hashlib.sha256(BODY).hexdigest()
+    ref, _ = await _serve_with_sidecar(http_server, tmp_path, {"aiperf_manifest_version": 1, "sha256": sha})  # fmt: skip
+    first = await service.materialize_probe(await service.probe_ref(ref))
+    first.local_path.write_bytes(bytes(b ^ 0xFF for b in BODY))
+    second = await service.materialize_probe(await service.probe_ref(ref))
+    assert second.local_path.read_bytes() == BODY
+
+
 @pytest.mark.asyncio
 async def test_materialize_failure_writes_no_index(
     http_server, tmp_path: Path, monkeypatch

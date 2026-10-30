@@ -189,6 +189,15 @@ async def stream_to_file(chunks: AsyncIterable[bytes], dest: Path) -> tuple[str,
     return hasher.hexdigest(), size
 
 
+def file_sha256(path: Path) -> str:
+    """The sha256 of a file on disk, read in 1 MiB blocks (blocking)."""
+    hasher = hashlib.sha256()
+    with path.open("rb") as f:
+        while block := f.read(1 << 20):
+            hasher.update(block)
+    return hasher.hexdigest()
+
+
 def write_atomically(chunks: Iterable[bytes], dest: Path) -> tuple[str, int]:
     """Blocking twin of ``stream_to_file`` for libraries with sync bodies (botocore)."""
     dest.parent.mkdir(parents=True, exist_ok=True)

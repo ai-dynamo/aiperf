@@ -16,7 +16,12 @@ from filelock import Timeout
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.environment import Environment
 from aiperf.config.dataset.remote_ref import RemoteRef
-from aiperf.dataset.remote.cache import entry_dir, entry_lock, local_fs_error
+from aiperf.dataset.remote.cache import (
+    entry_dir,
+    entry_lock,
+    file_sha256,
+    local_fs_error,
+)
 from aiperf.dataset.remote.errors import RemoteErrorKind, RemoteSourceError, RemoteStage
 from aiperf.dataset.remote.index import latest_indexed_version, read_index, write_index
 from aiperf.dataset.remote.models import (
@@ -156,23 +161,29 @@ def _verify_checksum(source: ResolvedSource) -> None:
 
 
 def _cached_for(probe: ProbeResult) -> ResolvedSource | None:
-    """The intact cached copy of ``probe``, if it has the sha256 the manifest declares now.
+    """The intact cached copy of ``probe``, recorded with the manifest accepted now.
 
     A version pins only the data file for HTTP and single S3 objects, so a
-    sidecar can change its checksum while the cache key stays the same.
+    sidecar can change (its sha256 included) while the cache key stays the same.
+    A declared sha256 is checked against the file's bytes, not only the digest
+    the index recorded at download time.
     """
     source = _usable_entry(probe.ref)
+    if source is None:
+        return None
     declared = _declared_sha256(probe)
-    if (
-        source is not None
-        and declared is not None
-        and source.files[0].sha256 != declared
+    if declared is not None and (
+        source.files[0].sha256 != declared or file_sha256(source.local_path) != declared
     ):
         _logger.warning(
             f"Cached copy of {probe.ref.display} does not match the sha256 its "
             "manifest declares; downloading it again"
         )
         return None
+    if source.probe.manifest_sha256 != probe.manifest_sha256:
+        # Provenance reads the index, so record the sidecar this run accepted.
+        source = source.model_copy(update={"probe": probe})
+        write_index(source)
     return source
 
 

@@ -67,7 +67,7 @@ named `train` fails the access check, so publish one split or name it `train`.
 | `aiperf_manifest_version` | yes | Currently `1`. A newer version makes older AIPerf releases fail with a request to upgrade. |
 | `format` | root manifests | A loader name from `aiperf plugins custom-dataset-loader`. A consumer's `--custom-dataset-type` must match it. |
 | `path` | root manifests | One file or one folder, relative to the root. No `..`, no absolute paths, no backslashes. |
-| `sha256` | no | Lowercase hex digest, checked after download. Single files only; ignored for folders. |
+| `sha256` | no | Lowercase hex digest of the data file, checked after every download and again on every cache hit. Single files only; ignored for folders. |
 | `block_size` | no | Hash block size the trace was recorded with. A `--prompt-input-tokens-block-size` (`--isl-block-size`) on the command line still wins. |
 | `requires.aiperf` | no | A [PEP 440](https://peps.python.org/pep-0440/) version specifier, such as `>=0.13`. |
 | `requires.endpoint_types` | no | Allowed `--endpoint-type` values. Other endpoint types fail before the download. |
