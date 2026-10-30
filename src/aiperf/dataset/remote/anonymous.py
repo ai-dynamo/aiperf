@@ -28,7 +28,7 @@ async def anonymous_needs_auth(ref: RemoteRef) -> bool | None:
     """
     if ref.scheme in ("http", "https"):
         return carries_credential(ref.ref)
-    if service.remote_offline():
+    if service.is_remote_offline():
         return None
     probe = _hf_needs_auth if ref.scheme == "hf" else _s3_needs_auth
     try:

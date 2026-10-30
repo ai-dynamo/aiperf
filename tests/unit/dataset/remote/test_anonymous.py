@@ -151,7 +151,7 @@ async def test_anonymous_needs_auth_probe_timeout_answers_within_budget(
 
     monkeypatch.setattr(anonymous, "PROBE_TIMEOUT_S", 0.05)
     monkeypatch.setattr(anonymous, probe_name, hang)
-    monkeypatch.setattr(anonymous.service, "remote_offline", lambda: False)
+    monkeypatch.setattr(anonymous.service, "is_remote_offline", lambda: False)
     start = time.monotonic()
     try:
         assert await anonymous.anonymous_needs_auth(RemoteRef(ref=ref)) is expected
