@@ -100,7 +100,7 @@ for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
 
 ## Plugin Categories
 
-AIPerf supports 34 plugin categories organized by function, including `api_router` and `public_dataset_loader`:
+AIPerf supports 36 plugin categories organized by function, including `api_router` and `public_dataset_loader`:
 
 ### Timing Categories
 
@@ -168,6 +168,7 @@ AIPerf supports 34 plugin categories organized by function, including `api_route
 |----------|------|-------------|
 | `plot` | `PlotType` | Chart types (scatter, histogram, timeline, etc.) |
 | `gpu_telemetry_collector` | `GPUTelemetryCollectorType` | GPU metric collection (DCGM, pynvml) |
+| `host_telemetry_collector` | `HostTelemetryCollectorType` | Host power/energy collection (RAPL); not yet wired to a CLI flag |
 
 ### Infrastructure Categories (Internal)
 
