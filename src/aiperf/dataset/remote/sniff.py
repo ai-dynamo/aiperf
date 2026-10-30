@@ -138,8 +138,9 @@ async def remote_first_record_has_timestamp(probe: ProbeResult) -> bool:
 
     A parquet folder (a Hugging Face layout or a manifest folder) is sniffed from
     its first listed shard alone: read in place from an indexed download, or else
-    fetched into the cache the later download reuses. Other files escalate prefix reads through PREFIX_STEPS. Offline mode
-    (which allows no network reads), single columnar files (whose schema sits in
+    fetched into the cache the later download reuses. Other files escalate prefix
+    reads through PREFIX_STEPS. Offline mode (which allows no network reads),
+    single columnar files (whose schema sits in
     the footer), and a first record the sniff leaves undecided (longer than the
     last step, or past MAX_FIRST_LINE_BYTES once inflated) read the cached
     download instead.
