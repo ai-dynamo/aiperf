@@ -115,6 +115,8 @@ def _walk_item(
         tool_calls = item.get("tool_calls")
         if isinstance(tool_calls, list) and tool_calls:
             msg["tool_calls"] = tool_calls
+        if "tool_call_id" in item:
+            msg["tool_call_id"] = item["tool_call_id"]
         chat_messages.append(msg)
 
 
