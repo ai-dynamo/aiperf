@@ -290,7 +290,7 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
         Args:
             request_info: Request context and metadata
             payload: Request payload (format depends on transport)
-            first_token_callback: Optional callback fired on first SSE message with ttft_ns
+            first_token_callback: Optional per-message callback; see FirstTokenCallback
 
         Returns:
             Record containing responses, timing, and any errors
