@@ -480,7 +480,28 @@ def _apply_default_stop_condition(prof: dict[str, Any], cli: CLIConfig) -> None:
     PhaseConfig itself requires an explicit stop condition (YAML users must
     choose one); this is the CLI-only default.
     """
-    from aiperf.config.phases import FULL_PASS_SESSIONS, PhaseType
+    stop, message = _default_stop_condition(prof, cli)
+    prof.update(stop)
+    _logger.warning(message)
+
+
+def full_pass_stop_condition(dataset_name: str) -> tuple[dict[str, Any], str]:
+    """One full pass over every conversation, and the warning that announces it."""
+    from aiperf.config.phases import FULL_PASS_SESSIONS
+
+    return {"sessions": FULL_PASS_SESSIONS}, (
+        "No stop condition given; running one full pass over every "
+        f"conversation in {dataset_name}. "
+        "Pass --request-count, --num-conversations, or --benchmark-duration "
+        "to bound the run instead."
+    )
+
+
+def _default_stop_condition(
+    prof: dict[str, Any], cli: CLIConfig
+) -> tuple[dict[str, Any], str]:
+    """The stop condition ``_apply_default_stop_condition`` applies, and its warning."""
+    from aiperf.config.phases import PhaseType
 
     # Scenarios lock their own timing mode and user-centric sizing is
     # governed by users, so both keep the flat floor.
@@ -488,14 +509,9 @@ def _apply_default_stop_condition(prof: dict[str, Any], cli: CLIConfig) -> None:
         cli.scenario is not None or prof["type"] == PhaseType.USER_CENTRIC
     )
     if not keeps_flat_floor and _is_full_pass_dataset(cli):
-        prof["sessions"] = FULL_PASS_SESSIONS
-        _logger.warning(
-            "No stop condition given; running one full pass over every "
-            f"conversation in {cli.public_dataset or cli.custom_dataset_type}. "
-            "Pass --request-count, --num-conversations, or --benchmark-duration "
-            "to bound the run instead."
+        return full_pass_stop_condition(
+            str(cli.public_dataset or cli.custom_dataset_type)
         )
-        return
 
     requests = _MIN_DEFAULT_REQUESTS
     reason = ""
@@ -519,8 +535,7 @@ def _apply_default_stop_condition(prof: dict[str, Any], cli: CLIConfig) -> None:
             f" (max({_MIN_DEFAULT_REQUESTS}, "
             f"{_DEFAULT_REQUESTS_PER_CONCURRENCY_SLOT} x {label} {concurrency}))"
         )
-    prof["requests"] = requests
-    _logger.warning(
+    return {"requests": requests}, (
         f"No stop condition given; defaulting to {requests} requests{reason}. "
         "Pass --request-count, --num-conversations, or --benchmark-duration "
         "to change it."
@@ -653,8 +668,14 @@ def _defer_remote_auto_promotion(prof: dict[str, Any], cli: CLIConfig) -> None:
             "conflict_error": fixed_schedule_sweep_message(*sweep),
         }
         return
+    check: dict[str, Any] = {"promoted": True, "conflict_error": None}
+    if not _has_stop_condition(prof):
+        # Computed while the phase is still concurrency, so a demoted run gets the
+        # bound and warning a local file without timestamps would have had.
+        stop, message = _default_stop_condition(prof, cli)
+        check |= {"demoted_stop_condition": stop, "demoted_stop_warning": message}
     prof["type"] = PhaseType.FIXED_SCHEDULE
-    prof[REMOTE_FIXED_SCHEDULE_CHECK_KEY] = {"promoted": True, "conflict_error": None}
+    prof[REMOTE_FIXED_SCHEDULE_CHECK_KEY] = check
 
 
 def _is_dag_without_stop_condition(prof: dict[str, Any], cli: CLIConfig) -> bool:
