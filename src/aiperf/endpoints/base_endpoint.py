@@ -170,8 +170,10 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         uninterpreted so a ``SpecDecodeAdapterProtocol`` owns the engine-specific
         interpretation downstream; None when absent.
 
-        A response with more than one choice is an ``n > 1`` non-streaming
-        request; its per-choice payload is suppressed because a single
+        A response with more than one choice is an ``n > 1`` or multi-prompt
+        non-streaming request; its per-choice and SGLang payloads are
+        suppressed (SGLang reports only the first prompt's details as an
+        object when ``n == 1``) because a single
         per-request record cannot attribute request-level usage to one sequence
         -- reporting one choice's acceptance alongside all choices' token count
         would be a mixed, misleading record. (``n > 1`` streaming is suppressed
@@ -186,16 +188,19 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
             if isinstance(stats, dict):
                 return stats
 
+        choices = json_obj.get("choices")
+        if isinstance(choices, list) and len(choices) > 1:
+            return None
+
         sglext = json_obj.get("sglext")
         if isinstance(sglext, dict):
             stats = sglext.get("spec_tokens_details")
             if isinstance(stats, dict):
                 return stats
 
-        choices = json_obj.get("choices")
         if (
             not isinstance(choices, list)
-            or len(choices) != 1
+            or not choices
             or not isinstance(choices[0], dict)
         ):
             return None
