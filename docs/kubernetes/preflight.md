@@ -488,8 +488,9 @@ still run. See `OperatorPreflightChecker._resource_mode_skip`.
   `src/aiperf/operator/preflight/_workload.py:_check_remote_datasets`
 - **Status**:
   - `skip` — no remote dataset reference.
-  - `fail` — a private or gated Hugging Face repo with no Secret-backed `HF_TOKEN` and no
-    `HF_TOKEN_PATH` env; a presigned URL that has already expired.
+  - `fail` — a private or gated Hugging Face repo with no Secret-backed `HF_TOKEN`, no
+    `HF_TOKEN_PATH` env, and no Secret mounted at `/aiperf/hf_home/token`; a presigned URL
+    that has already expired.
   - `warn` — a non-public S3 object with no `AWS_*` env and the default service account
     (IRSA, Pod Identity and node roles are invisible from the spec); a presigned URL that
     expires within an hour; a Hugging Face repo that could not be checked.

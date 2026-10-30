@@ -25,6 +25,7 @@ from aiperf.common.redact import REDACTED_VALUE
 from aiperf.config.dataset.remote_ref import carries_credential, remote_dataset_refs
 from aiperf.config.loader.errors import ConfigurationError
 from aiperf.dataset.remote.errors import RemoteErrorKind, RemoteSourceError
+from aiperf.kubernetes.jobset_helpers import HF_HOME_PATH
 from aiperf.kubernetes.preflight import CheckResult, CheckStatus
 
 if TYPE_CHECKING:
@@ -298,12 +299,37 @@ def _sas_expiry(value: str) -> datetime | None:
 
 
 def _has_hf_credential(pod_template: PodTemplateConfig) -> bool:
-    """A Secret-backed ``HF_TOKEN``, or ``HF_TOKEN_PATH`` naming a mounted token file."""
+    """A Secret-backed ``HF_TOKEN``, ``HF_TOKEN_PATH`` naming a mounted token file, or
+    a Secret mounted at ``$HF_HOME/token``, the file Hugging Face reads by default."""
     if "HF_TOKEN" in secret_env_names(pod_template.env):
         return True
-    return any(
+    if any(
         isinstance(item, dict) and item.get("name") == "HF_TOKEN_PATH"
         for item in pod_template.env
+    ):
+        return True
+    return _mounts_secret_at(pod_template, f"{HF_HOME_PATH}/token")
+
+
+def _mounts_secret_at(pod_template: PodTemplateConfig, path: str) -> bool:
+    """Whether a Secret-backed volume (plain or projected) is mounted exactly at ``path``."""
+    secret_volumes = {
+        volume.get("name")
+        for volume in pod_template.volumes
+        if isinstance(volume, dict)
+        and (
+            "secret" in volume
+            or any(
+                isinstance(source, dict) and "secret" in source
+                for source in (volume.get("projected") or {}).get("sources") or []
+            )
+        )
+    }
+    return any(
+        isinstance(mount, dict)
+        and mount.get("name") in secret_volumes
+        and str(mount.get("mountPath") or "").rstrip("/") == path
+        for mount in pod_template.volume_mounts
     )
 
 
@@ -336,8 +362,9 @@ def _evaluate_hf(
             CheckStatus.FAIL,
             f"{ref.display} is private or gated, and the pods have no "
             "Secret-backed HF_TOKEN or HF_TOKEN_PATH",
-            "Add --env-from-secrets HF_TOKEN=<secret>/<key>, or a "
-            "spec.podTemplate.env entry HF_TOKEN with valueFrom.secretKeyRef",
+            "Add --env-from-secrets HF_TOKEN=<secret>/<key>, a "
+            "spec.podTemplate.env entry HF_TOKEN with valueFrom.secretKeyRef, or "
+            f"a Secret file mounted at {HF_HOME_PATH}/token",
         )
     state = "needs a token, which the pods have" if needs_auth else "is public"
     return _result(CheckStatus.PASS, f"{ref.display} {state}")

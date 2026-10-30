@@ -287,7 +287,7 @@ flowchart LR
 
 | Source | What the pods need |
 |---|---|
-| Hugging Face (private or gated) | `--env-from-secrets HF_TOKEN=<secret>/<key>`, or an `HF_TOKEN_PATH` env pointing at a mounted Secret file. A missing token fails before submission. |
+| Hugging Face (private or gated) | `--env-from-secrets HF_TOKEN=<secret>/<key>`, an `HF_TOKEN_PATH` env pointing at a mounted Secret file, or a Secret file mounted at `/aiperf/hf_home/token` (the pods' `$HF_HOME/token`, which Hugging Face reads by default). A missing token fails before submission. |
 | S3 | An AWS identity: a ServiceAccount with IRSA or EKS Pod Identity (`--service-account`), or `AWS_*` env from a Secret. IRSA and node roles are invisible in the pod spec, so a non-public object with neither only warns. |
 | HTTPS presigned URL | The full URL in a Secret, passed as `AIPERF_INJECTED_DATASET_URLS` (below). |
 

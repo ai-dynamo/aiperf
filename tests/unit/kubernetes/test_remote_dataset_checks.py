@@ -108,6 +108,41 @@ def test_evaluate_remote_dataset_hf_matrix(
         assert "--env-from-secrets HF_TOKEN=<secret>/<key>" in result.hints[0]
 
 
+_SECRET_VOLUME = {"name": "hf", "secret": {"secretName": "hf-token"}}
+_PROJECTED_VOLUME = {
+    "name": "hf",
+    "projected": {"sources": [{"secret": {"name": "hf-token"}}]},
+}
+_CONFIGMAP_VOLUME = {"name": "hf", "configMap": {"name": "not-a-secret"}}
+
+
+@pytest.mark.parametrize(
+    "volumes,mount_path,expected",
+    [
+        param([_SECRET_VOLUME], "/aiperf/hf_home/token", CheckStatus.PASS, id="secret-file-at-default-token"),
+        param([_PROJECTED_VOLUME], "/aiperf/hf_home/token", CheckStatus.PASS, id="projected-secret-at-default-token"),
+        param([_SECRET_VOLUME], "/aiperf/hf_home/token/", CheckStatus.PASS, id="trailing-slash"),
+        param([_SECRET_VOLUME], "/secrets/hf/token", CheckStatus.FAIL, id="secret-elsewhere-needs-token-path"),
+        param([_CONFIGMAP_VOLUME], "/aiperf/hf_home/token", CheckStatus.FAIL, id="configmap-is-not-a-secret"),
+        param([], "/aiperf/hf_home/token", CheckStatus.FAIL, id="mount-without-volume"),
+    ],
+)  # fmt: skip
+def test_evaluate_remote_dataset_hf_secret_mounted_as_default_token_file(
+    volumes: list[dict], mount_path: str, expected: CheckStatus
+) -> None:
+    """Pods force HF_HOME=/aiperf/hf_home, and Hugging Face reads $HF_HOME/token by default."""
+    template = PodTemplateConfig(
+        volumes=volumes,
+        volume_mounts=[{"name": "hf", "mountPath": mount_path, "subPath": "token", "readOnly": True}],
+    )  # fmt: skip
+    result = evaluate_remote_dataset(
+        RemoteRef(ref="hf://org/repo"), True, template, now=NOW
+    )
+    assert result.status is expected
+    if expected is CheckStatus.FAIL:
+        assert "/aiperf/hf_home/token" in result.hints[0]
+
+
 @pytest.mark.parametrize(
     "needs_auth,env,service_account,expected",
     [
