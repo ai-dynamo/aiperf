@@ -24,7 +24,11 @@ async def test_intercept_no_spawn_returns_false():
     issuer = MagicMock()
     orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
     credit = MagicMock(
-        x_correlation_id="root", conversation_id="c", turn_index=0, agent_depth=0
+        x_correlation_id="root",
+        conversation_id="c",
+        turn_index=0,
+        agent_depth=0,
+        finite_replay=False,
     )
     assert await orch.intercept(credit) is False
 
@@ -68,7 +72,11 @@ async def test_intercept_with_spawn_dispatches_children_and_registers_sticky():
         conversation_source=cs, credit_issuer=issuer, sticky_router=sticky_router
     )
     credit = MagicMock(
-        x_correlation_id="root", conversation_id="c", turn_index=0, agent_depth=0
+        x_correlation_id="root",
+        conversation_id="c",
+        turn_index=0,
+        agent_depth=0,
+        finite_replay=False,
     )
 
     # No SPAWN_JOIN prereq set -> no gate -> intercept returns False.
@@ -111,7 +119,11 @@ async def test_intercept_uses_get_metadata():
     source = _FakeSource(parent_meta)
     orch = BranchOrchestrator(conversation_source=source, credit_issuer=MagicMock())
     credit = MagicMock(
-        x_correlation_id="root", conversation_id="c", turn_index=0, agent_depth=0
+        x_correlation_id="root",
+        conversation_id="c",
+        turn_index=0,
+        agent_depth=0,
+        finite_replay=False,
     )
     assert await orch.intercept(credit) is False
 
@@ -442,7 +454,7 @@ async def test_dispatch_failure_rolls_back_bookkeeping():
     issuer = MagicMock()
 
     # First dispatch succeeds (True), second fails (False -- slots saturated).
-    async def _dispatch(session):
+    async def _dispatch(session, *, on_refused=None):
         return session.x_correlation_id == "child-a"
 
     issuer.dispatch_first_turn = AsyncMock(side_effect=_dispatch)
@@ -452,7 +464,11 @@ async def test_dispatch_failure_rolls_back_bookkeeping():
         conversation_source=cs, credit_issuer=issuer, sticky_router=sticky_router
     )
     credit = MagicMock(
-        x_correlation_id="root", conversation_id="c", turn_index=0, agent_depth=0
+        x_correlation_id="root",
+        conversation_id="c",
+        turn_index=0,
+        agent_depth=0,
+        finite_replay=False,
     )
 
     # No gate -> intercept returns False. Only the successful child stays tracked.
@@ -517,7 +533,11 @@ async def test_spawn_mode_branch_does_not_register_sticky_routing():
         conversation_source=cs, credit_issuer=issuer, sticky_router=sticky_router
     )
     credit = MagicMock(
-        x_correlation_id="root", conversation_id="c", turn_index=0, agent_depth=0
+        x_correlation_id="root",
+        conversation_id="c",
+        turn_index=0,
+        agent_depth=0,
+        finite_replay=False,
     )
 
     # No gate -> intercept returns False; children still spawn.
@@ -646,7 +666,11 @@ async def test_intercept_short_circuits_when_cleaning_up():
     )
     orch.cleanup()
     credit = MagicMock(
-        x_correlation_id="root", conversation_id="c", turn_index=0, agent_depth=0
+        x_correlation_id="root",
+        conversation_id="c",
+        turn_index=0,
+        agent_depth=0,
+        finite_replay=False,
     )
     assert await orch.intercept(credit) is False
 

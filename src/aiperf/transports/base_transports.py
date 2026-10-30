@@ -46,6 +46,8 @@ This callback is used to determine if the first token has been received and can 
 It is used to release prefill concurrency.
 """
 
+TransportBoundaryCallback = Callable[[int], None]
+
 
 def _remove_headers_case_insensitive(
     headers: dict[str, str], names: tuple[str, ...]
@@ -77,7 +79,13 @@ class TransportProtocol(AIPerfLifecycleProtocol, Protocol):
     def stream_chunks_received(self) -> int: ...
 
     async def send_request(
-        self, request_info: RequestInfo, payload: RequestInputT
+        self,
+        request_info: RequestInfo,
+        payload: RequestInputT,
+        *,
+        first_token_callback: FirstTokenCallback | None = None,
+        transport_start_callback: TransportBoundaryCallback | None = None,
+        transport_eof_callback: TransportBoundaryCallback | None = None,
     ) -> RequestRecord: ...
 
 
@@ -284,6 +292,8 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
         payload: RequestInputT,
         *,
         first_token_callback: FirstTokenCallback | None = None,
+        transport_start_callback: TransportBoundaryCallback | None = None,
+        transport_eof_callback: TransportBoundaryCallback | None = None,
     ) -> RequestRecord:
         """Execute request via this transport protocol.
 
@@ -291,6 +301,8 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
             request_info: Request context and metadata
             payload: Request payload (format depends on transport)
             first_token_callback: Optional callback fired on first SSE message with ttft_ns
+            transport_start_callback: Optional request-invocation timestamp callback.
+            transport_eof_callback: Optional successful response-body EOF callback.
 
         Returns:
             Record containing responses, timing, and any errors

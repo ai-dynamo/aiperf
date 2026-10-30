@@ -8,6 +8,7 @@ import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import TimingConfig
 from aiperf.timing.phase_orchestrator import PhaseOrchestrator
@@ -28,6 +29,7 @@ def make_dataset(num_convs: int = 3, turns: int = 1) -> DatasetMetadata:
 
 def make_router() -> MagicMock:
     r = MagicMock()
+    r.clock = MonotonicClock()
     r.send_credit = AsyncMock()
     r.cancel_all_credits = AsyncMock()
     r.mark_credits_complete = MagicMock()

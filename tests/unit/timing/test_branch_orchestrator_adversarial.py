@@ -161,6 +161,7 @@ async def test_intercept_spawns_without_gate_when_branch_has_no_consumer_prereq(
         turn_index=0,
         agent_depth=0,
         parent_correlation_id=None,
+        finite_replay=False,
     )
     assert await orch.intercept(credit) is False
     assert cs.start_branch_child.call_count == 1
@@ -224,6 +225,7 @@ async def test_intercept_concurrent_on_same_parent_corr_serializes_via_parent_lo
         turn_index=0,
         agent_depth=0,
         parent_correlation_id=None,
+        finite_replay=False,
     )
 
     task1 = asyncio.create_task(orch.intercept(credit))
@@ -259,6 +261,7 @@ async def test_intercept_short_circuits_when_cleaning_up():
         turn_index=0,
         agent_depth=0,
         parent_correlation_id=None,
+        finite_replay=False,
     )
     assert await orch.intercept(credit) is False
     cs.start_branch_child.assert_not_called()
@@ -301,6 +304,7 @@ async def test_start_branch_child_raise_rolls_back_sticky_refcount_unchanged():
         turn_index=0,
         agent_depth=0,
         parent_correlation_id=None,
+        finite_replay=False,
     )
     # No gate -> returns False, and all children failed -> no state.
     assert await orch.intercept(credit) is False
@@ -515,6 +519,7 @@ async def test_intercept_gather_exception_in_one_child_does_not_block_siblings()
         turn_index=0,
         agent_depth=0,
         parent_correlation_id=None,
+        finite_replay=False,
     )
     # No gate -> intercept returns False.
     assert await orch.intercept(credit) is False
@@ -606,6 +611,7 @@ async def test_intercept_reentry_for_same_parent_after_join_starts_new_gate():
         turn_index=0,
         agent_depth=0,
         parent_correlation_id=None,
+        finite_replay=False,
     )
     # No gate in metadata -> returns False. Child was spawned.
     assert await orch.intercept(credit0) is False
@@ -619,6 +625,7 @@ async def test_intercept_reentry_for_same_parent_after_join_starts_new_gate():
         turn_index=1,
         agent_depth=0,
         parent_correlation_id=None,
+        finite_replay=False,
     )
     assert await orch.intercept(credit1) is False
     assert "child-b" in orch._child_to_join

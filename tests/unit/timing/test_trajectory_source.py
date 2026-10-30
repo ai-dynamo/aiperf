@@ -4,6 +4,7 @@ import logging
 from unittest.mock import MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import ConversationBranchMode, PrerequisiteKind
 from aiperf.common.models import (
@@ -63,6 +64,82 @@ def _make_timestamped_subagent_dataset() -> DatasetMetadata:
         ],
         sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
     )
+
+
+@pytest.mark.parametrize(
+    ("sampling_strategy", "sampled_ids", "expected_ids"),
+    [
+        param(
+            DatasetSamplingStrategy.SEQUENTIAL,
+            ["a", "empty", "b", "c"],
+            ("a", "b", "c"),
+            id="sequential",
+        ),
+        param(
+            DatasetSamplingStrategy.SHUFFLE,
+            ["c", "empty", "a", "b"],
+            ("c", "a", "b"),
+            id="shuffle",
+        ),
+    ],
+)  # fmt: skip
+def test_finite_replay_uses_sampler_order_once_per_eligible_root(
+    sampling_strategy: DatasetSamplingStrategy,
+    sampled_ids: list[str],
+    expected_ids: tuple[str, ...],
+) -> None:
+    metadata = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id=cid,
+                turns=[TurnMetadata(timestamp_ms=0.0)] if cid != "empty" else [],
+            )
+            for cid in ("a", "b", "c", "empty")
+        ],
+        sampling_strategy=sampling_strategy,
+    )
+    sampler = MagicMock()
+    sampler.next_conversation_id.side_effect = sampled_ids
+
+    source = TrajectorySource(
+        dataset_metadata=metadata,
+        dataset_sampler=sampler,
+        concurrency=2,
+        random_seed=42,
+        finite_replay=True,
+    )
+
+    assert source.finite_root_ids == expected_ids
+    assert sampler.next_conversation_id.call_count == len(sampled_ids)
+
+
+def test_finite_replay_random_order_is_seeded_and_without_replacement() -> None:
+    metadata = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id=f"root-{index}",
+                turns=[TurnMetadata(timestamp_ms=0.0)],
+            )
+            for index in range(5)
+        ],
+        sampling_strategy=DatasetSamplingStrategy.RANDOM,
+    )
+    sampler = MagicMock()
+
+    def root_order() -> tuple[str, ...]:
+        source = TrajectorySource(
+            dataset_metadata=metadata,
+            dataset_sampler=sampler,
+            concurrency=2,
+            random_seed=42,
+            finite_replay=True,
+        )
+        return source.finite_root_ids
+
+    first_order = root_order()
+    assert first_order == root_order()
+    assert set(first_order) == {f"root-{index}" for index in range(5)}
+    assert len(first_order) == 5
 
 
 def test_trajectory_count_matches_min_concurrency_and_pool():
