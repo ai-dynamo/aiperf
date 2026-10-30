@@ -50,7 +50,7 @@ class ServerMetricsDiscoveryConfig(BaseConfig):
             default=ServerMetricsDiscoveryMode.AUTO,
             description="Discovery mode: 'auto' detects environment and tries K8s "
             "if in-cluster, 'kubernetes' forces K8s API discovery, "
-            "'disabled' uses only explicit URLs.",
+            "'disabled' uses only endpoint-derived and explicitly configured URLs.",
         ),
     ]
 

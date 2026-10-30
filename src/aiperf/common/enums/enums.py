@@ -801,7 +801,7 @@ class ServerMetricsDiscoveryMode(CaseInsensitiveStrEnum):
     """Use Kubernetes API to discover inference-server pods."""
 
     DISABLED = "disabled"
-    """Disable automatic discovery. Only use explicitly provided URLs."""
+    """Disable automatic discovery. Only use endpoint-derived and explicitly configured URLs."""
 
 
 class SweepMode(CaseInsensitiveStrEnum):
