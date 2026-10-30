@@ -288,8 +288,17 @@ annotation path.
 
 Set `AIPERF_SERVER_METRICS_DISCOVERY_LABEL_SELECTOR` to provide a default selector
 without a configuration file. An explicit `server_metrics.discovery.label_selector`
-value takes precedence. Set it to an empty string to ignore the environment default
-and use only the built-in eligibility rules.
+value takes precedence. Set that YAML field to an empty string to ignore the
+environment default and use only the built-in eligibility rules.
+
+Discovery reads this variable inside the benchmark pod. For `aiperf kube profile`,
+a variable exported in your submitting shell does not reach the pod. Pass it with
+`--env-vars`, or set it in the `AIPerfJob` `spec.podTemplate.env` list:
+
+```bash
+aiperf kube profile ... \
+  --env-vars.AIPERF_SERVER_METRICS_DISCOVERY_LABEL_SELECTOR app.kubernetes.io/name=dynamo
+```
 
 #### RBAC prerequisites
 
