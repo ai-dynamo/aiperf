@@ -45,8 +45,8 @@ def _demoted_stop_condition(
         and plugins.get_dataset_loader_metadata(str(fmt)).full_pass_by_default
     ):
         return full_pass_stop_condition(str(fmt))
-    if check.demoted_stop_condition:
-        return dict(check.demoted_stop_condition), check.demoted_stop_warning or ""
+    if check.demoted_requests:
+        return {"requests": check.demoted_requests}, check.demoted_stop_warning or ""
     # A check serialized before the bound was carried on it.
     return {"requests": DEFAULT_UNBOUNDED_REQUESTS}, (
         f"No stop condition given; defaulting to {DEFAULT_UNBOUNDED_REQUESTS} requests. "

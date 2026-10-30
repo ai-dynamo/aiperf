@@ -121,4 +121,4 @@ def test_demotion_logs_the_default_it_applies(caplog) -> None:
 def test_promotion_carries_no_bound_when_the_user_set_one() -> None:
     cfg = make_run_from_cli(CLIConfig(model_names=["m"], input_file="hf://o/r/t.jsonl", concurrency=8, request_count=5)).cfg  # fmt: skip
     check = cfg.get_default_dataset().remote_fixed_schedule_check
-    assert check.demoted_stop_condition is None
+    assert check.demoted_requests is None

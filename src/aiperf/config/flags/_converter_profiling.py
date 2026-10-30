@@ -673,7 +673,12 @@ def _defer_remote_auto_promotion(prof: dict[str, Any], cli: CLIConfig) -> None:
         # Computed while the phase is still concurrency, so a demoted run gets the
         # bound and warning a local file without timestamps would have had.
         stop, message = _default_stop_condition(prof, cli)
-        check |= {"demoted_stop_condition": stop, "demoted_stop_warning": message}
+        # A promotable remote is never a full-pass suite, so this is a request count.
+        if "requests" in stop:
+            check |= {
+                "demoted_requests": stop["requests"],
+                "demoted_stop_warning": message,
+            }
     prof["type"] = PhaseType.FIXED_SCHEDULE
     prof[REMOTE_FIXED_SCHEDULE_CHECK_KEY] = check
 

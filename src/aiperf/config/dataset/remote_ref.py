@@ -321,19 +321,20 @@ class RemoteFixedScheduleCheck(BaseConfig):
             "incompatible rate-shaped mode or a parameter sweep was selected).",
         ),
     ]
-    demoted_stop_condition: Annotated[
-        dict[str, int | str] | None,
+    demoted_requests: Annotated[
+        int | None,
         Field(
             default=None,
-            description="Stop condition the CLI would have defaulted to without the "
-            "promotion (for example requests scaled to concurrency); applied if the "
-            "access preflight demotes the phase. None when the user set one.",
+            ge=1,
+            description="Request count the CLI would have defaulted to without the "
+            "promotion (scaled to concurrency); applied if the access preflight demotes "
+            "the phase. None when the user set a stop condition.",
         ),
     ]
     demoted_stop_warning: Annotated[
         str | None,
         Field(
             default=None,
-            description="Warning logged when demoted_stop_condition is applied.",
+            description="Warning logged when demoted_requests is applied.",
         ),
     ]
