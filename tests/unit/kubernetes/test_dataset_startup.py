@@ -390,3 +390,30 @@ def test_prepare_dataset_manager_run_redaction_failure_keeps_the_original_error(
     message = termination_log.read_text(encoding="utf-8")
     assert message.startswith(f"{POD_PREFIX} RuntimeError")
     assert "download failed" not in message
+
+
+def test_injected_dataset_urls_reach_only_the_dataset_manager() -> None:
+    """Only dataset-manager downloads; no other container gets the presigned URLs' Secret."""
+    from aiperf.config.deployment import PodTemplateConfig
+
+    secret_env = {
+        "name": AIPERF_INJECTED_DATASET_URLS,
+        "valueFrom": {"secretKeyRef": {"name": "aiperf-dataset-urls", "key": "urls"}},
+    }
+    other_env = {"name": "CUSTOM", "value": "kept"}
+    spec = AIPerfJobSetSpec(
+        name="ts", namespace="ns", job_id="ts-1", image="aiperf:ci", remote_dataset=True,
+        pod_template=PodTemplateConfig(env=[secret_env, other_env]),
+    )  # fmt: skip
+    holders, seen = [], 0
+    for job in spec.to_k8s_manifest()["spec"]["replicatedJobs"]:
+        pod = job["template"]["spec"]["template"]["spec"]
+        for container in pod["containers"] + pod.get("initContainers", []):
+            names = [e["name"] for e in container.get("env", [])]
+            seen += 1
+            if AIPERF_INJECTED_DATASET_URLS in names:
+                holders.append(container["name"])
+            if container["name"] != "results-sidecar":
+                assert "CUSTOM" in names, container["name"]
+    assert seen > 2
+    assert holders == [Containers.DATASET_MANAGER]

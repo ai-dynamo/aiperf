@@ -547,6 +547,7 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
         controller_host: str | None = None,
         include_pod_index: bool = True,
         controller_pod: bool = False,
+        dataset_downloader: bool = False,
     ) -> list[dict[str, Any]]:
         """Create environment variables for a container."""
         return build_env_vars(
@@ -558,6 +559,7 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
             include_pod_index=include_pod_index,
             controller_pod=controller_pod,
             remote_dataset=self.remote_dataset,
+            dataset_downloader=dataset_downloader,
         )
 
     # ------------------------------------------------------------------ container factories
@@ -589,6 +591,7 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
             controller_host=controller_host,
             include_pod_index=include_pod_index,
             controller_pod=controller_pod,
+            dataset_downloader=name == Containers.DATASET_MANAGER,
         )
         if extra_env:
             env.extend(extra_env)
