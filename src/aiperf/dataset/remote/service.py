@@ -123,9 +123,16 @@ def _usable_entry(ref: RemoteRef) -> ResolvedSource | None:
 async def probe_ref(ref: RemoteRef) -> ProbeResult:
     """Check access and pin the version of ``ref`` (from the cache when offline)."""
     if remote_offline():
-        return await asyncio.to_thread(_offline_probe, ref)
-    resolver = get_resolver(ref.scheme)
-    return await with_transient_retry(lambda: resolver.probe(ref))
+        probe = await asyncio.to_thread(_offline_probe, ref)
+    else:
+        resolver = get_resolver(ref.scheme)
+        probe = await with_transient_retry(lambda: resolver.probe(ref))
+    if probe.data_is_dir and probe.manifest is not None and probe.manifest.sha256:
+        _logger.warning(
+            f"The manifest of {ref.display} declares a sha256, but its data is a folder; "
+            "sha256 is checked for single files only, so these files are not verified"
+        )
+    return probe
 
 
 def _offline_probe(ref: RemoteRef) -> ProbeResult:

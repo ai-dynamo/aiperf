@@ -23,7 +23,8 @@ from aiperf.dataset.remote import service
 from aiperf.dataset.remote.cache import remote_cache_dir
 from aiperf.dataset.remote.errors import RemoteErrorKind, RemoteSourceError, RemoteStage
 from aiperf.dataset.remote.index import read_index
-from aiperf.dataset.remote.models import UNVERSIONED
+from aiperf.dataset.remote.manifest import AIPerfManifest
+from aiperf.dataset.remote.models import UNVERSIONED, ProbeResult
 
 BODY = b'{"timestamp": 1, "input_length": 4, "output_length": 2}\n'
 
@@ -234,6 +235,29 @@ async def test_cache_hit_rehashes_a_file_whose_manifest_declares_sha256(
     first.local_path.write_bytes(bytes(b ^ 0xFF for b in BODY))
     second = await service.materialize_probe(await service.probe_ref(ref))
     assert second.local_path.read_bytes() == BODY
+
+
+@pytest.mark.parametrize("data_is_dir,warned", [param(True, True, id="folder"), param(False, False, id="file")])  # fmt: skip
+@pytest.mark.asyncio
+async def test_probe_warns_when_a_folder_manifest_declares_sha256(
+    monkeypatch, caplog, data_is_dir: bool, warned: bool
+) -> None:
+    """sha256 covers single files only; a folder's publisher must not think it is checked."""
+    ref = RemoteRef(ref="s3://bucket/set/").with_version("list:abc")
+    manifest = AIPerfManifest(aiperf_manifest_version=1, format="mooncake_trace", path="data", sha256="0" * 64)  # fmt: skip
+    probe = ProbeResult(
+        ref=ref, pinned_ref=ref.display, data_relpath="data", data_is_dir=data_is_dir,
+        filename="data", manifest=manifest, manifest_sha256="m", needs_auth=True,
+    )  # fmt: skip
+
+    class Resolver:
+        async def probe(self, _ref):
+            return probe
+
+    monkeypatch.setattr(service, "get_resolver", lambda scheme: Resolver())
+    with caplog.at_level("WARNING"):
+        await service.probe_ref(RemoteRef(ref="s3://bucket/set/"))
+    assert ("sha256 is checked for single files only" in caplog.text) is warned
 
 
 @pytest.mark.asyncio
