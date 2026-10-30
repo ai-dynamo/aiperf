@@ -152,7 +152,7 @@ jobs:
 
   botorch-regression:
     name: BoTorch Regression Tests (CPU)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -197,7 +197,7 @@ jobs:
     name: Unit Tests Gate
     needs: [build, botorch-regression]
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions: {}
     steps:
