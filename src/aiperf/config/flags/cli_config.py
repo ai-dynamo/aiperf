@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, TypeAlias
 
 from cyclopts import Parameter
-from pydantic import AfterValidator, BeforeValidator, ConfigDict, Field
+from pydantic import AfterValidator, BeforeValidator, Field
 
 from aiperf.common.constants import DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS
 from aiperf.common.enums import (
@@ -64,13 +64,14 @@ from aiperf.config.cli_parameter import CLIParameter, Groups
 from aiperf.config.endpoint import EndpointDefaults
 from aiperf.config.loader.parsing import (
     normalize_http_urls,
-    parse_file,
     parse_float_or_float_list,
+    parse_input_file,
     parse_int_or_int_list,
     parse_str_as_numeric_dict,
     parse_str_or_dict_as_tuple_list,
     parse_str_or_list,
     parse_str_or_list_of_positive_values,
+    raise_rejected_input_file,
     reject_moved_custom_dataset_type,
     require_turn_mean_at_least_one,
 )
@@ -106,9 +107,6 @@ class CLIConfig(BaseConfig):
     CLIConfig is a flat DTO; no nested-class forward refs remain. Validators
     are forbidden on this class - AIPerfConfig is the single validation gate.
     """
-
-    # ``input_file`` may hold a presigned URL; ValidationError text would echo it.
-    model_config = ConfigDict(hide_input_in_errors=True)
 
     ##############################################################################
     # Endpoint
@@ -711,7 +709,10 @@ class CLIConfig(BaseConfig):
             "Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), "
             "Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
         ),
-        BeforeValidator(parse_file),
+        # Runs bottom-up: a failed parse becomes a redacted value, then raises, so
+        # a presigned URL's signature never appears in the ValidationError.
+        BeforeValidator(raise_rejected_input_file),
+        BeforeValidator(parse_input_file),
         CLIParameter(
             name=("--input-file",),
             group=Groups.INPUT,

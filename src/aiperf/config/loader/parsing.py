@@ -336,6 +336,51 @@ def parse_file(value: "str | Path | RemoteRef | None") -> "Path | RemoteRef | No
     raise ValueError(f"'{value}' is not a valid file or directory")
 
 
+class RejectedInputFile:
+    """An ``--input-file`` value that failed to parse, carried only in redacted form.
+
+    ``raise_rejected_input_file`` raises its reason, so Pydantic echoes this object
+    as the error's input, never the raw value, which may hold a presigned signature
+    or URL userinfo. Other fields keep their values in validation errors.
+    """
+
+    __slots__ = ("reason", "redacted")
+
+    def __init__(self, redacted: str, reason: str) -> None:
+        self.redacted = redacted
+        self.reason = reason
+
+    def __repr__(self) -> str:
+        return repr(self.redacted)
+
+
+def parse_input_file(value: Any) -> "Path | RemoteRef | RejectedInputFile | None":
+    """``parse_file``, turning a failure into a redacted ``RejectedInputFile``."""
+    from pydantic import ValidationError
+
+    from aiperf.common.redact import redact_url
+
+    try:
+        return parse_file(value)
+    except ValueError as e:
+        raw = str(value)
+        redacted = redact_url(raw)
+        if isinstance(e, ValidationError):
+            reason = "; ".join(
+                err["msg"].removeprefix("Value error, ") for err in e.errors()
+            )
+        else:
+            reason = str(e)
+        return RejectedInputFile(redacted, reason.replace(raw, redacted))
+
+
+def raise_rejected_input_file(value: Any) -> Any:
+    """Raise the reason ``parse_input_file`` recorded; pass anything else through."""
+    if isinstance(value, RejectedInputFile):
+        raise ValueError(value.reason)
+    return value
+
+
 def validate_sequence_distribution(v: str | None) -> str | None:
     """Validate sequence distribution format, returns original value if valid."""
     # Only validate the format, don't create the full distribution yet.

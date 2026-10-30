@@ -146,4 +146,17 @@ def test_cli_config_error_hides_presigned_secret(bad_ref: str, reason: str) -> N
         CLIConfig(model_names=["m"], input_file=bad_ref)
     text = str(exc_info.value)
     assert "deadbeefsecret" not in text
+    assert "deadbeefsecret" not in repr(exc_info.value.errors())
     assert reason in text
+
+
+def test_cli_config_error_still_shows_other_flags_values() -> None:
+    """Only --input-file is redacted; every other flag keeps its value in the error."""
+    with pytest.raises(ValidationError) as exc_info:
+        CLIConfig(model_names=["m"], concurrency="lots")
+    assert "lots" in str(exc_info.value)
+
+
+def test_cli_config_error_shows_a_missing_local_path() -> None:
+    with pytest.raises(ValidationError, match=r"/no/such/file\.jsonl"):
+        CLIConfig(model_names=["m"], input_file="/no/such/file.jsonl")
