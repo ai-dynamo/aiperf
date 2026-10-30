@@ -511,9 +511,48 @@ def convert_cli_to_aiperf(cli: CLIConfig) -> AIPerfConfig:
     """
     from aiperf.config.config import AIPerfConfig
 
+    cli = _apply_scenario_defaults(cli)
     nested = _assemble_envelope_dict(cli)
     _apply_variants_scenario_sweep(nested, cli)
     return AIPerfConfig(**nested)
+
+
+def _apply_scenario_defaults(cli: CLIConfig) -> CLIConfig:
+    """Apply a scenario's CLI preset before builders fill general defaults."""
+    from aiperf.common.scenario import get_scenario
+
+    if not cli.scenario:
+        return cli
+    spec = get_scenario(cli.scenario)
+    defaults = {
+        "benchmark_duration": spec.default_benchmark_duration_seconds,
+        "trajectory_start_min_ratio": spec.default_trajectory_start_min_ratio,
+        "trajectory_start_max_ratio": spec.default_trajectory_start_max_ratio,
+        **spec.cli_defaults,
+    }
+    defaults = {
+        key: value
+        for key, value in defaults.items()
+        if value is not None and key not in cli.model_fields_set
+    }
+    for enabled, disabled in (
+        ("gpu_telemetry", "no_gpu_telemetry"),
+        ("server_metrics", "no_server_metrics"),
+        ("request_rate", "request_rate_series"),
+    ):
+        if enabled in cli.model_fields_set:
+            defaults.pop(disabled, None)
+        if disabled in cli.model_fields_set:
+            defaults.pop(enabled, None)
+    if cli.agentic_cache_warmup_duration is not None:
+        defaults.pop("warmup_requests_per_lane", None)
+    unknown = sorted(defaults.keys() - type(cli).model_fields.keys())
+    if unknown:
+        raise TypeError(
+            f"Scenario {cli.scenario!r} cli_defaults has unknown CLI field(s): {unknown}"
+        )
+    defaults = type(cli).model_validate(defaults).model_dump(exclude_unset=True)
+    return cli.model_copy(update=defaults)
 
 
 def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:

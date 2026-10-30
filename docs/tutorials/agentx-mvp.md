@@ -12,6 +12,57 @@ does and why.
 
 ---
 
+## Short command with `--scenario agentx`
+
+The `agentx` scenario supplies the defaults used by InferenceX's standalone
+command. Select the server, served model, dataset, concurrency, and output:
+
+```bash
+aiperf profile \
+  --scenario agentx \
+  --url http://127.0.0.1:8000 \
+  --model moonshotai/Kimi-K3 --tokenizer moonshotai/Kimi-K3 \
+  --public-dataset semianalysis_cc_traces_weka_062126 \
+  --concurrency 8 \
+  --output-artifact-dir ./results/agentx-c8
+```
+
+The preset supplies streaming chat, a 3,600-second profiling duration, seed 42,
+trajectory start ratios 0.25–0.75, 10 warmup requests per lane, a 1,800-second
+warmup grace period, a 0.10 live failure threshold, a 300-second trace idle cap,
+393 dataset entries, server token counts, disabled GPU telemetry, 30-second
+stats, and 1-second metric slices. It also defaults these runtime settings for
+the profiling process and its child services:
+
+| Environment setting | Default |
+| --- | --- |
+| `AIPERF_DATASET_CONFIGURATION_TIMEOUT` | `1800` seconds |
+| `AIPERF_SERVICE_PROFILE_CONFIGURE_TIMEOUT` | `1800` seconds |
+| `AIPERF_UI_REALTIME_METRICS_ENABLED` | `true` |
+| `AIPERF_HTTP_TCP_USER_TIMEOUT` | `900000` milliseconds |
+
+Explicit CLI flags and runtime environment settings override the preset defaults. For example, `--warmup-grace-period 3600` extends warmup, and
+`--agentic-cache-warmup-duration 60` selects duration-based cache warmup instead
+of the default request budget. The argument preset applies to flag-based
+`aiperf profile` commands; `--config` continues to define benchmark settings
+in the YAML file.
+
+The preset is declared on the registered `ScenarioSpec`: `cli_defaults` supplies
+omitted flags, and `environment_defaults` supplies runtime settings through the
+existing `Environment` settings model. Environment defaults are scoped to the run
+and restored afterward.
+
+Choose the dataset variant and tokenizer appropriate to the model. Model aliases
+can require an explicit `--tokenizer`. Add `--tokenizer-trust-remote-code` only
+when the tokenizer needs it. Router affinity and server metrics remain explicit.
+The old `AIPERF_DATASET_WEKA_LIVE_ASSISTANT_RESPONSES` export is unnecessary;
+the harness no longer reads it.
+
+The existing `inferencex-agentx-mvp` scenario retains its defaults. `agentx`
+shares its replay, streaming, EOS, corpus, cache-busting, and submission-validity
+checks; conflicting invariants still fail. The different duration and trajectory
+window mean results from the two default commands are not directly equivalent.
+
 ## What Is AgentX MVP?
 
 AgentX MVP is a multi-turn, agentic-coding benchmark proposed by SemiAnalysis as

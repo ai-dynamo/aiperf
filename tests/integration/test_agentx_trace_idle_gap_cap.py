@@ -95,11 +95,21 @@ def _tree_idle_gaps_seconds(result: AIPerfResults) -> list[float]:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-@pytest.mark.parametrize("cap_seconds", [None, 0.1, 0.25, 0.5])
+@pytest.mark.parametrize(
+    ("scenario", "cap_seconds"),
+    [
+        ("inferencex-agentx-mvp", None),
+        ("inferencex-agentx-mvp", 0.1),
+        ("inferencex-agentx-mvp", 0.25),
+        ("inferencex-agentx-mvp", 0.5),
+        ("agentx", 0.25),
+    ],
+)
 async def test_agentx_trace_idle_gap_cap_controls_replay_timing(
     cli: AIPerfCLI,
     aiperf_mock_server: AIPerfMockServer,
     varied_weka_traces: Path,
+    scenario: str,
     cap_seconds: float | None,
 ) -> None:
     """Replay varied traces through the mock server and verify the configured cap."""
@@ -109,7 +119,7 @@ async def test_agentx_trace_idle_gap_cap_controls_replay_timing(
     result = await cli.run(
         f"""
         aiperf profile
-            --scenario inferencex-agentx-mvp
+            --scenario {scenario}
             --unsafe-override
             --model mock-model
             --url {aiperf_mock_server.url}
@@ -121,10 +131,12 @@ async def test_agentx_trace_idle_gap_cap_controls_replay_timing(
             --no-fixed-schedule
             --concurrency 4
             --benchmark-duration 6
+            {"--warmup-requests-per-lane 1" if scenario == "agentx" else ""}
             --trajectory-start-min-ratio 0.25
             --trajectory-start-max-ratio 0.25
             --random-seed 42
             --workers-max 4
+            --record-processors 1
             --ui simple
             {cap_arg}
         """,

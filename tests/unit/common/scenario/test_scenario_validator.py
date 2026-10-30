@@ -337,9 +337,11 @@ def _local_unpinned_trace_run(
     *,
     unsafe_override: bool = False,
     detected_loader: str = "weka_trace",
+    scenario: str = "inferencex-agentx-mvp",
 ) -> BenchmarkRun:
     """FileDataset whose resolver detects a local, unpinned trace loader."""
     run = _build_run(
+        scenario=scenario,
         streaming=True,
         extra={"ignore_eos": True},
         unsafe_override=unsafe_override,
@@ -408,6 +410,32 @@ def test_local_mooncake_trace_unsafe_override_marks_submission_invalid() -> None
         v.current_value == "mooncake_trace (local, unpinned)"
         for v in outcome.violations
     )
+
+
+@pytest.mark.parametrize("detected_loader", ["weka_trace", "mooncake_trace"])
+def test_agentx_rejects_local_unpinned_traces(detected_loader: str) -> None:
+    """The concise preset must keep the MVP's corpus-identity lock."""
+    run = _local_unpinned_trace_run(scenario="agentx", detected_loader=detected_loader)
+    with pytest.raises(ScenarioLockError) as exc:
+        apply_scenario(run)
+    assert "cannot verify corpus identity" in str(exc.value)
+
+
+def test_agentx_weka_hf_requires_pinned_repo() -> None:
+    run = _build_run(
+        scenario="agentx",
+        streaming=True,
+        extra={"ignore_eos": True},
+        dataset={
+            "name": "main",
+            "type": "public",
+            "dataset": "weka_hf",
+            "hf_weka_dataset": "example/not-agentx-corpus",
+        },
+    )
+    with pytest.raises(ScenarioLockError) as exc:
+        apply_scenario(run)
+    assert "semianalysisai/cc-traces-weka-062126" in str(exc.value)
 
 
 def test_cache_bust_auto_filled_when_default() -> None:
