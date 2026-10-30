@@ -1516,9 +1516,10 @@ async def _refresh_final_phase_progress(
 ) -> None:
     """Take one last progress sample while the controller is still reachable.
 
-    ``status.phases`` mirrors the controller's live progress, sampled once per
-    monitor tick. A benchmark shorter than the tick interval therefore freezes
-    the CR at whatever the last tick saw, and the job reports Completed while
+    ``status.phases`` mirrors the controller's live progress, pushed by the
+    controller and only re-read by ``monitor_progress`` when the heartbeat
+    watchdog invokes it. A benchmark shorter than that gap therefore freezes
+    the CR at whatever the last sample saw, and the job reports Completed while
     its own phase counters say otherwise -- observed on a live 21s gemma sweep
     child: ``requestsCompleted 284/300`` and ``isRecordsComplete false`` on a
     run whose export contains all 300 records.
