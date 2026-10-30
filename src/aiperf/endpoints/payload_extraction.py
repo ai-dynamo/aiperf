@@ -33,8 +33,18 @@ def extract_inputs(
     """
     result = ExtractedPayload()
     n = payload.get("n")
-    if isinstance(n, int) and n > 1:
-        result.num_choices = n
+    n = n if isinstance(n, int) and n > 1 else 1
+    prompt = payload.get("prompt")
+    # A completions prompt list of strings or token lists is a batch; a flat
+    # token-id list is one prompt. Each batched prompt gets its own n choices.
+    num_prompts = (
+        len(prompt)
+        if isinstance(prompt, list)
+        and prompt
+        and all(isinstance(p, str | list) for p in prompt)
+        else 1
+    )
+    result.num_choices = n * num_prompts
     # Reverse index the part-type set: ``{"text": MediaType.TEXT,
     # "image_url": MediaType.IMAGE, ...}``. Built per-call - the map is
     # small and per-part lookup is O(1).
