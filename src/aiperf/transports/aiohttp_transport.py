@@ -451,7 +451,7 @@ class AioHttpTransport(BaseTransport):
         Args:
             request_info: Request context and metadata (includes cancel_after_ns)
             payload: JSON-serializable request payload
-            first_token_callback: Optional callback fired on first SSE message with ttft_ns
+            first_token_callback: Optional per-message callback; see FirstTokenCallback
 
         Returns:
             Request record with responses, timing, and any errors

@@ -50,6 +50,7 @@ class PhaseProgressTracker:
         """
         self._config = config
         self._counter = CreditCounter(config)
+        self._last_streaming_content_ns: int | None = None
 
         # Events for synchronization
         self.all_credits_sent_event: asyncio.Event = asyncio.Event()
@@ -243,6 +244,13 @@ class PhaseProgressTracker:
     # Stats Creation
     # =========================================================================
 
+    def observe_streaming_content(self, timestamp_ns: int | None) -> None:
+        """Retain the latest content timestamp independently of completion counts."""
+        if timestamp_ns is not None:
+            self._last_streaming_content_ns = max(
+                self._last_streaming_content_ns or 0, timestamp_ns
+            )
+
     def create_stats(self, lifecycle: PhaseLifecycle) -> CreditPhaseStats:
         """Create immutable stats snapshot.
 
@@ -262,6 +270,7 @@ class PhaseProgressTracker:
             phase_kind=self._config.phase_kind,
             # Timestamps from lifecycle
             start_ns=lifecycle.started_at_ns,
+            last_streaming_content_ns=self._last_streaming_content_ns,
             sent_end_ns=lifecycle.sending_complete_at_ns,
             requests_end_ns=lifecycle.complete_at_ns,
             # Configuration (stop conditions)

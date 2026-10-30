@@ -109,7 +109,7 @@ class AioHttpClient(AIPerfLoggerMixin):
             headers: Request headers
             data: Request payload (for POST, PUT, etc.)
             on_request_sent: Optional event to set when the full request is sent
-            first_token_callback: Optional callback fired on first SSE message with ttft_ns
+            first_token_callback: Optional per-message callback; see FirstTokenCallback
             trace_data: Optional trace data to populate (for cancellation scenarios)
             connector: Optional TCP connector to use instead of the shared pool.
                 If None, uses self.tcp_connector (shared pool).
@@ -372,7 +372,7 @@ class AioHttpClient(AIPerfLoggerMixin):
             headers: Request headers
             cancel_after_ns: If set, cancel the request this many nanoseconds after
                 it's fully sent. The request is always sent before cancellation.
-            first_token_callback: Optional callback fired on first SSE message with ttft_ns
+            first_token_callback: Optional per-message callback; see FirstTokenCallback
             connector: Optional TCP connector to use instead of the shared pool.
             connector_owner: If True, the session will close the connector when done.
             **kwargs: Additional arguments passed to aiohttp

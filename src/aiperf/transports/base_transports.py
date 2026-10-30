@@ -28,7 +28,7 @@ FirstTokenCallback = Callable[
     [int, SSEMessage | AwsEventStreamMessage], Awaitable[bool]
 ]
 """
-Type alias for a callback called with the ttft_ns and the first streamed message.
+Callback invoked for each streamed message until it returns True.
 
 The message type depends on the response framing the transport decoded: an
 ``SSEMessage`` for ``text/event-stream``, an ``AwsEventStreamMessage`` for AWS
@@ -36,14 +36,14 @@ binary eventstream. Callbacks read it through the ``InferenceServerResponse``
 protocol, so they do not branch on which one arrived.
 
 Args:
-    ttft_ns: duration from request start
-    message: the first streamed message
+    ttft_ns: elapsed duration from request start to this message
+    message: the current streamed message
 
 Returns:
-    True if this is meaningful content (stop looking for first token), False otherwise
+    True to stop observing; False to continue receiving subsequent messages.
 
-This callback is used to determine if the first token has been received and can be released.
-It is used to release prefill concurrency.
+The worker uses this to release prefill concurrency once on meaningful content.
+Scenario coverage keeps observing afterward to retain the latest content timestamp.
 """
 
 
@@ -290,7 +290,7 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
         Args:
             request_info: Request context and metadata
             payload: Request payload (format depends on transport)
-            first_token_callback: Optional callback fired on first SSE message with ttft_ns
+            first_token_callback: Optional per-message callback; see FirstTokenCallback
 
         Returns:
             Record containing responses, timing, and any errors

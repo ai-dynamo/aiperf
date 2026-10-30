@@ -22,15 +22,18 @@ from aiperf.common.models import (
     TextResponseData,
     Turn,
 )
-from aiperf.common.monotonic_clock import process_clock
+from aiperf.common.monotonic_clock import MonotonicClock, process_clock
 from aiperf.config.phases import ConcurrencyPhase
+from aiperf.credit.messages import CreditReturn, FirstToken, StreamingContent
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.dataset.memory_map_utils import PayloadTurnData
+from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.endpoints.openai_responses import ResponsesEndpoint
 from aiperf.plugin.enums import EndpointType
 from aiperf.workers.session_manager import UserSession
 from aiperf.workers.worker import (
     Worker,
+    _credit_task_key,
     _is_terminal_context_overflow,
     _phase_needs_first_token_callback,
 )
@@ -1396,14 +1399,46 @@ class TestFinalizeSessionResponseChaining:
 
 
 @pytest.mark.asyncio
-class TestMakeFirstTokenCallback:
-    """Coverage for the REAL Worker._make_first_token_callback factory."""
+@pytest.mark.parametrize("last_content_ns", [None, 12_000_000_000])
+async def test_credit_task_fallback_preserves_last_content(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_worker: Worker,
+    sample_credit_context: CreditContext,
+    last_content_ns: int | None,
+) -> None:
+    sample_credit_context.last_streaming_content_ns = last_content_ns
+    credit = sample_credit_context.credit
+    task = Mock(spec=asyncio.Task)
+    task.cancelled.return_value = True
+    mock_worker.credit_tasks[_credit_task_key(credit)] = task
+    mock_worker.credit_return_push_client = AsyncMock()
+    schedule = Mock()
+    monkeypatch.setattr(mock_worker, "execute_async", schedule)
+
+    mock_worker._on_credit_drop_message_task_done(task, sample_credit_context)
+
+    schedule.assert_called_once()
+    await schedule.call_args.args[0]
+    mock_worker.credit_return_push_client.send.assert_awaited_once()
+    returned = mock_worker.credit_return_push_client.send.await_args.args[0]
+    assert isinstance(returned, CreditReturn)
+    assert returned.credit is credit
+    assert returned.cancelled is True
+    assert returned.last_streaming_content_ns == last_content_ns
+    assert sample_credit_context.returned is True
+    assert sample_credit_context.credit is None
+    assert _credit_task_key(credit) not in mock_worker.credit_tasks
+
+
+@pytest.mark.asyncio
+class TestMakeContentCallback:
+    """Coverage for the REAL Worker._make_content_callback factory."""
 
     async def test_returns_none_when_prefill_concurrency_disabled(
         self, mock_worker, sample_credit_context
     ):
         mock_worker._prefill_concurrency_enabled = False
-        assert mock_worker._make_first_token_callback(sample_credit_context) is None
+        assert mock_worker._make_content_callback(sample_credit_context) is None
 
     async def test_callback_skips_meaningless_content(
         self, monkeypatch, mock_worker, sample_credit_context
@@ -1412,7 +1447,7 @@ class TestMakeFirstTokenCallback:
         mock_worker.credit_return_push_client = AsyncMock()
         setup_mock_endpoint(mock_worker, monkeypatch, None)
 
-        callback = mock_worker._make_first_token_callback(sample_credit_context)
+        callback = mock_worker._make_content_callback(sample_credit_context)
         assert callback is not None
 
         result = await callback(50_000_000, SSEMessage(perf_ns=100_000_000))
@@ -1432,7 +1467,7 @@ class TestMakeFirstTokenCallback:
             ParsedResponse(perf_ns=100_000_000, data=TextResponseData(text="hi")),
         )
 
-        callback = mock_worker._make_first_token_callback(sample_credit_context)
+        callback = mock_worker._make_content_callback(sample_credit_context)
         assert callback is not None
 
         result = await callback(50_000_000, SSEMessage(perf_ns=100_000_000))
@@ -1443,6 +1478,159 @@ class TestMakeFirstTokenCallback:
         assert sent.credit_id == sample_credit_context.credit.id
         assert sent.phase_index == sample_credit_context.credit.phase_index
         assert sent.ttft_ns == 50_000_000
+
+    @pytest.mark.parametrize("prefill_enabled", [False, True])
+    async def test_callback_tracks_content_until_cancellation(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        prefill_enabled: bool,
+    ) -> None:
+        mock_worker._prefill_concurrency_enabled = prefill_enabled
+        mock_worker._streaming_coverage_enabled = True
+        mock_worker._tracks_clock_offset = False
+        mock_worker.credit_return_push_client = AsyncMock()
+        mock_worker._send_inference_result_message = AsyncMock()
+        monkeypatch.setattr(
+            "aiperf.workers.worker.process_clock",
+            lambda: MonotonicClock(
+                perf_anchor_ns=1_000_000_000, wall_anchor_ns=10_000_000_000
+            ),
+        )
+        setup_mock_endpoint(
+            mock_worker,
+            monkeypatch,
+            [
+                None,
+                ParsedResponse(
+                    perf_ns=2_000_000_000, data=TextResponseData(text="first")
+                ),
+                ParsedResponse(
+                    perf_ns=2_500_000_000, data=TextResponseData(text="middle")
+                ),
+                ParsedResponse(
+                    perf_ns=3_000_000_000, data=TextResponseData(text="last")
+                ),
+                ParsedResponse(perf_ns=4_000_000_000, data=None),
+            ],
+        )
+        callback = mock_worker._make_content_callback(sample_credit_context)
+        assert callback is not None
+        for timestamp in (
+            1_000_000_000,
+            2_000_000_000,
+            2_500_000_000,
+            3_000_000_000,
+            4_000_000_000,
+        ):
+            assert await callback(1, SSEMessage(perf_ns=timestamp)) is False
+        assert sample_credit_context.last_streaming_content_ns == 12_000_000_000
+        mock_worker._process_credit = AsyncMock(side_effect=asyncio.CancelledError)
+
+        await mock_worker._on_credit_drop_message_task(sample_credit_context)
+
+        messages = [
+            call.args[0]
+            for call in mock_worker.credit_return_push_client.send.await_args_list
+        ]
+        assert sum(isinstance(message, FirstToken) for message in messages) == int(
+            prefill_enabled
+        )
+        content_reports = [
+            message for message in messages if isinstance(message, StreamingContent)
+        ]
+        assert [message.timestamp_ns for message in content_reports] == [
+            11_000_000_000,
+            12_000_000_000,
+        ]
+        returned = messages[-1]
+        assert isinstance(returned, CreditReturn)
+        assert returned.cancelled is True
+        assert returned.last_streaming_content_ns == 12_000_000_000
+        mock_worker._send_inference_result_message.assert_not_called()
+
+    async def test_callback_maps_content_to_controller_clock_on_kubernetes(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+    ) -> None:
+        """Phase start is controller time, so worker content must be corrected too."""
+        mock_worker._prefill_concurrency_enabled = False
+        mock_worker._streaming_coverage_enabled = True
+        mock_worker._tracks_clock_offset = True
+        mock_worker.credit_return_push_client = AsyncMock()
+        monkeypatch.setattr(
+            "aiperf.workers.worker.process_clock",
+            lambda: MonotonicClock(perf_anchor_ns=0, wall_anchor_ns=10_000_000_000),
+        )
+        monkeypatch.setattr(
+            type(mock_worker.clock_offset_tracker),
+            "correction_ns",
+            property(lambda _self: 3_000_000_000),
+        )
+        setup_mock_endpoint(
+            mock_worker,
+            monkeypatch,
+            ParsedResponse(perf_ns=2_000_000_000, data=TextResponseData(text="hi")),
+        )
+        callback = mock_worker._make_content_callback(sample_credit_context)
+        assert callback is not None
+
+        await callback(1, SSEMessage(perf_ns=2_000_000_000))
+
+        assert sample_credit_context.last_streaming_content_ns == 9_000_000_000
+        sent = mock_worker.credit_return_push_client.send.await_args.args[0]
+        assert isinstance(sent, StreamingContent)
+        assert sent.timestamp_ns == 9_000_000_000
+
+    async def test_callback_warmup_does_not_track_profile_coverage(
+        self,
+        mock_worker: Worker,
+    ) -> None:
+        mock_worker._prefill_concurrency_enabled = False
+        mock_worker._streaming_coverage_enabled = True
+        credit_context = TestCreateRequestInfo._warmup_override_credit()
+        assert mock_worker._make_content_callback(credit_context) is None
+
+    @pytest.mark.parametrize(
+        "payload,has_content",
+        [
+            param('data: {"object":"chat.completion.chunk","choices":[{"delta":{"content":"hello"}}]}', True, id="text"),
+            param('data: {"object":"chat.completion.chunk","choices":[{"delta":{"reasoning_content":"thinking"}}]}', True, id="reasoning"),
+            param('data: {"object":"chat.completion.chunk","choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"search","arguments":"{}"}}]}}]}', True, id="tool-call"),
+            param('data: {"object":"chat.completion.chunk","choices":[{"delta":{"role":"assistant"}}]}', False, id="role"),
+            param('data: {"object":"chat.completion.chunk","choices":[],"usage":{"completion_tokens":10}}', False, id="usage"),
+            param('data: {"object":"chat.completion.chunk","choices":[{"delta":{},"finish_reason":"stop"}]}', False, id="finish"),
+            param(': keepalive', False, id="keepalive"),
+            param('data: [DONE]', False, id="done"),
+        ],
+    )  # fmt: skip
+    async def test_callback_counts_only_parsed_content(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        payload: str,
+        has_content: bool,
+    ) -> None:
+        mock_worker._streaming_coverage_enabled = True
+        mock_worker._prefill_concurrency_enabled = False
+        mock_worker.credit_return_push_client = AsyncMock()
+        monkeypatch.setattr(
+            mock_worker.inference_client,
+            "endpoint",
+            ChatEndpoint(mock_worker.model_endpoint),
+        )
+        callback = mock_worker._make_content_callback(sample_credit_context)
+        assert callback is not None
+
+        assert await callback(1, SSEMessage.parse(payload, perf_ns=1)) is False
+
+        assert (
+            sample_credit_context.last_streaming_content_ns is not None
+        ) is has_content
 
 
 # --- no_request (orchestrator) Credit Tests ---
