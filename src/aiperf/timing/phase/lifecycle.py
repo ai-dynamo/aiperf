@@ -45,21 +45,19 @@ class PhaseLifecycle:
     its lifecycle for cleanup.
 
     Publishes timestamps in the wall-clock domain for cross-service comparison.
-    With an injected clock, they share the credit router's monotonic clock frame.
-    Standalone callers use wall-clock reads for transitions and anchor
-    ``now_ns()`` at phase start.
+    All timestamps share the credit router's injected monotonic clock frame.
     """
 
     def __init__(
         self,
         config: CreditPhaseConfig,
-        clock: MonotonicClock | None = None,
+        clock: MonotonicClock,
     ) -> None:
         self._config = config
         self._clock = clock
         self.state: PhaseState = PhaseState.CREATED
 
-        # Wall-clock-domain timestamps (shared clock when injected)
+        # Wall-clock-domain timestamps from the shared clock
         self.started_at_ns: int | None = None
         self.sending_complete_at_ns: int | None = None
         self.complete_at_ns: int | None = None
@@ -86,7 +84,7 @@ class PhaseLifecycle:
     def now_ns(self) -> int:
         """Current wall-clock-domain time in this phase's clock frame.
 
-        With an injected clock, use the credit router's shared anchor and advance
+        Use the credit router's shared anchor and advance
         by ``perf_counter_ns`` deltas. This keeps controller timestamps in one
         wall-clock-domain frame despite NTP steps during a benchmark.
 
@@ -95,15 +93,8 @@ class PhaseLifecycle:
         cutoffs -- must read it here rather than calling ``time.time_ns()``
         directly. Wall-clock adjustments after the anchor can make raw reads
         diverge from this frame and misclassify credits at a boundary.
-
-        Without an injected clock, anchor on the phase start; before the phase
-        starts, fall back to a raw wall-clock read.
         """
-        if self._clock is not None:
-            return self._clock.now_ns()
-        if self.started_at_ns is None or self.started_at_perf_ns is None:
-            return time.time_ns()
-        return self.started_at_ns + (time.perf_counter_ns() - self.started_at_perf_ns)
+        return self._clock.now_ns()
 
     def start(self) -> None:
         """Transition to STARTED state.
@@ -116,10 +107,7 @@ class PhaseLifecycle:
         self.state = PhaseState.STARTED
         perf_ns = time.perf_counter_ns()
         self.started_at_perf_ns = perf_ns
-        if self._clock is not None:
-            self.started_at_ns = self._clock.wall_ns_at(perf_ns)
-        else:
-            self.started_at_ns = time.time_ns()
+        self.started_at_ns = self._clock.wall_ns_at(perf_ns)
 
     def mark_sending_complete(self, *, timeout_triggered: bool = False) -> None:
         """Transition to SENDING_COMPLETE state.
@@ -132,9 +120,7 @@ class PhaseLifecycle:
         if self.state in _SENDING_COMPLETE_STATES:
             raise ValueError("Credit phase already completed sending")
         self.state = PhaseState.SENDING_COMPLETE
-        self.sending_complete_at_ns = (
-            self._clock.now_ns() if self._clock is not None else time.time_ns()
-        )
+        self.sending_complete_at_ns = self._clock.now_ns()
         if timeout_triggered:
             self.timeout_triggered = True
 
@@ -151,9 +137,7 @@ class PhaseLifecycle:
                 "Credit phase has not completed sending. Call mark_sending_complete() first."
             )
         self.state = PhaseState.COMPLETE
-        self.complete_at_ns = (
-            self._clock.now_ns() if self._clock is not None else time.time_ns()
-        )
+        self.complete_at_ns = self._clock.now_ns()
         if grace_period_triggered:
             self.grace_period_triggered = True
 

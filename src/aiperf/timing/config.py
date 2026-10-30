@@ -274,8 +274,6 @@ def _validate_finite_replay_phases(phases: list[PhaseConfig]) -> None:
         phase.cancellation is not None and phase.cancellation.rate for phase in phases
     ):
         raise ValueError("Finite replay does not support request cancellation")
-    if any(phase.agentic_warmup_grace_period is not None for phase in phases):
-        raise ValueError("Finite replay does not support agentic warmup grace settings")
 
 
 def _validate_finite_replay_dataset(dataset: Any) -> None:

@@ -629,7 +629,7 @@ class ReplayBarrierCoordinator:
                     stack.append((predecessor, iter(graph[predecessor])))
 
     def activate(self) -> None:
-        """Enable barriers after baseline cache priming completes."""
+        """Enable barriers for profiling, after cache priming when configured."""
         if self._active:
             return
         self._active = True
@@ -645,9 +645,6 @@ class ReplayBarrierCoordinator:
             sum(widths.values()),
             dict(sorted(widths.items())),
         )
-
-    def activate_finite(self) -> None:
-        self._active = True
 
     def pause_releases(self) -> None:
         """Retain newly ready dispatches for an explicit phase handoff."""

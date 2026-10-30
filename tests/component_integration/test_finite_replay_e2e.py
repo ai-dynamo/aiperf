@@ -26,6 +26,7 @@ from aiperf.common.models import (
     DatasetMetadata,
     TurnMetadata,
 )
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.credit.callback_handler import CreditCallbackHandler
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.messages import CreditReturn, TransportDispatched
@@ -117,7 +118,7 @@ def _build_finite_test_rig(
     )
 
     scheduler = LoopScheduler()
-    lifecycle = PhaseLifecycle(phase_cfg)
+    lifecycle = PhaseLifecycle(phase_cfg, clock=MonotonicClock())
     progress = PhaseProgressTracker(phase_cfg)
     stop_checker = StopConditionChecker(
         config=phase_cfg,

@@ -522,9 +522,7 @@ class CreditCallbackHandler:
         # In finite replay, trace fidelity is strict: any failed request
         # (server error, connection drop, missing EOF, or clock skew) invalidates
         # the entire replay run. When observe_credit_return raises observe_exc,
-        # fatal error was already recorded above before child cleanup, so we
-        # early-return immediately here to halt downstream turn dispatch, child
-        # spawning, or session recycling.
+        # the fatal error was already recorded above before child cleanup.
         if observe_exc is not None:
             return
 

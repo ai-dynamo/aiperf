@@ -17,9 +17,9 @@ from aiperf.workers.worker import Worker
 
 
 @pytest.mark.asyncio
-async def test_finite_preflight_handle_pong_feeds_clock_observation() -> None:
-    """When finite_preflight is enabled, pong router timestamps calibrate the tracker."""
-    tracker = ClockOffsetTracker(finite_preflight=True, min_samples=1)
+async def test_observe_router_pongs_handle_pong_feeds_clock_observation() -> None:
+    """When observe_router_pongs is enabled, pong router timestamps calibrate the tracker."""
+    tracker = ClockOffsetTracker(observe_router_pongs=True, min_samples=1)
     tracker._pending_pong_sequence = 1
     tracker._pending_pong_future = asyncio.get_running_loop().create_future()
 

@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.common.enums import AgenticReplayLifecycle
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
@@ -37,16 +38,16 @@ def test_finite_lifecycle_rejects_non_profiling_phase() -> None:
 @pytest.mark.parametrize(
     ("field_name", "field_value"),
     [
-        ("requests", 10),
-        ("duration", 30.0),
-        ("sessions", 5),
-        ("agentic_cache_warmup_duration", 10.0),
-        ("agentic_warmup_grace_period", 5.0),
-        ("system_idle_gap_cap_seconds", 1.0),
-        ("concurrency_ramp", 1.0),
-        ("prefill_ramp", 1.0),
+        param("requests", 10, id="requests"),
+        param("duration", 30.0, id="duration"),
+        param("sessions", 5, id="sessions"),
+        param("agentic_cache_warmup_duration", 10.0, id="agentic_cache_warmup_duration"),
+        param("agentic_warmup_grace_period", 5.0, id="agentic_warmup_grace_period"),
+        param("system_idle_gap_cap_seconds", 1.0, id="system_idle_gap_cap_seconds"),
+        param("concurrency_ramp", 1.0, id="concurrency_ramp"),
+        param("prefill_ramp", 1.0, id="prefill_ramp"),
     ],
-)
+)  # fmt: skip
 def test_finite_lifecycle_rejects_conflicting_parameters(
     field_name: str, field_value: object
 ) -> None:
@@ -119,7 +120,6 @@ def test_compatibility_rejects_non_http_transport() -> None:
     p1 = SimpleNamespace(
         agentic_replay_lifecycle=AgenticReplayLifecycle.FINITE,
         cancellation=None,
-        agentic_warmup_grace_period=None,
     )
     cfg = SimpleNamespace(
         get_warmup_phases=lambda: [],
@@ -134,7 +134,6 @@ def test_compatibility_rejects_polling_endpoints() -> None:
     p1 = SimpleNamespace(
         agentic_replay_lifecycle=AgenticReplayLifecycle.FINITE,
         cancellation=None,
-        agentic_warmup_grace_period=None,
     )
     cfg = SimpleNamespace(
         get_warmup_phases=lambda: [],
@@ -153,7 +152,6 @@ def test_compatibility_rejects_request_cancellation() -> None:
     p1 = SimpleNamespace(
         agentic_replay_lifecycle=AgenticReplayLifecycle.FINITE,
         cancellation=SimpleNamespace(rate=0.5),
-        agentic_warmup_grace_period=None,
     )
     cfg = SimpleNamespace(
         get_warmup_phases=lambda: [],
@@ -171,19 +169,18 @@ def test_compatibility_rejects_request_cancellation() -> None:
 @pytest.mark.parametrize(
     "compression_field",
     [
-        "trace_idle_gap_cap_seconds",
-        "inter_turn_delay_cap_seconds",
-        "max_idle_gap_cap_seconds",
-        "replay_speedup",
+        param("trace_idle_gap_cap_seconds", id="trace_idle_gap_cap_seconds"),
+        param("inter_turn_delay_cap_seconds", id="inter_turn_delay_cap_seconds"),
+        param("max_idle_gap_cap_seconds", id="max_idle_gap_cap_seconds"),
+        param("replay_speedup", id="replay_speedup"),
     ],
-)
+)  # fmt: skip
 def test_compatibility_rejects_dataset_delay_compression(
     compression_field: str,
 ) -> None:
     p1 = SimpleNamespace(
         agentic_replay_lifecycle=AgenticReplayLifecycle.FINITE,
         cancellation=None,
-        agentic_warmup_grace_period=None,
     )
     dataset = SimpleNamespace(**{compression_field: 1.5})
     cfg = SimpleNamespace(
@@ -199,32 +196,10 @@ def test_compatibility_rejects_dataset_delay_compression(
         _validate_finite_replay_compatibility(cfg, [p1])
 
 
-def test_compatibility_rejects_agentic_warmup_grace_period() -> None:
-    p1 = SimpleNamespace(
-        agentic_replay_lifecycle=AgenticReplayLifecycle.FINITE,
-        cancellation=None,
-        agentic_warmup_grace_period=5.0,
-    )
-    cfg = SimpleNamespace(
-        get_warmup_phases=lambda: [],
-        endpoint=SimpleNamespace(transport=TransportType.HTTP, type="vllm"),
-        get_default_dataset=lambda: SimpleNamespace(),
-    )
-    meta = SimpleNamespace(requires_polling=False)
-    with (
-        patch("aiperf.plugin.plugins.get_endpoint_metadata", return_value=meta),
-        pytest.raises(
-            ValueError, match="does not support agentic warmup grace settings"
-        ),
-    ):
-        _validate_finite_replay_compatibility(cfg, [p1])
-
-
 def test_compatibility_rejects_ignore_trace_delays() -> None:
     p1 = SimpleNamespace(
         agentic_replay_lifecycle=AgenticReplayLifecycle.FINITE,
         cancellation=None,
-        agentic_warmup_grace_period=None,
     )
     dataset = SimpleNamespace(ignore_trace_delays=True)
     cfg = SimpleNamespace(

@@ -251,6 +251,7 @@ The Timing Manager uses a **credit-based flow control system** to control when r
 - If a registered worker that owns in-flight credits or sticky sessions is lost during an active benchmark, the Timing Manager cancels the phase and records a terminal failure rather than migrating or truncating worker-local state.
 - Credit returns travel back on a dedicated PUSH/PULL fan-in channel: each worker PUSHes its `CreditReturn`/`FirstToken` to the Timing Manager's single PULL, separating the high-volume return path from credit dispatch
 - Finite replay sends transport start and response EOF timestamps on the return channel. Local workers send same-host performance timestamps directly; Kubernetes workers send wall timestamps with clock correction so the controller can place events on its performance clock.
+- Phase lifecycles require the credit router's shared monotonic clock, keeping phase boundaries and credit timestamps in the same frame across wall-clock adjustments. HTTP body EOF is checked before recording its timestamp and invoking the completion callback; an incomplete body reports `ResponseBodyIncompleteError` for streaming, binary, and text responses.
 - The return channel carries no ZMQ envelope identity, so the returning worker id travels inside the message
 - No coordination required between workers
 - Scales to large numbers of workers without bottlenecks

@@ -702,7 +702,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             logger_name=self.service_id,
             window_size=Environment.WORKER.CLOCK_OFFSET_WINDOW_SIZE,
             min_samples=Environment.WORKER.CLOCK_OFFSET_MIN_SAMPLES,
-            finite_preflight=self._finite_replay_enabled and self._is_kubernetes,
+            observe_router_pongs=self._finite_replay_enabled and self._is_kubernetes,
         )
         self._tracks_clock_offset = self._is_kubernetes
         self._clock_probe_lock = asyncio.Lock()

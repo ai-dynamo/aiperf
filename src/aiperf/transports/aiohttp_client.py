@@ -11,7 +11,7 @@ from yarl import URL
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import SSEResponseError
+from aiperf.common.exceptions import ResponseBodyIncompleteError, SSEResponseError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     AioHttpTraceData,
@@ -55,6 +55,21 @@ def _expected_request_body_size(data: Any) -> int | None:
         except (ValueError, TypeError, AttributeError):
             return None
     return None
+
+
+def _record_response_body_eof(
+    response: aiohttp.ClientResponse,
+    record: RequestRecord,
+    callback: "TransportBoundaryCallback",
+) -> None:
+    """Validate body EOF and stamp the record before notifying the observer."""
+    if not response.content.at_eof():
+        raise ResponseBodyIncompleteError(
+            "Successful HTTP response did not reach body EOF"
+        )
+    eof_perf_ns = time.perf_counter_ns()
+    record.response_body_eof_perf_ns = eof_perf_ns
+    callback(eof_perf_ns)
 
 
 VIDEO_DOWNLOAD_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
@@ -283,13 +298,9 @@ class AioHttpClient(AIPerfLoggerMixin):
                                 reader_cls.inspect_message_for_error(message)
                                 record.responses.append(message)
                         if transport_eof_callback is not None:
-                            if not response.content.at_eof():
-                                raise SSEResponseError(
-                                    "Successful SSE response did not reach body EOF"
-                                )
-                            eof_perf_ns = time.perf_counter_ns()
-                            record.response_body_eof_perf_ns = eof_perf_ns
-                            transport_eof_callback(eof_perf_ns)
+                            _record_response_body_eof(
+                                response, record, transport_eof_callback
+                            )
                         record.end_perf_ns = time.perf_counter_ns()
                     else:
                         # Non-SSE response (e.g., JSON or binary)
@@ -307,13 +318,9 @@ class AioHttpClient(AIPerfLoggerMixin):
                         if is_binary:
                             raw_bytes = await response.read()
                             if transport_eof_callback is not None:
-                                if not response.content.at_eof():
-                                    raise SSEResponseError(
-                                        "Successful binary response did not reach body EOF"
-                                    )
-                                eof_perf_ns = time.perf_counter_ns()
-                                record.response_body_eof_perf_ns = eof_perf_ns
-                                transport_eof_callback(eof_perf_ns)
+                                _record_response_body_eof(
+                                    response, record, transport_eof_callback
+                                )
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
                                 BinaryResponse(
@@ -325,13 +332,9 @@ class AioHttpClient(AIPerfLoggerMixin):
                         else:
                             if transport_eof_callback is not None:
                                 await response.read()
-                                if not response.content.at_eof():
-                                    raise SSEResponseError(
-                                        "Successful HTTP response did not reach body EOF"
-                                    )
-                                eof_perf_ns = time.perf_counter_ns()
-                                record.response_body_eof_perf_ns = eof_perf_ns
-                                transport_eof_callback(eof_perf_ns)
+                                _record_response_body_eof(
+                                    response, record, transport_eof_callback
+                                )
                             raw_response = await response.text()
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
@@ -357,9 +360,13 @@ class AioHttpClient(AIPerfLoggerMixin):
                             f"{method} request to {url} completed in {(record.end_perf_ns - record.start_perf_ns) / NANOS_PER_SECOND} seconds"
                         )
                     )
-        except (SSEResponseError, AwsEventStreamError) as e:
+        except (
+            ResponseBodyIncompleteError,
+            SSEResponseError,
+            AwsEventStreamError,
+        ) as e:
             record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Error in streaming response: {e!r}")
+            self.error(f"Error in HTTP response: {e!r}")
             record.error = ErrorDetails.from_exception(e)
             if isinstance(e, AwsEventStreamError) and e.exception_type:
                 # Preserve AWS's own label (ModelStreamError,

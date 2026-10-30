@@ -13,6 +13,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.credit.dispatch import ChildDispatchResult, TurnAdmission
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
@@ -78,11 +79,9 @@ def mock_lifecycle():
     mock.time_left_in_seconds = MagicMock(return_value=None)
     mock.phase_start_ns = 0
     # CreditIssuer uses these to calculate issued_at_ns timestamps
-    mock.started_at_ns = time.time_ns()
-    mock._clock = (
-        None  # Prevent PhaseLifecycle.now_ns from calling mock._clock.now_ns()
-    )
-    mock.started_at_perf_ns = time.perf_counter_ns()
+    mock._clock = MonotonicClock()
+    mock.started_at_ns = mock._clock.wall_anchor_ns
+    mock.started_at_perf_ns = mock._clock.perf_anchor_ns
     # Real clock-frame math, so issued_at_ns stays a comparable int.
     mock.now_ns = MagicMock(side_effect=lambda: PhaseLifecycle.now_ns(mock))
     return mock
@@ -848,9 +847,8 @@ class TestIssuedAtTimestamp:
     async def test_issued_at_ns_is_recent(self, credit_issuer, mock_router):
         """Issued timestamp should be very recent (within 1 second).
 
-        Production code derives ``issued_at_ns`` from ``started_at_ns +
-        (perf_counter_ns - started_at_perf_ns)`` — mixing wall clock with a
-        monotonic delta. On Windows the two clocks can drift by a few
+        Production code derives ``issued_at_ns`` from the router's wall-clock
+        anchor plus a monotonic delta. On Windows the two clocks can drift by a few
         microseconds, so allow a small slack window on either side instead
         of strict ``before <= ts <= after``.
         """

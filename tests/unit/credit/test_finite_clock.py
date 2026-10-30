@@ -156,7 +156,7 @@ class TestFiniteClockSynchronization:
         worker_tracker = ClockOffsetTracker(
             logger_name="test_worker",
             min_samples=5,
-            finite_preflight=True,
+            observe_router_pongs=True,
         )
         worker_clock_offset_ns = 500_000_000
 
@@ -235,9 +235,8 @@ class TestFiniteClockSynchronization:
 
         This is an integration-level wiring test: the actual ``PhaseRunner``
         constructor reads ``credit_router.clock`` and threads the instance
-        through to ``self._lifecycle._clock``.  A missing or broken handoff
-        silently falls back to ``time.time_ns()`` in PhaseLifecycle, which is
-        the exact dual-anchor vulnerability AIP-1401 prohibits.
+        through to ``self._lifecycle._clock`` so no independent anchor can
+        reintroduce the dual-anchor vulnerability AIP-1401 prohibits.
         """
         from aiperf.timing.phase.runner import PhaseRunner
 
@@ -299,7 +298,7 @@ class TestFiniteClockSynchronization:
         worker_tracker = ClockOffsetTracker(
             logger_name="test_worker_backward",
             min_samples=5,
-            finite_preflight=True,
+            observe_router_pongs=True,
         )
         worker_clock_offset_ns = 500_000_000
 
@@ -362,75 +361,3 @@ class TestFiniteClockSynchronization:
         assert converted_perf_ns == event_perf_on_controller
         # Must NOT be 100 ms late (backward-step analog of forward-step's early bias)
         assert converted_perf_ns != event_perf_on_controller - ntp_jump_ns
-
-    def test_fallback_path_without_clock_is_vulnerable_to_ntp_step(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Negative test: prove that PhaseLifecycle without a shared
-        MonotonicClock IS vulnerable to a wall-clock step between construction
-        and start().
-
-        When no ``clock`` is injected, ``start()`` captures ``time.time_ns()``
-        directly.  If the host wall clock jumps between the router's anchor
-        capture and ``start()``, the phase anchor absorbs the jump.  Worker
-        timestamps calibrated against the router's pong frame then disagree
-        with the phase's ``started_at_ns`` by exactly the NTP step, causing
-        ``_controller_perf_ns`` to produce a result that is offset by the jump.
-
-        This test confirms the vulnerability exists in the fallback path,
-        validating that the clock-injection fix is structurally necessary.
-        """
-        initial_perf = 10_000_000
-        initial_wall = 1_700_000_000_000_000_000
-
-        router_clock = MonotonicClock(
-            perf_anchor_ns=initial_perf,
-            wall_anchor_ns=initial_wall,
-        )
-
-        # NO clock injected — exercises the fallback path
-        lifecycle_no_clock = PhaseLifecycle(config=_make_phase_config(), clock=None)
-
-        ntp_jump_ns = 100_000_000  # +100 ms
-
-        # Advance perf_counter to simulate real elapsed time
-        phase_start_perf = initial_perf + 25_000_000
-        monkeypatch.setattr(time, "perf_counter_ns", lambda: phase_start_perf)
-        # Wall clock has jumped by +100 ms beyond what perf_counter would predict
-        monkeypatch.setattr(
-            time,
-            "time_ns",
-            lambda: initial_wall + 25_000_000 + ntp_jump_ns,
-        )
-
-        lifecycle_no_clock.start()
-
-        # With clock injected, started_at_ns would equal router_clock's prediction
-        expected_if_fixed = router_clock.wall_ns_at(phase_start_perf)
-        # Without clock, started_at_ns absorbed the NTP jump
-        assert lifecycle_no_clock.started_at_ns != expected_if_fixed
-        assert lifecycle_no_clock.started_at_ns == expected_if_fixed + ntp_jump_ns
-
-        # _controller_perf_ns using this vulnerable lifecycle produces wrong result
-        credit_perf = phase_start_perf + 2_000_000
-        monkeypatch.setattr(time, "perf_counter_ns", lambda: credit_perf)
-
-        # Simulate a worker event at a known controller perf time
-        event_perf_on_controller = credit_perf + 15_000_000
-        worker_clock_offset_ns = 500_000_000
-        # Worker wall timestamp derived from the router clock (the correct frame)
-        worker_event_wall = (
-            router_clock.wall_ns_at(event_perf_on_controller) + worker_clock_offset_ns
-        )
-
-        handler_ctx = MagicMock()
-        handler_ctx.lifecycle = lifecycle_no_clock
-        converted_perf_ns = CreditCallbackHandler._controller_perf_ns(
-            handler=handler_ctx,
-            worker_wall_ns=worker_event_wall,
-            correction_ns=worker_clock_offset_ns,
-        )
-
-        # Without the fix, converted perf time is 100 ms EARLY (the AIP-1401 violation)
-        assert converted_perf_ns != event_perf_on_controller
-        assert converted_perf_ns == event_perf_on_controller - ntp_jump_ns

@@ -129,7 +129,7 @@ async def test_nine_request_graph_uses_latest_captured_deadline() -> None:
     coordinator = ReplayBarrierCoordinator(
         _metadata(), strict_finite=True, scheduler=scheduler
     )
-    coordinator.activate_finite()
+    coordinator.activate()
     roots = {
         name: "b0" if name in {"b0", "b1", "d0"} else "a0"
         for name in ("a0", "a1", "a2", "c0", "c1", "bg", "b0", "b1", "d0")
@@ -205,7 +205,7 @@ async def test_early_timer_rechecks_absolute_deadline() -> None:
     coordinator = ReplayBarrierCoordinator(
         _metadata(), strict_finite=True, scheduler=scheduler
     )
-    coordinator.activate_finite()
+    coordinator.activate()
     issued: list[str] = []
     root = _credit("a0", "a0", 1)
     child = TurnToSend(
@@ -288,7 +288,7 @@ async def test_late_eof_notification_keeps_authored_absolute_deadline() -> None:
     coordinator = ReplayBarrierCoordinator(
         _metadata(), strict_finite=True, scheduler=scheduler
     )
-    coordinator.activate_finite()
+    coordinator.activate()
     root = _credit("a0", "a0", 1)
     parent = _credit("a1", "a0", 2)
     child = TurnToSend(

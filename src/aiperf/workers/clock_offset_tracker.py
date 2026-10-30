@@ -120,7 +120,7 @@ class ClockOffsetTracker:
         "_logger",
         "_max_abs_ns",
         "_max_rtt_ns",
-        "_finite_preflight",
+        "_observe_router_pongs",
         "_min_samples",
         "_outlier_factor",
         "_outlier_floor_ns",
@@ -147,7 +147,7 @@ class ClockOffsetTracker:
         outlier_floor_sec: float = Environment.WORKER.CLOCK_OFFSET_OUTLIER_FLOOR_SEC,
         reset_after_rejects: int = Environment.WORKER.CLOCK_OFFSET_RESET_AFTER_REJECTS,
         max_rtt_sec: float = Environment.WORKER.CLOCK_PROBE_MAX_RTT_SEC,
-        finite_preflight: bool = False,
+        observe_router_pongs: bool = False,
     ) -> None:
         """Initialize the tracker.
 
@@ -170,6 +170,8 @@ class ClockOffsetTracker:
                 window is cleared and re-seeded from the rejected sample.
             max_rtt_sec: Plausibility bound on a single ping/pong round trip, in
                 seconds. 0 disables the bound.
+            observe_router_pongs: Feed router wall timestamps into offset tracking
+                during startup probes and periodic RTT remeasurement.
         """
         self._logger = AIPerfLogger(f"{logger_name}.clock_offset")
         self._clock = MonotonicClock()
@@ -180,7 +182,7 @@ class ClockOffsetTracker:
         self._outlier_floor_ns = int(outlier_floor_sec * NANOS_PER_SECOND)
         self._reset_after_rejects = reset_after_rejects
         self._max_rtt_ns = int(max_rtt_sec * NANOS_PER_SECOND)
-        self._finite_preflight = finite_preflight
+        self._observe_router_pongs = observe_router_pongs
         self._consecutive_rejects = 0
         self.offset_ns: int | None = None
         self.sample_count: int = 0
@@ -399,7 +401,7 @@ class ClockOffsetTracker:
             )
             return
         if self._pending_pong_future and not self._pending_pong_future.done():
-            if self._finite_preflight and pong.router_sent_wall_ns is not None:
+            if self._observe_router_pongs and pong.router_sent_wall_ns is not None:
                 self.observe(pong.router_sent_wall_ns, self._now_ns())
             self._pending_pong_future.set_result(pong)
 

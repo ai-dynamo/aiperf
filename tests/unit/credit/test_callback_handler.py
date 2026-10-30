@@ -275,7 +275,7 @@ async def test_finite_background_child_terminal_failure_real_graph(
     coordinator = ReplayBarrierCoordinator(
         dataset_meta, strict_finite=True, scheduler=mock_scheduler
     )
-    coordinator.activate_finite()
+    coordinator.activate()
     replay_gate = ReplayIssueGate(coordinator)
 
     # 3. Real session tree registry wired to close_root on drain

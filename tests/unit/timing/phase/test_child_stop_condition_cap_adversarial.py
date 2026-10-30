@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.credit.structs import TurnToSend
 from aiperf.plugin.enums import TimingMode
 from aiperf.timing.config import CreditPhaseConfig
@@ -16,7 +17,7 @@ from aiperf.timing.phase.stop_conditions import StopConditionChecker
 def _checker(counter: CreditCounter, config: CreditPhaseConfig) -> StopConditionChecker:
     return StopConditionChecker(
         config=config,
-        lifecycle=PhaseLifecycle(config),
+        lifecycle=PhaseLifecycle(config, clock=MonotonicClock()),
         counter=counter,
     )
 
@@ -61,7 +62,7 @@ def test_child_turn_still_honors_cancellation() -> None:
         expected_duration_sec=None,
     )
     counter = CreditCounter(config)
-    lifecycle = PhaseLifecycle(config)
+    lifecycle = PhaseLifecycle(config, clock=MonotonicClock())
     checker = StopConditionChecker(config=config, lifecycle=lifecycle, counter=counter)
     assert checker.can_send_child_turn() is True
     lifecycle.was_cancelled = True

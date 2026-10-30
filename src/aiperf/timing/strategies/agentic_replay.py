@@ -983,7 +983,11 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         error: str | None = None,
         cancelled: bool = False,
     ) -> None:
-        """Track the next live turn for the warmup-to-profile handoff."""
+        """Record replay completion and track turns for warmup-to-profile handoff.
+
+        Finite replay validates successful completion, transport EOF, and clock
+        spread, raising RuntimeError on a fatal terminal failure.
+        """
         if self.config.finite_replay:
             self.credit_issuer.replay_gate.record_completion(
                 credit,
