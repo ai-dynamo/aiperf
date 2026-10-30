@@ -785,6 +785,30 @@ class TestSearchSpacePhaseShapeInference:
         with pytest.raises(ValueError, match="base rate"):
             build_profiling(user)
 
+    def test_nested_rate_ramp_duration_with_request_rate_stays_poisson(self) -> None:
+        loadgen = CLIConfig(
+            search_space=["phases.profiling.rate_ramp.duration:1,60:real"],
+            request_rate=10.0,
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        prof = build_profiling(user)
+        assert prof["type"] == PhaseType.POISSON
+        assert prof["rate"] == 10.0
+
+    def test_nested_rate_ramp_duration_alone_raises_clear_error(self) -> None:
+        """The nested ramp-duration path is the same rate-ramp search as the
+        bare 'rate_ramp' alias. Ignoring it during shape inference left a
+        concurrency phase, and the first trial then failed writing
+        'rate_ramp' onto a phase that has no such field."""
+        loadgen = CLIConfig(
+            search_space=["phases.profiling.rate_ramp.duration:1,60:real"],
+            request_count=10,
+        )
+        user = _make_user(loadgen=loadgen)
+        with pytest.raises(ValueError, match="base rate"):
+            build_profiling(user)
+
     def test_rate_series_keyword_alone_raises_clear_error(self) -> None:
         """'rate_series' is a piecewise-linear schedule, not a scalar the
         planner can sample between two bounds -- it must never be treated

@@ -101,7 +101,7 @@ A benchmark has one "shape" before it starts: `concurrency` ("send as many
 requests as possible"), `rate` ("send N requests per second"), `user`
 ("simulate N users"), or `gamma` ("send requests with a particular
 bumpy/smooth pattern"). Searching a shape-specific field --
-`rate`/`rate_ramp` (rate shape), `smoothness` (gamma shape), or `users`
+`rate`/`rate_ramp`/`rate_ramp.duration` (rate shape), `smoothness` (gamma shape), or `users`
 (user shape) -- automatically switches the base benchmark to a compatible
 shape, the same as passing the matching CLI flag (`--request-rate`,
 `--arrival-pattern gamma`, `--user-centric-rate`) would. Fields from the

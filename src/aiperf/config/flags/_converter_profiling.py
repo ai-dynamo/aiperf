@@ -101,8 +101,14 @@ def _profiling_search_dimensions(cli: CLIConfig) -> dict[str, SearchSpaceDimensi
     dims: dict[str, SearchSpaceDimension] = {}
     for dimension in parse_search_space(list(cli.search_space or [])):
         segments = dimension.path.split(".")
-        if len(segments) == 3 and segments[:2] == ["phases", "profiling"]:
-            dims[segments[-1]] = dimension
+        if segments[:2] != ["phases", "profiling"]:
+            continue
+        if len(segments) == 3:
+            dims[segments[2]] = dimension
+        # Searching the ramp duration still writes 'rate_ramp', so it needs a
+        # rate-shaped phase; other nested leaves (cancellation.rate) do not.
+        elif segments[2:] == ["rate_ramp", "duration"]:
+            dims["rate_ramp"] = dimension
     return dims
 
 
