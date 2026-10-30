@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """An explicitly unknown final write count must not revive an earlier streamed count."""
 
+import orjson
 import pytest
 from pytest import param
 
 from aiperf.common.exceptions import NoMetricValue
-from aiperf.common.models import ParsedResponse, ParsedResponseRecord, RequestRecord
-from aiperf.common.models.record_models import TextResponseData, TokenCounts
+from aiperf.common.models import ParsedResponseRecord, RequestRecord, SSEMessage
+from aiperf.common.models.record_models import TokenCounts
 from aiperf.common.models.usage_models import Usage
 from aiperf.endpoints.anthropic_messages import MessagesEndpoint
 from aiperf.endpoints.openai_chat import ChatEndpoint
@@ -208,28 +209,111 @@ def test_unreported_placeholder_does_not_become_measured_zero() -> None:
     assert usage.prompt_cache_write_tokens is None
 
 
-def test_final_unknown_write_does_not_restore_an_earlier_count() -> None:
-    record = ParsedResponseRecord(
-        request=RequestRecord(start_perf_ns=1, end_perf_ns=10),
-        responses=[
-            ParsedResponse(
-                perf_ns=2,
-                data=TextResponseData(text="OK"),
-                usage={"prompt_tokens_details": {"cache_write_tokens": 8192}},
-            ),
-            ParsedResponse(
-                perf_ns=9,
-                usage={
-                    "prompt_tokens_details": {
-                        "cache_write_tokens": 0,
-                        "cache_write_tokens_reported": False,
-                    }
+def _parse_final_write_stream(
+    endpoint_type: EndpointType, final_write: dict[str, object]
+) -> ParsedResponseRecord:
+    if endpoint_type == EndpointType.CHAT:
+        endpoint_class = ChatEndpoint
+        frames = [
+            {
+                "object": "chat.completion.chunk",
+                "choices": [{"index": 0, "delta": {"content": "OK"}}],
+                "usage": {"prompt_tokens_details": {"cache_write_tokens": 8192}},
+            },
+            {
+                "object": "chat.completion.chunk",
+                "choices": [],
+                "usage": {"completion_tokens": 8, "prompt_tokens_details": final_write},
+            },
+        ]
+    elif endpoint_type == EndpointType.MESSAGES:
+        endpoint_class = MessagesEndpoint
+        frames = [
+            {
+                "type": "message_start",
+                "message": {
+                    "usage": {"input_tokens": 256, "cache_creation_input_tokens": 8192}
                 },
-            ),
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "OK"},
+            },
+            {"type": "message_delta", "usage": {"output_tokens": 8, **final_write}},
+        ]
+    else:
+        endpoint_class = ResponsesEndpoint
+        frames = [
+            {
+                "type": "response.created",
+                "response": {
+                    "usage": {"input_tokens_details": {"cache_write_tokens": 8192}}
+                },
+            },
+            {
+                "type": "response.output_text.delta",
+                "delta": "OK",
+                "output_index": 0,
+                "content_index": 0,
+            },
+            {
+                "type": "response.completed",
+                "response": {
+                    "usage": {"output_tokens": 8, "input_tokens_details": final_write}
+                },
+            },
+        ]
+    request = RequestRecord(
+        timestamp_ns=1_000_000_000,
+        start_perf_ns=1,
+        end_perf_ns=10,
+        responses=[
+            SSEMessage.parse(
+                (f"event: {frame['type']}\n".encode() if "type" in frame else b"")
+                + b"data: "
+                + orjson.dumps(frame),
+                perf_ns=index + 2,
+            )
+            for index, frame in enumerate(frames)
         ],
+    )
+    endpoint = endpoint_class(
+        model_endpoint=create_model_endpoint(endpoint_type, streaming=True)
+    )
+    return ParsedResponseRecord(
+        request=request,
+        responses=endpoint.extract_response_data(request),
         token_counts=TokenCounts(input=8448, output=8),
     )
+
+
+@pytest.mark.parametrize(
+    "endpoint_type,final_write",
+    [
+        param(EndpointType.CHAT, {"cache_write_tokens": None}, id="chat-null"),
+        param(EndpointType.CHAT, {"cache_write_tokens": 0, "cache_write_tokens_reported": False}, id="chat-unreported"),
+        param(EndpointType.MESSAGES, {"cache_creation_input_tokens": None}, id="messages-null"),
+        param(EndpointType.RESPONSES, {"cache_write_tokens": None}, id="responses-null"),
+        param(EndpointType.RESPONSES, {"cache_write_tokens": 0, "cache_write_tokens_reported": False}, id="responses-unreported"),
+    ],
+)  # fmt: skip
+def test_final_unknown_write_does_not_restore_an_earlier_count(
+    endpoint_type: EndpointType, final_write: dict[str, object]
+) -> None:
+    record = _parse_final_write_stream(endpoint_type, final_write)
     assert record.valid
+    writes = [
+        response.usage.prompt_cache_write_tokens
+        for response in record.responses
+        if response.usage
+    ]
+    # Responses consumes terminal usage only; Messages backfills absent keys,
+    # but must keep an explicitly null final key instead of its earlier value.
+    assert writes == (
+        [None] if endpoint_type == EndpointType.RESPONSES else [8192, None]
+    )
+    assert record.final_usage.completion_tokens == 8
     with pytest.raises(NoMetricValue):
         UsagePromptCacheWriteTokensMetric().parse_record(record, MetricRecordDict())
 
