@@ -178,3 +178,28 @@ def test_ttft_curve_fit_raises_with_single_point():
 def test_handlers_implement_post_process_handler_protocol():
     assert isinstance(DegradationKneeDetect(), PostProcessHandler)
     assert isinstance(TTFTCurveFit(), PostProcessHandler)
+
+
+def test_degradation_knee_detect_reads_the_requested_stat_from_a_single_trial_row():
+    """A single trial keeps each metric's stats in one block, whose mean is the
+    average. Here the p99 breaches the threshold while the average never does."""
+    agg = {
+        "per_combination_metrics": [
+            {
+                "parameters": {"phases.profiling.concurrency": conc},
+                "metrics": {"request_latency": {"mean": avg, "avg": avg, "p99": p99}},
+            }
+            for conc, avg, p99 in [(1, 10.0, 10.0), (10, 10.2, 11.0), (100, 10.5, 15.0)]
+        ]
+    }
+    out = DegradationKneeDetect().process(
+        agg,
+        {
+            "threshold_pct": 0.20,
+            "metric_tag": "request_latency",
+            "stat": "p99",
+            "swept_param": "phases.profiling.concurrency",
+        },
+    )
+    assert out["knee_concurrency"] == 100
+    assert out["knee_p99"] == 15.0

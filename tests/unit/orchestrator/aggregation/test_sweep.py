@@ -1465,3 +1465,78 @@ class TestSweepAnalyzerLatencyResolution:
         result = SweepAnalyzer.compute(per_combination_stats, sweep_params)
 
         assert result["best_configurations"]["best_latency_p99"]["metric"] == 10.0
+
+
+class TestSingleTrialLayout:
+    """A single-trial sweep, the default, keys stats by metric tag with the stat
+    inside the block, not by the flattened ``<tag>_<stat>`` key repeated trials
+    produce. Averages and p99s rank the two runs in opposite orders here, so
+    reading a block's mean (its average) instead of its p99 picks the wrong run.
+    """
+
+    @staticmethod
+    def _compute() -> dict:
+        stats = {
+            ParameterCombination({"concurrency": 1}): {
+                "request_throughput": {
+                    "mean": 10.0,
+                    "avg": 10.0,
+                    "unit": "requests/sec",
+                },
+                "time_to_first_token": {
+                    "mean": 20.0,
+                    "avg": 20.0,
+                    "p99": 90.0,
+                    "unit": "ms",
+                },
+            },
+            ParameterCombination({"concurrency": 4}): {
+                "request_throughput": {
+                    "mean": 30.0,
+                    "avg": 30.0,
+                    "unit": "requests/sec",
+                },
+                "time_to_first_token": {
+                    "mean": 40.0,
+                    "avg": 40.0,
+                    "p99": 60.0,
+                    "unit": "ms",
+                },
+            },
+        }
+        return SweepAnalyzer.compute(stats, [{"name": "concurrency", "values": [1, 4]}])
+
+    def test_best_configurations_are_found(self):
+        best = self._compute()["best_configurations"]
+        assert best["best_throughput"] == {
+            "parameters": {"concurrency": 4},
+            "metric": 30.0,
+            "unit": "requests/sec",
+        }
+        assert best["best_latency_p99"] == {
+            "parameters": {"concurrency": 4},
+            "metric": 60.0,
+            "unit": "ms",
+        }
+
+    def test_the_pareto_frontier_is_found(self):
+        assert self._compute()["pareto_optimal"] == [{"concurrency": 4}]
+
+    def test_a_compound_stat_objective_is_read_from_the_tag_block(self):
+        """``ci_low`` contains an underscore, so the key must not be split at
+        the last one (which would look up tag ``time_to_first_token_ci``)."""
+        stats = {
+            ParameterCombination({"concurrency": c}): {
+                "request_throughput": {"mean": thr, "avg": thr},
+                "time_to_first_token": {"mean": 50.0, "avg": 50.0, "ci_low": lo},
+            }
+            for c, thr, lo in [(1, 10.0, 5.0), (2, 20.0, 8.0), (3, 15.0, 9.0)]
+        }
+        objectives = [
+            ParetoObjective("request_throughput_avg", OptimizationDirection.MAXIMIZE),
+            ParetoObjective(
+                "time_to_first_token_ci_low", OptimizationDirection.MINIMIZE
+            ),
+        ]
+        pareto = identify_pareto_optimal(stats, objectives)
+        assert sorted(c.parameters["concurrency"] for c in pareto) == [1, 2]
