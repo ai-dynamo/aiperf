@@ -171,6 +171,33 @@ To retain live model responses (including tool calls) between structured-message
 
 ---
 
+## Structured decision APIs
+
+Use `--endpoint-type decisions` for OpenAI-schema `POST /v1/decisions` or `--endpoint-type systemone` for Jev `POST /v1/systemone`. Both adapters are text-only and non-streaming, preserve structured responses rather than converting JSON into generated text, and reject `nvext` and SGLang-native Decisions formats. Engine selection is independent: qualify each SGLang or vLLM serving profile separately.
+
+The `raw_payload` JSONL loader requires a chat `messages` array. For decisions, use the existing `inputs_json` loader instead: it accepts complete payloads without inventing chat fields. Save this example as `decisions.json`:
+
+```json
+{"data":[{"session_id":"department","payloads":[{"model":"qualified-model","input":"Please correct my invoice.","questions":[{"type":"choice","name":"department","instructions":"Which department should handle this?","choices":[{"value":"billing"},{"value":"support"}]}]}]}]}
+```
+
+```bash
+aiperf profile --model qualified-model --endpoint-type decisions \
+    --url http://localhost:8000 --custom-dataset-type inputs_json \
+    --input-file decisions.json --request-count 20 --concurrency 1 \
+    --no-gpu-telemetry --export-level raw --artifact-dir artifacts/decisions
+```
+
+For System One, save `systemone.json` and use `--endpoint-type systemone --input-file systemone.json` with a different artifact directory:
+
+```json
+{"data":[{"session_id":"department","payloads":[{"model":"qualified-model","state":"Please correct my invoice.","questions":{"department":{"type":"choice","criteria":{"billing":"Billing requests","support":"Technical support"}}}}]}]}
+```
+
+The configured model must be registered by the server, and each payload must contain its actual model alias. The adapters do not merge generation settings, replace the model, coerce choice values, or rewrite questions. OpenAI string and boolean choices remain distinct. Answers are checked against question count, order, names and typed candidate identities. Malformed HTTP-200 responses become record errors; infrastructure errors and genuine OpenAI refusals remain distinct. Confidence is checked as a finite probability, not against an invented universal calibration formula. Missing usage remains unknown, and actual nonzero output-token usage is retained when a backend performs an internal decode.
+
+These adapters provide structural validation and per-record question/refusal metadata, not complete official SDK/schema conformance or an aggregate question-throughput report. Request latency and HTTP throughput are not question throughput. Generated-text TTFT, inter-token latency and output-token-throughput metrics are not applicable. Raw exports retain the wire evidence for auditing. Do not force `AIPERF_RECORD_STRIP_PAYLOAD_BYTES=true`: response reconciliation needs the original payload, and stripping it causes validation failure. Model quality, numerical parity, physical GPU cancellation and performance qualification need separate campaigns. See [enhancement #1536](https://github.com/ai-dynamo/aiperf/issues/1536) and the [Dynamo benchmark workstream](https://github.com/ai-dynamo/dynamo/pull/15886) for remaining scope.
+
 ## Tips
 
 - **Include the full API path in `--url`** only when using `--endpoint-type raw`. Other endpoint types append the path automatically.
