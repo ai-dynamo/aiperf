@@ -266,9 +266,7 @@ class _ProcessGroupKillGuard:
     def mark_finished(self) -> bool:
         """Close the race from the reader's side.
 
-        Returns whether the watchdog got there first, which the caller needs:
-        a watchdog kill leaves the in-container command running until its own
-        deadline, and the next command must not start inside that window.
+        Returns whether the watchdog killed the process.
         """
         with self._lock:
             self._finished = True

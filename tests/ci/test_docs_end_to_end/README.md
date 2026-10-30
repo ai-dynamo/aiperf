@@ -74,7 +74,7 @@ the closing `-->`.
 | Attribute | Valid on | Meaning |
 |---|---|---|
 | `weight={seconds}` | `aiperf-run` | The command's estimated runtime, used only by the matrix sharder to bin-pack work so one shard does not end up owning every slow test. The default (80s) suits a typical synthetic-input tutorial; set it when a command runs materially longer. Getting it wrong makes the sharding lopsided, not incorrect. |
-| `timeout={seconds}` | `aiperf-run` | How long this one command may run before it is killed, overriding the global default. Enforced by the host watchdog, with a second deadline just past it inside the container so killing the `docker exec` client cannot leave the command running indefinitely. Set it when a documented command is legitimately slower than the rest. It is a ceiling, not an estimate: raising it does not tell the sharder anything, so a command that really does run longer wants `weight=` raised as well. |
+| `timeout={seconds}` | `aiperf-run` | How long this one command may run before it is killed, overriding the global default. Enforced inside the container, which owns the deadline; the host watchdog fires later, as a backstop for a `docker exec` client that outlives the command it was running. Set it when a documented command is legitimately slower than the rest. It is a ceiling, not an estimate: raising it does not tell the sharder anything, so a command that really does run longer wants `weight=` raised as well. |
 | `path={relative path}` | `setup-file` | Where the block's content is written inside the container, relative to the working directory. Required. An absolute path or one containing `..` is rejected before any server boots. |
 
 `weight` and `timeout` must be positive integers. A non-integer, zero or
