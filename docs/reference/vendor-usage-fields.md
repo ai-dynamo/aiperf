@@ -54,7 +54,7 @@ After normalization, each property reads through an ordered synonym list (the `*
 
 For cache writes, `Usage` checks `prompt_tokens_details` before `input_tokens_details`. Within each details object, the first present field wins: `cache_write_tokens`, then `created_cache_tokens`. The shared normalizer accepts both aliases in either envelope for compatible servers; the vendor sections below describe the fields each vendor currently reports, not a guarantee that every combination appears on its wire protocol.
 
-If neither details object contains a recognized write field, lookup falls back to top-level `cache_creation_input_tokens`, then `cacheWriteInputTokens`. Missing or non-object details are skipped. A present null write stops lookup, as does `cache_write_tokens_reported: false` paired with a present `cache_write_tokens`; neither falls back to an earlier or lower-priority count. An explicit zero remains a reported zero.
+If neither details object contains a recognized write field, lookup falls back to top-level `cache_creation_input_tokens`, then `cacheWriteInputTokens`. Missing or non-object details are skipped. A present null or invalid nested write stops lookup, as does `cache_write_tokens_reported: false` paired with a present `cache_write_tokens`; none falls back to an earlier or lower-priority count. Nested counts must be nonnegative integers; booleans, strings and other types remain unknown. An explicit zero remains a reported zero.
 
 ## Per-vendor verification details
 

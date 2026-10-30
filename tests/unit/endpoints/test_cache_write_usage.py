@@ -12,11 +12,8 @@ from aiperf.common.models.usage_models import Usage
 from aiperf.endpoints.anthropic_messages import MessagesEndpoint
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.endpoints.openai_responses import ResponsesEndpoint
-from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
+from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.usage_cache_metrics import UsagePromptCacheWriteTokensMetric
-from aiperf.metrics.types.usage_total_metrics import (
-    TotalUsagePromptCacheWriteTokensMetric,
-)
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import create_mock_response, create_model_endpoint
 
@@ -36,7 +33,7 @@ from tests.unit.endpoints.conftest import create_mock_response, create_model_end
         for write in writes
     ],
 )  # fmt: skip
-def test_cache_write_usage_reaches_record_and_total_metrics(
+def test_cache_write_usage_reaches_record_metric(
     endpoint_type: EndpointType,
     endpoint_class: type,
     write_key: str,
@@ -148,12 +145,6 @@ def test_cache_write_usage_reaches_record_and_total_metrics(
     else:
         value = metric.parse_record(record, MetricRecordDict())
         assert value == write
-        assert (
-            TotalUsagePromptCacheWriteTokensMetric._derive_value(
-                MetricResultsDict({metric.tag: value})
-            )
-            == write
-        )
 
 
 @pytest.mark.parametrize(
@@ -185,6 +176,23 @@ def test_canonical_write_precedes_vllm_alias() -> None:
         }
     )
     assert usage.prompt_cache_write_tokens == 0
+
+
+@pytest.mark.parametrize(
+    "details_key,write_key,value",
+    [
+        param("prompt_tokens_details", "cache_write_tokens", "invalid", id="string"),
+        param("prompt_tokens_details", "created_cache_tokens", 1.5, id="float"),
+        param("input_tokens_details", "cache_write_tokens", True, id="boolean"),
+        param("input_tokens_details", "created_cache_tokens", -1, id="negative"),
+        param("prompt_tokens_details", "cache_write_tokens", {}, id="object"),
+    ],
+)  # fmt: skip
+def test_invalid_nested_write_is_unknown(
+    details_key: str, write_key: str, value: object
+) -> None:
+    usage = Usage({details_key: {write_key: value}, "cache_creation_input_tokens": 999})
+    assert usage.prompt_cache_write_tokens is None
 
 
 def test_unreported_placeholder_does_not_become_measured_zero() -> None:

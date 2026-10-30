@@ -357,7 +357,8 @@ class Usage(dict):
         neither object has a write field, fall back to cache_creation_input_tokens
         (Anthropic), then cacheWriteInputTokens (AWS Bedrock).
 
-        Missing/null counts remain unknown; explicit zero is a reported zero.
+        Missing/null or invalid nested counts remain unknown; a nonnegative
+        integer, including explicit zero, is a reported count.
         A present cache_write_tokens paired with cache_write_tokens_reported=False
         marks a compatibility placeholder, not a measured count; it stops
         lookup just like a present null. These are API token
@@ -374,7 +375,8 @@ class Usage(dict):
                         and details.get("cache_write_tokens_reported") is False
                     ):
                         return None
-                    return details[key]
+                    value = details[key]
+                    return value if type(value) is int and value >= 0 else None
         return self._first_present(self.CACHE_WRITE_TOP_LEVEL_KEYS)
 
     @property
