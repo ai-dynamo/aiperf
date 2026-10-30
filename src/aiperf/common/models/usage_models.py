@@ -351,15 +351,16 @@ class Usage(dict):
     def prompt_cache_write_tokens(self) -> int | None:
         """Get cached prompt-token writes (cache creations).
 
-        Recognized fields (in precedence order):
-        - Moonshot: nested cache_write_tokens in prompt/input token details.
-        - vLLM: nested created_cache_tokens in prompt token details.
-        - Anthropic: top-level cache_creation_input_tokens.
-        - AWS Bedrock: top-level cacheWriteInputTokens.
+        Check prompt details before input details; each object accepts the
+        first present cache_write_tokens or created_cache_tokens alias. This
+        shared lookup also accepts aliases from compatible servers. Only when
+        neither object has a write field, fall back to cache_creation_input_tokens
+        (Anthropic), then cacheWriteInputTokens (AWS Bedrock).
 
         Missing/null counts remain unknown; explicit zero is a reported zero.
-        A server's optional cache_write_tokens_reported=False flag marks a
-        compatibility placeholder, not a measured count. These are API token
+        A present cache_write_tokens paired with cache_write_tokens_reported=False
+        marks a compatibility placeholder, not a measured count; it stops
+        lookup just like a present null. These are API token
         observations, not physical transfer bytes or a billing calculation.
         """
         for details_key in self.PROMPT_DETAILS_KEYS:

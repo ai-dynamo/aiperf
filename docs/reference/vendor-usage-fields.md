@@ -52,6 +52,10 @@ The original keys are preserved if a normalized key would collide; the original 
 
 After normalization, each property reads through an ordered synonym list (the `*_KEYS` class attributes). The first present key wins. Properties return `None` when no synonym is present, so `0` is correctly distinguished from "missing".
 
+For cache writes, `Usage` checks `prompt_tokens_details` before `input_tokens_details`. Within each details object, the first present field wins: `cache_write_tokens`, then `created_cache_tokens`. The shared normalizer accepts both aliases in either envelope for compatible servers; the vendor sections below describe the fields each vendor currently reports, not a guarantee that every combination appears on its wire protocol.
+
+If neither details object contains a recognized write field, lookup falls back to top-level `cache_creation_input_tokens`, then `cacheWriteInputTokens`. Missing or non-object details are skipped. A present null write stops lookup, as does `cache_write_tokens_reported: false` paired with a present `cache_write_tokens`; neither falls back to an earlier or lower-priority count. An explicit zero remains a reported zero.
+
 ## Per-vendor verification details
 
 ### OpenAI
@@ -109,13 +113,13 @@ AIPerf models `cached_tokens`, `reasoning_tokens`, and `created_cache_tokens`. T
 
 vLLM may emit `prompt_tokens_details: null` and `completion_tokens_details: null` explicitly; AIPerf's nested-field walk handles that case (the `isinstance(details, dict)` guard returns False, and the property returns None).
 
+**Enablement (opt-in):** vLLM populates `cached_tokens` only when the server is launched with `--enable-prompt-tokens-details` (default off, per [vllm-project/vllm#10174](https://github.com/vllm-project/vllm/pull/10174) — "guarded by a flag ... OFF by default"). Without the flag, `prompt_tokens_details` is `null` and AIPerf's cache-read metrics are all-None even when prefix caching is active. The flag is independent of `--enable-prefix-caching` (the cache must still be on for `cached_tokens` to be non-zero).
+
 ### Moonshot (Kimi)
 
 The [context-caching documentation](https://platform.kimi.com/docs/guide/context-caching) reports cache writes under `usage.prompt_tokens_details.cache_write_tokens` for Chat Completions and `usage.input_tokens_details.cache_write_tokens` for Responses. Both map to `Usage.prompt_cache_write_tokens` and the existing per-record and total cache-write metrics, including streaming final usage. Their `prompt_tokens` / `input_tokens` already include cache reads and writes; AIPerf does not add the write count to those totals.
 
 Messages uses the existing Anthropic-shaped `cache_creation_input_tokens` and disjoint input accounting. No write count is inferred from input minus cache reads. Missing/null writes, or an optional `cache_write_tokens_reported: false` placeholder, remain unknown rather than becoming zero.
-
-**Enablement (opt-in):** vLLM populates `cached_tokens` only when the server is launched with `--enable-prompt-tokens-details` (default off, per [vllm-project/vllm#10174](https://github.com/vllm-project/vllm/pull/10174) — "guarded by a flag ... OFF by default"). Without the flag, `prompt_tokens_details` is `null` and AIPerf's cache-read metrics are all-None even when prefix caching is active. The flag is independent of `--enable-prefix-caching` (the cache must still be on for `cached_tokens` to be non-zero).
 
 ### SGLang
 

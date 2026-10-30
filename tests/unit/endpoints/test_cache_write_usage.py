@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Cache-write accounting must survive endpoint parsing and final usage selection."""
+"""An explicitly unknown final write count must not revive an earlier streamed count."""
 
 import pytest
 from pytest import param
@@ -153,9 +153,14 @@ def test_cache_write_usage_reaches_record_and_total_metrics(
 
 
 @pytest.mark.parametrize(
-    "details_key", ["prompt_tokens_details", "input_tokens_details"]
-)
-@pytest.mark.parametrize("write_key", ["cache_write_tokens", "created_cache_tokens"])
+    "details_key,write_key",
+    [
+        param("prompt_tokens_details", "cache_write_tokens", id="chat-canonical"),
+        param("input_tokens_details", "cache_write_tokens", id="responses-canonical"),
+        param("prompt_tokens_details", "created_cache_tokens", id="vllm-prompt-alias"),
+        param("input_tokens_details", "created_cache_tokens", id="input-details-alias-compatibility"),
+    ],
+)  # fmt: skip
 @pytest.mark.parametrize("write", [None, 0, 8192])
 def test_nested_write_preserves_null_zero_and_precedence(
     details_key: str,
@@ -219,5 +224,6 @@ def test_final_unknown_write_does_not_restore_an_earlier_count() -> None:
 
 @pytest.mark.parametrize("details", [None, {}, "invalid"])
 def test_absent_nested_write_retains_legacy_vendor_fallback(details: object) -> None:
+    """Raw server fields may be malformed; they must not hide a valid legacy count."""
     usage = Usage({"prompt_tokens_details": details, "cacheWriteInputTokens": 12})
     assert usage.prompt_cache_write_tokens == 12

@@ -1090,7 +1090,7 @@ usage_prompt_cache_write_tokens = record.final_usage.prompt_cache_write_tokens
 **Notes:**
 - Taken from the API response `usage` object, not computed by AIPerf.
 - OpenAI itself does not report cache writes, but compatible servers may expose them in `prompt_tokens_details` or `input_tokens_details`. Absent or null values remain unavailable; an explicit zero remains a reported zero. If a server supplies `cache_write_tokens_reported: false`, its placeholder value is not counted.
-- Nested details take precedence over top-level synonyms. Within the same details object, `cache_write_tokens` precedes `created_cache_tokens`; an explicit null or unreported value does not fall back to another field.
+- Lookup checks `prompt_tokens_details` before `input_tokens_details`, and within each object checks `cache_write_tokens` before `created_cache_tokens`. If neither object contains a recognized write field, it falls back to top-level `cache_creation_input_tokens`, then `cacheWriteInputTokens`. Missing or non-object details do not block fallback; a present null or a `cache_write_tokens_reported: false` placeholder paired with `cache_write_tokens` stops lookup.
 - Measures the API's token classification, not physical CPU/GPU copy bytes or duration. It does not establish a cache-retention guarantee or calculate a bill.
 - Writes may enable subsequent cache reads but can also indicate cache churn, so the metric is intentionally not flagged "larger is better." Billing semantics depend on the server; AIPerf does not infer them from this count.
 - For streaming responses, reads the final usage snapshot. An explicit unknown in that snapshot does not reuse an earlier write count.
@@ -1325,15 +1325,22 @@ overall_usage_prompt_cache_read_pct = (
 
 **Type:** [Derived Metric](#derived-metrics)
 
-The sum of all API-reported prompt cache-write (cache creation) tokens across all requests. Anthropic-specific.
+The sum of available API-reported prompt cache-write (cache creation) token counts across valid requests. Supports Moonshot Chat Completions and Responses, vLLM-compatible usage, Anthropic, and Bedrock through the same normalized per-record metric.
 
 **Formula:**
 ```python
-total_usage_prompt_cache_write_tokens = sum(r.usage_prompt_cache_write_tokens for r in records if r.valid)
+reported_writes = [
+    r.usage_prompt_cache_write_tokens
+    for r in records
+    if r.valid and r.usage_prompt_cache_write_tokens is not None
+]
+total_usage_prompt_cache_write_tokens = sum(reported_writes) if reported_writes else None
 ```
 
 **Notes:**
-- Aggregates server-reported cache-write prompt tokens across all requests (Anthropic top-level `cache_creation_input_tokens`). Empty for OpenAI workloads.
+- Aggregates [Usage Prompt Cache Write Tokens](#usage-prompt-cache-write-tokens), including nested `cache_write_tokens` / `created_cache_tokens` and top-level `cache_creation_input_tokens` / `cacheWriteInputTokens`, with the same field precedence and fallback rules.
+- Explicit zeros participate in the sum. Unknown or unreported counts do not become zero; if no valid request reports a count, the metric is unavailable. A total over the available counts does not establish reporting coverage for requests with unknown writes.
+- OpenAI itself does not report cache writes; compatible servers may. This is a token-count total, not physical copy volume, retention duration, or a billing calculation.
 
 ---
 
