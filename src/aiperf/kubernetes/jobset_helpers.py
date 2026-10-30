@@ -28,6 +28,8 @@ REMOTE_CACHE_VOLUME = "remote-cache"
 REMOTE_CACHE_MOUNT_PATH = "/aiperf/remote-cache"
 REMOTE_CACHE_ENV = "AIPERF_DATASET_REMOTE_CACHE_DIR"
 MMAP_CACHE_ENABLED_ENV = "AIPERF_DATASET_MMAP_CACHE_ENABLED"
+# Every container's HF_HOME: the shared `tokenizer-cache` emptyDir.
+HF_HOME_PATH = "/aiperf/hf_home"
 
 
 @lru_cache(maxsize=256)
@@ -188,7 +190,7 @@ def build_volume_mounts(pod_template: PodTemplateConfig) -> list[dict[str, Any]]
         # and dataset-manager picks up its tokenizer from the same cache.
         # On worker pods the same mount exists but is unused — workers get
         # their tokenizer bundle from the operator API via the WGM, not HF.
-        {"name": "tokenizer-cache", "mountPath": "/aiperf/hf_home"},
+        {"name": "tokenizer-cache", "mountPath": HF_HOME_PATH},
         {"name": "tmp", "mountPath": "/tmp"},
     ]
     mounts.extend(pod_template.volume_mounts)
@@ -379,7 +381,7 @@ def build_env_vars(
     # controller pod's warmer, dataset-manager, and api containers all see
     # the same on-disk snapshots. Worker pods carry the mount too but never
     # write to it — they receive bundles from the operator API instead.
-    env.append({"name": "HF_HOME", "value": "/aiperf/hf_home"})
+    env.append({"name": "HF_HOME", "value": HF_HOME_PATH})
 
     if include_pod_index:
         # Expose the JobSet job-index as a unique pod identifier for
