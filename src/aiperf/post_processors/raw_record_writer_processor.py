@@ -13,7 +13,6 @@ import orjson
 from aiperf.common.enums import ExportLevel
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
-from aiperf.common.finite import scrub_non_finite
 from aiperf.common.mixins import AIPerfLoggerMixin, BufferedJSONLWriterMixin
 from aiperf.common.models import (
     MetricRecordMetadata,
@@ -138,11 +137,9 @@ class RawRecordWriterProcessor(BufferedJSONLWriterMixin[RawRecordInfo]):
             return
 
         try:
-            # Scrub before splicing: scrub_non_finite keeps main's "null on
-            # disk = absent" invariant on the metadata/responses fields. The
-            # Fragment is inserted afterwards so the wire-exact payload bytes
-            # pass through untouched.
-            dumped = scrub_non_finite(record.model_dump(exclude_none=True, mode="json"))
+            # orjson writes non-finite floats as null, so JSON-mode model
+            # output needs no recursive scrub before the payload is spliced.
+            dumped = record.model_dump(exclude_none=True, mode="json")
             # ``payload_bytes`` carries the wire-exact JSON; substitute it
             # in place of the (absent) ``payload`` dict so orjson emits the
             # pre-encoded bytes with zero re-parsing.

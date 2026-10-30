@@ -49,7 +49,7 @@ Python 3.11+ async AI benchmarking tool for measuring LLM inference server perfo
 
 ## NaN/Inf Discipline
 
-Numeric metric values crossing a serialization boundary or feeding a numerical algorithm must be finite or explicitly `None`. Use `aiperf.common.finite` (`FiniteFloat`, `scrub_non_finite`, `nan_safe_mean`/`std`, `is_finite_value`). Mechanical CI invariants in `tests/unit/property/test_finite_invariants.py` reject new violations and ratchet existing debt to zero via baseline files. See [`docs/dev/patterns.md`](docs/dev/patterns.md) § "NaN/Inf Discipline Pattern" and [`docs/dev/global-invariants.md`](docs/dev/global-invariants.md) for the full contract.
+Numeric metric values must be finite or explicitly `None` before numerical calculations and, by default, before serialization. Use `aiperf.common.finite` (`FiniteFloat`, `scrub_non_finite`, `nan_safe_mean`/`std`, `is_finite_value`). Only the shared JSONL writer (`BufferedJSONLWriterMixin`) and raw-record writer (`RawRecordWriterProcessor`) may omit normalization before serialization: they pass JSON-mode model dumps to `orjson`, which writes remaining non-finite floats as JSON `null`. Input validation, numerical checks, and the requirements for other exporters still apply. Mechanical CI invariants in `tests/unit/property/test_finite_invariants.py` reject new violations and ratchet existing debt to zero via baseline files. See [`docs/dev/patterns.md`](docs/dev/patterns.md) § "NaN/Inf Discipline Pattern" and [`docs/dev/global-invariants.md`](docs/dev/global-invariants.md) for the full contract.
 
 ## CLI Flag Routing Under `--config`
 
