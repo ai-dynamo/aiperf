@@ -22,14 +22,18 @@ from tests.unit.endpoints.conftest import create_mock_response, create_model_end
 
 
 @pytest.mark.parametrize("streaming", [False, True])
-@pytest.mark.parametrize("write", [None, 0, 8192])
 @pytest.mark.parametrize(
-    "endpoint_type,endpoint_class,write_key",
+    "endpoint_type,endpoint_class,write_key,write",
     [
-        param(EndpointType.CHAT, ChatEndpoint, "cache_write_tokens", id="chat"),
-        param(EndpointType.CHAT, ChatEndpoint, "created_cache_tokens", id="vllm"),
-        param(EndpointType.RESPONSES, ResponsesEndpoint, "cache_write_tokens", id="responses"),
-        param(EndpointType.MESSAGES, MessagesEndpoint, "cache_creation_input_tokens", id="messages"),
+        param(endpoint_type, endpoint_class, write_key, write, id=f"{name}-{write}")
+        for name, endpoint_type, endpoint_class, write_key, writes in [
+            ("chat", EndpointType.CHAT, ChatEndpoint, "cache_write_tokens", (None, 0, 8192)),
+            # Absent-write Chat payloads are identical for the canonical and alias fields.
+            ("vllm", EndpointType.CHAT, ChatEndpoint, "created_cache_tokens", (0, 8192)),
+            ("responses", EndpointType.RESPONSES, ResponsesEndpoint, "cache_write_tokens", (None, 0, 8192)),
+            ("messages", EndpointType.MESSAGES, MessagesEndpoint, "cache_creation_input_tokens", (None, 0, 8192)),
+        ]
+        for write in writes
     ],
 )  # fmt: skip
 def test_cache_write_usage_reaches_record_and_total_metrics(
