@@ -10,6 +10,9 @@ AIPerf supports benchmarking embedding models that convert text into dense vecto
 
 This guide covers profiling OpenAI-compatible embedding endpoints using vLLM.
 
+For the `embeddings` and `nim_embeddings` endpoint types, server-reported
+`usage.prompt_tokens` populates the prompt token usage metric when present. Responses without `usage` still produce embedding results.
+
 ---
 
 ## Section 1. Profile vLLM Embedding Models
