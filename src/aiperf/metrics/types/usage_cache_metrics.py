@@ -73,9 +73,9 @@ class UsagePromptCacheWriteTokensMetric(BaseUsageRecordMetric[int]):
     cache_creation_input_tokens (Anthropic), or cacheWriteInputTokens
     (Bedrock). Missing or explicitly unreported counts raise NoMetricValue.
 
-    LARGER_IS_BETTER is intentionally omitted: writes cost more than ordinary
-    input tokens but enable cheap reads on subsequent requests, so larger is
-    not unambiguously better.
+    LARGER_IS_BETTER is intentionally omitted: writes can enable subsequent
+    cache reads, but can also indicate cache churn. A higher count is not
+    unambiguously better, and billing semantics depend on the server.
 
     Formula:
         Usage Prompt Cache Write Tokens = response.usage.prompt_cache_write_tokens (last non-None)

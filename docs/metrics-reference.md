@@ -1092,7 +1092,7 @@ usage_prompt_cache_write_tokens = record.final_usage.prompt_cache_write_tokens
 - OpenAI itself does not report cache writes, but compatible servers may expose them in `prompt_tokens_details` or `input_tokens_details`. Absent or null values remain unavailable; an explicit zero remains a reported zero. If a server supplies `cache_write_tokens_reported: false`, its placeholder value is not counted.
 - Nested details take precedence over top-level synonyms. Within the same details object, `cache_write_tokens` precedes `created_cache_tokens`; an explicit null or unreported value does not fall back to another field.
 - Measures the API's token classification, not physical CPU/GPU copy bytes or duration. It does not establish a cache-retention guarantee or calculate a bill.
-- Cache writes are typically billed at a premium relative to ordinary input tokens but enable cheap reads on subsequent requests, so the metric is intentionally not flagged "larger is better."
+- Writes may enable subsequent cache reads but can also indicate cache churn, so the metric is intentionally not flagged "larger is better." Billing semantics depend on the server; AIPerf does not infer them from this count.
 - For streaming responses, reads the final usage snapshot. An explicit unknown in that snapshot does not reuse an earlier write count.
 
 ---
