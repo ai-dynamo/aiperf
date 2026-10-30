@@ -1141,8 +1141,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         Re-announcing is safe because every consumer is idempotent on the
         repeat: the WorkerGroupManager short-circuits once the dataset is
         downloaded, and a Kubernetes Worker defers to the pod-local download.
-        Restricted to Kubernetes precisely because the local-mode Worker path
-        re-opens its dataset client on each notification.
         """
         if not self._is_kubernetes_run():
             return

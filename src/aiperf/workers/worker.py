@@ -2380,8 +2380,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     async def _on_profile_configure_command(self, message: Command) -> None:
         """Configure the worker."""
         self.debug("Waiting for dataset to be configured before starting profiling")
+        # Locally, the dataset opens before WorkerDispatchable is sent; acking
+        # in between lets the router pin sessions to earlier workers only.
         await asyncio.wait_for(
-            self._dataset_configured_event.wait(),
+            (
+                self._dataset_configured_event
+                if self._is_kubernetes
+                else self._worker_ready_event
+            ).wait(),
             timeout=Environment.DATASET.CONFIGURATION_TIMEOUT,
         )
         if self.is_debug_enabled:

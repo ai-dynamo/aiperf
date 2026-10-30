@@ -3,7 +3,7 @@
 """Stream dataset JSON without a document-sized GIL-held encoder call."""
 
 import asyncio
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterable, Iterator
 from itertools import islice
 from typing import Any
 
@@ -87,16 +87,28 @@ def _parts(value: Any, *, pretty: bool, depth: int = 0) -> Iterator[bytes]:
         yield data.replace(b"\n", b"\n" + b"  " * depth) if pretty and depth else data
 
 
-def _chunks(value: Any, *, pretty: bool) -> Iterator[bytes]:
-    """Batch small JSON tokens to avoid a thread handoff for every scalar."""
+def _chunks(parts: Iterator[bytes]) -> Iterator[tuple[bytes, bool]]:
+    """Batch small JSON tokens to avoid a thread handoff for every scalar.
+
+    Flags the final chunk so the caller skips a handoff just to see exhaustion.
+    """
     buffer = bytearray()
-    for part in _parts(value, pretty=pretty):
+    for part in parts:
         if len(buffer) + len(part) > _CHUNK_SIZE:
-            yield bytes(buffer)
+            yield bytes(buffer), False
             buffer.clear()
         buffer.extend(part)
-    if buffer:
-        yield bytes(buffer)
+    yield bytes(buffer), True
+
+
+async def _iter_chunks(parts: Iterator[bytes]) -> AsyncIterator[bytes]:
+    """Produce each chunk on a worker thread."""
+    chunks = _chunks(parts)
+    last = False
+    while not last:
+        chunk, last = await asyncio.to_thread(next, chunks)
+        if chunk:
+            yield chunk
 
 
 async def iter_json_bytes(value: Any, *, pretty: bool = False) -> AsyncIterator[bytes]:
@@ -105,6 +117,26 @@ async def iter_json_bytes(value: Any, *, pretty: bool = False) -> AsyncIterator[
     Containers stream recursively; string slices and numeric batches bound
     the work in each native encoder call.
     """
-    chunks = _chunks(value, pretty=pretty)
-    while (chunk := await asyncio.to_thread(next, chunks, None)) is not None:
+    async for chunk in _iter_chunks(_parts(value, pretty=pretty)):
+        yield chunk
+
+
+async def iter_concatenated_json_bytes(
+    values: Iterable[Any], sizes: list[int]
+) -> AsyncIterator[bytes]:
+    """Yield the compact JSON of each value back to back.
+
+    Small values share a chunk, and so a thread handoff, instead of paying one
+    each. Appends each value's encoded byte size to ``sizes`` once encoded.
+    """
+
+    def parts() -> Iterator[bytes]:
+        for value in values:
+            size = 0
+            for part in _parts(value, pretty=False):
+                size += len(part)
+                yield part
+            sizes.append(size)
+
+    async for chunk in _iter_chunks(parts()):
         yield chunk

@@ -311,3 +311,21 @@ async def test_concurrent_dataset_notifications_open_local_client_once(
     local_worker.credit_dealer_client.send.assert_awaited_once_with(
         WorkerDispatchable(worker_id=local_worker.service_id)
     )
+
+
+@pytest.mark.asyncio
+async def test_local_profile_configure_waits_for_dispatchable(
+    local_worker: Worker,
+) -> None:
+    """Acking configure between dataset open and WorkerDispatchable strands the worker."""
+    local_worker.event_loop_monitor = MagicMock()
+    local_worker._dataset_configured_event.set()
+    configure = asyncio.create_task(
+        local_worker._on_profile_configure_command(MagicMock())
+    )
+    await asyncio.sleep(0)
+    assert not configure.done()
+
+    await local_worker._mark_worker_ready()
+    await asyncio.wait_for(configure, timeout=1)
+    local_worker.event_loop_monitor.start.assert_called_once()

@@ -376,11 +376,11 @@ class _DatasetSettings(BaseSettings):
         ge=0.1,
         le=100000.0,
         default=10.0,
-        description="Timeout in seconds for the one-shot DatasetConfigStatusRequest "
-        "a RecordProcessor/RecordsManager sends to DatasetManager when it hasn't yet "
-        "received DatasetConfiguredNotification. Recovers a subscriber that finished "
-        "subscribing after DatasetManager already published the one-shot notification, "
-        "instead of blocking for the full CONFIGURATION_TIMEOUT.",
+        description="Timeout in seconds for each DatasetConfigStatusRequest a "
+        "RecordProcessor, RecordsManager, or local Worker sends to DatasetManager when "
+        "it hasn't yet received DatasetConfiguredNotification. Recovers a subscriber "
+        "that finished subscribing after DatasetManager already published the one-shot "
+        "notification, instead of blocking for the full CONFIGURATION_TIMEOUT.",
     )
     BASETEN_SESSION_COLUMN: Literal["provided_session_id", "poor_man_session_id"] = (
         Field(
@@ -394,10 +394,11 @@ class _DatasetSettings(BaseSettings):
         gt=0.0,
         le=60.0,
         default=1.0,
-        description="Seconds between polls of pod-local dataset state while a worker "
-        "waits to become dispatchable. The dataset arrives via one-shot broadcasts; "
-        "a worker container that subscribes after they fire recovers by polling its "
-        "WorkerGroupManager at this interval instead of waiting forever.",
+        description="Seconds between dataset state polls while a worker waits to "
+        "become dispatchable. The dataset arrives via one-shot broadcasts; a worker "
+        "that subscribes after they fire recovers by polling at this interval instead "
+        "of waiting forever: its WorkerGroupManager in Kubernetes, or DatasetManager "
+        "in local mode.",
     )
     MMAP_BASE_PATH: Path | None = Field(
         default=None,

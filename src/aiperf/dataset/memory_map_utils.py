@@ -58,7 +58,7 @@ from aiperf.common.models import (
     MemoryMapClientMetadata,
     Turn,
 )
-from aiperf.dataset.json_stream import iter_json_bytes
+from aiperf.dataset.json_stream import iter_concatenated_json_bytes
 
 _logger = AIPerfLogger(__name__)
 
@@ -209,22 +209,26 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             # turn scalars in the index so metric enrichment can restore
             # max_tokens / scheduled_send_ms / source_kind / audio_duration_seconds
             # without the full Conversation.
+            sizes: list[int] = []
+            start_offset = self._current_offset
+            async for chunk in iter_concatenated_json_bytes(
+                (turn.raw_payload for turn in conversation.turns), sizes
+            ):
+                await self._write_bytes(chunk)
+                self._current_offset += len(chunk)
             turn_offsets: list[PayloadOffset] = []
-            for turn in conversation.turns:
-                start_offset = self._current_offset
-                async for chunk in iter_json_bytes(turn.raw_payload):
-                    await self._write_bytes(chunk)
-                    self._current_offset += len(chunk)
+            for turn, size in zip(conversation.turns, sizes, strict=True):
                 turn_offsets.append(
                     PayloadOffset(
                         offset=start_offset,
-                        size=self._current_offset - start_offset,
+                        size=size,
                         max_tokens=_resolve_turn_max_tokens(turn),
                         timestamp=turn.timestamp,
                         source_kind=turn.source_kind,
                         audio_duration_seconds=turn.audio_duration_seconds,
                     )
                 )
+                start_offset += size
             self._payload_offsets[conversation_id] = turn_offsets
         else:
             conv_bytes = await asyncio.to_thread(
