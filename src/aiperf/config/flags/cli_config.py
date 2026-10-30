@@ -1217,6 +1217,32 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    end_conversation_on_truncation: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description="End a multi-turn conversation after any turn the server "
+            "truncated at the output-token cap (`finish_reason=length`, Anthropic "
+            "`stop_reason=max_tokens`, or an incomplete Responses API reply) and "
+            "skip its remaining turns. The truncated turn is still measured. "
+            "Follow-up prompts assume a complete prior answer, so sending them "
+            "after a cut-off reply measures off-distribution generations. Default: "
+            "on for SPEED-Bench qualitative datasets (public `speed_bench_qualitative` "
+            "and `speed_bench_<category>`, custom `speed_bench_qualitative`) and "
+            "`spec_al_mtbench`, off otherwise. Counts of ended conversations and "
+            "skipped turns (per conversation session) are logged "
+            "and written to `profile_export_aiperf.json`. Conflicts with "
+            "`--extra-inputs ignore_eos:true`, which truncates every turn. "
+            "Rejected at startup for DAG datasets and agentic replay. "
+            "Maps to the dataset's ``end_conversation_on_truncation``.",
+        ),
+        CLIParameter(
+            name=("--end-conversation-on-truncation",),
+            negative="--no-end-conversation-on-truncation",
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = None
+
     max_idle_gap_cap_seconds: Annotated[
         float | None,
         Field(
@@ -2380,8 +2406,11 @@ class CLIConfig(BaseConfig):
     request_count: Annotated[
         Any,
         Field(
-            description="The maximum number of requests to send. If not set, will be automatically determined based "
-            "on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. "
+            description="The maximum number of requests to send. When none of `--request-count`, `--num-conversations`, "
+            "or `--benchmark-duration` is set, the run is bounded automatically: trace datasets replay every record, "
+            "`dag_jsonl` runs every root session, benchmark suites (SPEED-Bench, `spec_al_*`, `spec_bench`) run one full "
+            "pass over every loaded conversation, concurrency runs send `max(10, 2 * concurrency)` requests (the largest "
+            "value for a `--concurrency` sweep or `--search-space` concurrency range), and request-rate and user-centric runs send 10. "
             "Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple "
             "request counts; the converter promotes the list to a sweep on phases.profiling.requests "
             "before AIPerfConfig validation.",

@@ -215,6 +215,17 @@ Do not set `ignore_eos` - let the model stop naturally at its end-of-sequence to
 
 For reasoning models (e.g. DeepSeek-R1, QwQ), follow the model card's recommended settings for temperature, top_p, and output length. Reasoning models typically require higher output limits and specific sampling parameters.
 
+### Truncated Turns in Multi-Turn Categories
+
+The qualitative split includes multi-turn rows whose follow-up prompts assume a complete prior answer. SPEED-Bench's convention is that when a turn reaches the output-token cap, the rest of that conversation is skipped. Inserting a canned answer instead gives acceptance lengths with high variance relative to the true value. AIPerf follows this convention by default for every SPEED-Bench qualitative dataset, whether loaded with `--public-dataset speed_bench_qualitative` / `speed_bench_<category>` or `--custom-dataset-type speed_bench_qualitative` (and for `spec_al_mtbench`):
+
+- A turn the server truncates (`finish_reason: "length"`) is still measured, and the conversation ends there.
+- The run summary prints how many conversations ended early and how many turns were skipped. `profile_export_aiperf.json` records them as `conversations_ended_on_truncation` and `turns_skipped_on_truncation`. These count conversation sessions, so a conversation replayed to fill `--request-count` counts once per replay.
+- If many conversations end early, raise `--osl` (reasoning models often need well over 4K) so later turns are measured too.
+- `--no-end-conversation-on-truncation` restores sending every turn.
+
+This is one more reason not to set `ignore_eos`: every turn would run to the cap, so every conversation would end after its first turn. See [Ending Conversations on Truncated Turns](multi-turn.md#ending-conversations-on-truncated-turns).
+
 ---
 
 ## Per-Category Matrix in One Run
@@ -235,13 +246,15 @@ aiperf profile \
 ```
 
 > [!WARNING]
-> **Size the run by turns, not by prompts.** `--request-count` counts *requests*,
-> and a multi-turn SPEED-Bench row dispatches one request per turn - the qualitative
-> split's 880 rows expand to roughly 1,140 requests. Passing `--request-count 880`
-> therefore stops partway through the file and **silently drops whole categories**,
-> which biases the matrix: the categories that fall off the end are not a random
-> sample. The `jq` expression above sizes the run to the split's true turn count.
-> Without any count at all, AIPerf defaults to 10 requests.
+> **Leave the run unbounded so it covers the whole split.** With no `--request-count`,
+> `--num-conversations`, or `--benchmark-duration`, AIPerf runs one full pass over
+> every SPEED-Bench conversation the dataset loaded, sending every turn of every row
+> once, and logs that it did so. A bound smaller than the split stops partway
+> through the file and **silently drops whole categories**, which biases the matrix:
+> the categories that fall off the end are not a random sample. `--request-count` is
+> the easiest to get wrong because it counts *requests*, and a multi-turn row
+> dispatches one request per turn - the qualitative split's 880 rows expand to
+> roughly 1,140 requests, so `--request-count 880` falls short.
 >
 > Verify afterwards that every category is present and none was truncated:
 >
@@ -412,7 +425,7 @@ The speculative-decoding literature overwhelmingly reports acceptance length aga
 
 These are five separate datasets, so unlike the SPEED-Bench categories they cannot collapse into one run - a run takes one dataset. What the per-request path changes here is only where each run's number comes from: with `--per-request-spec-decode-metrics` enabled, the report reads it from that run's own requests instead of scraping the server, and `--server-metrics` becomes unnecessary.
 
-Prompts are emitted verbatim (the raw question/problem/prompt field); the served model's chat template wraps them at request time via `--endpoint-type chat`. HumanEval and MBPP are text-completion tasks in the spec-decode literature, so chat-wrapping them keeps the matrix uniform but shifts their acceptance length somewhat from the papers' headline numbers. Acceptance length is correctness-agnostic, so use greedy decoding (`--extra-inputs temperature:0`) to match the headline numbers reported in the literature. Note that `--osl` does not apply to public datasets, so cap generation with `--extra-inputs max_tokens:N` instead. `spec_al_mtbench` is multi-turn: AIPerf dispatches both turns per session and feeds the live assistant reply back as conversation history between them - size it with `--num-conversations` rather than `--request-count` (see below).
+Prompts are emitted verbatim (the raw question/problem/prompt field); the served model's chat template wraps them at request time via `--endpoint-type chat`. HumanEval and MBPP are text-completion tasks in the spec-decode literature, so chat-wrapping them keeps the matrix uniform but shifts their acceptance length somewhat from the papers' headline numbers. Acceptance length is correctness-agnostic, so use greedy decoding (`--extra-inputs temperature:0`) to match the headline numbers reported in the literature. Cap generation with `--osl N`. `spec_al_mtbench` is multi-turn: AIPerf dispatches both turns per session and feeds the live assistant reply back as conversation history between them. Every run below covers its whole dataset by default (one full pass over every conversation), so none of them passes a count. If a turn hits the output-token cap, the conversation's later turns are skipped by default (see [Truncated Turns in Multi-Turn Categories](#truncated-turns-in-multi-turn-categories)).
 
 ### Run All Five with a Matrix Report
 
@@ -420,47 +433,30 @@ Prompts are emitted verbatim (the raw question/problem/prompt field); the served
 MODEL="meta-llama/Llama-3.1-8B-Instruct"
 ART=./artifacts/spec-al   # dedicated root so this matrix never merges with speed_bench_* runs
 
-# Single-turn datasets: size each run to the full dataset with --request-count.
-for pair in spec_al_gsm8k:1319 spec_al_math500:500 spec_al_humaneval:164 spec_al_mbpp:500; do
-  ds="${pair%%:*}"; count="${pair##*:}"
-  echo "=== Running dataset: $ds ($count requests) ==="
+# No count needed: each run makes one full pass over its dataset, including
+# both turns of every spec_al_mtbench conversation.
+for ds in spec_al_gsm8k spec_al_math500 spec_al_humaneval spec_al_mbpp spec_al_mtbench; do
+  echo "=== Running dataset: $ds ==="
   aiperf profile \
       --model "$MODEL" \
       --endpoint-type chat \
       --streaming \
       --url localhost:8000 \
       --public-dataset "$ds" \
-      --request-count "$count" \
-      --extra-inputs temperature:0 max_tokens:4096 \
+      --osl 4096 \
+      --extra-inputs temperature:0 \
       --concurrency 16 \
       --output-artifact-dir "$ART/$ds"
 done
-
-# MT-Bench is multi-turn (80 two-turn conversations). Size it with
-# --num-conversations so every session runs exactly once; --request-count
-# recycles the 80 sessions to reach the count and would dispatch each prompt
-# more than once.
-aiperf profile \
-    --model "$MODEL" \
-    --endpoint-type chat \
-    --streaming \
-    --url localhost:8000 \
-    --public-dataset spec_al_mtbench \
-    --num-conversations 80 \
-    --extra-inputs temperature:0 max_tokens:4096 \
-    --concurrency 16 \
-    --output-artifact-dir "$ART/spec_al_mtbench"
 
 # Assemble the acceptance-length matrix (one column per dataset)
 aiperf speed-bench-report "$ART" --metric accept_length --format both
 ```
 
-> Size each run to the full dataset - without an explicit count AIPerf defaults
-> to 10 requests. Single-turn datasets use `--request-count`; the multi-turn
-> `spec_al_mtbench` uses `--num-conversations 80` (one run per conversation),
-> since `--request-count` recycles its 80 sessions to reach the count. Cap
-> generation with `--extra-inputs max_tokens:N` (`--osl` is ignored for public
-> datasets), and keep these runs in their own artifacts directory so
+> Leave the count off so each run covers its whole dataset. If you do bound a run,
+> prefer `--num-conversations` for `spec_al_mtbench`: `--request-count` counts
+> turns and recycles its 80 sessions to reach the count. Keep these runs in their
+> own artifacts directory so
 > `speed-bench-report` does not average them into an unrelated `speed_bench_*`
 > matrix. On the server-scrape path, add `--server-metrics http://localhost:8000/metrics`
 > to each run.

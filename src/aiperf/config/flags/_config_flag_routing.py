@@ -143,6 +143,9 @@ _ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
         # _VERBATIM_DATASET_FIELDS (added on main by #1268)
         "system_prompt",
         "system_prompt_file",
+        # truncation handling, carried onto every dataset variant by
+        # _VERBATIM_DATASET_FIELDS
+        "end_conversation_on_truncation",
         # baseten_trace dataset knobs carried by _VERBATIM_DATASET_FIELDS;
         # against another format they raise rather than drop
         "force_min_tokens",
@@ -231,6 +234,7 @@ _INPUT_NOT_ON_DATASET: frozenset[str] = frozenset(
 # keying that check on INPUT_FIELDS alone let them no-op silently.
 DATASET_FIELDS_OUTSIDE_INPUT: frozenset[str] = frozenset(
     {
+        "end_conversation_on_truncation",
         "force_min_tokens",
         "inter_turn_delay_cap_seconds",
         "max_idle_gap_cap_seconds",

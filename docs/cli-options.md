@@ -840,6 +840,10 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
+#### `--end-conversation-on-truncation`, `--no-end-conversation-on-truncation`
+
+End a multi-turn conversation after any turn the server truncated at the output-token cap (`finish_reason=length`, Anthropic `stop_reason=max_tokens`, or an incomplete Responses API reply) and skip its remaining turns. The truncated turn is still measured. Follow-up prompts assume a complete prior answer, so sending them after a cut-off reply measures off-distribution generations. Default: on for SPEED-Bench qualitative datasets (public `speed_bench_qualitative` and `speed_bench_<category>`, custom `speed_bench_qualitative`) and `spec_al_mtbench`, off otherwise. Counts of ended conversations and skipped turns (per conversation session) are logged and written to `profile_export_aiperf.json`. Conflicts with `--extra-inputs ignore_eos:true`, which truncates every turn. Rejected at startup for DAG datasets and agentic replay. Maps to the dataset's ``end_conversation_on_truncation``.
+
 #### `--max-idle-gap-cap-seconds` `<float>`
 
 Collapse idle gaps between consecutive requests (across all sessions) to at most this many seconds, so a sparse or session-sampled trace does not replay dead air; ``None`` disables the cap. The cap is in replay wall-clock seconds, applied after --replay-speedup compression, so it bounds actual benchmark idle time regardless of speedup. Only supported by the baseten_trace loader. Maps to FileDataset ``max_idle_gap_cap_seconds``.
@@ -1291,7 +1295,7 @@ Smoothness parameter for gamma distribution arrivals (--arrival-pattern gamma). 
 
 #### `--request-count`, `--num-requests` `<str>`
 
-The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
+The maximum number of requests to send. When none of `--request-count`, `--num-conversations`, or `--benchmark-duration` is set, the run is bounded automatically: trace datasets replay every record, `dag_jsonl` runs every root session, benchmark suites (SPEED-Bench, `spec_al_*`, `spec_bench`) run one full pass over every loaded conversation, concurrency runs send `max(10, 2 * concurrency)` requests (the largest value for a `--concurrency` sweep or `--search-space` concurrency range), and request-rate and user-centric runs send 10. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
 
 #### `--concurrency-ramp-duration` `<float>`
 
@@ -2493,6 +2497,10 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
+#### `--end-conversation-on-truncation`, `--no-end-conversation-on-truncation`
+
+End a multi-turn conversation after any turn the server truncated at the output-token cap (`finish_reason=length`, Anthropic `stop_reason=max_tokens`, or an incomplete Responses API reply) and skip its remaining turns. The truncated turn is still measured. Follow-up prompts assume a complete prior answer, so sending them after a cut-off reply measures off-distribution generations. Default: on for SPEED-Bench qualitative datasets (public `speed_bench_qualitative` and `speed_bench_<category>`, custom `speed_bench_qualitative`) and `spec_al_mtbench`, off otherwise. Counts of ended conversations and skipped turns (per conversation session) are logged and written to `profile_export_aiperf.json`. Conflicts with `--extra-inputs ignore_eos:true`, which truncates every turn. Rejected at startup for DAG datasets and agentic replay. Maps to the dataset's ``end_conversation_on_truncation``.
+
 #### `--max-idle-gap-cap-seconds` `<float>`
 
 Collapse idle gaps between consecutive requests (across all sessions) to at most this many seconds, so a sparse or session-sampled trace does not replay dead air; ``None`` disables the cap. The cap is in replay wall-clock seconds, applied after --replay-speedup compression, so it bounds actual benchmark idle time regardless of speedup. Only supported by the baseten_trace loader. Maps to FileDataset ``max_idle_gap_cap_seconds``.
@@ -2944,7 +2952,7 @@ Smoothness parameter for gamma distribution arrivals (--arrival-pattern gamma). 
 
 #### `--request-count`, `--num-requests` `<str>`
 
-The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
+The maximum number of requests to send. When none of `--request-count`, `--num-conversations`, or `--benchmark-duration` is set, the run is bounded automatically: trace datasets replay every record, `dag_jsonl` runs every root session, benchmark suites (SPEED-Bench, `spec_al_*`, `spec_bench`) run one full pass over every loaded conversation, concurrency runs send `max(10, 2 * concurrency)` requests (the largest value for a `--concurrency` sweep or `--search-space` concurrency range), and request-rate and user-centric runs send 10. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
 
 #### `--concurrency-ramp-duration` `<float>`
 
@@ -4141,6 +4149,10 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
+#### `--end-conversation-on-truncation`, `--no-end-conversation-on-truncation`
+
+End a multi-turn conversation after any turn the server truncated at the output-token cap (`finish_reason=length`, Anthropic `stop_reason=max_tokens`, or an incomplete Responses API reply) and skip its remaining turns. The truncated turn is still measured. Follow-up prompts assume a complete prior answer, so sending them after a cut-off reply measures off-distribution generations. Default: on for SPEED-Bench qualitative datasets (public `speed_bench_qualitative` and `speed_bench_<category>`, custom `speed_bench_qualitative`) and `spec_al_mtbench`, off otherwise. Counts of ended conversations and skipped turns (per conversation session) are logged and written to `profile_export_aiperf.json`. Conflicts with `--extra-inputs ignore_eos:true`, which truncates every turn. Rejected at startup for DAG datasets and agentic replay. Maps to the dataset's ``end_conversation_on_truncation``.
+
 #### `--max-idle-gap-cap-seconds` `<float>`
 
 Collapse idle gaps between consecutive requests (across all sessions) to at most this many seconds, so a sparse or session-sampled trace does not replay dead air; ``None`` disables the cap. The cap is in replay wall-clock seconds, applied after --replay-speedup compression, so it bounds actual benchmark idle time regardless of speedup. Only supported by the baseten_trace loader. Maps to FileDataset ``max_idle_gap_cap_seconds``.
@@ -4592,7 +4604,7 @@ Smoothness parameter for gamma distribution arrivals (--arrival-pattern gamma). 
 
 #### `--request-count`, `--num-requests` `<str>`
 
-The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
+The maximum number of requests to send. When none of `--request-count`, `--num-conversations`, or `--benchmark-duration` is set, the run is bounded automatically: trace datasets replay every record, `dag_jsonl` runs every root session, benchmark suites (SPEED-Bench, `spec_al_*`, `spec_bench`) run one full pass over every loaded conversation, concurrency runs send `max(10, 2 * concurrency)` requests (the largest value for a `--concurrency` sweep or `--search-space` concurrency range), and request-rate and user-centric runs send 10. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
 
 #### `--concurrency-ramp-duration` `<float>`
 
@@ -6296,6 +6308,10 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
 
+#### `--end-conversation-on-truncation`, `--no-end-conversation-on-truncation`
+
+End a multi-turn conversation after any turn the server truncated at the output-token cap (`finish_reason=length`, Anthropic `stop_reason=max_tokens`, or an incomplete Responses API reply) and skip its remaining turns. The truncated turn is still measured. Follow-up prompts assume a complete prior answer, so sending them after a cut-off reply measures off-distribution generations. Default: on for SPEED-Bench qualitative datasets (public `speed_bench_qualitative` and `speed_bench_<category>`, custom `speed_bench_qualitative`) and `spec_al_mtbench`, off otherwise. Counts of ended conversations and skipped turns (per conversation session) are logged and written to `profile_export_aiperf.json`. Conflicts with `--extra-inputs ignore_eos:true`, which truncates every turn. Rejected at startup for DAG datasets and agentic replay. Maps to the dataset's ``end_conversation_on_truncation``.
+
 #### `--max-idle-gap-cap-seconds` `<float>`
 
 Collapse idle gaps between consecutive requests (across all sessions) to at most this many seconds, so a sparse or session-sampled trace does not replay dead air; ``None`` disables the cap. The cap is in replay wall-clock seconds, applied after --replay-speedup compression, so it bounds actual benchmark idle time regardless of speedup. Only supported by the baseten_trace loader. Maps to FileDataset ``max_idle_gap_cap_seconds``.
@@ -6747,7 +6763,7 @@ Smoothness parameter for gamma distribution arrivals (--arrival-pattern gamma). 
 
 #### `--request-count`, `--num-requests` `<str>`
 
-The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
+The maximum number of requests to send. When none of `--request-count`, `--num-conversations`, or `--benchmark-duration` is set, the run is bounded automatically: trace datasets replay every record, `dag_jsonl` runs every root session, benchmark suites (SPEED-Bench, `spec_al_*`, `spec_bench`) run one full pass over every loaded conversation, concurrency runs send `max(10, 2 * concurrency)` requests (the largest value for a `--concurrency` sweep or `--search-space` concurrency range), and request-rate and user-centric runs send 10. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
 
 #### `--concurrency-ramp-duration` `<float>`
 

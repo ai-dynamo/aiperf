@@ -1207,6 +1207,68 @@ class TestFixedScheduleConfigCorrection:
         # Config should remain unchanged for USER_CENTRIC_RATE
         assert r._config.total_expected_requests == 100
 
+    async def test_sessions_from_dataset_resolves_to_conversation_count(
+        self,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """``sessions: all`` targets every loaded conversation, not the turn count."""
+        config = cfg(reqs=None).model_copy(update={"sessions_from_dataset": True})
+
+        conv_src = MagicMock()
+        conv_src.dataset_metadata = make_dataset_metadata(
+            [("c1", 2), ("c2", 2), ("c3", 1)]
+        )
+
+        r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
+
+        assert r._config.expected_num_sessions == 3
+        assert r._config.total_expected_requests is None
+        conv_src.start_full_pass.assert_called_once_with()
+
+    async def test_sessions_from_dataset_counts_only_root_conversations(
+        self,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """DAG children run inside their root's session, so only roots count."""
+        config = cfg(reqs=None).model_copy(update={"sessions_from_dataset": True})
+        metadata = make_dataset_metadata(
+            [("root", 1), ("branch_a", 2), ("branch_b", 2)]
+        )
+        for child in metadata.conversations[1:]:
+            child.is_root = False
+
+        conv_src = MagicMock()
+        conv_src.dataset_metadata = metadata
+
+        r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
+
+        assert r._config.expected_num_sessions == 1
+
+    async def test_sessions_from_dataset_without_metadata_leaves_config(
+        self,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        config = cfg(reqs=None).model_copy(update={"sessions_from_dataset": True})
+
+        conv_src = MagicMock()
+        conv_src.dataset_metadata = None
+
+        r = make_runner(config, conv_src, pub, router, conc, cancel, cb)
+
+        assert r._config.expected_num_sessions is None
+
     async def test_fixed_schedule_filtered_dataset_scenario(
         self,
         pub: MagicMock,
