@@ -749,6 +749,43 @@ def test_pin_remote_datasets_for_kubernetes_connection_failure_with_deferred_pro
         pin_remote_datasets_for_kubernetes(benchmark)
 
 
+@pytest.mark.parametrize(
+    "cli",
+    [
+        param({}, id="promoted-trace"),
+        param({"request_rate": 2.0}, id="rate-conflict-pending"),
+    ],
+)  # fmt: skip
+@pytest.mark.usefixtures("online")
+def test_pin_remote_datasets_for_kubernetes_sniff_failure_after_probe_keeps_decision_pending(
+    cli: dict,
+) -> None:
+    """Metadata succeeds, the first-record read cannot connect: the pending decision survives.
+
+    The access stage pins the dataset and drops the marker before it reads the first
+    record; handing that half-settled run to the pod would skip both the timestamp
+    check and the rate-conflict error.
+    """
+    benchmark = _remote_benchmark(**cli)
+    pending = benchmark.get_default_dataset().remote_fixed_schedule_check
+    assert pending is not None
+    phases_before = [p.model_dump() for p in benchmark.phases]
+    sniff_failure = RemoteSourceError(
+        ref=HF_REF, kind=RemoteErrorKind.TRANSIENT, stage=RemoteStage.ACCESS,
+        what="the connection was reset", hint="Retry", connection_failed=True,
+    )  # fmt: skip
+    with (
+        patch("aiperf.dataset.remote.service.probe_ref", AsyncMock(side_effect=_probe_for)),
+        patch("aiperf.dataset.remote.preflight.remote_first_record_has_timestamp", AsyncMock(side_effect=sniff_failure)),
+        pytest.raises(ConfigurationError, match="--fixed-schedule"),
+    ):  # fmt: skip
+        pin_remote_datasets_for_kubernetes(benchmark)
+    dataset = benchmark.get_default_dataset()
+    assert dataset.remote_fixed_schedule_check == pending
+    assert dataset.path.resolved_version is None
+    assert [p.model_dump() for p in benchmark.phases] == phases_before
+
+
 @pytest.mark.usefixtures("online")
 def test_pin_remote_datasets_for_kubernetes_refused_connection_on_real_http_path_warns() -> (
     None
