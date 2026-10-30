@@ -1618,6 +1618,68 @@ class TestCliCommandRedaction:
         assert secret not in cmd
         assert REDACTED_VALUE in cmd
 
+    @pytest.mark.parametrize(
+        "header_args, secret",
+        [
+            param(
+                ["--header", "X-Acme-Token:sk-custom"],
+                "sk-custom",
+                id="custom-name-header",
+            ),
+            param(
+                ["-H", "X-Request-Id:42", "X-API-Key:sk-second"],
+                "sk-second",
+                id="second-value-after-H",
+            ),
+            param(
+                ["-H", "X-Request-Id:42", "X-Tenant-Secret:sk-second-custom"],
+                "sk-second-custom",
+                id="second-value-custom-name",
+            ),
+            param(
+                ["--header=X-API-Key:sk-inline"],
+                "sk-inline",
+                id="inline-equals-form",
+            ),
+            param(
+                ["-H", "X-Request-Id:42,X-Acme-Token:sk-comma"],
+                "sk-comma",
+                id="comma-separated-pairs",
+            ),
+            param(
+                ["-H", '{"X-Request-Id":"42","Authorization":"Bearer sk-json"}'],
+                "sk-json",
+                id="json-object",
+            ),
+        ],
+    )
+    def test_header_values_gated_by_is_sensitive_header_name(self, header_args, secret):
+        """Regression: every --header/-H value must go through the same
+        is_sensitive_header_name gate as redact_headers, including custom
+        credential names and the 2nd+ values of the consume_multiple flag."""
+        cmd = self._build_cli_command(
+            ["aiperf", "profile", "--model", "gpt2", *header_args]
+        )
+        assert secret not in cmd
+        assert REDACTED_VALUE in cmd
+
+    def test_benign_header_values_preserved_in_cli_command(self):
+        cmd = self._build_cli_command(
+            [
+                "aiperf",
+                "profile",
+                "-H",
+                "X-Request-Id:42",
+                '{"X-Trace":"abc","X-Acme-Token":"sk-json"}',
+                "--model",
+                "gpt2",
+            ]
+        )
+        assert "X-Request-Id:42" in cmd
+        assert '"X-Trace":"abc"' in cmd
+        assert "sk-json" not in cmd
+        assert "'gpt2'" in cmd
+
     def test_authorization_bearer_argv_redacted_in_cli_command(self):
         """Regression: argv with `--header Authorization:Bearer X` must be
         redacted by _build_cli_command alone, no second pass required."""
