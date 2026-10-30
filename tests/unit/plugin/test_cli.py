@@ -626,3 +626,36 @@ class TestEdgeCases:
 
         output = get_console_output(capture_console)
         assert "API endpoints" in output
+
+
+# =============================================================================
+# Real descriptions render as text
+# =============================================================================
+
+
+class TestRegisteredDescriptionsRender:
+    """Descriptions are plain text: brackets in one must not be parsed as Rich markup."""
+
+    @pytest.fixture
+    def rendered(self) -> Generator[StringIO, None, None]:
+        out = StringIO()
+        with patch("aiperf.plugin.cli.console", Console(file=out, width=200)):
+            yield out
+
+    def test_every_registered_category_and_type_renders(
+        self, rendered: StringIO
+    ) -> None:
+        from aiperf.plugin import plugins as registry
+
+        show_packages_detailed()
+        show_categories_overview()
+        for category in registry.list_categories():
+            show_category_types(category)
+            for entry in registry.list_entries(category):
+                show_type_details(category, entry.name)
+
+    def test_bracketed_reference_syntax_prints_literally(
+        self, rendered: StringIO
+    ) -> None:
+        show_type_details("dataset_source_resolver", "hf")
+        assert "[@<rev>][/<path>]" in rendered.getvalue()
