@@ -477,6 +477,7 @@ class TestImageGeneratorCustomDirectory:
             BytesIO(base64.b64decode(result.removeprefix(prefix)))
         ) as image:
             assert image.size == (10, 10)
+            assert image.mode == "I;16"
 
     def test_custom_directory_shuffle_cycle_uses_pool_once(self, tmp_path):
         colors = {
