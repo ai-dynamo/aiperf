@@ -17,6 +17,8 @@ mechanism. The vendors expose this differently:
 - Google Gemini surfaces only reads, top-level as `cachedContentTokenCount`.
 - AWS Bedrock mirrors Anthropic shape with camelCase top-level
   `cacheReadInputTokens` / `cacheWriteInputTokens`.
+- Moonshot reports writes as nested `cache_write_tokens` and vLLM as
+  nested `created_cache_tokens` in prompt/input token details.
 
 `Usage` normalizes the read / write / miss synonyms via the
 `prompt_cache_read_tokens` / `prompt_cache_write_tokens` /
@@ -66,10 +68,10 @@ class UsagePromptCacheWriteTokensMetric(BaseUsageRecordMetric[int]):
     """
     API usage field prompt cache-write (cache creation) token count metric.
 
-    Counts prompt tokens written to cache. Reported only by APIs that bill
-    cache writes separately — Anthropic surfaces this at the top level as
-    cache_creation_input_tokens. OpenAI does not surface writes, so this
-    metric raises NoMetricValue for OpenAI-shaped responses.
+    Counts API-reported prompt tokens written to cache: nested
+    cache_write_tokens (Moonshot), nested created_cache_tokens (vLLM),
+    cache_creation_input_tokens (Anthropic), or cacheWriteInputTokens
+    (Bedrock). Missing or explicitly unreported counts raise NoMetricValue.
 
     LARGER_IS_BETTER is intentionally omitted: writes cost more than ordinary
     input tokens but enable cheap reads on subsequent requests, so larger is
@@ -92,8 +94,8 @@ class UsagePromptCacheWriteTokensMetric(BaseUsageRecordMetric[int]):
     usage_field = "prompt_cache_write_tokens"
     missing_message = (
         "Usage prompt cache-write token count not available: no response "
-        "had top-level `cache_creation_input_tokens` "
-        "(this field is Anthropic-specific; OpenAI does not surface writes)."
+        "reported nested `cache_write_tokens` / `created_cache_tokens` "
+        "or top-level `cache_creation_input_tokens` / `cacheWriteInputTokens`."
     )
 
 

@@ -96,6 +96,10 @@ class Usage(dict):
         "cache_creation_input_tokens",  # Anthropic
         "cacheWriteInputTokens",  # AWS Bedrock
     ]
+    CACHE_WRITE_DETAILS_KEYS: ClassVar[list[str]] = [
+        "cache_write_tokens",  # Moonshot Chat Completions / Responses
+        "created_cache_tokens",  # vLLM
+    ]
     CACHE_MISS_TOP_LEVEL_KEYS: ClassVar[list[str]] = [
         "prompt_cache_miss_tokens",  # DeepSeek
     ]
@@ -347,14 +351,29 @@ class Usage(dict):
     def prompt_cache_write_tokens(self) -> int | None:
         """Get cached prompt-token writes (cache creations).
 
-        Reported only by APIs that bill cache writes separately:
+        Recognized fields (in precedence order):
+        - Moonshot: nested cache_write_tokens in prompt/input token details.
+        - vLLM: nested created_cache_tokens in prompt token details.
         - Anthropic: top-level cache_creation_input_tokens.
         - AWS Bedrock: top-level cacheWriteInputTokens.
 
-        OpenAI / DeepSeek / Gemini do not surface writes — writes happen
-        transparently or are not separately billed — so this property returns
-        None for those shapes.
+        Missing/null counts remain unknown; explicit zero is a reported zero.
+        A server's optional cache_write_tokens_reported=False flag marks a
+        compatibility placeholder, not a measured count. These are API token
+        observations, not physical transfer bytes or a billing calculation.
         """
+        for details_key in self.PROMPT_DETAILS_KEYS:
+            details = self.get(details_key)
+            if not isinstance(details, dict):
+                continue
+            for key in self.CACHE_WRITE_DETAILS_KEYS:
+                if key in details:
+                    if (
+                        key == "cache_write_tokens"
+                        and details.get("cache_write_tokens_reported") is False
+                    ):
+                        return None
+                    return details[key]
         return self._first_present(self.CACHE_WRITE_TOP_LEVEL_KEYS)
 
     @property

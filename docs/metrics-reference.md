@@ -1080,18 +1080,20 @@ usage_prompt_cache_read_tokens = response.usage.cache_read_input_tokens  # from 
 
 **Type:** [Record Metric](#record-metrics)
 
-The number of prompt tokens written to cache (cache creations) as reported by the API's `usage.cache_creation_input_tokens` field for a single request. Anthropic-specific.
+The number of prompt tokens written to cache (cache creations) as reported by the API for a single request. Recognizes nested `cache_write_tokens` (Moonshot Chat Completions and Responses), nested `created_cache_tokens` (vLLM), top-level `cache_creation_input_tokens` (Anthropic), and top-level `cacheWriteInputTokens` (Bedrock).
 
 **Formula:**
 ```python
-usage_prompt_cache_write_tokens = response.usage.cache_creation_input_tokens  # from last non-None response
+usage_prompt_cache_write_tokens = record.final_usage.prompt_cache_write_tokens
 ```
 
 **Notes:**
 - Taken from the API response `usage` object, not computed by AIPerf.
-- Reported only by APIs that bill cache writes separately (Anthropic). OpenAI does not surface cache writes — they happen transparently and are not billed separately, so this metric is empty for OpenAI workloads.
+- OpenAI itself does not report cache writes, but compatible servers may expose them in `prompt_tokens_details` or `input_tokens_details`. Absent or null values remain unavailable; an explicit zero remains a reported zero. If a server supplies `cache_write_tokens_reported: false`, its placeholder value is not counted.
+- Nested details take precedence over top-level synonyms. Within the same details object, `cache_write_tokens` precedes `created_cache_tokens`; an explicit null or unreported value does not fall back to another field.
+- Measures the API's token classification, not physical CPU/GPU copy bytes or duration. It does not establish a cache-retention guarantee or calculate a bill.
 - Cache writes are typically billed at a premium relative to ordinary input tokens but enable cheap reads on subsequent requests, so the metric is intentionally not flagged "larger is better."
-- For streaming responses, uses the last non-None value reported.
+- For streaming responses, reads the final usage snapshot. An explicit unknown in that snapshot does not reuse an earlier write count.
 
 ---
 
