@@ -75,6 +75,27 @@ class TestEncodeImage:
         assert decoded_img.mode == "RGB"
         assert decoded_img.format == format
 
+    def test_encode_integer_png_preserves_16bit_clipping(self) -> None:
+        """Preserve Pillow 12's clipped PNG pixels when encoding a mode I image."""
+        pixels = [-5, 0, 40000, 65535, 70000]
+        img = Image.new("I", (5, 1))
+        img.putdata(pixels)
+
+        with Image.open(
+            BytesIO(base64.b64decode(utils.encode_image(img, "PNG")))
+        ) as decoded:
+            assert decoded.format == "PNG"
+            assert decoded.mode == "I;16"
+            assert [decoded.getpixel((x, 0)) for x in range(5)] == [
+                0,
+                0,
+                40000,
+                65535,
+                65535,
+            ]
+        assert img.mode == "I"
+        assert [img.getpixel((x, 0)) for x in range(5)] == pixels
+
     def test_encode_rgba_to_jpeg(self):
         """Test that RGBA image is converted to RGB for JPEG format."""
         img = Image.new("RGBA", (2, 2), color=(255, 0, 0, 128))

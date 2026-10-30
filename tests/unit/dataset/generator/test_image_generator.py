@@ -430,6 +430,33 @@ class TestImageGeneratorCustomDirectory:
         result = generator.generate()
         assert result.startswith("data:image/png;base64,")
 
+    @pytest.mark.parametrize("image_format", [ImageFormat.PNG, ImageFormat.JPEG])
+    def test_custom_directory_integer_tiff_encodes(
+        self, tmp_path: Path, image_format: ImageFormat
+    ) -> None:
+        """Resize and encode a real mode I TIFF through the custom-source path."""
+        Image.new("I", (5, 5), color=70000).save(tmp_path / "depth.tif")
+        config = ImageConfig(
+            batch_size=1,
+            width=ImageWidthConfig(mean=10, stddev=0),
+            height=ImageHeightConfig(mean=10, stddev=0),
+            format=image_format,
+            source=tmp_path,
+        )
+        result = ImageGenerator(config).generate()
+
+        prefix = f"data:image/{image_format.name.lower()};base64,"
+        assert result.startswith(prefix)
+        with Image.open(
+            BytesIO(base64.b64decode(result.removeprefix(prefix)))
+        ) as image:
+            assert image.size == (10, 10)
+            if image_format == ImageFormat.PNG:
+                assert image.mode == "I;16"
+                assert image.getextrema() == (65535, 65535)
+            else:
+                assert image.mode == "RGB"
+
     def test_custom_directory_shuffle_cycle_uses_pool_once(self, tmp_path):
         colors = {
             "blue.png": (0, 0, 255),

@@ -63,6 +63,9 @@ def encode_image(img: Image, format: str) -> str:
     # to be converted to RGB before an image can be saved as JPEG format.
     if format == "JPEG" and img.mode != "RGB":
         img = img.convert("RGB")
+    # Preserve Pillow 12's 16-bit clipping when Pillow 13 refuses mode I PNGs.
+    elif format == "PNG" and img.mode == "I":
+        img = img.convert("I;16")
 
     buffer = BytesIO()
     # Use explicit compression settings to ensure deterministic output across platforms
