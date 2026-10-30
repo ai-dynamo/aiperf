@@ -330,6 +330,9 @@ def config_summary(config: SessionDistributionConfig) -> dict[str, float | int]:
         "inter_turn_delay_agentic_fraction": config.inter_turn_delay.agentic_fraction,
         "inter_turn_delay_agentic_mean_ms": config.inter_turn_delay.agentic_delay.mean,
         "inter_turn_delay_human_mean_ms": config.inter_turn_delay.human_delay.mean,
+        "inter_turn_delay_context_scaling": int(
+            config.inter_turn_delay.context_scaling
+        ),
         "turn_mode_enabled": int(config.turns is not None),
     }
     if config.reset is not None:

@@ -10,12 +10,15 @@ from pathlib import Path
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.dataset.agentic_code_gen.config import load_config
 from aiperf.dataset.agentic_code_gen.distributions import lognormal_from_mean_median
 from aiperf.dataset.agentic_code_gen.models import (
     CacheLayerConfig,
     Layer15GroupConfig,
+    LognormalParams,
+    MixtureDelayConfig,
     ResetConfig,
     SessionDistributionConfig,
 )
@@ -25,6 +28,43 @@ from aiperf.dataset.loader.models import MooncakeTrace
 
 
 class TestRoundtrip:
+    @pytest.mark.parametrize(
+        "context_scaling, expected_delay",
+        [param(True, 900, id="scaled"), param(False, 1000, id="unscaled")],
+    )  # fmt: skip
+    def test_delay_config_survives_manifest_and_trace_roundtrip(
+        self,
+        tmp_path: Path,
+        turns_config: SessionDistributionConfig,
+        context_scaling: bool,
+        expected_delay: float,
+    ) -> None:
+        turns_config.cache.layer1_tokens = 2000
+        turns_config.inter_turn_delay = MixtureDelayConfig(
+            context_scaling=context_scaling,
+            agentic_fraction=1.0,
+            agentic_delay=LognormalParams(mean=1000, median=1000, min=900),
+        )
+        sessions = SessionSynthesizer(turns_config, seed=42).synthesize_sessions(3)
+
+        jsonl, manifest, quality = write_dataset(
+            sessions, tmp_path / "run", turns_config, seed=42
+        )
+
+        restored_config = load_config(str(manifest))
+        assert restored_config.inter_turn_delay.context_scaling is context_scaling
+        replay = SessionSynthesizer(restored_config, seed=42).synthesize_sessions(3)
+        assert replay == sessions
+        turns = [
+            MooncakeTrace(**orjson.loads(line))
+            for line in jsonl.read_bytes().splitlines()
+        ]
+        delays = [turn.delay for turn in turns if turn.delay is not None]
+        assert len(delays) == 9
+        assert delays == pytest.approx([expected_delay] * 9)
+        summary = orjson.loads(quality.read_bytes())["config_summary"]
+        assert summary["inter_turn_delay_context_scaling"] == int(context_scaling)
+
     def test_config_to_mooncake_roundtrip(self, tmp_path: Path) -> None:
         config = SessionDistributionConfig()
         synth = SessionSynthesizer(config, seed=42)
