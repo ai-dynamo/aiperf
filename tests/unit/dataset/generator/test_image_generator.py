@@ -454,6 +454,30 @@ class TestImageGeneratorCustomDirectory:
         result = generator.generate()
         assert result.startswith("data:image/png;base64,")
 
+    def test_custom_directory_32bit_integer_tiff_source(self, tmp_path):
+        """A 32-bit integer TIFF stays mode ``I`` through open and resize.
+        Guards that PNG output still encodes it (Pillow 13 cannot write mode
+        ``I`` as PNG) instead of aborting dataset generation.
+        """
+        Image.new("I", (5, 5), color=70000).save(tmp_path / "depth.tif")
+
+        config = ImageConfig(
+            batch_size=1,
+            width=ImageWidthConfig(mean=10, stddev=0),
+            height=ImageHeightConfig(mean=10, stddev=0),
+            format=ImageFormat.PNG,
+            source=tmp_path,
+        )
+        generator = ImageGenerator(config)
+        result = generator.generate()
+
+        prefix = "data:image/png;base64,"
+        assert result.startswith(prefix)
+        with Image.open(
+            BytesIO(base64.b64decode(result.removeprefix(prefix)))
+        ) as image:
+            assert image.size == (10, 10)
+
     def test_custom_directory_shuffle_cycle_uses_pool_once(self, tmp_path):
         colors = {
             "blue.png": (0, 0, 255),
