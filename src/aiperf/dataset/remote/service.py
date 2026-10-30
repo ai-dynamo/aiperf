@@ -127,7 +127,7 @@ def indexed_file(ref: RemoteRef, relpath: str) -> Path | None:
     Reads only the local cache, and logs nothing on a miss: the caller fetches instead.
     """
     source = read_index(ref)
-    if source is None or not _intact(source):
+    if source is None or not _is_intact(source):
         return None
     file = next((f for f in source.files if f.path == relpath), None)
     return None if file is None else _disk_path(source, file)
