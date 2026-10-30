@@ -131,6 +131,8 @@ Use `semianalysis_cc_traces_weka_no_subagents` if you want the main-agent-only c
 
 On first run, the full corpus downloads upfront and is cached locally by the HuggingFace `datasets` library; subsequent runs reuse the cache. Both datasets are public — no HuggingFace authentication or token is required.
 
+The loader removes the null values that Arrow adds for fields a request type does not define (for example `agent_id` on a normal request) before validation. Non-null unknown fields and null required fields still fail; the file-based schema stays strict.
+
 > **`--num-dataset-entries` is optional for Weka loaders.** When omitted, the HF Weka loader automatically loads the full corpus and logs `Loading all <total> traces` at INFO. Pass an explicit value only when you want a subset — the loader will log `Loading <n>/<total> traces` so you can see the cap in effect. (The file-based `--input-file <dir>` path always loads every JSON file it finds; the same auto-full behavior applies.)
 
 The HuggingFace path and the file-based `--input-file` path produce **byte-identical conversations** for the same source rows because the public-dataset loader is a thin wrapper that delegates 100% of trace reconstruction (hash_id replay, per-trace model mapping, branch + spawn-join topology, delay capping, parallel reconstruction) to the same `WekaTraceLoader.convert_to_conversations()` used by `--input-file`. There is one source of truth for trace reconstruction.
