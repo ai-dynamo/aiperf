@@ -182,9 +182,12 @@ The run log prints the exact version used, for example:
 Remote dataset hf://<org>/<repo>: using hf://datasets/<org>/<repo>@3e1f.../data/chat.jsonl.gz (version 3e1f..., 1 file(s), 48211093 bytes, sha256 9c1d4f0a7b2e)
 ```
 
-Copy the `using ...` reference to reproduce the run. The same information (reference, pinned
-version, downloaded files with their digests, and the manifest digest) is recorded under
-`metadata.dataset` in `profile_export_aiperf.json`.
+For an `hf://` source (pinned to a commit) or an S3 object with a VersionId, the `using ...`
+reference names that exact version, so copying it reproduces the run. An HTTPS URL, or an S3
+object or prefix pinned by ETag or by listing, has no reference that locks a version: running
+it again reads whatever is current. The same information (reference, pinned version,
+downloaded files with their digests, and the manifest digest) is recorded under
+`metadata.dataset` in `profile_export_aiperf.json`, so the version that ran is always on record.
 
 ---
 

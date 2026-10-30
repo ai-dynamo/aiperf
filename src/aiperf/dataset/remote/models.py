@@ -34,7 +34,9 @@ class ProbeResult(AIPerfBaseModel):
 
     ref: _RemoteRefField = Field(description="The reference with resolved_version set.")
     pinned_ref: str = Field(
-        description="Redacted reference that reproduces this exact version."
+        description="Redacted reference to this version. It reproduces the version "
+        "exactly only for an HF commit or an S3 VersionId; an HTTP URL or an S3 "
+        "reference pinned by ETag or listing reads the current version when reused."
     )
     data_relpath: str | None = Field(
         description="Data file or directory relative to the repo/bucket root; None for http(s)."
