@@ -23,6 +23,7 @@ from aiperf.operator import events, runs_index
 from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.results_layout import (
     enforce_retention,
+    is_run_ready,
     job_dir,
     list_run_epochs,
     reconcile_latest,
@@ -352,17 +353,30 @@ async def _reconcile_index_latest(
         )
 
 
+def _published_epochs(
+    base: Path, namespace: str, job_id: str, epochs: set[str]
+) -> set[str]:
+    return {
+        epoch
+        for epoch in epochs
+        if is_run_ready(run_dir(base, namespace, job_id, epoch))
+    }
+
+
 async def on_aiperfjob_delete_index_cleanup(
     namespace: str, name: str, status: dict[str, Any]
 ) -> None:
-    """Drop every index row for a deleted AIPerfJob.
+    """Drop index rows for a deleted AIPerfJob whose results never published.
 
     Wired from ``main.on_delete`` via ``lifecycle.on_delete``. That handler
     does not touch disk (results retention is independent of CR lifecycle),
-    but the index entries become orphaned when the CR is gone — ``aiperf kube
-    results list-runs`` would still surface them. Walk every epoch dir on disk
-    plus every index row and drop matching index rows; missing-on-both is a
-    no-op.
+    so an epoch with a durable ``.aiperf_results_ready.json`` marker keeps
+    its row: ``/results`` still lists the run from disk, and under a complete
+    catalog the index-only analytics fast path would otherwise answer with
+    nothing for it until the next bootstrap re-ingests the PVC. Rows for
+    epochs with no published results -- a job deleted mid-run, or a Pending
+    stub -- are dropped so they do not surface as orphans. Walk every epoch
+    dir on disk plus every index row; missing-on-both is a no-op.
 
     Best-effort: any failure logs and swallows so on_delete remains fast.
     """
@@ -388,7 +402,10 @@ async def on_aiperfjob_delete_index_cleanup(
             job_id,
             exc,
         )
-    for epoch in epochs:
+    published = await asyncio.to_thread(
+        _published_epochs, base, namespace, job_id, epochs
+    )
+    for epoch in epochs - published:
         try:
             await runs_index.delete_run(namespace, job_id, epoch)
         except Exception as exc:  # noqa: BLE001 - best-effort index sync
