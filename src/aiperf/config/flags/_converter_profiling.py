@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from aiperf.config.flags import CLIConfig
+    from aiperf.config.sweep.adaptive import SearchSpaceDimension
 
 
 _PROF_FIELD_ROUTES: tuple[tuple[str, str], ...] = (
@@ -93,106 +94,32 @@ _RATE_SHAPE_SEARCH_FIELDS: frozenset[str] = frozenset(
 )
 
 
-def _search_space_dimensions(cli: CLIConfig) -> dict[str, tuple[float, str]]:
-    """Field name -> (lower bound, kind) for every dimension in ``--search-space``.
+def _profiling_search_dimensions(cli: CLIConfig) -> dict[str, SearchSpaceDimension]:
+    """Field name -> dimension for each ``--search-space`` entry on ``phases.profiling.<field>``."""
+    from aiperf.orchestrator.search_planner.parsing import parse_search_space
 
-    A lightweight companion to ``parse_search_space()`` (which runs later,
-    in ``_build_adaptive_search``): only extracts each dimension's final
-    path segment (resolving bare-name aliases the same way the real parser
-    does), its lower bound, and its declared ``kind`` (``int``/``real``,
-    default ``real`` when omitted -- matches ``SearchSpaceDimension``'s own
-    default), so ``_profiling_phase_type``/``build_profiling`` can pick a
-    compatible phase shape -- and seed a self-supplying field's initial
-    value from its own search range -- before search-space bounds/kind are
-    even validated by the real parser. Malformed entries are skipped here;
-    the real parser reports the actual grammar error. Only dimensions that
-    target a direct ``phases.profiling.<field>`` scalar are considered
-    (bare aliases always resolve there); a fully-qualified path targeting a
-    different phase (e.g. ``phases.warmup.*``) OR a nested sub-field one
-    level deeper (e.g. ``phases.profiling.cancellation.rate``, the request-
-    cancellation rate -- an unrelated field that merely happens to share
-    the ``rate`` leaf name) is ignored by this shape-inference helper --
-    the real search-space parser still processes it normally later, just
-    not for the purpose of phase-shape inference.
-
-    ``rate_series`` is rejected outright, regardless of any companion CLI
-    flag: it's a piecewise-linear schedule (``RateSeriesConfig``), not a
-    scalar the planner can sample between two bounds. Letting it through
-    would set a phase's ``rate_series`` field to a bare Optuna-sampled
-    float on the first trial and crash there -- reject it immediately and
-    clearly instead.
-    """
-    if not cli.search_space:
-        return {}
-
-    dims: dict[str, tuple[float, str]] = {}
-    for raw in cli.search_space:
-        parsed = _parse_shape_dimension(raw)
-        if parsed is not None:
-            field, lo, kind = parsed
-            dims[field] = (lo, kind)
+    dims: dict[str, SearchSpaceDimension] = {}
+    for dimension in parse_search_space(list(cli.search_space or [])):
+        segments = dimension.path.split(".")
+        if segments[:2] != ["phases", "profiling"]:
+            continue
+        if len(segments) == 3:
+            dims[segments[2]] = dimension
+        # Searching the ramp duration still writes 'rate_ramp', so it needs a
+        # rate-shaped phase; other nested leaves (cancellation.rate) do not.
+        elif segments[2:] == ["rate_ramp", "duration"]:
+            dims["rate_ramp"] = dimension
     return dims
 
 
-def _parse_shape_dimension(raw: str) -> tuple[str, float, str] | None:
-    """Parse one ``--search-space`` entry into ``(field, lo, kind)``, or
-    ``None`` if it isn't a shape-bearing ``phases.profiling.<field>`` scalar.
-
-    Raises for ``rate_series`` specifically (see ``_search_space_dimensions``
-    docstring); every other malformed or out-of-scope entry is skipped so
-    the real parser (``parse_search_space``) is what reports the actual
-    grammar error, rather than this lightweight helper guessing wrong.
-    """
-    from aiperf.config.loader.dotted_path import _resolve_path_alias
-
-    path_part, _, rest = raw.partition(":")
-    path = path_part
-    if not path:
-        return None
-    if "." not in path:
-        path = _resolve_path_alias(path)
-    if not path.startswith("phases.profiling."):
-        return None
-    remainder = path[len("phases.profiling.") :]
-    if "." in remainder:
-        # A nested sub-field (e.g. "phases.profiling.cancellation.rate") is
-        # not the phase's own scalar field -- matching it by leaf name alone
-        # would misclassify e.g. a cancellation-rate sweep as the phase's
-        # request rate. Not a shape-bearing dimension.
-        return None
-    field = remainder
-    if field == "rate_series":
-        raise ValueError(
-            "--search-space 'rate_series' is not a valid adaptive-search "
-            "dimension: it's a piecewise-linear rate schedule (a list of "
-            "time/rate points), not a single number the planner can "
-            "sample between two bounds. Pass --request-rate-series as a "
-            "fixed companion instead of searching over it, or search "
-            "'rate'/'rate_ramp' for a scalar rate to sweep."
-        )
-    bounds_part, _, kind_part = rest.partition(":")
-    if ":" in kind_part:
-        # More than three ':'-separated segments (e.g. "users:1,50:int:log")
-        # -- malformed grammar. Skip rather than guess a kind from it.
-        return None
-    kind = kind_part or "real"
-    if kind not in ("int", "real"):
-        # Not one of the real parser's _VALID_KINDS (parsing.py) -- skip so
-        # the real parser's own grammar error is what the user sees. This is
-        # also what makes _seed_users_dimension's "not ':real'" message
-        # always accurate: by the time kind reaches there, it can only ever
-        # be "int" or "real".
-        return None
-    lo_str = bounds_part.split(",", 1)[0]
-    try:
-        return field, float(lo_str), kind
-    except ValueError:
-        return None
+def _search_space_dimensions(cli: CLIConfig) -> dict[str, float]:
+    return {
+        field: dimension.lo
+        for field, dimension in _profiling_search_dimensions(cli).items()
+    }
 
 
-def _profiling_phase_type(
-    cli: CLIConfig, search_dims: dict[str, tuple[float, str]]
-) -> Any:
+def _profiling_phase_type(cli: CLIConfig, search_dims: dict[str, float]) -> Any:
     from aiperf.config.phases import PhaseType
     from aiperf.plugin.enums import ArrivalPattern
 
@@ -248,7 +175,7 @@ def _profiling_phase_type(
 
 
 def _apply_search_space_shape_seeds(
-    prof: dict[str, Any], search_dims: dict[str, tuple[float, str]]
+    prof: dict[str, Any], search_dims: dict[str, float]
 ) -> None:
     """Seed the required scalar(s) a search-space-inferred shape still needs.
 
@@ -265,31 +192,10 @@ def _apply_search_space_shape_seeds(
     "rate-controlled phases require rate or rate_series" surface as an
     unexplained crash on the very first config build.
 
-    Both the 'users' and 'rate' validation below run whenever the
-    respective field is in search_dims, regardless of whether an explicit
-    CLI flag (--num-users, --request-rate, --request-rate-series, or
-    --user-centric-rate) already populated prof["users"]/prof["rate"]/
-    prof["rate_series"] via _PROF_FIELD_ROUTES / _apply_profiling_rate_series
-    before this runs -- only the *assignment* is gated on absence.
-    Otherwise `--request-rate 10 --search-space "rate:-5,100"` would
-    silently skip bound validation on a dimension the planner still samples
-    from every trial (crashing mid-search once a negative value is drawn,
-    not at config-build time), the same class of bug as skipping 'users'
-    validation whenever --num-users was also explicit.
+    Dimension bounds and kinds have already been validated by the shared
+    search-space model, including dimensions outside the profiling phase.
     """
     from aiperf.config.phases import PhaseType
-
-    # 'smoothness' (GammaPhase.smoothness, gt=0) and 'rate_ramp'
-    # (RampConfig.duration, gt=0.0) aren't seeded into prof here -- both are
-    # optional fields the planner only ever writes once trials start -- but
-    # they share the same "validate the bound now, not at sample time" need
-    # as 'rate'/'users': a negative lower bound otherwise builds a valid
-    # base config and only fails once the planner happens to sample a
-    # negative value mid-search.
-    _reject_non_positive_bound(
-        search_dims, "smoothness", "the gamma distribution's shape parameter"
-    )
-    _reject_non_positive_bound(search_dims, "rate_ramp", "the ramp duration (seconds)")
 
     phase_type = prof["type"]
 
@@ -318,43 +224,13 @@ def _apply_search_space_shape_seeds(
         _seed_rate_dimension(prof, search_dims, phase_type)
 
 
-def _reject_non_positive_bound(
-    search_dims: dict[str, tuple[float, str]], field: str, subject: str
-) -> None:
-    """Raise a clear error if `field`'s search-space lower bound isn't > 0."""
-    if field not in search_dims:
-        return
-    lo, _kind = search_dims[field]
-    if not math.isfinite(lo) or lo <= 0:
-        raise ValueError(
-            f"--search-space '{field}' lower bound must be > 0 (got {lo!r}); "
-            f"{subject} must be positive."
-        )
-
-
-def _seed_users_dimension(
-    prof: dict[str, Any], search_dims: dict[str, tuple[float, str]]
-) -> None:
-    """Validate and (if absent) seed prof["users"] from a 'users' dimension."""
-    users_lo, users_kind = search_dims["users"]
-    if users_kind != "int":
-        raise ValueError(
-            "--search-space 'users' must use ':int' kind (e.g. "
-            "'users:1,50:int'), not ':real' -- the number of simulated "
-            "users must be a whole number."
-        )
-    if not math.isfinite(users_lo) or users_lo < 1:
-        raise ValueError(
-            f"--search-space 'users' lower bound must be >= 1 (got "
-            f"{users_lo!r}); the number of simulated users can't be "
-            "less than one."
-        )
+def _seed_users_dimension(prof: dict[str, Any], search_dims: dict[str, float]) -> None:
     if "users" not in prof:
-        prof["users"] = int(users_lo)
+        prof["users"] = int(search_dims["users"])
 
 
 def _seed_rate_dimension(
-    prof: dict[str, Any], search_dims: dict[str, tuple[float, str]], phase_type: Any
+    prof: dict[str, Any], search_dims: dict[str, float], phase_type: Any
 ) -> None:
     """Validate and (if absent) seed prof["rate"] from a 'rate' dimension.
 
@@ -382,14 +258,8 @@ def _seed_rate_dimension(
             "search 'rate', or drop the 'rate' dimension to keep the "
             "fixed schedule."
         )
-    rate_lo, _rate_kind = search_dims["rate"]
-    if not math.isfinite(rate_lo) or rate_lo <= 0:
-        raise ValueError(
-            f"--search-space 'rate' lower bound must be > 0 (got "
-            f"{rate_lo!r}); rate must be positive."
-        )
     if not has_base_rate:
-        prof["rate"] = rate_lo
+        prof["rate"] = search_dims["rate"]
 
 
 def apply_cancellation(prof: dict[str, Any], cli: CLIConfig) -> None:
@@ -538,6 +408,7 @@ def _detect_cli_magic_sweep(cli: CLIConfig) -> tuple[str, list] | None:
 
 
 def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
+    """Reject invalid mode combinations, then apply dataset-aware and stop-condition defaults."""
     from aiperf.config.phases import PhaseType
 
     # `--conversation-turn-mean` may be a list when used as a magic-list
@@ -577,12 +448,86 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
         not any(k in prof for k in ("requests", "duration", "sessions"))
         and prof["type"] != PhaseType.FIXED_SCHEDULE
     ):
-        # Why: when no bound is given for an unbounded run, default to
-        # 10 requests so the run terminates in a reasonable time.
-        # Deliberate override of the PhaseConfig default (which would
-        # leave it unbounded).
-        prof.setdefault("requests", 10)
+        _apply_default_stop_condition(prof, cli)
     apply_cancellation(prof, cli)
+
+
+_MIN_DEFAULT_REQUESTS = 10
+_DEFAULT_REQUESTS_PER_CONCURRENCY_SLOT = 2
+
+
+def _apply_default_stop_condition(prof: dict[str, Any], cli: CLIConfig) -> None:
+    """Bound a CLI run that set no requests, sessions, or duration.
+
+    PhaseConfig itself requires an explicit stop condition (YAML users must
+    choose one); this is the CLI-only default.
+    """
+    from aiperf.config.phases import FULL_PASS_SESSIONS, PhaseType
+
+    # Scenarios lock their own timing mode and user-centric sizing is
+    # governed by users, so both keep the flat floor.
+    keeps_flat_floor = (
+        cli.scenario is not None or prof["type"] == PhaseType.USER_CENTRIC
+    )
+    if not keeps_flat_floor and _is_full_pass_dataset(cli):
+        prof["sessions"] = FULL_PASS_SESSIONS
+        _logger.warning(
+            "No stop condition given; running one full pass over every "
+            f"conversation in {cli.public_dataset or cli.custom_dataset_type}. "
+            "Pass --request-count, --num-conversations, or --benchmark-duration "
+            "to bound the run instead."
+        )
+        return
+
+    requests = _MIN_DEFAULT_REQUESTS
+    reason = ""
+    if prof["type"] == PhaseType.CONCURRENCY and not keeps_flat_floor:
+        # Sweeps and searches size every variation for the largest value so
+        # the busiest variation still saturates its slots.
+        concurrency = prof.get("concurrency") or 1
+        label = "concurrency"
+        if isinstance(concurrency, list):
+            concurrency = max(concurrency)
+            label = "largest swept concurrency"
+        searched = _search_space_upper_bound(cli, "concurrency")
+        if searched is not None:
+            concurrency = math.ceil(searched)
+            label = "largest searched concurrency"
+        requests = max(
+            _MIN_DEFAULT_REQUESTS,
+            concurrency * _DEFAULT_REQUESTS_PER_CONCURRENCY_SLOT,
+        )
+        reason = (
+            f" (max({_MIN_DEFAULT_REQUESTS}, "
+            f"{_DEFAULT_REQUESTS_PER_CONCURRENCY_SLOT} x {label} {concurrency}))"
+        )
+    prof["requests"] = requests
+    _logger.warning(
+        f"No stop condition given; defaulting to {requests} requests{reason}. "
+        "Pass --request-count, --num-conversations, or --benchmark-duration "
+        "to change it."
+    )
+
+
+def _search_space_upper_bound(cli: CLIConfig, field: str) -> float | None:
+    """Upper bound of the ``--search-space`` dimension on ``phases.profiling.<field>``."""
+    dimension = _profiling_search_dimensions(cli).get(field)
+    return None if dimension is None else dimension.hi
+
+
+def _is_full_pass_dataset(cli: CLIConfig) -> bool:
+    """Whether the selected dataset is a suite that defaults to one full pass."""
+    from aiperf.plugin import plugins
+
+    if cli.public_dataset is not None:
+        return plugins.get_public_dataset_loader_metadata(
+            str(cli.public_dataset)
+        ).full_pass_by_default
+    if cli.custom_dataset_type is not None:
+        return plugins.get_dataset_loader_metadata(
+            str(cli.custom_dataset_type)
+        ).full_pass_by_default
+    return False
 
 
 def _maybe_auto_promote_trace(

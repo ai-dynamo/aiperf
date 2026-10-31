@@ -83,19 +83,25 @@ This runs 30 search iterations × 3 trials each = 90 benchmarks. `--search-plann
 | `--optuna-acquisition ACQ` | no | BoTorch acquisition override. Only consulted with `--search-planner=optuna --optuna-sampler=botorch`. Single-objective: `qnei` (Letham 2019) or `qlognei` (Ament 2023) for noisy-EI; `logei`/`qlogei` are the explicit defaults. Multi-objective: `qehvi`, `qnehvi`, or `qlognehvi` (Daulton 2021). The cross-field validator on `AdaptiveSearchSweep` requires the choice to match `len(objectives)`: single-objective acquisitions reject `len(objectives) > 1`, multi-objective acquisitions reject `len(objectives) == 1`. The `bayesian` preset auto-selects `qlognei` (single-obj) or `qlognehvi` (multi-obj) based on `len(objectives)`. See [Multi-objective Pareto BO](#multi-objective-pareto-bo). |
 | `--optuna-terminator MODE` | no | Posterior-regret stopping: `regret` (Makarova 2022 `RegretBoundEvaluator`) or `emmr` (Ishibashi 2023). Only consulted with `--search-planner=optuna`. Layered on top of three-signal convergence; `convergence_reason` becomes `posterior_regret_bound` or `emmr` when it fires. |
 
-The shape-inference, seeding, and rejection rules below are enforced when
-`--search-space` is parsed on the CLI conversion path (`convert_cli_to_aiperf`).
-A `search_space:` entry under a YAML `sweep:` block goes through a
-different code path that doesn't apply the same validation, so a
-config-file sweep can still hit the underlying crashes these rules
-prevent -- prefer `--search-space` on the CLI until config-file sweeps get
-equivalent validation.
+Search-space bounds and kinds are validated by the shared dimension model for
+both CLI flags and YAML `sweep.search_space` entries. `rate`, `smoothness`, and
+`rate_ramp` require positive lower bounds; `users` requires `kind: int` and a
+lower bound of at least 1. These checks also cover warmup and named phases,
+and `rate_ramp.duration` when targeting a nested ramp. Nested cancellation
+`rate` is a percentage: its bounds must stay within the inclusive range
+`[0, 100]`, including zero. Invalid CLI entries report `--search-space` and the
+offending entry without Pydantic internals.
+
+The automatic phase inference and seeding described below apply to direct
+profiling fields on the CLI conversion path. YAML phases retain their authored
+`type` and required base values; search dimensions must be compatible with that
+phase type.
 
 A benchmark has one "shape" before it starts: `concurrency` ("send as many
 requests as possible"), `rate` ("send N requests per second"), `user`
 ("simulate N users"), or `gamma` ("send requests with a particular
 bumpy/smooth pattern"). Searching a shape-specific field --
-`rate`/`rate_ramp` (rate shape), `smoothness` (gamma shape), or `users`
+`rate`/`rate_ramp`/`rate_ramp.duration` (rate shape), `smoothness` (gamma shape), or `users`
 (user shape) -- automatically switches the base benchmark to a compatible
 shape, the same as passing the matching CLI flag (`--request-rate`,
 `--arrival-pattern gamma`, `--user-centric-rate`) would. Fields from the

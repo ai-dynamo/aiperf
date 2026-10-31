@@ -629,6 +629,20 @@ These variables tune the operator and individual benchmark pods. `operator.env` 
 
 Resource-sizing and JobSet variables are read by the process that *renders* the JobSet, so `spec.podTemplate.env` has no effect on them; they must be set on the operator.
 
+### Server-metrics isolation and storage
+
+Server metrics require Kubernetes 1.29+ and run in a restartable native sidecar.
+An optional metrics-container crash does not fail the controller job. The
+controller reports incomplete telemetry and exports the measured inference
+results before reporting a degraded run.
+
+Set `AIPERF_SERVER_METRICS_STORAGE_MAX_BYTES`,
+`AIPERF_SERVER_METRICS_STORAGE_FLUSH_BYTES`, and
+`AIPERF_SERVER_METRICS_MAX_SERIES` through `spec.podTemplate.env` to configure
+one run's disk and series budgets. Their defaults are 16 GiB, 8 MiB, and 20,000.
+The numeric sample store uses the artifact filesystem; keep the results volume
+disk-backed. See [long-run collection behavior](../server-metrics/server-metrics.md#long-runs-and-collection-failures).
+
 ### Resource sizing (per-container CPU / memory)
 
 Every control-plane container, the event-bus proxy sidecar, the results sidecar, and the worker pod have a paired `_CPU` / `_MEMORY` variable. Defaults are low burstable requests so many tiny jobs can start concurrently; raise them for very large concurrency or high-token workloads.
