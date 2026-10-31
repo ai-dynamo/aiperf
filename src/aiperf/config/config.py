@@ -604,9 +604,12 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         Cache-bust markers are minted by every timing strategy and injected by
         the worker into structured endpoint turns. Endpoint plugins opt in via
         ``supports_cache_bust`` metadata; timing mode is not a restriction.
+        ``media_uuids`` is further limited to the chat endpoint, the only one
+        that sends ``Image.uuids``, like ``--uuid-and-strip``.
         """
         from aiperf.common.enums import CacheBustTarget
         from aiperf.plugin import plugins
+        from aiperf.plugin.enums import EndpointType
 
         if self.get_cache_bust_target() == CacheBustTarget.NONE:
             return self
@@ -617,6 +620,14 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 "cache-bust is not supported by endpoint "
                 f"{self.endpoint.type}; select an endpoint whose plugin metadata "
                 "sets supports_cache_bust=true"
+            )
+        if (
+            self.is_cache_bust_media_uuids_enabled()
+            and self.endpoint.type != EndpointType.CHAT
+        ):
+            raise ValueError(
+                "--cache-bust-media-uuids requires endpoint type 'chat', "
+                f"got '{self.endpoint.type}'"
             )
 
         return self

@@ -191,6 +191,68 @@ class TestCacheBustRouting:
         ).benchmark.datasets[0]
         assert str(ds.cache_bust.target) == "first_turn_prefix"
 
+    def test_media_uuids_routes_onto_file_trace(self, trace_jsonl: Path) -> None:
+        cli = _file_cli(
+            trace_jsonl, cache_bust="system_suffix", cache_bust_media_uuids=True
+        )
+        assert build_dataset(cli).get("cache_bust") == {
+            "target": "system_suffix",
+            "media_uuids": True,
+        }
+        benchmark = convert_cli_to_aiperf(cli).benchmark
+        assert benchmark.is_cache_bust_media_uuids_enabled()
+
+    def test_media_uuids_routes_onto_synthetic_prompts(self) -> None:
+        cli = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type="chat",
+            cache_bust="first_turn_prefix",
+            cache_bust_media_uuids=True,
+        )
+        assert build_dataset(cli)["prompts"]["cache_bust"] == {
+            "target": "first_turn_prefix",
+            "media_uuids": True,
+        }
+        benchmark = convert_cli_to_aiperf(cli).benchmark
+        assert benchmark.is_cache_bust_media_uuids_enabled()
+
+    def test_media_uuids_defaults_off(self, trace_jsonl: Path) -> None:
+        cli = _file_cli(trace_jsonl, cache_bust="system_suffix")
+        benchmark = convert_cli_to_aiperf(cli).benchmark
+        assert not benchmark.is_cache_bust_media_uuids_enabled()
+
+    @pytest.mark.parametrize(
+        "target",
+        [
+            param("none", id="none"),
+            param("warmup_isolation_system", id="warmup_isolation_system"),
+            param("warmup_isolation_first_turn", id="warmup_isolation_first_turn"),
+        ],
+    )  # fmt: skip
+    def test_media_uuids_needs_a_rid_target(
+        self, trace_jsonl: Path, target: str
+    ) -> None:
+        cli = _file_cli(trace_jsonl, cache_bust=target, cache_bust_media_uuids=True)
+        with pytest.raises(ValueError, match="--cache-bust-media-uuids requires a RID"):
+            convert_cli_to_aiperf(cli)
+
+    @pytest.mark.parametrize(
+        "endpoint_type",
+        [
+            param("responses", id="responses"),
+            param("messages", id="messages"),
+        ],
+    )  # fmt: skip
+    def test_media_uuids_needs_the_chat_endpoint(self, endpoint_type: str) -> None:
+        cli = CLIConfig(
+            model_names=["test-model"],
+            endpoint_type=endpoint_type,
+            cache_bust="first_turn_prefix",
+            cache_bust_media_uuids=True,
+        )
+        with pytest.raises(ValueError, match="requires endpoint type 'chat'"):
+            convert_cli_to_aiperf(cli)
+
 
 class TestInterTurnDelayCapRouting:
     @pytest.mark.parametrize(

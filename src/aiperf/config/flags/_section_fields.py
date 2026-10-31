@@ -91,6 +91,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "conversation_turn_delay_ratio",
         # ----- prompt modality -----
         "cache_bust",
+        "cache_bust_media_uuids",
         "prompt_batch_size",
         "prompt_corpus",
         "prompt_input_tokens_mean",

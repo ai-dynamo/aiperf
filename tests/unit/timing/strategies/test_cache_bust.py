@@ -11,6 +11,7 @@ from aiperf.timing.strategies.cache_bust import (
     WARMUP_ISOLATION_MARKER,
     build_cache_bust_marker,
     estimate_marker_token_cost,
+    rid_digest,
 )
 
 _RID_PATTERN = re.compile(r"\[rid:[0-9a-f]{12}\]")
@@ -232,3 +233,22 @@ def test_estimate_marker_token_cost_rounds_to_int():
         CacheBustTarget.SYSTEM_PREFIX, JitterTokenizer(), samples=8
     )
     assert cost == 6
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        CacheBustTarget.SYSTEM_PREFIX,
+        CacheBustTarget.SYSTEM_SUFFIX,
+    ],
+)
+def test_rid_digest_returns_marker_digest(target):
+    marker = build_cache_bust_marker("bench-1", 2, 3, "trace_a", target=target)
+    digest = rid_digest(marker)
+    assert digest is not None and len(digest) == 12
+    assert f"[rid:{digest}]" in marker
+
+
+@pytest.mark.parametrize("marker", [None, WARMUP_ISOLATION_MARKER, "no marker"])
+def test_rid_digest_without_rid_marker_returns_none(marker):
+    assert rid_digest(marker) is None
