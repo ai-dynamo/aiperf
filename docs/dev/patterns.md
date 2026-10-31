@@ -368,6 +368,43 @@ from aiperf.plugin.enums import PluginType
 EndpointClass = plugins.get_class(PluginType.ENDPOINT, 'chat')
 ```
 
+## Remote Dataset Sources Pattern
+
+A remote `--input-file` scheme (`hf://`, `s3://`, `https://`) is handled by a `dataset_source_resolver` plugin, one per URI scheme. The preflight in `src/aiperf/dataset/remote/preflight.py` drives it through the scheme-agnostic `dataset/remote/service.py` (retries, offline mode, caching), so consumers only read a cached local path.
+
+Adding a scheme needs two things:
+
+1. A parser branch in `parse_remote_ref` (`src/aiperf/config/dataset/remote_ref.py`), including the scheme in `SUPPORTED_SCHEMES`. Unknown schemes fail at parse time with the list of supported ones.
+2. A `SourceResolverProtocol` implementation registered under `dataset_source_resolver` in `plugins.yaml`, with the scheme as the plugin name.
+
+```python
+class SourceResolverProtocol(Protocol):
+    async def probe(self, ref: RemoteRef) -> ProbeResult:
+        """Check existence and access, pin the version, and read any manifest."""
+
+    async def read_prefix(self, probe: ProbeResult, nbytes: int) -> tuple[bytes, bool]:
+        """Return up to ``nbytes`` leading bytes and whether they are the whole file."""
+
+    async def materialize(self, probe: ProbeResult) -> ResolvedSource:
+        """Download the probed version into the cache."""
+```
+
+```yaml
+# plugins.yaml
+dataset_source_resolver:
+  myscheme:
+    class: my_package.resolver:MySchemeResolver
+    description: Resolves myscheme://... references.
+```
+
+Rules a resolver must follow:
+
+- Raise `RemoteSourceError` with a `RemoteErrorKind` and a hint that names the fix; `TRANSIENT` errors are retried by the service.
+- Never put a presigned query value or token in an error, log, or result: use `RemoteRef.display` and `redact_url`.
+- Write downloads with `stream_to_file` / `write_atomically` from `dataset/remote/cache.py` so an interrupted download leaves no partial file, and place them under `entry_dir(ref)`.
+- Raise `changed_after_pin` when the remote no longer matches the pinned version.
+- Block only in worker threads (`asyncio.to_thread`); the preflight entry points are sync and call `asyncio.run`.
+
 ## Error Handling Pattern
 
 Log errors and publish `ErrorDetails` in messages:

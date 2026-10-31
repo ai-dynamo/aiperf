@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -9,11 +10,18 @@ import orjson
 
 from aiperf.common.enums import ConversationContextMode, DatasetFormat
 from aiperf.common.models import Conversation
+from aiperf.common.record_files import (
+    first_record,
+    is_parquet_input,
+    parquet_files,
+    require_parquet_reader,
+)
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.utils import load_json_str, open_text_maybe_gzip
 from aiperf.config.dataset import FileDataset
 from aiperf.dataset.composer.base import BaseDatasetComposer
 from aiperf.dataset.loader.base_loader import BaseLoader
+from aiperf.dataset.remote.service import local_path_for
 from aiperf.dataset.utils import check_file_exists
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import CustomDatasetType, PluginType
@@ -31,7 +39,7 @@ class CustomDatasetComposer(BaseDatasetComposer):
             raise ValueError("CustomDatasetComposer requires a file-based dataset.")
         self._file_dataset: FileDataset = dataset
         self._file_path: str | None = (
-            str(dataset.path) if dataset.path is not None else None
+            str(local_path_for(dataset.path)) if dataset.path is not None else None
         )
         self._inline_records = dataset.records
         self.loader: BaseLoader | None = None
@@ -83,6 +91,10 @@ class CustomDatasetComposer(BaseDatasetComposer):
 
         # Validate synthesis options are only used with mooncake_trace
         self._validate_synthesis_config(dataset_type)
+        if not is_inline and is_parquet_input(self._file_path):
+            require_parquet_reader(
+                dataset_type, is_directory=Path(self._file_path).is_dir()
+            )
 
         self.detected_dataset_type = dataset_type
         self._create_loader_instance(dataset_type)
@@ -142,8 +154,11 @@ class CustomDatasetComposer(BaseDatasetComposer):
         try:
             path = Path(file_path)
 
+            if is_parquet_input(path):
+                return self._infer_parquet_type(path)
+
             # If it's a directory, use path-based detection only
-            if path.is_dir() or path.suffix.lower() == ".parquet":
+            if path.is_dir():
                 return self._infer_type(data=None, filename=file_path)
 
             # For files, read first non-empty line and use both content and path detection
@@ -166,6 +181,20 @@ class CustomDatasetComposer(BaseDatasetComposer):
                 f"Error inferring dataset type from file: {file_path}: {e!r}"
             )
             raise
+
+    def _infer_parquet_type(self, path: Path) -> CustomDatasetType:
+        """Detect the loader for parquet input: by schema first, then by first row.
+
+        A columnar-native loader (``baseten_trace``) claims a file from its schema
+        alone, so its rows are never converted for detection. Otherwise the first
+        row is detected exactly like the first line of a JSONL file. Loaders see
+        the first shard, not the directory, because they check the file suffix.
+        """
+        first_file = str(parquet_files(path)[0])
+        # Raising here means no columnar-native loader claims the file from its schema.
+        with contextlib.suppress(ValueError):
+            return self._infer_type(data=None, filename=first_file)
+        return self._infer_type(data=first_record(path), filename=first_file)
 
     def _infer_type(
         self, data: dict[str, Any] | None = None, filename: str | Path | None = None

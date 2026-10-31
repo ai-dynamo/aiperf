@@ -254,6 +254,10 @@ def count_baseten_parquet_records_and_sessions(file_path: str) -> tuple[int, int
 class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
     """Loader for Baseten completion traces exported as Parquet or Arrow IPC."""
 
+    reads_parquet = True
+    # The native reader opens one parquet or Arrow file.
+    reads_parquet_directories = False
+
     def __init__(self, *args, **kwargs) -> None:
         if pq is None:
             raise ValueError(

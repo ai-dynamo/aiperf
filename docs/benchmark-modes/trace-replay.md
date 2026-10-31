@@ -46,6 +46,8 @@ Mooncake provides a specification and sample datasets for [trace replay](https:/
 
 Mooncake traces use a JSONL file where each line represents a request with timing information.
 
+Mooncake and Bailian traces may also be parquet files or directories of parquet shards (see [Parquet Datasets](../tutorials/remote-datasets.md#parquet-datasets)).
+
 Required fields for trace replay:
 - `timestamp`: Request arrival time in milliseconds
 - `input_length`: Number of input tokens
