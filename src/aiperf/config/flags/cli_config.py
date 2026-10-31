@@ -182,6 +182,20 @@ class CLIConfig(BaseConfig):
         ),
     ] = EndpointDefaults.STREAMING
 
+    allow_empty_content: Annotated[
+        bool,
+        Field(
+            description="Retain explicitly empty content or reasoning strings as "
+            "timed responses for streaming OpenAI Chat Completions. This changes "
+            "TTFT and all metrics using the shared response timeline, but TTFO "
+            "still requires non-empty output and empty strings add no tokens.",
+        ),
+        CLIParameter(
+            name=("--allow-empty-content",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.ALLOW_EMPTY_CONTENT
+
     urls: Annotated[
         list[str],
         Field(

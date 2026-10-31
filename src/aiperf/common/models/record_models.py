@@ -1823,10 +1823,11 @@ class ParsedResponseRecord:
 
     @cached_property
     def content_responses(self) -> list[ParsedResponse]:
-        """Get only responses with actual content (data is not None or empty).
+        """Get parsed content responses on the shared metric timeline.
 
-        This excludes usage-only or [DONE] responses that may appear at the end of streaming responses.
-        Useful for timing metrics that should measure content delivery.
+        Explicit empty chat strings may be present when endpoint extraction is
+        configured to retain them. Usage-only, metadata-only, null-data, and
+        [DONE] responses are excluded.
         """
         return [response for response in self.responses if response.data]
 
@@ -1864,7 +1865,7 @@ class ParsedResponseRecord:
             err = InvalidInferenceResultError("Invalid inference result")
             if len(self.responses) == 0 or len(self.content_responses) == 0:
                 err.add_note(
-                    "No responses with actual content were received from the server (only usage/metadata, null/empty data, or [DONE] markers)"
+                    "No parsed content responses were received from the server (only usage/metadata, null data, or [DONE] markers)"
                 )
             if self.start_perf_ns <= 0 or self.start_perf_ns >= sys.maxsize:
                 err.add_note(

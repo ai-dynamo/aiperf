@@ -214,7 +214,9 @@ any knowledge of the individual request/response data.
 ## Streaming Metrics
 
 > [!NOTE]
-> All metrics in this section require the `--streaming` flag with a token-producing endpoint and at least one non-empty response chunk.
+> All metrics in this section require `--streaming` with a token-producing endpoint and one or more qualifying parsed responses. By default, a qualifying response has non-empty parsed content. With `--allow-empty-content`, an OpenAI Chat Completions `chat.completion.chunk` with an explicitly empty (`""`) `content`, `reasoning_content`, or `reasoning` string also qualifies. Missing fields, `null`, role/handshake metadata, and other non-content chunks do not qualify.
+
+Qualifying responses form one shared response timeline. Enabling `--allow-empty-content` can therefore change TTFT, TTST, Request Latency, Decode Duration, ICL, ITL, and the per-user output-throughput metrics together. It does not change token accounting: token normalization remains Output Sequence Length (OSL)-based, and an empty decoded string adds no client output or reasoning tokens. When server usage is available, its reported token counts remain authoritative with `--allow-empty-content` enabled.
 
 ### Time to First Token (TTFT)
 
@@ -237,7 +239,7 @@ ttft_seconds = ttft_ns / 1e9
 **Notes:**
 - Includes network latency, queuing time, prompt processing, and generation of the first token (or chunk of tokens).
 - Raw timestamps are in nanoseconds; converted to milliseconds for display and seconds for rate calculations.
-- Response chunks refer to individual messages with non-empty content received during streaming.
+- Uses the first qualifying parsed response on the shared response timeline. By default this is non-empty parsed content; with `--allow-empty-content`, an explicit empty Chat Completions content or reasoning string can be first.
 
 ---
 
@@ -257,7 +259,7 @@ ttst_ms = ttst_ns / 1e6
 ```
 
 **Notes:**
-- Requires at least 2 non-empty response chunks to compute the time between first and second tokens.
+- Requires at least 2 qualifying parsed responses on the shared response timeline. With `--allow-empty-content`, either response can be an explicit empty Chat Completions content or reasoning string.
 - Raw timestamps are in nanoseconds; converted to milliseconds for display.
 
 ---
@@ -282,7 +284,7 @@ ttfo_ms = ttfo_ns / 1e6
 **Notes:**
 - TTFO vs TTFT: Time to First Output (TTFO) measures time to the first non-reasoning token, while Time to First Token (TTFT) measures time to any first token including reasoning tokens. For models without reasoning, TTFO and TTFT are equivalent.
 - Non-reasoning tokens include TextResponseData with non-empty text, or ReasoningResponseData with non-empty content field (regardless of reasoning field).
-- Requires at least one non-empty non-reasoning response chunk.
+- Requires at least one non-empty non-reasoning response chunk. `--allow-empty-content` never makes an empty content or reasoning string satisfy TTFO.
 
 ---
 
@@ -290,7 +292,7 @@ ttfo_ms = ttfo_ns / 1e6
 
 **Type:** [Record Metric](#record-metrics)
 
-Measures the client-observed wall-clock interval between the first and final non-empty streamed content responses. Unlike ITL, this metric is not normalized by the number of generated tokens.
+Measures the client-observed wall-clock interval between the first and final qualifying parsed responses on the shared response timeline. Unlike ITL, this metric is not normalized by the number of generated tokens.
 
 **Formula:**
 ```python
@@ -301,6 +303,7 @@ decode_duration_ms = decode_duration_ns / 1e6
 
 **Notes:**
 - This is an end-to-end client observation. It includes response delivery and client-observed gaps after TTFT; it does not isolate server kernel execution time.
+- With `--allow-empty-content`, explicit empty Chat Completions content or reasoning strings participate in both ends of this interval. For example, a trailing Kimi K3 empty-content chunk extends Decode Duration.
 - Compare Decode Duration with Output Sequence Length when early stopping or a generation-length change is possible.
 - A run can have similar Decode Duration but a much higher ITL if it produces fewer output tokens.
 - Requires valid `time_to_first_token` and `request_latency` metrics.
@@ -311,20 +314,20 @@ decode_duration_ms = decode_duration_ns / 1e6
 
 **Type:** [Record Metric](#record-metrics)
 
-Measures the client-observed wall-clock interval from the first non-empty parsed
-content response until the HTTP response is fully consumed. Unlike Decode
+Measures the client-observed wall-clock interval from the first qualifying parsed
+response until the HTTP response is fully consumed. Unlike Decode
 Duration, it includes time after the last parsed content chunk, such as generation
 that a structured-output parser suppresses before the terminal usage response.
 
 **Formula:**
 ```python
-full_decode_duration_ns = request.end_perf_ns - first_content_response.perf_ns
+full_decode_duration_ns = request.end_perf_ns - first_qualifying_response.perf_ns
 ```
 
 **Notes:**
 - This is a client-observed full-response duration, not server kernel execution time.
 - It includes terminal serialization, transport, and client-processing overhead.
-- It requires an explicit request-end timestamp and at least one non-empty content response.
+- It requires an explicit request-end timestamp and at least one qualifying parsed response. Its end is always `request.end_perf_ns`, even when `--allow-empty-content` changes the shared response timeline.
 - It cannot be reconstructed from existing profile exports. The exported `request_end_ns` is stamped at the last streamed response chunk, whereas this metric anchors on the request's own completion timestamp, so `(request_end_ns - request_start_ns) - time_to_first_token_ns` omits exactly the post-final-chunk tail that Full Decode Duration is meant to capture.
 
 ---
@@ -352,7 +355,7 @@ inter_token_latency_ms = inter_token_latency_ns / 1e6
 - By default the divisor is `output_sequence_length - 1`, which is exact for servers that stream one token per chunk. This is the formula every run uses unless `--per-chunk-usage` is enabled.
 - **Opt-in first-chunk correction (`--per-chunk-usage`).** The decode window (`request_latency - time_to_first_token`) covers only the tokens that arrive *after* the first content chunk. When a server bundles several tokens into the first streamed chunk (for example TRT-LLM's `stream-interval`), assuming a single token over-counts the decode tokens and inflates Output Token Throughput Per User (`1 / ITL`). Passing `--per-chunk-usage` (which also requires `--use-server-token-count`, a `chat` endpoint, and `--streaming`) makes the server report cumulative per-chunk usage via `stream_options.continuous_usage_stats`; the divisor then becomes `output_sequence_length - tokens_in_first_content_chunk`, where that count is the server-reported cumulative `completion_tokens` (reasoning included, matching OSL which is `output + reasoning = completion`) through the first content chunk. Requires a server that honors `continuous_usage_stats` (e.g. vLLM, TRT-LLM); otherwise the divisor stays `output_sequence_length - 1`.
 - Requires an output sequence length of at least 2, plus valid `time_to_first_token`, `request_latency`, and `output_sequence_length` metrics. If the first-chunk count is inconsistent with OSL (>= OSL), the divisor degrades to `output_sequence_length - 1` and a one-time warning is logged rather than dropping the metric.
-- ITL is generated-token-normalized decode duration. It is not the total wall-clock decode duration.
+- ITL is generated-token-normalized decode duration on the shared response timeline. It is not the total wall-clock decode duration, and empty decoded strings do not add client tokens to OSL.
 - Compare runs at equivalent output lengths, or inspect Decode Duration and Output Sequence Length alongside ITL.
 - Streaming chunks can contain multiple tokens. ITL uses token count, while ICL uses chunk arrival timestamps.
 - Result is in seconds when used for throughput calculations (Output Token Throughput Per User).
@@ -365,7 +368,7 @@ inter_token_latency_ms = inter_token_latency_ns / 1e6
 **Type:** [Record Metric](#record-metrics)
 
 Measures the average token interval over the full client-observed decode window,
-from the first non-empty parsed content response through explicit HTTP request
+from the first qualifying parsed response through explicit HTTP request
 completion.
 
 **Formula:**
@@ -383,7 +386,7 @@ full_response_inter_token_latency_ns = (
 
 **Notes:**
 - Requires an output sequence length of at least 2 tokens and a valid Full Decode Duration.
-- Uses the same conditional divisor as Inter Token Latency while extending the interval through HTTP response completion: `output_sequence_length - tokens_in_first_content_chunk` when `--per-chunk-usage` reports a positive first-content-chunk count smaller than OSL, otherwise `output_sequence_length - 1`.
+- Uses the same conditional divisor as Inter Token Latency while extending the interval through HTTP response completion: `output_sequence_length - tokens_in_first_content_chunk` when `--per-chunk-usage` reports a positive first-content-chunk count smaller than OSL, otherwise `output_sequence_length - 1`. Empty decoded strings do not add client tokens.
 - With server-reported token counting, it keeps the duration and token count aligned when a response parser suppresses generated tokens.
 - This remains a client-observed average, not a distribution of raw engine token-to-token timestamps.
 - Streaming chunks can contain multiple tokens. A response delivered entirely in one content chunk may not expose a meaningful post-first-content decode interval.
@@ -402,7 +405,7 @@ inter_chunk_latency = [request.content_responses[i].perf_ns - request.content_re
 ```
 
 **Notes:**
-- Requires at least 2 response chunks.
+- Requires at least 2 qualifying parsed responses on the shared response timeline. With `--allow-empty-content`, explicit empty Chat Completions content or reasoning strings are included.
 - Unlike ITL (which produces a single average), ICL provides the full distribution of inter-chunk times.
 - Useful for detecting variability, jitter, or issues in streaming delivery.
 - Analyzing ICL distributions can reveal batching behavior, scheduling issues, or network variability.
@@ -425,6 +428,7 @@ output_token_throughput_per_user = 1.0 / inter_token_latency_seconds
 
 **Notes:**
 - Computes the inverse of ITL to show tokens per second from an individual user's perspective.
+- Uses the same shared response timeline and OSL normalization as ITL; empty decoded strings do not increase the client token total.
 - Differs from Output Token Throughput (aggregate across all concurrent requests) by focusing on single-request experience.
 - Useful for understanding the user experience independent of concurrency effects.
 - Assumes the output token count describes the content-delivery interval. If a server reports tokens that its response parser suppresses, compare it with the full-response metric pair.
@@ -447,7 +451,8 @@ full_response_output_token_throughput_per_user = (
 
 **Notes:**
 - Computes the inverse of Full-Response Inter Token Latency, mirroring the relationship between Output Token Throughput Per User and Inter Token Latency.
-- Excludes TTFT but measures through full HTTP response completion.
+- Excludes TTFT but measures through `request.end_perf_ns`, regardless of where qualifying responses appear on the shared response timeline.
+- Uses OSL normalization; explicit empty decoded strings do not add client tokens.
 - With server-reported token counting, this approximates raw engine decode TPS when the response parser suppresses generated tokens.
 - It remains a client-observed approximation because AIPerf does not have raw engine first/last-token timestamps.
 - Aggregate latency percentiles and throughput percentiles are not interchangeable: `1 / p75(latency)` describes the slow tail, while `p75(throughput)` describes the fast side of the reciprocal distribution.
@@ -1816,8 +1821,8 @@ total_error_isl = sum(r.error_isl for r in records if not r.valid)
 
 **Type:** [Record Metric](#record-metrics)
 
-Measures the time from request start until the final non-empty parsed content
-response. Usage-only and terminal responses are excluded.
+Measures the time from request start until the final qualifying parsed response
+on the shared response timeline. Usage-only and terminal responses are excluded.
 
 **Formula:**
 ```python
@@ -1825,9 +1830,9 @@ request_latency_ns = request.content_responses[-1].perf_ns - request.start_perf_
 ```
 
 **Notes:**
-- Includes network time, queuing, prompt processing, and content delivery through the final parsed content chunk.
+- Includes network time, queuing, prompt processing, and content delivery through the final qualifying parsed response. With `--allow-empty-content`, a trailing explicit empty Kimi K3 content chunk extends Request Latency (and therefore Decode Duration).
 - It can be shorter than the HTTP lifecycle when a response parser suppresses generated content or terminal usage arrives later.
-- Use `http_req_duration` for the complete HTTP exchange and Full Decode Duration for the post-TTFT interval through request completion.
+- Use `http_req_duration` for the complete HTTP exchange and Full Decode Duration, Full-Response ITL, or Full-Response Output Token Throughput Per User for the post-TTFT interval through `request.end_perf_ns`.
 
 ---
 
