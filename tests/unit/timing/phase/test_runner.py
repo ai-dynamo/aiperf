@@ -1077,6 +1077,23 @@ class TestEdgeCases:
                 await r.run(is_final_phase=True)
             mock_ramper.stop.assert_called_once()
 
+    async def test_cleanup_logs_per_trace_idle_cap_summary(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """Phase teardown is the one place the per-trace cap totals are final."""
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+        r._replay_barrier = MagicMock()
+
+        r._detach_orchestrator_and_cleanup(MagicMock())
+
+        r._replay_barrier.log_root_idle_summary.assert_called_once_with()
+
     async def test_timeout_skips_cancel_drain_when_all_credits_returned(
         self,
         conv_src: MagicMock,
