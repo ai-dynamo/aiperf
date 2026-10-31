@@ -84,6 +84,62 @@ def _restore_reloaded_operator_modules():
             module.OperatorEnvironment = original_singleton
 
 
+@pytest.fixture(autouse=True)
+def _restore_reloaded_operator_main_registry_bindings():
+    """Undo ``importlib.reload`` side effects that strand kopf handler refs.
+
+    The timer-override test reloads ``aiperf.operator.main`` to re-materialize
+    its kopf registrations against a patched environment. Reload re-executes
+    the module, rebinding every function defined in it — ``owns_namespace``
+    and the handler callables included — to brand-new objects *in place*. The
+    global default registry is left untouched (registration is redirected to
+    throwaway registries), but it keeps holding the *original* function
+    objects, so a later test in the same process that asserts handler identity
+    against the module — ``handler.fn is operator_main.cleanup_old_sweeps`` or
+    ``handler.when is operator_main.owns_namespace`` — sees every handler as a
+    stranger and fails purely by execution order.
+
+    Importing ``main`` here — rather than when a test first asks for it —
+    guarantees the snapshot holds the pre-reload bindings even when the
+    reload-based test is the first one to run in the process. After each test,
+    every module attribute whose original object the global registry still
+    references is rebound to that original, keeping the module and the
+    registry mutually consistent.
+    """
+    import kopf
+
+    from aiperf.operator import main as operator_main
+
+    registry = kopf.get_default_registry()
+    referenced: set[int] = set()
+    for sub_name in (
+        "_activities",
+        "_changing",
+        "_indexing",
+        "_spawning",
+        "_watching",
+        "_webhooks",
+    ):
+        sub_registry = getattr(registry, sub_name, None)
+        get_all_handlers = getattr(sub_registry, "get_all_handlers", None)
+        if get_all_handlers is None:
+            continue
+        for handler in get_all_handlers():  # noqa: SLF001
+            referenced.add(id(handler.fn))
+            when = getattr(handler, "when", None)
+            if when is not None:
+                referenced.add(id(when))
+    original_bindings = {
+        name: obj
+        for name, obj in vars(operator_main).items()
+        if callable(obj) and id(obj) in referenced
+    }
+    yield
+    for name, original in original_bindings.items():
+        if getattr(operator_main, name, None) is not original:
+            setattr(operator_main, name, original)
+
+
 # =============================================================================
 # Kubernetes Resource Body Fixtures
 # =============================================================================
