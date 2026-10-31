@@ -3,16 +3,71 @@
 name: "Run Unit Tests"
 
 # The Linux matrix leg runs on Velonix. Only run repository code from trusted
-# branch pushes; fork PRs enter CI after being copied to pull-request/<number>.
+# branch pushes and merge queue groups; fork PRs enter CI after being copied
+# to pull-request/<number>, and only PRs whose vetted head already passed
+# Unit Tests Gate can be added to the merge queue.
 on:
   push:
     branches:
       - main
       - 'pull-request/[0-9]+'
       - 'release/*'
+  merge_group:
+    types: [checks_requested]
+
+# A new copy of a PR supersedes the run on its previous head. Every other
+# event gets its own group so main, release, and queue runs are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ startsWith(github.ref, 'refs/heads/pull-request/') && github.ref || github.run_id }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
 
 jobs:
+  # PR copies run one leg per OS so a vetted head gets fast feedback; the
+  # merge queue, main, and release branches run the full matrix before code
+  # lands. Windows ARM and BoTorch run only in the full matrix.
+  select-matrix:
+    name: Select Test Matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      full: ${{ steps.select.outputs.full }}
+    steps:
+    - name: Select legs for this event
+      id: select
+      shell: python
+      env:
+        REF: ${{ github.ref }}
+      run: |
+        import json
+        import os
+
+        runners = {
+            "linux": "prod-aiperf-builder-amd-v1",
+            "macos": "macos-latest",
+            "windows": "windows-latest",
+            "windows-arm": "windows-11-arm",
+        }
+        pr_subset = [("linux", "3.13"), ("macos", "3.12"), ("windows", "3.11")]
+        full = not os.environ["REF"].startswith("refs/heads/pull-request/")
+        legs = (
+            [(o, py) for o in runners for py in ("3.11", "3.12", "3.13")]
+            if full
+            else pr_subset
+        )
+        matrix = {
+            "include": [
+                {"os": o, "python-version": py, "runner": runners[o]} for o, py in legs
+            ]
+        }
+        print(json.dumps(matrix, indent=2))
+        with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+            out.write(f"matrix={json.dumps(matrix)}\n")
+            out.write(f"full={str(full).lower()}\n")
+
   build:
+    needs: select-matrix
     runs-on: ${{ matrix.runner }}
     # Windows x64 runners can finish the component tier just past 30 minutes.
     timeout-minutes: 90
@@ -23,18 +78,7 @@ jobs:
       PYTHONUTF8: "1"
     strategy:
       fail-fast: false
-      matrix:
-        os: [linux, macos, windows, windows-arm]
-        python-version: ["3.11", "3.12", "3.13"]
-        include:
-          - os: linux
-            runner: prod-aiperf-builder-amd-v1
-          - os: macos
-            runner: macos-latest
-          - os: windows
-            runner: windows-latest
-          - os: windows-arm
-            runner: windows-11-arm
+      matrix: ${{ fromJSON(needs.select-matrix.outputs.matrix) }}
 
     steps:
     - uses: actions/checkout@v6
@@ -152,6 +196,8 @@ jobs:
 
   botorch-regression:
     name: BoTorch Regression Tests (CPU)
+    needs: select-matrix
+    if: needs.select-matrix.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -193,19 +239,27 @@ jobs:
   # The merge ruleset requires this single check rather than each matrix leg,
   # whose names change whenever a leg is added or renamed. always() keeps it
   # from being skipped, because GitHub treats a skipped required check as passed.
+  # BoTorch may be skipped only when the PR subset deliberately left it out.
   unit-tests-gate:
     name: Unit Tests Gate
-    needs: [build, botorch-regression]
+    needs: [select-matrix, build, botorch-regression]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
     steps:
-    - name: Require every unit test job to pass
+    - name: Require every selected unit test job to pass
       env:
-        RESULTS: ${{ join(needs.*.result, ' ') }}
+        SELECT: ${{ needs.select-matrix.result }}
+        FULL: ${{ needs.select-matrix.outputs.full }}
+        BUILD: ${{ needs.build.result }}
+        BOTORCH: ${{ needs.botorch-regression.result }}
       run: |
-        echo "Job results: ${RESULTS}"
-        for result in ${RESULTS}; do
-          [ "${result}" = "success" ] || exit 1
-        done
+        echo "select-matrix=${SELECT} full=${FULL} build=${BUILD} botorch-regression=${BOTORCH}"
+        [ "${SELECT}" = "success" ] || exit 1
+        [ "${BUILD}" = "success" ] || exit 1
+        if [ "${FULL}" = "true" ]; then
+          [ "${BOTORCH}" = "success" ] || exit 1
+        else
+          [ "${BOTORCH}" = "skipped" ] || exit 1
+        fi

@@ -204,11 +204,13 @@ Feature branches use `<username>/feature-name` format, forked from `main`.
 
 ## Required Checks
 
-A PR can merge into `main` only after the `pre-commit` and `Unit Tests Gate` checks pass. `Unit Tests Gate` is the last job in `.github/workflows/run-unit-tests.yml` and fails unless every unit test job passed.
+A PR can merge into `main` only after the `pre-commit` and `Unit Tests Gate` checks pass. `Unit Tests Gate` is the last job in `.github/workflows/run-unit-tests.yml` and fails unless every selected unit test job passed.
 
 Unit tests run on NVIDIA runners, so copy-pr-bot copies each PR to a `pull-request/<number>` branch to run them. A PR is copied automatically only when its author is trusted and every commit is cryptographically signed (GPG or SSH; this is separate from the DCO sign-off below). Fork PRs, PRs with unsigned commits, and bot PRs such as Dependabot's wait for a maintainer to review them and comment `/ok to test <sha>`. Until then the PR shows `Unit Tests Gate` as expected and cannot merge. Docs-only PRs are not exempt, because several unit tests check the docs. Repository admins can bypass the requirement when needed.
 
-A PR must also be up to date with `main` before it merges, and every branch update creates a new head commit that needs a full unit test run. For a PR that is not copied automatically, a maintainer must comment `/ok to test <sha>` again after each update. If a job fails from a known flake, rerun the failed jobs with `gh run rerun <run-id> --failed`, which also reruns `Unit Tests Gate`.
+The copied PR runs a subset of the unit test matrix: Linux on Python 3.13, macOS on Python 3.12, and Windows x64 on Python 3.11. A new copy cancels the run on the previous head. The full matrix, which adds the remaining Python versions, Windows ARM, and the BoTorch regression tests, runs in the merge queue.
+
+Once the subset passes and the PR is approved, a maintainer adds it to the merge queue with **Merge when ready** (or `gh pr merge <number> --squash`). The queue tests the PR on top of the latest `main` and any PRs queued ahead of it, and merges it when the full matrix passes, so the PR branch does not need to be kept up to date with `main` and does not need another `/ok to test` for the queue run. A queue failure removes the PR from the queue; push a fix, or add it to the queue again if a job flaked. If a job on the PR head fails from a known flake, rerun the failed jobs with `gh run rerun <run-id> --failed`, which also reruns `Unit Tests Gate`.
 
 ## Documenting a Runnable Command
 
