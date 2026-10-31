@@ -1,10 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-from unittest.mock import MagicMock
+import asyncio
+import time
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
+from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
@@ -329,3 +333,423 @@ class TestUserClass:
         assert u.next_send_time == 1000
         assert u.max_turns == 3
         assert u.order == 5
+
+
+@pytest.mark.asyncio
+class TestArrivalQueueClamping:
+    """Deterministic coverage for the clamped arrival queue in execute_phase.
+
+    Contract under test: every arrival slot fires at
+    max(planned, previous_arrival_fire + stagger) -- stagger is the
+    documented SMALLEST gap between any two users' first turns, so the clamp
+    applies to on-plan and overdue slots alike. Issuance is fire-and-track
+    (one scheduler task per arrival): a blocked or excepting issuance must
+    neither stall nor abort the remaining grid, and replacement slots are
+    derived at fire time so a failed issuance cannot kill its user's
+    replacement stream.
+
+    All tests run under time_traveler_no_patch_sleep: looptime virtualizes
+    the loop clock (real asyncio.sleep calls become virtual loop timers that
+    the loop reaches instantly when idle, and pending issuance tasks always
+    run BEFORE the idle clock jump), while time.perf_counter reads share the
+    same virtual clock -- so fire times are exact. (time_traveler's patched
+    sleep advances its offset BEFORE yielding, which would let a later
+    queue sleep shift an issuance task's recorded timestamp.) Every wait is
+    bounded by asyncio.wait_for with a finite virtual timeout, and cleanup
+    always cancels the execution task and drains scheduler-tracked tasks.
+    """
+
+    @staticmethod
+    def _strategy(num_users: int = 3, rate: float = 20.0) -> UserCentricStrategy:
+        """Real ConversationSource (one 2-turn conversation, wrapping sampler)
+        and a REAL LoopScheduler (fire-and-track issuance must actually run);
+        mocked stop_checker/lifecycle; issuer injected per test.
+        rate=20.0 -> stagger=50ms, turn_gap=num_users/rate=150ms."""
+        scheduler = LoopScheduler()
+        ds = DatasetMetadata(
+            conversations=[
+                ConversationMetadata(
+                    conversation_id="c1",
+                    turns=[TurnMetadata(delay_ms=None), TurnMetadata(delay_ms=None)],
+                )
+            ],
+            sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+        )
+        sampler = make_sampler(["c1"], DatasetSamplingStrategy.SEQUENTIAL)
+        src = ConversationSource(ds, sampler)
+        cfg = CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.USER_CENTRIC_RATE,
+            request_rate=rate,
+            num_users=num_users,
+            total_expected_requests=num_users * 2,
+        )
+        return UserCentricStrategy(
+            config=cfg,
+            conversation_source=src,
+            scheduler=scheduler,
+            stop_checker=MagicMock(),
+            credit_issuer=MagicMock(),
+            lifecycle=MagicMock(),
+        )
+
+    @staticmethod
+    async def _run(strategy: UserCentricStrategy, timeout: float = 30.0) -> None:
+        """Run execute_phase bounded by a finite (virtual) timeout, always
+        cancelling the task and draining scheduler-tracked tasks after."""
+        task = asyncio.create_task(strategy.execute_phase())
+        try:
+            await asyncio.wait_for(task, timeout=timeout)
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await asyncio.gather(
+                *strategy._scheduler.cancel_all(), return_exceptions=True
+            )
+
+    @staticmethod
+    def _set_phase_start(
+        strategy: UserCentricStrategy, time_traveler, offset_staggers: float = 0.0
+    ) -> float:
+        """Anchor the phase start (both lifecycle clock fields) at virtual-now
+        minus offset_staggers worth of stagger; returns start in seconds."""
+        stagger = strategy._stagger
+        start_ns = time_traveler.perf_counter_ns() - int(
+            offset_staggers * stagger * NANOS_PER_SECOND
+        )
+        strategy._lifecycle.started_at_perf_ns = start_ns
+        strategy._lifecycle.started_at_perf_sec = start_ns / NANOS_PER_SECOND
+        return start_ns / NANOS_PER_SECOND
+
+    async def test_healthy_grid_lands_on_planned_slots(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
+        """With no stall the clamp never engages: initial users issue exactly
+        on the planned stagger grid (base + order * stagger)."""
+        strategy = self._strategy()
+        await strategy.setup_phase()
+        stagger = strategy._stagger
+        start = self._set_phase_start(strategy, time_traveler_no_patch_sleep)
+
+        call_times: list[float] = []
+
+        async def _issue(_turn) -> bool:
+            call_times.append(time.perf_counter())
+            return len(call_times) < 3  # stop after the 3 initial users
+
+        strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
+        await self._run(strategy)
+
+        planned = [start + i * stagger for i in range(3)]
+        assert call_times == pytest.approx(planned, abs=stagger / 10)
+
+    async def test_stalled_grid_respaces_initial_and_replacement_arrivals(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
+        """Started 10 staggers in the past, every planned slot -- initial grid
+        and derived replacements alike -- is overdue. The clamp must re-space
+        all of them at one stagger per slot instead of bursting them at one
+        instant (the pre-fix CI failure: mean stagger 0.0000s)."""
+        strategy = self._strategy()
+        await strategy.setup_phase()
+        stagger = strategy._stagger
+        self._set_phase_start(
+            strategy, time_traveler_no_patch_sleep, offset_staggers=10.0
+        )
+
+        call_times: list[float] = []
+
+        async def _issue(_turn) -> bool:
+            call_times.append(time.perf_counter())
+            return len(call_times) < 6  # 3 initial users + 3 replacements
+
+        strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
+        await self._run(strategy)
+
+        assert len(call_times) == 6
+        gaps = [b - a for a, b in zip(call_times, call_times[1:], strict=False)]
+        assert all(gap == pytest.approx(stagger, abs=stagger / 10) for gap in gaps)
+
+    async def test_sub_stagger_planned_gap_is_clamped(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
+        """The min-gap contract applies to on-plan slots too: two arrivals
+        planned 0.4 staggers apart must still fire one full stagger apart."""
+        strategy = self._strategy()
+        await strategy.setup_phase()
+        stagger = strategy._stagger
+        strategy._initial_users = [
+            User(user_id=1, sampled=MagicMock(), max_turns=1, order=0),
+            User(user_id=2, sampled=MagicMock(), max_turns=1, order=0.4),
+        ]
+        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
+
+        call_times: list[float] = []
+
+        async def _issue(_turn) -> bool:
+            call_times.append(time.perf_counter())
+            return len(call_times) < 2
+
+        strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
+        await self._run(strategy)
+
+        assert len(call_times) == 2
+        assert call_times[1] - call_times[0] == pytest.approx(stagger, abs=stagger / 10)
+
+    async def test_issuer_exception_isolated_and_stream_survives(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
+        """One excepting issuance must neither abort nor stall the remaining
+        grid, and its user's replacement stream survives: replacement slots
+        are derived at fire time, before the issuance outcome is known.
+        The failure is captured by the scheduler's exception handler."""
+        strategy = self._strategy()
+        await strategy.setup_phase()
+        stagger = strategy._stagger
+        start = self._set_phase_start(strategy, time_traveler_no_patch_sleep)
+
+        errors: list[BaseException] = []
+        strategy._scheduler.set_exception_handler(
+            lambda task: errors.append(task.exception())
+        )
+        call_times: list[float] = []
+
+        async def _issue(_turn) -> bool:
+            call_times.append(time.perf_counter())
+            if len(call_times) == 1:
+                raise RuntimeError("boom")
+            return len(call_times) < 6  # 3 initials + 3 replacements
+
+        strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
+        await self._run(strategy)
+
+        # Pin the exact planned slot times, not just the count: with this
+        # fixture the six arrivals are the initial grid (0, stagger, 2x) and
+        # the three derived replacements (4x, 5x, 6x stagger: orders 1 and 2
+        # users have max_turns=1, the order-0 user -- the one whose issuance
+        # raises -- has max_turns=2, so its replacement is the 6x slot). If
+        # the exception killed the failed user's stream, the 6x-stagger slot
+        # would vanish and later re-derived replacements would fire elsewhere.
+        turn_gap = strategy._turn_gap
+        planned = [
+            start,
+            start + stagger,
+            start + 2 * stagger,
+            start + stagger + turn_gap,  # order-1 user's replacement
+            start + 2 * stagger + turn_gap,  # order-2 user's replacement
+            start + 2 * turn_gap,  # excepted (order-0) user's replacement
+        ]
+        assert call_times == pytest.approx(planned, abs=stagger / 10)
+        assert len(errors) == 1
+        assert isinstance(errors[0], RuntimeError)
+
+    async def test_blocked_issuance_does_not_stall_grid(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
+        """Fire-and-track: an issuance blocked on slot acquisition must not
+        delay later slots -- they fire on the clamped schedule while the
+        first issuance is still blocked."""
+        strategy = self._strategy()
+        await strategy.setup_phase()
+        stagger = strategy._stagger
+        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
+
+        gate = asyncio.Event()
+        third_call = asyncio.Event()
+        call_times: list[float] = []
+
+        async def _issue(_turn) -> bool:
+            call_times.append(time.perf_counter())
+            if len(call_times) == 1:
+                await gate.wait()  # first issuance blocks until cleanup
+            if len(call_times) == 3:
+                third_call.set()
+            return len(call_times) < 3
+
+        strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
+        task = asyncio.create_task(strategy.execute_phase())
+        try:
+            # The third arrival fires (bounded wait) while the first
+            # issuance is still blocked.
+            await asyncio.wait_for(third_call.wait(), timeout=5.0)
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            gate.set()
+            await asyncio.gather(
+                *strategy._scheduler.cancel_all(), return_exceptions=True
+            )
+
+        assert len(call_times) == 3
+        gaps = [b - a for a, b in zip(call_times, call_times[1:], strict=False)]
+        assert all(gap == pytest.approx(stagger, abs=stagger / 10) for gap in gaps)
+
+    async def test_refusal_stops_arrival_loop(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
+        """A refused issuance (stop condition) flips the loop's stop flag,
+        which is re-checked after each clamp sleep, so no further arrival
+        fires once the refusal has landed."""
+        strategy = self._strategy()
+        await strategy.setup_phase()
+        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
+
+        call_times: list[float] = []
+
+        async def _issue(_turn) -> bool:
+            call_times.append(time.perf_counter())
+            return len(call_times) < 2  # refuse from the 2nd arrival on
+
+        strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
+        # Returns (not times out): the loop exits on the refusal flag.
+        await self._run(strategy, timeout=5.0)
+
+        assert len(call_times) == 2
+
+    async def test_cancelled_execution_task_strands_no_timers_or_tasks(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
+        """Cancelling the execution task mid-phase leaves no pending timers
+        and no running issuance tasks after scheduler cleanup; a timeout
+        waiting for the first arrival still runs full cleanup."""
+        strategy = self._strategy()
+        await strategy.setup_phase()
+        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
+
+        gate = asyncio.Event()
+        first_call = asyncio.Event()
+
+        async def _issue(_turn) -> bool:
+            first_call.set()
+            await gate.wait()  # every issuance blocks until cleanup
+            return True
+
+        strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
+        task = asyncio.create_task(strategy.execute_phase())
+        try:
+            await asyncio.wait_for(first_call.wait(), timeout=5.0)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        finally:
+            gate.set()
+            await asyncio.gather(
+                *strategy._scheduler.cancel_all(), return_exceptions=True
+            )
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+        assert strategy._scheduler.pending_count == 0
+        assert strategy._scheduler.running_count == 0
+
+    async def test_scale_down_defers_replacement_slots(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
+        """Adaptive scale-down with target == active population: replacement
+        slots still derive (active <= target) but their issuance is gated off
+        (active !< target), so the pop loop defers them one stagger out and
+        the initial grid is the only issuance."""
+        strategy = self._strategy()
+        await strategy.setup_phase()
+        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
+        strategy.set_target_users(3)  # == active: defer, but still derive
+
+        deferrals = 0
+        first_defer = asyncio.Event()
+        real_defer = strategy._defer_next_spawn
+
+        def _defer_spy(queue) -> None:
+            nonlocal deferrals
+            deferrals += 1
+            first_defer.set()
+            real_defer(queue)
+
+        strategy._defer_next_spawn = _defer_spy
+
+        call_times: list[float] = []
+
+        async def _issue(_turn) -> bool:
+            call_times.append(time.perf_counter())
+            return True
+
+        strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
+        task = asyncio.create_task(strategy.execute_phase())
+        try:
+            await asyncio.wait_for(first_defer.wait(), timeout=5.0)
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await asyncio.gather(
+                *strategy._scheduler.cancel_all(), return_exceptions=True
+            )
+
+        assert len(call_times) == 3  # initial grid only; replacement deferred
+        assert deferrals >= 1
+
+    async def test_empty_queue_idles_until_cancelled(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
+        """With replacement derivation suppressed (adaptive target below the
+        active population), the queue runs dry after the initial grid and the
+        loop idles on its empty-queue sleep instead of exiting or spinning
+        without a wait."""
+        strategy = self._strategy()
+        await strategy.setup_phase()
+        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
+        strategy.set_target_users(2)  # active 3 > target 2: no derivations
+
+        call_times: list[float] = []
+        third_call = asyncio.Event()
+
+        async def _issue(_turn) -> bool:
+            call_times.append(time.perf_counter())
+            if len(call_times) == 3:
+                third_call.set()
+            return True
+
+        strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
+        task = asyncio.create_task(strategy.execute_phase())
+        try:
+            await asyncio.wait_for(third_call.wait(), timeout=5.0)
+            # Let the loop reach and cycle the empty-queue branch.
+            await asyncio.sleep(0.3)
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            await asyncio.gather(
+                *strategy._scheduler.cancel_all(), return_exceptions=True
+            )
+
+        # Still idling (not exited, not crashed) when cancelled: the empty
+        # queue was cycled rather than treated as a stop condition.
+        assert task.cancelled()
+        assert len(call_times) == 3
+
+    async def test_refusal_during_empty_queue_sleep_exits_at_loop_top(
+        self, time_traveler_no_patch_sleep
+    ) -> None:
+        """Backstop pin: with derivation suppressed and the initial grid
+        consumed, a refusal landing during the empty-queue sleep is caught by
+        the loop-top check on the next iteration (the post-sleep check only
+        sees refusals that land during a slot's clamp sleep)."""
+        strategy = self._strategy(num_users=2)
+        await strategy.setup_phase()
+        self._set_phase_start(strategy, time_traveler_no_patch_sleep)
+        strategy.set_target_users(1)  # active 2 > target 1: no derivations
+
+        call_times: list[float] = []
+
+        async def _issue(_turn) -> bool:
+            call_times.append(time.perf_counter())
+            return len(call_times) < 2  # 2nd arrival refuses
+
+        strategy._credit_issuer.issue_credit = AsyncMock(side_effect=_issue)
+        # Loop returns on its own (via the loop-top check) before the timeout.
+        await self._run(strategy, timeout=5.0)
+
+        assert len(call_times) == 2

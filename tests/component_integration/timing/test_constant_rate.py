@@ -104,11 +104,27 @@ class TestConstantRateTiming:
         [
             (15, 50.0),  # 20ms intervals
             (20, 100.0),  # 10ms intervals
-            (25, 150.0),  # ~6.7ms intervals
+            (50, 75.0),  # ~13.3ms intervals, 49 gaps
         ],
     )
     def test_constant_intervals(self, cli: AIPerfCLI, num_sessions: int, qps: float):
-        """Verify intervals have correct mean (rate is correct)."""
+        """Verify intervals have correct mean (rate is correct).
+
+        The per-gap CV assert cannot survive a nominal interval near the
+        scheduler-stall floor of a loaded shared CI runner. The rate loop's
+        documented catch-up contract (MAX_CATCHUP_SECONDS in
+        RequestRateStrategy.execute_phase) keeps delivered rate by firing an
+        overdue credit as soon as the loop regains the CPU, so every multi-ms
+        stall shows up here as one stretched gap (bounded only by the stall)
+        next to a compressed catch-up gap. At the original (25, 150.0) point a
+        single ~40ms stall moved CV from ~0.2 past the 0.8 threshold with only
+        24 gaps to dilute it (observed CV 0.94-1.64 in CI, reproduced locally
+        under CPU contention). This point keeps the asserted interval roughly
+        2x farther above the stall floor and doubles the sample count, so a
+        CI-grade stall moves CV by ~0.1 instead of ~1.0, while a genuinely
+        broken engine (systematic drift, Poisson-like jitter, burst pairs)
+        still fails the mean/CV checks at any sample size.
+        """
         config = TimingTestConfig(num_sessions=num_sessions, qps=qps)
         cmd = build_timing_command(config, arrival_pattern="constant")
         result = cli.run_sync(cmd, timeout=config.timeout)
