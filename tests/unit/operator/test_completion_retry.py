@@ -28,6 +28,7 @@ from aiperf.kubernetes.constants import Annotations
 from aiperf.kubernetes.crd_models import ControllerFetchResult
 from aiperf.operator.environment import _ResultsSettings
 from aiperf.operator.handlers._completion_retry import (
+    TransientCompletionFetchError,
     maybe_raise_for_transient_fetch_failure,
 )
 from aiperf.operator.handlers.completion import _ResultFlags
@@ -167,7 +168,7 @@ class TestBudgetGating:
 
     def test_within_budget_raises_temporary_error(self, env_with_budget) -> None:
         env_with_budget(budget=60.0, delay=5.0)
-        with pytest.raises(kopf.TemporaryError) as exc_info:
+        with pytest.raises(TransientCompletionFetchError) as exc_info:
             maybe_raise_for_transient_fetch_failure(
                 body=_body(_now_iso(-10)),
                 namespace="ns",
@@ -175,7 +176,9 @@ class TestBudgetGating:
                 result=_result(),
                 flags=_flags(),
             )
+        assert isinstance(exc_info.value, kopf.TemporaryError)
         assert exc_info.value.delay == 5.0
+        assert "orphan-claim" not in str(exc_info.value)
 
     def test_over_budget_returns_silently(self, env_with_budget) -> None:
         env_with_budget(budget=10.0)
