@@ -17,6 +17,8 @@ mechanism. The vendors expose this differently:
 - Google Gemini surfaces only reads, top-level as `cachedContentTokenCount`.
 - AWS Bedrock mirrors Anthropic shape with camelCase top-level
   `cacheReadInputTokens` / `cacheWriteInputTokens`.
+- Moonshot and vLLM Responses report writes as nested `cache_write_tokens`;
+  vLLM Chat uses nested `created_cache_tokens`.
 
 `Usage` normalizes the read / write / miss synonyms via the
 `prompt_cache_read_tokens` / `prompt_cache_write_tokens` /
@@ -66,17 +68,18 @@ class UsagePromptCacheWriteTokensMetric(BaseUsageRecordMetric[int]):
     """
     API usage field prompt cache-write (cache creation) token count metric.
 
-    Counts prompt tokens written to cache. Reported only by APIs that bill
-    cache writes separately — Anthropic surfaces this at the top level as
-    cache_creation_input_tokens. OpenAI does not surface writes, so this
-    metric raises NoMetricValue for OpenAI-shaped responses.
+    Counts API-reported prompt tokens written to cache: nested
+    cache_write_tokens (Moonshot and vLLM Responses), nested created_cache_tokens
+    (vLLM Chat),
+    cache_creation_input_tokens (Anthropic), or cacheWriteInputTokens
+    (Bedrock). Missing or explicitly unreported counts raise NoMetricValue.
 
-    LARGER_IS_BETTER is intentionally omitted: writes cost more than ordinary
-    input tokens but enable cheap reads on subsequent requests, so larger is
-    not unambiguously better.
+    LARGER_IS_BETTER is intentionally omitted: writes can enable subsequent
+    cache reads, but can also indicate cache churn. A higher count is not
+    unambiguously better, and billing semantics depend on the server.
 
     Formula:
-        Usage Prompt Cache Write Tokens = response.usage.prompt_cache_write_tokens (last non-None)
+        Usage Prompt Cache Write Tokens = record.final_usage.prompt_cache_write_tokens
     """
 
     tag = "usage_prompt_cache_write_tokens"
@@ -92,8 +95,8 @@ class UsagePromptCacheWriteTokensMetric(BaseUsageRecordMetric[int]):
     usage_field = "prompt_cache_write_tokens"
     missing_message = (
         "Usage prompt cache-write token count not available: no response "
-        "had top-level `cache_creation_input_tokens` "
-        "(this field is Anthropic-specific; OpenAI does not surface writes)."
+        "reported nested `cache_write_tokens` / `created_cache_tokens` "
+        "or top-level `cache_creation_input_tokens` / `cacheWriteInputTokens`."
     )
 
 

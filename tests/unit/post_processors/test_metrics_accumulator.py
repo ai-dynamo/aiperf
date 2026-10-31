@@ -30,6 +30,10 @@ from aiperf.metrics.types.min_request_metric import MinRequestTimestampMetric
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
+from aiperf.metrics.types.usage_cache_metrics import UsagePromptCacheWriteTokensMetric
+from aiperf.metrics.types.usage_total_metrics import (
+    TotalUsagePromptCacheWriteTokensMetric,
+)
 from tests.unit.post_processors.conftest import (
     create_accumulator_with_metrics,
     create_metric_metadata,
@@ -39,6 +43,35 @@ from tests.unit.post_processors.conftest import (
 
 class TestMetricsAccumulator:
     """Test cases for MetricsAccumulator."""
+
+    @pytest.mark.parametrize(
+        "values,expected",
+        [
+            pytest.param((3, None, 0, 5), 8, id="sum-reported-only"),
+            pytest.param((0, None), 0, id="reported-zero"),
+            pytest.param((None, None), None, id="all-unknown"),
+        ],
+    )
+    async def test_cache_write_total_preserves_unknown_and_zero(
+        self, mock_run, values: tuple[int | None, ...], expected: int | None
+    ) -> None:
+        accumulator = MetricsAccumulator(mock_run)
+        for index, value in enumerate(values):
+            await accumulator.process_record(
+                create_metric_records_data(
+                    x_request_id=f"cache-write-{index}",
+                    session_num=index,
+                    results=[]
+                    if value is None
+                    else [{UsagePromptCacheWriteTokensMetric.tag: value}],
+                )
+            )
+        summary = await accumulator.summarize()
+        tag = TotalUsagePromptCacheWriteTokensMetric.tag
+        if expected is None:
+            assert tag not in summary.results
+        else:
+            assert summary.results[tag].avg == expected
 
     def test_initialization(self, mock_metric_registry: Mock, mock_run) -> None:
         """Test processor initialization sets up necessary data structures."""
