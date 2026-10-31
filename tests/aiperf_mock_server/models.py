@@ -3,7 +3,7 @@
 from typing import Any, Literal
 
 from pydantic import BaseModel as PydanticBaseModel
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, model_validator
 
 # ============================================================================
 # Base Models (for request parsing only)
@@ -41,7 +41,24 @@ class Message(BaseModel):
     """Represents a chat message with role and content."""
 
     role: str
-    content: str | list[dict[str, Any]]
+    content: str | list[dict[str, Any]] | None = Field(
+        default=None, description="Message content; nullable for assistant tool calls."
+    )
+    tool_calls: list[dict[str, Any]] | None = Field(
+        default=None, description="Assistant tool calls in OpenAI chat format."
+    )
+    tool_call_id: str | None = Field(
+        default=None, description="Assistant tool call answered by this tool result."
+    )
+
+    @model_validator(mode="after")
+    def validate_content(self) -> "Message":
+        """Permit missing content only on assistant tool-call messages."""
+        if self.content is None and not (self.role == "assistant" and self.tool_calls):
+            raise ValueError(
+                "Message content is required except for assistant tool calls"
+            )
+        return self
 
 
 class BaseCompletionRequest(BaseModel):

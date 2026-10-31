@@ -249,6 +249,44 @@ Use multi_turn when you need **conversations with context** where each turn buil
 **Execution:** Sequential within each conversation (turn 1, then 2, then 3, etc.), but multiple conversations run concurrently
 **Input:** Single JSONL file only
 
+### Tool-Calling Messages
+
+With `--endpoint-type chat`, turns can carry OpenAI-compatible `tool_calls`
+on an assistant message and `tool_call_id` on a tool result. An assistant
+with non-empty `tool_calls` can omit `text` or set it to `null`. A tool
+result must provide content; use `"text": ""` for an empty result.
+
+For example, this JSONL record replays two parallel tool calls and their
+results before asking for a summary:
+
+```jsonl
+{"session_id":"file_review","turns":[{"role":"user","text":"Read and inspect main.py"},{"role":"assistant","text":null,"tool_calls":[{"id":"call_read","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"main.py\"}"}},{"id":"call_stat","type":"function","function":{"name":"stat_file","arguments":"{\"path\":\"main.py\"}"}}]},{"role":"tool","text":"print('hello')","tool_call_id":"call_read"},{"role":"tool","text":"128 bytes","tool_call_id":"call_stat"},{"role":"user","text":"Summarize the file"}]}
+```
+
+Tool names, argument strings, and call IDs are preserved through dataset
+serialization and chat request formatting. Text and media on a message are
+still rendered normally. Request-level tool definitions can be supplied with
+the existing per-turn `extra` field, for example `"extra": {"tools": [...]}`.
+
+When recording requests with the mock server, tokenizers without a usable
+chat template include tool fields in a deterministic JSON fallback alongside
+message content. Those input-length estimates are not model-specific tool
+template measurements.
+
+These fields also work on `single_turn` records. Session-grouped
+`single_turn` records remain self-contained requests; use `multi_turn` to
+accumulate authored conversation history.
+
+AIPerf replays the authored messages; it does not execute tools. Each
+authored turn remains a benchmark request, so these fields do not introduce
+a live agent tool loop or combine assistant/tool messages into a single turn.
+Servers that require all tool results immediately after an assistant's tool
+calls may reject the intermediate prefixes sent by this format. Use
+`raw_payload` or `dag_jsonl` to author complete request boundaries for those
+servers.
+For a complete pre-built request body or a conversation graph, use
+`raw_payload` or `dag_jsonl`, respectively.
+
 ### Basic Conversation
 
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->

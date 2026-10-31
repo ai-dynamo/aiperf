@@ -12,7 +12,7 @@ from aiperf.common.models import Conversation, Turn
 from aiperf.dataset.loader.base_loader import BaseFileLoader
 from aiperf.dataset.loader.mixins import MediaConversionMixin
 from aiperf.dataset.loader.models import SingleTurn
-from aiperf.plugin.enums import DatasetSamplingStrategy
+from aiperf.plugin.enums import DatasetSamplingStrategy, EndpointType
 
 
 class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
@@ -129,6 +129,13 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                 ),
             )
             for single_turn in single_turns:
+                if (
+                    single_turn.tool_calls is not None
+                    or single_turn.tool_call_id is not None
+                ) and self.run.cfg.endpoint.type != EndpointType.CHAT:
+                    raise NotImplementedError(
+                        "Tool-call messages require --endpoint-type chat"
+                    )
                 media = self.convert_to_media_objects(single_turn)
                 conversation.turns.append(
                     Turn(
@@ -139,6 +146,7 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
                         timestamp=single_turn.timestamp,
                         delay=single_turn.delay,
                         role=single_turn.role,
+                        chat_tool_metadata=single_turn.chat_tool_metadata,
                         max_tokens=single_turn.output_length,
                         audio_duration_seconds=single_turn.audio_duration_seconds,
                         extra_body=single_turn.extra,
