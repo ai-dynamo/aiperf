@@ -194,6 +194,12 @@ It carries its own `schema_version` (`OutputsJsonExporter.SCHEMA_VERSION`, curre
 - Schema `1.1` added `warmup` and `benchmark_phase`; both are additive over `1.0`.
 - The exporter sorts fragments through temporary files beside the final artifact and replaces `outputs.json` only after the complete document is written. Working memory depends on the sorting chunk size, read/write buffers, and merge fan-in. Each merge input can retain a full record, so oversized responses can increase merge memory in proportion to the number of inputs. Failure or cancellation before final replacement preserves the source fragments and any previous `outputs.json`.
 
+### Raw record JSONL export
+
+With `--export-level raw`, `profile_export_raw.jsonl` contains newline-delimited raw records, including both warmup and profiling records. Before publishing the file, AIPerf validates that every record is a complete JSON object with `metadata.benchmark_phase` set to `warmup` or `profiling`, then checks that the number of profiling records matches the completed-request count. Warmup records are retained in the export but are not included in that count.
+
+If a shard is truncated, invalid, or the profiling count does not match, the run fails and the final raw export is not published. The raw shards are preserved for diagnosis. When an artifact directory is reused, leftover raw shards are moved into `.aiperf-stale-raw-records/` inside the current artifact directory before a real run so they cannot be mixed into its export.
+
 ### Named phase artifacts
 
 Named multi-phase workflows keep the root exports (`profile_export_aiperf.{json,csv}`, `server_metrics_export.{json,csv}`, and related files) as backward-compatible aggregate artifacts. Phase-scoped artifacts are additive and are referenced from `phase_manifest.json`, for example `phases/<phase_name>/profile_export_aiperf.json`, `phases/<phase_name>/profile_export_aiperf.csv`, and, when server metrics produced data for that phase, `phases/<phase_name>/server_metrics.json`.

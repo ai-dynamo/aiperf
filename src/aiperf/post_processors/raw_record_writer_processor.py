@@ -5,12 +5,14 @@
 from __future__ import annotations
 
 import contextlib
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import aiofiles
 import orjson
 
-from aiperf.common.enums import ExportLevel
+from aiperf.common.enums import CreditPhase, ExportLevel
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import DataExporterDisabled, PostProcessorDisabled
 from aiperf.common.finite import scrub_non_finite
@@ -215,30 +217,106 @@ class RawRecordAggregator(AIPerfLoggerMixin):
             file_path=self.output_file,
         )
 
+    @staticmethod
+    def _is_profiling_record(line: str, file: Path, line_number: int) -> bool:
+        if not line.endswith("\n"):
+            raise ValueError(
+                f"Incomplete raw record line in {file}:{line_number}: "
+                "record is missing its newline delimiter."
+            )
+        try:
+            record = orjson.loads(line)
+        except orjson.JSONDecodeError as exc:
+            raise ValueError(
+                f"Invalid raw record JSON in {file}:{line_number}: {exc}"
+            ) from exc
+        if not isinstance(record, dict) or not isinstance(record.get("metadata"), dict):
+            raise ValueError(
+                f"Invalid raw record in {file}:{line_number}: "
+                "expected an object with metadata."
+            )
+        phase = record["metadata"].get("benchmark_phase")
+        if phase not in (CreditPhase.WARMUP, CreditPhase.PROFILING):
+            raise ValueError(
+                f"Invalid raw record in {file}:{line_number}: "
+                "expected metadata.benchmark_phase to be 'warmup' or 'profiling'."
+            )
+        return phase == CreditPhase.PROFILING
+
+    async def _aggregate_input_files(
+        self, raw_record_files: list[Path], temp_path: Path
+    ) -> int:
+        profiling_record_count = 0
+        async with aiofiles.open(temp_path, "w") as export_file:
+            for file in raw_record_files:
+                async with aiofiles.open(file) as input_file:
+                    line_number = 0
+                    async for line in input_file:
+                        line_number += 1
+                        if not line.strip():
+                            continue
+                        if self._is_profiling_record(line, file, line_number):
+                            profiling_record_count += 1
+                        await export_file.write(line)
+        return profiling_record_count
+
     async def export(self) -> None:
-        """Aggregate the raw records."""
+        """Aggregate and verify the raw records before publishing the export."""
         if self.exporter_config.cfg.artifacts.export_level != ExportLevel.RAW:
             return
 
         raw_record_files = list(self.output_dir.glob("raw_records_*.jsonl"))
+        self.output_file.unlink(missing_ok=True)
+
+        results = self.exporter_config.results
+        expected_record_count = results.completed if results is not None else None
         if not raw_record_files:
+            if expected_record_count:
+                raise ValueError(
+                    "Raw record export is incomplete: expected "
+                    f"{expected_record_count} profiling records from the run summary, found 0."
+                )
             return
 
-        self.output_file.unlink(missing_ok=True)
+        self.output_file.parent.mkdir(parents=True, exist_ok=True)
         self.info(
             f"Aggregating {len(raw_record_files)} raw record files from {self.output_dir} to {self.output_file}"
         )
-        record_count = 0
-        async with aiofiles.open(self.output_file, "w") as export_file:
-            for file in raw_record_files:
-                async with aiofiles.open(file) as f:
-                    async for line in f:
-                        if line.strip():
-                            record_count += 1
-                            await export_file.write(line)
-                file.unlink(missing_ok=True)
+
+        with tempfile.NamedTemporaryFile(
+            dir=self.output_file.parent,
+            prefix=f".{self.output_file.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+
+        try:
+            profiling_record_count = await self._aggregate_input_files(
+                raw_record_files, temp_path
+            )
+
+            if (
+                expected_record_count is not None
+                and profiling_record_count != expected_record_count
+            ):
+                raise ValueError(
+                    "Raw record export is incomplete: expected "
+                    f"{expected_record_count} profiling records from the run summary, "
+                    f"found {profiling_record_count}."
+                )
+
+            temp_path.replace(self.output_file)
+        except BaseException:
+            temp_path.unlink(missing_ok=True)
+            raise
+
+        for file in raw_record_files:
+            file.unlink(missing_ok=True)
 
         with contextlib.suppress(OSError):
             self.output_dir.rmdir()
 
-        self.info(f"Aggregated {record_count} raw records to {self.output_file}")
+        self.info(
+            f"Aggregated {profiling_record_count} profiling raw records to {self.output_file}"
+        )
