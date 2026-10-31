@@ -1080,7 +1080,7 @@ usage_prompt_cache_read_tokens = response.usage.cache_read_input_tokens  # from 
 
 **Type:** [Record Metric](#record-metrics)
 
-The number of prompt tokens written to cache (cache creations) as reported by the API for a single request. Recognizes nested `cache_write_tokens` (Moonshot Chat Completions and Responses), nested `created_cache_tokens` (vLLM), top-level `cache_creation_input_tokens` (Anthropic), and top-level `cacheWriteInputTokens` (Bedrock).
+The number of prompt tokens written to cache (cache creations) as reported by the API for a single request. Recognizes nested `cache_write_tokens` (Moonshot Chat Completions/Responses and vLLM Responses), nested `created_cache_tokens` (vLLM Chat), top-level `cache_creation_input_tokens` (Anthropic), and top-level `cacheWriteInputTokens` (Bedrock).
 
 **Formula:**
 ```python

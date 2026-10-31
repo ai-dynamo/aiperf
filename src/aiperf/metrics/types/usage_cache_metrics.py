@@ -17,8 +17,8 @@ mechanism. The vendors expose this differently:
 - Google Gemini surfaces only reads, top-level as `cachedContentTokenCount`.
 - AWS Bedrock mirrors Anthropic shape with camelCase top-level
   `cacheReadInputTokens` / `cacheWriteInputTokens`.
-- Moonshot reports writes as nested `cache_write_tokens` and vLLM as
-  nested `created_cache_tokens` in prompt/input token details.
+- Moonshot and vLLM Responses report writes as nested `cache_write_tokens`;
+  vLLM Chat uses nested `created_cache_tokens`.
 
 `Usage` normalizes the read / write / miss synonyms via the
 `prompt_cache_read_tokens` / `prompt_cache_write_tokens` /
@@ -69,7 +69,8 @@ class UsagePromptCacheWriteTokensMetric(BaseUsageRecordMetric[int]):
     API usage field prompt cache-write (cache creation) token count metric.
 
     Counts API-reported prompt tokens written to cache: nested
-    cache_write_tokens (Moonshot), nested created_cache_tokens (vLLM),
+    cache_write_tokens (Moonshot and vLLM Responses), nested created_cache_tokens
+    (vLLM Chat),
     cache_creation_input_tokens (Anthropic), or cacheWriteInputTokens
     (Bedrock). Missing or explicitly unreported counts raise NoMetricValue.
 
@@ -78,7 +79,7 @@ class UsagePromptCacheWriteTokensMetric(BaseUsageRecordMetric[int]):
     unambiguously better, and billing semantics depend on the server.
 
     Formula:
-        Usage Prompt Cache Write Tokens = response.usage.prompt_cache_write_tokens (last non-None)
+        Usage Prompt Cache Write Tokens = record.final_usage.prompt_cache_write_tokens
     """
 
     tag = "usage_prompt_cache_write_tokens"

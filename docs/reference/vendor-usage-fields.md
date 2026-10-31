@@ -19,7 +19,7 @@ The verification work behind this document was performed by inspecting each prov
 | Vendor | Wrapper | Token-count fields | Cache fields | Notable extras |
 |---|---|---|---|---|
 | OpenAI | flat `usage` | `prompt_tokens`, `completion_tokens`, `total_tokens` | `prompt_tokens_details.cached_tokens` (read-only) | nested `*_tokens_details` for audio / reasoning / prediction |
-| vLLM | flat `usage` | OpenAI-shape | `prompt_tokens_details.cached_tokens` (opt-in) | OpenAI-shape; `cached_tokens` emitted only with `--enable-prompt-tokens-details` (default off), else `prompt_tokens_details: null` |
+| vLLM | flat `usage` | OpenAI-shape | Chat: `prompt_tokens_details.cached_tokens` / `created_cache_tokens`; Responses: `input_tokens_details.cached_tokens` / `cache_write_tokens` | Chat prompt details are opt-in (`--enable-prompt-tokens-details`); Responses write count is populated unconditionally |
 | SGLang | flat `usage` | OpenAI-shape | `prompt_tokens_details.cached_tokens` (opt-in) | OpenAI-compatible; `cached_tokens` emitted only with `--enable-cache-report` (default off) |
 | TRT-LLM | flat `usage` | OpenAI-shape | `prompt_tokens_details.cached_tokens` | OpenAI-compatible; `cached_tokens` emitted by default (no flag) |
 | Anthropic | flat `usage` | `input_tokens`, `output_tokens` | `cache_creation_input_tokens`, `cache_read_input_tokens` | `cache_creation` TTL sub-object; `service_tier`; `server_tool_use` |
@@ -111,9 +111,11 @@ vLLM is OpenAI-compatible, but its `*_tokens_details` sub-objects are neither a 
 
 AIPerf models `cached_tokens`, `reasoning_tokens`, and `created_cache_tokens`. The latter populates `usage_prompt_cache_write_tokens` and its total metric. `multimodal_tokens` is preserved on the raw usage dict but is not mapped to per-modality metrics.
 
+For Responses, vLLM also declares `input_tokens_details.cache_write_tokens` as a required integer ([protocol at `48ab853fa1`](https://github.com/vllm-project/vllm/blob/48ab853fa1/vllm/entrypoints/openai/responses/protocol.py#L88)). The [serving implementation](https://github.com/vllm-project/vllm/blob/48ab853fa1/vllm/entrypoints/openai/responses/serving.py#L865) populates it unconditionally from `num_cache_creation_tokens`, defaulting to zero when that context attribute is absent. AIPerf maps this field to `Usage.prompt_cache_write_tokens` and the same per-record and total cache-write metrics.
+
 vLLM may emit `prompt_tokens_details: null` and `completion_tokens_details: null` explicitly; AIPerf's nested-field walk handles that case (the `isinstance(details, dict)` guard returns False, and the property returns None).
 
-**Enablement (opt-in):** vLLM populates `cached_tokens` only when the server is launched with `--enable-prompt-tokens-details` (default off, per [vllm-project/vllm#10174](https://github.com/vllm-project/vllm/pull/10174) — "guarded by a flag ... OFF by default"). Without the flag, `prompt_tokens_details` is `null` and AIPerf's cache-read metrics are all-None even when prefix caching is active. The flag is independent of `--enable-prefix-caching` (the cache must still be on for `cached_tokens` to be non-zero).
+**Chat enablement (opt-in):** vLLM populates `cached_tokens` only when the server is launched with `--enable-prompt-tokens-details` (default off, per [vllm-project/vllm#10174](https://github.com/vllm-project/vllm/pull/10174) — "guarded by a flag ... OFF by default"). Without the flag, `prompt_tokens_details` is `null` and AIPerf's cache-read metrics are all-None even when prefix caching is active. The flag is independent of `--enable-prefix-caching` (the cache must still be on for `cached_tokens` to be non-zero).
 
 ### Moonshot (Kimi)
 
