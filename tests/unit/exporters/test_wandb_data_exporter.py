@@ -191,7 +191,8 @@ class TestWandbDataExporter:
         fake_wandb: dict[str, Any],
     ) -> None:
         """The run carries the full resolved config, tags, exactly one logged
-        payload (the console-style table), and the artifact-dir file bundle.
+        payload (the console-style table and its scalars), and the artifact-dir
+        file bundle.
         """
         (tmp_path / "profile_export_aiperf.json").write_text("{}", encoding="utf-8")
         (tmp_path / "profile_export_aiperf.csv").write_text("a,b", encoding="utf-8")
@@ -215,7 +216,6 @@ class TestWandbDataExporter:
         assert config["wandb"]["project"] == "aiperf-dev"
 
         [logged] = fake_wandb["logged"]
-        assert set(logged) == {"summary_metrics"}  # the table is the only payload
         table = logged["summary_metrics"]
         assert isinstance(table, fake_wandb["table_cls"])
         assert table.columns == ["Metric", "avg", "min", "max", "p99", "p90", "p50", "std"]  # fmt: skip
@@ -287,6 +287,44 @@ class TestWandbDataExporter:
         assert by_col["avg"] is None  # nan scrubbed
         assert by_col["max"] is None  # inf scrubbed
         assert by_col["min"] == 1.0
+        assert logged["metrics/request_throughput/min"] == 1.0
+        assert "metrics/request_throughput/avg" not in logged  # nan not logged
+
+    @pytest.mark.asyncio
+    async def test_export_logs_table_cells_as_scalars(
+        self,
+        tmp_path: Path,
+        sample_results: ProfileResults,
+        fake_wandb: dict[str, Any],
+    ) -> None:
+        """Each finite table cell is also logged as ``metrics/<tag>/<stat>`` in
+        the same payload as the table, so wandb panels can plot it across runs.
+        """
+        exporter = _make_exporter(_make_cfg(tmp_path), sample_results)
+        await asyncio.to_thread(exporter._export_sync)
+
+        [logged] = fake_wandb["logged"]
+        scalars = {k: v for k, v in logged.items() if k != "summary_metrics"}
+        assert scalars == {"metrics/request_throughput/avg": 42.5}  # None cells skipped
+
+    @pytest.mark.asyncio
+    async def test_export_logs_no_scalars_for_incomplete_results(
+        self,
+        tmp_path: Path,
+        sample_results: ProfileResults,
+        fake_wandb: dict[str, Any],
+    ) -> None:
+        """Metrics of an incomplete result must not be compared with complete
+        runs, so only the table is logged.
+        """
+        results = sample_results.model_copy(
+            update={"is_complete": False, "incomplete_reason": "record-stall watchdog"}
+        )
+        exporter = _make_exporter(_make_cfg(tmp_path), results)
+        await asyncio.to_thread(exporter._export_sync)
+
+        [logged] = fake_wandb["logged"]
+        assert set(logged) == {"summary_metrics"}
 
     @pytest.mark.asyncio
     async def test_export_includes_redacted_cli_command(
