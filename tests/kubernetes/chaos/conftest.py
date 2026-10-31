@@ -166,6 +166,7 @@ async def operator_ready_toxiproxy_routed(
         operator_image=k8s_settings.aiperf_image,
         default_job_namespace=operator_job_namespace,
         controller_http_url_override=CONTROLLER_HTTP_OVERRIDE_URL,
+        strict_preflight=k8s_settings.operator_strict_preflight,
     )
     await deployer.install_crd()
     await kubectl.run("create", "namespace", operator_job_namespace, check=False)
@@ -196,6 +197,7 @@ async def operator_ready_toxiproxy_routed(
             operator_image=k8s_settings.aiperf_image,
             default_job_namespace=operator_job_namespace,
             controller_http_url_override=None,
+            strict_preflight=k8s_settings.operator_strict_preflight,
         )
         await restore.deploy_operator()
 
@@ -241,6 +243,7 @@ async def operator_ready_apiserver_toxiproxy_routed(
         apiserver_service_host_override=APISERVER_SERVICE_HOST_OVERRIDE,
         apiserver_service_port_override=APISERVER_SERVICE_PORT_OVERRIDE,
         apiserver_tls_server_name_override=APISERVER_TLS_SERVER_NAME_OVERRIDE,
+        strict_preflight=k8s_settings.operator_strict_preflight,
     )
     await deployer.install_crd()
     await kubectl.run("create", "namespace", operator_job_namespace, check=False)
@@ -280,5 +283,6 @@ async def operator_ready_apiserver_toxiproxy_routed(
             operator_image=k8s_settings.aiperf_image,
             default_job_namespace=operator_job_namespace,
             controller_http_url_override=None,
+            strict_preflight=k8s_settings.operator_strict_preflight,
         )
         await restore.deploy_operator()
