@@ -343,6 +343,18 @@ async def test_transport_error_subclasses_are_transient() -> None:
     ):
         await HFSourceResolver().probe(RemoteRef(ref="hf://org/repo/t.jsonl"))
     assert exc.value.kind == RemoteErrorKind.TRANSIENT
+    assert exc.value.connection_failed is True
+
+
+@pytest.mark.asyncio
+async def test_http_503_is_transient_without_connection_failure() -> None:
+    with (
+        patch("huggingface_hub.HfApi.dataset_info", side_effect=_http_error(503)),
+        pytest.raises(RemoteSourceError) as exc,
+    ):
+        await HFSourceResolver().probe(RemoteRef(ref="hf://org/repo/t.jsonl"))
+    assert exc.value.kind == RemoteErrorKind.TRANSIENT
+    assert exc.value.connection_failed is False
 
 
 @pytest.mark.parametrize(

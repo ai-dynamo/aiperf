@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from typing import Annotated, Any
 
@@ -81,7 +82,9 @@ def _build_sweep_spec(
     )
 
     validate_kubernetes_credential_transport(
-        config.benchmark.endpoint, dc.pod_template.env
+        config.benchmark.endpoint,
+        dc.pod_template.env,
+        datasets=config.benchmark.datasets,
     )
     dc_dict = dc.model_dump(
         mode="json", by_alias=True, exclude_unset=True, exclude_none=True
@@ -123,7 +126,9 @@ def _resolve_spec_and_name(
     """Return (spec, config, name) from either an AIPerfJob CR file or CLI flags.
 
     A parameter sweep or multi-run workload is built for AIPerfSweep; an
-    ordinary single run is built for AIPerfJob.
+    ordinary single run is built for AIPerfJob. Remote dataset references are
+    pinned on this machine first; that calls asyncio.run, so the async command
+    runs this in a worker thread.
     """
     from aiperf.cli_commands.kube.profile import (
         _build_cr_spec_and_config,
@@ -147,16 +152,21 @@ def _resolve_spec_and_name(
         name = kube_options.name or cr_name or generate_benchmark_name(config)
     else:
         config = _resolve_config(cli_config, config_file)
+        from aiperf.kubernetes.remote_datasets import (
+            pin_remote_datasets_for_kubernetes,
+        )
         from aiperf.kubernetes.sweep_routing import requires_sweep_controller
 
-        if requires_sweep_controller(config):
+        sweep = requires_sweep_controller(config)
+        pin_remote_datasets_for_kubernetes(config.benchmark, sweep=sweep)
+        if sweep:
             spec = _build_sweep_spec(config, kube_options)
         else:
             spec = kube_options.to_crd_spec(config)
         name = kube_options.name or generate_benchmark_name(config)
-    from aiperf.kubernetes.spec_converter import reject_remote_datasets_for_kubernetes
+    from aiperf.kubernetes.remote_datasets import report_remote_dataset_checks
 
-    reject_remote_datasets_for_kubernetes(config)
+    report_remote_dataset_checks(config.benchmark, spec)
     return spec, config, name
 
 
@@ -235,7 +245,9 @@ def _dump_raw_manifests(
     )
 
     validate_kubernetes_credential_transport(
-        config.benchmark.endpoint, deploy_config.pod_template.env
+        config.benchmark.endpoint,
+        deploy_config.pod_template.env,
+        datasets=config.benchmark.datasets,
     )
 
     manifests = deployment.get_all_manifests()
@@ -307,11 +319,19 @@ async def generate(
         )
     import ruamel.yaml
 
+    from aiperf.kubernetes import console as kube_console
+
     kube_options = kube_options or KubeOptions()
-    with cli_utils.exit_on_error(title="Error Generating Kubernetes Manifests"):
+    # stdout carries only the YAML; every log record goes to stderr.
+    with (
+        cli_utils.exit_on_error(title="Error Generating Kubernetes Manifests"),
+        kube_console.machine_readable_stdout(),
+    ):
         from aiperf.kubernetes.cli_helpers import resolve_benchmark_namespace
 
-        spec, config, name = _resolve_spec_and_name(cli_config, kube_options)
+        spec, config, name = await asyncio.to_thread(
+            _resolve_spec_and_name, cli_config, kube_options
+        )
         # Offline rendering still refuses to guess: a manifest whose namespace
         # was invented here would apply somewhere the author never named.
         namespace = resolve_benchmark_namespace(

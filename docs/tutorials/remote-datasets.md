@@ -40,10 +40,8 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
-Remote references are for local runs. Kubernetes runs (`aiperf kube` commands, and
-`AIPerfJob`/`AIPerfSweep` resources applied to the operator) reject them before anything is
-scheduled, with "Remote dataset references (hf://, s3://, https://) are not yet supported for
-Kubernetes runs". Download the file and use a local path instead.
+Remote references also work on Kubernetes, through `aiperf kube` or in an
+`AIPerfJob`/`AIPerfSweep` applied with `kubectl`; see [Kubernetes](#kubernetes).
 
 To publish a trace that others can run this way, see [Publishing traces](publishing-traces.md).
 
@@ -153,15 +151,18 @@ see [Publishing traces](publishing-traces.md#publishing-with-datasetspush_to_hub
    satisfied. It pins the exact version here (Hugging Face commit SHA, S3 object version or
    ETag, HTTP `ETag` or, without one, `Last-Modified` and length). Problems fail at this step, before anything is downloaded, including a
    parquet source whose declared format does not read parquet. The one exception is a parquet
-   file or folder that needs the first-record check (a trace format declared by flag or
-   manifest, and neither `--fixed-schedule` nor `--no-fixed-schedule`): it is downloaded here
-   so that its first row can be read (step 2).
+   source that needs the first-record check (a trace format declared by flag or manifest, and
+   neither `--fixed-schedule` nor `--no-fixed-schedule`): a single parquet file is downloaded
+   here, and a parquet folder has its first shard downloaded, so that its first row can be
+   read (step 2).
 2. **First-record check.** For trace formats, AIPerf reads the first record. If it has
    timestamps, the run replays on the recorded schedule (`--no-fixed-schedule` opts out), just
    like a local trace. To decide this it reads only the leading bytes of the file, in steps of
    64 KiB, 1 MiB, and 8 MiB, and downloads the whole file only when the first record is longer
-   than that. Columnar files (Parquet, Arrow) are always read from the downloaded copy. A
-   `weka_trace` needs no check: it replays on its recorded schedule unless you pass
+   than that. A single columnar file (Parquet, Arrow) is read from the downloaded copy, since
+   its schema sits at the end of the file. A parquet folder is read from its first shard only,
+   fetched into the cache so the full download in step 3 reuses it.
+   A `weka_trace` needs no check: it replays on its recorded schedule unless you pass
    `--ignore-trace-delays` or `--use-think-time-only`, as for a local Weka trace.
 3. **Download** into the cache, verified against the manifest's `sha256` when present. A
    cache hit rehashes the cached file whenever the manifest declares a `sha256`. The
@@ -230,6 +231,130 @@ suggests generating a new one.
   repo, a replaced object), the run fails with a "changed after AIPerf pinned its version"
   error; run again to use the new version.
 
+## Kubernetes
+
+`aiperf kube profile`, `aiperf kube generate` and `aiperf kube sweep` accept the same
+references, and so do `AIPerfJob` and `AIPerfSweep` resources applied with `kubectl`. Only the
+dataset-manager container downloads; workers receive the built dataset as before.
+
+```mermaid
+flowchart LR
+  A["aiperf kube: access check on this machine"] -->|readable| B["resource carries ref + pinned version"]
+  A -->|"no credentials or no connection here"| C["resource carries the ref unpinned (warning)"]
+  K["kubectl apply"] --> O
+  B --> O["operator: validate, preflight (Remote Datasets check)"]
+  C --> O
+  O --> P["dataset-manager pod: rehydrate presigned URLs, pin if unpinned, download"]
+  P -- fails --> S["status.error + DatasetReady=False"]
+```
+
+### Pinning
+
+- `aiperf kube` runs the access check on the machine you run it from, pins the version, and
+  writes `path: {ref: ..., resolved_version: ...}` into the resource. Every pod, and every
+  child of an `aiperf kube sweep`, uses that version.
+- If this machine cannot read an `hf://` or `s3://` source but the pods can (IRSA, EKS Pod
+  Identity, a token only the pods have), the reference is submitted unpinned with a warning,
+  and the dataset-manager pod pins it when it starts. An `https://` source that refuses this
+  machine fails instead, because the pod would fetch the same URL.
+- If this machine cannot connect to the source at all (a DNS failure, a refused connection, a
+  timeout), for example an object store or HTTP server that only the cluster's network reaches,
+  the reference is submitted unpinned with the same warning, whatever its scheme. An HTTP 429 or
+  5xx answer is not a connection failure: the source answered, so `aiperf kube` retries and then
+  fails.
+- A resource that already carries a pinned version keeps it when this machine cannot read the
+  source; the dataset-manager pod downloads that version.
+- A resource written by `aiperf kube generate --operator` can be passed back to
+  `aiperf kube profile -f` or `aiperf kube sweep -f`. A presigned path whose credential is
+  `<redacted>` is not read on this machine at all, since only the pods hold the full URL: its
+  pinned version is kept, or, if it has none, it is submitted unpinned with the same warning.
+- `aiperf kube sweep` (or any run with multi-run trials) that submits a reference unpinned
+  warns that each child pins it separately, so variations can see different versions if the
+  source changes meanwhile. Pin it explicitly (`@<commit>`, `?versionId=`) to avoid that.
+- A trace whose fixed-schedule promotion depends on its first record cannot be submitted
+  unpinned. Pass `--fixed-schedule` or `--no-fixed-schedule`, or run `aiperf kube` from a
+  machine that can read the source.
+- A resource applied with `kubectl` is pinned by its dataset-manager pod. An unpinned
+  `AIPerfSweep` applied with `kubectl` resolves the reference separately in each child, so
+  children can see different versions. Pin explicitly (`@<commit>`, `?versionId=`) or use
+  `aiperf kube sweep`.
+- When the pod pins, the pinned version and any manifest defaults (`format`, `block_size`)
+  exist only in the dataset-manager's copy of the run, and `profile_export_aiperf.json` records
+  the reference without its version. Pin on the CLI host, or in the reference, when you need
+  full provenance.
+
+### Credentials
+
+| Source | What the pods need |
+|---|---|
+| Hugging Face (private or gated) | `--env-from-secrets HF_TOKEN=<secret>/<key>`, an `HF_TOKEN_PATH` env pointing at a mounted Secret file, or a Secret file mounted at `/aiperf/hf_home/token` (the pods' `$HF_HOME/token`, which Hugging Face reads by default). A missing token fails before submission. |
+| S3 | An AWS identity: a ServiceAccount with IRSA or EKS Pod Identity (`--service-account`), or `AWS_*` env from a Secret. IRSA and node roles are invisible in the pod spec, so a non-public object with neither only warns. |
+| HTTPS presigned URL | The full URL in a Secret, passed as `AIPERF_INJECTED_DATASET_URLS` (below). |
+
+A presigned URL is a credential. The resource, the run ConfigMap and every spec the operator
+stores carry it with its signature replaced by `<redacted>`. Put the full URL(s) in a Secret as
+a JSON list and pass it to the pods; AIPerf never creates the Secret:
+
+```bash
+kubectl create secret generic aiperf-dataset-urls -n <namespace> \
+    --from-literal=urls='["https://bucket.s3.amazonaws.com/trace.jsonl?X-Amz-Signature=..."]'
+
+aiperf kube profile ... \
+    --input-file 'https://bucket.s3.amazonaws.com/trace.jsonl?X-Amz-Signature=...' \
+    --env-from-secrets AIPERF_INJECTED_DATASET_URLS=aiperf-dataset-urls/urls
+```
+
+Only the dataset-manager container, which does the download, receives the Secret; the other
+containers are rendered without it. The dataset-manager matches each URL to its dataset by
+the URL without its signing parameters, so list one URL per dataset: when you re-sign a URL, replace the old one. A resource applied with `kubectl` must not contain the signature: the operator
+rejects it, because the API server has already stored it, so rotate the URL. Write the path
+as `aiperf kube generate --operator` does, with the credential values replaced by
+`<redacted>`. `aiperf kube validate` catches a raw signature before you apply.
+
+Before submission, `aiperf kube` warns when a presigned URL expires within an hour (queueing,
+for example in Kueue, can delay the download) and fails when it has already expired, before it
+tries to read the URL, so the error names the expiry instead of a bare access denial. The
+operator runs the same checks for resources applied with `kubectl`; see
+[Preflight](../kubernetes/preflight.md#remote-datasets-operator-and-cli).
+
+### Storage
+
+- Hugging Face files land in the pod's Hugging Face home (`/aiperf/hf_home`, an emptyDir;
+  AIPerf sets `HF_HOME` and ignores a user value). S3 and HTTPS files land in
+  `/aiperf/remote-cache`, an emptyDir mounted in the dataset-manager and control-plane
+  containers.
+- Both use the node's ephemeral storage. For multi-GB datasets, or to reuse downloads across
+  jobs, mount a PVC and point `HF_HUB_CACHE` and `AIPERF_DATASET_REMOTE_CACHE_DIR` at paths on
+  it; see [Kubernetes configuration](../kubernetes/configuration.md#remote-datasets).
+
+### Large datasets and the startup probe
+
+The dataset-manager downloads before its health server starts, so its startup probe fails for
+as long as the download runs. When the run reads a remote dataset, the dataset-manager
+container (and only that container) gets a startup probe that allows
+`AIPERF_K8S_HEALTH_DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS` (default 3600, one hour): its
+failure threshold becomes that budget divided by `AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS`,
+rounded up. The dataset-manager also registers with the controller only after the download,
+so the controller-pod containers wait for registration for that budget on top of
+`AIPERF_SERVICE_REGISTRATION_TIMEOUT`. A download that runs longer is killed by the kubelet, possibly in the middle of the
+transfer and before AIPerf can write its termination message; the job then fails without the
+`[dataset-manager pod]` line or the `DatasetReady` condition described below.
+
+For a dataset that takes longer than the budget to download, raise
+`AIPERF_K8S_HEALTH_DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS` (at most 86400), or pre-populate a
+PVC-backed cache (see Storage) so the pod finds the files already downloaded. The probe
+variables are read by the process that renders the JobSet (the operator Deployment, or the CLI
+in direct mode), so set them there, not in `spec.podTemplate.env`; see
+[Kubernetes configuration](../kubernetes/configuration.md#health-probes).
+
+### When the pod fails
+
+A dataset that fails in the pod stops the dataset-manager before the benchmark starts. The job
+fails with a `status.error` that contains `[dataset-manager pod] Cannot use <reference>: ...`,
+the `DatasetReady` condition turns `False` with reason `DatasetUnavailable`, and
+`aiperf kube debug --job-id <name>` shows that reason as a `DatasetReady=False` finding. Gated public datasets (`--public-dataset`)
+fail the same way.
+
 ---
 
 ## Troubleshooting
@@ -245,6 +370,7 @@ in the table.
 | "has not accepted its terms" | A gated Hugging Face dataset | Accept the terms on the dataset page, then retry |
 | "has no revision" or "has no version" | The `@<rev>` or `?versionId=` does not exist | Check the branch, tag, commit, or version id |
 | "was not found, or your token can't access it", "S3 has no such bucket or key", or "the server has no such file" | Wrong repo, path, key, or URL | Check the reference |
+| "which may differ from the pods' token" (`aiperf kube`) | This machine's Hugging Face token cannot see the repo; the pods' token might | Run `aiperf kube` where no Hugging Face token is configured, so the dataset-manager pod pins it with its own token |
 | "offline mode is on and it is not in the local cache" | Offline mode with nothing downloaded for that reference | Run once with network access, or unset `AIPERF_DATASET_REMOTE_OFFLINE` / `HF_HUB_OFFLINE` |
 | "no `aiperf.json` describing it" or "no `aiperf.json` under it" | A repo, folder, or prefix without a manifest | Point at a data file, or ask the publisher to add `aiperf.json` |
 | "its manifest points at" ... "which does not exist", or "its manifest" ... "is invalid" | A malformed or stale manifest | Ask the publisher to fix `aiperf.json` |
@@ -261,7 +387,13 @@ in the table.
 | "the downloaded file's sha256 is" | The file does not match the manifest's `sha256` | Retry; if it persists, the publisher's file or manifest is wrong |
 | "changed after AIPerf pinned its version" | The remote changed during the run | Run again to use the new version |
 | "need the optional botocore dependency" | `s3://` without the AWS extra | `uv pip install 'aiperf[aws]'` |
-| "are not yet supported for Kubernetes runs" | A remote reference passed to `aiperf kube` or set in an `AIPerfJob`/`AIPerfSweep` | Download the file and use a local path |
+| "so AIPerf cannot tell whether the trace has timestamps" | `aiperf kube` could not read the source, and the phase type depends on its first record | Pass `--fixed-schedule` or `--no-fixed-schedule`, or run from a machine that can read the source |
+| "is private or gated, and the pods have no Secret-backed HF_TOKEN" | A Hugging Face repo that needs a token, submitted without one | `--env-from-secrets HF_TOKEN=<secret>/<key>` |
+| "must come from Secret-backed pod environment variables" naming `AIPERF_INJECTED_DATASET_URLS` | A presigned dataset URL with no Secret for the pods | Create the Secret and pass `--env-from-secrets AIPERF_INJECTED_DATASET_URLS=<secret>/<key>` |
+| "carries a credential (a presigned query or URL userinfo) in the resource itself" | A `kubectl`-applied resource holding a raw presigned URL | Rotate the URL, move it into a Secret, and write the path with `<redacted>` values |
+| "has no URL for it" or "matches no dataset in this run" | The Secret's URL list does not name the dataset in the resource | Make the Secret hold the full URL of exactly that dataset |
+| "The presigned URL ... expired at" | The URL expired before submission | Generate a new URL and update the Secret |
+| `status.error` contains `[dataset-manager pod]` | The dataset failed inside the pod | Look up the rest of the message in this table |
 | "cannot be written" | The cache directory is full or read-only | Free disk space or fix permissions, or set `AIPERF_DATASET_REMOTE_CACHE_DIR` (Hugging Face: `HF_HOME`) |
 | "the connection failed", "is unavailable", or "could not be reached" | Network trouble or a rate-limited server | Check network access and retry later |
 | "timed out waiting for another process" | Another AIPerf run holds the download lock | Wait, or delete the lock file the message names if no run is active |

@@ -337,6 +337,7 @@ async def test_client_error_mapping(code: str, status: int, kind: RemoteErrorKin
                 RemoteRef(ref="s3://bucket/k.jsonl")
             )
     assert exc.value.kind == kind
+    assert exc.value.connection_failed is False
 
 
 @pytest.mark.parametrize(
@@ -354,6 +355,7 @@ async def test_connection_errors_are_transient(error: Exception) -> None:
     with pytest.raises(RemoteSourceError) as exc:
         await S3SourceResolver(client=client).probe(RemoteRef(ref="s3://bucket/k.jsonl"))  # fmt: skip
     assert exc.value.kind == RemoteErrorKind.TRANSIENT
+    assert exc.value.connection_failed is True
 
 
 @pytest.mark.asyncio

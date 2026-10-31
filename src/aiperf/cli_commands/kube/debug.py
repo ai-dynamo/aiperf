@@ -449,7 +449,7 @@ async def _debug_namespace(
 
 
 async def _benchmark_findings(api: Any, job_info: Any | None) -> list[Any]:
-    """Run the benchmark-metric detectors against an already-fetched AIPerfJob.
+    """Run the job-failure and benchmark-metric detectors against an already-fetched AIPerfJob.
 
     Complements the pod-level problem map: those come from container statuses,
     these from the operator-published ``status.liveMetrics``. The raw ``.status``
@@ -462,14 +462,20 @@ async def _benchmark_findings(api: Any, job_info: Any | None) -> list[Any]:
     if job_info is None:
         return []
 
-    from aiperf.kubernetes.benchmark_diagnosis import diagnose_benchmark
+    from aiperf.kubernetes.benchmark_diagnosis import (
+        diagnose_benchmark,
+        diagnose_job_failure,
+    )
     from aiperf.kubernetes.client import get_raw_aiperfjob_status
 
     try:
         status = await get_raw_aiperfjob_status(api, job_info.name, job_info.namespace)
         if not status:
             status = _status_from_info(job_info)
-        return diagnose_benchmark(status, elapsed_seconds=_elapsed_seconds(job_info))
+        return [
+            *diagnose_job_failure(status),
+            *diagnose_benchmark(status, elapsed_seconds=_elapsed_seconds(job_info)),
+        ]
     except Exception:  # noqa: BLE001 - diagnostics must never break the report
         return []
 

@@ -44,6 +44,7 @@ from aiperf.operator.handlers.monitor import (
     _reconcile_pod_startup_issue,
     _recover_from_live_status,
     _recover_from_partial_checkpoints,
+    _salvage_terminated_controller_results,
     _scheduling_issue_is_structural,
     _startup_issue_state,
     _update_worker_counts,
@@ -1528,3 +1529,283 @@ class TestControllerAuthoredWorkers:
         """
         workers = {"ready": 0, "total": 0, "totalPods": 0}
         assert _controller_authored_workers({"workers": workers}) == workers
+
+
+class TestDatasetFailureSurfacing:
+    """The dataset-manager's termination message reaches status.error and DatasetReady."""
+
+    def test_get_terminated_controller_info_appends_dataset_manager_termination_message(
+        self,
+    ) -> None:
+        pod = {
+            "status": {
+                "containerStatuses": [
+                    {"name": "control-plane", "state": {"running": {}}},
+                    {
+                        "name": "dataset-manager",
+                        "state": {
+                            "terminated": {
+                                "exitCode": 1,
+                                "reason": "Error",
+                                "message": "[dataset-manager pod] Cannot use hf://org/repo: it is gated.\n",
+                            }
+                        },
+                    },
+                    {"name": "results-sidecar", "state": {"running": {}}},
+                ]
+            }
+        }  # fmt: skip
+        assert _get_terminated_controller_info(pod) == (
+            1,
+            "Error (container dataset-manager): [dataset-manager pod] Cannot use "
+            "hf://org/repo: it is gated.",
+        )
+
+    def test_get_terminated_controller_info_flattens_and_redacts_fallback_logs(
+        self,
+    ) -> None:
+        terminated = SimpleNamespace(
+            exit_code=1,
+            reason="Error",
+            message=(
+                "Traceback:\n  GET https://h/t.jsonl?X-Amz-Signature=topsecret\n"
+                "  headers={'Authorization': 'Bearer hf_SECRETabc'}\n"
+                "  token=hf_SECRETdef\n"
+                "  x-api-key: sk-SECRETxyz\n"
+                "  failed"
+            ),
+        )
+        dataset_manager = SimpleNamespace(
+            name="dataset-manager", state=SimpleNamespace(terminated=terminated)
+        )
+        sidecar = SimpleNamespace(name="results-sidecar", state=None)
+        pod = SimpleNamespace(
+            status=SimpleNamespace(container_statuses=[dataset_manager, sidecar])
+        )
+        exit_code, reason = _get_terminated_controller_info(pod)
+        assert exit_code == 1
+        assert "\n" not in reason
+        for secret in ("topsecret", "hf_SECRETabc", "hf_SECRETdef", "sk-SECRETxyz"):
+            assert secret not in reason
+        assert reason.startswith("Error (container dataset-manager): Traceback: GET ")
+        assert reason.endswith(" failed")
+
+    @pytest.mark.parametrize(
+        "control_plane_first",
+        [param(True, id="control-plane-listed-first"), param(False, id="dataset-manager-listed-first")],
+    )  # fmt: skip
+    def test_get_terminated_controller_info_prefers_dataset_manager_pod_line_over_control_plane(
+        self, control_plane_first: bool
+    ) -> None:
+        """The control-plane exits after a dataset startup failure; the cause must win."""
+        control_plane = {
+            "name": "control-plane",
+            "state": {"terminated": {"exitCode": 1, "reason": "Error"}},
+        }
+        dataset_manager = {
+            "name": "dataset-manager",
+            "state": {
+                "terminated": {
+                    "exitCode": 1,
+                    "reason": "Error",
+                    "message": "[dataset-manager pod] Cannot use hf://org/repo: it is gated.",
+                }
+            },
+        }  # fmt: skip
+        sidecar = {"name": "results-sidecar", "state": {"running": {}}}
+        statuses = (
+            [control_plane, dataset_manager, sidecar]
+            if control_plane_first
+            else [dataset_manager, control_plane, sidecar]
+        )
+        assert _get_terminated_controller_info(
+            {"status": {"containerStatuses": statuses}}
+        ) == (
+            1,
+            "Error (container dataset-manager): [dataset-manager pod] Cannot use "
+            "hf://org/repo: it is gated.",
+        )
+
+    def test_get_terminated_controller_info_unprefixed_dataset_manager_keeps_control_plane_first(
+        self,
+    ) -> None:
+        control_plane = {
+            "name": "control-plane",
+            "state": {"terminated": {"exitCode": 2, "reason": "Error"}},
+        }
+        dataset_manager = {
+            "name": "dataset-manager",
+            "state": {"terminated": {"exitCode": 137, "reason": "OOMKilled"}},
+        }
+        sidecar = {"name": "results-sidecar", "state": {"running": {}}}
+        pod = {
+            "status": {"containerStatuses": [dataset_manager, control_plane, sidecar]}
+        }
+        assert _get_terminated_controller_info(pod) == (2, "Error")
+
+    @pytest.mark.asyncio
+    async def test_fail_unrecoverable_controller_both_terminated_sets_dataset_ready_false(
+        self,
+    ) -> None:
+        pod = {
+            "status": {
+                "containerStatuses": [
+                    {"name": "control-plane", "state": {"terminated": {"exitCode": 1, "reason": "Error"}}},
+                    {
+                        "name": "dataset-manager",
+                        "state": {
+                            "terminated": {
+                                "exitCode": 1,
+                                "reason": "Error",
+                                "message": "[dataset-manager pod] Cannot use hf://org/repo: it is gated.",
+                            }
+                        },
+                    },
+                    {"name": "results-sidecar", "state": {"running": {}}},
+                ]
+            }
+        }  # fmt: skip
+        _, reason = _get_terminated_controller_info(pod)
+        sb, status_patch = _make_status_builder()
+        custom = MagicMock()
+        custom.delete_namespaced_custom_object = AsyncMock()
+        with _fenced_jobset_api(custom, "js"):
+            await _fail_unrecoverable_controller(
+                body=_owned_body(),
+                namespace="ns",
+                jobset_name="js",
+                job_id="job",
+                reason=reason,
+                sb=sb,
+                custom=custom,
+            )
+        assert (
+            "[dataset-manager pod] Cannot use hf://org/repo"
+            in status_patch.status["error"]
+        )
+        dataset = next(
+            c for c in status_patch.status["conditions"] if c["type"] == "DatasetReady"
+        )
+        assert dataset["status"] == "False"
+        assert dataset["reason"] == "DatasetUnavailable"
+
+    @pytest.mark.asyncio
+    async def test_fail_unrecoverable_controller_dataset_manager_sets_dataset_ready_false(
+        self,
+    ) -> None:
+        sb, status_patch = _make_status_builder()
+        custom = MagicMock()
+        custom.delete_namespaced_custom_object = AsyncMock()
+        reason = (
+            "Error (container dataset-manager): [dataset-manager pod] Cannot use "
+            "hf://org/repo: it is gated."
+        )
+        with _fenced_jobset_api(custom, "js"):
+            await _fail_unrecoverable_controller(
+                body=_owned_body(),
+                namespace="ns",
+                jobset_name="js",
+                job_id="job",
+                reason=reason,
+                sb=sb,
+                custom=custom,
+            )
+        error = status_patch.status["error"]
+        assert error == (
+            f"Controller container terminated before results were recoverable: {reason}"
+        )
+        dataset = next(
+            c for c in status_patch.status["conditions"] if c["type"] == "DatasetReady"
+        )
+        assert dataset["status"] == "False"
+        assert dataset["reason"] == "DatasetUnavailable"
+        assert dataset["message"] == error
+
+    @pytest.mark.parametrize(
+        "reason,expected_branch",
+        [
+            param(
+                "Error (container dataset-manager): [dataset-manager pod] Cannot use hf://org/repo: it is gated.",
+                "unrecoverable",
+                id="dataset-failure-skips-checkpoints",
+            ),
+            param("Error", "checkpoints", id="other-failure-recovers-checkpoints"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.asyncio
+    async def test_salvage_terminated_controller_dataset_failure_skips_partial_checkpoints(
+        self, reason: str, expected_branch: str
+    ) -> None:
+        """Checkpoints written before a dataset failure must not hide the pod's message."""
+        sb, _ = _make_status_builder()
+        result = SimpleNamespace(downloaded=True, checkpoints=[Path("ckpt.json")])
+        with (
+            patch(
+                "aiperf.operator.handlers.monitor._recover_from_partial_checkpoints",
+                new=AsyncMock(),
+            ) as recover_checkpoints,
+            patch(
+                "aiperf.operator.handlers.monitor._recover_from_live_status",
+                new=AsyncMock(return_value=True),
+            ) as recover_live,
+            patch(
+                "aiperf.operator.handlers.monitor._fail_unrecoverable_controller",
+                new=AsyncMock(),
+            ) as fail_unrecoverable,
+        ):
+            await _salvage_terminated_controller_results(
+                MagicMock(),
+                body=_owned_body(),
+                result=result,
+                status={},
+                namespace="ns",
+                jobset_name="js",
+                job_id="job",
+                reason=reason,
+                sb=sb,
+            )
+        recover_live.assert_not_awaited()
+        if expected_branch == "unrecoverable":
+            recover_checkpoints.assert_not_awaited()
+            fail_unrecoverable.assert_awaited_once()
+            assert fail_unrecoverable.await_args.kwargs["reason"] == reason
+        else:
+            recover_checkpoints.assert_awaited_once()
+            fail_unrecoverable.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            param("OOMKilled", id="control-plane-oomkilled"),
+            param("OOMKilled (container dataset-manager)", id="dataset-manager-oomkilled"),
+            param(
+                "Error (container dataset-manager): Traceback: KeyError: 'x'",
+                id="dataset-manager-unprefixed-log-tail",
+            ),
+            param(
+                "Error (container records-manager): Traceback: saw [dataset-manager pod] earlier",
+                id="prefix-not-at-message-start",
+            ),
+        ],
+    )  # fmt: skip
+    @pytest.mark.asyncio
+    async def test_fail_unrecoverable_controller_without_pod_prefix_leaves_dataset_ready_unset(
+        self, reason: str
+    ) -> None:
+        """Only the dataset-manager's own prefixed line is a dataset failure (P4)."""
+        sb, status_patch = _make_status_builder()
+        custom = MagicMock()
+        custom.delete_namespaced_custom_object = AsyncMock()
+        with _fenced_jobset_api(custom, "js"):
+            await _fail_unrecoverable_controller(
+                body=_owned_body(),
+                namespace="ns",
+                jobset_name="js",
+                job_id="job",
+                reason=reason,
+                sb=sb,
+                custom=custom,
+            )
+        assert status_patch.status["phase"] == Phase.FAILED
+        types = {c["type"] for c in status_patch.status["conditions"]}
+        assert "DatasetReady" not in types

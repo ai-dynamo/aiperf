@@ -19,6 +19,7 @@ from rich.markup import escape
 
 from aiperf.cli_commands.kube._debug_report import (
     _get_event_severity_style,
+    _print_benchmark_findings,
     _print_events,
     _print_node_resources,
     _print_pod_logs,
@@ -27,6 +28,7 @@ from aiperf.cli_commands.kube._debug_report import (
     _print_report,
     _print_summary,
 )
+from aiperf.kubernetes.benchmark_diagnosis import BenchmarkFinding
 
 # ============================================================
 # Helpers — minimal data shapes the report helpers consume
@@ -783,3 +785,22 @@ class TestPrintReport:
             )
             (line,), _ = mock_header.call_args
             assert "my-special-ns" in line
+
+
+def test_print_benchmark_findings_escapes_markup_in_status_error() -> None:
+    finding = BenchmarkFinding(
+        id="job_error",
+        severity="critical",
+        title="Job failed",
+        detail="Error (container dataset-manager): [dataset-manager pod] Cannot use x",
+        impact="The job stopped.",
+        suggested_fix="Fix the cause.",
+    )
+    with (
+        patch("aiperf.kubernetes.console.print_warning") as mock_warn,
+        patch("aiperf.kubernetes.console.print_info"),
+        patch("aiperf.kubernetes.console.print_header"),
+    ):
+        _print_benchmark_findings([finding])
+    text = mock_warn.call_args.args[0]
+    assert escape("[dataset-manager pod]") in text

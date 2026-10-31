@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from typing import Annotated, Any
 from urllib.parse import parse_qsl, quote, unquote, urlsplit, urlunsplit
@@ -19,6 +19,7 @@ from pydantic import (
 )
 
 from aiperf.common.redact import (
+    REDACTED_VALUE,
     has_sensitive_query_parameters,
     is_sensitive_query_parameter_name,
     redact_url,
@@ -78,6 +79,27 @@ def is_remote_ref(value: object) -> bool:
 def is_presigned(value: str) -> bool:
     """Return True when the URL carries a credential in its query string."""
     return has_sensitive_query_parameters(value)
+
+
+def carries_credential(value: str) -> bool:
+    """Return True when a URL holds a credential, raw or already redacted.
+
+    Covers presigned query parameters and URL userinfo. A redacted reference still
+    counts: it stands for a credential that must be supplied out of band.
+    """
+    return REDACTED_VALUE in value or redact_url(value) != value
+
+
+def remote_dataset_refs(datasets: Iterable[object]) -> list[RemoteRef]:
+    """The remote references among ``datasets`` (file datasets with a remote path)."""
+    # Imported here: aiperf.config.dataset.config imports this module.
+    from aiperf.config.dataset.config import FileDataset
+
+    return [
+        dataset.path
+        for dataset in datasets
+        if isinstance(dataset, FileDataset) and isinstance(dataset.path, RemoteRef)
+    ]
 
 
 def parse_remote_ref(value: str) -> ParsedRemoteRef:
