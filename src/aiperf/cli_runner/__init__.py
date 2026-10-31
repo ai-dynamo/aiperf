@@ -26,6 +26,7 @@ from aiperf.cli_runner._preflight import (
     _preflight_dataset_materialize,
     _preflight_endpoint_ready,
     _preflight_fd_limit,
+    _preflight_synthetic_prompt_reuse,
 )
 from aiperf.cli_runner._single_run import _run_single_benchmark
 
@@ -67,6 +68,7 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
     _preflight_artifact_dir(plan)
     _preflight_accuracy_deps(plan)
     _preflight_fd_limit()
+    _preflight_synthetic_prompt_reuse(plan)
     _preflight_dataset_access(plan)
     _preflight_endpoint_ready(plan)
     _preflight_dataset_materialize(plan)
