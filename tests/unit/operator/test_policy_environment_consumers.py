@@ -256,6 +256,62 @@ def test_cleanup_timer_delay_overrides_reach_kopf_registration(
         importlib.reload(operator_main)
 
 
+def test_operator_main_reload_restore_keeps_registry_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The reload restore must rebind the global registry's own handlers.
+
+    Reloads ``operator_main`` exactly like the timer-override test above
+    (registration redirected to a throwaway registry), then runs the same
+    restore logic the autouse fixture uses. Without the restore, the global
+    registry's handlers are no longer identity-equal to the module bindings;
+    with it, the registry-identity invariants hold again. Self-contained, so
+    it fails when the restore logic is removed regardless of execution order.
+    """
+    import kopf
+    from kopf._core.intents import registries
+
+    from aiperf.operator import main as operator_main
+    from tests.harness.operator import (
+        restore_operator_main_registry_bindings,
+        snapshot_operator_main_registry_bindings,
+    )
+
+    snapshot = snapshot_operator_main_registry_bindings()
+
+    throwaway_registry = registries.OperatorRegistry()
+    with monkeypatch.context() as context:
+        context.setattr(
+            registries, "get_default_registry", lambda: throwaway_registry
+        )
+        importlib.reload(operator_main)
+
+    registry = kopf.get_default_registry()
+    # Sanity: the reload redirected registration and rebound the module's
+    # functions, so nothing in the global registry matches the module now.
+    assert not any(
+        handler.fn is operator_main.cleanup_old_sweeps
+        for handler in registry._spawning.get_all_handlers()  # noqa: SLF001
+    )
+    assert all(
+        handler.when is not operator_main.owns_namespace
+        for handler in registry._spawning.get_all_handlers()  # noqa: SLF001
+    )
+
+    restore_operator_main_registry_bindings(snapshot)
+
+    reaper = [
+        handler
+        for handler in registry._spawning.get_all_handlers()  # noqa: SLF001
+        if handler.fn is operator_main.cleanup_old_sweeps
+    ]
+    assert len(reaper) == 1
+    assert all(
+        handler.when is operator_main.owns_namespace
+        for handler in registry._spawning.get_all_handlers()  # noqa: SLF001
+    )
+
+
 @pytest.mark.asyncio
 async def test_sweep_cleanup_interval_override_reaches_retention_wait(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
