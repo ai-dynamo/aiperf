@@ -281,9 +281,7 @@ def test_operator_main_reload_restore_keeps_registry_identity(
 
     throwaway_registry = registries.OperatorRegistry()
     with monkeypatch.context() as context:
-        context.setattr(
-            registries, "get_default_registry", lambda: throwaway_registry
-        )
+        context.setattr(registries, "get_default_registry", lambda: throwaway_registry)
         importlib.reload(operator_main)
 
     registry = kopf.get_default_registry()
