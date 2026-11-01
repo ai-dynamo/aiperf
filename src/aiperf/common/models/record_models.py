@@ -1414,6 +1414,20 @@ class BaseResponseData:
 
 
 @dataclass(slots=True)
+class AudioResponseData(BaseResponseData):
+    """Validated sample counts for a complete generated audio response."""
+
+    frames: int
+    """Number of complete sample frames, including all channels."""
+
+    sample_rate: int
+    """Sample frames per second."""
+
+    channels: int
+    """Number of interleaved channels."""
+
+
+@dataclass(slots=True)
 class TextResponseData(BaseResponseData):
     """Parsed text response data."""
 
@@ -1662,6 +1676,7 @@ class ParsedResponse:
         | ImageRetrievalResponseData
         | ImageResponseData
         | VideoResponseData
+        | AudioResponseData
         | BaseResponseData
         | None
     ] = None

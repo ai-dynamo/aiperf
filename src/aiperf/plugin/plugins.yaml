@@ -219,6 +219,19 @@ service_manager:
 # One-to-one mapping: exactly one endpoint is selected based on endpoint_type config.
 # =============================================================================
 endpoint:
+  speech:
+    class: aiperf.endpoints.openai_speech:SpeechEndpoint
+    description: |
+      OpenAI-compatible speech generation at /v1/audio/speech. Validates complete
+      PCM or WAV responses and reports output-audio metrics, without token metrics.
+    metadata:
+      endpoint_path: /v1/audio/speech
+      supports_streaming: false
+      produces_tokens: false
+      tokenizes_input: false
+      produces_audio: true
+      metrics_title: Speech Generation Metrics
+
   audio_transcription:
     class: aiperf.endpoints.openai_audio_transcription:AudioTranscriptionEndpoint
     description: |

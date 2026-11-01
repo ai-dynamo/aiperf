@@ -116,6 +116,7 @@ class TestBaseMetricsProcessor:
             | MetricFlags.SUPPORTS_IMAGE_ONLY
             | MetricFlags.SUPPORTS_VIDEO_ONLY
             | MetricFlags.PRODUCES_VIDEO_ONLY
+            | MetricFlags.PRODUCES_AUDIO_ONLY
             | MetricFlags.STREAMING_ONLY
             | MetricFlags.FIXED_SCHEDULE_ONLY
             | MetricFlags.GOODPUT
@@ -145,6 +146,7 @@ class TestBaseMetricsProcessor:
                 | MetricFlags.SUPPORTS_IMAGE_ONLY
                 | MetricFlags.SUPPORTS_VIDEO_ONLY
                 | MetricFlags.PRODUCES_VIDEO_ONLY
+                | MetricFlags.PRODUCES_AUDIO_ONLY
                 | MetricFlags.STREAMING_ONLY
                 | MetricFlags.FIXED_SCHEDULE_ONLY
                 | MetricFlags.GOODPUT,
@@ -158,6 +160,7 @@ class TestBaseMetricsProcessor:
                 | MetricFlags.SUPPORTS_IMAGE_ONLY
                 | MetricFlags.SUPPORTS_VIDEO_ONLY
                 | MetricFlags.PRODUCES_VIDEO_ONLY
+                | MetricFlags.PRODUCES_AUDIO_ONLY
                 | MetricFlags.STREAMING_ONLY
                 | MetricFlags.FIXED_SCHEDULE_ONLY
                 | MetricFlags.ERROR_ONLY
@@ -172,6 +175,7 @@ class TestBaseMetricsProcessor:
                 | MetricFlags.SUPPORTS_IMAGE_ONLY
                 | MetricFlags.SUPPORTS_VIDEO_ONLY
                 | MetricFlags.PRODUCES_VIDEO_ONLY
+                | MetricFlags.PRODUCES_AUDIO_ONLY
                 | MetricFlags.STREAMING_ONLY
                 | MetricFlags.FIXED_SCHEDULE_ONLY
                 | MetricFlags.GOODPUT,
@@ -248,6 +252,7 @@ class TestBaseMetricsProcessor:
             | MetricFlags.SUPPORTS_IMAGE_ONLY
             | MetricFlags.SUPPORTS_VIDEO_ONLY
             | MetricFlags.PRODUCES_VIDEO_ONLY
+            | MetricFlags.PRODUCES_AUDIO_ONLY
             | MetricFlags.STREAMING_ONLY
             | MetricFlags.FIXED_SCHEDULE_ONLY
             | MetricFlags.GOODPUT
@@ -409,3 +414,22 @@ class TestFixedScheduleOnlyGating:
         applicable = set(MetricRegistry.tags_applicable_to(*processor.get_filters()))
 
         assert applicable >= self.REPLAY_SCHED_TAGS
+
+
+@pytest.mark.parametrize(
+    "endpoint_type",
+    [EndpointType.SPEECH, EndpointType.CHAT, EndpointType.AUDIO_TRANSCRIPTION],
+)
+def test_output_audio_capability_is_independent_of_input_audio(
+    mock_run: Mock, endpoint_type: EndpointType
+) -> None:
+    """Speech enables output-audio metrics while ASR retains input-audio semantics."""
+    mock_run.cfg.endpoint.type = endpoint_type
+    mock_run.cfg.endpoint.streaming = False
+    _, disallowed = BaseMetricsProcessor(mock_run).get_filters()
+    if endpoint_type == EndpointType.SPEECH:
+        assert not disallowed & MetricFlags.PRODUCES_AUDIO_ONLY
+        assert disallowed & MetricFlags.SUPPORTS_AUDIO_ONLY
+        assert disallowed & MetricFlags.PRODUCES_TOKENS_ONLY
+    else:
+        assert disallowed & MetricFlags.PRODUCES_AUDIO_ONLY

@@ -70,6 +70,7 @@ from aiperf.common.models.progress_models import (
     WorkerStats,
 )
 from aiperf.common.models.record_models import (
+    AudioResponseData,
     AwsEventStreamMessage,
     BaseResponseData,
     BinaryResponse,
@@ -165,6 +166,7 @@ __all__ = [
     "AioHttpTraceData",
     "AioHttpTraceDataExport",
     "Audio",
+    "AudioResponseData",
     "AutoRoutedModel",
     "BasePhaseStats",
     "BaseResponseData",

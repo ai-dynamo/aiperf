@@ -309,6 +309,20 @@ class JsonExportData(AIPerfBaseModel):
     )
     request_throughput: JsonMetricResult | None = None
     request_latency: JsonMetricResult | None = None
+    output_audio_duration: JsonMetricResult | None = Field(
+        default=None, description="Duration in seconds of successfully generated audio."
+    )
+    output_audio_rtf: JsonMetricResult | None = Field(
+        default=None,
+        description="Complete-response latency divided by output audio duration.",
+    )
+    output_audio_throughput: JsonMetricResult | None = Field(
+        default=None,
+        description="Successful output audio seconds per observation wall second.",
+    )
+    total_output_audio_duration: JsonMetricResult | None = Field(
+        default=None, description="Total successful output audio duration in seconds."
+    )
     request_count: JsonMetricResult | None = None
     time_to_first_token: JsonMetricResult | None = None
     time_to_second_token: JsonMetricResult | None = None

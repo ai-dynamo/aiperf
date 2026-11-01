@@ -19,7 +19,7 @@ from aiperf.common.enums import (
     RequestContentType,
 )
 from aiperf.common.models import AIPerfBaseModel
-from aiperf.config.endpoint import EndpointDefaults, TemplateConfig
+from aiperf.config.endpoint import EndpointDefaults, PCMOutputConfig, TemplateConfig
 from aiperf.plugin.enums import EndpointType, RequestSignerType, TransportType
 
 if TYPE_CHECKING:
@@ -150,6 +150,9 @@ class EndpointInfo(AIPerfBaseModel):
         description="Collect per-chunk trace data (timestamps and sizes) for HTTP trace export. "
         "When False, only aggregate metrics are tracked (counts, totals, first/last timestamps).",
     )
+    pcm_output: PCMOutputConfig | None = Field(
+        default=None, description="Declared format of headerless speech responses."
+    )
     template: TemplateConfig | None = Field(
         default=None,
         description="Custom template configuration for template endpoints. "
@@ -269,6 +272,7 @@ class ModelEndpointInfo(AIPerfBaseModel):
                 request_content_type=ep.request_content_type,
                 collect_trace_chunks=False,
                 template=getattr(ep, "template", None),
+                pcm_output=ep.pcm_output,
                 session_header=getattr(ep, "session_header", None),
                 uuid_and_strip=getattr(
                     ep, "uuid_and_strip", EndpointDefaults.UUID_AND_STRIP
