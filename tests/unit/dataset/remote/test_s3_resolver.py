@@ -620,19 +620,23 @@ async def test_cancel_before_get_object_never_requests_it() -> None:
     executor = ThreadPoolExecutor(max_workers=1)
     asyncio.get_running_loop().set_default_executor(executor)
     release = threading.Event()
-    executor.submit(release.wait, 5)
-    client = MagicMock()
-    probe = _object_probe('etag:"e"')
-    task = asyncio.create_task(S3SourceResolver(client=client).materialize(probe))
-    for _ in range(10):
-        await asyncio.sleep(0)
-    task.cancel()
-    for _ in range(5):
-        await asyncio.sleep(0)
-    assert not task.done()
-    release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    try:
+        executor.submit(release.wait, 5)
+        client = MagicMock()
+        probe = _object_probe('etag:"e"')
+        task = asyncio.create_task(S3SourceResolver(client=client).materialize(probe))
+        for _ in range(10):
+            await asyncio.sleep(0)
+        task.cancel()
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert not task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        release.set()
+        executor.shutdown(wait=True)
     client.get_object.assert_not_called()
     assert list(entry_dir(probe.ref).glob("*")) == []
 
