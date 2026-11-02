@@ -23,6 +23,28 @@ ROWS = [
     {"timestamp": 9, "input_length": 8, "output_length": 4, "hash_ids": [3]},
 ]
 UNTIMED = [{k: v for k, v in r.items() if k != "timestamp"} for r in ROWS]
+# Nested structs take the union of their keys, so parquet stores null for every key a
+# turn or message lacks; the reader must drop those again.
+NESTED = [
+    {
+        "session_id": "a",
+        "turns": [
+            {"text": "hi", "delay": 5},
+            {"text": "again", "role": "user"},
+        ],
+    },
+    {
+        "messages": [
+            {"role": "user", "content": "weather?"},
+            {
+                "role": "assistant",
+                "tool_calls": [{"id": "c1", "name": "get_weather"}],
+            },
+            {"role": "tool", "tool_call_id": "c1", "content": "sunny"},
+        ],
+    },
+    {"session_id": "b", "turns": [{"text": "yo", "tags": [None, "x"]}]},
+]
 SESSIONS = [
     {"session_id": "a", "turns": [{"text": "hi"}]},
     {"session_id": "a", "turns": [{"text": "again"}]},
@@ -37,7 +59,9 @@ def _jsonl(path: Path, rows: list[dict]) -> Path:
 
 def _parquet(path: Path, rows: list[dict]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    pq.write_table(pa.Table.from_pylist(rows), path)
+    # Infer the schema from every row, as push_to_hub does; Table.from_pylist
+    # would take the columns from the first row only.
+    pq.write_table(pa.Table.from_struct_array(pa.array(rows)), path)
     return path
 
 
@@ -58,8 +82,15 @@ def encodings(request, tmp_path: Path):
     return make
 
 
-def test_iter_records_parquet_equals_jsonl(encodings) -> None:
-    jsonl, parquet = encodings(ROWS)
+@pytest.mark.parametrize(
+    "rows",
+    [
+        param(ROWS, id="flat"),
+        param(NESTED, id="nested-mixed-keys"),
+    ],
+)  # fmt: skip
+def test_iter_records_parquet_equals_jsonl(encodings, rows: list[dict]) -> None:
+    jsonl, parquet = encodings(rows)
     assert list(iter_records(parquet)) == list(iter_records(jsonl))
 
 

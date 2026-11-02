@@ -90,8 +90,9 @@ that read their records through the shared reader: `mooncake_trace`, `bailian_tr
 only; a directory of Baseten shards is rejected). Any other format fails before the run with
 "does not read parquet files"; convert the data to JSONL or choose a format that reads parquet.
 
-- Rows are read as JSON records and nulls are dropped, which restores the record shape of the
-  JSONL file that `datasets.push_to_hub` started from. Binary, timestamp, decimal, and map
+- Rows are read as JSON records and null-valued keys are dropped at every depth (including
+  inside nested turns or messages), which restores the record shape of the JSONL file that
+  `datasets.push_to_hub` started from. Binary, timestamp, decimal, and map
   columns, and NaN or infinity values, are rejected with the name of the column.
 - A directory reads every shard in order. When the shards are named
   `<split>-00000-of-00002.parquet` and several splits are present, AIPerf reads `train`.
