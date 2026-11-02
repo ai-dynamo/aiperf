@@ -41,14 +41,44 @@ logger = logging.getLogger(__name__)
 _UI_FLAG_RE = re.compile(r"(?<!\S)--ui(-type)?(=|\s)")
 
 
-def _scan(command: str) -> Iterator[tuple[int, str | None, bool]]:
-    """Walk a shell command, tracking quoting, comments and escapes.
+def _read_heredoc_delimiter(command: str, start: int) -> str | None:
+    """The delimiter word of a heredoc redirection, or None if there is none.
 
-    Yields ``(index, quote, in_comment)`` per character, where ``quote`` is the
-    enclosing quote character or None. Escaped characters are consumed and
-    never yielded, so ``\\'`` in unquoted text cannot open a quote that
-    swallows the rest of the command -- which would hide every invocation
-    after it.
+    Accepts the spellings bash does: bare (``<<EOF``), quoted (``<<'EOF'``,
+    ``<<"EOF"``) and backslash-escaped (``<<\\EOF``). Which one is used only
+    decides whether bash expands the body, and that distinction does not
+    matter here: either way the body is data rather than syntax.
+    """
+    i = start
+    if i < len(command) and command[i] in "\"'":
+        quote = command[i]
+        end = command.find(quote, i + 1)
+        if end == -1:
+            return None
+        return command[i + 1 : end] or None
+    chars: list[str] = []
+    while i < len(command) and command[i] not in " \t\n;&|<>()":
+        if command[i] == "\\":
+            i += 1
+            if i >= len(command):
+                break
+        chars.append(command[i])
+        i += 1
+    return "".join(chars) or None
+
+
+def _scan(command: str) -> Iterator[tuple[int, str | None, bool]]:
+    """Walk a shell command, tracking quoting, comments, escapes and heredocs.
+
+    Yields ``(index, quote, is_data)`` per character, where ``quote`` is the
+    enclosing quote character or None and ``is_data`` marks text the shell
+    never executes. Escaped characters are consumed and never yielded, so
+    ``\\'`` in unquoted text cannot open a quote that swallows the rest of the
+    command -- which would hide every invocation after it.
+
+    A heredoc body is data the command writes, not syntax, and is reported as
+    such: an apostrophe in ``Explain why the sky's blue`` must not open a
+    quote that runs past the terminator and hides the invocation underneath.
 
     One scanner rather than one per caller: the locator and the option check
     have to agree about what the shell would actually execute, and two copies
@@ -56,8 +86,27 @@ def _scan(command: str) -> Iterator[tuple[int, str | None, bool]]:
     """
     quote: str | None = None
     in_comment = False
+    # Bash reads a heredoc body starting at the next line, so an operator
+    # seen mid-line waits here until that newline arrives. A line may open
+    # more than one, and they are consumed in the order written.
+    pending_heredocs: list[tuple[str, bool]] = []
+    heredoc: tuple[str, bool] | None = None
     i = 0
     while i < len(command):
+        if heredoc is not None:
+            delimiter, strip_tabs = heredoc
+            newline = command.find("\n", i)
+            stop = len(command) if newline == -1 else newline
+            line = command[i:stop]
+            if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+                heredoc = None
+            for j in range(i, stop):
+                yield j, None, True
+            i = stop
+            if newline != -1:
+                yield newline, None, True
+                i = newline + 1
+            continue
         char = command[i]
         if in_comment:
             if char == "\n":
@@ -67,6 +116,11 @@ def _scan(command: str) -> Iterator[tuple[int, str | None, bool]]:
                 i += 1
                 continue
         if quote is None:
+            if char == "\n" and pending_heredocs:
+                heredoc = pending_heredocs.pop(0)
+                yield i, None, False
+                i += 1
+                continue
             if char == "\\":
                 i += 2
                 continue
@@ -74,6 +128,21 @@ def _scan(command: str) -> Iterator[tuple[int, str | None, bool]]:
                 in_comment = True
                 i += 1
                 continue
+            # ``<<<`` is a here-string: its word is ordinary syntax and it
+            # opens no body. Its own leading ``<<`` finds no delimiter,
+            # because a delimiter cannot start with ``<``; the left-neighbour
+            # check is what stops the trailing ``<<`` of one from being read
+            # as a heredoc opener and swallowing the rest of the block.
+            if command.startswith("<<", i) and (i == 0 or command[i - 1] != "<"):
+                j = i + 2
+                strip_tabs = j < len(command) and command[j] == "-"
+                if strip_tabs:
+                    j += 1
+                while j < len(command) and command[j] in " \t":
+                    j += 1
+                delimiter = _read_heredoc_delimiter(command, j)
+                if delimiter is not None:
+                    pending_heredocs.append((delimiter, strip_tabs))
             if char in "\"'":
                 quote = char
                 yield i, None, False
@@ -93,16 +162,17 @@ def _scan(command: str) -> Iterator[tuple[int, str | None, bool]]:
 
 
 def _executable_text(command: str) -> str:
-    """The command with comment spans blanked out, for option scanning.
+    """The command with non-executable spans blanked out, for option scanning.
 
     Guides routinely show a commented variant above the command they run
     (``# aiperf profile --ui-type none``). Tokenizing the raw text finds the
     flag in that comment and concludes the guide chose a UI, so the real
-    invocation never gets one.
+    invocation never gets one. A heredoc body is blanked for the same reason:
+    a prompt file that happens to quote a flag is not the guide passing it.
     """
     chars = [" "] * len(command)
-    for i, _quote, in_comment in _scan(command):
-        if not in_comment:
+    for i, _quote, is_data in _scan(command):
+        if not is_data:
             chars[i] = command[i]
     return "".join(chars)
 
@@ -136,13 +206,14 @@ def _has_explicit_ui_flag(command: str) -> bool:
 def _invocation_indices(command: str, needle: str) -> list[int]:
     """Every index where ``needle`` is really executed, in order.
 
-    Skips quoted spans and shell comments: a payload or a commented variant
-    that merely mentions the command is not an invocation of it.
+    Skips quoted spans, shell comments and heredoc bodies: a payload, a
+    commented variant or a file the command writes that merely mentions the
+    command is not an invocation of it.
     """
     return [
         i
-        for i, quote, in_comment in _scan(command)
-        if quote is None and not in_comment and command.startswith(needle, i)
+        for i, quote, is_data in _scan(command)
+        if quote is None and not is_data and command.startswith(needle, i)
     ]
 
 
@@ -217,6 +288,24 @@ def timed_out_in_container(returncode: int | None) -> bool:
     a command that ignored SIGTERM.
     """
     return returncode in (TIMEOUT_EXIT_CODE, TIMEOUT_SIGKILL_EXIT_CODE)
+
+
+def deadline_ended_the_command(
+    returncode: int | None, elapsed_seconds: float, command_timeout: int
+) -> bool:
+    """Whether *this* deadline is what ended the command.
+
+    The exit code alone does not establish that. A documented command that
+    runs its own ``timeout`` exits 124 as soon as that inner deadline fires,
+    and anything the kernel OOM-kills inside the container exits 137; both are
+    indistinguishable by exit code from the deadline this runner set.
+
+    Elapsed time settles it. The host clock starts before the container's
+    timer does, so a command our deadline really did end always measures at or
+    past ``command_timeout``. The guard can only ever reject an early exit,
+    never a genuine timeout.
+    """
+    return timed_out_in_container(returncode) and elapsed_seconds >= command_timeout
 
 
 def resolve_command_timeout(aiperf_cmd: Command) -> int:
@@ -845,6 +934,7 @@ class EndToEndTestRunner:
                 logger.info(f"With UI flag: {aiperf_command_with_ui}")
                 logger.info("=" * 60)
 
+                command_started = time.monotonic()
                 aiperf_process = subprocess.Popen(
                     exec_argv,
                     stdin=subprocess.DEVNULL,
@@ -894,16 +984,30 @@ class EndToEndTestRunner:
                     killed_by_watchdog = kill_guard.mark_finished()
                     watchdog.cancel()
 
+                elapsed_seconds = time.monotonic() - command_started
+
                 # ``timeout`` reports 124 when it had to signal the command
                 # at the deadline, and 137 when the command ignored SIGTERM
                 # and had to be SIGKILLed after the grace period. Reading the
                 # exit code keeps the diagnostic even though the watchdog no
-                # longer fires on an ordinary timeout.
-                if timed_out_in_container(aiperf_process.returncode):
+                # longer fires on an ordinary timeout -- but only alongside
+                # the elapsed time, because the command can produce either
+                # code itself without this deadline being involved.
+                if deadline_ended_the_command(
+                    aiperf_process.returncode, elapsed_seconds, command_timeout
+                ):
                     logger.error(
                         f"AIPerf test {i + 1} exceeded {command_timeout}s "
                         f"timeout for {server.name} and was terminated inside "
                         f"the container (exit {aiperf_process.returncode})"
+                    )
+                elif timed_out_in_container(aiperf_process.returncode):
+                    logger.error(
+                        f"AIPerf test {i + 1} for {server.name} exited "
+                        f"{aiperf_process.returncode} after "
+                        f"{elapsed_seconds:.1f}s, well inside its "
+                        f"{command_timeout}s deadline; that exit code came "
+                        f"from the command itself, not from this deadline"
                     )
                 elif killed_by_watchdog:
                     logger.error(

@@ -173,3 +173,71 @@ def test_one_invocations_explicit_choice_does_not_cover_another() -> None:
 
     assert injected.splitlines()[0] == "aiperf profile --ui-type simple --model a"
     assert injected.splitlines()[1] == "aiperf profile --model b --ui-type none"
+
+
+@pytest.mark.parametrize(
+    "heredoc",
+    [
+        param("<<'EOF'\nExplain why the sky's blue.\nEOF", id="single-quoted-delimiter"),
+        param('<<"EOF"\nExplain why the sky\'s blue.\nEOF', id="double-quoted-delimiter"),
+        param("<<EOF\nExplain why the sky's blue.\nEOF", id="bare-delimiter"),
+        param("<<-EOF\n\tExplain why the sky's blue.\n\tEOF", id="tab-stripped-delimiter"),
+    ],
+)  # fmt: skip
+def test_an_apostrophe_in_a_heredoc_body_does_not_hide_the_invocation(
+    heredoc: str,
+) -> None:
+    """A heredoc body is data the command writes, not shell syntax.
+
+    Read as syntax, the apostrophe in ``sky's`` opens a quote that never
+    closes, so the invocation underneath looks quoted and is skipped. The
+    command then runs with whatever UI it defaults to and the simple-UI
+    output for that test is lost.
+    """
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type(
+        f"cat > prompts.txt {heredoc}\naiperf profile --model m --input-file prompts.txt"
+    )
+
+    assert "aiperf profile --ui-type simple --model m" in injected
+
+
+def test_a_flag_inside_a_heredoc_body_is_not_the_guide_choosing_a_ui() -> None:
+    """The body is written to a file, so a flag quoted there is not passed."""
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type(
+        "cat > notes.txt <<'EOF'\nrun it with --ui-type none\nEOF\n"
+        "aiperf profile --model m"
+    )
+
+    assert "aiperf profile --ui-type simple --model m" in injected
+
+
+def test_a_here_string_is_not_read_as_a_heredoc() -> None:
+    """``<<<`` takes a word on the same line and opens no body.
+
+    Swallowing the rest of the block as a heredoc body would hide every
+    invocation after it, which is the same failure in the other direction.
+    """
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type(
+        "cat <<< 'seed'\naiperf profile --model m",
+    )
+
+    assert "aiperf profile --ui-type simple --model m" in injected
+
+
+def test_an_unspaced_here_string_is_not_read_as_a_heredoc() -> None:
+    """``<<<WORD`` has a ``<<`` one character in, which must not open a body.
+
+    Read as a heredoc it would take ``WORD`` as the delimiter and swallow
+    every line until one matched, hiding the invocations underneath.
+    """
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type("cat <<<SEED\naiperf profile --model m")
+
+    assert "aiperf profile --ui-type simple --model m" in injected

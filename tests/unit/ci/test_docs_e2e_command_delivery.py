@@ -19,6 +19,7 @@ from __future__ import annotations
 import subprocess
 
 import pytest
+from pytest import param
 
 from aiperf.common.constants import IS_WINDOWS
 
@@ -209,3 +210,30 @@ def test_an_in_container_timeout_is_still_reported_as_one() -> None:
     assert not timed_out_in_container(0)
     assert not timed_out_in_container(1)
     assert not timed_out_in_container(None)
+
+
+@pytest.mark.parametrize(
+    ("returncode", "elapsed", "expected"),
+    [
+        param(124, 30.1, True, id="signalled-at-the-deadline"),
+        param(137, 40.2, True, id="sigkilled-after-the-grace"),
+        param(124, 0.2, False, id="the-command-ran-its-own-timeout"),
+        param(137, 0.1, False, id="oom-killed-inside-the-container"),
+        param(1, 0.1, False, id="ordinary-failure"),
+        param(0, 45.0, False, id="slow-but-successful"),
+    ],
+)  # fmt: skip
+def test_only_a_late_exit_is_blamed_on_the_deadline(
+    returncode: int, elapsed: float, expected: bool
+) -> None:
+    """124/137 do not prove this deadline ended the command.
+
+    A documented command running its own ``timeout`` exits 124 immediately,
+    and an OOM kill inside the container exits 137. Blaming the deadline for
+    either sends a reader hunting a slow benchmark that never happened. The
+    host clock starts before the container's timer, so a real timeout always
+    measures at or past the deadline and the guard cannot reject one.
+    """
+    from test_runner import deadline_ended_the_command
+
+    assert deadline_ended_the_command(returncode, elapsed, 30) is expected
