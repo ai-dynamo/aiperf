@@ -3,15 +3,19 @@
 
 from __future__ import annotations
 
+import logging
 import textwrap
 
+import pytest
 from cyclopts import App
 
 from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
 from aiperf.config import BenchmarkRun
+from aiperf.config.endpoint import EndpointConfig
 from aiperf.config.flags._converter_endpoint import build_endpoint
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.loader import build_benchmark_plan, load_config_from_string
+from aiperf.plugin.enums import EndpointType
 
 
 def _parse_cli_args(argv: list[str]) -> CLIConfig:
@@ -93,3 +97,28 @@ def test_allow_empty_content_yaml_reaches_runtime_endpoint() -> None:
 
     assert run.cfg.endpoint.allow_empty_content is True
     assert ModelEndpointInfo.from_run(run).endpoint.allow_empty_content is True
+
+
+@pytest.mark.parametrize(
+    ("streaming", "endpoint_type", "warns"),
+    [
+        (True, EndpointType.CHAT, False),
+        (False, EndpointType.CHAT, True),
+        (True, EndpointType.COMPLETIONS, True),
+    ],
+)  # fmt: skip
+def test_allow_empty_content_warns_when_inactive(
+    caplog: pytest.LogCaptureFixture,
+    streaming: bool,
+    endpoint_type: EndpointType,
+    warns: bool,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="aiperf.config.endpoint"):
+        EndpointConfig(
+            urls=["http://localhost:8000"],
+            type=endpoint_type,
+            streaming=streaming,
+            allow_empty_content=True,
+        )
+
+    assert ("--allow-empty-content has no effect" in caplog.text) is warns

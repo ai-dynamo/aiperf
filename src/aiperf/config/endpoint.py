@@ -872,6 +872,19 @@ class EndpointConfig(BaseConfig):
         return self
 
     @model_validator(mode="after")
+    def _warn_inactive_allow_empty_content(self) -> Self:
+        """Surface ``--allow-empty-content`` where the chat stream parser never sees it."""
+        if self.allow_empty_content and (
+            not self.streaming or self.type != EndpointType.CHAT
+        ):
+            _logger.warning(
+                "--allow-empty-content has no effect unless --streaming is set with "
+                f"endpoint type 'chat' (got streaming={self.streaming}, type "
+                f"'{self.type}'). Drop --allow-empty-content to silence this warning."
+            )
+        return self
+
+    @model_validator(mode="after")
     def _validate_responses_store_requires_server_token_count(self) -> Self:
         """Require server token counts when Responses stateful storage is requested.
 
