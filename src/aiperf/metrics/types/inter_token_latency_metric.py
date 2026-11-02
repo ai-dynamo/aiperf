@@ -51,6 +51,12 @@ def _decode_token_count(
     None (or a non-positive/lagging value) means "not reported", so fall
     back to assuming one token in the first chunk -- the legacy `osl - 1`.
     """
+    # An explicit empty first chunk (--allow-empty-content) set TTFT without a
+    # token, so every output token arrived in the decode window.
+    if record.content_responses and is_explicit_empty_chunk(
+        record.content_responses[0]
+    ):
+        return osl  # type: ignore
     first_chunk_tokens = (
         record.token_counts.first_content_chunk_tokens
         if record.token_counts is not None
@@ -62,14 +68,6 @@ def _decode_token_count(
         return osl - 1  # type: ignore
 
     decode_tokens = osl - first_chunk_tokens  # type: ignore
-    # An explicit empty first chunk (--allow-empty-content) set TTFT without a
-    # token, so every output token arrived in the decode window.
-    if (
-        first_chunk_tokens == 0
-        and record.content_responses
-        and is_explicit_empty_chunk(record.content_responses[0])
-    ):
-        return decode_tokens
     # A server-reported count that is non-positive or >= OSL is inconsistent
     # (e.g. per-chunk usage lagging a chunk, or the whole response in one
     # chunk). Degrade to `osl - 1` and warn once per metric type rather than

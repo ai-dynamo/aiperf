@@ -138,13 +138,15 @@ def test_enabled_empty_responses_drive_one_metric_timeline() -> None:
     assert results[InterChunkLatencyMetric.tag] == [
         [100_000_000, 100_000_000, 100_000_000]
     ]
-    assert results[InterTokenLatencyMetric.tag] == pytest.approx([100_000_000])
+    # The empty TTFT chunk carries no token, so all 4 output tokens fall in the
+    # decode window.
+    assert results[InterTokenLatencyMetric.tag] == pytest.approx([300_000_000 / 4])
     assert results[FullResponseInterTokenLatencyMetric.tag] == pytest.approx(
-        [500_000_000 / 3]
+        [500_000_000 / 4]
     )
-    assert results[OutputTokenThroughputPerUserMetric.tag] == pytest.approx([10.0])
+    assert results[OutputTokenThroughputPerUserMetric.tag] == pytest.approx([4 / 0.3])
     assert results[FullResponseOutputTokenThroughputPerUserMetric.tag] == pytest.approx(
-        [6.0]
+        [4 / 0.5]
     )
     assert results[PrefillThroughputPerUserMetric.tag] == pytest.approx([1_000.0])
 
