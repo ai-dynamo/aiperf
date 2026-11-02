@@ -67,6 +67,8 @@ class SingleTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     ```
     """
 
+    reads_parquet = True
+
     @classmethod
     def can_load(
         cls, data: dict[str, Any] | None = None, filename: str | Path | None = None

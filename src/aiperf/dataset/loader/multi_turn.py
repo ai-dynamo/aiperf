@@ -120,6 +120,8 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     pre-hoist behavior.
     """
 
+    reads_parquet = True
+
     _hoist_leading_system_message: ClassVar[bool] = True
     """Hoist a leading text-only system turn into ``conversation.system_message``.
 

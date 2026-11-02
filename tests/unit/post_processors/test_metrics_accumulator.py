@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -734,7 +735,7 @@ class TestSummarize:
         )
         await processor.process_record(msg)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
 
         assert isinstance(summary, AccumulatorMetricsSummary)
         assert RequestLatencyMetric.tag in summary.results
@@ -800,12 +801,12 @@ class TestSummarize:
             mock_warning.assert_called()
 
 
-class TestTimesliceSummarize:
+class TestTimesliceExport:
     @pytest.mark.asyncio
-    async def test_summarize_with_timeslices(
+    async def test_export_with_timeslices(
         self, mock_metric_registry: Mock, mock_run
     ) -> None:
-        """Test summarize produces timeslice results when slice_duration is set."""
+        """Test export produces timeslice results when slice_duration is set."""
         mock_run.cfg.artifacts.slice_duration = 1.0
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
@@ -830,7 +831,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg2)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
 
         assert isinstance(summary, AccumulatorMetricsSummary)
         assert summary.timeslices is not None
@@ -840,10 +841,10 @@ class TestTimesliceSummarize:
         assert len(summary.timeslices[1].metric_results) > 0
 
     @pytest.mark.asyncio
-    async def test_summarize_no_timeslices_without_config(
+    async def test_export_no_timeslices_without_config(
         self, mock_metric_registry: Mock, mock_run
     ) -> None:
-        """Test summarize returns None timeslices when slice_duration is not set."""
+        """Test export returns None timeslices when slice_duration is not set."""
         processor = MetricsAccumulator(mock_run)
         processor._tags_to_types = {"test_record": MetricType.RECORD}
         processor._metric_classes = {"test_record": RequestLatencyMetric}
@@ -855,7 +856,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
         assert summary.timeslices is None
 
     @pytest.mark.asyncio
@@ -885,7 +886,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg2)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
         assert summary.timeslices is not None
         # Both should be in the same timeslice
         assert len(summary.timeslices) == 1
@@ -932,7 +933,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg3)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
         assert summary.timeslices is not None
         assert len(summary.timeslices) == 2
 
@@ -969,7 +970,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg2)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
         assert summary.timeslices is not None
         ts0_results = summary.timeslices[0].metric_results
         assert ts0_results["max_ts"].avg == 300.0  # MAX of 100, 300
@@ -1001,7 +1002,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg2)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
         assert summary.timeslices is not None
         ts0_results = summary.timeslices[0].metric_results
         assert ts0_results["min_ts"].avg == 200.0  # MIN of 500, 200
@@ -1034,7 +1035,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg2)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
 
         assert summary.timeslices is not None
         assert len(summary.timeslices) == 2
@@ -1064,7 +1065,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
         assert summary.timeslices is None
 
     @pytest.mark.asyncio
@@ -1099,7 +1100,7 @@ class TestTimesliceSummarize:
         )
         await processor.process_record(msg2)
 
-        summary = await processor.summarize()
+        summary = await processor.export_results(ExportContext())
         assert summary.timeslices is not None
         assert len(summary.timeslices) == 2
 
@@ -1224,8 +1225,18 @@ class TestTimesliceRaggedIndex:
         ]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "overlap_kwargs",
+        [
+            param({"include_timeslices": True}, id="overlapping-timeslice-summary"),
+            param(
+                {"include_timeslices": False, "include_sweeps": False},
+                id="overlapping-live-summary",
+            ),
+        ],
+    )  # fmt: skip
     async def test_summary_overlapping_timeslice_export_keeps_its_own_values(
-        self, mock_run
+        self, mock_run, overlap_kwargs: dict[str, bool]
     ) -> None:
         mock_run.cfg.artifacts.slice_duration = 1.0
         accumulator = MetricsAccumulator(mock_run)
@@ -1233,17 +1244,20 @@ class TestTimesliceRaggedIndex:
         warmup = ExportContext(phase=CreditPhase.WARMUP)
         profiling = ExportContext(phase=CreditPhase.PROFILING)
         expected_warmup = self._dump(await accumulator.export_results(warmup))
-        expected_profiling = self._dump(await accumulator.export_results(profiling))
+        expected_profiling = await accumulator.export_results(profiling)
 
         compute_results = MetricsAccumulator._compute_results
         pending = [profiling]
         overlapped: list[AccumulatorMetricsSummary] = []
 
         def summarize_mid_slice(self, *args, **kwargs):
-            # The realtime summary runs on the event loop while the export's
-            # slice loop runs in a worker thread.
+            # A second summary runs on the event loop while the export's slice
+            # loop runs in a worker thread. The live tick passes summarize()'s
+            # headless flags; summarize() itself is async and cannot run here.
             if kwargs.get("is_timeslice") and pending:
-                overlapped.append(self._summarize_for_export_context(pending.pop()))
+                overlapped.append(
+                    self._summarize_for_export_context(pending.pop(), **overlap_kwargs)
+                )
             return compute_results(self, *args, **kwargs)
 
         with patch.object(
@@ -1256,7 +1270,19 @@ class TestTimesliceRaggedIndex:
 
         assert overlapped
         assert self._dump(exported) == expected_warmup
-        assert self._dump(overlapped[0]) == expected_profiling
+        if overlap_kwargs["include_timeslices"]:
+            assert self._dump(overlapped[0]) == self._dump(expected_profiling)
+        else:
+            live = overlapped[0]
+            assert live.timeslices is None
+            assert live.results.keys() <= expected_profiling.results.keys()
+            assert {
+                tag: result.model_dump(mode="json")
+                for tag, result in live.results.items()
+            } == {
+                tag: expected_profiling.results[tag].model_dump(mode="json")
+                for tag in live.results
+            }
 
 
 class TestMetricsSummary:
@@ -1461,7 +1487,7 @@ class TestTimesliceSweepMetrics:
         )
         await acc.process_record(msg)
 
-        summary = await acc.summarize()
+        summary = await acc.export_results(ExportContext())
         assert summary.timeslices is not None
         for ts in summary.timeslices:
             ts_results = ts.metric_results
@@ -1508,7 +1534,7 @@ class TestTimesliceSweepMetrics:
             )
             await acc.process_record(msg)
 
-        summary = await acc.summarize()
+        summary = await acc.export_results(ExportContext())
         assert summary.timeslices is not None
         ts0 = summary.timeslices[0].metric_results
         assert ts0["effective_concurrency"].avg > 1.0
@@ -1538,7 +1564,7 @@ class TestTimesliceSweepMetrics:
         )
         await acc.process_record(msg)
 
-        summary = await acc.summarize()
+        summary = await acc.export_results(ExportContext())
         assert summary.timeslices is not None
         ts0 = summary.timeslices[0].metric_results
         assert ts0["effective_decode_throughput"].avg > 0.0
@@ -1560,7 +1586,7 @@ class TestTimesliceSweepMetrics:
         )
         await acc.process_record(msg)
 
-        summary = await acc.summarize()
+        summary = await acc.export_results(ExportContext())
         assert summary.timeslices is not None
         ts0 = summary.timeslices[0].metric_results
         assert ts0["effective_decode_throughput"].avg == 0.0
@@ -1598,7 +1624,7 @@ class TestTimesliceSweepMetrics:
             )
             await acc.process_record(msg)
 
-        summary = await acc.summarize()
+        summary = await acc.export_results(ExportContext())
         assert summary.timeslices is not None
         assert len(summary.timeslices) == 3
 
