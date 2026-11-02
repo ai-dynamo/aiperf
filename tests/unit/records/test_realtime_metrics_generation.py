@@ -206,7 +206,6 @@ async def test_live_metrics_skip_unused_work_and_preserve_final_export(
     assert "effective_concurrency" in before.results
     assert "network_adjusted_request_latency" in before.results
 
-    # Failing at the expensive entry point proves it is skipped, not discarded.
     with (
         patch.object(
             accumulator,
