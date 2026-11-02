@@ -1,0 +1,690 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Stage Release RC: build and stage release candidate N of an EXISTING release
+# branch, then hand the staged artifacts to GitLab release-automation
+# (PIPELINE_TYPE=rc) for scanning and nSpect registration. Run once per rc
+# round, dispatched FROM the release/X.Y.Z branch.
+#
+# Phases:
+#   1. Prepare   - validate the dispatch, derive RC names from the branch version
+#   2. Authorize - only active ai-dynamo/devops members may stage
+#   3. Build     - wheel (-> S3) + multi-arch containers (-> ECR), as in nightly.yml
+#   4. Stage     - ECR -> NGC staging; S3 -> Artifactory
+#   5. Trigger   - GitLab release-automation, PIPELINE_TYPE=rc
+#   6. Summary   - always runs
+#
+# Names follow the release-automation aiperf contract (projects/aiperf.yml):
+#
+#   wheel      aiperf-X.Y.ZrcN-py3-none-any.whl   flat under <pypi repo>/release/
+#   container  <NGC staging>/aiperf:X.Y.ZrcN      (+ -amd64 / -arm64 per-arch tags)
+#   RC_TAG     vX.Y.Z-rcN                         label sent to GitLab, not a git tag
+#
+# No git tag is created and the branch is never modified: the release version
+# bump comes from the normal release-branch process. The version is patched
+# into the build workspace only, and the workflow refuses to run if the
+# branch's pyproject.toml does not already carry release_version. Registries
+# are immutable, so a failed or rejected round is re-staged as the next round.
+#
+# Publishing to production is a separate, manual GitLab step after QA sign-off
+# (PIPELINE_TYPE=publish); this workflow stops at staging + scanning.
+
+name: RC
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Version being released, X.Y.Z. Must equal the version in pyproject.toml; run this workflow from release/X.Y.Z.'
+        required: true
+        type: string
+      rc_round:
+        description: 'RC round N (bare integer): stages X.Y.ZrcN. Re-stage a failed or rejected round as N+1; registries are immutable.'
+        required: true
+        type: string
+        default: '0'
+      skip_gitlab_trigger:
+        description: 'Skip the GitLab release-automation trigger. Emergency use only.'
+        required: false
+        type: boolean
+        default: false
+
+# One staging run per (version, rc round): a second dispatch queues instead of
+# racing the first into immutable registries. Never cancel a run mid-stage.
+concurrency:
+  group: rc-${{ inputs.release_version }}-${{ inputs.rc_round }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # ============================================================================
+  # PHASE 1: PREPARE
+  # ============================================================================
+
+  prepare-rc:
+    name: Prepare RC
+    runs-on: ubuntu-latest
+    outputs:
+      release_version: ${{ steps.version.outputs.release_version }}
+      rc_number:       ${{ steps.version.outputs.rc_number }}
+      rc_tag:          ${{ steps.version.outputs.rc_tag }}
+      wheel_version:   ${{ steps.version.outputs.wheel_version }}
+      wheel_filename:  ${{ steps.version.outputs.wheel_filename }}
+      container_tag:   ${{ steps.version.outputs.container_tag }}
+      resolved_sha:    ${{ steps.version.outputs.resolved_sha }}
+      source_branch:   ${{ steps.version.outputs.source_branch }}
+    steps:
+      - name: Require a release branch on the upstream repo
+        env:
+          REPOSITORY:      ${{ github.repository }}
+          REF:             ${{ github.ref }}
+          EVENT:           ${{ github.event_name }}
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          RC_ROUND:        ${{ inputs.rc_round }}
+        run: |
+          set -euo pipefail
+          if [ "${REPOSITORY}" != "ai-dynamo/aiperf" ]; then
+            echo "::error::RC staging runs only on ai-dynamo/aiperf (got ${REPOSITORY})"
+            exit 1
+          fi
+          if [ "${EVENT}" != "workflow_dispatch" ]; then
+            echo "::error::RC only runs from a manual dispatch (got '${EVENT}')"
+            exit 1
+          fi
+          if [[ ! "${RELEASE_VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::release_version must be X.Y.Z (got '${RELEASE_VERSION}')"
+            exit 1
+          fi
+          if [[ ! "${RC_ROUND}" =~ ^(0|[1-9][0-9]{0,8})$ ]]; then
+            echo "::error::rc_round must be a bare integer without leading zeros (got '${RC_ROUND}')"
+            exit 1
+          fi
+          if [ "${REF}" != "refs/heads/release/${RELEASE_VERSION}" ]; then
+            echo "::error::dispatch this workflow from release/${RELEASE_VERSION} (got ${REF}); the branch tip is what gets staged."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Compute versions and tags
+        id: version
+        env:
+          RELEASE_VERSION: ${{ inputs.release_version }}
+          RC_ROUND:        ${{ inputs.rc_round }}
+        run: |
+          set -euo pipefail
+          V="${RELEASE_VERSION}"
+          N="${RC_ROUND}"
+
+          BASE_VERSION=$(sed -n 's/^version = "\([A-Za-z0-9._+-]*\)"$/\1/p' pyproject.toml | head -1)
+          if [ "${BASE_VERSION}" != "${V}" ]; then
+            echo "::error::pyproject.toml carries version '${BASE_VERSION}', expected ${V}. Bump the release branch first."
+            exit 1
+          fi
+
+          WHEEL_VERSION="${V}rc${N}"
+          {
+            echo "release_version=${V}"
+            echo "rc_number=${N}"
+            echo "rc_tag=v${V}-rc${N}"
+            echo "wheel_version=${WHEEL_VERSION}"
+            echo "wheel_filename=aiperf-${WHEEL_VERSION}-py3-none-any.whl"
+            echo "container_tag=${WHEEL_VERSION}"
+            echo "resolved_sha=$(git rev-parse HEAD)"
+            echo "source_branch=release/${V}"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  # ============================================================================
+  # PHASE 2: AUTHORIZE
+  # Only active members of the ai-dynamo/devops team may stage. Checks BOTH
+  # github.actor and github.triggering_actor (actor does not re-resolve on
+  # re-runs). Every later job compares authorized_attempt to github.run_attempt,
+  # so "Re-run failed jobs" re-runs this gate and is re-checked against whoever
+  # triggered the re-run. Team membership needs an org-scoped token, so it is
+  # read with the release GitHub App installed on this repo (secrets in the
+  # automated-release environment).
+  # ============================================================================
+
+  authorize:
+    name: Verify release-ops membership
+    needs: [prepare-rc]
+    runs-on: prod-aiperf-default-v1
+    environment: automated-release
+    timeout-minutes: 10
+    outputs:
+      authorized_attempt: ${{ steps.authorized.outputs.run_attempt }}
+    steps:
+      - name: Mint app token (ops gate)
+        id: ops-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Require release-ops team membership
+        env:
+          GH_TOKEN:         ${{ steps.ops-token.outputs.token }}
+          ORG:              ${{ github.repository_owner }}
+          TEAM:             devops
+          ACTOR:            ${{ github.actor }}
+          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          for USER in $(printf '%s\n%s\n' "${ACTOR}" "${TRIGGERING_ACTOR}" | sort -u); do
+            HTTP=$(curl -sS -o "${RUNNER_TEMP}/membership.json" -w '%{http_code}' \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/orgs/${ORG}/teams/${TEAM}/memberships/${USER}")
+            if [ "${HTTP}" != "200" ] || ! grep -Eq '"state"[[:space:]]*:[[:space:]]*"active"' "${RUNNER_TEMP}/membership.json"; then
+              echo "::error::@${USER} is not an active member of ${ORG}/${TEAM} (HTTP ${HTTP}); only release ops may stage a release."
+              exit 1
+            fi
+            echo "@${USER} authorized via ${ORG}/${TEAM}"
+          done
+
+      - name: Authorized
+        id: authorized
+        env:
+          RC_TAG: ${{ needs.prepare-rc.outputs.rc_tag }}
+        run: |
+          echo "Release authorized for ${RC_TAG}"
+          echo "run_attempt=${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+  # ============================================================================
+  # PHASE 3: BUILD
+  # No environment: declaration - builder runners carry AWS credentials via IAM
+  # instance profile. The authorize gate above is what lets the build start.
+  # ============================================================================
+
+  build-container:
+    name: Build Container (${{ matrix.arch }})
+    needs: [prepare-rc, authorize]
+    if: ${{ needs.authorize.outputs.authorized_attempt == github.run_attempt }}
+    # 90 min covers cold registry cache on both archs plus license extraction.
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: prod-aiperf-builder-amd-v1
+          - arch: arm64
+            platform: linux/arm64
+            runner: prod-aiperf-builder-arm-v1
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-rc.outputs.resolved_sha }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Patch version in pyproject.toml and uv.lock
+        uses: ./.github/actions/update-pyproject-version
+        with:
+          version: ${{ needs.prepare-rc.outputs.wheel_version }}
+
+      # Catch a bad version patch here, not ten minutes into the Docker build.
+      - name: Verify uv.lock matches the patched pyproject.toml
+        run: uv lock --check
+
+      # Embed the commit SHA two ways for redundant discoverability:
+      #   1. [project.urls] Repository = <commit URL> in pyproject.toml, which
+      #      lands in the wheel METADATA (pip show, importlib.metadata, SBOM
+      #      and vendor scanners).
+      #   2. src/aiperf/_build_info.py with COMMIT_SHA, shipped as a regular
+      #      module so `aiperf.__commit_sha__` works at runtime.
+      - name: Embed commit SHA in wheel metadata
+        env:
+          COMMIT_SHA: ${{ needs.prepare-rc.outputs.resolved_sha }}
+          REPO:       ${{ github.repository }}
+        run: |
+          python3 - <<'PYEOF'
+          import os
+          from pathlib import Path
+
+          sha = os.environ["COMMIT_SHA"]
+          repo = os.environ["REPO"]
+          url = f"https://github.com/{repo}/commit/{sha}"
+
+          pyproject = Path("pyproject.toml")
+          text = pyproject.read_text()
+          entry = f'Repository = "{url}"'
+          if "[project.urls]" in text:
+              text = text.replace("[project.urls]", f"[project.urls]\n{entry}", 1)
+          else:
+              if not text.endswith("\n"):
+                  text += "\n"
+              text += f"\n[project.urls]\n{entry}\n"
+          pyproject.write_text(text)
+
+          Path("src/aiperf/_build_info.py").write_text(
+              "# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n"
+              "# SPDX-License-Identifier: Apache-2.0\n"
+              '"""Build-time metadata. Generated by the RC pipeline; do not edit."""\n'
+              "\n"
+              f'COMMIT_SHA = "{sha}"\n'
+          )
+          print(f"Embedded commit SHA in METADATA + _build_info.py: {sha}")
+          PYEOF
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ECR
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
+            | docker login --username AWS --password-stdin \
+                "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+
+      # Wheel is pure Python (py3-none-any); build once on amd64 and upload.
+      - name: Build and extract wheel (amd64 only)
+        if: matrix.arch == 'amd64'
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          docker buildx build \
+            --platform linux/amd64 \
+            --target   wheel-artifact \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-amd64" \
+            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-amd64,mode=max" \
+            --output     type=local,dest=./dist/ \
+            .
+
+      - name: Validate wheel (amd64 only)
+        if: matrix.arch == 'amd64'
+        env:
+          EXPECTED_VERSION:  ${{ needs.prepare-rc.outputs.wheel_version }}
+          EXPECTED_FILENAME: ${{ needs.prepare-rc.outputs.wheel_filename }}
+        run: |
+          set -euo pipefail
+          WHEEL=$(find dist/ -maxdepth 1 -name "aiperf-*.whl" -type f | head -1)
+          if [ -z "${WHEEL}" ]; then
+            echo "::error::No aiperf wheel found in dist/"
+            exit 1
+          fi
+          if [ "${WHEEL##*/}" != "${EXPECTED_FILENAME}" ]; then
+            echo "::error::Wheel is ${WHEEL##*/}, expected ${EXPECTED_FILENAME}; GitLab looks it up by that exact name."
+            exit 1
+          fi
+          uvx twine check "${WHEEL}"
+          uv venv .venv-check
+          uv pip install --python .venv-check/bin/python "${WHEEL}"
+          GOT=$(.venv-check/bin/python -c "import aiperf; print(aiperf.__version__)")
+          if [ "${GOT}" != "${EXPECTED_VERSION}" ]; then
+            echo "::error::Wheel version mismatch: expected '${EXPECTED_VERSION}', got '${GOT}'"
+            exit 1
+          fi
+          .venv-check/bin/aiperf --help > /dev/null
+          echo "OK: ${WHEEL##*/} -> __version__=${GOT}"
+
+      - name: Upload wheel to S3 (amd64 only)
+        if: matrix.arch == 'amd64'
+        env:
+          S3_BUCKET:     ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          WHEEL_VERSION: ${{ needs.prepare-rc.outputs.wheel_version }}
+        run: |
+          set -euo pipefail
+          for WHEEL in $(find dist/ -maxdepth 1 -name "aiperf-*.whl" -type f); do
+            aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/rc/${WHEEL_VERSION}/" --sse AES256
+          done
+
+      - name: Build and push ${{ matrix.arch }} image to ECR
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          CONTAINER_TAG:      ${{ needs.prepare-rc.outputs.container_tag }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          IMAGE_TAG="${CONTAINER_TAG}-${{ matrix.arch }}"
+
+          refresh_ecr_token() {
+            while sleep 21600; do
+              aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
+                | docker login --username AWS --password-stdin "${REGISTRY}" 2>/dev/null || true
+            done
+          }
+          refresh_ecr_token &
+          REFRESH_PID=$!
+          trap 'kill ${REFRESH_PID} 2>/dev/null || true' EXIT
+
+          docker buildx build \
+            --platform "${{ matrix.platform }}" \
+            --target   runtime \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-${{ matrix.arch }}" \
+            --cache-to   "type=registry,ref=${REGISTRY}/aiperf:cache-${{ matrix.arch }},mode=max" \
+            --push \
+            --tag "${REGISTRY}/aiperf:${IMAGE_TAG}" \
+            .
+
+          DIGEST=$(docker buildx imagetools inspect "${REGISTRY}/aiperf:${IMAGE_TAG}" \
+            --format '{{.Manifest.Digest}}')
+          echo "Pushed ${REGISTRY}/aiperf:${IMAGE_TAG} - digest: ${DIGEST}"
+
+      # Compliance: re-export /opt/licenses/* from the licenses-artifact stage
+      # (a few MB, cache-hit from the runtime build above). amd64 only: Python
+      # deps are identical across archs.
+      - name: Extract license artifacts (amd64 only)
+        if: matrix.arch == 'amd64'
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          docker buildx build \
+            --platform linux/amd64 \
+            --target   licenses-artifact \
+            --cache-from "type=registry,ref=${REGISTRY}/aiperf:cache-amd64" \
+            --output     "type=local,dest=./license-raw" \
+            .
+          mkdir -p license-artifacts
+          cp -r ./license-raw/. license-artifacts/
+          {
+            cat license-artifacts/python/python-deps.csv
+            tail -n +2 license-artifacts/dpkg/dpkg-deps.csv
+          } > license-artifacts/deps.csv
+          find license-artifacts -type f | sort
+
+      - name: Upload license artifacts
+        if: matrix.arch == 'amd64'
+        uses: actions/upload-artifact@v5
+        with:
+          name: license-artifacts-${{ needs.prepare-rc.outputs.wheel_version }}
+          path: |
+            license-artifacts/
+            !license-artifacts/**/.DS_Store
+            !license-artifacts/.DS_Store
+          retention-days: 90
+          if-no-files-found: error
+
+  create-multiarch-manifest-ecr:
+    name: Create Multi-arch Manifest (ECR)
+    needs: [prepare-rc, build-container]
+    runs-on: prod-aiperf-default-v1
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare-rc.outputs.resolved_sha }}
+
+      - name: Create multi-arch manifest on ECR
+        uses: ./.github/actions/create-multiarch-manifest
+        with:
+          registry:       ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
+          aws-ecr-region: ${{ secrets.AWS_DEFAULT_REGION }}
+          target-image: >-
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-rc.outputs.container_tag }}
+          source-images: >-
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-rc.outputs.container_tag }}-amd64
+            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-rc.outputs.container_tag }}-arm64
+
+  # ============================================================================
+  # PHASE 4: STAGE
+  # ============================================================================
+
+  stage-container:
+    name: Stage Container (ECR -> NGC Staging)
+    needs: [prepare-rc, authorize, create-multiarch-manifest-ecr]
+    if: ${{ needs.authorize.outputs.authorized_attempt == github.run_attempt }}
+    runs-on: prod-aiperf-default-v1
+    environment: automated-release
+    env:
+      CRANE_VERSION: v0.20.2
+    steps:
+      - name: Install crane
+        run: |
+          set -euo pipefail
+          TARBALL="go-containerregistry_Linux_x86_64.tar.gz"
+          curl -fsSL \
+            "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/${TARBALL}" \
+            -o "${TARBALL}"
+          tar -xzf "${TARBALL}" crane
+          sudo mv crane /usr/local/bin/crane
+          rm "${TARBALL}"
+
+      - name: Log in to ECR and NGC staging
+        env:
+          AWS_ACCOUNT_ID:     ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          NGC_TOKEN:          ${{ secrets.NGC_PUBLISH_TOKEN }}
+          NGC_USERNAME:       ${{ secrets.NGC_PUBLISH_USERNAME }}
+        run: |
+          aws ecr get-login-password --region "${AWS_DEFAULT_REGION}" \
+            | crane auth login \
+                "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com" \
+                --username AWS --password-stdin
+          echo "${NGC_TOKEN}" | crane auth login nvcr.io \
+            --username "${NGC_USERNAME}" --password-stdin
+
+      - name: Copy multi-arch images ECR -> NGC staging
+        env:
+          AWS_ACCOUNT_ID:         ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_DEFAULT_REGION:     ${{ secrets.AWS_DEFAULT_REGION }}
+          NGC_STAGING_IMAGE_BASE: ${{ secrets.NGC_STAGING_IMAGE_BASE }}
+          CONTAINER_TAG:          ${{ needs.prepare-rc.outputs.container_tag }}
+        run: |
+          set -euo pipefail
+          ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
+          CONTAINER_IMAGE="${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}"
+
+          # Registries are immutable: a first attempt must never land on an
+          # already-staged round. Later attempts are retries of this same run.
+          if [ "${GITHUB_RUN_ATTEMPT}" = "1" ] && crane digest "${CONTAINER_IMAGE}" >/dev/null 2>&1; then
+            echo "::error::${CONTAINER_TAG} is already staged on NGC; stage the next rc_round instead."
+            exit 1
+          fi
+
+          for ARCH in amd64 arm64; do
+            crane copy \
+              "${ECR_REGISTRY}/aiperf:${CONTAINER_TAG}-${ARCH}" \
+              "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-${ARCH}"
+          done
+          crane index append \
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-amd64" \
+            --manifest "${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}-arm64" \
+            --tag      "${CONTAINER_IMAGE}"
+          echo "Container staged: ${CONTAINER_TAG} (amd64 + arm64)"
+          # The full image name contains the NGC_STAGING_IMAGE_BASE secret, so it
+          # is not a job output (GitHub blanks outputs that contain a secret);
+          # trigger-gitlab rebuilds it from the same secret + container_tag.
+
+  stage-wheel:
+    name: Stage Wheel (S3 -> Artifactory)
+    needs: [prepare-rc, authorize, create-multiarch-manifest-ecr]
+    if: ${{ needs.authorize.outputs.authorized_attempt == github.run_attempt }}
+    # Use the builder runner: prod-aiperf-default-v1's role lacks s3:GetObject on
+    # the wheels bucket.
+    runs-on: prod-aiperf-builder-amd-v1
+    environment: automated-release
+    steps:
+      - name: Upload wheel from S3 to Artifactory
+        env:
+          S3_BUCKET:          ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          ARTIFACTORY_URL:    ${{ secrets.ARTIFACTORY_URL }}
+          ARTIFACTORY_USER:   ${{ secrets.ARTIFACTORY_USER }}
+          ARTIFACTORY_TOKEN:  ${{ secrets.ARTIFACTORY_TOKEN }}
+          WHEEL_VERSION:      ${{ needs.prepare-rc.outputs.wheel_version }}
+          WHEEL_FILENAME:     ${{ needs.prepare-rc.outputs.wheel_filename }}
+          RESOLVED_SHA:       ${{ needs.prepare-rc.outputs.resolved_sha }}
+        run: |
+          set -euo pipefail
+          TMPDIR=$(mktemp -d)
+          trap 'rm -rf "${TMPDIR}"' EXIT
+
+          RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          RUN_URL_ENC=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "${RUN_URL}")
+          PROPS=";github.run.url=${RUN_URL_ENC};git.commit.sha=${RESOLVED_SHA}"
+
+          # Single-object copy (no --recursive) so we only need s3:GetObject.
+          aws s3 cp \
+            "s3://${S3_BUCKET}/aiperf/rc/${WHEEL_VERSION}/${WHEEL_FILENAME}" \
+            "${TMPDIR}/${WHEEL_FILENAME}"
+
+          # Raw Artifactory deploy via the native repo API (the PyPI handler
+          # does not accept sub-path deploys). ARTIFACTORY_URL is the generic
+          # repo base: https://<host>/artifactory/<repo>. GitLab downloads RC
+          # wheels flat from release/, so the version lives in the file name.
+          TARGET_URL="${ARTIFACTORY_URL%/}/release/${WHEEL_FILENAME}"
+          BODY_FILE=$(mktemp)
+          HTTP_CODE=$(curl -sSL -o "${BODY_FILE}" -w "%{http_code}" \
+            -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
+            -T "${TMPDIR}/${WHEEL_FILENAME}" \
+            "${TARGET_URL}${PROPS}")
+          if [ "${HTTP_CODE}" != "201" ]; then
+            echo "::error::Artifactory deploy failed for ${WHEEL_FILENAME}: HTTP ${HTTP_CODE} at ${TARGET_URL}"
+            cat "${BODY_FILE}" || true
+            exit 1
+          fi
+          echo "Wheel staged to Artifactory: ${TARGET_URL}"
+
+  # ============================================================================
+  # PHASE 5: TRIGGER GITLAB RC PIPELINE
+  # Pulse container scans, wheel scan, Sonar and nSpect registration run on
+  # GitLab because GitHub AWS runners cannot reach those internal endpoints.
+  # Fire-and-forget; publishing to production stays a manual GitLab step
+  # (PIPELINE_TYPE=publish) after QA sign-off.
+  # ============================================================================
+
+  trigger-gitlab-rc-pipeline:
+    name: Trigger GitLab RC Pipeline
+    needs: [prepare-rc, authorize, stage-container, stage-wheel]
+    runs-on:
+      group: gitlab_ci_runners
+    environment: automated-release
+    if: ${{ !inputs.skip_gitlab_trigger && needs.authorize.outputs.authorized_attempt == github.run_attempt }}
+    steps:
+      - name: Trigger GitLab pipeline
+        env:
+          GITLAB_TRIGGER_TOKEN:       ${{ secrets.GITLAB_TRIGGER_TOKEN }}
+          GITLAB_TRIGGER_URL:         ${{ secrets.GITLAB_PIPELINE_URL }}
+          RC_TAG:                     ${{ needs.prepare-rc.outputs.rc_tag }}
+          RC_NUMBER:                  ${{ needs.prepare-rc.outputs.rc_number }}
+          RELEASE_VERSION:            ${{ needs.prepare-rc.outputs.release_version }}
+          WHEEL_VERSION:              ${{ needs.prepare-rc.outputs.wheel_version }}
+          WHEEL_FILENAME:             ${{ needs.prepare-rc.outputs.wheel_filename }}
+          CONTAINER_TAG:              ${{ needs.prepare-rc.outputs.container_tag }}
+          RESOLVED_SHA:               ${{ needs.prepare-rc.outputs.resolved_sha }}
+          SOURCE_BRANCH:              ${{ needs.prepare-rc.outputs.source_branch }}
+          NGC_STAGING_IMAGE_BASE:     ${{ secrets.NGC_STAGING_IMAGE_BASE }}
+          ARTIFACTORY_PYPI_URL:       ${{ secrets.ARTIFACTORY_PYPI_URL }}
+          ARTIFACTORY_PYPI_REPO_NAME: ${{ secrets.ARTIFACTORY_PYPI_REPO_NAME }}
+        run: |
+          set -euo pipefail
+
+          CONTAINER_IMAGE="${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}"
+
+          TOKEN_FILE=$(mktemp)
+          echo -n "${GITLAB_TRIGGER_TOKEN}" > "${TOKEN_FILE}"
+          trap 'rm -f "${TOKEN_FILE}"' EXIT
+
+          RESPONSE=$(curl -fsSL \
+            --request POST \
+            --form "token=<${TOKEN_FILE}" \
+            --form "ref=main" \
+            --form "variables[PIPELINE_TYPE]=rc" \
+            --form "variables[RELEASE_TYPE]=rc" \
+            --form "variables[PROJECT]=aiperf" \
+            --form "variables[SOURCE_BRANCH]=${SOURCE_BRANCH}" \
+            --form "variables[RC_TAG]=${RC_TAG}" \
+            --form "variables[RC_NUMBER]=${RC_NUMBER}" \
+            --form "variables[RELEASE_VERSION]=${RELEASE_VERSION}" \
+            --form "variables[WHEEL_VERSION]=${WHEEL_VERSION}" \
+            --form "variables[WHEEL_FILENAME]=${WHEEL_FILENAME}" \
+            --form "variables[CONTAINER_TAG]=${CONTAINER_TAG}" \
+            --form "variables[CONTAINER_IMAGE]=${CONTAINER_IMAGE}" \
+            --form "variables[COMMIT_SHA]=${RESOLVED_SHA}" \
+            --form "variables[GITHUB_RUN_ID]=${GITHUB_RUN_ID}" \
+            --form "variables[ARTIFACTS]=wheel,container" \
+            --form "variables[ARTIFACTORY_PYPI_URL]=${ARTIFACTORY_PYPI_URL}" \
+            --form "variables[ARTIFACTORY_PYPI_REPO_NAME]=${ARTIFACTORY_PYPI_REPO_NAME}" \
+            --form "variables[ENABLE_PULSE_SCAN]=true" \
+            --form "variables[ENABLE_WHEEL_SCAN]=true" \
+            --form "variables[ENABLE_SONARQUBE]=true" \
+            --form "variables[SONAR_REPO]=aiperf" \
+            --form "variables[SONAR_BRANCH]=${SOURCE_BRANCH}" \
+            "${GITLAB_TRIGGER_URL}")
+
+          PIPELINE_ID=$(echo "${RESPONSE}" | jq -r '.id // empty')
+          if [ -z "${PIPELINE_ID}" ]; then
+            echo "::error::Failed to trigger GitLab pipeline or parse response"
+            exit 1
+          fi
+
+          echo "GitLab RC pipeline triggered: pipeline ID ${PIPELINE_ID}"
+          {
+            echo "### GitLab Release Automation"
+            echo "- **Pipeline ID**: ${PIPELINE_ID}"
+            echo "- **Type**: RC (security scans + nSpect registration)"
+            echo "- **RC Tag**: \`${RC_TAG}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ============================================================================
+  # PHASE 6: SUMMARY
+  # ============================================================================
+
+  rc-status:
+    name: RC Status
+    needs:
+      - prepare-rc
+      - authorize
+      - build-container
+      - create-multiarch-manifest-ecr
+      - stage-container
+      - stage-wheel
+      - trigger-gitlab-rc-pipeline
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: always()
+    steps:
+      - name: Verify results
+        env:
+          RESULTS:     ${{ toJSON(needs) }}
+          SKIP_GITLAB: ${{ inputs.skip_gitlab_trigger }}
+          RC_TAG:      ${{ needs.prepare-rc.outputs.rc_tag }}
+        run: |
+          set -uo pipefail
+          echo "${RESULTS}" | jq .
+          MANDATORY="prepare-rc authorize build-container create-multiarch-manifest-ecr stage-container stage-wheel"
+          [ "${SKIP_GITLAB}" != "true" ] && MANDATORY="${MANDATORY} trigger-gitlab-rc-pipeline"
+          FAILED=""
+          for JOB in ${MANDATORY}; do
+            RESULT=$(echo "${RESULTS}" | jq -r --arg j "${JOB}" 'if has($j) then .[$j].result else "MISSING" end')
+            if [ "${RESULT}" = "MISSING" ]; then
+              echo "::error::rc-status references unknown job '${JOB}' - add it to needs: or fix the name."
+              exit 1
+            fi
+            if [ "${RESULT}" != "success" ]; then
+              FAILED="${FAILED}
+          ${JOB} (result: ${RESULT})"
+            fi
+          done
+          {
+            echo "### RC ${RC_TAG}"
+            if [ -n "${FAILED}" ]; then
+              echo "Staging FAILED:${FAILED}"
+            else
+              echo "Staged and handed to GitLab."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "${FAILED}" ]; then
+            echo "::error::RC staging failed:${FAILED}"
+            exit 1
+          fi
+          if [ "${SKIP_GITLAB}" = "true" ]; then
+            echo "::warning::skip_gitlab_trigger=true: ${RC_TAG} is staged but was NOT handed to GitLab, so it is unscanned and unregistered with nSpect."
+          fi
