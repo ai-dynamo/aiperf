@@ -1636,12 +1636,24 @@ def first_content_chunk_completion_tokens(
     that value is the number of tokens delivered through the first content chunk.
     Returns ``None`` when no content chunk carries usage (e.g. the server only
     reports the final total), so callers fall back to assuming one token in the
-    first chunk.
+    first chunk. An explicit empty first chunk (``--allow-empty-content``) sets
+    TTFT without delivering a token, so its count is 0 with or without usage.
     """
-    for response in responses:
-        if response.data and response.usage:
+    content = [response for response in responses if response.data]
+    if content and is_explicit_empty_chunk(content[0]):
+        return 0
+    for response in content:
+        if response.usage:
             return response.usage.completion_tokens
     return None
+
+
+def is_explicit_empty_chunk(response: ParsedResponse) -> bool:
+    """Whether a retained ``--allow-empty-content`` chunk decoded to an empty string."""
+    return (
+        isinstance(response.data, TextResponseData | ReasoningResponseData)
+        and not response.data.get_text()
+    )
 
 
 @dataclass(slots=True)

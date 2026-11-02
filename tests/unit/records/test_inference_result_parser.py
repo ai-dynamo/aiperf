@@ -431,6 +431,32 @@ class TestServerTokenCount:
         assert result.token_counts.output == 20
         assert result.token_counts.reasoning == 32
 
+    @pytest.mark.parametrize("empty_chunk_usage", [0, None])
+    async def test_first_content_chunk_is_zero_for_explicit_empty_chunk(
+        self, per_chunk_usage_parser, request_record, empty_chunk_usage
+    ):
+        """An explicit empty first chunk (--allow-empty-content) sets TTFT without a
+        token, so the count is 0 whether it reports zero usage or none."""
+        setup_parser_responses(
+            per_chunk_usage_parser,
+            [
+                ParsedResponse(
+                    perf_ns=1000,
+                    data=TextResponseData(text=""),
+                    usage=None
+                    if empty_chunk_usage is None
+                    else Usage({"completion_tokens": empty_chunk_usage}),
+                ),
+                make_parsed_response(text="hello", completion_tokens=4),
+                make_parsed_response(text=" world", completion_tokens=8),
+            ],
+        )
+
+        result = await per_chunk_usage_parser.process_valid_record(request_record)
+
+        assert result.token_counts.first_content_chunk_tokens == 0
+        assert result.token_counts.output == 8
+
     async def test_first_content_chunk_not_read_without_per_chunk_usage(
         self, server_token_parser, request_record
     ):

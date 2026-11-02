@@ -5,6 +5,7 @@ from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import MetricFlags, MetricTimeUnit
 from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
+from aiperf.common.models.record_models import is_explicit_empty_chunk
 from aiperf.metrics import BaseRecordMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict
 from aiperf.metrics.types.decode_duration_metric import FullDecodeDurationMetric
@@ -61,6 +62,14 @@ def _decode_token_count(
         return osl - 1  # type: ignore
 
     decode_tokens = osl - first_chunk_tokens  # type: ignore
+    # An explicit empty first chunk (--allow-empty-content) set TTFT without a
+    # token, so every output token arrived in the decode window.
+    if (
+        first_chunk_tokens == 0
+        and record.content_responses
+        and is_explicit_empty_chunk(record.content_responses[0])
+    ):
+        return decode_tokens
     # A server-reported count that is non-positive or >= OSL is inconsistent
     # (e.g. per-chunk usage lagging a chunk, or the whole response in one
     # chunk). Degrade to `osl - 1` and warn once per metric type rather than

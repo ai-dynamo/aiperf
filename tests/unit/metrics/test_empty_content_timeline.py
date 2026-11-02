@@ -12,6 +12,7 @@ from aiperf.common.models import (
     SSEMessage,
     TokenCounts,
 )
+from aiperf.common.models.record_models import first_content_chunk_completion_tokens
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.metrics.types.decode_duration_metric import (
     DecodeDurationMetric,
@@ -184,3 +185,71 @@ def test_enabled_empty_only_response_is_valid_but_has_no_token_metrics() -> None
     )
     assert results[TTFTMetric.tag] == [100_000_000]
     assert InterTokenLatencyMetric.tag not in results
+
+
+def _per_chunk_usage_record(*, empty_chunk_usage: bool) -> ParsedResponseRecord:
+    """Empty TTFT chunk followed by cumulative per-chunk usage of 4 then 8 tokens."""
+    model_endpoint = create_model_endpoint(EndpointType.CHAT, streaming=True)
+    model_endpoint.endpoint.allow_empty_content = True
+    endpoint = ChatEndpoint(model_endpoint)
+    empty_chunk = _chat_chunk({"content": ""})
+    if empty_chunk_usage:
+        empty_chunk["usage"] = {"completion_tokens": 0}
+    request = RequestRecord(
+        model_name="test-model",
+        start_perf_ns=START_NS,
+        end_perf_ns=1_500_000_000,
+        responses=[
+            _event(1_100_000_000, empty_chunk),
+            _event(
+                1_200_000_000,
+                {**_chat_chunk({"content": "abcd"}), "usage": {"completion_tokens": 4}},
+            ),
+            _event(
+                1_400_000_000,
+                {
+                    **_chat_chunk({"content": "efgh"}, finish_reason="stop"),
+                    "usage": {"completion_tokens": 8},
+                },
+            ),
+        ],
+    )
+    responses = endpoint.extract_response_data(request)
+    return ParsedResponseRecord(
+        request=request,
+        responses=responses,
+        token_counts=TokenCounts(
+            input=100,
+            output=8,
+            first_content_chunk_tokens=first_content_chunk_completion_tokens(responses),
+        ),
+    )
+
+
+@pytest.mark.parametrize("empty_chunk_usage", [True, False])
+def test_per_chunk_usage_counts_all_tokens_after_empty_ttft_chunk(
+    empty_chunk_usage: bool,
+) -> None:
+    record = _per_chunk_usage_record(empty_chunk_usage=empty_chunk_usage)
+    results = run_simple_metrics_pipeline(
+        [record],
+        TTFTMetric.tag,
+        RequestLatencyMetric.tag,
+        FullDecodeDurationMetric.tag,
+        InterTokenLatencyMetric.tag,
+        FullResponseInterTokenLatencyMetric.tag,
+        OutputTokenThroughputPerUserMetric.tag,
+        FullResponseOutputTokenThroughputPerUserMetric.tag,
+    )
+
+    assert record.token_counts is not None
+    assert record.token_counts.first_content_chunk_tokens == 0
+    assert results[TTFTMetric.tag] == [100_000_000]
+    assert results[InterTokenLatencyMetric.tag] == pytest.approx([300_000_000 / 8])
+    assert results[FullResponseInterTokenLatencyMetric.tag] == pytest.approx(
+        [400_000_000 / 8]
+    )
+    assert results[OutputTokenThroughputPerUserMetric.tag] == pytest.approx([8 / 0.3])
+    assert results[FullResponseOutputTokenThroughputPerUserMetric.tag] == pytest.approx(
+        [8 / 0.4]
+    )
