@@ -216,7 +216,7 @@ any knowledge of the individual request/response data.
 > [!NOTE]
 > All metrics in this section require `--streaming` with a token-producing endpoint and one or more qualifying parsed responses. By default, a qualifying response has non-empty parsed content. With `--allow-empty-content`, an OpenAI Chat Completions `chat.completion.chunk` with an explicitly empty (`""`) `content`, `reasoning_content`, or `reasoning` string also qualifies. Missing fields, `null`, role/handshake metadata, and other non-content chunks do not qualify.
 
-Qualifying responses form one shared response timeline. Enabling `--allow-empty-content` can therefore change TTFT, TTST, Request Latency, Decode Duration, ICL, ITL, and the per-user output-throughput metrics together. It does not change token accounting: token normalization remains Output Sequence Length (OSL)-based, and an empty decoded string adds no client output or reasoning tokens. When server usage is available, its reported token counts remain authoritative with `--allow-empty-content` enabled.
+Qualifying responses form one shared response timeline. Enabling `--allow-empty-content` can therefore change TTFT, TTST, Request Latency, Decode Duration, ICL, ITL, Prefill Throughput Per User, and the per-user output-throughput metrics together. It does not change token accounting: token normalization remains Output Sequence Length (OSL)-based, and an empty decoded string adds no client output or reasoning tokens. When server usage is available, its reported token counts remain authoritative with `--allow-empty-content` enabled.
 
 ### Time to First Token (TTFT)
 
