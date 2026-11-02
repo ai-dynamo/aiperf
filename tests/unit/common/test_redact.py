@@ -15,6 +15,7 @@ from aiperf.common.redact import (
     _SENSITIVE_HEADER_NAMES,
     REDACTED_VALUE,
     extract_sensitive_headers,
+    has_sensitive_query_parameters,
     redact_cli_command,
     redact_endpoint_spec,
     redact_headers,
@@ -1295,6 +1296,33 @@ class TestRedactCliCommandUrlFlags:
     @pytest.mark.parametrize(
         "cmd",
         [
+            param(
+                "aiperf profile --input-file https://b/t.jsonl?X-Amz-Signature=deadbeef",
+                id="space-unquoted",
+            ),
+            param(
+                "aiperf profile --input-file 'https://b/t.jsonl?X-Amz-Signature=deadbeef'",
+                id="space-quoted",
+            ),
+            param(
+                "aiperf profile --input-file=https://b/t.jsonl?X-Amz-Signature=deadbeef",
+                id="equals",
+            ),
+        ],
+    )  # fmt: skip
+    def test_input_file_presigned_signature_redacted(self, cmd: str):
+        result = redact_cli_command(cmd)
+        assert "deadbeef" not in result, f"Signature leaked in: {result}"
+        assert f"X-Amz-Signature={REDACTED_VALUE}" in result
+        assert "https://b/t.jsonl?" in result
+
+    def test_input_file_local_path_unchanged(self):
+        cmd = "aiperf profile --input-file /data/t.jsonl"
+        assert redact_cli_command(cmd) == cmd
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
             param("aiperf profile --url 'http://localhost:8000'", id="plain-url"),
             param(
                 "aiperf profile --url 'http://host/users@example.com'",
@@ -1916,6 +1944,21 @@ class TestRedactUrl:
     def test_similarly_named_noncredential_query_parameters_are_unchanged(self) -> None:
         url = "https://host/v1?token_count=128&monkey=capuchin&email=a@b.com"
         assert redact_url(url) == url
+
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
+            param("https://h/t.jsonl?X-Amz-Signature=abc", True, id="signature"),
+            param("https://h/t.jsonl?a=1&api%5Fkey=abc", True, id="encoded-name"),
+            param("https://h/t.jsonl?%74oken=abc", True, id="encoded-first-char"),
+            param("https://h/t.jsonl?page=2", False, id="plain-query"),
+            param("https://h/t.jsonl?token_count=128", False, id="similar-name"),
+            param("https://h/t.jsonl", False, id="no-query"),
+            param("https://h/t.jsonl?token=abc#frag", True, id="with-fragment"),
+        ],
+    )  # fmt: skip
+    def test_has_sensitive_query_parameters(self, url: str, expected: bool) -> None:
+        assert has_sensitive_query_parameters(url) is expected
 
     @pytest.mark.parametrize(
         "url,expected",
