@@ -11,7 +11,9 @@ from unittest.mock import MagicMock
 import pytest
 from pytest import param
 
+from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.strategies.genai_semconv import (
+    METRIC_NAME_MAP,
     _build_duration_attributes,
     _build_token_usage_attributes,
     _classify_error_type,
@@ -227,14 +229,14 @@ class TestConvertMetricValue:
         assert result == 42.0
 
     def test_token_count_identity(self) -> None:
-        result = convert_metric_value("input_token_count", 100.0)
+        result = convert_metric_value("input_sequence_length", 100.0)
         assert result == 100.0
 
 
 class TestTranslateTokenUsage:
     """Cover translate() with token usage metrics."""
 
-    def test_input_token_count_translates(self) -> None:
+    def test_input_sequence_length_translates(self) -> None:
         record = MagicMock()
         record.error = None
         cfg = MagicMock()
@@ -244,7 +246,7 @@ class TestTranslateTokenUsage:
         cfg.endpoint.urls = ["http://localhost"]
         cfg.otel.gen_ai_provider = None
 
-        emission = translate("input_token_count", 50.0, record, cfg=cfg)
+        emission = translate("input_sequence_length", 50.0, record, cfg=cfg)
         assert emission is not None
         assert emission.spec_metric_name == "gen_ai.client.token.usage"
         assert emission.attributes["gen_ai.token.type"] == "input"
@@ -269,3 +271,10 @@ class TestTranslateTokenUsage:
         record = MagicMock()
         cfg = MagicMock()
         assert translate("some_random_metric", 1.0, record, cfg=cfg) is None
+
+    @pytest.mark.parametrize("metric_name", sorted(METRIC_NAME_MAP))
+    def test_mapped_metric_is_a_registered_tag(self, metric_name: str) -> None:
+        """translate() is keyed by the tags records actually carry, so a key that
+        is not a registered metric tag can never produce an emission.
+        """
+        assert MetricRegistry.get_class_or_none(metric_name) is not None

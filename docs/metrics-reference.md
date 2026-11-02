@@ -2627,7 +2627,7 @@ AIPerf translates its internal metric names onto the [OTel GenAI semantic conven
 | `request_latency` | `gen_ai.client.operation.duration` | s | Histogram |
 | `time_to_first_token` | `gen_ai.client.operation.time_to_first_chunk` | s | Histogram |
 | `inter_token_latency` | `gen_ai.client.operation.time_per_output_chunk` | s | Histogram |
-| `input_token_count` + `output_token_count` (merged) | `gen_ai.client.token.usage` with `gen_ai.token.type=input\|output` | {token} | Histogram |
+| `input_sequence_length` + `output_token_count` (merged) | `gen_ai.client.token.usage` with `gen_ai.token.type=input\|output` | {token} | Histogram |
 
 Duration metrics are converted from nanoseconds to seconds. Token counts use the identity conversion.
 
