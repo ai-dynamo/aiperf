@@ -359,3 +359,85 @@ class TestAdaptiveSearchNInitialPointsBoundary:
     def test_zero_rejected(self):
         with pytest.raises(ValidationError, match="greater than or equal to 1"):
             AdaptiveSearchSweep(**_minimal_kwargs(n_initial_points=0))
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        param("rate", id="bare-rate"),
+        param("phases.profiling.smoothness", id="profiling-smoothness"),
+        param("phases.warmup.rate", id="warmup-rate"),
+        param("phases.measured.smoothness", id="named-smoothness"),
+        param("phases.warmup.rate_ramp", id="warmup-ramp"),
+        param("phases.measured.rate_ramp.duration", id="nested-ramp-duration"),
+    ],
+)  # fmt: skip
+@pytest.mark.parametrize("lo", [0, -1])
+def test_search_space_field_rejects_nonpositive_bound(path: str, lo: float) -> None:
+    with pytest.raises(ValidationError, match="lower bound must be > 0"):
+        SearchSpaceDimension(path=path, lo=lo, hi=10)
+
+
+@pytest.mark.parametrize(
+    "path", ["users", "phases.warmup.users", "phases.measured.users"]
+)
+@pytest.mark.parametrize(
+    "lo,kind,message",
+    [
+        param(0, "int", "lower bound must be >= 1", id="zero"),
+        param(0.5, "int", "lower bound must be >= 1", id="fraction-below-one"),
+        param(1, "real", "must use ':int'", id="real-kind"),
+    ],
+)  # fmt: skip
+def test_search_space_users_constraints(
+    path: str, lo: float, kind: str, message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        SearchSpaceDimension(path=path, lo=lo, hi=10, kind=kind)
+
+
+@pytest.mark.parametrize(
+    "path,lo,hi,kind",
+    [
+        param("phases.warmup.rate", 0.01, 10, "real", id="positive-rate"),
+        param("phases.measured.smoothness", 0.01, 10, "real", id="positive-smoothness"),
+        param("phases.warmup.rate_ramp", 0.01, 10, "real", id="positive-ramp"),
+        param("phases.measured.rate_ramp.duration", 0.01, 10, "real", id="nested-ramp"),
+        param("phases.warmup.users", 1, 10, "int", id="minimum-users"),
+        param("phases.profiling.cancellation.rate", 0, 100, "real", id="zero-cancellation"),
+        param("unrelated", -10, 0, "real", id="unrelated-negative"),
+    ],
+)  # fmt: skip
+def test_search_space_field_accepts_valid_bounds(
+    path: str, lo: float, hi: float, kind: str
+) -> None:
+    dimension = SearchSpaceDimension(path=path, lo=lo, hi=hi, kind=kind)
+    assert (dimension.lo, dimension.hi, dimension.kind) == (lo, hi, kind)
+
+
+@pytest.mark.parametrize("path", ["rate_series", "phases.warmup.rate_series"])
+def test_search_space_rate_series_rejected(path: str) -> None:
+    with pytest.raises(ValidationError, match="piecewise-linear"):
+        SearchSpaceDimension(path=path, lo=1, hi=10)
+
+
+@pytest.mark.parametrize("field", ["lo", "hi"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_search_space_field_bounds_must_be_finite(field: str, value: float) -> None:
+    bounds = {"lo": 1, "hi": 10, field: value}
+    with pytest.raises(ValidationError, match="must be finite"):
+        SearchSpaceDimension(path="phases.warmup.rate", **bounds)
+
+
+@pytest.mark.parametrize(
+    "lo,hi",
+    [
+        param(-1, 10, id="below-zero"),
+        param(0, 101, id="above-100"),
+    ],
+)  # fmt: skip
+def test_search_space_cancellation_rate_rejects_out_of_range_bounds(
+    lo: float, hi: float
+) -> None:
+    with pytest.raises(ValidationError, match=r"within \[0, 100\]"):
+        SearchSpaceDimension(path="phases.profiling.cancellation.rate", lo=lo, hi=hi)

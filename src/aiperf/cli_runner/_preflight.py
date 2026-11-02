@@ -260,19 +260,27 @@ def _call_optional_hook(
 
 
 def _preflight_dataset_access(plan: BenchmarkPlan) -> None:
-    """Verify gated public datasets are reachable before anything expensive.
+    """Verify gated public datasets and remote files are reachable before anything expensive.
 
     Why: access to a gated dataset is granted per user through a browser, so it
     cannot be fixed mid-run. Probing first turns a multi-GB download that ends
     in a 403 -- or a wait on a model that was never going to be used -- into an
     immediate, actionable message.
+
+    Remote input files are also pinned to one version here, and their
+    fixed-schedule auto-promotion is settled, so this must run before anything
+    reads a config's profiling phase.
     """
     for LoaderClass, kwargs in _public_dataset_loaders(plan):
         _call_optional_hook(LoaderClass, "preflight_access", kwargs)
 
+    from aiperf.dataset.remote.preflight import preflight_remote_access
+
+    preflight_remote_access(plan.configs)
+
 
 def _preflight_dataset_materialize(plan: BenchmarkPlan) -> None:
-    """Fetch and cache public datasets that need resolution before services start.
+    """Fetch and cache public datasets and remote input files before services start.
 
     Why: ``DatasetManager`` performs dataset setup while ``TimingManager``
     blocks on the profiling handshake, so a large download there trips
@@ -301,6 +309,10 @@ def _preflight_dataset_materialize(plan: BenchmarkPlan) -> None:
 
     for LoaderClass, kwargs in _public_dataset_loaders(plan):
         _call_optional_hook(LoaderClass, "preflight_materialize", kwargs)
+
+    from aiperf.dataset.remote.preflight import preflight_remote_materialize
+
+    preflight_remote_materialize(plan.configs)
 
 
 def preflight_public_datasets_for_run(run) -> None:

@@ -27,6 +27,8 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
     milliseconds internally.
     """
 
+    reads_parquet = False
+
     _REQUIRED_COLUMNS = frozenset({"Timestamp", "Request tokens", "Response tokens"})
 
     @classmethod
