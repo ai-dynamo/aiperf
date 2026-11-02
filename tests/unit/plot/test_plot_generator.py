@@ -1453,6 +1453,14 @@ class TestGetMetricDirection:
             direction = plot_gen._get_metric_direction("test_throughput")
             assert direction == PlotMetricDirection.HIGHER
 
+    @pytest.mark.parametrize("metric_tag", ["goodput", "image_throughput"])
+    def test_get_metric_direction_rate_metrics_are_higher(self, metric_tag: str):
+        """Pareto plots read the direction off the real registry."""
+        assert (
+            PlotGenerator()._get_metric_direction(metric_tag)
+            == PlotMetricDirection.HIGHER
+        )
+
     def test_get_metric_direction_fallback_to_derived(self):
         """Falls back to DERIVED_METRIC_DIRECTIONS."""
         plot_gen = PlotGenerator()
