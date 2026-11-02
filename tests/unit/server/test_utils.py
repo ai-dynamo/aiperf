@@ -4,6 +4,7 @@
 
 import time
 
+import orjson
 import pytest
 from aiperf_mock_server.models import (
     ChatCompletionRequest,
@@ -154,6 +155,33 @@ class TestStreamChatCompletion:
             chunks.append(chunk)
 
         assert any(b"reasoning_content" in chunk for chunk in chunks)
+
+    @pytest.mark.asyncio
+    async def test_stream_chat_completion_reasoning_only_carries_finish_reason(self):
+        req = ChatCompletionRequest(
+            model="qwen-test",
+            messages=[Message(role="user", content="Solve")],
+            max_tokens=10,
+        )
+        ctx = make_ctx(req, "/v1/chat/completions", time.perf_counter())
+        assert ctx.reasoning_content_tokens
+        assert not ctx.tokens
+
+        chunks = [
+            orjson.loads(chunk.removeprefix(b"data: "))
+            async for chunk in stream_chat_completion(
+                ctx, "/v1/chat/completions", False
+            )
+            if chunk != b"data: [DONE]\n\n"
+        ]
+
+        finish_reasons = [
+            c["choices"][0].get("finish_reason")
+            for c in chunks
+            if c["choices"] and c["choices"][0].get("finish_reason")
+        ]
+        assert finish_reasons == ["length"]
+        assert chunks[-1]["choices"][0]["finish_reason"] == "length"
 
     @pytest.mark.asyncio
     async def test_stream_chat_completion_with_usage(self):

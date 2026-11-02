@@ -173,9 +173,24 @@ likewise each run in their own container inside a worker pod.
 | `records-manager` | Aggregates results from workers |
 | `api` | WebSocket + HTTP on port 9090 |
 | `gpu-telemetry-manager` | GPU metrics via DCGM (optional) |
-| `server-metrics-manager` | Prometheus metrics (optional) |
+| `server-metrics-manager` | Prometheus metrics (optional restartable native sidecar in `initContainers`) |
 | `results-sidecar` | Serves exported results after controller exit (port 9091) |
 | `event-bus-proxy` | XPUB/XSUB ZMQ proxy sidecar (`AIPERF_K8S_EVENT_BUS_SIDECAR_ENABLED=true` by default; isolates pub/sub I/O from the SystemController process) |
+
+The server-metrics sidecar uses `restartPolicy: Always` (Kubernetes 1.29+).
+It has a liveness probe but no startup/readiness probe: registration needs the
+controller to start first, and optional telemetry must not gate pod readiness.
+An OOM or liveness restart therefore restarts only this sidecar, without failing
+the Job. User init containers still run before it. The operator excludes this
+optional sidecar's crash loops from fatal startup diagnosis.
+
+Each control-channel `Registration` carries a process-stable `instance_id`.
+Reconnecting preserves it; restarting changes it. A metrics restart after
+initialization retires the old result producer even when it happens faster than
+the heartbeat watchdog. Retired producers cannot rejoin the result barrier or
+replace the recorded failure with a late result. Watchdog eviction follows the
+same export contract: inference continues, the primary JSON names incomplete
+server metrics, and the controller exports before reporting a degraded run.
 
 Per-container health ports run 8080-8088 (`AIPERF_K8S_PORT_*_HEALTH`); the API
 service is on 9090 and the results sidecar on 9091.
@@ -388,6 +403,13 @@ flowchart LR
 5. **Workers** - Make LLM API calls once their `WorkerGroupManager` reports group-local readiness, then generate raw records
 6. **RecordProcessor** - Computes metrics (latency, TTFT, throughput)
 7. **RecordsManager** - Aggregates results from all workers
+
+The RecordsManager's per-request JSONL stream is also available under
+`checkpoints/` before final export when request export and checkpointing are
+enabled. Both names refer to the same file. The API and results sidecar expose
+the checkpoint independently of the results-ready marker, so the operator can
+recover flushed request metrics after an interrupted export. Recovery retains
+the run's failed status; the checkpoint is not a final aggregate report.
 
 ### Service Discovery
 

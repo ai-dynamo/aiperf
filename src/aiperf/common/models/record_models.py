@@ -53,6 +53,9 @@ _logger = AIPerfLogger(__name__)
 _SSE_COMMENT_FIELD_NAME = "comment"
 _SSE_DATA_FIELD_NAME = "data"
 _SSE_DATA_PREFIX = "data:"
+# ASCII padding only: str.strip() would also eat U+0085/U+2028/U+2029 and
+# \x0b-\x0c/\x1c-\x1f, which are data, not SSE whitespace.
+_SSE_PADDING = " \t"
 
 
 class MetricResult(JsonMetricResult):
@@ -525,6 +528,20 @@ class ProfileResults(AIPerfBaseModel):
         "runs. Forwarded to profile_export_aiperf.json under the "
         "``branch_stats`` key when present.",
     )
+    conversations_ended_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Conversation sessions ended early because a turn was truncated "
+        "by the output-token cap; a conversation replayed to fill --request-count "
+        "counts once per replay. None when end_conversation_on_truncation is off.",
+    )
+    turns_skipped_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Turns never sent because their conversation ended early on "
+        "a truncated turn, excluding turns the run's stop condition would not "
+        "have sent anyway. None when end_conversation_on_truncation is off.",
+    )
     context_overflow_count: int = Field(
         default=0,
         ge=0,
@@ -761,7 +778,7 @@ class SSEMessage:
                 packets=[
                     SSEField(
                         name=_SSE_DATA_FIELD_NAME,
-                        value=raw_message[len(_SSE_DATA_PREFIX) :].strip(),
+                        value=raw_message[len(_SSE_DATA_PREFIX) :].strip(_SSE_PADDING),
                     )
                 ],
             )
@@ -771,7 +788,7 @@ class SSEMessage:
         if "\r" in raw_message:
             raw_message = raw_message.replace("\r\n", "\n").replace("\r", "\n")
         for line in raw_message.split("\n"):
-            if not (line := line.strip()):
+            if not (line := line.strip(_SSE_PADDING)):
                 continue
 
             prev_value = message.packets[-1].value if message.packets else None
@@ -794,7 +811,9 @@ class SSEMessage:
             parts = line.split(":", 1)
             if len(parts) < 2:
                 # Fields without a colon have no value, so the whole line is the field name
-                message.packets.append(SSEField(name=parts[0].strip(), value=None))
+                message.packets.append(
+                    SSEField(name=parts[0].strip(_SSE_PADDING), value=None)
+                )
                 continue
 
             field_name, value = parts
@@ -803,11 +822,14 @@ class SSEMessage:
                 # Field name is empty, so this is a comment
                 field_name = _SSE_COMMENT_FIELD_NAME
 
-            # Spec says strip only one leading space; we strip() all whitespace
+            # Spec says strip only one leading space; we strip all ASCII padding
             # to normalize inconsistent servers for downstream exact comparisons
             # (e.g. "[DONE]", "error").
             message.packets.append(
-                SSEField(name=field_name.strip(), value=value.strip())
+                SSEField(
+                    name=field_name.strip(_SSE_PADDING),
+                    value=value.strip(_SSE_PADDING),
+                )
             )
 
         return message
@@ -1165,6 +1187,12 @@ class RequestInfo(RecordContext):
         default=None,
         description="Response ID from the previous turn (e.g. 'resp_<hash>') "
         "used for stateful chaining in the Responses API.",
+    )
+    system_prompt_in_stored_history: bool = Field(
+        default=False,
+        description="Whether the stored server-side history behind "
+        "previous_response_id already contains the system prompt as an input "
+        "item. Only meaningful when previous_response_id is set.",
     )
 
 

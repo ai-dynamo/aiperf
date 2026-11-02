@@ -772,7 +772,7 @@ video_peak_memory = response.data.peak_memory_mb
 Per-request input audio duration in seconds. Hidden from the console summary; available in JSON / CSV record exports for characterizing dataset shape and verifying RTFx calculations.
 
 **Notes:**
-- Only computed when the request carries `audio_duration_seconds` (e.g., ASR datasets such as LibriSpeech).
+- Only computed when the request carries `audio_duration_seconds` (e.g., ASR datasets such as LibriSpeech, or a `--custom-dataset-type single_turn` entry with an explicit `audio_duration_seconds` field).
 - Aggregate stats (avg, p50, p99) are computed automatically.
 
 ### Inverse Real-Time Factor (RTFx)
@@ -1942,6 +1942,10 @@ These metrics appear only when network latency calibration is enabled (with
 `--network-latency-automatic` or `--network-latency-mean`). They make benchmark runs
 taken from different client network locations comparable by removing the client-to-endpoint
 network round-trip from the reported latencies.
+
+YAML configurations can enable calibration with `benchmark.networkLatency.enabled: true`.
+These settings are preserved when `--config` is used unless a network-latency CLI flag
+is explicitly supplied.
 
 With `--network-latency-automatic`, AIPerf opens a fresh TCP connection to the endpoint
 host:port on an interval throughout profiling (`--network-latency-ping-interval`, default 1s)

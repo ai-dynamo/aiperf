@@ -76,6 +76,8 @@ class AioHttpClient(AIPerfLoggerMixin):
         self.tcp_connector = create_tcp_connector(**tcp_kwargs or {})
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.collect_trace_chunks = collect_trace_chunks
+        # Read by the worker's health report; see WorkerTaskStats.stream_chunks_received.
+        self.stream_chunks_received = 0
 
     async def close(self) -> None:
         """Close the client."""
@@ -227,6 +229,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                             async for chunk in response.content.iter_any():
                                 chunk_ns = time.perf_counter_ns()
                                 chunk_len = len(chunk)
+                                self.stream_chunks_received += 1
                                 _trace.response_chunks_count += 1
                                 _trace.response_bytes_total += chunk_len
                                 if _chunks_append is not None:

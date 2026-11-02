@@ -28,7 +28,7 @@ def _run_api_script(body: str) -> object:
         const source = fs.readFileSync(sourcePath, 'utf8').replace(
           /import \{{[\s\S]*?\}} from '\.\/state\.js';/,
           'function setError(_) {{}}',
-        );
+        ).replace("import {{ API_BASE }} from './base-path.js';", "const API_BASE = '/api/v1';");
         const moduleUrl = `data:text/javascript;base64,${{Buffer.from(source).toString('base64')}}`;
         const {{ api }} = await import(moduleUrl);
 

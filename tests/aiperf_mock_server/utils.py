@@ -646,6 +646,10 @@ async def stream_chat_completion(
             }
             if ctx.continuous_usage:
                 chunk["usage"] = _partial_usage(ctx, completion_so_far)
+            if not ctx.tokens and ri == num_reasoning - 1:
+                # Reasoning used the whole budget, so no content chunk follows
+                # to carry finish_reason; real servers still send it.
+                chunk["choices"][0]["finish_reason"] = ctx.finish_reason
             if (
                 not ctx.tokens
                 and ri == num_reasoning - 1

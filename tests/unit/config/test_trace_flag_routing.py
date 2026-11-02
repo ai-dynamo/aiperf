@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 from pytest import param
@@ -21,7 +22,10 @@ from aiperf.config.flags.resolver import (
 )
 from aiperf.config.loader.errors import ConfigurationError
 from aiperf.config.resolution.plan import BenchmarkRun
+from aiperf.dataset.composer.public import PublicDatasetComposer
+from aiperf.dataset.loader.hf_mooncake_trace import HFMooncakeTraceDatasetLoader
 from aiperf.plugin.enums import CustomDatasetType, PublicDatasetType
+from tests.unit.conftest import make_run_from_cli
 
 _WEKA_HF = PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA_WITH_SUBAGENTS
 
@@ -504,6 +508,106 @@ class TestWekaHfFailFast:
         assert d.hf_weka_dataset is None  # registry-defined repo, no flag needed
 
 
+class TestMooncakeHFFailFast:
+    """Mooncake HF repositories and mappings are validated at config-load time."""
+
+    @pytest.mark.parametrize("flags,error", [
+        param({"endpoint_type": "completions"}, "requires --endpoint-type chat", id="endpoint"),
+        param({"fixed_schedule": True}, "no recorded timing", id="timing"),
+        param({"extra_inputs": {"messages": []}}, "must not override.*messages", id="messages"),
+        param({"extra_inputs": {"input": "other"}}, "must not override.*input", id="input"),
+        param({"extra_inputs": {"model": "other"}}, "must not override.*model", id="model"),
+        param({"extra_inputs": {"tools": []}}, "must not override.*tools", id="tools"),
+    ])  # fmt: skip
+    def test_incompatible_replay_config_raises(
+        self, flags: dict[str, object], error: str
+    ) -> None:
+        with pytest.raises(ValueError, match=error):
+            convert_cli_to_aiperf(
+                CLIConfig(
+                    model_names=["target"],
+                    hf_mooncake_dataset="example/trajectories",
+                    **flags,
+                )
+            )
+
+    @pytest.mark.parametrize("repo", [None, "   "])
+    def test_missing_or_empty_repo_raises(self, repo: str | None) -> None:
+        with pytest.raises(ValueError, match="non-empty"):
+            PublicDataset(
+                type="public",
+                name="m",
+                dataset=PublicDatasetType.MOONCAKE_HF,
+                hf_mooncake_dataset=repo,
+            )
+
+    def test_repo_on_other_loader_raises(self) -> None:
+        with pytest.raises(ValueError, match="can only be used with.*mooncake_hf"):
+            PublicDataset(
+                type="public",
+                name="m",
+                dataset=PublicDatasetType.SHAREGPT,
+                hf_mooncake_dataset="example/repo",
+            )
+
+    def test_repo_strips_and_validates(self) -> None:
+        dataset = PublicDataset(
+            type="public",
+            name="m",
+            dataset=PublicDatasetType.MOONCAKE_HF,
+            hf_mooncake_dataset="  example/trajectories  ",
+        )
+        assert dataset.hf_mooncake_dataset == "example/trajectories"
+
+    @pytest.mark.parametrize(
+        "flags,error",
+        [
+            param({"public_dataset": "mooncake_hf"}, "requires a non-empty hf_mooncake_dataset", id="missing_repo"),
+            param({"public_dataset": "aimo", "hf_mooncake_dataset": "example/repo"}, "--hf-mooncake-dataset", id="wrong_plugin"),
+            param({"mooncake_trace_to_hf_mapping": ["messages=turns"]}, "--mooncake-trace-to-hf-mapping", id="orphan_mapping"),
+            param({"public_dataset": "aimo", "mooncake_trace_to_hf_mapping": ["messages=turns"]}, "--mooncake-trace-to-hf-mapping", id="mapping_wrong_public_loader"),
+            param({"custom_dataset_type": "mooncake_trace", "mooncake_trace_to_hf_mapping": ["messages=turns"]}, "--mooncake-trace-to-hf-mapping", id="mapping_local_trace"),
+            param({"hf_mooncake_split": "train"}, "hf_mooncake_split", id="orphan_split"),
+            param({"public_dataset": "aimo", "hf_mooncake_split": "train"}, "--hf-mooncake-split", id="split_wrong_public_loader"),
+            param({"custom_dataset_type": "mooncake_trace", "hf_mooncake_split": "train"}, "hf_mooncake_split", id="split_local_trace"),
+            param({"hf_mooncake_dataset": "example/repo", "hf_mooncake_split": ""}, "hf_mooncake_split", id="empty_split"),
+            param({"hf_mooncake_dataset": "example/repo", "hf_mooncake_split": "   "}, "hf_mooncake_split", id="blank_split"),
+            param({"hf_mooncake_dataset": "example/repo", "mooncake_trace_to_hf_mapping": ["messages=turns", "messages=other"]}, "Duplicate --mooncake-trace-to-hf-mapping", id="duplicate_mapping"),
+            param({"hf_mooncake_dataset": "example/repo", "mooncake_trace_to_hf_mapping": ["messages"]}, "Invalid --mooncake-trace-to-hf-mapping", id="malformed_mapping"),
+            param({"hf_mooncake_dataset": "example/repo", "hf_weka_dataset": "example/weka"}, "--hf-mooncake-dataset", id="conflicting_repos"),
+            param({"hf_mooncake_dataset": "example/repo", "custom_dataset_type": "mooncake_trace"}, "public.format", id="conflicting_format"),
+        ],
+    )  # fmt: skip
+    def test_invalid_mooncake_flags_raise(
+        self, trace_jsonl: Path, flags: dict[str, object], error: str
+    ) -> None:
+        if "custom_dataset_type" in flags and "hf_mooncake_dataset" not in flags:
+            flags = flags | {"input_file": str(trace_jsonl)}
+        with pytest.raises(ValueError, match=error):
+            convert_cli_to_aiperf(CLIConfig(model_names=["m"], **flags))
+
+    @pytest.mark.parametrize(
+        "mapping,error",
+        [
+            param({"timestamp": "time"}, "unsupported", id="unsupported_target"),
+            param({"extra.": "temperature"}, "unsupported", id="empty_extra_key"),
+            param({"messages": ""}, "invalid source path", id="empty_source"),
+            param({"messages": "nested..messages"}, "invalid source path", id="empty_path_segment"),
+        ],
+    )  # fmt: skip
+    def test_invalid_mooncake_mapping_raises(
+        self, mapping: dict[str, str], error: str
+    ) -> None:
+        with pytest.raises(ValueError, match=error):
+            PublicDataset(
+                name="default",
+                type="public",
+                dataset=PublicDatasetType.MOONCAKE_HF,
+                hf_mooncake_dataset="example/trajectories",
+                mooncake_trace_to_hf_mapping=mapping,
+            )
+
+
 class TestHfWekaDatasetConverterRouting:
     """``--hf-weka-dataset`` is copied by build_dataset and, when set alone, auto-selects --public-dataset weka_hf."""
 
@@ -529,6 +633,69 @@ class TestHfWekaDatasetConverterRouting:
         assert out["type"] == "public"
         assert out["dataset"] == PublicDatasetType.WEKA_HF
         assert out["hf_weka_dataset"] == "semianalysisai/cc-traces-weka-061526"
+
+
+class TestHfMooncakeDatasetConverterRouting:
+    """The Mooncake repository flag selects its loader and routes source settings."""
+
+    @pytest.mark.parametrize("explicit_loader", [False, True])
+    def test_repository_flag_selects_loader(self, explicit_loader: bool) -> None:
+        flags = (
+            {"public_dataset": PublicDatasetType.MOONCAKE_HF} if explicit_loader else {}
+        )
+        cli = CLIConfig(
+            model_names=["m"], hf_mooncake_dataset="example/trajectories", **flags
+        )
+        out = build_dataset(cli)
+        assert out["type"] == "public"
+        assert out["dataset"] == PublicDatasetType.MOONCAKE_HF
+        assert out["hf_mooncake_dataset"] == "example/trajectories"
+        dataset = convert_cli_to_aiperf(cli).benchmark.get_default_dataset()
+        assert dataset.dataset == PublicDatasetType.MOONCAKE_HF
+        assert dataset.hf_mooncake_dataset == "example/trajectories"
+
+    @pytest.mark.parametrize(
+        "split,expected_split",
+        [param(None, "test", id="default"), param("train", "train", id="override")],
+    )  # fmt: skip
+    def test_mooncake_source_settings_reach_loader(
+        self, monkeypatch: pytest.MonkeyPatch, split: str | None, expected_split: str
+    ) -> None:
+        run = make_run_from_cli(
+            CLIConfig(
+                model_names=["m"],
+                hf_mooncake_dataset="example/trajectories",
+                hf_dataset_subset="custom-subset",
+                hf_mooncake_split=split,
+                mooncake_trace_to_hf_mapping=[
+                    "messages=turns",
+                    "extra.temperature=params.temperature",
+                ],
+                dataset_filters=["model=source/model"],
+            )
+        )
+        dataset = run.cfg.get_default_dataset()
+        assert dataset.mooncake_trace_to_hf_mapping == {
+            "messages": "turns",
+            "extra.temperature": "params.temperature",
+        }
+        assert dataset.filters == {"model": "source/model"}
+        composer = PublicDatasetComposer(run=run, tokenizer=None)
+        composer.prompt_generator = Mock()
+        monkeypatch.setattr(
+            "aiperf.dataset.generator.corpus.resolve_prompt_generator",
+            Mock(return_value=composer.prompt_generator),
+        )
+        kwargs = composer._build_loader_kwargs(
+            PublicDatasetType.MOONCAKE_HF, HFMooncakeTraceDatasetLoader
+        )
+        assert kwargs["hf_dataset_name"] == "example/trajectories"
+        assert kwargs["hf_subset"] == "custom-subset"
+        assert kwargs["hf_split"] == expected_split
+        assert "hf_revision" not in kwargs
+        assert kwargs["field_mapping"] == dataset.mooncake_trace_to_hf_mapping
+        assert kwargs["filters"] == dataset.filters
+        assert kwargs["streaming"] is True
 
 
 class TestTraceDelayExclusivity:

@@ -2635,8 +2635,23 @@ async def test_handle_credit_return_honors_delay_ms_via_scheduler():
 
 
 @pytest.mark.asyncio
-async def test_global_idle_cap_shifts_real_delayed_continuation_to_ten_seconds():
-    """Exercise the production scheduler and strategy together."""
+async def test_global_idle_cap_shifts_real_delayed_continuation_to_ten_seconds(
+    time_traveler_no_patch_sleep,
+):
+    """Exercise the production scheduler and strategy together.
+
+    The virtual loop clock (looptime) is required, not cosmetic: the cap's
+    contract is that enforcement retargets the pending timer to
+    ``enforcement_time + cap``, so the skipped amount is
+    ``delay - (t_cap - t_arm) - cap``. ``t_cap - t_arm`` is the loop-time
+    elapsed between the continuation timer's arming (inside
+    ``handle_credit_return``) and the enforcement's ``loop.time()`` sample --
+    real, unbounded wall time under host preemption (CI observed 100us-16ms),
+    which broke ``approx(90.0)`` (+-90us) and ``approx(10.0, abs=0.01)`` on the
+    real clock. The arm-to-cap-to-assert path never yields to the event loop,
+    so under looptime that elapsed time is exactly zero and both quantities are
+    deterministic.
+    """
     trajectories = [Trajectory(conversation_id="trace_0", start_turn_index=0)]
     dataset = DatasetMetadata(
         conversations=[

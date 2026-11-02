@@ -249,3 +249,18 @@ class TestConsoleOSLMismatchExporter:
             # `strict` matches Windows' default behavior; `replace` would mask
             # the very failure mode this test exists to catch.
             warning_text.encode("cp1252", errors="strict")
+
+    async def test_end_conversation_on_truncation_drops_ignore_eos_fix(self, mock_cfg):
+        """ignore_eos would end every conversation after turn 1, so it is not offered."""
+        with patch(
+            "aiperf.exporters.console_osl_mismatch_exporter.Environment.METRICS.OSL_MISMATCH_PCT_THRESHOLD",
+            20.0,
+        ):
+            config = create_exporter_config(
+                self._create_profile_results(count=30, total_records=100),
+                mock_cfg.model_copy(update={"end_conversation_on_truncation": True}),
+            )
+            output = await self._get_export_output(ConsoleOSLMismatchExporter(config))
+            assert "ignore_eos:true is not suggested" in output
+            assert "Generate until max_tokens" not in output
+            assert "min_tokens" in output

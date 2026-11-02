@@ -182,7 +182,7 @@ time handlers run). On CLI failure, the remaining checks are skipped.
 
 ### Kubernetes Version
 
-- **Validates**: `major.minor >= 1.24` per `MIN_K8S_MAJOR`/`MIN_K8S_MINOR`
+- **Validates**: `major.minor >= 1.24` per `MIN_K8S_MAJOR`/`MIN_K8S_MINOR`. The standalone check warns on 1.24–1.28 because server-metrics native sidecars require 1.29+. The operator rejects such a workload unless `benchmark.serverMetrics.enabled` is false.
   (`src/aiperf/operator/preflight/_common.py`).
 - **Source**: `src/aiperf/operator/preflight/_tier1.py:_check_kubernetes_version`,
   `src/aiperf/kubernetes/preflight_checks.py:check_kubernetes_version`

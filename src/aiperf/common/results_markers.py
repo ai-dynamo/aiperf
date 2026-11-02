@@ -57,6 +57,20 @@ def checkpoints_dir(base_dir: Path) -> Path:
     return base_dir / CHECKPOINTS_DIR_NAME
 
 
+def remove_committed_request_checkpoint(output_file: Path) -> None:
+    """Retire the live alias after readiness commits, keeping directory copies simple."""
+    checkpoint = output_file.parent / CHECKPOINTS_DIR_NAME / output_file.name
+    try:
+        if checkpoint.samefile(output_file):
+            checkpoint.unlink()
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        logger.warning(
+            "Failed to retire the live request checkpoint %s: %s", checkpoint, exc
+        )
+
+
 def processing_marker_path(base_dir: Path) -> Path:
     """Return the sidecar processing marker path."""
     return base_dir / PROCESSING_MARKER_NAME

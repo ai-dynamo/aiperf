@@ -20,6 +20,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.mixins import TaskManagerMixin
 from aiperf.common.phase import phase_runtime_key
+from aiperf.config.dataset.truncation import end_conversation_on_truncation_enabled
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TimingMode
@@ -187,6 +188,22 @@ class PhaseRunner(TaskManagerMixin):
                     self._config = config.model_copy(
                         update={"total_expected_requests": warmup_count}
                     )
+
+        if config.sessions_from_dataset and metadata:
+            # Count only sampleable roots: the stop condition counts root
+            # sessions, and DAG children run inside their root's session.
+            num_sessions = len(metadata.sampleable_conversation_ids)
+            # A shared sampler an earlier phase (e.g. warmup) already advanced
+            # could otherwise repeat or skip conversations within this pass.
+            conversation_source.start_full_pass()
+            self._config = self._config.model_copy(
+                update={"expected_num_sessions": num_sessions}
+            )
+            self.info(
+                f"Phase {config.phase_name or config.phase}: sessions=all, running "
+                f"one full pass over {num_sessions:,} conversations"
+            )
+
         self._phase_publisher = phase_publisher
         self._credit_router = credit_router
         self._concurrency_manager = concurrency_manager
@@ -227,6 +244,7 @@ class PhaseRunner(TaskManagerMixin):
         self._return_wait_task: asyncio.Task | None = None
         self._router_phase_started = False
         self._was_cancelled = False
+        self._cancel_event = asyncio.Event()
         self._rampers: list[RateControllerProtocol] = []
         self._baseline_start_ns: int | None = None
         self._baseline_end_ns: int | None = None
@@ -311,6 +329,17 @@ class PhaseRunner(TaskManagerMixin):
             conversation_source.dataset_metadata
         ):
             return
+        # Ending a root early would strand the branches the orchestrator spawns
+        # and later resumes through a join, so reject rather than miscount.
+        # Checked here because DAG-ness is only known once the dataset loads.
+        if self._run is not None and end_conversation_on_truncation_enabled(
+            self._run.cfg.get_default_dataset()
+        ):
+            raise ValueError(
+                "end_conversation_on_truncation (--end-conversation-on-truncation) "
+                "is not supported for DAG datasets or agentic replay; pass "
+                "--no-end-conversation-on-truncation."
+            )
         sticky_router = getattr(self._credit_router, "sticky_router", None)
         benchmark_id = self._run.benchmark_id if self._run is not None else "unknown"
         cache_bust_target = self._resolve_cache_bust_target()
@@ -460,6 +489,7 @@ class PhaseRunner(TaskManagerMixin):
     def cancel(self) -> None:
         """Cancel the phase runner (external cancellation like Ctrl+C)."""
         self._was_cancelled = True
+        self._cancel_event.set()
         self._lifecycle.cancel()
         if self._execution_task:
             self._execution_task.cancel()
@@ -559,6 +589,7 @@ class PhaseRunner(TaskManagerMixin):
         strategy = self._build_strategy()
         try:
             self._register_strategy_with_callback_handler(strategy)
+            self._wire_join_schedule_target(strategy)
             return await self._run_strategy(
                 strategy, is_final_phase, seamless_to_next=seamless_to_next
             )
@@ -567,6 +598,36 @@ class PhaseRunner(TaskManagerMixin):
             raise e
         finally:
             self._detach_orchestrator_and_cleanup(strategy)
+
+    def _wire_join_schedule_target(self, strategy: TimingStrategyProtocol) -> None:
+        """Let the orchestrator honour recorded timestamps on gated turns.
+
+        A turn gated on a SPAWN_JOIN is released by the BranchOrchestrator when
+        its children finish, which bypasses the timestamp scheduling the
+        fixed-schedule strategy applies to ordinary turns. Without this the
+        gated turn fires as soon as the children do, so a trace with subagents
+        replays faster than it was recorded.
+
+        Only fixed schedule has a notion of "when should this fire", so only it
+        supplies a resolver; every other mode keeps its reactive behaviour.
+        """
+        if self._branch_orchestrator is None:
+            return
+        if self._config.timing_mode != TimingMode.FIXED_SCHEDULE:
+            self._branch_orchestrator.set_schedule_target_resolver(None)
+            return
+
+        resolver = getattr(strategy, "schedule_target_perf_sec", None)
+        if resolver is None:
+            # Loud rather than silent: without the hook every gated turn goes
+            # back to firing as soon as its children finish, which compresses
+            # the very trace this mode exists to reproduce.
+            raise AttributeError(
+                f"{type(strategy).__name__} runs in fixed-schedule mode but does "
+                "not expose schedule_target_perf_sec(); SPAWN_JOIN-gated turns "
+                "would stop honouring their recorded timestamps"
+            )
+        self._branch_orchestrator.set_schedule_target_resolver(resolver)
 
     def _build_strategy(self) -> TimingStrategyProtocol:
         """Construct the timing strategy class for this phase."""
@@ -750,7 +811,9 @@ class PhaseRunner(TaskManagerMixin):
 
         # Seamless mode: phase flows into next without waiting for returns.
         # Progress task continues in background until phase complete.
-        if seamless_to_next and not is_final_phase:
+        # Warmup never detaches: the server-metrics barrier must finish before
+        # profiling credits start, even when the next phase is marked seamless.
+        if seamless_to_next and not is_final_phase and not self._is_warmup:
             self._return_wait_task = self.execute_async(
                 self._wait_for_returning_complete(strategy, phase_id=phase_id)
             )
@@ -1027,6 +1090,11 @@ class PhaseRunner(TaskManagerMixin):
                 f"sessions: completed={stats.final_completed_sessions:,}, "
                 f"cancelled={stats.final_cancelled_sessions:,}"
             )
+        if stats.sessions_ended_on_truncation:
+            parts.append(
+                f"ended_on_truncation={stats.sessions_ended_on_truncation:,} "
+                f"(skipped_turns={stats.turns_skipped_on_truncation:,})"
+            )
         elapsed = stats.requests_elapsed_time
         parts.append(f"elapsed={elapsed:.2f}s")
         if stats.grace_period_timeout_triggered:
@@ -1276,6 +1344,9 @@ class PhaseRunner(TaskManagerMixin):
             if not self._lifecycle.is_complete:
                 self._lifecycle.mark_complete(grace_period_triggered=timed_out)
                 self._progress.freeze_completed_counts()
+            # Skip on cancel: a cancelled run has no settled boundary worth
+            # waiting for (same rationale as PROFILE_CANCEL).
+            await self._prepare_server_metrics_warmup_boundary()
             if phase_id is not None and self._baseline_end_ns is None:
                 self._baseline_end_ns = (
                     await self._capture_baseline_boundary_before_completion(
@@ -1285,8 +1356,123 @@ class PhaseRunner(TaskManagerMixin):
             stats = self._create_final_stats()
             self.notice(self._format_phase_complete(stats))
             await self._phase_publisher.publish_progress(stats)
-            await self._phase_publisher.publish_phase_complete(
-                stats, branch_stats=self._snapshot_branch_stats()
+            await self._publish_phase_complete_with_server_metrics_gate(stats)
+
+    async def _prepare_server_metrics_warmup_boundary(self) -> None:
+        """Flush wait + clear ready event before publishing phase-complete."""
+        if self._was_cancelled:
+            return
+        await self._wait_for_server_metrics_warmup_flush()
+        self._phase_publisher.clear_warmup_boundary_ready()
+
+    async def _publish_phase_complete_with_server_metrics_gate(
+        self, stats: CreditPhaseStats
+    ) -> None:
+        """Publish phase-complete, then wait for warmup metrics drain ack."""
+        await self._phase_publisher.publish_phase_complete(
+            stats, branch_stats=self._snapshot_branch_stats()
+        )
+        if self._was_cancelled:
+            return
+        await self._wait_for_server_metrics_warmup_boundary_ready()
+
+    @property
+    def _is_warmup(self) -> bool:
+        """True when this runner owns a warmup phase."""
+        return (
+            self._config.phase == CreditPhase.WARMUP
+            or self._config.phase_kind == "warmup"
+        )
+
+    def _server_metrics_collection_active(self) -> bool:
+        """True when ServerMetricsManager reported reachable collectors.
+
+        Gates the warmup flush/ack barrier on the runtime
+        ``ServerMetricsStatusMessage`` rather than static
+        ``cfg.server_metrics.enabled``. When collection is inactive (no
+        reachable /metrics, or ``--no-server-metrics``), skip the barrier so
+        the run matches main's exit-0 behaviour.
+        """
+        return bool(self._phase_publisher.server_metrics_runtime_active)
+
+    async def _wait_for_server_metrics_warmup_flush(self) -> None:
+        """Hold warmup completion until server metrics can settle.
+
+        ``ServerMetricsManager`` scrapes the warmup boundary after the same
+        ``COLLECTION_FLUSH_PERIOD`` deadline. Sleeping here (before publishing
+        ``CREDIT_PHASE_COMPLETE``) keeps the next phase from issuing profiling
+        credits during that window. The runner then waits for the manager's
+        drain acknowledgment before ``run()`` returns.
+
+        Skipped when server metrics collection is runtime-inactive.
+        """
+        if not self._is_warmup or not self._server_metrics_collection_active():
+            return
+        flush_period = Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
+        if flush_period <= 0:
+            return
+        end_ns = self._lifecycle.complete_at_ns or time.time_ns()
+        remaining_seconds = (
+            end_ns + int(flush_period * 1_000_000_000) - time.time_ns()
+        ) / 1_000_000_000
+        if remaining_seconds > 0:
+            self.info(
+                f"Waiting {remaining_seconds:.1f}s for server metrics flush "
+                "before ending warmup..."
+            )
+            await asyncio.sleep(remaining_seconds)
+
+    def _server_metrics_warmup_boundary_ready_timeout(self) -> float:
+        """Bound the runner wait for the manager's warmup boundary work.
+
+        After ``CREDIT_PHASE_COMPLETE``, ``ServerMetricsManager`` drains
+        in-flight scrapes then takes a serial final scrape per collector.
+        Prefer ``AIPERF_SERVER_METRICS_WARMUP_BOUNDARY_TIMEOUT`` when set;
+        otherwise derive from the runtime reachable collector count
+        (``flush + SCRAPE_TIMEOUT * (N + 2) + 5``). The manager can spend up to
+        one ``SCRAPE_TIMEOUT`` draining in-flight scrapes, up to another
+        waiting on cancelled periodic scrapes, then ``N`` serial final scrapes.
+        """
+        override = Environment.SERVER_METRICS.WARMUP_BOUNDARY_TIMEOUT
+        if override is not None and override > 0:
+            return float(override)
+        collector_count = int(self._phase_publisher.server_metrics_collector_count or 0)
+        # Active collection implies at least one collector; floor at 1 so a
+        # missing count cannot collapse the budget to zero.
+        collector_budget = max(collector_count, 1)
+        return (
+            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD
+            + Environment.SERVER_METRICS.SCRAPE_TIMEOUT * (collector_budget + 2)
+            + 5.0
+        )
+
+    async def _wait_for_server_metrics_warmup_boundary_ready(self) -> None:
+        """Wait until in-flight warmup scrapes are drained and baselined.
+
+        ``CREDIT_PHASE_COMPLETE`` is fire-and-forget over PUB/SUB, so the
+        manager's drain and final scrape can still be running when the
+        orchestrator would otherwise start profiling. Waiting for
+        ``SERVER_METRICS_WARMUP_BOUNDARY_READY`` closes that gap.
+
+        Applies only when collection is runtime-active. A missing
+        acknowledgement in that case is a failed boundary: raise so ``run()``
+        aborts and profiling credits are never released. Soft-continuing after
+        timeout reintroduces warmup/profiling misattribution.
+        """
+        if not self._is_warmup or not self._server_metrics_collection_active():
+            return
+        timeout = self._server_metrics_warmup_boundary_ready_timeout()
+        # Race the ack against cancel(): nothing else interrupts this wait, so
+        # a Ctrl+C here should leave through the cancel path, not the timeout.
+        ready = await self._phase_publisher.wait_for_warmup_boundary_ready(
+            timeout, cancel_event=self._cancel_event
+        )
+        if self._was_cancelled:
+            return
+        if not ready:
+            raise TimeoutError(
+                f"Timed out after {timeout:.1f}s waiting for server-metrics "
+                "warmup boundary ready; aborting before profiling credits start"
             )
 
     def _release_stuck_slots(self) -> None:

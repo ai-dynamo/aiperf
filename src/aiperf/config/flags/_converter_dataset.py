@@ -233,17 +233,17 @@ def _build_video(cli: CLIConfig) -> dict[str, Any]:
 # --- top-level dataset assembly -------------------------------------------
 
 
-def _parse_dataset_filters(values: list[str]) -> dict[str, str]:
+def _parse_dataset_filters(
+    values: list[str], *, flag: str = "--dataset-filter"
+) -> dict[str, str]:
     filters: dict[str, str] = {}
     for item in values:
         key, separator, value = item.partition("=")
         key, value = key.strip(), value.strip()
         if not separator or not key or not value:
-            raise ValueError(
-                f"Invalid --dataset-filter {item!r}; expected non-empty key=value"
-            )
+            raise ValueError(f"Invalid {flag} {item!r}; expected non-empty key=value")
         if key in filters:
-            raise ValueError(f"Duplicate --dataset-filter key {key!r}")
+            raise ValueError(f"Duplicate {flag} key {key!r}")
         filters[key] = value
     return filters
 
@@ -256,6 +256,8 @@ _VERBATIM_DATASET_FIELDS = (
     ("input_file", "path", True),
     ("public_dataset", "dataset", True),
     ("hf_dataset_subset", "hf_subset", False),
+    ("hf_mooncake_dataset", "hf_mooncake_dataset", False),
+    ("hf_mooncake_split", "hf_mooncake_split", False),
     ("hf_weka_dataset", "hf_weka_dataset", False),
     ("weka_nested_timestamp_basis", "weka_nested_timestamp_basis", False),
     ("custom_dataset_type", "format", False),
@@ -272,18 +274,17 @@ _VERBATIM_DATASET_FIELDS = (
     # synthetic-only subtables below they must NOT be popped per-type.
     ("system_prompt", "system_prompt", False),
     ("system_prompt_file", "system_prompt_file", False),
+    ("end_conversation_on_truncation", "end_conversation_on_truncation", False),
 )
 
 
 def _implies_public_dataset(cli: CLIConfig) -> bool:
-    """True when the CLI selects a public dataset (explicit or via --hf-weka-dataset).
-
-    ``--hf-weka-dataset`` alone auto-selects ``weka_hf``; reject/type paths that
-    key off ``cli.public_dataset`` must treat that as public too.
-    """
     if cli.public_dataset:
         return True
-    return _set(cli, "hf_weka_dataset") and cli.hf_weka_dataset is not None
+    return any(
+        _set(cli, field) and getattr(cli, field) is not None
+        for field in ("hf_weka_dataset", "hf_mooncake_dataset")
+    )
 
 
 def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
@@ -293,6 +294,10 @@ def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
         value = getattr(cli, field)
         if _set(cli, field) and (keep_none or value is not None):
             out[key] = value
+    if _set(cli, "mooncake_trace_to_hf_mapping"):
+        out["mooncake_trace_to_hf_mapping"] = _parse_dataset_filters(
+            cli.mooncake_trace_to_hf_mapping, flag="--mooncake-trace-to-hf-mapping"
+        )
     if _set(cli, "dataset_filters"):
         out["filters"] = _parse_dataset_filters(cli.dataset_filters)
     # --hf-weka-dataset alone auto-selects --public-dataset weka_hf (docs +
@@ -301,6 +306,11 @@ def _flat_dataset_fields(cli: CLIConfig) -> dict[str, Any]:
         from aiperf.plugin.enums import PublicDatasetType
 
         out["dataset"] = PublicDatasetType.WEKA_HF
+
+    if "hf_mooncake_dataset" in out and "dataset" not in out:
+        from aiperf.plugin.enums import PublicDatasetType
+
+        out["dataset"] = PublicDatasetType.MOONCAKE_HF
     return out
 
 
@@ -1431,6 +1441,13 @@ def _run_dataset_rejections(
     _reject_baseten_trace_extra_input_collisions(
         cli, declared_format=declared_format if override_mode else None
     )
+
+    if cli.mooncake_trace_to_hf_mapping and not (
+        _implies_public_dataset(cli) or declared_type == DatasetType.PUBLIC
+    ):
+        raise ValueError(
+            "--mooncake-trace-to-hf-mapping requires a public dataset of type mooncake_hf"
+        )
 
     if cli.dataset_filters and not (
         _implies_public_dataset(cli) or declared_type == DatasetType.PUBLIC
