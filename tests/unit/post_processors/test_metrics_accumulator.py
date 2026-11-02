@@ -10,6 +10,7 @@ from unittest.mock import Mock, patch
 import numpy as np
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.accumulator_protocols import ExportContext, SummaryContext
 from aiperf.common.constants import NANOS_PER_SECOND
@@ -1224,8 +1225,18 @@ class TestTimesliceRaggedIndex:
         ]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "overlap_kwargs",
+        [
+            param({"include_timeslices": True}, id="overlapping-timeslice-summary"),
+            param(
+                {"include_timeslices": False, "include_sweeps": False},
+                id="overlapping-live-summary",
+            ),
+        ],
+    )  # fmt: skip
     async def test_summary_overlapping_timeslice_export_keeps_its_own_values(
-        self, mock_run
+        self, mock_run, overlap_kwargs: dict[str, bool]
     ) -> None:
         mock_run.cfg.artifacts.slice_duration = 1.0
         accumulator = MetricsAccumulator(mock_run)
@@ -1233,17 +1244,20 @@ class TestTimesliceRaggedIndex:
         warmup = ExportContext(phase=CreditPhase.WARMUP)
         profiling = ExportContext(phase=CreditPhase.PROFILING)
         expected_warmup = self._dump(await accumulator.export_results(warmup))
-        expected_profiling = self._dump(await accumulator.export_results(profiling))
+        expected_profiling = await accumulator.export_results(profiling)
 
         compute_results = MetricsAccumulator._compute_results
         pending = [profiling]
         overlapped: list[AccumulatorMetricsSummary] = []
 
         def summarize_mid_slice(self, *args, **kwargs):
-            # The realtime summary runs on the event loop while the export's
-            # slice loop runs in a worker thread.
+            # A second summary runs on the event loop while the export's slice
+            # loop runs in a worker thread. The live tick passes summarize()'s
+            # headless flags; summarize() itself is async and cannot run here.
             if kwargs.get("is_timeslice") and pending:
-                overlapped.append(self._summarize_for_export_context(pending.pop()))
+                overlapped.append(
+                    self._summarize_for_export_context(pending.pop(), **overlap_kwargs)
+                )
             return compute_results(self, *args, **kwargs)
 
         with patch.object(
@@ -1256,7 +1270,19 @@ class TestTimesliceRaggedIndex:
 
         assert overlapped
         assert self._dump(exported) == expected_warmup
-        assert self._dump(overlapped[0]) == expected_profiling
+        if overlap_kwargs["include_timeslices"]:
+            assert self._dump(overlapped[0]) == self._dump(expected_profiling)
+        else:
+            live = overlapped[0]
+            assert live.timeslices is None
+            assert live.results.keys() <= expected_profiling.results.keys()
+            assert {
+                tag: result.model_dump(mode="json")
+                for tag, result in live.results.items()
+            } == {
+                tag: expected_profiling.results[tag].model_dump(mode="json")
+                for tag in live.results
+            }
 
 
 class TestMetricsSummary:
