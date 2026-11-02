@@ -55,8 +55,6 @@ and restored afterward.
 Choose the dataset variant and tokenizer appropriate to the model. Model aliases
 can require an explicit `--tokenizer`. Add `--tokenizer-trust-remote-code` only
 when the tokenizer needs it. Router affinity and server metrics remain explicit.
-The old `AIPERF_DATASET_WEKA_LIVE_ASSISTANT_RESPONSES` export is unnecessary;
-the harness no longer reads it.
 
 The existing `inferencex-agentx-mvp` scenario retains its defaults. `agentx`
 shares its replay, streaming, EOS, corpus, cache-busting, and submission-validity
