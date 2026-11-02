@@ -40,9 +40,13 @@ Examples:
     print(f"Workers: {Environment.WORKER.CPU_UTILIZATION_FACTOR}")
 """
 
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, Self
 
+import orjson
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -2708,6 +2712,58 @@ class _Environment(BaseSettings):
         default_factory=_ZMQSettings,
         description="ZMQ communication settings",
     )
+
+    @contextmanager
+    def defaults(
+        self, values: dict[str, dict[str, str | int | float | bool]]
+    ) -> Iterator[None]:
+        """Scope missing settings to this process and children spawned within the context."""
+        previous: dict[str, BaseSettings] = {}
+        inserted: dict[str, tuple[str, str]] = {}
+        try:
+            for group, fields in values.items():
+                settings = getattr(self, group)
+                updates = {}
+                for key, value in fields.items():
+                    if key not in type(settings).model_fields:
+                        raise ValueError(f"Unknown environment setting: {group}.{key}")
+                    env_key = f"{settings.model_config['env_prefix']}{key}"
+                    if (
+                        env_key not in os.environ
+                        and key not in settings.model_fields_set
+                    ):
+                        os.environ[env_key] = str(value)
+                        inserted[env_key] = (group, key)
+                        updates[key] = value
+                previous[group] = settings
+                updated = type(settings)(**{**settings.model_dump(), **updates})
+                updated.__pydantic_fields_set__ = (
+                    settings.model_fields_set | updates.keys()
+                )
+                setattr(self, group, updated)
+            if values:
+                validated = type(self).model_validate(self.model_dump())
+                for group in type(self).model_fields:
+                    settings = getattr(self, group)
+                    normalized = getattr(validated, group)
+                    previous.setdefault(group, settings)
+                    normalized.__pydantic_fields_set__ = (
+                        settings.model_fields_set.copy()
+                    )
+                    setattr(self, group, normalized)
+                for env_key, (group, key) in inserted.items():
+                    value = getattr(getattr(self, group), key)
+                    os.environ[env_key] = (
+                        orjson.dumps(value, default=list).decode()
+                        if isinstance(value, list | set | dict)
+                        else str(value)
+                    )
+            yield
+        finally:
+            for group, settings in previous.items():
+                setattr(self, group, settings)
+            for key in inserted:
+                os.environ.pop(key, None)
 
     @model_validator(mode="after")
     def validate_dev_mode(self) -> Self:
