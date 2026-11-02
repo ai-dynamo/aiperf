@@ -917,24 +917,25 @@ class BranchOrchestrator:
             self.stats.graphs_admitted += 1
 
         parent_corr = credit.x_correlation_id
-        if (
-            self._schedule_stopped.is_set()
-            and not self._issuer.can_dispatch_child_turn()
-        ):
-            self._discard_undispatchable_future_joins(parent_corr)
-            self._notify_drain()
-            return False
+        branch_ids = self.get_branch_ids(credit)
+        if not branch_ids and getattr(credit, "no_request", False):
+            self.stats.graphs_completed_to_end += 1
+            self._cs.forget_ordinal(credit.x_correlation_id)
+
+        if self._schedule_stopped.is_set():
+            child_dispatch_closed = not self._issuer.can_dispatch_child_turn()
+            parent_continuation_closed = (
+                not credit.is_final_turn
+                and not self._issuer.can_dispatch_join(credit.agent_depth)
+            )
+            if child_dispatch_closed or parent_continuation_closed:
+                self._discard_undispatchable_future_joins(parent_corr)
+                self._notify_drain()
+                return False
 
         async with self._parent_locks[parent_corr]:
-            branch_ids = self.get_branch_ids(credit)
             if branch_ids:
                 await self._spawn_children_and_register_gates(credit, branch_ids)
-            elif getattr(credit, "no_request", False):
-                # Terminal request-free gate (no branches to spawn): all rounds
-                # drained, so this graph instance reached END. All think-times
-                # are resolved, so drop its sampling ordinal to bound the map.
-                self.stats.graphs_completed_to_end += 1
-                self._cs.forget_ordinal(credit.x_correlation_id)
 
             # Breeze-through: the parent's next turn is a gate whose children
             # already drained before the parent arrived. Rather than let the
@@ -1788,16 +1789,16 @@ class BranchOrchestrator:
         if child_corr in outstanding.completed:
             return None
         outstanding.completed.add(child_corr)
-        if not pending.is_satisfied:
-            return None
         if pending.is_blocked and pending.can_release:
             return self._active_joins.pop(parent_corr, None)
         if pending.is_blocked:
             return None
-        if self._schedule_stopped.is_set() and not self._issuer.can_dispatch_join(
+        if pending.total_outstanding == 0 and not self._issuer.can_dispatch_join(
             pending.parent_agent_depth
         ):
             self._pop_future_join(parent_corr, gated_idx)
+            return None
+        if not pending.is_satisfied:
             return None
         # Satisfied before the parent arrived. A request-free SPINE gate carries
         # between-round think-time, so leave it in place (marked satisfied) for

@@ -173,6 +173,21 @@ async def test_child_finishing_after_cutoff_drops_future_join() -> None:
 
 
 @pytest.mark.asyncio
+async def test_last_child_after_cutoff_drops_unsatisfied_fan_in_join() -> None:
+    orch = _orchestrator()
+    pending = _future_join_waiting_on_child(orch)
+    pending.outstanding["SPAWN_JOIN:r:1"] = PrereqState()
+    orch._issuer.can_dispatch_join.return_value = False
+
+    await orch.expire_replay_deadlines()
+    await orch._satisfy_prerequisite("corr-1", 7, "SPAWN_JOIN:r:0", "child-1")
+
+    assert not pending.is_satisfied
+    assert pending.total_outstanding == 0
+    assert not orch.has_pending_branch_work()
+
+
+@pytest.mark.asyncio
 async def test_stopped_parent_drops_undispatchable_future_join() -> None:
     orch = _orchestrator()
     pending = PendingBranchJoin(
@@ -215,28 +230,56 @@ async def test_cutoff_does_not_recreate_gate_from_late_parent_return() -> None:
     pending = PendingBranchJoin(
         parent_x_correlation_id="corr-1",
         parent_conversation_id="r",
-        parent_num_turns=8,
-        gated_turn_index=7,
+        parent_num_turns=2,
+        gated_turn_index=1,
     )
     pending.outstanding["SPAWN_JOIN:r:0"] = PrereqState()
-    orch._future_joins["corr-1"] = {7: pending}
+    orch._future_joins["corr-1"] = {1: pending}
     credit = MagicMock(
         phase=CreditPhase.PROFILING,
         no_request=False,
+        is_final_turn=False,
         turn_index=0,
         x_correlation_id="corr-1",
+        conversation_id="r",
+        agent_depth=0,
+        parent_correlation_id=None,
+        effective_root_correlation_id="corr-1",
+        branch_mode=ConversationBranchMode.SPAWN,
     )
-    orch.get_branch_ids = MagicMock(return_value=["r:0"])
-    orch._spawn_children_and_register_gates = AsyncMock()
+    child = MagicMock(x_correlation_id="child-1")
+    orch._cs.start_branch_child.return_value = child
+    orch._issuer.dispatch_first_turn = AsyncMock(return_value=True)
     orch._issuer.can_dispatch_join.return_value = False
-    orch._issuer.can_dispatch_child_turn.return_value = False
+    orch._issuer.can_dispatch_child_turn.return_value = True
 
     await orch.expire_replay_deadlines()
     intercepted = await orch.intercept(credit)
 
     assert not intercepted
     assert not orch.has_pending_branch_work()
-    orch._spawn_children_and_register_gates.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cutoff_keeps_terminal_request_free_bookkeeping() -> None:
+    orch = _orchestrator()
+    credit = MagicMock(
+        phase=CreditPhase.PROFILING,
+        no_request=True,
+        is_final_turn=True,
+        turn_index=1,
+        x_correlation_id="corr-1",
+        conversation_id="r",
+        agent_depth=0,
+    )
+    orch._schedule_stopped.set()
+    orch._issuer.can_dispatch_child_turn.return_value = False
+
+    intercepted = await orch.intercept(credit)
+
+    assert not intercepted
+    assert orch.stats.graphs_completed_to_end == 1
+    orch._cs.forget_ordinal.assert_called_once_with("corr-1")
 
 
 @pytest.mark.parametrize(
