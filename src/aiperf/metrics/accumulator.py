@@ -834,8 +834,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
     ) -> list[TimesliceResult]:
         """Compute per-timeslice results by partitioning the time range.
 
-        Sweeps are pre-computed once in ``summarize()`` and windowed per
-        timeslice via ``compute_time_weighted_stats`` — O(T log M) total.
+        Sweeps are pre-computed once in ``_summarize_for_export_context()`` and
+        windowed per timeslice via ``compute_time_weighted_stats`` — O(T log M)
+        total.
 
         Slice grid is sized to span [min(start_ns), max(end_ns)], the actual
         wall-clock span of activity. The last slice's window_end is clipped
@@ -914,8 +915,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
             results.update(sweeps.compute_metrics(window_start, window_end))
             results = self._convert_display_units(results)
             # Network-RTT-adjusted latency metrics per window, aggregated from the
-            # arrays precomputed once in summarize() — this window just slices its
-            # records out via full_mask. None unless a run-level RTT was delivered.
+            # arrays precomputed once in _summarize_for_export_context() — this
+            # window just slices its records out via full_mask. None unless a
+            # run-level RTT was delivered.
             if adjusted_arrays is not None:
                 inject_network_adjusted_from_arrays(
                     adjusted_arrays,
