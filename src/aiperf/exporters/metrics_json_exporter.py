@@ -84,6 +84,11 @@ class MetricsJsonExporter(MetricsBaseExporter):
             is_complete=self._results.is_complete,
             incomplete_reason=self._results.incomplete_reason,
             error_summary=self._results.error_summary,
+            server_metrics_error_summary=(
+                self._server_metrics_results.error_summary or None
+                if self._server_metrics_results is not None
+                else None
+            ),
             start_time=start_time,
             end_time=end_time,
             telemetry_data=self._telemetry_results,
@@ -223,12 +228,21 @@ class MetricsJsonExporter(MetricsBaseExporter):
     def _splice_run_level_aggregates(self, export_data: JsonExportData) -> None:
         """Attach optional run-level aggregates that live on ``ProfileResults``
         outside the metric dict. Each is omitted from the export (``exclude_none``)
-        when absent: ``branch_stats`` on non-DAG runs, the pooled spec-decode
+        when absent: ``branch_stats`` on non-DAG runs, the truncation early-end
+        counts when end_conversation_on_truncation is off, the pooled spec-decode
         acceptance histogram when spec decode is off.
         """
         branch_stats = getattr(self._results, "branch_stats", None)
         if branch_stats is not None:
             export_data.branch_stats = branch_stats
+
+        for field in (
+            "conversations_ended_on_truncation",
+            "turns_skipped_on_truncation",
+        ):
+            value = getattr(self._results, field, None)
+            if value is not None:
+                setattr(export_data, field, value)
 
         spec_decode_histogram = getattr(
             self._results, "pooled_spec_decode_acceptance_histogram", None

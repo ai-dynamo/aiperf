@@ -475,6 +475,7 @@ class MultiRunOrchestrator:
         for it via :meth:`_run_independent_cell`, feed results back to the
         planner, write search_history.json incrementally.
         """
+        from aiperf.cli_runner._strategy import validate_convergence_export
         from aiperf.exporters.search_history import write_search_history
         from aiperf.orchestrator.search_planner import write_search_checkpoint
 
@@ -527,6 +528,9 @@ class MultiRunOrchestrator:
                 await _flush_history(reason)
                 return all_results
             cfg, variation = proposal
+            validate_convergence_export(
+                plan, cfg, label=f"search iteration {variation.index}"
+            )
             strategy = _build_strategy(plan)
             strategy.validate_config(cfg)
 

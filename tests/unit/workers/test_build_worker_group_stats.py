@@ -59,6 +59,20 @@ def test_aggregates_task_stats_as_sum() -> None:
     assert msg.task_stats.failed == 2
 
 
+def test_aggregates_stream_chunks_as_sum() -> None:
+    workers = {
+        wid: _info(worker_id=wid, status=WorkerStatus.HEALTHY, cpu=0.0, mem=0, total=1)
+        for wid in ("w-0", "w-1")
+    }
+    workers["w-0"].task_stats.stream_chunks_received = 40
+    workers["w-1"].task_stats.stream_chunks_received = 2
+    msg = build_worker_group_stats(
+        service_id="wgm-0", declared_workers=2, worker_infos=workers
+    )
+    assert msg.task_stats.stream_chunks_received == 42
+    assert msg.worker_task_stats["w-0"].stream_chunks_received == 40
+
+
 def test_aggregates_cpu_as_average_memory_as_sum() -> None:
     workers = {
         "w-0": _info(

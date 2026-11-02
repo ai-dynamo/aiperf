@@ -6,7 +6,7 @@ These Pydantic models render JobSet v1alpha2 spec fragments for use by the
 higher-level :class:`aiperf.kubernetes.jobset.AIPerfJobSetSpec`.
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import ConfigDict, Field
 from pydantic.alias_generators import to_camel
@@ -55,6 +55,11 @@ class AIPerfContainerSpec(AIPerfBaseModel):
     )
     readiness_probe: dict[str, Any] | None = Field(
         default=None, description="Readiness probe configuration"
+    )
+    restart_policy: Literal["Always"] | None = Field(
+        default=None,
+        description="Always places this optional service in initContainers as a "
+        "native restartable sidecar, isolating failures from the pod's Job.",
     )
     security_context: dict[str, Any] | None = Field(
         default=None, description="Container security context"
@@ -171,10 +176,15 @@ class AIPerfReplicatedJobSpec(AIPerfBaseModel):
         """Assemble the pod spec (containers, volumes, scheduling overrides)."""
         pod_spec: dict[str, Any] = {
             "restartPolicy": str(self.restart_policy),
-            "containers": [c.to_k8s_spec() for c in self.containers],
+            "containers": [
+                c.to_k8s_spec() for c in self.containers if c.restart_policy is None
+            ],
             "volumes": self.volumes,
             "securityContext": merge_pod_security_context(None),
         }
+        init_containers = self._build_init_container_specs()
+        if init_containers:
+            pod_spec["initContainers"] = init_containers
         tmpl = self.pod_template
         if tmpl is None:
             return pod_spec
@@ -182,10 +192,6 @@ class AIPerfReplicatedJobSpec(AIPerfBaseModel):
             value = getattr(tmpl, attr)
             if value:
                 pod_spec[key] = value
-        if tmpl.init_containers:
-            pod_spec["initContainers"] = _build_init_containers(
-                tmpl, self.job_id or self.name
-            )
         if tmpl.image_pull_secrets:
             pod_spec["imagePullSecrets"] = list(tmpl.image_pull_secrets)
         if tmpl.share_process_namespace:
@@ -213,6 +219,19 @@ class AIPerfReplicatedJobSpec(AIPerfBaseModel):
                 }
             )
         return pod_spec
+
+    def _build_init_container_specs(self) -> list[dict[str, Any]]:
+        """Run user initialization before starting restartable service sidecars."""
+        user_init = (
+            _build_init_containers(self.pod_template, self.job_id or self.name)
+            if self.pod_template is not None and self.pod_template.init_containers
+            else []
+        )
+        return user_init + [
+            c.to_k8s_spec()
+            for c in self.containers
+            if c.restart_policy == RestartPolicy.ALWAYS
+        ]
 
     def _build_pod_annotations(self) -> dict[str, str]:
         """Merge annotations from the pod template and extras."""

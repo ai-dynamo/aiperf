@@ -12,6 +12,10 @@ from unittest.mock import MagicMock, mock_open, patch
 
 import numpy as np
 import pytest
+import tiktoken
+from tokenizers import Tokenizer as BackendTokenizer
+from tokenizers import decoders, models, pre_tokenizers
+from transformers import PreTrainedTokenizerFast
 
 from aiperf.common.enums import PromptCorpus
 from aiperf.common.exceptions import (
@@ -24,6 +28,46 @@ from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
 from aiperf.dataset.generator.prompt import PromptGenerator
 
 MOCK_CORPUS_CONTENT = "To be or not to be, that is the question.\nWhether 'tis nobler in the mind to suffer.\n"
+
+
+def test_generate_cached_prompt_does_not_expand_special_separators() -> None:
+    """BOS/EOS spellings expand when encoded as ordinary chat content."""
+    tokenizer = Tokenizer.from_pretrained("builtin")
+    generator = PromptGenerator(
+        prompts=PromptConfig(block_size=8),
+        prefix_prompts=None,
+        tokenizer=tokenizer,
+    )
+
+    prompt = generator.generate(mean=16, hash_ids=[101, 102])
+
+    ordinary_tokens = tiktoken.get_encoding("o200k_base").encode_ordinary(prompt)
+    assert len(ordinary_tokens) == 16
+
+
+def test_generate_cached_prompt_gpt2_boundary_preserves_token_budget() -> None:
+    """GPT-2 pretokenization splits a double newline before following text."""
+    backend = BackendTokenizer(
+        models.BPE({"a": 0, "Ċ": 1, "ĊĊ": 2, "Ġ": 3}, [("Ċ", "Ċ")])
+    )
+    backend.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+    backend.decoder = decoders.ByteLevel()
+    tokenizer = Tokenizer()
+    tokenizer._tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend)
+
+    assert tokenizer.encode("\n\n") == [2]
+    assert tokenizer.encode("\n\na") == [1, 1, 0]
+
+    with patch("builtins.open", mock_open(read_data="a" * 1024)):
+        generator = PromptGenerator(
+            prompts=PromptConfig(block_size=512),
+            prefix_prompts=None,
+            tokenizer=tokenizer,
+        )
+
+    prompt = generator.generate(mean=1024, hash_ids=[0, 1])
+
+    assert len(tokenizer.encode(prompt)) == 1024
 
 
 def _make_generator(
@@ -249,9 +293,8 @@ class TestPromptGeneratorComprehensive:
         assert 1 in generator._cache
         assert 2 in generator._cache
 
-        # Each cache entry should have BOS token at start
-        assert generator._cache[1][0] == 1  # BOS token
-        assert generator._cache[2][0] == 1  # BOS token
+        assert len(generator._cache[1]) == 5
+        assert len(generator._cache[2]) == 5
 
         # Should return decoded prompt
         assert isinstance(result, str)
@@ -353,24 +396,6 @@ class TestPromptGeneratorComprehensive:
             _ = generator._generate_cached_prompt(
                 num_tokens=num_tokens, hash_ids=hash_ids, block_size=block_size
             )
-
-    def test_generate_cached_prompt_bos_token_insertion(self, basic_config):
-        """Test that BOS token is correctly inserted in cached prompts."""
-        tokenizer, prompts, prefix_prompts = basic_config
-        generator = _make_generator(
-            tokenizer, prompts=prompts, prefix_prompts=prefix_prompts
-        )
-
-        cache_size = 5
-        generator._generate_cached_prompt(
-            num_tokens=cache_size, hash_ids=[1], block_size=5
-        )
-
-        assert len(generator._cache[1]) == cache_size
-        assert generator._cache[1][0] in [
-            tokenizer.bos_token_id,
-            tokenizer.eos_token_id,
-        ]
 
     def test_cache_reuse_across_calls(self, basic_config):
         """Test that cache is reused across multiple calls."""
