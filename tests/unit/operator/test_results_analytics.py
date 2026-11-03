@@ -635,3 +635,44 @@ async def test_get_job_config_returns_404_when_cr_missing(
         assert resp.status_code == 404
     finally:
         db.close()
+
+
+@pytest.mark.asyncio
+async def test_get_job_config_redacts_presigned_dataset_path_from_job_spec_file(
+    tmp_path,
+):
+    await runs_index.close()
+    await runs_index.open(tmp_path / ".aiperf_index.sqlite")
+    epoch = "1714064523"
+    run = run_dir(tmp_path, "ns", "presigned-job", epoch)
+    run.mkdir(parents=True, exist_ok=True)
+    run.joinpath("job_spec.json").write_bytes(
+        orjson.dumps(
+            {
+                "benchmark": {
+                    "datasets": [
+                        {
+                            "name": "main",
+                            "path": "https://h/t.jsonl?X-Amz-Signature=topsecret",
+                        }
+                    ]
+                }
+            }
+        )
+    )
+    write_latest(tmp_path, "ns", "presigned-job", epoch)
+    db = ResultsDB(tmp_path)
+    router = create_results_analytics_router(lambda: db, tmp_path, [None])
+    app = FastAPI()
+    app.include_router(router)
+    try:
+        with TestClient(app) as client:
+            resp = client.get("/api/v1/config/ns/presigned-job")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["source"] == "file"
+        assert "topsecret" not in resp.text
+        path = resp.json()["spec"]["benchmark"]["datasets"][0]["path"]
+        assert path == f"https://h/t.jsonl?X-Amz-Signature={REDACTED_VALUE}"
+    finally:
+        db.close()
+        await runs_index.close()

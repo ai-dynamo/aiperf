@@ -15,6 +15,7 @@ from aiperf.common.redact import (
     _SENSITIVE_HEADER_NAMES,
     REDACTED_VALUE,
     extract_sensitive_headers,
+    has_sensitive_query_parameters,
     redact_cli_command,
     redact_endpoint_spec,
     redact_headers,
@@ -267,7 +268,7 @@ class TestCustomAuthHeaderRedaction:
         )
 
         with pytest.raises(ValueError, match="Secret-backed"):
-            validate_kubernetes_credential_transport(config, pod_env=[])
+            validate_kubernetes_credential_transport(config, pod_env=[], datasets=[])
 
     def test_k8s_transport_allows_benign_headers_without_a_secret(self) -> None:
         """Non-credential headers must not force a Secret on every run."""
@@ -279,7 +280,7 @@ class TestCustomAuthHeaderRedaction:
             urls=["http://localhost:8000"], headers={"X-Request-ID": "req-001"}
         )
 
-        validate_kubernetes_credential_transport(config, pod_env=[])
+        validate_kubernetes_credential_transport(config, pod_env=[], datasets=[])
 
 
 # =============================================================================
@@ -1295,6 +1296,33 @@ class TestRedactCliCommandUrlFlags:
     @pytest.mark.parametrize(
         "cmd",
         [
+            param(
+                "aiperf profile --input-file https://b/t.jsonl?X-Amz-Signature=deadbeef",
+                id="space-unquoted",
+            ),
+            param(
+                "aiperf profile --input-file 'https://b/t.jsonl?X-Amz-Signature=deadbeef'",
+                id="space-quoted",
+            ),
+            param(
+                "aiperf profile --input-file=https://b/t.jsonl?X-Amz-Signature=deadbeef",
+                id="equals",
+            ),
+        ],
+    )  # fmt: skip
+    def test_input_file_presigned_signature_redacted(self, cmd: str):
+        result = redact_cli_command(cmd)
+        assert "deadbeef" not in result, f"Signature leaked in: {result}"
+        assert f"X-Amz-Signature={REDACTED_VALUE}" in result
+        assert "https://b/t.jsonl?" in result
+
+    def test_input_file_local_path_unchanged(self):
+        cmd = "aiperf profile --input-file /data/t.jsonl"
+        assert redact_cli_command(cmd) == cmd
+
+    @pytest.mark.parametrize(
+        "cmd",
+        [
             param("aiperf profile --url 'http://localhost:8000'", id="plain-url"),
             param(
                 "aiperf profile --url 'http://host/users@example.com'",
@@ -1920,6 +1948,21 @@ class TestRedactUrl:
     @pytest.mark.parametrize(
         "url,expected",
         [
+            param("https://h/t.jsonl?X-Amz-Signature=abc", True, id="signature"),
+            param("https://h/t.jsonl?a=1&api%5Fkey=abc", True, id="encoded-name"),
+            param("https://h/t.jsonl?%74oken=abc", True, id="encoded-first-char"),
+            param("https://h/t.jsonl?page=2", False, id="plain-query"),
+            param("https://h/t.jsonl?token_count=128", False, id="similar-name"),
+            param("https://h/t.jsonl", False, id="no-query"),
+            param("https://h/t.jsonl?token=abc#frag", True, id="with-fragment"),
+        ],
+    )  # fmt: skip
+    def test_has_sensitive_query_parameters(self, url: str, expected: bool) -> None:
+        assert has_sensitive_query_parameters(url) is expected
+
+    @pytest.mark.parametrize(
+        "url,expected",
+        [
             param(
                 "http://h/v1?api_key=secret",
                 f"http://h/v1?api_key={REDACTED_VALUE}",
@@ -2010,6 +2053,36 @@ class TestRedactEndpointSpec:
         assert spec["benchmark"]["endpoint"]["headers"]["Authorization"] == (
             "Bearer header-secret"
         )
+
+    @pytest.mark.parametrize(
+        "benchmark",
+        [
+            param({"datasets": [{"name": "main", "path": "https://h/t.jsonl?X-Amz-Signature=topsecret"}]}, id="string-path"),
+            param({"datasets": [{"name": "main", "path": {"ref": "https://h/t.jsonl?sig=topsecret&se=2026-10-15", "resolved_version": "etag:1"}}]}, id="pinned-path"),
+            param({"datasets": {"main": {"path": "https://h/t.jsonl?X-Goog-Signature=topsecret"}}}, id="named-map"),
+            param({"dataset": {"path": "https://user:topsecret@h/t.jsonl"}}, id="shorthand-userinfo"),
+        ],
+    )  # fmt: skip
+    def test_redact_endpoint_spec_redacts_dataset_paths_without_endpoint(
+        self, benchmark: dict
+    ) -> None:
+        spec = {"benchmark": benchmark}
+        safe = redact_endpoint_spec(spec)
+        assert "topsecret" not in str(safe)
+        assert REDACTED_VALUE in str(safe)
+        assert "topsecret" in str(spec)
+
+    def test_redact_endpoint_spec_keeps_public_dataset_paths(self) -> None:
+        spec = {
+            "benchmark": {
+                "datasets": [
+                    {"name": "a", "path": "hf://org/repo@main/data/t.jsonl"},
+                    {"name": "b", "path": {"ref": "s3://bucket/t.jsonl", "resolved_version": "v:1"}},
+                    {"name": "c", "path": "./traces/t.jsonl"},
+                ]
+            }
+        }  # fmt: skip
+        assert redact_endpoint_spec(spec) == spec
 
 
 # =============================================================================
