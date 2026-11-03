@@ -229,6 +229,9 @@ class TrajectorySource(ConversationSource):
     state survives the WARMUP -> PROFILING boundary.
     """
 
+    _warmup_counts_cache: tuple[list[Trajectory], tuple[int, ...]] | None = None
+    """``(trajectories, warmup_credit_counts_by_lane)`` for the current list."""
+
     def __init__(
         self,
         *,
@@ -429,6 +432,13 @@ class TrajectorySource(ConversationSource):
         send the join turn n, so n-1 is still its warmup turn). Streams whose
         first request is at/after t* contribute nothing to warm.
         """
+        # Trajectories and their snapshots are frozen, and ``trajectories`` is
+        # only ever replaced wholesale (the warmup handoff), so the counts are
+        # a pure function of the current list object. Every warmup credit
+        # return compares against the total, which made this O(lanes^2).
+        cached = self._warmup_counts_cache
+        if cached is not None and cached[0] is self.trajectories:
+            return cached[1]
         counts: list[int] = []
         for trajectory in self.trajectories:
             if trajectory.snapshot is None:
@@ -441,7 +451,9 @@ class TrajectorySource(ConversationSource):
                         if state.warmup_turn_index is not None
                     )
                 )
-        return tuple(counts)
+        result = tuple(counts)
+        self._warmup_counts_cache = (self.trajectories, result)
+        return result
 
     @property
     def warmup_credit_count(self) -> int:
