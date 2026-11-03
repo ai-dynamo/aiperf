@@ -7,6 +7,7 @@ no event loop and must not construct loaders (whose base class opens an
 aiohttp client).
 """
 
+import contextlib
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -256,3 +257,67 @@ class TestResolutionOutputStaysReadable:
         _preflight_dataset_materialize(_plan(_public("sharegpt")))
 
         assert logging.getLogger("httpx").level == logging.DEBUG
+
+
+class TestRemoteDatasetPreflightWiring:
+    def test_access_and_materialize_call_remote_preflights(self) -> None:
+        plan = _plan(
+            FileDataset(name="main", type="file", path="hf://org/repo/t.jsonl")
+        )
+        with (
+            patch("aiperf.dataset.remote.preflight.preflight_remote_access") as access,
+            patch(
+                "aiperf.dataset.remote.preflight.preflight_remote_materialize"
+            ) as materialize,
+        ):
+            _preflight_dataset_access(plan)
+            _preflight_dataset_materialize(plan)
+        access.assert_called_once_with(plan.configs)
+        materialize.assert_called_once_with(plan.configs)
+
+    def test_access_runs_before_anything_reads_the_promoted_phase(self) -> None:
+        """The CLI builds a remote trace's phase optimistically as fixed_schedule.
+
+        The access preflight settles it, so it must run before the endpoint
+        probe, the download, and the run itself (whose resolver chain checks the
+        dataset's timing data against the phase type).
+        """
+        import aiperf.cli_runner as cli_runner
+
+        calls: list[str] = []
+        plan = SimpleNamespace(
+            use_adaptive=False,
+            trials=1,
+            is_single_run=False,
+            configs=[SimpleNamespace(artifacts=SimpleNamespace(auto_plot=False))],
+        )
+        names = (
+            "_preflight_artifact_dir",
+            "_preflight_accuracy_deps",
+            "_preflight_fd_limit",
+            "_preflight_dataset_access",
+            "_preflight_endpoint_ready",
+            "_preflight_dataset_materialize",
+            "_run_multi_benchmark",
+        )
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                patch("aiperf.common.bootstrap.register_sigusr1_faulthandler")
+            )
+            for name in names:
+                stack.enter_context(
+                    patch.object(
+                        cli_runner,
+                        name,
+                        side_effect=lambda *a, _n=name, **k: calls.append(_n),
+                    )
+                )
+            cli_runner.run_benchmark(plan)
+        assert calls.index("_preflight_dataset_access") < calls.index(
+            "_preflight_endpoint_ready"
+        )
+        assert calls[-3:] == [
+            "_preflight_endpoint_ready",
+            "_preflight_dataset_materialize",
+            "_run_multi_benchmark",
+        ]

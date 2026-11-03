@@ -201,6 +201,9 @@ def _resolve_spec_and_name(
         config = resolve_config(cli_config, config_file)
         spec = kube_options.to_crd_spec(config)
         name = kube_options.name or generate_benchmark_name(config)
+    from aiperf.kubernetes.spec_converter import reject_remote_datasets_for_kubernetes
+
+    reject_remote_datasets_for_kubernetes(config)
     return spec, config, name
 
 
