@@ -13,9 +13,16 @@ import struct
 from pathlib import Path
 
 import pytest
+from choreographer.browsers import Chromium
 
 from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 from tests.integration.conftest import IntegrationTestDefaults as defaults
+
+# kaleido renders PNGs through a Chrome/Chromium browser (found on PATH, at a
+# choreographer download, or via BROWSER_PATH). x86 Linux CI runners ship one;
+# Linux arm64 hosts usually don't, and Chrome for Testing has no linux-arm64
+# build for `plotly_get_chrome` to fetch.
+NO_BROWSER_FOR_PNG_EXPORT = Chromium.find_browser(skip_local=False) is None
 
 
 def is_valid_png(file_path: Path) -> bool:
@@ -74,6 +81,11 @@ def validate_png_ihdr_chunk(file_path: Path) -> tuple[int, int] | None:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
+@pytest.mark.skipif(
+    NO_BROWSER_FOR_PNG_EXPORT,
+    reason="PNG export needs a Chrome/Chromium browser for kaleido; none found "
+    "(install one or set BROWSER_PATH)",
+)
 class TestPlotIntegration:
     """Integration tests for aiperf profile + plot workflow."""
 
