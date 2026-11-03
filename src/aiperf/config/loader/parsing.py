@@ -3,12 +3,15 @@
 
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import orjson
 
 from aiperf.common.utils import load_json_str
 from aiperf.plugin.enums import ServiceType
+
+if TYPE_CHECKING:
+    from aiperf.config.dataset.remote_ref import RemoteRef
 
 """
 This module provides utility functions for validating and parsing configuration inputs.
@@ -292,29 +295,37 @@ def parse_str_or_list_of_positive_values(input: Any) -> list[Any]:
     return output
 
 
-def parse_file(value: str | Path | None) -> Path | None:
-    """Parse an existing file/directory path from a CLI value.
+def parse_file(value: "str | Path | RemoteRef | None") -> "Path | RemoteRef | None":
+    """Parse an existing file/directory path, or a remote reference, from a CLI value.
 
     Args:
-        value: Path string from CLI/config input, or a ``Path`` this
-            function already returned -- accepted as a pass-through so the
+        value: Path string from CLI/config input, or a ``Path`` or ``RemoteRef``
+            this function already returned -- accepted as a pass-through so the
             validator is idempotent when a caller round-trips an
             already-parsed field value back through it (e.g. reconstructing
             a model from another instance's field values). ``None`` or an
             empty string disables the path and returns ``None``.
 
     Returns:
-        A ``Path`` pointing to an existing file or directory, or ``None`` when no
-        value was provided.
+        A ``Path`` pointing to an existing file or directory, a ``RemoteRef`` for
+        ``hf://``, ``s3://``, ``https://`` values, or ``None`` when no value was
+        provided.
 
     Raises:
         ValueError: If ``value`` is not a string or Path, or if the path does not
             exist as a file or directory.
     """
+    # Imported here: aiperf.common.environment imports this module at load time, and
+    # remote_ref pulls in aiperf.config, which would re-enter this module mid-import.
+    from aiperf.config.dataset.remote_ref import RemoteRef, is_remote_ref
 
     if not value:
         return None
-    elif isinstance(value, Path):
+    if isinstance(value, RemoteRef):
+        return value
+    if is_remote_ref(value):
+        return RemoteRef(ref=value)
+    if isinstance(value, Path):
         path = value
     elif not isinstance(value, str):
         raise ValueError(f"Expected a string, but got {type(value).__name__}")
@@ -322,8 +333,52 @@ def parse_file(value: str | Path | None) -> Path | None:
         path = Path(value)
     if path.is_file() or path.is_dir():
         return path
-    else:
-        raise ValueError(f"'{value}' is not a valid file or directory")
+    raise ValueError(f"'{value}' is not a valid file or directory")
+
+
+class RejectedInputFile:
+    """An ``--input-file`` value that failed to parse, carried only in redacted form.
+
+    ``raise_rejected_input_file`` raises its reason, so Pydantic echoes this object
+    as the error's input, never the raw value, which may hold a presigned signature
+    or URL userinfo. Other fields keep their values in validation errors.
+    """
+
+    __slots__ = ("reason", "redacted")
+
+    def __init__(self, redacted: str, reason: str) -> None:
+        self.redacted = redacted
+        self.reason = reason
+
+    def __repr__(self) -> str:
+        return repr(self.redacted)
+
+
+def parse_input_file(value: Any) -> "Path | RemoteRef | RejectedInputFile | None":
+    """``parse_file``, turning a failure into a redacted ``RejectedInputFile``."""
+    from pydantic import ValidationError
+
+    from aiperf.common.redact import redact_url
+
+    try:
+        return parse_file(value)
+    except ValueError as e:
+        raw = str(value)
+        redacted = redact_url(raw)
+        if isinstance(e, ValidationError):
+            reason = "; ".join(
+                err["msg"].removeprefix("Value error, ") for err in e.errors()
+            )
+        else:
+            reason = str(e)
+        return RejectedInputFile(redacted, reason.replace(raw, redacted))
+
+
+def raise_rejected_input_file(value: Any) -> Any:
+    """Raise the reason ``parse_input_file`` recorded; pass anything else through."""
+    if isinstance(value, RejectedInputFile):
+        raise ValueError(value.reason)
+    return value
 
 
 def validate_sequence_distribution(v: str | None) -> str | None:
