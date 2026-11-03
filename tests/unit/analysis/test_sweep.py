@@ -12,6 +12,7 @@ import pytest
 from aiperf.analysis.sweepline import (
     ZERO_SWEEP_LINE_STATS,
     SweepLineStats,
+    _merge_sorted_unique,
     add_step_functions,
     compute_active_weighted_stats,
     compute_time_weighted_stats,
@@ -1426,6 +1427,23 @@ def _step_function_with_duplicates(
 ) -> tuple[np.ndarray, np.ndarray]:
     ts = np.sort(rng.integers(0, 50, size=n).astype(np.float64))
     return ts, rng.random(n) * 10.0
+
+
+class TestMergeSortedUnique:
+    @pytest.mark.parametrize("seed", range(10))
+    def test_matches_np_unique_of_concatenation(self, seed: int) -> None:
+        rng = np.random.default_rng(seed)
+        a = np.sort(rng.integers(0, 30, size=rng.integers(0, 50)).astype(np.float64))
+        b = np.sort(rng.integers(0, 30, size=rng.integers(0, 50)).astype(np.float64))
+
+        merged = _merge_sorted_unique(a, b)
+
+        assert np.array_equal(merged, np.unique(np.concatenate([a, b])))
+
+    def test_empty_inputs(self) -> None:
+        empty = np.zeros(0, dtype=np.float64)
+        assert _merge_sorted_unique(empty, empty).size == 0
+        assert _merge_sorted_unique(np.array([1.0, 1.0]), empty).tolist() == [1.0]
 
 
 class TestClippedSegmentsMatchReference:

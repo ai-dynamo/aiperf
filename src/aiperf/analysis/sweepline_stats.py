@@ -13,6 +13,7 @@ from aiperf.analysis.sweepline import (
     ZERO_SWEEP_LINE_STATS,
     FloatArray,
     SweepLineStats,
+    _merge_sorted_unique,
     _step_lookup,
 )
 from aiperf.common.enums import MetricConsoleGroup
@@ -106,20 +107,6 @@ def compute_time_weighted_stats(
     if dur.size == 0:
         return ZERO_SWEEP_LINE_STATS
     return _segment_stats(val, dur, total_dur)
-
-
-def _merge_sorted_unique(a: FloatArray, b: FloatArray) -> FloatArray:
-    """``np.unique(np.concatenate([a, b]))`` for already-sorted inputs.
-
-    A stable sort of two sorted runs is a linear merge, so this avoids the
-    full comparison sort ``np.unique`` would do.
-    """
-    merged = np.concatenate([a, b])
-    merged.sort(kind="stable")
-    keep = np.empty(len(merged), dtype=np.bool_)
-    keep[:1] = True
-    np.not_equal(merged[1:], merged[:-1], out=keep[1:])
-    return merged[keep]
 
 
 @dataclass(frozen=True, slots=True)

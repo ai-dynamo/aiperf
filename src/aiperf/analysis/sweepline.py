@@ -283,6 +283,20 @@ def _step_lookup(
     return np.where(idx >= 0, event_vals[np.clip(idx, 0, len(event_vals) - 1)], 0.0)
 
 
+def _merge_sorted_unique(a: FloatArray, b: FloatArray) -> FloatArray:
+    """``np.unique(np.concatenate([a, b]))`` for already-sorted inputs.
+
+    A stable sort of two sorted runs is a linear merge, so this avoids the
+    full comparison sort ``np.unique`` would do.
+    """
+    merged = np.concatenate([a, b])
+    merged.sort(kind="stable")
+    keep = np.empty(len(merged), dtype=np.bool_)
+    keep[:1] = True
+    np.not_equal(merged[1:], merged[:-1], out=keep[1:])
+    return merged[keep]
+
+
 def add_step_functions(
     a_ts: FloatArray,
     a_vals: FloatArray,
@@ -305,7 +319,7 @@ def add_step_functions(
     if len(b_ts) == 0:
         return a_ts.copy(), a_vals.copy()
 
-    merged_ts = np.unique(np.concatenate([a_ts, b_ts]))
+    merged_ts = _merge_sorted_unique(a_ts, b_ts)
     return merged_ts, _step_lookup(a_ts, a_vals, merged_ts) + _step_lookup(
         b_ts, b_vals, merged_ts
     )
@@ -333,7 +347,7 @@ def divide_step_functions(
     if len(num_ts) == 0 or len(den_ts) == 0:
         return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
 
-    merged_ts = np.unique(np.concatenate([num_ts, den_ts]))
+    merged_ts = _merge_sorted_unique(num_ts, den_ts)
     num_at = _step_lookup(num_ts, num_vals, merged_ts)
     den_at = _step_lookup(den_ts, den_vals, merged_ts)
 
