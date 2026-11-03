@@ -186,6 +186,19 @@ def test_evaluate_remote_dataset_presigned_expiry(
     assert result.status is expected
 
 
+def test_evaluate_remote_dataset_expired_resource_url_hint_says_to_refresh_the_resource() -> (
+    None
+):
+    """A renewed Secret alone leaves the resource's old expiry, which fails again."""
+    stale = RemoteRef(ref=_amz(NOW - timedelta(hours=2), 3600))
+    result = evaluate_remote_dataset(stale, True, PodTemplateConfig(), now=NOW)
+    assert result.status is CheckStatus.FAIL
+    hint = " ".join(result.hints)
+    assert "update the Secret" in hint
+    assert "rerun the aiperf kube command" in hint
+    assert "aiperf kube generate --operator" in hint
+
+
 @pytest.mark.asyncio
 async def test_check_remote_datasets_no_remote_reference_skips() -> None:
     datasets = [FileDataset(name="main", type="file", path="t.jsonl")]

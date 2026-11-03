@@ -406,7 +406,10 @@ def _evaluate_url(ref: RemoteRef, now: datetime) -> CheckResult:
             CheckStatus.FAIL,
             f"The presigned URL {ref.display} expired at {stamp}",
             "Generate a new presigned URL and update the Secret behind "
-            f"{AIPERF_INJECTED_DATASET_URLS}",
+            f"{AIPERF_INJECTED_DATASET_URLS}. The expiry is read from the dataset "
+            "path, so also give the resource the new URL: rerun the aiperf kube "
+            "command with it, or write its redacted form (as aiperf kube generate "
+            "--operator does) into the resource",
         )
     if expiry - now < _EXPIRY_WARNING:
         minutes = int((expiry - now).total_seconds() // 60)

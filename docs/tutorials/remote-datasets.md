@@ -393,7 +393,7 @@ in the table.
 | "must come from Secret-backed pod environment variables" naming `AIPERF_INJECTED_DATASET_URLS` | A presigned dataset URL with no Secret for the pods | Create the Secret and pass `--env-from-secrets AIPERF_INJECTED_DATASET_URLS=<secret>/<key>` |
 | "carries a credential (a presigned query or URL userinfo) in the resource itself" | A `kubectl`-applied resource holding a raw presigned URL | Rotate the URL, move it into a Secret, and write the path with `<redacted>` values |
 | "has no URL for it" or "matches no dataset in this run" | The Secret's URL list does not name the dataset in the resource | Make the Secret hold the full URL of exactly that dataset |
-| "The presigned URL ... expired at" | The URL expired before submission | Generate a new URL and update the Secret |
+| "The presigned URL ... expired at" | The URL expired before submission | Generate a new URL and update the Secret. The expiry is read from the resource's dataset path, so also rerun the `aiperf kube` command with the new URL, or put its redacted form (as `aiperf kube generate --operator` writes it) in the resource |
 | `status.error` contains `[dataset-manager pod]` | The dataset failed inside the pod | Look up the rest of the message in this table |
 | "cannot be written" | The cache directory is full or read-only | Free disk space or fix permissions, or set `AIPERF_DATASET_REMOTE_CACHE_DIR` (Hugging Face: `HF_HOME`) |
 | "the connection failed", "is unavailable", or "could not be reached" | Network trouble or a rate-limited server | Check network access and retry later |
