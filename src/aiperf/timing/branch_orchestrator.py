@@ -922,16 +922,16 @@ class BranchOrchestrator:
             self.stats.graphs_completed_to_end += 1
             self._cs.forget_ordinal(credit.x_correlation_id)
 
-        if self._schedule_stopped.is_set():
-            child_dispatch_closed = not self._issuer.can_dispatch_child_turn()
-            parent_continuation_closed = (
+        if self._schedule_stopped.is_set() and (
+            not self._issuer.can_dispatch_child_turn()
+            or (
                 not credit.is_final_turn
                 and not self._issuer.can_dispatch_join(credit.agent_depth)
             )
-            if child_dispatch_closed or parent_continuation_closed:
-                self._discard_undispatchable_future_joins(parent_corr)
-                self._notify_drain()
-                return False
+        ):
+            self._discard_undispatchable_future_joins(parent_corr)
+            self._notify_drain()
+            return False
 
         async with self._parent_locks[parent_corr]:
             if branch_ids:

@@ -247,8 +247,7 @@ async def test_cutoff_does_not_recreate_gate_from_late_parent_return() -> None:
         effective_root_correlation_id="corr-1",
         branch_mode=ConversationBranchMode.SPAWN,
     )
-    child = MagicMock(x_correlation_id="child-1")
-    orch._cs.start_branch_child.return_value = child
+    orch._cs.start_branch_child.return_value = MagicMock(x_correlation_id="child-1")
     orch._issuer.dispatch_first_turn = AsyncMock(return_value=True)
     orch._issuer.can_dispatch_join.return_value = False
     orch._issuer.can_dispatch_child_turn.return_value = True
