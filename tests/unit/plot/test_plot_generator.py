@@ -1681,6 +1681,14 @@ class TestParetoFrontierOptimization:
             ("HIGHER", "LOWER", [1, 2, 3], [3, 2, 1], [False, False, True]),
             # Edge cases: duplicate x values
             ("LOWER", "HIGHER", [1, 1, 2], [5, 3, 6], [True, False, True]),
+            # Edge cases: duplicate x values, dominated whichever order they arrive in
+            ("HIGHER", "HIGHER", [10, 10], [100, 50], [True, False]),
+            ("HIGHER", "HIGHER", [10, 10], [50, 100], [False, True]),
+            ("HIGHER", "LOWER", [10, 10], [100, 50], [False, True]),
+            ("HIGHER", "LOWER", [10, 10], [50, 100], [True, False]),
+            ("LOWER", "HIGHER", [10, 10], [50, 100], [False, True]),
+            ("LOWER", "LOWER", [10, 10], [100, 50], [False, True]),
+            ("HIGHER", "HIGHER", [10, 10, 20], [100, 50, 200], [False, False, True]),
             # Edge cases: duplicate y values
             ("LOWER", "HIGHER", [1, 2, 3], [5, 5, 5], [True, True, True]),
             # Edge cases: all points on frontier (monotonic increase)
