@@ -272,6 +272,10 @@ class TestTranslateTokenUsage:
         cfg = MagicMock()
         assert translate("some_random_metric", 1.0, record, cfg=cfg) is None
 
+
+class TestMetricNameMap:
+    """METRIC_NAME_MAP covers token usage and duration metrics alike."""
+
     @pytest.mark.parametrize("metric_name", sorted(METRIC_NAME_MAP))
     def test_mapped_metric_is_a_registered_tag(self, metric_name: str) -> None:
         """translate() is keyed by the tags records actually carry, so a key that

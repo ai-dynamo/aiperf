@@ -418,7 +418,12 @@ def run_otel_streaming_fanout(
                         histograms[metric_name].record(
                             payload["value"], payload["attributes"]
                         )
-                    _append_mlflow_metric(metric_name, payload["value"])
+                    # MLflow keys carry no attributes, so keep token types apart.
+                    token_type = payload["attributes"].get("gen_ai.token.type")
+                    _append_mlflow_metric(
+                        f"{metric_name}.{token_type}" if token_type else metric_name,
+                        payload["value"],
+                    )
                 except Exception as exc:  # malformed payload must not crash fanout loop
                     logger.warning(
                         f"Invalid histogram fanout payload received: {exc!r}"
