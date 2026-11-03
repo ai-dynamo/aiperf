@@ -45,8 +45,13 @@ normalized = sorted(
             # changes (which alter shard assignment and per-shard wall-clock)
             # invalidate the detect-changes hash and trigger the GPU e2e job.
             # Sorting as tuples keeps the result deterministic across runs.
+            # An absent ``timeout=`` sorts as 0, which the parser rejects as a
+            # written value, so it cannot collide with a real deadline. Left
+            # as None it would compare against an int whenever two otherwise
+            # identical commands differ only by their deadline, and the
+            # TypeError would cost every later unchanged-docs push its skip.
             "aiperf_commands": sorted(
-                [c.command, c.weight, c.timeout] for c in s.aiperf_commands
+                [c.command, c.weight, c.timeout or 0] for c in s.aiperf_commands
             ),
             "files": sorted(
                 [f.path, hashlib.sha256(f.content.encode()).hexdigest()]

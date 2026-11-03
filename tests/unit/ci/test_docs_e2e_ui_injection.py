@@ -241,3 +241,51 @@ def test_an_unspaced_here_string_is_not_read_as_a_heredoc() -> None:
     injected = inject_ui_type("cat <<<SEED\naiperf profile --model m")
 
     assert "aiperf profile --ui-type simple --model m" in injected
+
+
+def test_the_second_of_two_heredocs_on_one_line_is_still_data() -> None:
+    """``cat <<A <<B`` opens two bodies that run back to back.
+
+    Waiting for another opener before starting the second leaves its first
+    line looking executable, so an invocation written there is rewritten in
+    a file the guide meant to write verbatim.
+    """
+    from test_runner import inject_ui_type
+
+    command = "cat <<A <<B\nfirst\nA\naiperf profile --model m\nB\nprintf 'AFTER\\n'"
+
+    assert inject_ui_type(command) == command
+
+
+def test_an_apostrophe_in_the_second_heredoc_body_does_not_hide_the_invocation() -> (
+    None
+):
+    """The same miss in the other direction: data read as syntax."""
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type(
+        "cat <<A <<B\nfirst\nA\nsky's blue\nB\naiperf profile --model m"
+    )
+
+    assert "aiperf profile --ui-type simple --model m" in injected
+
+
+@pytest.mark.parametrize(
+    "arithmetic",
+    [
+        param("N=$((1<<2))", id="dollar-arithmetic"),
+        param("((N = 1 << 2))", id="arithmetic-command"),
+        param("N=$(( (1<<2) + 3 ))", id="nested-parentheses"),
+    ],
+)  # fmt: skip
+def test_a_shift_inside_arithmetic_is_not_a_heredoc_opener(arithmetic: str) -> None:
+    """``<<`` shifts inside ``$(( ))``; it opens no body.
+
+    Read as a heredoc it would take the right operand as the delimiter and
+    swallow every line until one matched, hiding the invocation underneath.
+    """
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type(f"{arithmetic}\naiperf profile --model m")
+
+    assert "aiperf profile --ui-type simple --model m" in injected

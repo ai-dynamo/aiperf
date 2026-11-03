@@ -91,6 +91,9 @@ def _scan(command: str) -> Iterator[tuple[int, str | None, bool]]:
     # more than one, and they are consumed in the order written.
     pending_heredocs: list[tuple[str, bool]] = []
     heredoc: tuple[str, bool] | None = None
+    # Parenthesis depth inside ``$((...))`` / ``((...))``. Zero means not in
+    # arithmetic.
+    arith_depth = 0
     i = 0
     while i < len(command):
         if heredoc is not None:
@@ -99,7 +102,10 @@ def _scan(command: str) -> Iterator[tuple[int, str | None, bool]]:
             stop = len(command) if newline == -1 else newline
             line = command[i:stop]
             if (line.lstrip("\t") if strip_tabs else line) == delimiter:
-                heredoc = None
+                # A line may open several bodies; they run back to back, so
+                # the next one starts at the line after this terminator
+                # rather than waiting for another opener.
+                heredoc = pending_heredocs.pop(0) if pending_heredocs else None
             for j in range(i, stop):
                 yield j, None, True
             i = stop
@@ -126,6 +132,28 @@ def _scan(command: str) -> Iterator[tuple[int, str | None, bool]]:
                 continue
             if char == "#" and (i == 0 or command[i - 1].isspace()):
                 in_comment = True
+                i += 1
+                continue
+            # ``<<`` shifts inside arithmetic, it does not redirect, so
+            # ``N=$((1<<2))`` must not register ``2`` as a heredoc delimiter
+            # and swallow everything after it. Depth is tracked rather than
+            # a flag so a nested ``$(( (1<<2) + 3 ))`` closes at the right
+            # parenthesis.
+            if arith_depth == 0 and (
+                command.startswith("$((", i) or command.startswith("((", i)
+            ):
+                parens = i + 1 if char == "$" else i
+                arith_depth = 2
+                for j in range(i, parens + 2):
+                    yield j, None, False
+                i = parens + 2
+                continue
+            if arith_depth:
+                if char == "(":
+                    arith_depth += 1
+                elif char == ")":
+                    arith_depth -= 1
+                yield i, None, False
                 i += 1
                 continue
             # ``<<<`` is a here-string: its word is ordinary syntax and it

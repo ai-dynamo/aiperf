@@ -111,3 +111,19 @@ def test_a_well_formed_tree_still_prints_one_digest(tmp_path) -> None:
 
     assert result.returncode == 0
     assert len(result.stdout.strip()) == 64
+
+
+def test_two_commands_differing_only_by_deadline_still_hash(tmp_path) -> None:
+    """An absent ``timeout=`` must sort against a written one.
+
+    Compared as None against an int the script raises TypeError and exits 1.
+    CI reads that as "could not compute the hash" and runs the GPU matrix,
+    so nothing is mis-skipped, but this otherwise valid tree then costs
+    every later unchanged-docs push its skip.
+    """
+    result = _hash(
+        tmp_path, SETUP + RUN.format(attrs="") + RUN.format(attrs=" timeout=3600")
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert len(result.stdout.strip()) == 64
