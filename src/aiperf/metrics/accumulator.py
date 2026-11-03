@@ -995,7 +995,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
             # Records ingested after ``record_bin`` was sized fall in no slice,
             # as in get_values_for_mask.
             in_bounds = rec_idx < len(record_bin)
-            value_bin = np.full(len(rec_idx), -1, dtype=np.int32)
+            # numpy stable-sorts 16-bit keys with a radix sort instead of a
+            # comparison sort, so narrow the slice keys whenever the grid fits.
+            key_dtype = np.int16 if n_bins < np.iinfo(np.int16).max else np.int32
+            value_bin = np.full(len(rec_idx), -1, dtype=key_dtype)
             value_bin[in_bounds] = record_bin[rec_idx[in_bounds]]
             order = np.argsort(value_bin, kind="stable")
             if len(order) <= np.iinfo(np.int32).max:
