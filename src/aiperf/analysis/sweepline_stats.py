@@ -70,15 +70,23 @@ def _segment_stats(
     avg = float(np.sum(val * dur) / total_dur)
     mn = float(np.min(val))
     mx = float(np.max(val))
-    std = float(np.sqrt(np.sum(dur * (val - avg) ** 2) / total_dur))
+    # The run-level window spans every event, so square and weight the
+    # deviations in place, drop the permutation once applied and turn the
+    # cumulative duration into the CDF in place rather than holding a chain of
+    # full-length temporaries.
+    dev = val - avg
+    np.square(dev, out=dev)
+    np.multiply(dev, dur, out=dev)
+    std = float(np.sqrt(np.sum(dev) / total_dur))
+    del dev
 
     order = np.argsort(val)
     sorted_val = val[order]
-    sorted_dur = dur[order]
-    cum_dur = np.cumsum(sorted_dur)
-    cum_frac = cum_dur / cum_dur[-1]
+    cum_dur = np.cumsum(dur[order])
+    del order
+    cum_dur /= cum_dur[-1]
 
-    indices = np.searchsorted(cum_frac, [0.50, 0.90, 0.95, 0.99])
+    indices = np.searchsorted(cum_dur, [0.50, 0.90, 0.95, 0.99])
     np.minimum(indices, len(sorted_val) - 1, out=indices)
     p50, p90, p95, p99 = sorted_val[indices].tolist()
 

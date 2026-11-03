@@ -267,9 +267,10 @@ def _sweep_line_cumsum(
     # ordering bug would produce a magnitude orders larger than this threshold
     # and remain visible.
     if len(vals) > 0:
-        max_abs = float(np.max(np.abs(vals)))
+        magnitude = np.abs(vals)
+        max_abs = float(np.max(magnitude))
         if max_abs > 0.0:
-            vals = np.where(np.abs(vals) < 1e-9 * max_abs, 0.0, vals)
+            vals[magnitude < 1e-9 * max_abs] = 0.0
     return timestamps[order], vals
 
 
