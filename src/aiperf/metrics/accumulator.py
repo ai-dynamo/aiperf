@@ -65,6 +65,9 @@ if TYPE_CHECKING:
 
 FloatArray: TypeAlias = NDArray[np.float64]
 BoolArray: TypeAlias = NDArray[np.bool_]
+# Record selector: a boolean mask or ascending record indices (equivalent under
+# numpy fancy indexing; timeslices pass indices to avoid full-length masks).
+RecordSelector: TypeAlias = NDArray[np.bool_] | NDArray[np.integer]
 # (value positions sorted by slice, slice b at order[bounds[b] : bounds[b + 1]])
 SliceIndex: TypeAlias = tuple[NDArray[np.integer], NDArray[np.int64]]
 
@@ -410,7 +413,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     def _compute_results(
         self,
-        mask: BoolArray | None = None,
+        mask: RecordSelector | None = None,
         *,
         window_start_ns: int | None = None,
         window_end_ns: int | None = None,
@@ -454,7 +457,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         if n > 0:
             is_error = self._column_store.metadata_bool("has_error")[:n] == 1
             if mask is not None:
-                is_error = is_error & mask
+                is_error = is_error[mask]
             error_count = int(is_error.sum())
             inject_adjusted_latency_metrics(
                 output, record_arrays, error_count, self._metric_classes
@@ -493,7 +496,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
     def _collect_scalars_and_arrays(
         self,
-        mask: BoolArray | None,
+        mask: RecordSelector | None,
         scalar_dict: MetricResultsDict,
         record_arrays: dict[MetricTagT, tuple[FloatArray, float]],
         sketch_results: dict[MetricTagT, MetricResult],
@@ -542,7 +545,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         self,
         tag: MetricTagT,
         *,
-        mask: BoolArray | None,
+        mask: RecordSelector | None,
         full_dataset: bool,
         scalar_dict: MetricResultsDict,
         record_arrays: dict[MetricTagT, tuple[FloatArray, float]],
@@ -907,14 +910,20 @@ class MetricsAccumulator(BaseMetricsProcessor):
         record_bin = np.full(n, -1, dtype=np.int32)
         record_bin[filled_indices] = bins
         ragged_index = self._build_slice_ragged_index(record_bin, len(edges) - 1)
+        # Group the selected records by slice once: a stable sort keeps storage
+        # order inside each slice, so ``filled_indices[order[lo:hi]]`` is the
+        # ascending index set of slice ``b`` (identical to ``np.where`` of its
+        # boolean mask) at O(records in the slice) per slice instead of O(n).
+        order = np.argsort(bins, kind="stable")
+        bounds = np.concatenate(
+            ([0], np.cumsum(np.bincount(bins, minlength=len(edges) - 1)))
+        )
 
         for bin_idx in range(len(edges) - 1):
-            bin_mask_local = bins == bin_idx
-            if not bin_mask_local.any():
+            lo, hi = bounds[bin_idx], bounds[bin_idx + 1]
+            if lo == hi:
                 continue
-            # Expand local mask to full-array mask
-            full_mask = np.zeros(n, dtype=bool)
-            full_mask[filled_indices[bin_mask_local]] = True
+            slice_indices = filled_indices[order[lo:hi]]
 
             raw_window_end = float(edges[bin_idx + 1])
             window_start = float(edges[bin_idx])
@@ -925,13 +934,13 @@ class MetricsAccumulator(BaseMetricsProcessor):
             window_end = raw_window_end if is_complete else max_ts
 
             results = self._compute_results(
-                full_mask,
+                slice_indices,
                 window_start_ns=int(window_start),
                 window_end_ns=int(window_end),
                 is_timeslice=True,
                 ragged_positions={
-                    tag: order[bounds[bin_idx] : bounds[bin_idx + 1]]
-                    for tag, (order, bounds) in ragged_index.items()
+                    tag: r_order[r_bounds[bin_idx] : r_bounds[bin_idx + 1]]
+                    for tag, (r_order, r_bounds) in ragged_index.items()
                 },
             )
             if len(results) == 0:
@@ -947,7 +956,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
                     adjusted_arrays,
                     results,
                     self._network_rtt_ns,
-                    mask=full_mask,
+                    mask=slice_indices,
                 )
             results = self._filter_hidden_metrics(results)
             timeslices.append(
