@@ -9,10 +9,12 @@ reused and tested without constructing a full JobSet spec.
 
 from __future__ import annotations
 
+import math
 from functools import lru_cache
 from typing import Any
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.endpoint_credentials import AIPERF_INJECTED_DATASET_URLS
 from aiperf.common.environment import Environment
 from aiperf.config.deployment import (
     PodTemplateConfig,
@@ -22,6 +24,13 @@ from aiperf.config.deployment import (
 from aiperf.kubernetes.environment import K8sEnvironment
 
 _logger = AIPerfLogger(__name__)
+
+REMOTE_CACHE_VOLUME = "remote-cache"
+REMOTE_CACHE_MOUNT_PATH = "/aiperf/remote-cache"
+REMOTE_CACHE_ENV = "AIPERF_DATASET_REMOTE_CACHE_DIR"
+MMAP_CACHE_ENABLED_ENV = "AIPERF_DATASET_MMAP_CACHE_ENABLED"
+# Every container's HF_HOME: the shared `tokenizer-cache` emptyDir.
+HF_HOME_PATH = "/aiperf/hf_home"
 
 
 @lru_cache(maxsize=256)
@@ -128,6 +137,22 @@ def build_startup_probe(port: int, path: str = "/healthz") -> dict[str, Any]:
     }
 
 
+def dataset_download_startup_threshold() -> int:
+    """Startup-probe failure threshold that covers a remote dataset download.
+
+    The dataset-manager downloads before its health server starts, so its
+    startup probe fails for as long as the download runs.
+    """
+    health = K8sEnvironment.HEALTH
+    return max(
+        health.STARTUP_FAILURE_THRESHOLD,
+        math.ceil(
+            health.DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS
+            / health.STARTUP_PERIOD_SECONDS
+        ),
+    )
+
+
 def build_service_probes(
     probe_port: int | None,
     *,
@@ -166,7 +191,7 @@ def build_volume_mounts(pod_template: PodTemplateConfig) -> list[dict[str, Any]]
         # and dataset-manager picks up its tokenizer from the same cache.
         # On worker pods the same mount exists but is unused — workers get
         # their tokenizer bundle from the operator API via the WGM, not HF.
-        {"name": "tokenizer-cache", "mountPath": "/aiperf/hf_home"},
+        {"name": "tokenizer-cache", "mountPath": HF_HOME_PATH},
         {"name": "tmp", "mountPath": "/tmp"},
     ]
     mounts.extend(pod_template.volume_mounts)
@@ -185,10 +210,49 @@ def build_shared_volumes(
         {"name": "datasets", "emptyDir": {}},
         # Shared HF cache for the controller pod's warmer + API + dataset-manager.
         {"name": "tokenizer-cache", "emptyDir": {}},
+        # Remote-dataset downloads and their index; the root filesystem is read-only.
+        {"name": REMOTE_CACHE_VOLUME, "emptyDir": {}},
         {"name": "tmp", "emptyDir": {}},
     ]
     volumes.extend(pod_template.volumes)
     return volumes
+
+
+def _normalized_mount_path(mount: dict[str, Any] | None) -> str:
+    """A mount's ``mountPath`` without trailing slashes; empty when absent or not a string."""
+    path = (mount or {}).get("mountPath")
+    return path.rstrip("/") if isinstance(path, str) else ""
+
+
+def build_remote_cache_env_and_mounts(
+    pod_template: PodTemplateConfig,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Env and mounts that give a container a writable remote-dataset cache.
+
+    The default cache (``~/.cache/aiperf/remote``) sits on the read-only root
+    filesystem, so dataset-manager downloads into an emptyDir instead, and the
+    control-plane mounts the same volume so exported provenance can read the
+    cache index. A user's ``AIPERF_DATASET_REMOTE_CACHE_DIR`` or a user mount at
+    the same path wins.
+    """
+    user_env = any(
+        (item or {}).get("name") == REMOTE_CACHE_ENV for item in pod_template.env
+    )
+    user_mount = any(
+        _normalized_mount_path(mount) == REMOTE_CACHE_MOUNT_PATH
+        for mount in pod_template.volume_mounts
+    )
+    env = (
+        []
+        if user_env
+        else [{"name": REMOTE_CACHE_ENV, "value": REMOTE_CACHE_MOUNT_PATH}]
+    )
+    mounts = (
+        []
+        if user_mount
+        else [{"name": REMOTE_CACHE_VOLUME, "mountPath": REMOTE_CACHE_MOUNT_PATH}]
+    )
+    return env, mounts
 
 
 def build_container_args(
@@ -236,15 +300,23 @@ def build_env_vars(
     controller_host: str | None = None,
     include_pod_index: bool = True,
     controller_pod: bool = False,
+    remote_dataset: bool = False,
+    dataset_downloader: bool = False,
 ) -> list[dict[str, Any]]:
     """Create environment variables for a container.
 
     Args:
         controller_pod: When True, this container runs inside the controller
-            pod (api / dataset-manager / etc.) -- emit AIPERF_CONTROLLER_POD=1
-            so bootstrap.py skips HF offline-mode (the controller needs HF
-            egress for prewarming the shared cache). Worker-pod containers
-            default to False and inherit offline mode.
+            pod (api / dataset-manager / etc.): emit AIPERF_CONTROLLER_POD=1 and
+            the controller-only settings below. Nothing toggles HF offline mode
+            from this marker, here or in bootstrap.py.
+        remote_dataset: The run reads a remote dataset. The dataset-manager
+            registers only after its download, so controller-pod containers
+            wait for registration as long as the download startup budget allows.
+        dataset_downloader: This is the dataset-manager container, the only one
+            that downloads datasets. Every other container is rendered without
+            AIPERF_INJECTED_DATASET_URLS, so the presigned URLs' Secret is not
+            readable there (for example through ``kubectl exec``).
     """
     datasets_path = K8sEnvironment.JOBSET.DATASETS_PATH
     config_mount_path = K8sEnvironment.JOBSET.CONFIG_MOUNT_PATH
@@ -255,6 +327,10 @@ def build_env_vars(
         Environment.SERVICE.REGISTRATION_TIMEOUT,
         K8sEnvironment.JOBSET.WORKER_CONNECTION_PROBE_TIMEOUT * 2,
     )
+    if controller_pod and remote_dataset:
+        registration_timeout += (
+            K8sEnvironment.HEALTH.DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS
+        )
     env: list[dict[str, Any]] = [
         # Shared dataset path: dataset-manager writes mmap files here,
         # API service serves them to workers via HTTP
@@ -291,9 +367,8 @@ def build_env_vars(
     ]
 
     if controller_pod:
-        # Marker consumed by aiperf.common.bootstrap._configure_child_process:
-        # presence of this var disables the HF offline-mode default so the
-        # controller pod can reach HuggingFace to warm the shared cache.
+        # Identifies controller-pod containers in the pod spec; AIPerf code
+        # does not branch on it.
         env.append({"name": "AIPERF_CONTROLLER_POD", "value": "1"})
         # Records-manager publishes RealtimeMetricsMessage only when this gate
         # is true (records_manager.py::_report_realtime_inference_metrics_task).
@@ -312,7 +387,7 @@ def build_env_vars(
     # controller pod's warmer, dataset-manager, and api containers all see
     # the same on-disk snapshots. Worker pods carry the mount too but never
     # write to it — they receive bundles from the operator API instead.
-    env.append({"name": "HF_HOME", "value": "/aiperf/hf_home"})
+    env.append({"name": "HF_HOME", "value": HF_HOME_PATH})
 
     if include_pod_index:
         # Expose the JobSet job-index as a unique pod identifier for
@@ -335,9 +410,17 @@ def build_env_vars(
 
     reserved_names = {item["name"] for item in env}
     reserved_names.add("AIPERF_JOB_UID")
-    env.extend(
+    if not dataset_downloader:
+        reserved_names.add(AIPERF_INJECTED_DATASET_URLS)
+    user_env = [
         item
         for item in pod_template.env
         if (item or {}).get("name") not in reserved_names
-    )
+    ]
+    # The cross-run mmap cache defaults to ~/.cache on the read-only root
+    # filesystem, and per-pod emptyDir volumes would not outlive the run anyway.
+    # A user who mounts persistent storage can turn it back on in podTemplate.env.
+    if not any((item or {}).get("name") == MMAP_CACHE_ENABLED_ENV for item in user_env):
+        env.append({"name": MMAP_CACHE_ENABLED_ENV, "value": "false"})
+    env.extend(user_env)
     return env
