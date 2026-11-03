@@ -160,6 +160,17 @@ async def entry_lock(entry: Path) -> AsyncIterator[None]:
         await asyncio.to_thread(lock.release)
 
 
+def lock_timeout_error(
+    entry: Path, *, ref_display: str, stage: RemoteStage
+) -> RemoteSourceError:
+    """The retryable error for an ``entry_lock`` another holder kept past the timeout."""
+    return RemoteSourceError(
+        ref=ref_display, kind=RemoteErrorKind.TRANSIENT, stage=stage,
+        what="timed out waiting for another process to finish downloading it",
+        hint=f"If no other AIPerf run is downloading it, delete the lock file {entry}.lock and retry",
+    )  # fmt: skip
+
+
 def _partial_path(dest: Path) -> Path:
     return dest.with_name(f".{dest.name}.{uuid.uuid4().hex}.partial")
 

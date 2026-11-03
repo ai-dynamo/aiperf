@@ -256,6 +256,21 @@ def _check_finite(row: dict[str, Any], float_columns: list[str], file: Path) -> 
             )
 
 
+def _drop_null_keys(value: Any) -> Any:
+    """Drop null-valued keys at every depth; list items are kept as they are.
+
+    A parquet struct holds the union of the keys its rows had, at the top level and
+    inside nested structs (a list of turns or messages), so push_to_hub turns a key
+    a record never had into null. Dropping those keys restores the record shape the
+    JSONL file had.
+    """
+    if isinstance(value, dict):
+        return {k: _drop_null_keys(v) for k, v in value.items() if v is not None}
+    if isinstance(value, list):
+        return [_drop_null_keys(item) for item in value]
+    return value
+
+
 def _iter_parquet_file(
     pa: Any, pq: Any, file: Path, batch_rows: int
 ) -> Iterator[dict[str, Any]]:
@@ -277,9 +292,7 @@ def _iter_parquet_file(
         for batch in parquet_file.iter_batches(batch_size=batch_rows):
             for row in batch.to_pylist():
                 _check_finite(row, float_columns, file)
-                # push_to_hub turns a key a row never had into null; dropping
-                # nulls restores the record shape the JSONL file had.
-                yield {key: value for key, value in row.items() if value is not None}
+                yield _drop_null_keys(row)
 
 
 def _iter_parquet(
