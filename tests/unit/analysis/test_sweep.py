@@ -26,7 +26,11 @@ from aiperf.analysis.sweepline import (
     tokens_in_flight_sweep_line_icl,
     total_throughput_sweep_line,
 )
-from aiperf.analysis.sweepline_stats import metric_result_from_sweep_line_stats
+from aiperf.analysis.sweepline_stats import (
+    ActiveCurve,
+    _build_clipped_segments,
+    metric_result_from_sweep_line_stats,
+)
 
 
 class TestConcurrencySweep:
@@ -1341,30 +1345,144 @@ class TestComputeActiveWeightedStats:
         assert stats.min == pytest.approx(10.0)
         assert stats.max == pytest.approx(10.0)
 
-    def test_unique_receives_only_events_inside_window(
+    def test_window_evaluation_does_not_sort(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """The merged grid is built once; a window is a slice of it."""
         rate_ts = np.arange(10_000, dtype=np.float64)
         rate_vals = np.full(10_000, 100.0)
         mask_ts = np.arange(10_000, dtype=np.float64)
         mask_vals = np.ones(10_000)
-        unique_input_sizes: list[int] = []
-        original_unique = np.unique
+        curve = ActiveCurve.from_step_functions(rate_ts, rate_vals, mask_ts, mask_vals)
 
-        def tracking_unique(values: np.ndarray) -> np.ndarray:
-            unique_input_sizes.append(values.size)
-            return original_unique(values)
+        def fail_sort(*args: object, **kwargs: object) -> np.ndarray:
+            raise AssertionError("window evaluation sorted an array")
 
-        monkeypatch.setattr(
-            "aiperf.analysis.sweepline_stats.np.unique", tracking_unique
-        )
+        monkeypatch.setattr("aiperf.analysis.sweepline_stats.np.unique", fail_sort)
+        monkeypatch.setattr("aiperf.analysis.sweepline_stats.np.sort", fail_sort)
 
-        stats = compute_active_weighted_stats(
-            rate_ts, rate_vals, mask_ts, mask_vals, 5000.25, 5001.25
-        )
+        stats = curve.window_stats(5000.25, 5001.25)
 
         assert stats.avg == pytest.approx(100.0)
-        assert unique_input_sizes == [4]
+
+
+def _reference_clipped_segments(
+    sorted_ts: np.ndarray, values: np.ndarray, window_start: float, window_end: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Clamp-and-mask formulation the fast path must reproduce bit for bit."""
+    lo = max(0, int(np.searchsorted(sorted_ts, window_start, side="right")) - 1)
+    hi = min(
+        len(sorted_ts), int(np.searchsorted(sorted_ts, window_end, side="left")) + 1
+    )
+    seg_starts = np.concatenate(([window_start], sorted_ts[lo:hi]))
+    seg_values = np.concatenate(
+        ([float(values[lo - 1]) if lo > 0 else 0.0], values[lo:hi])
+    )
+    seg_ends = np.concatenate((seg_starts[1:], [window_end]))
+    seg_starts = np.maximum(seg_starts, window_start)
+    seg_ends = np.minimum(seg_ends, window_end)
+    durations = np.maximum(seg_ends - seg_starts, 0.0)
+    mask = durations > 0
+    return durations[mask], seg_values[mask]
+
+
+def _reference_active_stats(
+    rate_ts: np.ndarray,
+    rate_vals: np.ndarray,
+    mask_ts: np.ndarray,
+    mask_vals: np.ndarray,
+    window_start: float,
+    window_end: float,
+) -> SweepLineStats:
+    """Per-window merge-and-lookup formulation ActiveCurve must reproduce."""
+    from aiperf.analysis.sweepline import _step_lookup
+    from aiperf.analysis.sweepline_stats import _segment_stats
+
+    rate_lo = int(np.searchsorted(rate_ts, window_start, side="right"))
+    rate_hi = int(np.searchsorted(rate_ts, window_end, side="left"))
+    mask_lo = int(np.searchsorted(mask_ts, window_start, side="right"))
+    mask_hi = int(np.searchsorted(mask_ts, window_end, side="left"))
+    grid = np.unique(
+        np.concatenate(
+            [
+                np.array([window_start, window_end]),
+                rate_ts[rate_lo:rate_hi],
+                mask_ts[mask_lo:mask_hi],
+            ]
+        )
+    )
+    seg_durations = np.diff(grid)
+    rate_at = _step_lookup(rate_ts, rate_vals, grid[:-1])
+    mask_at = _step_lookup(mask_ts, mask_vals, grid[:-1])
+    active = (mask_at > 0) & (seg_durations > 0)
+    if not active.any():
+        return ZERO_SWEEP_LINE_STATS
+    val, dur = rate_at[active], seg_durations[active]
+    return _segment_stats(val, dur, float(dur.sum()))
+
+
+def _step_function_with_duplicates(
+    rng: np.random.Generator, n: int
+) -> tuple[np.ndarray, np.ndarray]:
+    ts = np.sort(rng.integers(0, 50, size=n).astype(np.float64))
+    return ts, rng.random(n) * 10.0
+
+
+class TestClippedSegmentsMatchReference:
+    """The precomputed-slice fast path equals the clamp-and-mask formulation
+    element for element, including duplicate timestamps and windows that
+    start before the first event or end after the last."""
+
+    @pytest.mark.parametrize("seed", range(20))
+    def test_clipped_segments_identical(self, seed: int) -> None:
+        rng = np.random.default_rng(seed)
+        ts, vals = _step_function_with_duplicates(rng, 40)
+        for window_start, window_end in [
+            (-5.0, 3.0),
+            (-5.0, 60.0),
+            (10.0, 10.5),
+            (10.0, 20.0),
+            (49.0, 60.0),
+            (52.0, 60.0),
+            (float(ts[7]), float(ts[23])),
+        ]:
+            expected = _reference_clipped_segments(ts, vals, window_start, window_end)
+            actual = _build_clipped_segments(ts, vals, window_start, window_end)
+            assert np.array_equal(actual[0], expected[0])
+            assert np.array_equal(actual[1], expected[1])
+
+    @pytest.mark.parametrize("seed", range(20))
+    def test_active_curve_identical(self, seed: int) -> None:
+        rng = np.random.default_rng(seed)
+        rate_ts, rate_vals = _step_function_with_duplicates(rng, 40)
+        mask_ts, _ = _step_function_with_duplicates(rng, 12)
+        mask_vals = rng.integers(0, 2, size=12).astype(np.float64)
+        curve = ActiveCurve.from_step_functions(rate_ts, rate_vals, mask_ts, mask_vals)
+        for window_start, window_end in [
+            (-5.0, 3.0),
+            (-5.0, 60.0),
+            (10.0, 10.5),
+            (10.0, 20.0),
+            (49.0, 60.0),
+            (52.0, 60.0),
+            (float(rate_ts[7]), float(mask_ts[9])),
+        ]:
+            expected = _reference_active_stats(
+                rate_ts, rate_vals, mask_ts, mask_vals, window_start, window_end
+            )
+            assert curve.window_stats(window_start, window_end) == expected
+
+    def test_rate_defined_on_merged_grid_is_shared(self) -> None:
+        mask_ts = np.array([0.0, 10.0, 20.0])
+        mask_vals = np.array([1.0, 0.0, 1.0])
+        rate_ts = np.array([0.0, 5.0, 10.0, 15.0, 20.0])
+        rate_vals = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+
+        curve = ActiveCurve.from_step_functions(rate_ts, rate_vals, mask_ts, mask_vals)
+
+        assert curve.grid is rate_ts
+        assert curve.rate is rate_vals
+        assert curve.active.tolist() == [True, True, False, False, True]
 
 
 # ---------------------------------------------------------------------------
