@@ -2569,6 +2569,7 @@ Metric flags are used to control when and how metrics are computed, displayed, a
 | <a id="flag-supports-video-only"></a>`SUPPORTS_VIDEO_ONLY` | Only computed for video endpoints | Requires video-capable endpoints; skipped for other endpoint types |
 | <a id="flag-usage-diff-only"></a>`USAGE_DIFF_ONLY` | Only computed when usage field data is available | Requires API responses to include usage field with token counts for comparison with client-computed values |
 | <a id="flag-produces-video-only"></a>`PRODUCES_VIDEO_ONLY` | Only computed for video-producing endpoints | Requires endpoints that produce video output (e.g., SGLang video generation) |
+| <a id="flag-produces-audio-only"></a>`PRODUCES_AUDIO_ONLY` | Only computed for audio-producing endpoints | Requires endpoints that produce audio output (e.g., `speech`) |
 
 ## Composite Flags
 

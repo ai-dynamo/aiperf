@@ -31,7 +31,7 @@ A run with 20 requests against a streaming chat endpoint produces entries shaped
 
 ```json
 {
-  "schema_version": "1.7",
+  "schema_version": "1.8",
   "request_latency": {
     "unit": "ms",
     "avg": 2620.71,
@@ -151,6 +151,7 @@ The current schema version is exported as the top-level `schema_version` field o
 | `1.5` | Added per-GPU telemetry `platform` and renamed built-in NVIDIA GPU telemetry metrics to `nvidia_*`. AMD telemetry remains under `amd_*`. This is a telemetry metric-name breaking change for consumers of `telemetry_data`. Also added the full-response metric blocks `full_decode_duration`, `full_response_inter_token_latency`, and `full_response_output_token_throughput_per_user` (emitted only when the corresponding metrics were computed), and the top-level `runtime_submission_invalid_reasons` array. Additive and backward-compatible apart from the telemetry rename. |
 | `1.6` | Added `server_metrics_error_summary` for optional collection and producer failures, independently of inference request errors. Additive and backward-compatible. |
 | `1.7` | Added top-level `conversations_ended_on_truncation` and `turns_skipped_on_truncation`, present only when `--end-conversation-on-truncation` is enabled. Additive and backward-compatible. |
+| `1.8` | Added optional top-level `output_audio_duration`, `output_audio_rtf`, `output_audio_throughput`, and `total_output_audio_duration` metric blocks for speech output. Additive and backward-compatible. |
 
 ### Other JSON exports use independent schema versions
 
