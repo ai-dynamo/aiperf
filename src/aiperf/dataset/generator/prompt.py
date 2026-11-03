@@ -21,6 +21,14 @@ from aiperf.dataset.generator.base import BaseGenerator
 DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"
 
 
+def reject_separator_only_blocks(block_size: int, sep_token: int | None) -> None:
+    """Adjacent newline-only blocks can merge into a single token."""
+    if block_size == 1 and sep_token is not None:
+        raise ConfigurationError(
+            "Hash-based prompt synthesis with newline separators requires block_size >= 2."
+        )
+
+
 def sample_tokens_from_corpus(
     corpus,
     num_tokens: int,
@@ -625,6 +633,10 @@ class PromptGenerator(BaseGenerator):
 
         if not hash_ids:
             return self._sample_tokens(num_tokens)
+
+        reject_separator_only_blocks(
+            block_size, self.tokenizer.block_separation_token_id
+        )
 
         if total_hashed > num_tokens:
             # Synthetic-prompt path: last hash is a partial block.

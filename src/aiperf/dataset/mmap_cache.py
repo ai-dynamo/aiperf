@@ -80,6 +80,11 @@ _logger = AIPerfLogger(__name__)
 # Version 5 fixed the Conversation.metadata() projection of per-turn
 # theoretical prefix-cache block counts for realtime infinite-cache hit rate.
 MANIFEST_VERSION = (
+    # v29: a weka request's hashed partial last block now holds its own hash
+    # content instead of sampled filler, a later turn that reuses that hash
+    # keeps the earlier messages, and a forked child splits its first turn at
+    # the parent's token positions. raw_messages decode differently for the
+    # same trace, so bump per this file's contract.
     # v28: a forked weka child's first turn now keeps the parent's message layout
     # (AIPERF_DATASET_WEKA_FORK_PARENT_MESSAGES, default on), so its raw_messages
     # decode differently for the same trace. The flag is in the key payload, but
@@ -187,7 +192,7 @@ MANIFEST_VERSION = (
     # v10: merge of the flattened-agent-splitting lineage and the
     # tool-shaping lineage (boundary-cut overhang strip; shaping decided at
     # first emission so reset re-emits reproduce the first-sent shape).
-    28
+    29
 )
 MANIFEST_FILENAME = "manifest.json"
 INPUTS_JSON_FILENAME = "inputs.json"
@@ -1013,7 +1018,11 @@ def compute_cache_key_from_run(run: BenchmarkRun) -> str | None:
     input_file: Path | None = None
     path = getattr(dataset, "path", None)
     if path is not None:
-        candidate = Path(path)
+        # Hash the cached file's content, not the (possibly redacted) remote URL, so
+        # two versions of one remote ref never share an entry.
+        from aiperf.dataset.remote.service import local_path_for
+
+        candidate = local_path_for(path)
         if candidate.is_file() or candidate.is_dir():
             input_file = candidate
     custom_dataset_type = (

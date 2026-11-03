@@ -781,17 +781,19 @@ class AIPerfJobSetSpec(AIPerfBaseModel):
                 )
             )
         if self.server_metrics_enabled:
-            managers.append(
-                self._create_container(
-                    name=Containers.SERVER_METRICS_MANAGER,
-                    service_type="server_metrics_manager",
-                    health_port=ports.SERVER_METRICS_MANAGER_HEALTH,
-                    resources=self._resolve_pod_resources("SERVER_METRICS_MANAGER"),
-                    service_id="server_metrics_manager",
-                    include_pod_index=False,
-                    controller_pod=True,
-                )
+            server_metrics = self._create_container(
+                name=Containers.SERVER_METRICS_MANAGER,
+                service_type="server_metrics_manager",
+                health_port=ports.SERVER_METRICS_MANAGER_HEALTH,
+                resources=self._resolve_pod_resources("SERVER_METRICS_MANAGER"),
+                service_id="server_metrics_manager",
+                include_pod_index=False,
+                controller_pod=True,
+                skip_startup_probe=True,
+                skip_readiness_probe=True,
             )
+            server_metrics.restart_policy = RestartPolicy.ALWAYS
+            managers.append(server_metrics)
         return managers
 
     def create_controller_containers(self) -> list[AIPerfContainerSpec]:

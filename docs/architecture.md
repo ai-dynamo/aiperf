@@ -83,6 +83,8 @@ The Dataset Manager handles all aspects of input data management during benchmar
 - Supporting custom dataset types, such as MoonCake traces, for advanced benchmarking scenarios
 - Managing the lifecycle of datasets, including initialization, iteration, and cleanup
 
+**Remote `--input-file` references.** A `--input-file` of the form `hf://...`, `s3://...`, or `https://...` is parsed into a `RemoteRef` and resolved by the `dataset_source_resolver` plugin registered for its scheme. Resolution runs in two dataset preflight stages: the access stage probes the source, pins one exact version, applies the publisher's `aiperf.json` manifest, and settles fixed-schedule auto-promotion from the first record; the materialize stage, after the endpoint probe, downloads the pinned version into a version-keyed local cache. `DatasetManager` and the composers only ever see a cached local path, so a remote dataset replays exactly like the same file on disk. See [Run a Published Trace](tutorials/remote-datasets.md).
+
 ### Timing Manager
 
 The Timing Manager controls and coordinates the timing of requests during benchmarking runs through a credit-based system.
@@ -160,6 +162,8 @@ Prometheus snapshots remain inside Server Metrics Manager:
 | `accuracy` | Record Processor (`AccuracyRecordProcessor`) | `RecordsMessage` | `AccuracyAccumulator`, `AccuracyJSONLWriter` |
 | `gpu_telemetry` | GPU Telemetry Manager | `TelemetryRecordsMessage` | `GPUTelemetryAccumulator`, GPU JSONL writer |
 | `server_metrics` | Server Metrics Manager | None (manager-local callback) | `ServerMetricsAccumulator`, server-metrics JSONL writer, both hosted by Server Metrics Manager |
+
+Live request-metric summaries omit per-timeslice statistics. Per-timeslice request statistics are computed by `MetricsAccumulator.export_results()` for final exports and plots, avoiding unused timeslice calculations during each live update. Live summaries skip sweep curves unless the UI is the interactive dashboard, because the progress log does not use their 14 metrics. Final exports retain those metrics. Every non-dashboard run (including `--api-port` WebSocket and `/metrics` subscribers, and Kubernetes runs, which force `--ui simple`) omits them from live `RealtimeMetricsMessage` payloads. Server-metric time series are independent of this path.
 
 **Two-stage record processing.** The `RecordProcessorService` runs two roles per parsed response (mirroring the accumulator/stream-exporter split on the consumer side): **producers** (`record_processor` category) parse and emit one finished typed record on a declared `record_type` channel — `MetricRecordProcessor` → `MetricRecordsData` (`metric_records`), `AccuracyRecordProcessor` → `AccuracyRecordsData` (`accuracy`) — and **observers** (`record_observer` category, e.g. the raw-record and outputs-json writers) receive a `RecordObserverContext` (the parsed record + all producer outputs keyed by `record_type`) and act without emitting a channel record. Each producer's output carries its own serialized `record_type` discriminator, so the service ships **one generic `RecordsMessage`** per request — `{metadata, records: list[RecordData], error}` — and the `RecordsManager` dispatches each record to its channel handlers by `record.record_type` (no per-type message classes, no type-sniffing). The metric record is the canonical per-request record that drives the phase-completion lockstep, keyed off the message metadata.
 
@@ -350,6 +354,13 @@ a result, an error, or an explicit "no handler" response. See
 Registration is deliberately the *second* readiness proof a service gives: it
 runs after the event-bus connection probe succeeds, so a registered service has
 demonstrated both planes are live.
+
+The registration's `instance_id` remains stable across reconnects and changes
+when the service process restarts. The controller uses it to detect optional
+server-metrics history loss promptly, release the failed producer from the
+result barrier, and export inference results with an explicit telemetry error.
+Server-metrics numeric histories live on the artifact filesystem with finite
+disk and series budgets; see [long-run collection behavior](server-metrics/server-metrics.md#long-runs-and-collection-failures).
 
 **Heartbeats are sent on both planes, on purpose.** Every service emits a
 `Heartbeat` struct on the control channel *and* a `HeartbeatMessage` on the event

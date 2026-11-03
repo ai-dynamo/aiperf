@@ -41,7 +41,7 @@ def _mock_api() -> MagicMock:
     return MagicMock()
 
 
-def _version_obj(major: str = "1", minor: str = "28", git_version: str | None = None):
+def _version_obj(major: str = "1", minor: str = "30", git_version: str | None = None):
     obj = MagicMock()
     obj.major = major
     obj.minor = minor
@@ -157,7 +157,7 @@ def _make_checker(
     )
 
 
-def _patch_version(major: str = "1", minor: str = "28", git_version: str | None = None):
+def _patch_version(major: str = "1", minor: str = "30", git_version: str | None = None):
     """Patch ``client.VersionApi`` to return a pinned version."""
     mock_v = MagicMock()
     mock_v.get_code = AsyncMock(
@@ -239,8 +239,9 @@ class TestCheckKubernetesVersion:
     @pytest.mark.parametrize(
         "major,minor,expected_status",
         [
-            param("1", "28", CheckStatus.PASS, id="v1.28-pass"),
-            param("1", "24", CheckStatus.PASS, id="v1.24-pass-edge"),
+            param("1", "29", CheckStatus.PASS, id="native-sidecars"),
+            param("1", "28", CheckStatus.FAIL, id="no-native-sidecars"),
+            param("1", "24", CheckStatus.FAIL, id="server-metrics-requires-sidecars"),
             param("1", "23", CheckStatus.FAIL, id="v1.23-fail"),
             param("0", "99", CheckStatus.FAIL, id="v0.99-fail"),
         ],
@@ -260,7 +261,16 @@ class TestCheckKubernetesVersion:
     async def test_gke_version_with_plus_suffix(self) -> None:
         """GKE/EKS versions like '28+' should parse correctly."""
         checker = _make_checker()
-        with _patch_version(major="1", minor="28+", git_version="v1.28.2-gke.1"):
+        with _patch_version(major="1", minor="29+", git_version="v1.29.2-gke.1"):
+            result = await checker._check_kubernetes_version()
+        assert result.status == CheckStatus.PASS
+
+    @pytest.mark.asyncio
+    async def test_older_cluster_allowed_with_server_metrics_disabled(self) -> None:
+        """Disabling the optional sidecar preserves the Kubernetes 1.24 floor."""
+        checker = _make_checker()
+        checker.config.benchmark.server_metrics.enabled = False
+        with _patch_version(major="1", minor="24"):
             result = await checker._check_kubernetes_version()
         assert result.status == CheckStatus.PASS
 

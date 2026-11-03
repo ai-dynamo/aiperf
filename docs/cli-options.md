@@ -489,6 +489,11 @@ The API endpoint type to benchmark. Determines request/response format and suppo
 Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. Automatically disabled if the selected endpoint type does not support streaming. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
 <br/>_Flag (no value required)_
 
+#### `--allow-empty-content`
+
+Retain explicitly empty content or reasoning strings as timed responses for streaming OpenAI Chat Completions. This changes TTFT and all metrics using the shared response timeline, but TTFO still requires non-empty output and empty strings add no tokens.
+<br/>_Flag (no value required)_
+
 #### `-u`, `--url` `<list>`
 
 Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified for load balancing across multiple instances (e.g., `--url http://server1:8000 --url http://server2:8000`). The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`). URLs that do not include a scheme (no `://`) have `http://` prepended automatically.
@@ -683,7 +688,7 @@ Custom HTTP headers to include with every request. Specify as `Header:Value` pai
 
 #### `--input-file` `<str>`
 
-Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
+Path to file or directory containing benchmark dataset, or a remote reference (`hf://<org>/<repo>[@<rev>][/<path>]`, `s3://<bucket>/<key>`, `https://...`) downloaded into a local cache before the run. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
 
 #### `--public-dataset` `<str>`
 
@@ -839,6 +844,10 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
+
+#### `--end-conversation-on-truncation`, `--no-end-conversation-on-truncation`
+
+End a multi-turn conversation after any turn the server truncated at the output-token cap (`finish_reason=length`, Anthropic `stop_reason=max_tokens`, or an incomplete Responses API reply) and skip its remaining turns. The truncated turn is still measured. Follow-up prompts assume a complete prior answer, so sending them after a cut-off reply measures off-distribution generations. Default: on for SPEED-Bench qualitative datasets (public `speed_bench_qualitative` and `speed_bench_<category>`, custom `speed_bench_qualitative`) and `spec_al_mtbench`, off otherwise. Counts of ended conversations and skipped turns (per conversation session) are logged and written to `profile_export_aiperf.json`. Conflicts with `--extra-inputs ignore_eos:true`, which truncates every turn. Rejected at startup for DAG datasets and agentic replay. Maps to the dataset's ``end_conversation_on_truncation``.
 
 #### `--max-idle-gap-cap-seconds` `<float>`
 
@@ -1291,7 +1300,7 @@ Smoothness parameter for gamma distribution arrivals (--arrival-pattern gamma). 
 
 #### `--request-count`, `--num-requests` `<str>`
 
-The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
+The maximum number of requests to send. When none of `--request-count`, `--num-conversations`, or `--benchmark-duration` is set, the run is bounded automatically: trace datasets replay every record, `dag_jsonl` runs every root session, benchmark suites (SPEED-Bench, `spec_al_*`, `spec_bench`) run one full pass over every loaded conversation, concurrency runs send `max(10, 2 * concurrency)` requests (the largest value for a `--concurrency` sweep or `--search-space` concurrency range), and request-rate and user-centric runs send 10. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
 
 #### `--concurrency-ramp-duration` `<float>`
 
@@ -1348,7 +1357,7 @@ AGENTIC_REPLAY only: maximum time in seconds the replay may remain globally idle
 
 #### `--scenario` `<str>`
 
-Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
+Lock all benchmark invariants for a named scenario ('agentx' or 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
 
 #### `--unsafe-override`
 
@@ -2136,6 +2145,11 @@ The API endpoint type to benchmark. Determines request/response format and suppo
 Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. Automatically disabled if the selected endpoint type does not support streaming. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
 <br/>_Flag (no value required)_
 
+#### `--allow-empty-content`
+
+Retain explicitly empty content or reasoning strings as timed responses for streaming OpenAI Chat Completions. This changes TTFT and all metrics using the shared response timeline, but TTFO still requires non-empty output and empty strings add no tokens.
+<br/>_Flag (no value required)_
+
 #### `-u`, `--url` `<list>`
 
 Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified for load balancing across multiple instances (e.g., `--url http://server1:8000 --url http://server2:8000`). The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`). URLs that do not include a scheme (no `://`) have `http://` prepended automatically.
@@ -2330,7 +2344,7 @@ Custom HTTP headers to include with every request. Specify as `Header:Value` pai
 
 #### `--input-file` `<str>`
 
-Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
+Path to file or directory containing benchmark dataset, or a remote reference (`hf://<org>/<repo>[@<rev>][/<path>]`, `s3://<bucket>/<key>`, `https://...`) downloaded into a local cache before the run. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
 
 #### `--public-dataset` `<str>`
 
@@ -2486,6 +2500,10 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
+
+#### `--end-conversation-on-truncation`, `--no-end-conversation-on-truncation`
+
+End a multi-turn conversation after any turn the server truncated at the output-token cap (`finish_reason=length`, Anthropic `stop_reason=max_tokens`, or an incomplete Responses API reply) and skip its remaining turns. The truncated turn is still measured. Follow-up prompts assume a complete prior answer, so sending them after a cut-off reply measures off-distribution generations. Default: on for SPEED-Bench qualitative datasets (public `speed_bench_qualitative` and `speed_bench_<category>`, custom `speed_bench_qualitative`) and `spec_al_mtbench`, off otherwise. Counts of ended conversations and skipped turns (per conversation session) are logged and written to `profile_export_aiperf.json`. Conflicts with `--extra-inputs ignore_eos:true`, which truncates every turn. Rejected at startup for DAG datasets and agentic replay. Maps to the dataset's ``end_conversation_on_truncation``.
 
 #### `--max-idle-gap-cap-seconds` `<float>`
 
@@ -2938,7 +2956,7 @@ Smoothness parameter for gamma distribution arrivals (--arrival-pattern gamma). 
 
 #### `--request-count`, `--num-requests` `<str>`
 
-The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
+The maximum number of requests to send. When none of `--request-count`, `--num-conversations`, or `--benchmark-duration` is set, the run is bounded automatically: trace datasets replay every record, `dag_jsonl` runs every root session, benchmark suites (SPEED-Bench, `spec_al_*`, `spec_bench`) run one full pass over every loaded conversation, concurrency runs send `max(10, 2 * concurrency)` requests (the largest value for a `--concurrency` sweep or `--search-space` concurrency range), and request-rate and user-centric runs send 10. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
 
 #### `--concurrency-ramp-duration` `<float>`
 
@@ -2995,7 +3013,7 @@ AGENTIC_REPLAY only: maximum time in seconds the replay may remain globally idle
 
 #### `--scenario` `<str>`
 
-Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
+Lock all benchmark invariants for a named scenario ('agentx' or 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
 
 #### `--unsafe-override`
 
@@ -3778,6 +3796,11 @@ The API endpoint type to benchmark. Determines request/response format and suppo
 Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. Automatically disabled if the selected endpoint type does not support streaming. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
 <br/>_Flag (no value required)_
 
+#### `--allow-empty-content`
+
+Retain explicitly empty content or reasoning strings as timed responses for streaming OpenAI Chat Completions. This changes TTFT and all metrics using the shared response timeline, but TTFO still requires non-empty output and empty strings add no tokens.
+<br/>_Flag (no value required)_
+
 #### `-u`, `--url` `<list>`
 
 Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified for load balancing across multiple instances (e.g., `--url http://server1:8000 --url http://server2:8000`). The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`). URLs that do not include a scheme (no `://`) have `http://` prepended automatically.
@@ -3972,7 +3995,7 @@ Custom HTTP headers to include with every request. Specify as `Header:Value` pai
 
 #### `--input-file` `<str>`
 
-Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
+Path to file or directory containing benchmark dataset, or a remote reference (`hf://<org>/<repo>[@<rev>][/<path>]`, `s3://<bucket>/<key>`, `https://...`) downloaded into a local cache before the run. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
 
 #### `--public-dataset` `<str>`
 
@@ -4128,6 +4151,10 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
+
+#### `--end-conversation-on-truncation`, `--no-end-conversation-on-truncation`
+
+End a multi-turn conversation after any turn the server truncated at the output-token cap (`finish_reason=length`, Anthropic `stop_reason=max_tokens`, or an incomplete Responses API reply) and skip its remaining turns. The truncated turn is still measured. Follow-up prompts assume a complete prior answer, so sending them after a cut-off reply measures off-distribution generations. Default: on for SPEED-Bench qualitative datasets (public `speed_bench_qualitative` and `speed_bench_<category>`, custom `speed_bench_qualitative`) and `spec_al_mtbench`, off otherwise. Counts of ended conversations and skipped turns (per conversation session) are logged and written to `profile_export_aiperf.json`. Conflicts with `--extra-inputs ignore_eos:true`, which truncates every turn. Rejected at startup for DAG datasets and agentic replay. Maps to the dataset's ``end_conversation_on_truncation``.
 
 #### `--max-idle-gap-cap-seconds` `<float>`
 
@@ -4580,7 +4607,7 @@ Smoothness parameter for gamma distribution arrivals (--arrival-pattern gamma). 
 
 #### `--request-count`, `--num-requests` `<str>`
 
-The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
+The maximum number of requests to send. When none of `--request-count`, `--num-conversations`, or `--benchmark-duration` is set, the run is bounded automatically: trace datasets replay every record, `dag_jsonl` runs every root session, benchmark suites (SPEED-Bench, `spec_al_*`, `spec_bench`) run one full pass over every loaded conversation, concurrency runs send `max(10, 2 * concurrency)` requests (the largest value for a `--concurrency` sweep or `--search-space` concurrency range), and request-rate and user-centric runs send 10. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
 
 #### `--concurrency-ramp-duration` `<float>`
 
@@ -4637,7 +4664,7 @@ AGENTIC_REPLAY only: maximum time in seconds the replay may remain globally idle
 
 #### `--scenario` `<str>`
 
-Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
+Lock all benchmark invariants for a named scenario ('agentx' or 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
 
 #### `--unsafe-override`
 
@@ -5927,6 +5954,11 @@ The API endpoint type to benchmark. Determines request/response format and suppo
 Enable streaming responses. When enabled, the server streams tokens incrementally as they are generated. Automatically disabled if the selected endpoint type does not support streaming. Enables measurement of time-to-first-token (TTFT) and inter-token latency (ITL) metrics.
 <br/>_Flag (no value required)_
 
+#### `--allow-empty-content`
+
+Retain explicitly empty content or reasoning strings as timed responses for streaming OpenAI Chat Completions. This changes TTFT and all metrics using the shared response timeline, but TTFO still requires non-empty output and empty strings add no tokens.
+<br/>_Flag (no value required)_
+
 #### `-u`, `--url` `<list>`
 
 Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified for load balancing across multiple instances (e.g., `--url http://server1:8000 --url http://server2:8000`). The endpoint path is automatically appended based on `--endpoint-type` (e.g., `/v1/chat/completions` for `chat`). URLs that do not include a scheme (no `://`) have `http://` prepended automatically.
@@ -6121,7 +6153,7 @@ Custom HTTP headers to include with every request. Specify as `Header:Value` pai
 
 #### `--input-file` `<str>`
 
-Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
+Path to file or directory containing benchmark dataset, or a remote reference (`hf://<org>/<repo>[@<rev>][/<path>]`, `s3://<bucket>/<key>`, `https://...`) downloaded into a local cache before the run. Required when using `--custom-dataset-type`. Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.
 
 #### `--public-dataset` `<str>`
 
@@ -6277,6 +6309,10 @@ Multiplier for scaling all turn delays within conversations. Applied after mean/
 
 Clamp per-turn replay delays to at most this many seconds; ``None`` disables the cap. Honored by the DAG JSONL loader and the baseten_trace loader's closed-loop think-times; the clamp count is reported at end of load. Maps to FileDataset ``inter_turn_delay_cap_seconds``.
 <br/>_Constraints: ≥ 0.0_
+
+#### `--end-conversation-on-truncation`, `--no-end-conversation-on-truncation`
+
+End a multi-turn conversation after any turn the server truncated at the output-token cap (`finish_reason=length`, Anthropic `stop_reason=max_tokens`, or an incomplete Responses API reply) and skip its remaining turns. The truncated turn is still measured. Follow-up prompts assume a complete prior answer, so sending them after a cut-off reply measures off-distribution generations. Default: on for SPEED-Bench qualitative datasets (public `speed_bench_qualitative` and `speed_bench_<category>`, custom `speed_bench_qualitative`) and `spec_al_mtbench`, off otherwise. Counts of ended conversations and skipped turns (per conversation session) are logged and written to `profile_export_aiperf.json`. Conflicts with `--extra-inputs ignore_eos:true`, which truncates every turn. Rejected at startup for DAG datasets and agentic replay. Maps to the dataset's ``end_conversation_on_truncation``.
 
 #### `--max-idle-gap-cap-seconds` `<float>`
 
@@ -6729,7 +6765,7 @@ Smoothness parameter for gamma distribution arrivals (--arrival-pattern gamma). 
 
 #### `--request-count`, `--num-requests` `<str>`
 
-The maximum number of requests to send. If not set, will be automatically determined based on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
+The maximum number of requests to send. When none of `--request-count`, `--num-conversations`, or `--benchmark-duration` is set, the run is bounded automatically: trace datasets replay every record, `dag_jsonl` runs every root session, benchmark suites (SPEED-Bench, `spec_al_*`, `spec_bench`) run one full pass over every loaded conversation, concurrency runs send `max(10, 2 * concurrency)` requests (the largest value for a `--concurrency` sweep or `--search-space` concurrency range), and request-rate and user-centric runs send 10. Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple request counts; the converter promotes the list to a sweep on phases.profiling.requests before AIPerfConfig validation.
 
 #### `--concurrency-ramp-duration` `<float>`
 
@@ -6786,7 +6822,7 @@ AGENTIC_REPLAY only: maximum time in seconds the replay may remain globally idle
 
 #### `--scenario` `<str>`
 
-Lock all benchmark invariants for a named scenario (e.g. 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
+Lock all benchmark invariants for a named scenario ('agentx' or 'inferencex-agentx-mvp'). Conflicts with the locked invariants raise ScenarioLockError at startup unless --unsafe-override is also passed. Distinct from the sweep ``scenarios`` strategy (hand-picked named runs).
 
 #### `--unsafe-override`
 
@@ -7496,7 +7532,7 @@ Explore AIPerf plugins: aiperf plugins [category] [type]
 ### `--category` `<str>`
 
 Category to explore.
-<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_observer`, `record_processor`, `request_signer`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `service`, `service_manager`, `spec_decode_adapter`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
+<br/>_Choices: [`accumulator`, `accuracy_benchmark`, `accuracy_grader`, `analyzer`, `api_router`, `arrival_pattern`, `communication`, `communication_client`, `console_exporter`, `convergence_criterion`, `custom_dataset_loader`, `data_exporter`, `dataset_backing_store`, `dataset_client_store`, `dataset_composer`, `dataset_sampler`, `dataset_source_resolver`, `endpoint`, `gpu_telemetry_collector`, `plot`, `public_dataset_loader`, `ramp`, `record_observer`, `record_processor`, `request_signer`, `search_planner`, `search_recipe`, `search_recipe_post_process`, `service`, `service_manager`, `spec_decode_adapter`, `stream_exporter`, `timing_strategy`, `transport`, `ui`, `url_selection_strategy`, `zmq_proxy`]_
 
 ### `--name` `<str>`
 

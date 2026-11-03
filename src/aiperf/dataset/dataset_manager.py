@@ -56,7 +56,7 @@ from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset import FileDataset, PublicDataset
 from aiperf.dataset import mmap_cache
 from aiperf.dataset.memory_map_utils import turn_from_payload_turn
-from aiperf.dataset.utils import encode_image
+from aiperf.dataset.utils import encode_image, normalize_image_format
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ComposerType,
@@ -428,6 +428,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
                 def _decode_and_encode() -> str:
                     img = PILImage.open(BytesIO(data))
+                    normalize_image_format(img)
                     if img.format is None:
                         raise RuntimeError(
                             f"Failed to determine image format for URL '{url}'"
