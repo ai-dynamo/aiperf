@@ -162,9 +162,10 @@ The wire object maps to the record one-to-one, except:
   for `n > 1` on both endpoints, and additionally for **multi-prompt** requests
   on completions (`prompt: ["a", "b"]`), where timestamps would span prompts.
   Because the object is at the response root -- not per-choice -- AIPerf simply
-  reads it as present or absent; no client-side suppression is needed, and such
-  requests yield no record. AIPerf sends one prompt per request, so in practice
-  only `n > 1` triggers this.
+  reads it as present or absent, and such requests yield no record. AIPerf also
+  drops the record for every engine when a request generates more than one
+  sequence: `n > 1`, or a completions request with several prompts
+  (`--batch-size-text` above 1).
 - **Behind Dynamo** the custom field is currently stripped, so this path is
   direct-to-vLLM only.
 

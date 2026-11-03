@@ -424,13 +424,16 @@ class InferenceResultParser(CommunicationMixin):
         Returns zero-step records as adapted; ``process_valid_record`` drops
         them engine-neutrally, so no adapter has to repeat that rule.
 
-        Suppresses the record for any ``n > 1`` request: the per-request record
-        can't attribute request-level ``completion_tokens`` to a single
-        sequence, so a mixed record is worse than none. ``num_choices`` is the
-        request's own ``n`` and is the primary guard -- a sibling that never
-        drafted carries no payload, so counting payloads alone would let an
-        ``n = 2`` stream through with one. More than one response carrying
-        stats is still refused as a backstop for callers without the request.
+        Suppresses the record for any request that generates more than one
+        sequence: the per-request record can't attribute request-level
+        ``completion_tokens`` to a single sequence, so a mixed record is worse
+        than none. ``num_choices`` counts every sequence the request generates
+        (``n`` times the number of batched completions prompts) and is the
+        primary guard -- a sibling that never drafted carries no payload, and
+        SGLang reports only the first prompt's details for a batched ``n = 1``
+        request, so counting payloads alone would let either through with one.
+        More than one response carrying stats is still refused as a backstop
+        for callers without the request.
 
         Counts payloads by truthiness (not ``is not None``) to match the
         adapter's ``find_spec_decode_payload``: an empty ``{}`` is treated as
