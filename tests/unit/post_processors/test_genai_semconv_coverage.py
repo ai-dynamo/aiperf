@@ -57,16 +57,21 @@ class TestClassifyErrorType:
         error = SimpleNamespace(code=None, type=error_type, cause_chain=[], message="")
         assert _classify_error_type(error) == expected
 
-    def test_request_cancellation_is_not_an_http_error(self) -> None:
-        """The transport records --request-cancellation-rate aborts with the
-        synthetic status 499, which must not be reported as a server 4xx.
+    @pytest.mark.parametrize(
+        "error_type,code,expected",
+        [
+            param("RequestCancellationError", 499, "cancelled", id="request-cancellation"),
+            param("TimeoutError", 504, "timeout", id="video-poll-deadline"),
+        ],
+    )  # fmt: skip
+    def test_error_type_wins_over_synthetic_status(
+        self, error_type: str, code: int, expected: str
+    ) -> None:
+        """The transport gives --request-cancellation-rate aborts the synthetic
+        status 499 and video-poll deadlines 504, and neither is a server response.
         """
-        error = ErrorDetails(
-            type="RequestCancellationError",
-            message="Request cancelled 0.070s after being sent",
-            code=499,
-        )
-        assert _classify_error_type(error) == "cancelled"
+        error = ErrorDetails(type=error_type, message="synthetic", code=code)
+        assert _classify_error_type(error) == expected
 
     def test_cause_chain_timeout(self) -> None:
         error = SimpleNamespace(
