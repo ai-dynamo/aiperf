@@ -1222,6 +1222,15 @@ class TestSpecDecodeRequestCardinality:
         result = await self._parse(server_token_parser, request_record, spy_tokenizer)
         assert result.spec_decode_acceptance is None
 
+    async def test_stripped_payload_uses_worker_sequence_count(
+        self, server_token_parser, request_record, spy_tokenizer
+    ):
+        """The worker counts sequences before it strips the payload bytes."""
+        request_record.request_info.payload_bytes = None
+        request_record.request_info.num_choices = 2
+        result = await self._parse(server_token_parser, request_record, spy_tokenizer)
+        assert result.spec_decode_acceptance is None
+
 
 @pytest.mark.asyncio
 class TestSpecDecodeZeroStepRecords:

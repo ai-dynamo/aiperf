@@ -1096,6 +1096,15 @@ class RecordContext(AIPerfBaseModel):
         "continuation turns and non-fixed-schedule datasets.",
     )
 
+    num_choices: int | None = Field(
+        default=None,
+        ge=1,
+        description="Sequences the request generates: ``n`` times the batched "
+        "completions prompts. Set by ``inference_client`` so the spec-decode "
+        "multi-sequence guard survives payload-bytes stripping. None for a "
+        "pre-encoded payload whose bytes are retained.",
+    )
+
     # --- Cache-bust marker (sourced from Credit, exported in raw JSONL) -------
 
     cache_bust_marker: str | None = Field(

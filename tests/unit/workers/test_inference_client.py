@@ -273,6 +273,30 @@ class TestInferenceClient:
         # orjson.dumps and the record carries the exact wire payload).
         assert call_args.kwargs["payload"] == orjson.dumps(raw_payload)
 
+    @pytest.mark.parametrize(
+        "pre_encoded,expected",
+        [
+            param(False, 2, id="formatted"),
+            param(True, None, id="pre_encoded"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.asyncio
+    async def test_send_request_counts_sequences(
+        self, inference_client, sample_request_info, pre_encoded, expected
+    ):
+        """Formatted payloads are counted before dispatch, at no decode cost."""
+        payload = {"prompt": ["a", "b"]}
+        inference_client.endpoint.format_payload.return_value = payload
+        if pre_encoded:
+            sample_request_info.payload_bytes = orjson.dumps(payload)
+        inference_client.transport.send_request = AsyncMock(
+            return_value=RequestRecord(request_info=sample_request_info)
+        )
+
+        await inference_client.send_request(sample_request_info)
+
+        assert sample_request_info.num_choices == expected
+
     @pytest.mark.asyncio
     async def test_send_request_sends_empty_raw_payload_without_formatting(
         self, inference_client, sample_request_info
@@ -522,6 +546,27 @@ class TestInferenceClient:
         )
 
         assert result.request_info.payload_bytes == expected_payload_bytes
+
+    @pytest.mark.parametrize(
+        "strip,expected",
+        [
+            param(True, 2, id="stripped_counted"),
+            param(False, None, id="retained_not_counted"),
+        ],
+    )  # fmt: skip
+    def test_finalize_request_record_counts_stripped_sequences(
+        self, inference_client, sample_request_info, strip, expected
+    ):
+        """Pre-encoded bytes are counted after the response, before stripping."""
+        inference_client.strip_record_payload_bytes = strip
+        sample_request_info.payload_bytes = b'{"prompt": ["a", "b"]}'
+        record = RequestRecord(request_info=sample_request_info)
+
+        result = inference_client._finalize_request_record(
+            record=record, request_info=sample_request_info
+        )
+
+        assert result.request_info.num_choices == expected
 
     @pytest.mark.parametrize(
         "base_url",

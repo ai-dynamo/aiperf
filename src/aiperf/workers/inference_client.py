@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -19,6 +20,7 @@ from aiperf.common.models import (
     RequestRecord,
 )
 from aiperf.common.redact import redact_headers
+from aiperf.endpoints.payload_extraction import count_choices
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TransportType
 
@@ -131,6 +133,7 @@ class InferenceClient(AIPerfLifecycleMixin):
         # and the server's form parser would reject them (422, prompt=null).
         wire_payload: dict[str, Any] | bytes = formatted_payload
         if isinstance(formatted_payload, dict):
+            request_info.num_choices = count_choices(formatted_payload)
             encoded = orjson.dumps(formatted_payload)
             request_info.payload_bytes = encoded
             is_multipart = (
@@ -265,7 +268,15 @@ class InferenceClient(AIPerfLifecycleMixin):
             # the canonical request payload bytes from the slim record context
             # after dispatch.
             if self.strip_record_payload_bytes:
-                record.request_info.payload_bytes = None
+                ctx = record.request_info
+                if ctx.num_choices is None and ctx.payload_bytes:
+                    # The record processor cannot count stripped bytes; count
+                    # pre-encoded ones here, after the response.
+                    with contextlib.suppress(orjson.JSONDecodeError):
+                        payload = orjson.loads(ctx.payload_bytes)
+                        if isinstance(payload, dict):
+                            ctx.num_choices = count_choices(payload)
+                ctx.payload_bytes = None
 
         # If this is the first turn, calculate the credit drop latency
         if request_info.turn_index == 0 and request_info.drop_perf_ns is not None:

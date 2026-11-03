@@ -20,18 +20,8 @@ from aiperf.common.enums import MediaType
 from aiperf.common.models import ExtractedPayload
 
 
-def extract_inputs(
-    payload: dict[str, Any],
-    part_types: dict[MediaType, set[str]],
-) -> ExtractedPayload:
-    """Single O(n) walk yielding tokenisable text + per-modality counts.
-
-    Covers chat ``messages``, Responses ``input``, completions ``prompt``,
-    embeddings ``input``, rankings ``query`` + ``passages``, and HuggingFace
-    ``inputs``. Endpoints with a non-standard payload shape override
-    ``BaseEndpoint.extract_payload_inputs`` directly.
-    """
-    result = ExtractedPayload()
+def count_choices(payload: dict[str, Any]) -> int:
+    """Sequences a request generates: ``n`` times the batched completions prompts."""
     n = payload.get("n")
     n = n if isinstance(n, int) and n > 1 else 1
     prompt = payload.get("prompt")
@@ -44,7 +34,21 @@ def extract_inputs(
         and all(isinstance(p, str | list) for p in prompt)
         else 1
     )
-    result.num_choices = n * num_prompts
+    return n * num_prompts
+
+
+def extract_inputs(
+    payload: dict[str, Any],
+    part_types: dict[MediaType, set[str]],
+) -> ExtractedPayload:
+    """Single O(n) walk yielding tokenisable text + per-modality counts.
+
+    Covers chat ``messages``, Responses ``input``, completions ``prompt``,
+    embeddings ``input``, rankings ``query`` + ``passages``, and HuggingFace
+    ``inputs``. Endpoints with a non-standard payload shape override
+    ``BaseEndpoint.extract_payload_inputs`` directly.
+    """
+    result = ExtractedPayload(num_choices=count_choices(payload))
     # Reverse index the part-type set: ``{"text": MediaType.TEXT,
     # "image_url": MediaType.IMAGE, ...}``. Built per-call - the map is
     # small and per-part lookup is O(1).

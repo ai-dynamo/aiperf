@@ -374,10 +374,17 @@ class InferenceResultParser(CommunicationMixin):
         else:
             token_counts = TokenCounts()
 
+        # Stripped payload bytes leave no inputs; the worker counted the
+        # sequences before stripping them.
+        ctx = request_record.request_info
+        if inputs is not None:
+            num_choices = inputs.num_choices
+        elif ctx is not None and ctx.num_choices is not None:
+            num_choices = ctx.num_choices
+        else:
+            num_choices = 1
         spec_decode_acceptance = self._extract_spec_decode_acceptance(
-            resp,
-            self._spec_decode_warned,
-            num_choices=inputs.num_choices if inputs is not None else 1,
+            resp, self._spec_decode_warned, num_choices=num_choices
         )
         # A record exists only for a request that speculated. vLLM sends a
         # payload even when no verify step ran (max_tokens: 1, EOS first, an
