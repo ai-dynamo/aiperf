@@ -15,7 +15,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import aiohttp
 import kopf
@@ -23,10 +23,8 @@ from kubernetes_asyncio import client
 from kubernetes_asyncio.client import ApiClient, CustomObjectsApi
 from kubernetes_asyncio.client.exceptions import ApiException
 
-from aiperf.common.endpoint_credentials import redact_credential_text
 from aiperf.common.enums import SystemState
 from aiperf.common.environment import Environment
-from aiperf.common.redact import redact_text
 from aiperf.common.results_markers import READY_MARKER_NAME, write_ready_marker
 from aiperf.kubernetes.client import k8s_client
 from aiperf.kubernetes.constants import (
@@ -47,7 +45,7 @@ from aiperf.kubernetes.crd_models import (
     ControllerFetchResult,
     MetricsSummary,
 )
-from aiperf.kubernetes.dataset_startup import POD_PREFIX
+from aiperf.kubernetes.dataset_startup import POD_PREFIX, scrub_message
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.phase import Phase, as_phase, format_timestamp, parse_timestamp
@@ -2807,17 +2805,26 @@ def _termination_detail(terminated: Any) -> str:
     """The container's termination message as one redacted line ('' when absent).
 
     With ``FallbackToLogsOnError`` the message is the log tail, which can span
-    lines and quote URLs, headers or tokens, so it is flattened and scrubbed
-    with the same pipeline the pod applies to its own line.
+    lines and quote URLs, headers or tokens, so it goes through the same
+    ``scrub_message`` the pod applies to its own line.
     """
     message = _resource_field(terminated, "message")
     if not isinstance(message, str):
         return ""
-    return redact_credential_text(redact_text(" ".join(message.split())), ())
+    return scrub_message(message)
 
 
-def _container_failure(status: Any) -> tuple[str, int, str, str] | None:
-    """(name, exit_code, reason, message) for a non-sidecar container that exited non-zero."""
+class _ContainerFailure(NamedTuple):
+    """A non-sidecar container that exited non-zero."""
+
+    name: str
+    exit_code: int
+    reason: str
+    message: str
+
+
+def _container_failure(status: Any) -> _ContainerFailure | None:
+    """The failure of a non-sidecar container that exited non-zero, if it did."""
     name = _resource_field(status, "name", default="") or ""
     if name == Containers.RESULTS_SIDECAR:
         return None
@@ -2828,19 +2835,20 @@ def _container_failure(status: Any) -> tuple[str, int, str, str] | None:
     if exit_code == 0:
         return None
     reason = _resource_field(terminated, "reason") or "Error"
-    return name, exit_code, reason, _termination_detail(terminated)
+    return _ContainerFailure(name, exit_code, reason, _termination_detail(terminated))
 
 
-def _failure_rank(failure: tuple[str, int, str, str]) -> int:
+def _failure_rank(failure: _ContainerFailure) -> int:
     """Sort key: the dataset-manager's own line, then control-plane, then the rest.
 
     A dataset startup failure can take the control-plane down with it; the
     dataset-manager's ``POD_PREFIX`` line is then the cause, not a bystander.
     """
-    name, _, _, message = failure
-    if name == Containers.DATASET_MANAGER and message.startswith(POD_PREFIX):
+    if failure.name == Containers.DATASET_MANAGER and failure.message.startswith(
+        POD_PREFIX
+    ):
         return 0
-    return 1 if name == Containers.CONTROL_PLANE else 2
+    return 1 if failure.name == Containers.CONTROL_PLANE else 2
 
 
 def _get_terminated_controller_info(pod: Any) -> tuple[int, str] | None:
@@ -2871,13 +2879,13 @@ def _get_terminated_controller_info(pod: Any) -> tuple[int, str] | None:
     failures = [f for f in map(_container_failure, statuses) if f is not None]
     if not failures:
         return None
-    failures.sort(key=_failure_rank)
-    name, exit_code, reason, message = failures[0]
-    if name != Containers.CONTROL_PLANE:
-        reason = f"{reason} (container {name})"
-    if message:
-        reason = f"{reason}: {message}"
-    return exit_code, reason
+    failure = min(failures, key=_failure_rank)
+    reason = failure.reason
+    if failure.name != Containers.CONTROL_PLANE:
+        reason = f"{reason} (container {failure.name})"
+    if failure.message:
+        reason = f"{reason}: {failure.message}"
+    return failure.exit_code, reason
 
 
 async def handle_pod_recovery_event(

@@ -28,6 +28,7 @@ from kubernetes_asyncio.client.exceptions import ApiException
 from pytest import param
 
 from aiperf.kubernetes.cr_refs import AIPERF_JOB_API_VERSION
+from aiperf.kubernetes.dataset_startup import scrub_message
 from aiperf.kubernetes.phase import Phase, as_phase
 from aiperf.operator import results_layout, runs_index
 from aiperf.operator.handlers.monitor import (
@@ -1589,6 +1590,10 @@ class TestDatasetFailureSurfacing:
             assert secret not in reason
         assert reason.startswith("Error (container dataset-manager): Traceback: GET ")
         assert reason.endswith(" failed")
+        # The same pipeline the pod applies to its own line, not a copy of it.
+        assert reason == (
+            f"Error (container dataset-manager): {scrub_message(terminated.message)}"
+        )
 
     @pytest.mark.parametrize(
         "control_plane_first",

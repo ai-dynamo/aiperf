@@ -56,6 +56,23 @@ def _dataset_url_secrets(url: str) -> list[str]:
     return values
 
 
+def scrub_message(text: str, secrets: Iterable[str] = ()) -> str:
+    """``text`` flattened to one line with every credential removed.
+
+    The dataset-manager scrubs its own termination message with this, and the
+    operator scrubs any container's termination message (with
+    ``FallbackToLogsOnError``, a log tail) with it again before persisting it, so
+    a redaction fix lands in both. ``secrets`` are plaintext credentials the
+    caller holds; they are scrubbed even where no pattern would catch them.
+    """
+    # Held secrets are replaced whole before any pattern rewrites their pieces
+    # and hides the rest from the exact match. Token-wise URL redaction comes
+    # next, because applied to the whole text the URL redactor swallows every
+    # word after a raw signature value.
+    line = " ".join(replace_secret_values(text, secrets).split())
+    return redact_credential_text(redact_text(line), ())
+
+
 def termination_message(error: BaseException, secrets: Iterable[str]) -> str:
     """One redacted line describing ``error``, prefixed and capped at 4 KiB.
 
@@ -68,14 +85,7 @@ def termination_message(error: BaseException, secrets: Iterable[str]) -> str:
         if isinstance(error, ConfigurationError)
         else f"{type(error).__name__}: {error}"
     )
-    # Held secrets are replaced whole before any pattern rewrites their pieces
-    # and hides the rest from the exact match. Token-wise URL redaction comes
-    # next, because applied to the whole text the URL redactor swallows every
-    # word after a raw signature value.
-    scrubbed = redact_credential_text(
-        redact_text(replace_secret_values(text, secrets)), ()
-    )
-    line = " ".join(f"{POD_PREFIX} {scrubbed}".split())
+    line = f"{POD_PREFIX} {scrub_message(text, secrets)}".rstrip()
     capped = line.encode("utf-8")[:MAX_TERMINATION_MESSAGE_BYTES]
     return capped.decode("utf-8", errors="ignore")
 
