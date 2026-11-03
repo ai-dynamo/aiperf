@@ -17,6 +17,7 @@ from typing import Any, Literal
 import kopf
 from pydantic import ValidationError
 
+from aiperf.common.endpoint_credentials import AIPERF_INJECTED_DATASET_URLS
 from aiperf.common.results_markers import EPOCH_RE
 from aiperf.config.deployment import PodTemplateConfig
 from aiperf.config.loader import ConfigurationError
@@ -694,6 +695,8 @@ async def _create_sweep_controller_jobset(
     # Merge user-supplied container env (spec.podTemplate.env) so
     # users can pass HTTP_PROXY, HF_HOME, custom log levels, etc. The
     # controller's reserved AIPERF_SWEEP_* vars take precedence on collision.
+    # The presigned dataset URLs' Secret is left out: the controller never
+    # downloads, and child jobs take it from the sweep spec, not from this env.
     pod_template = template_spec.get("podTemplate") or {}
     controller_template = PodTemplateConfig(
         container_security_context=pod_template.get("containerSecurityContext") or {}
@@ -701,6 +704,7 @@ async def _create_sweep_controller_jobset(
     user_env = pod_template.get("env") or []
     if user_env:
         reserved = {e["name"] for e in container["env"]}
+        reserved.add(AIPERF_INJECTED_DATASET_URLS)
         container["env"].extend(e for e in user_env if e.get("name") not in reserved)
     # Container-level resources/securityContext from podTemplate. Without
     # these, the sweep-controller pod gets no requests/limits (rejected by

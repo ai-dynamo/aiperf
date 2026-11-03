@@ -1147,8 +1147,8 @@ def _script_entrypoint() -> int:
     from aiperf.common.endpoint_credentials import drop_injected_dataset_urls
     from aiperf.common.event_loop import configure_event_loop_policy_for_platform
 
-    # The sweep-controller inherits spec.podTemplate.env but never downloads;
-    # only a child's dataset-manager may hold presigned dataset URLs.
+    # Only a child's dataset-manager may hold presigned dataset URLs. The operator
+    # renders this container without them, but an envFrom Secret can still carry them.
     drop_injected_dataset_urls()
     configure_event_loop_policy_for_platform()
     return asyncio.run(main())
