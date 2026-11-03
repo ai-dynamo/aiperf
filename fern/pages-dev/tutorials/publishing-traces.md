@@ -33,8 +33,9 @@ must not set `path`. A repo, folder, or prefix without `aiperf.json` cannot be r
 
 HTTPS references support single files and sidecars only. The sidecar is looked up at
 `<url>.aiperf.json`, and not at all when the URL has a query string (a presigned URL signs
-one object). A server that answers the sidecar path with an HTML page is treated as having no
-sidecar.
+one object). A server that answers the sidecar path with a client error (404, 400, 403, 405, and
+so on) or with an HTML page is treated as having no sidecar; HTTP 429 and 5xx answers fail the
+run as transient errors.
 
 A folder can hold several files (for example a `random_pool` or `raw_payload` directory).
 Only folders whose format reads a directory work as `path`, with one exception: a folder of
