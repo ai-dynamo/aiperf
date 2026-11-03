@@ -814,9 +814,13 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # publishing. Keep that path on the event loop so column-store mutation
         # cannot race a worker thread traversing its arrays.
         if ctx.cancelled:
-            return self._summarize_for_export_context(ctx, include_timeslices=True)
+            return self._summarize_for_export_context(
+                ctx, include_timeslices=ctx.include_timeslices
+            )
         return await asyncio.to_thread(
-            self._summarize_for_export_context, ctx, include_timeslices=True
+            self._summarize_for_export_context,
+            ctx,
+            include_timeslices=ctx.include_timeslices,
         )
 
     def _inject_sweep_metrics(
