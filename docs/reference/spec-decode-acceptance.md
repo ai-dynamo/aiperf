@@ -283,6 +283,15 @@ which include the prefill output token. Copying that average changes the metric.
 The response reports no fixed draft bound or ordered per-step arrays, so those
 optional record fields remain `None`.
 
+SGLang computes `spec_num_proposed_drafts` as
+`spec_verify_ct × (speculative_num_draft_tokens − 1)`. For a chain drafter, this
+count equals the draft tokens on the verified path. For a tree drafter
+(`--speculative-eagle-topk` above 1), it counts every draft node in the tree. One
+step accepts at most `speculative_num_steps` tokens along one path, so the draft
+acceptance rate of a tree drafter has a lower maximum. If two drafters have
+different shapes, do not compare their draft acceptance rates across engines or
+server configurations. Acceptance length does not use this denominator.
+
 Multi-sequence responses contain a list of detail objects. AIPerf excludes that
 list because one record cannot attribute request-level usage to one sequence.
 A completions request with several prompts and `n=1` returns one object for the
