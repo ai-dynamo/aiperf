@@ -49,6 +49,7 @@ aiperf profile \
     --streaming \
     --url 127.0.0.1:8000 \
     --public-dataset vision_arena \
+    --output-tokens-mean 100 \
     --request-count 10 \
     --concurrency 4
 ```

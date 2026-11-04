@@ -63,6 +63,21 @@ renders — by default `aiperf-operator`, or `<release>-aiperf-operator` if your
 release name differs from the chart name. The port is exposed under the
 `results` named port (default 8081, see `resultsServer.port` in `values.yaml`).
 
+### Behind a reverse proxy with a path prefix
+
+The UI resolves its API, WebSocket and download URLs against the page URL, so
+it also works behind a reverse proxy or ingress that serves the results server
+under a path prefix and strips the prefix before forwarding (for example
+`https://gateway.example.com/aiperf/` → `http://aiperf-operator:8081/`). No
+operator setting is needed.
+
+- Open the UI with a trailing slash (`/aiperf/`, not `/aiperf`). Without it,
+  the browser resolves relative URLs one level up and the UI cannot reach its
+  assets or API.
+- The "Plots ↗" link is hidden under a prefix: the Dash app loads its assets
+  and callbacks from the origin-root `/dashboard/` path, so it does not work
+  behind a prefix yet.
+
 ### Local no-build UI development
 
 For fast iteration on the static operator UI without adding a frontend build
@@ -74,7 +89,9 @@ uv run python tools/operator_ui_proxy.py --dev-reload --port 8123 --upstream htt
 ```
 
 Open `http://127.0.0.1:8123/live/`. The proxy serves
-`src/aiperf/operator/ui/`, forwards `/api/v1/*` to the configured upstream, and
+`src/aiperf/operator/ui/`, forwards `/api/v1/*` (including the
+`/live/api/v1/*` paths the UI calls when served under `/live/`) to the
+configured upstream, and
 reloads the browser when `.html`, `.js`, or `.css` files change.
 
 ### Authentication
@@ -168,7 +185,10 @@ dashboard sidecar for GET, POST, PUT, DELETE, PATCH, and OPTIONS. Paths
 containing `.` or `..` segments are rejected with `400` so a decoded traversal
 cannot escape the `/dashboard/` prefix and reach the sidecar's unauthenticated
 `POST /admin/refresh`. The link is gated by
-`/api/v1/config/features`'s `dashboard_enabled` flag, and the proxy returns
+`/api/v1/config/features`'s `dashboard_enabled` flag, and is only shown when
+the UI is served at the origin root (see
+[Behind a reverse proxy with a path prefix](#behind-a-reverse-proxy-with-a-path-prefix)).
+The proxy returns
 `503` when the sidecar is disabled or unreachable. (The Dash app itself uses
 `WSGIMiddleware` inside the sidecar's own `dashboard_server.py`, not on the
 results server.)

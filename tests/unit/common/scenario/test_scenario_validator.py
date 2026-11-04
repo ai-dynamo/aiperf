@@ -333,9 +333,15 @@ def test_weka_hf_with_pinned_repo_ok() -> None:
     assert outcome.violations == []
 
 
-def _local_weka_trace_run(*, unsafe_override: bool = False) -> BenchmarkRun:
-    """FileDataset whose resolver would detect ``weka_trace`` (local, unpinned)."""
+def _local_unpinned_trace_run(
+    *,
+    unsafe_override: bool = False,
+    detected_loader: str = "weka_trace",
+    scenario: str = "inferencex-agentx-mvp",
+) -> BenchmarkRun:
+    """FileDataset whose resolver detects a local, unpinned trace loader."""
     run = _build_run(
+        scenario=scenario,
         streaming=True,
         extra={"ignore_eos": True},
         unsafe_override=unsafe_override,
@@ -354,13 +360,13 @@ def _local_weka_trace_run(*, unsafe_override: bool = False) -> BenchmarkRun:
             "cache_bust": {"target": "first_turn_prefix"},
         },
     )
-    run.resolved.dataset_types = {"main": "weka_trace"}
+    run.resolved.dataset_types = {"main": detected_loader}
     return run
 
 
 def test_local_weka_trace_raises_without_unsafe_override() -> None:
     """Local weka_trace is format-ok but unpinned — refuse submission_valid=true."""
-    run = _local_weka_trace_run()
+    run = _local_unpinned_trace_run()
     with pytest.raises(ScenarioLockError) as exc:
         apply_scenario(run)
     assert "cannot verify corpus identity" in str(exc.value)
@@ -371,13 +377,65 @@ def test_local_weka_trace_raises_without_unsafe_override() -> None:
 
 def test_local_weka_trace_unsafe_override_marks_submission_invalid() -> None:
     """Offline smoke: local weka_trace + --unsafe-override -> submission_valid=false."""
-    run = _local_weka_trace_run(unsafe_override=True)
+    run = _local_unpinned_trace_run(unsafe_override=True)
     outcome = apply_scenario(run)
     assert outcome.submission_valid is False
     assert "unsafe_override" in outcome.submission_invalid_reasons
     assert any(
         v.flag == "--custom-dataset-type / --input-file" for v in outcome.violations
     )
+
+
+def test_local_mooncake_trace_raises_without_unsafe_override() -> None:
+    """Local mooncake_trace is format-ok but unpinned — refuse submission_valid=true."""
+    run = _local_unpinned_trace_run(detected_loader="mooncake_trace")
+    with pytest.raises(ScenarioLockError) as exc:
+        apply_scenario(run)
+    assert "cannot verify corpus identity" in str(exc.value)
+    assert any(
+        v.current_value == "mooncake_trace (local, unpinned)"
+        for v in exc.value.violations
+    )
+
+
+def test_local_mooncake_trace_unsafe_override_marks_submission_invalid() -> None:
+    """Offline smoke: local mooncake_trace + --unsafe-override -> submission_valid=false."""
+    run = _local_unpinned_trace_run(
+        detected_loader="mooncake_trace", unsafe_override=True
+    )
+    outcome = apply_scenario(run)
+    assert outcome.submission_valid is False
+    assert "unsafe_override" in outcome.submission_invalid_reasons
+    assert any(
+        v.current_value == "mooncake_trace (local, unpinned)"
+        for v in outcome.violations
+    )
+
+
+@pytest.mark.parametrize("detected_loader", ["weka_trace", "mooncake_trace"])
+def test_agentx_rejects_local_unpinned_traces(detected_loader: str) -> None:
+    """The concise preset must keep the MVP's corpus-identity lock."""
+    run = _local_unpinned_trace_run(scenario="agentx", detected_loader=detected_loader)
+    with pytest.raises(ScenarioLockError) as exc:
+        apply_scenario(run)
+    assert "cannot verify corpus identity" in str(exc.value)
+
+
+def test_agentx_weka_hf_requires_pinned_repo() -> None:
+    run = _build_run(
+        scenario="agentx",
+        streaming=True,
+        extra={"ignore_eos": True},
+        dataset={
+            "name": "main",
+            "type": "public",
+            "dataset": "weka_hf",
+            "hf_weka_dataset": "example/not-agentx-corpus",
+        },
+    )
+    with pytest.raises(ScenarioLockError) as exc:
+        apply_scenario(run)
+    assert "semianalysisai/cc-traces-weka-062126" in str(exc.value)
 
 
 def test_cache_bust_auto_filled_when_default() -> None:
