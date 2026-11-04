@@ -225,18 +225,14 @@ class TestTokenizerAliasResolution:
 
     @pytest.mark.parametrize("var", ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"])
     @pytest.mark.parametrize("value", ["0", "false", "False", "no", "off", ""])
-    def test_resolve_alias_ignores_falsey_offline_env(
-        self, mock_model_info, mock_list_models, monkeypatch, var, value
-    ):
+    def test_is_offline_mode_ignores_falsey_env(self, monkeypatch, var, value):
         """``HF_HUB_OFFLINE=0`` (or false/no/off) must not force offline mode."""
         monkeypatch.setenv(var, value)
         assert _is_offline_mode() is False
 
     @pytest.mark.parametrize("var", ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"])
     @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on", " 1 "])
-    def test_resolve_alias_honors_truthy_offline_env(
-        self, mock_model_info, mock_list_models, monkeypatch, var, value
-    ):
+    def test_is_offline_mode_honors_truthy_env(self, monkeypatch, var, value):
         monkeypatch.setenv(var, value)
         assert _is_offline_mode() is True
 

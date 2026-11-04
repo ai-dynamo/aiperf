@@ -194,6 +194,42 @@ class TestTokenizerOnlyRepoCacheLoad:
         assert seen_kwargs["name_or_path"] == repo
         assert seen_kwargs["revision"] == "main"
 
+    @pytest.mark.parametrize("value", [None, "0", "false"])
+    def test_online_cached_alias_loads_canonical_repo(
+        self, hf_cache, monkeypatch, value
+    ) -> None:
+        """A short alias cached as ``org/name`` must load under its canonical ID.
+
+        ``_is_hf_cached`` accepts the alias, but the Hub only knows the
+        canonical repo, so passing the alias to ``AutoTokenizer`` fails
+        whenever the Hub lookup 404s.
+        """
+        self._materialize_tokenizer_only_snapshot(
+            hf_cache, "review-org/review-tokenizer", "main", "deadbeef"
+        )
+        monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
+        if value is None:
+            monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+        else:
+            monkeypatch.setenv("HF_HUB_OFFLINE", value)
+
+        seen: dict[str, str] = {}
+
+        def fake_from_pretrained(name_or_path, **kwargs):
+            seen["name_or_path"] = name_or_path
+            return _FakeHfTokenizer()
+
+        with patch(
+            "transformers.AutoTokenizer.from_pretrained",
+            side_effect=fake_from_pretrained,
+        ):
+            tokenizer = Tokenizer.from_pretrained(
+                "review-tokenizer", revision="main", resolve_alias=True
+            )
+
+        assert seen["name_or_path"] == "review-org/review-tokenizer"
+        assert tokenizer.resolved_name == "review-org/review-tokenizer"
+
     def test_offline_cached_load_uses_snapshot_path(
         self, hf_cache, monkeypatch
     ) -> None:
