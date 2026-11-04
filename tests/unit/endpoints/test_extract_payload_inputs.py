@@ -26,6 +26,7 @@ from aiperf.common.models import (
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 from aiperf.endpoints.nim_image_retrieval import ImageRetrievalEndpoint
 from aiperf.endpoints.openai_chat import ChatEndpoint
+from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.endpoints.openai_responses import ResponsesEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import create_model_endpoint
@@ -33,6 +34,12 @@ from tests.unit.endpoints.conftest import create_model_endpoint
 
 def _chat() -> ChatEndpoint:
     return ChatEndpoint(model_endpoint=create_model_endpoint(EndpointType.CHAT))
+
+
+def _completions() -> CompletionsEndpoint:
+    return CompletionsEndpoint(
+        model_endpoint=create_model_endpoint(EndpointType.COMPLETIONS)
+    )
 
 
 def _responses() -> ResponsesEndpoint:
@@ -171,7 +178,7 @@ class TestFlatFieldFallbacks:
     def test_completions_num_choices(self, payload: dict[str, Any], expected: int):
         """SGLang reports one prompt's spec-decode details for a batched
         ``n=1`` request, so every batched prompt must count as a sequence."""
-        assert _chat().extract_payload_inputs(payload).num_choices == expected
+        assert _completions().extract_payload_inputs(payload).num_choices == expected
 
     def test_embeddings_input_string(self):
         result = _chat().extract_payload_inputs({"input": "to embed"})
