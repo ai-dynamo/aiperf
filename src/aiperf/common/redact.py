@@ -430,7 +430,9 @@ def _redact_cli_args(args: list) -> list:
             flags = arg[: len(arg) - len(attached)]
             out.append(f"{flags}{_redact_cli_header_value(attached)}")
             continue
-        if isinstance(arg, str) and arg.startswith("-"):
+        # Cyclopts reads number- and slice-shaped tokens (-1, -1.5, -1:01) as
+        # values, so they do not end the header window.
+        if isinstance(arg, str) and arg.startswith("-") and not arg[1:2].isdigit():
             flag, eq, inline = arg.partition("=")
             in_header_window = flag in _CLI_HEADER_FLAGS
             if in_header_window:

@@ -1700,6 +1700,7 @@ class TestCliCommandRedaction:
             param(["-vHX-Acme-Token:sk-e"], id="clustered-attached"),
             param(["-vH", "X-Acme-Token:sk-f"], id="clustered-separate"),
             param(["-vH=X-Request-Id:42", "X-Acme-Token:sk-g"], id="clustered-equals-then-more"),
+            param(["-H", "X-Request-Id:ok", "-1:01", "X-Tenant-Secret:sk-h"], id="number-shaped-value"),
             param(["--header", "X-Request-Id:42", "X-Tenant-Secret:sk-d"], id="long-multiple"),
         ],
     )  # fmt: skip
