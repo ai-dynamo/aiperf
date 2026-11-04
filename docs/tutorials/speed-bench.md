@@ -135,8 +135,7 @@ and pins the SPEED-Bench v1.1 dataset to commit
 keeps earlier prepared prompts separate; existing unversioned caches are not reused.
 When preparing files with the standalone script, select `--format raw` for
 AIPerf's `messages` JSONL format and `--dataset-revision
-fa4e669bee2a4393c56aa8ed05a7c667897f9590` (the upstream CLI defaults to a
-`v1.1` tag that is not currently published).
+fa4e669bee2a4393c56aa8ed05a7c667897f9590`.
 
 Resolution runs before AIPerf starts its services, so the download is not part
 of any measured run.
