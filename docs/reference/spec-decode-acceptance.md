@@ -106,8 +106,20 @@ Acceptance Metrics* feature doc is the authoritative wire-format reference. It i
 present on chat and completions, streaming and non-streaming; in streaming it
 rides the trailing `include_usage` chunk (empty `choices`) at the response root.
 
-Because vLLM emits that trailing chunk only when `stream_options.include_usage`
-is set, AIPerf requests it on **every** streaming run -- not just when
+On the Responses API (`/v1/responses`) the payload sits on the response object:
+at the body root non-streaming, and under the terminal `response.completed`
+event's `response` key streaming. Only that terminal event is read, so the
+full-response-bearing `response.created` / `response.in_progress` events never
+add a second carrier, and capture does not depend on `include_usage`. This
+requires a vLLM build that includes
+[vllm-project/vllm#58656](https://github.com/vllm-project/vllm/pull/58656)
+(pending at the time of writing); earlier versions return
+`metrics.speculative_decoding: null` on `/v1/responses`, and AIPerf reports no
+acceptance metrics.
+
+For chat and completions, vLLM emits the trailing chunk only when
+`stream_options.include_usage` is set, so AIPerf requests it on every streaming
+chat/completions run -- not just when
 `--use-server-token-count` is on, which would otherwise silently drop the
 metrics. The chunk carries no content, so it is excluded from timing metrics via
 `ParsedResponseRecord.content_responses`, and token counting still follows the
