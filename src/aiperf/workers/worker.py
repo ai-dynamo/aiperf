@@ -1840,6 +1840,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 )
             ],
         )
+        request_info.num_choices = payload_turn.num_choices
         record = await self.inference_client.send_request(
             request_info, first_token_callback=first_token_callback
         )
