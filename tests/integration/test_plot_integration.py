@@ -340,7 +340,7 @@ class TestPlotIntegration:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_plot_with_nonexistent_directory_fails(cli: AIPerfCLI):
+async def test_plot_with_nonexistent_directory_fails(cli: AIPerfCLI) -> None:
     """Test that plot command fails gracefully with nonexistent directory."""
     plot_result = await cli.run(
         """
