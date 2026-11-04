@@ -24,9 +24,8 @@ from tests.integration.conftest import IntegrationTestDefaults as defaults
 # Linux arm64 hosts usually don't, and Chrome for Testing has no linux-arm64
 # build for `plotly_get_chrome` to fetch.
 def browser_available_for_png_export() -> bool:
-    """Check that the browser Kaleido will select exists."""
-    browser = Chromium.find_browser(skip_local=False)
-    return bool(browser and Path(browser).is_file())
+    """Only skip when browser discovery finds no path at all."""
+    return Chromium.find_browser(skip_local=False) is not None
 
 
 NO_BROWSER_FOR_PNG_EXPORT = not browser_available_for_png_export()

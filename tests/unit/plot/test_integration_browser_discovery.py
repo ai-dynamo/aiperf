@@ -4,7 +4,9 @@
 from pathlib import Path
 
 import pytest
-from choreographer.browsers import Chromium
+from choreographer.browsers import Chromium, chromium
+from choreographer.channels import Pipe
+from kaleido.errors import ChromeNotFoundError
 from pytest import param
 
 from tests.integration.test_plot_integration import browser_available_for_png_export
@@ -14,8 +16,8 @@ from tests.integration.test_plot_integration import browser_available_for_png_ex
     "kind,expected",
     [
         param("missing", False, id="missing-browser"),
-        param("invalid", False, id="invalid-browser-path"),
-        param("directory", False, id="directory-not-browser"),
+        param("invalid", True, id="invalid-browser-path-must-fail"),
+        param("directory", True, id="directory-must-fail"),
         param("file", True, id="existing-browser-file"),
     ],
 )  # fmt: skip
@@ -33,3 +35,14 @@ def test_browser_available_for_png_export(
         lambda **kwargs: None if kind == "missing" else str(path),
     )
     assert browser_available_for_png_export() is expected
+
+
+def test_browser_invalid_override_is_not_skipped_and_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(chromium, "get_chrome_download_path", lambda **kwargs: None)
+    monkeypatch.setattr(chromium, "get_old_chrome_download_path", lambda: None)
+    monkeypatch.setenv("BROWSER_PATH", str(tmp_path / "missing"))
+    assert browser_available_for_png_export()
+    with pytest.raises(ChromeNotFoundError):
+        Chromium(Pipe())
