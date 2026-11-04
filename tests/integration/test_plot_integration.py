@@ -18,11 +18,18 @@ from choreographer.browsers import Chromium
 from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 from tests.integration.conftest import IntegrationTestDefaults as defaults
 
+
 # kaleido renders PNGs through a Chrome/Chromium browser (found on PATH, at a
 # choreographer download, or via BROWSER_PATH). x86 Linux CI runners ship one;
 # Linux arm64 hosts usually don't, and Chrome for Testing has no linux-arm64
 # build for `plotly_get_chrome` to fetch.
-NO_BROWSER_FOR_PNG_EXPORT = Chromium.find_browser(skip_local=False) is None
+def browser_available_for_png_export() -> bool:
+    """Check that the browser Kaleido will select exists."""
+    browser = Chromium.find_browser(skip_local=False)
+    return bool(browser and Path(browser).is_file())
+
+
+NO_BROWSER_FOR_PNG_EXPORT = not browser_available_for_png_export()
 
 
 def is_valid_png(file_path: Path) -> bool:
@@ -205,17 +212,6 @@ class TestPlotIntegration:
         for png_path in png_files:
             assert is_valid_png(png_path), f"Plot {png_path.name} is not valid"
 
-    async def test_plot_with_nonexistent_directory_fails(self, cli: AIPerfCLI):
-        """Test that plot command fails gracefully with nonexistent directory."""
-        plot_result = await cli.run(
-            """
-            aiperf plot \
-                --paths /nonexistent/path/to/artifacts
-            """,
-            assert_success=False,
-        )
-        assert plot_result.exit_code != 0
-
     # ========================================================================
     # Server Metrics Plotting Tests
     # ========================================================================
@@ -341,3 +337,17 @@ class TestPlotIntegration:
         # Validate PNGs
         for png_path in png_files:
             assert is_valid_png(png_path), f"{png_path.name} is not a valid PNG"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_plot_with_nonexistent_directory_fails(cli: AIPerfCLI):
+    """Test that plot command fails gracefully with nonexistent directory."""
+    plot_result = await cli.run(
+        """
+        aiperf plot \
+            --paths /nonexistent/path/to/artifacts
+        """,
+        assert_success=False,
+    )
+    assert plot_result.exit_code != 0
