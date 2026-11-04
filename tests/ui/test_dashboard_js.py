@@ -946,7 +946,13 @@ class TestRunNodeRetryBudget:
         def _counting_run(
             args: Sequence[str], **kwargs: Any
         ) -> subprocess.CompletedProcess:
-            spawns.append(list(args))
+            # Count only launches of THIS script. `_run_node` also performs a
+            # per-process warm-up whose argv does not name the script, and that
+            # warm-up is skipped when an earlier test already warmed the worker.
+            # Counting it made this assertion depend on test order: it passed in
+            # the full suite and failed with `assert 3 == 2` when run alone.
+            if str(script) in args:
+                spawns.append(list(args))
             return real_run(args, **kwargs)
 
         monkeypatch.setattr(subprocess, "run", _counting_run)
