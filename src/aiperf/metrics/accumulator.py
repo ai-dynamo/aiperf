@@ -450,9 +450,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
         output = self._build_metric_results(scalar_dict, record_arrays, sketch_results)
 
         n = self._column_store.count
-        if mask is not None:
+        if mask is not None and mask.dtype == np.bool_:
             # Cap to mask length: mask was snapshotted before this call and
             # concurrent ingestion (asyncio.to_thread race) may have grown count.
+            # Index selectors only name records that existed at the snapshot.
             n = min(n, len(mask))
         if n > 0:
             is_error = self._column_store.metadata_bool("has_error")[:n] == 1
@@ -514,7 +515,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
             else:
                 # Cap to mask length before boolean indexing — concurrent ingestion
                 # (asyncio.to_thread race) may have grown the column beyond the mask snapshot.
-                values = store.numeric(tag)[: len(mask)][mask]
+                col = store.numeric(tag)
+                if mask.dtype == np.bool_:
+                    col = col[: len(mask)]
+                values = col[mask]
                 clean = values[~np.isnan(values)]
             if len(clean) == 0:
                 continue
