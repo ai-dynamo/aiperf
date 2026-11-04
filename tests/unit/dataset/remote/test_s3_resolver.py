@@ -337,6 +337,7 @@ async def test_client_error_mapping(code: str, status: int, kind: RemoteErrorKin
                 RemoteRef(ref="s3://bucket/k.jsonl")
             )
     assert exc.value.kind == kind
+    assert exc.value.connection_failed is False
 
 
 @pytest.mark.parametrize(
@@ -354,6 +355,7 @@ async def test_connection_errors_are_transient(error: Exception) -> None:
     with pytest.raises(RemoteSourceError) as exc:
         await S3SourceResolver(client=client).probe(RemoteRef(ref="s3://bucket/k.jsonl"))  # fmt: skip
     assert exc.value.kind == RemoteErrorKind.TRANSIENT
+    assert exc.value.connection_failed is True
 
 
 @pytest.mark.asyncio
@@ -618,19 +620,23 @@ async def test_cancel_before_get_object_never_requests_it() -> None:
     executor = ThreadPoolExecutor(max_workers=1)
     asyncio.get_running_loop().set_default_executor(executor)
     release = threading.Event()
-    executor.submit(release.wait, 5)
-    client = MagicMock()
-    probe = _object_probe('etag:"e"')
-    task = asyncio.create_task(S3SourceResolver(client=client).materialize(probe))
-    for _ in range(10):
-        await asyncio.sleep(0)
-    task.cancel()
-    for _ in range(5):
-        await asyncio.sleep(0)
-    assert not task.done()
-    release.set()
-    with pytest.raises(asyncio.CancelledError):
-        await task
+    try:
+        executor.submit(release.wait, 5)
+        client = MagicMock()
+        probe = _object_probe('etag:"e"')
+        task = asyncio.create_task(S3SourceResolver(client=client).materialize(probe))
+        for _ in range(10):
+            await asyncio.sleep(0)
+        task.cancel()
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert not task.done()
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    finally:
+        release.set()
+        executor.shutdown(wait=True)
     client.get_object.assert_not_called()
     assert list(entry_dir(probe.ref).glob("*")) == []
 

@@ -63,7 +63,7 @@ CustomDatasetType = plugins.create_enum(PluginType.CUSTOM_DATASET_LOADER, "Custo
 
 PublicDatasetTypeStr: TypeAlias = str
 PublicDatasetType = plugins.create_enum(PluginType.PUBLIC_DATASET_LOADER, "PublicDatasetType", module=__name__)
-"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.SPEC_AL_MTBENCH, PublicDatasetType.WEKA_HF"""
+"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.SPEED_BENCH_CODING, PublicDatasetType.WEKA_HF"""
 
 DatasetSourceSchemeStr: TypeAlias = str
 DatasetSourceScheme = plugins.create_enum(PluginType.DATASET_SOURCE_RESOLVER, "DatasetSourceScheme", module=__name__)
