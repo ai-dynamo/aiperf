@@ -130,7 +130,9 @@ RUN mkdir -p /opt/licenses/dpkg \
 # so bumping FFMPEG_VERSION requires updating the hash too. curl rather than
 # wget: wget treats a failed TLS handshake as fatal and never retries it, and
 # ffmpeg.org intermittently stalls handshakes for minutes. --connect-timeout
-# covers the handshake, so a stall is cut short and retried.
+# covers the handshake, so a stall is cut short and retried. --retry-max-time
+# bounds the whole retry window, because a 429/503 Retry-After header overrides
+# --retry-delay and could otherwise stall the build for as long as it asks.
 ARG FFMPEG_VERSION=8.1.2
 ARG FFMPEG_SHA256=464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c
 ARG ENABLE_FFMPEG=1
@@ -140,7 +142,7 @@ RUN if [ "${ENABLE_FFMPEG}" != "1" ]; then \
         exit 0; \
     fi; \
     { curl -fSL --no-progress-meter \
-        --retry 5 --retry-all-errors --retry-delay 10 \
+        --retry 5 --retry-all-errors --retry-delay 10 --retry-max-time 300 \
         --connect-timeout 30 --max-time 600 \
         -o ffmpeg-${FFMPEG_VERSION}.tar.xz \
         https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
