@@ -592,3 +592,63 @@ async def test_max_conversations_stops_stream(monkeypatch: pytest.MonkeyPatch) -
     conversations = await loader.convert_to_conversations({"dataset": rows})
 
     assert [conversation.session_id for conversation in conversations] == ["session-0"]
+
+
+_DELAY_MESSAGES = [{"role": "user", "parts": [{"type": "text", "content": "hi"}]}]
+
+
+def _delay_loader(**flags: Any) -> ExgenticDatasetLoader:
+    run = make_run_from_cli(
+        CLIConfig(
+            model_names=["target-model"],
+            public_dataset=PublicDatasetType.EXGENTIC,
+            conversation_num=1,
+            **flags,
+        )
+    )
+    return ExgenticDatasetLoader(
+        run=run, hf_dataset_name="Exgentic/agent-llm-traces", streaming=True
+    )
+
+
+def _idle_session_row() -> dict[str, Any]:
+    return _row(
+        "session-1",
+        [
+            _span("2026-01-01T00:00:00Z", "2026-01-01T00:00:01Z", messages=_DELAY_MESSAGES),
+            _span("2026-01-01T00:10:01Z", "2026-01-01T00:10:02Z", messages=_DELAY_MESSAGES),
+            _span("2026-01-01T00:10:04Z", "2026-01-01T00:10:05Z", messages=_DELAY_MESSAGES),
+        ],
+    )  # fmt: skip
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "flags, expected",
+    [
+        param({}, [None, 600_000.0, 2_000.0], id="no_cap_keeps_recorded_gaps"),
+        param(
+            {"inter_turn_delay_cap_seconds": 5.0},
+            [None, 5_000.0, 2_000.0],
+            id="cap_clamps_long_gap_only",
+        ),
+        param(
+            {"inter_turn_delay_cap_seconds": 0.0},
+            [None, 0.0, 0.0],
+            id="zero_cap_sends_back_to_back",
+        ),
+    ],
+)
+async def test_inter_turn_delay_cap_clamps_recorded_gaps(
+    flags: dict[str, Any], expected: list[float | None]
+) -> None:
+    conversations = await _delay_loader(**flags).convert_to_conversations(
+        {"dataset": [_idle_session_row()]}
+    )
+
+    assert [turn.delay for turn in conversations[0].turns] == expected
+
+
+def test_ignore_trace_delays_is_rejected() -> None:
+    with pytest.raises(DatasetLoaderError, match="--ignore-trace-delays"):
+        _delay_loader(ignore_trace_delays=True)
