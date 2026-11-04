@@ -1259,7 +1259,8 @@ These properties are load-bearing. Changes to the operator must preserve them.
    failure the pods stay up for inspection and retry.
 5. **Persist before launch.** `job_spec.json` and the index row exist before
    the JobSet does.
-6. **The index is a cache.** Every read path falls back to the filesystem.
+6. **The index is a cache.** Listings, leaderboard, and history fall back to
+   the filesystem; scatter is index-only.
 7. **Kopf patches must be cleared on exception.** A stale pending patch stops a
    timer permanently.
 8. **Credentials never land in ConfigMaps or status.** They travel only through
