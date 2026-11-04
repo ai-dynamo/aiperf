@@ -183,6 +183,20 @@ class CLIConfig(BaseConfig):
         ),
     ] = EndpointDefaults.STREAMING
 
+    allow_empty_content: Annotated[
+        bool,
+        Field(
+            description="Retain explicitly empty content or reasoning strings as "
+            "timed responses for streaming OpenAI Chat Completions. This changes "
+            "TTFT and all metrics using the shared response timeline, but TTFO "
+            "still requires non-empty output and empty strings add no tokens.",
+        ),
+        CLIParameter(
+            name=("--allow-empty-content",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.ALLOW_EMPTY_CONTENT
+
     urls: Annotated[
         list[str],
         Field(
@@ -1419,6 +1433,22 @@ class CLIConfig(BaseConfig):
             group=Groups.CACHE_BUST,
         ),
     ] = CacheBustTarget.NONE
+
+    cache_bust_media_uuids: Annotated[
+        bool,
+        Field(
+            description=(
+                "Append the trajectory's RID digest to every media `uuid`, so a replay "
+                "cannot hit vLLM's multimodal cache entries from an earlier play. "
+                "Requires a RID --cache-bust target and --endpoint-type chat. "
+                "See [cache-bust.md](reference/cache-bust.md)."
+            ),
+        ),
+        CLIParameter(
+            name=("--cache-bust-media-uuids",),
+            group=Groups.CACHE_BUST,
+        ),
+    ] = False
 
     ##############################################################################
     # Prefix Prompt

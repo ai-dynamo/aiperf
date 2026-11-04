@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlsplit, urlunsplit
 
 import aiohttp
@@ -45,8 +45,6 @@ from aiperf.dataset.remote.models import (
 
 _logger = AIPerfLogger(__name__)
 
-# Object stores answer 403 for a missing key in a public bucket.
-_NO_SIDECAR_STATUSES = frozenset({401, 403, 404, 410})
 _SIDECAR_MAX_BYTES = 1 << 20
 _FALLBACK_FILENAME = "download"
 
@@ -101,6 +99,16 @@ def _filename_of(url: str) -> str:
     return name
 
 
+def _means_no_sidecar(status: int) -> bool:
+    """True when the answer for the optional sidecar URL means there is none.
+
+    Object stores answer 403 for a missing key in a public bucket, and gateways,
+    signed-path CDNs and some static hosts answer an unknown path with 400 or 405, so
+    every client error except rate limiting counts; 429 and 5xx still fail as transient.
+    """
+    return 400 <= status < 500 and status != 429
+
+
 class HTTPSourceResolver:
     """Resolve https:// and http:// dataset URLs."""
 
@@ -144,7 +152,7 @@ class HTTPSourceResolver:
         async with safe_request(
             session, "GET", sidecar, headers={}, ref_display=ref.display, stage=stage
         ) as resp:
-            if resp.status in _NO_SIDECAR_STATUSES:
+            if _means_no_sidecar(resp.status):
                 return None, None
             if (
                 err := status_error(resp.status, ref_display=ref.display, stage=stage)
@@ -162,6 +170,7 @@ class HTTPSourceResolver:
                     stage=stage,
                     what=f"reading its {SIDECAR_SUFFIX} sidecar failed ({type(e).__name__}: {e})",
                     hint="Check network access and retry",
+                    connection_failed=True,
                 ) from e
         if len(raw) > _SIDECAR_MAX_BYTES:
             raise RemoteSourceError(
@@ -195,6 +204,13 @@ class HTTPSourceResolver:
                 headers={},
                 ref_display=probe.ref.display,
             )
+
+    async def fetch_file(self, probe: ProbeResult, relpath: str) -> Path:
+        """Not supported: an http(s) reference is always one file, never a folder."""
+        raise NotImplementedError(
+            f"{probe.ref.display} is a single file; fetch_file only applies to "
+            f"folders (asked for {relpath!r})"
+        )
 
     async def materialize(self, probe: ProbeResult) -> ResolvedSource:
         dest = entry_dir(probe.ref) / probe.filename

@@ -57,6 +57,7 @@ from aiperf.common.models import (
     MemoryMapClientMetadata,
     Turn,
 )
+from aiperf.endpoints.payload_extraction import count_choices
 
 _logger = AIPerfLogger(__name__)
 
@@ -201,6 +202,9 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
                         timestamp=turn.timestamp,
                         source_kind=turn.source_kind,
                         audio_duration_seconds=turn.audio_duration_seconds,
+                        num_choices=count_choices(turn.raw_payload)
+                        if isinstance(turn.raw_payload, dict)
+                        else 1,
                     )
                 )
                 self._current_offset += len(payload_bytes)
@@ -535,6 +539,16 @@ class PayloadOffset(AIPerfBaseModel):
             "RTFx metrics stay live on the PAYLOAD_BYTES path."
         ),
     )
+    num_choices: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Sequences the payload generates (``n`` times the batched "
+            "completions prompts), counted once at build time. Restored onto "
+            "the request context so the spec-decode multi-sequence guard "
+            "survives payload-bytes stripping without decoding on the worker."
+        ),
+    )
 
 
 # Wire-body keys that encode the same Turn.max_tokens scalar across endpoints.
@@ -554,6 +568,7 @@ class PayloadTurnData:
     timestamp: int | float | None = None
     source_kind: str | None = None
     audio_duration_seconds: float | None = None
+    num_choices: int = 1
 
 
 def max_tokens_from_wire_payload(payload: dict[str, Any] | None) -> int | None:
@@ -910,6 +925,7 @@ class MemoryMapDatasetClient:
             timestamp=offset_info.timestamp,
             source_kind=offset_info.source_kind,
             audio_duration_seconds=offset_info.audio_duration_seconds,
+            num_choices=offset_info.num_choices,
         )
 
     def close(self) -> None:

@@ -21,6 +21,7 @@ from aiperf.dataset.remote.cache import (
     entry_lock,
     file_sha256,
     local_fs_error,
+    lock_timeout_error,
 )
 from aiperf.dataset.remote.errors import RemoteErrorKind, RemoteSourceError, RemoteStage
 from aiperf.dataset.remote.index import latest_indexed_version, read_index, write_index
@@ -118,6 +119,18 @@ def _usable_entry(ref: RemoteRef) -> ResolvedSource | None:
         )
         return None
     return source
+
+
+def indexed_file(ref: RemoteRef, relpath: str) -> Path | None:
+    """Local path of ``relpath`` in the indexed, intact cache entry of ``ref``; None otherwise.
+
+    Reads only the local cache, and logs nothing on a miss: the caller fetches instead.
+    """
+    source = read_index(ref)
+    if source is None or not _is_intact(source):
+        return None
+    file = next((f for f in source.files if f.path == relpath), None)
+    return None if file is None else _disk_path(source, file)
 
 
 async def probe_ref(ref: RemoteRef) -> ProbeResult:
@@ -229,12 +242,8 @@ async def _download(probe: ProbeResult, *, reusable: bool) -> ResolvedSource:
         try:
             await stack.enter_async_context(entry_lock(entry))
         except Timeout as e:
-            raise RemoteSourceError(
-                ref=ref.display,
-                kind=RemoteErrorKind.TRANSIENT,
-                stage=RemoteStage.MATERIALIZE,
-                what="timed out waiting for another process to finish downloading it",
-                hint=f"If no other AIPerf run is downloading it, delete the lock file {entry}.lock and retry",
+            raise lock_timeout_error(
+                entry, ref_display=ref.display, stage=RemoteStage.MATERIALIZE
             ) from e
         # Another process may have finished this download while we waited.
         if reusable and (cached := await asyncio.to_thread(_cached_for, probe)):
