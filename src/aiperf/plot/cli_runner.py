@@ -126,8 +126,8 @@ def run_plot_controller(
 ) -> None:
     """Generate plots from AIPerf profiling data.
 
-    Note: PNG export requires Chrome or Chromium to be installed on your system,
-    as it is used by kaleido to render Plotly figures to static images.
+    Note: PNG export requires Chrome or Chromium. On Linux ARM64, install system
+    Chromium and set BROWSER_PATH to its executable if it is not on PATH.
 
     Args:
         paths: Paths to profiling run directories. Defaults to ./artifacts if not specified.
