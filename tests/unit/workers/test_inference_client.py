@@ -547,26 +547,25 @@ class TestInferenceClient:
 
         assert result.request_info.payload_bytes == expected_payload_bytes
 
-    @pytest.mark.parametrize(
-        "strip,expected",
-        [
-            param(True, 2, id="stripped_counted"),
-            param(False, None, id="retained_not_counted"),
-        ],
-    )  # fmt: skip
-    def test_finalize_request_record_counts_stripped_sequences(
-        self, inference_client, sample_request_info, strip, expected
+    def test_finalize_request_record_strips_without_decoding(
+        self, inference_client, sample_request_info
     ):
-        """Pre-encoded bytes are counted after the response, before stripping."""
-        inference_client.strip_record_payload_bytes = strip
+        """Stripping keeps the worker-provided count and never decodes bytes."""
+        inference_client.strip_record_payload_bytes = True
         sample_request_info.payload_bytes = b'{"prompt": ["a", "b"]}'
+        sample_request_info.num_choices = 2
         record = RequestRecord(request_info=sample_request_info)
 
-        result = inference_client._finalize_request_record(
-            record=record, request_info=sample_request_info
-        )
+        with patch(
+            "aiperf.workers.inference_client.orjson.loads",
+            side_effect=AssertionError("decoded"),
+        ):
+            result = inference_client._finalize_request_record(
+                record=record, request_info=sample_request_info
+            )
 
-        assert result.request_info.num_choices == expected
+        assert result.request_info.payload_bytes is None
+        assert result.request_info.num_choices == 2
 
     @pytest.mark.parametrize(
         "base_url",

@@ -1100,9 +1100,10 @@ class RecordContext(AIPerfBaseModel):
         default=None,
         ge=1,
         description="Sequences the request generates: ``n`` times the batched "
-        "completions prompts. Set by ``inference_client`` so the spec-decode "
-        "multi-sequence guard survives payload-bytes stripping. None for a "
-        "pre-encoded payload whose bytes are retained.",
+        "completions prompts. Set by ``inference_client`` for formatted "
+        "payloads and by the worker from the mmap index for pre-encoded ones, "
+        "so the spec-decode multi-sequence guard survives payload-bytes "
+        "stripping.",
     )
 
     # --- Cache-bust marker (sourced from Credit, exported in raw JSONL) -------
