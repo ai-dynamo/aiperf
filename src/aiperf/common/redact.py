@@ -351,6 +351,25 @@ _CLI_COMMAND_SENSITIVE_TOKENS = (
 # every token up to the next flag is another header value.
 _CLI_HEADER_FLAGS: frozenset[str] = frozenset({"--header", "-H"})
 
+# Short options that take no value. Cyclopts keeps reading a short-option
+# cluster after these (-vH...), while any other short option takes the rest of
+# the token as its value (-uHost means --url Host).
+_CLI_SHORT_FLAGS_WITHOUT_VALUE: frozenset[str] = frozenset({"v"})
+
+
+def _attached_short_header_value(arg: str) -> str | None:
+    """Return what follows ``H`` in a short-option cluster such as ``-vHName:Value``.
+
+    None if the cluster has no ``-H`` or an earlier option takes the rest of
+    the token as its value.
+    """
+    for i, char in enumerate(arg[1:], start=1):
+        if char == "H":
+            return arg[i + 1 :]
+        if char not in _CLI_SHORT_FLAGS_WITHOUT_VALUE:
+            return None
+    return None
+
 
 def _redact_cli_header_value(value: Any) -> Any:
     """Redact one ``--header`` value through :func:`is_sensitive_header_name`.
@@ -398,19 +417,19 @@ def _redact_cli_args(args: list) -> list:
             out.append(REDACTED_VALUE)
             redact_next = False
             continue
-        if isinstance(arg, str) and arg.startswith("-") and not arg.startswith("--"):
+        if (
+            isinstance(arg, str)
+            and arg.startswith("-")
+            and not arg.startswith(("--", "-H="))
+            and (attached := _attached_short_header_value(arg)) is not None
+        ):
             # Cyclopts also accepts -H inside a short-option cluster with the
             # value attached (-HName:Value, -vHName:Value) and keeps consuming
             # the tokens that follow as more headers.
-            cluster, h, attached = arg.partition("H")
-            if (
-                h
-                and all(c.isalpha() for c in cluster[1:])
-                and not attached.startswith("=")
-            ):
-                in_header_window = True
-                out.append(f"{cluster}H{_redact_cli_header_value(attached)}")
-                continue
+            in_header_window = True
+            flags = arg[: len(arg) - len(attached)]
+            out.append(f"{flags}{_redact_cli_header_value(attached)}")
+            continue
         if isinstance(arg, str) and arg.startswith("-"):
             flag, eq, inline = arg.partition("=")
             in_header_window = flag in _CLI_HEADER_FLAGS

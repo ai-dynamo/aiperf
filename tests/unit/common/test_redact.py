@@ -1699,6 +1699,7 @@ class TestCliCommandRedaction:
             param(["-H=X-Acme-Token:sk-c"], id="equals"),
             param(["-vHX-Acme-Token:sk-e"], id="clustered-attached"),
             param(["-vH", "X-Acme-Token:sk-f"], id="clustered-separate"),
+            param(["-vH=X-Request-Id:42", "X-Acme-Token:sk-g"], id="clustered-equals-then-more"),
             param(["--header", "X-Request-Id:42", "X-Tenant-Secret:sk-d"], id="long-multiple"),
         ],
     )  # fmt: skip
@@ -1716,6 +1717,36 @@ class TestCliCommandRedaction:
         cmd = self._build_cli_command(["aiperf", "profile", *argv])
         for value in sensitive:
             assert value.split()[-1] not in cmd
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            param(["-uHF-tokenizer:8000"], id="url-value-starting-with-H"),
+            param(["-mHermes", "--url", "http://localhost:8000"], id="model-value-starting-with-H"),
+        ],
+    )  # fmt: skip
+    def test_short_option_values_starting_with_h_preserved(self, argv):
+        """A value attached to a value-taking short option is not a -H cluster,
+        so it must come back unchanged."""
+        cmd = self._build_cli_command(["aiperf", "profile", "--model", "m", *argv])
+        assert argv[0] in cmd
+        assert REDACTED_VALUE not in cmd
+
+    def test_short_flags_without_value_match_cli_config(self):
+        """Keep _CLI_SHORT_FLAGS_WITHOUT_VALUE in sync with the bool short
+        options of CLIConfig, otherwise -<flag>H... clusters are missed."""
+        from aiperf.common.redact import _CLI_SHORT_FLAGS_WITHOUT_VALUE
+
+        bool_shorts = {
+            name[1]
+            for field in CLIConfig.model_fields.values()
+            if field.annotation is bool
+            for meta in field.metadata
+            if isinstance(getattr(meta, "name", None), tuple | list)
+            for name in meta.name
+            if len(name) == 2 and name.startswith("-")
+        }
+        assert bool_shorts == _CLI_SHORT_FLAGS_WITHOUT_VALUE
 
     def test_authorization_bearer_argv_redacted_in_cli_command(self):
         """Regression: argv with `--header Authorization:Bearer X` must be
