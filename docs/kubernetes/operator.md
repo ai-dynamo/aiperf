@@ -398,11 +398,15 @@ The controller pod pushes progress; the operator does not poll for it.
   `workers` object appears; the presence of `totalPods` marks the controller
   takeover. It also advances phases from `subPhase`.
 
-Every event-driven status write the operator makes is a JSON patch with `test`
-ops on `/metadata/uid`, `/metadata/resourceVersion`, and `/status/phase`. A
-409/422 conflict retries after
+Event-driven status writes go out as a JSON patch with `test` ops on
+`/metadata/uid`, `/metadata/resourceVersion`, and `/status/phase`. A 409/422
+conflict retries after
 `AIPERF_OPERATOR_RECONCILE_CONFLICT_RETRY_DELAY_SECONDS`, so two writers never
-silently clobber each other.
+silently clobber each other. Two terminal writes are deliberate exceptions:
+the cancellation and completion final status patches ride kopf's merge patch
+without a resourceVersion fence, because a concurrent heartbeat write must not
+strand the CR in `Running` (see
+[Completion and Result Harvesting](#completion-and-result-harvesting)).
 
 The operator also calls these controller endpoints on
 `<jobset>-controller-0-0.<jobset>.<ns>.svc.cluster.local`:
@@ -1243,7 +1247,8 @@ AIPerfSweep's `podTemplate.env`.
 These properties are load-bearing. Changes to the operator must preserve them.
 
 1. **Every write is identity-fenced.** Status patches, deletes, and claims test
-   `metadata.uid`, and usually `resourceVersion` too. A callback for a deleted
+   `metadata.uid`, and all but the two terminal merge patches (cancellation and
+   completion, above) also fence on `resourceVersion`. A callback for a deleted
    CR must never mutate its same-named successor.
 2. **Exactly-once terminal work goes through an apiserver-atomic claim.** The
    claim is a JSON patch `test` op, never only an in-process flag.
