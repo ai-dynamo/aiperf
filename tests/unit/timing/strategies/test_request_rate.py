@@ -366,6 +366,29 @@ async def test_high_res_pacer_os_error_falls_back_to_event_loop_timers() -> None
     credit_issuer.try_issue_credit.assert_awaited_once()
 
 
+class _PerfStartSampledWhenRead:
+    """Phase lifecycle whose start stamp is sampled where ``execute_phase`` reads it.
+
+    ``execute_phase`` derives its first deadline as ``started_at_perf_ns +
+    next_interval()``. A stamp captured in the test body *before* the strategy
+    is built silently turns any wall-clock gap between capture and the phase's
+    first loop iteration into schedule debt. With the 0.05s fake interval used
+    here, a gap of 0.05s or more makes the first deadline already expired: the
+    rate loop takes the no-pause branch, the credit issuer reports the stop
+    condition, and the phase returns without ever entering the pacer. The test
+    then blocks on ``pacer.started`` until its ``asyncio.wait_for`` budget runs
+    out -- which is exactly how it failed on a starved Windows CI runner
+    (``TimeoutError`` from ``asyncio/timeouts.py``), with no pacing in the log.
+
+    Sampling the stamp at attribute-access time removes the race by
+    construction, without touching what the test asserts about cancellation.
+    """
+
+    @property
+    def started_at_perf_ns(self) -> int:
+        return int(time.perf_counter() * NANOS_PER_SECOND)
+
+
 @pytest.mark.asyncio
 async def test_execute_phase_cancelled_mid_pace_drains_pacer_and_closes() -> None:
     """A cancel during active pacing drains the pacer instead of orphaning it.
@@ -384,8 +407,9 @@ async def test_execute_phase_cancelled_mid_pace_drains_pacer_and_closes() -> Non
 
         def next_interval(self) -> float:
             # Comfortably inside RATE_RAMP_UPDATE_INTERVAL (0.1s) so the
-            # high-res branch is taken, but long enough that setup overhead
-            # cannot push the first deadline into the past.
+            # high-res branch is taken. Setup overhead can push the first
+            # deadline into the past; ``_PerfStartSampledWhenRead`` keeps that
+            # from turning the wait below into a race.
             return 0.05
 
     class FakePacer:
@@ -405,8 +429,7 @@ async def test_execute_phase_cancelled_mid_pace_drains_pacer_and_closes() -> Non
         def close(self) -> None:
             self.closed = True
 
-    lifecycle = MagicMock()
-    lifecycle.started_at_perf_ns = int(time.perf_counter() * NANOS_PER_SECOND)
+    lifecycle = _PerfStartSampledWhenRead()
     conversation_source = MagicMock()
     conversation_source.next.return_value.build_first_turn.return_value = object()
     credit_issuer = MagicMock()
