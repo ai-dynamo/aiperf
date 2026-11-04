@@ -914,31 +914,45 @@ class TestRunNodeRetryBudget:
             "if (!existsSync(marker)) {\n"
             "  writeFileSync(marker, '1');\n"
             # Never exits: stands in for a launch stalled in the host, not a
-            # script waiting on something the test controls.
+            # script waiting on something the test controls. The second launch
+            # sees the marker and exits normally, with identical argv.
             "  setInterval(() => {}, 1000);\n"
             "} else {\n"
             "  console.log('warm');\n"
             "}\n"
         )
 
-        proc = _run_node([str(script)], timeout=1.5, text=True)
+        proc = _run_node([str(script)], timeout=2.0, text=True)
 
         assert marker.exists(), "the retried launch did not follow a stalled one"
         assert proc.returncode == 0, proc.stderr
         assert proc.stdout.strip() == "warm"
 
     @pytest.mark.skipif(_node_binary() is None, reason=_NODE_REASON)
-    def test_script_that_never_exits_still_fails(self, tmp_path: Path) -> None:
-        """A genuine hang exhausts both budgets instead of passing quietly."""
-        marker = tmp_path / "hang-attempts"
+    def test_script_that_never_exits_still_fails(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A genuine hang exhausts both budgets instead of passing quietly.
+
+        Counts spawns rather than watching the child, so the assertion cannot
+        itself depend on node starting in time on a loaded runner.
+        """
         script = tmp_path / "hang.mjs"
-        script.write_text(
-            "import {appendFileSync} from 'node:fs';\n"
-            f"appendFileSync({json.dumps(str(marker))}, 'x');\n"
-            "setInterval(() => {}, 1000);\n"
-        )
+        script.write_text("setInterval(() => {}, 1000);\n")
+
+        spawns: list[list[str]] = []
+        real_run = subprocess.run
+
+        def _counting_run(
+            args: Sequence[str], **kwargs: Any
+        ) -> subprocess.CompletedProcess:
+            spawns.append(list(args))
+            return real_run(args, **kwargs)
+
+        monkeypatch.setattr(subprocess, "run", _counting_run)
 
         with pytest.raises(subprocess.TimeoutExpired):
             _run_node([str(script)], timeout=0.5)
 
-        assert marker.read_text() == "xx", "expected exactly one retry"
+        assert len(spawns) == 2, "expected exactly one retry"
+        assert spawns[0] == spawns[1], "the retry must reuse identical argv"
