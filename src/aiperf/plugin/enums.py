@@ -63,7 +63,7 @@ CustomDatasetType = plugins.create_enum(PluginType.CUSTOM_DATASET_LOADER, "Custo
 
 PublicDatasetTypeStr: TypeAlias = str
 PublicDatasetType = plugins.create_enum(PluginType.PUBLIC_DATASET_LOADER, "PublicDatasetType", module=__name__)
-"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.SPEC_AL_MTBENCH, PublicDatasetType.WEKA_HF"""
+"""Dynamic enum for public dataset loader. Example: PublicDatasetType.AIMO, PublicDatasetType.SPEED_BENCH_CODING, PublicDatasetType.WEKA_HF"""
 
 DatasetSourceSchemeStr: TypeAlias = str
 DatasetSourceScheme = plugins.create_enum(PluginType.DATASET_SOURCE_RESOLVER, "DatasetSourceScheme", module=__name__)
@@ -103,7 +103,7 @@ AnalyzerType = plugins.create_enum(PluginType.ANALYZER, "AnalyzerType", module=_
 
 SpecDecodeAdapterTypeStr: TypeAlias = str
 SpecDecodeAdapterType = plugins.create_enum(PluginType.SPEC_DECODE_ADAPTER, "SpecDecodeAdapterType", module=__name__)
-"""Dynamic enum for spec decode adapter. Example: SpecDecodeAdapterType.TENSORRT_LLM, SpecDecodeAdapterType.VLLM"""
+"""Dynamic enum for spec decode adapter. Example: SpecDecodeAdapterType.SGLANG, SpecDecodeAdapterType.TENSORRT_LLM, SpecDecodeAdapterType.VLLM"""
 
 AccuracyGraderTypeStr: TypeAlias = str
 AccuracyGraderType = plugins.create_enum(PluginType.ACCURACY_GRADER, "AccuracyGraderType", module=__name__)

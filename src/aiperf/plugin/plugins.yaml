@@ -743,6 +743,14 @@ custom_dataset_loader:
     metadata:
       full_pass_by_default: true
 
+  speed_bench_throughput_100k:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput100KLoader
+    description: |
+      SPEED-Bench throughput split at ~100K input tokens from HuggingFace (nvidia).
+      384 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      full_pass_by_default: true
+
   tracelab:
     class: aiperf.dataset.loader.tracelab_trace:TraceLabTraceDatasetLoader
     description: |
@@ -1468,6 +1476,15 @@ gpu_telemetry_collector:
 # One-to-one mapping based on grader configuration or benchmark default.
 # =============================================================================
 spec_decode_adapter:
+  sglang:
+    class: aiperf.spec_decode.sglang_adapter:SGLangSpecDecodeAdapter
+    description: |
+      Reads SGLang's ``sglext.spec_tokens_details`` response extension when
+      the request sets ``return_spec_tokens_details: true``. Derives acceptance
+      from per-request counters and fills the engine-neutral record for chat
+      and completions, streaming and non-streaming.
+    metadata: {}
+
   vllm:
     class: aiperf.spec_decode.vllm_adapter:VLLMSpecDecodeAdapter
     description: |
@@ -2867,6 +2884,53 @@ public_dataset_loader:
       hf_dataset_name: nvidia/SPEED-Bench
       hf_split: test
       hf_subset: throughput_32k
+      multi_turn: true
+      category: high_entropy
+      full_pass_by_default: true
+
+  speed_bench_throughput_100k:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 100K split (384 prompts, ~100k input tokens).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_100k
+      multi_turn: true
+      full_pass_by_default: true
+
+  speed_bench_throughput_100k_low_entropy:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 100K low_entropy tier (128 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_100k
+      multi_turn: true
+      category: low_entropy
+      full_pass_by_default: true
+
+  speed_bench_throughput_100k_mixed:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 100K mixed tier (128 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_100k
+      multi_turn: true
+      category: mixed
+      full_pass_by_default: true
+
+  speed_bench_throughput_100k_high_entropy:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 100K high_entropy tier (128 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_100k
       multi_turn: true
       category: high_entropy
       full_pass_by_default: true
