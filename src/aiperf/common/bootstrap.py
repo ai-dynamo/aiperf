@@ -21,6 +21,7 @@ from aiperf.common.constants import IS_LINUX, IS_MACOS, IS_WINDOWS
 from aiperf.common.enums import LifecycleState
 from aiperf.common.environment import Environment
 from aiperf.common.event_loop import configure_event_loop_policy_for_platform
+from aiperf.common.glibc_malloc import pin_malloc_thresholds
 from aiperf.plugin.enums import ServiceType
 
 _logger = AIPerfLogger(__name__)
@@ -153,6 +154,10 @@ def bootstrap_and_run_service(
             gc.freeze()
             gc.set_threshold(0)
             gc.disable()
+            # Workers churn 0.1-2 MB payload and conversation strings; with
+            # glibc's dynamic mmap threshold about 1 GB per worker of freed
+            # chunks stays resident after an AgentX warmup burst.
+            pin_malloc_thresholds()
 
         # Load and apply custom GPU metrics in child process
         if run.cfg.gpu_telemetry.metrics_file:

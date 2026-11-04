@@ -19,6 +19,7 @@ from PIL import Image as PILImage
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.control_structs import Command
+from aiperf.common.glibc_malloc import trim_heap
 from aiperf.common.enums import (
     CacheBustTarget,
     CommAddress,
@@ -355,6 +356,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._conversation_ids_cache = []
         gc.collect()
         gc.collect()
+        # The freed conversations leave gigabytes of empty arena behind
+        # (11.5 GB anon after a 9,843-conversation cache build); hand it back.
+        trim_heap()
 
         if self._compress_only:
             self.info(
