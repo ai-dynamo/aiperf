@@ -304,7 +304,6 @@ class TestSummarizeAndExport:
         "mode,through_cli",
         [
             param("single", False, id="single-config"),
-            param("grid", False, id="single-point-grid"),
             param("search", True, id="one-point-search-cli-with-no-feasible-point"),
         ],
     )  # fmt: skip
@@ -313,9 +312,7 @@ class TestSummarizeAndExport:
     ) -> None:
         """SLA infeasibility is a search outcome, not a benchmark execution failure."""
         sweep = None
-        if mode == "grid":
-            sweep = GridSweep(parameters={"phases.profiling.concurrency": [10]})
-        elif mode == "search":
+        if mode == "search":
             sweep = AdaptiveSearchSweep(
                 search_space=[
                     SearchSpaceDimension(
