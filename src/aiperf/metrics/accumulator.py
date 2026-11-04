@@ -55,6 +55,7 @@ from aiperf.metrics.replay_sched_lag_analyzer import inject_replay_sched_lag_met
 from aiperf.metrics.types.replay_sched_lag_metrics import (
     REPLAY_SCHED_DEGRADED_THRESHOLD_MS,
 )
+from aiperf.plugin.enums import UIType
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
 if TYPE_CHECKING:
@@ -64,6 +65,8 @@ if TYPE_CHECKING:
 
 FloatArray: TypeAlias = NDArray[np.float64]
 BoolArray: TypeAlias = NDArray[np.bool_]
+# (value positions sorted by slice, slice b at order[bounds[b] : bounds[b + 1]])
+SliceIndex: TypeAlias = tuple[NDArray[np.integer], NDArray[np.int64]]
 
 
 _AGGREGATE_FUNCS: dict[AggregationKind, Callable[[np.ndarray], float]] = {
@@ -412,6 +415,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         window_start_ns: int | None = None,
         window_end_ns: int | None = None,
         is_timeslice: bool = False,
+        ragged_positions: dict[MetricTagT, NDArray[np.integer]] | None = None,
     ) -> dict[MetricTagT, MetricResult]:
         """Phases: collect scalars/arrays, resolve derived, build MetricResults.
 
@@ -421,6 +425,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
         ``is_timeslice`` skips derived metrics anchored to a run-global reference
         (``timeslice_derivable = False``); see ``_non_timeslice_derived_tags``.
+
+        ``ragged_positions`` gives, per ragged tag, the positions of the values
+        selected by ``mask``, so they are gathered without a scan of every value.
         """
         scalar_dict: MetricResultsDict = MetricResultsDict()
         scalar_dict.window_start_ns = window_start_ns
@@ -429,7 +436,11 @@ class MetricsAccumulator(BaseMetricsProcessor):
         sketch_results: dict[MetricTagT, MetricResult] = {}
 
         self._collect_scalars_and_arrays(
-            mask, scalar_dict, record_arrays, sketch_results
+            mask,
+            scalar_dict,
+            record_arrays,
+            sketch_results,
+            ragged_positions=ragged_positions,
         )
         self._resolve_derived_metrics(scalar_dict, is_timeslice=is_timeslice)
 
@@ -486,6 +497,8 @@ class MetricsAccumulator(BaseMetricsProcessor):
         scalar_dict: MetricResultsDict,
         record_arrays: dict[MetricTagT, tuple[FloatArray, float]],
         sketch_results: dict[MetricTagT, MetricResult],
+        *,
+        ragged_positions: dict[MetricTagT, NDArray[np.integer]] | None = None,
     ) -> None:
         """Iterate columns, populating scalar_dict and record_arrays in-place."""
         store = self._column_store
@@ -520,6 +533,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 scalar_dict=scalar_dict,
                 record_arrays=record_arrays,
                 sketch_results=sketch_results,
+                positions=(
+                    ragged_positions.get(tag) if ragged_positions is not None else None
+                ),
             )
 
     def _collect_one_list_column(
@@ -531,6 +547,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
         scalar_dict: MetricResultsDict,
         record_arrays: dict[MetricTagT, tuple[FloatArray, float]],
         sketch_results: dict[MetricTagT, MetricResult],
+        positions: NDArray[np.integer] | None = None,
     ) -> None:
         """Forks on the backend's ``SUPPORTS_PER_RECORD_REPLAY`` flag.
 
@@ -545,11 +562,12 @@ class MetricsAccumulator(BaseMetricsProcessor):
             # a view into the ragged buffer that compute_sweep_curves reads later
             # (against unsorted offsets/record_indices), so the full-dataset branch
             # must copy. get_values_for_mask already returns a fresh masked copy.
-            filtered = (
-                backend.values.copy()
-                if full_dataset
-                else backend.get_values_for_mask(mask)
-            )
+            if full_dataset:
+                filtered = backend.values.copy()
+            elif positions is not None:
+                filtered = backend.values[positions]
+            else:
+                filtered = backend.get_values_for_mask(mask)
             if len(filtered) == 0:
                 return
             s = float(np.sum(filtered))
@@ -668,8 +686,8 @@ class MetricsAccumulator(BaseMetricsProcessor):
     ) -> AccumulatorMetricsSummary:
         """Compute and return aggregated metric results.
 
-        If slice_duration is configured, also computes per-timeslice results
-        by partitioning the data into time windows. Always derives the
+        Timeslices are reserved for export_results(); realtime consumers only
+        use the overall results. Always derives the
         coordinated-omission-aware ``effective_latency`` and the
         ``credit_to_start_latency`` queue-wait metric from stored timestamps,
         plus a per-``turn_index`` TTFT trend that surfaces KV-cache effectiveness.
@@ -688,10 +706,20 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # (and reallocates on grow) them, with no lock between the two. The
         # final export path can safely use a thread because ingestion has
         # stopped by then; see export_results.
-        return self._summarize_for_export_context(export_ctx)
+        return self._summarize_for_export_context(
+            export_ctx,
+            include_timeslices=False,
+            # Only the dashboard renders live sweep metrics; the log block and
+            # final exports do not depend on this path.
+            include_sweeps=self.run.cfg.ui_type == UIType.DASHBOARD,
+        )
 
     def _summarize_for_export_context(
-        self, ctx: ExportContext | None = None
+        self,
+        ctx: ExportContext | None = None,
+        *,
+        include_timeslices: bool,
+        include_sweeps: bool = True,
     ) -> AccumulatorMetricsSummary:
         mask = self._mask_for_export_context(ctx)
 
@@ -710,14 +738,14 @@ class MetricsAccumulator(BaseMetricsProcessor):
             mask is None or bool(mask.any())
         )
         if has_records:
-            # Compute sweeps once for both overall and timeslice injection.
-            sweeps = compute_sweep_curves(self._column_store, mask=mask)
-            self._inject_sweep_metrics(
-                overall_results,
-                sweeps,
-                window_start_ns=window_start_ns,
-                window_end_ns=window_end_ns,
-            )
+            if include_sweeps or include_timeslices:
+                sweeps = compute_sweep_curves(self._column_store, mask=mask)
+                self._inject_sweep_metrics(
+                    overall_results,
+                    sweeps,
+                    window_start_ns=window_start_ns,
+                    window_end_ns=window_end_ns,
+                )
             # Network-RTT-adjusted latency: the per-record subtraction is
             # window-independent, so compute the clamped arrays ONCE here and let
             # the overall summary and every timeslice aggregate masked views. No-op
@@ -726,7 +754,7 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 adjusted_arrays = compute_network_adjusted_arrays(
                     self._column_store, self._network_rtt_ns
                 )
-            if self._slice_duration_ns is not None:
+            if include_timeslices and self._slice_duration_ns is not None:
                 timeslices = self._compute_timeslices(
                     sweeps, mask=mask, adjusted_arrays=adjusted_arrays
                 )
@@ -783,8 +811,10 @@ class MetricsAccumulator(BaseMetricsProcessor):
         # publishing. Keep that path on the event loop so column-store mutation
         # cannot race a worker thread traversing its arrays.
         if ctx.cancelled:
-            return self._summarize_for_export_context(ctx)
-        return await asyncio.to_thread(self._summarize_for_export_context, ctx)
+            return self._summarize_for_export_context(ctx, include_timeslices=True)
+        return await asyncio.to_thread(
+            self._summarize_for_export_context, ctx, include_timeslices=True
+        )
 
     def _inject_sweep_metrics(
         self,
@@ -821,8 +851,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
     ) -> list[TimesliceResult]:
         """Compute per-timeslice results by partitioning the time range.
 
-        Sweeps are pre-computed once in ``summarize()`` and windowed per
-        timeslice via ``compute_time_weighted_stats`` — O(T log M) total.
+        Sweeps are pre-computed once in ``_summarize_for_export_context()`` and
+        windowed per timeslice via ``compute_time_weighted_stats`` — O(T log M)
+        total.
 
         Slice grid is sized to span [min(start_ns), max(end_ns)], the actual
         wall-clock span of activity. The last slice's window_end is clipped
@@ -873,6 +904,9 @@ class MetricsAccumulator(BaseMetricsProcessor):
 
         timeslices: list[TimesliceResult] = []
         filled_indices = np.where(filled)[0]
+        record_bin = np.full(n, -1, dtype=np.int32)
+        record_bin[filled_indices] = bins
+        ragged_index = self._build_slice_ragged_index(record_bin, len(edges) - 1)
 
         for bin_idx in range(len(edges) - 1):
             bin_mask_local = bins == bin_idx
@@ -895,14 +929,19 @@ class MetricsAccumulator(BaseMetricsProcessor):
                 window_start_ns=int(window_start),
                 window_end_ns=int(window_end),
                 is_timeslice=True,
+                ragged_positions={
+                    tag: order[bounds[bin_idx] : bounds[bin_idx + 1]]
+                    for tag, (order, bounds) in ragged_index.items()
+                },
             )
             if len(results) == 0:
                 continue
             results.update(sweeps.compute_metrics(window_start, window_end))
             results = self._convert_display_units(results)
             # Network-RTT-adjusted latency metrics per window, aggregated from the
-            # arrays precomputed once in summarize() — this window just slices its
-            # records out via full_mask. None unless a run-level RTT was delivered.
+            # arrays precomputed once in _summarize_for_export_context() — this
+            # window just slices its records out via full_mask. None unless a
+            # run-level RTT was delivered.
             if adjusted_arrays is not None:
                 inject_network_adjusted_from_arrays(
                     adjusted_arrays,
@@ -921,3 +960,34 @@ class MetricsAccumulator(BaseMetricsProcessor):
             )
 
         return timeslices
+
+    def _build_slice_ragged_index(
+        self, record_bin: NDArray[np.int32], n_bins: int
+    ) -> dict[MetricTagT, SliceIndex]:
+        """Bucket every replay-capable ragged value by its record's slice, once.
+
+        ``record_bin`` maps each record to its slice (-1 for none). A stable sort
+        keeps storage order inside each slice, so ``values[order[bounds[b]:bounds[b + 1]]]``
+        equals ``get_values_for_mask`` for slice ``b``'s mask element for element,
+        at O(values in the slice) per slice instead of O(all values).
+        """
+        index: dict[MetricTagT, SliceIndex] = {}
+        for tag in self._column_store.ragged_tags():
+            backend = self._column_store.ragged(tag)
+            if not getattr(backend, "SUPPORTS_PER_RECORD_REPLAY", False):
+                continue
+            rec_idx = backend.record_indices
+            if len(rec_idx) == 0:
+                continue
+            # Records ingested after ``record_bin`` was sized fall in no slice,
+            # as in get_values_for_mask.
+            in_bounds = rec_idx < len(record_bin)
+            value_bin = np.full(len(rec_idx), -1, dtype=np.int32)
+            value_bin[in_bounds] = record_bin[rec_idx[in_bounds]]
+            order = np.argsort(value_bin, kind="stable")
+            if len(order) <= np.iinfo(np.int32).max:
+                order = order.astype(np.int32)
+            # Unassigned values (-1) sort first; bounds[b] is where slice b starts.
+            bounds = np.cumsum(np.bincount(value_bin + 1, minlength=n_bins + 1))
+            index[tag] = (order, bounds)
+        return index

@@ -18,6 +18,37 @@ if TYPE_CHECKING:
     from pathlib import Path
 
     from aiperf.config.flags import CLIConfig
+    from aiperf.config.sweep.adaptive import SearchSpaceDimension
+
+
+REMOTE_FIXED_SCHEDULE_CHECK_KEY = "_remote_fixed_schedule_check"
+_STOP_CONDITION_KEYS = ("requests", "duration", "sessions")
+_FIXED_SCHEDULE_CONFLICT_KEYS = ("rate", "users", "smoothness")
+
+
+def auto_promote_conflict_message(conflicts: list[str]) -> str:
+    return (
+        "Trace dataset has per-record timestamps and would be "
+        "auto-promoted to fixed_schedule, but the following flags or "
+        f"--search-space dimensions are incompatible with "
+        f"fixed_schedule mode: {conflicts}. Either drop the "
+        "conflicting flags/dimensions to enable auto-fixed-schedule, "
+        "or pass --no-fixed-schedule to keep your user-selected timing "
+        "mode and ignore trace timestamps."
+    )
+
+
+def fixed_schedule_sweep_message(param_name: str, param_values: list) -> str:
+    joined = ",".join(map(str, param_values))
+    return (
+        f"Parameter sweeps (e.g., --{param_name} {joined}) cannot be "
+        "used with --fixed-schedule mode (including the auto-promotion "
+        "of trace datasets with per-record timestamps). Fixed schedule "
+        "replays exact timing patterns from the trace, which is "
+        "incompatible with varying parameter values. Use a single "
+        "parameter value, or pass --no-fixed-schedule to keep your "
+        "rate/concurrency mode and ignore the trace timestamps."
+    )
 
 
 _PROF_FIELD_ROUTES: tuple[tuple[str, str], ...] = (
@@ -93,106 +124,32 @@ _RATE_SHAPE_SEARCH_FIELDS: frozenset[str] = frozenset(
 )
 
 
-def _search_space_dimensions(cli: CLIConfig) -> dict[str, tuple[float, str]]:
-    """Field name -> (lower bound, kind) for every dimension in ``--search-space``.
+def _profiling_search_dimensions(cli: CLIConfig) -> dict[str, SearchSpaceDimension]:
+    """Field name -> dimension for each ``--search-space`` entry on ``phases.profiling.<field>``."""
+    from aiperf.orchestrator.search_planner.parsing import parse_search_space
 
-    A lightweight companion to ``parse_search_space()`` (which runs later,
-    in ``_build_adaptive_search``): only extracts each dimension's final
-    path segment (resolving bare-name aliases the same way the real parser
-    does), its lower bound, and its declared ``kind`` (``int``/``real``,
-    default ``real`` when omitted -- matches ``SearchSpaceDimension``'s own
-    default), so ``_profiling_phase_type``/``build_profiling`` can pick a
-    compatible phase shape -- and seed a self-supplying field's initial
-    value from its own search range -- before search-space bounds/kind are
-    even validated by the real parser. Malformed entries are skipped here;
-    the real parser reports the actual grammar error. Only dimensions that
-    target a direct ``phases.profiling.<field>`` scalar are considered
-    (bare aliases always resolve there); a fully-qualified path targeting a
-    different phase (e.g. ``phases.warmup.*``) OR a nested sub-field one
-    level deeper (e.g. ``phases.profiling.cancellation.rate``, the request-
-    cancellation rate -- an unrelated field that merely happens to share
-    the ``rate`` leaf name) is ignored by this shape-inference helper --
-    the real search-space parser still processes it normally later, just
-    not for the purpose of phase-shape inference.
-
-    ``rate_series`` is rejected outright, regardless of any companion CLI
-    flag: it's a piecewise-linear schedule (``RateSeriesConfig``), not a
-    scalar the planner can sample between two bounds. Letting it through
-    would set a phase's ``rate_series`` field to a bare Optuna-sampled
-    float on the first trial and crash there -- reject it immediately and
-    clearly instead.
-    """
-    if not cli.search_space:
-        return {}
-
-    dims: dict[str, tuple[float, str]] = {}
-    for raw in cli.search_space:
-        parsed = _parse_shape_dimension(raw)
-        if parsed is not None:
-            field, lo, kind = parsed
-            dims[field] = (lo, kind)
+    dims: dict[str, SearchSpaceDimension] = {}
+    for dimension in parse_search_space(list(cli.search_space or [])):
+        segments = dimension.path.split(".")
+        if segments[:2] != ["phases", "profiling"]:
+            continue
+        if len(segments) == 3:
+            dims[segments[2]] = dimension
+        # Searching the ramp duration still writes 'rate_ramp', so it needs a
+        # rate-shaped phase; other nested leaves (cancellation.rate) do not.
+        elif segments[2:] == ["rate_ramp", "duration"]:
+            dims["rate_ramp"] = dimension
     return dims
 
 
-def _parse_shape_dimension(raw: str) -> tuple[str, float, str] | None:
-    """Parse one ``--search-space`` entry into ``(field, lo, kind)``, or
-    ``None`` if it isn't a shape-bearing ``phases.profiling.<field>`` scalar.
-
-    Raises for ``rate_series`` specifically (see ``_search_space_dimensions``
-    docstring); every other malformed or out-of-scope entry is skipped so
-    the real parser (``parse_search_space``) is what reports the actual
-    grammar error, rather than this lightweight helper guessing wrong.
-    """
-    from aiperf.config.loader.dotted_path import _resolve_path_alias
-
-    path_part, _, rest = raw.partition(":")
-    path = path_part
-    if not path:
-        return None
-    if "." not in path:
-        path = _resolve_path_alias(path)
-    if not path.startswith("phases.profiling."):
-        return None
-    remainder = path[len("phases.profiling.") :]
-    if "." in remainder:
-        # A nested sub-field (e.g. "phases.profiling.cancellation.rate") is
-        # not the phase's own scalar field -- matching it by leaf name alone
-        # would misclassify e.g. a cancellation-rate sweep as the phase's
-        # request rate. Not a shape-bearing dimension.
-        return None
-    field = remainder
-    if field == "rate_series":
-        raise ValueError(
-            "--search-space 'rate_series' is not a valid adaptive-search "
-            "dimension: it's a piecewise-linear rate schedule (a list of "
-            "time/rate points), not a single number the planner can "
-            "sample between two bounds. Pass --request-rate-series as a "
-            "fixed companion instead of searching over it, or search "
-            "'rate'/'rate_ramp' for a scalar rate to sweep."
-        )
-    bounds_part, _, kind_part = rest.partition(":")
-    if ":" in kind_part:
-        # More than three ':'-separated segments (e.g. "users:1,50:int:log")
-        # -- malformed grammar. Skip rather than guess a kind from it.
-        return None
-    kind = kind_part or "real"
-    if kind not in ("int", "real"):
-        # Not one of the real parser's _VALID_KINDS (parsing.py) -- skip so
-        # the real parser's own grammar error is what the user sees. This is
-        # also what makes _seed_users_dimension's "not ':real'" message
-        # always accurate: by the time kind reaches there, it can only ever
-        # be "int" or "real".
-        return None
-    lo_str = bounds_part.split(",", 1)[0]
-    try:
-        return field, float(lo_str), kind
-    except ValueError:
-        return None
+def _search_space_dimensions(cli: CLIConfig) -> dict[str, float]:
+    return {
+        field: dimension.lo
+        for field, dimension in _profiling_search_dimensions(cli).items()
+    }
 
 
-def _profiling_phase_type(
-    cli: CLIConfig, search_dims: dict[str, tuple[float, str]]
-) -> Any:
+def _profiling_phase_type(cli: CLIConfig, search_dims: dict[str, float]) -> Any:
     from aiperf.config.phases import PhaseType
     from aiperf.plugin.enums import ArrivalPattern
 
@@ -248,7 +205,7 @@ def _profiling_phase_type(
 
 
 def _apply_search_space_shape_seeds(
-    prof: dict[str, Any], search_dims: dict[str, tuple[float, str]]
+    prof: dict[str, Any], search_dims: dict[str, float]
 ) -> None:
     """Seed the required scalar(s) a search-space-inferred shape still needs.
 
@@ -265,31 +222,10 @@ def _apply_search_space_shape_seeds(
     "rate-controlled phases require rate or rate_series" surface as an
     unexplained crash on the very first config build.
 
-    Both the 'users' and 'rate' validation below run whenever the
-    respective field is in search_dims, regardless of whether an explicit
-    CLI flag (--num-users, --request-rate, --request-rate-series, or
-    --user-centric-rate) already populated prof["users"]/prof["rate"]/
-    prof["rate_series"] via _PROF_FIELD_ROUTES / _apply_profiling_rate_series
-    before this runs -- only the *assignment* is gated on absence.
-    Otherwise `--request-rate 10 --search-space "rate:-5,100"` would
-    silently skip bound validation on a dimension the planner still samples
-    from every trial (crashing mid-search once a negative value is drawn,
-    not at config-build time), the same class of bug as skipping 'users'
-    validation whenever --num-users was also explicit.
+    Dimension bounds and kinds have already been validated by the shared
+    search-space model, including dimensions outside the profiling phase.
     """
     from aiperf.config.phases import PhaseType
-
-    # 'smoothness' (GammaPhase.smoothness, gt=0) and 'rate_ramp'
-    # (RampConfig.duration, gt=0.0) aren't seeded into prof here -- both are
-    # optional fields the planner only ever writes once trials start -- but
-    # they share the same "validate the bound now, not at sample time" need
-    # as 'rate'/'users': a negative lower bound otherwise builds a valid
-    # base config and only fails once the planner happens to sample a
-    # negative value mid-search.
-    _reject_non_positive_bound(
-        search_dims, "smoothness", "the gamma distribution's shape parameter"
-    )
-    _reject_non_positive_bound(search_dims, "rate_ramp", "the ramp duration (seconds)")
 
     phase_type = prof["type"]
 
@@ -318,43 +254,13 @@ def _apply_search_space_shape_seeds(
         _seed_rate_dimension(prof, search_dims, phase_type)
 
 
-def _reject_non_positive_bound(
-    search_dims: dict[str, tuple[float, str]], field: str, subject: str
-) -> None:
-    """Raise a clear error if `field`'s search-space lower bound isn't > 0."""
-    if field not in search_dims:
-        return
-    lo, _kind = search_dims[field]
-    if not math.isfinite(lo) or lo <= 0:
-        raise ValueError(
-            f"--search-space '{field}' lower bound must be > 0 (got {lo!r}); "
-            f"{subject} must be positive."
-        )
-
-
-def _seed_users_dimension(
-    prof: dict[str, Any], search_dims: dict[str, tuple[float, str]]
-) -> None:
-    """Validate and (if absent) seed prof["users"] from a 'users' dimension."""
-    users_lo, users_kind = search_dims["users"]
-    if users_kind != "int":
-        raise ValueError(
-            "--search-space 'users' must use ':int' kind (e.g. "
-            "'users:1,50:int'), not ':real' -- the number of simulated "
-            "users must be a whole number."
-        )
-    if not math.isfinite(users_lo) or users_lo < 1:
-        raise ValueError(
-            f"--search-space 'users' lower bound must be >= 1 (got "
-            f"{users_lo!r}); the number of simulated users can't be "
-            "less than one."
-        )
+def _seed_users_dimension(prof: dict[str, Any], search_dims: dict[str, float]) -> None:
     if "users" not in prof:
-        prof["users"] = int(users_lo)
+        prof["users"] = int(search_dims["users"])
 
 
 def _seed_rate_dimension(
-    prof: dict[str, Any], search_dims: dict[str, tuple[float, str]], phase_type: Any
+    prof: dict[str, Any], search_dims: dict[str, float], phase_type: Any
 ) -> None:
     """Validate and (if absent) seed prof["rate"] from a 'rate' dimension.
 
@@ -382,14 +288,8 @@ def _seed_rate_dimension(
             "search 'rate', or drop the 'rate' dimension to keep the "
             "fixed schedule."
         )
-    rate_lo, _rate_kind = search_dims["rate"]
-    if not math.isfinite(rate_lo) or rate_lo <= 0:
-        raise ValueError(
-            f"--search-space 'rate' lower bound must be > 0 (got "
-            f"{rate_lo!r}); rate must be positive."
-        )
     if not has_base_rate:
-        prof["rate"] = rate_lo
+        prof["rate"] = search_dims["rate"]
 
 
 def apply_cancellation(prof: dict[str, Any], cli: CLIConfig) -> None:
@@ -538,6 +438,7 @@ def _detect_cli_magic_sweep(cli: CLIConfig) -> tuple[str, list] | None:
 
 
 def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
+    """Reject invalid mode combinations, then apply dataset-aware and stop-condition defaults."""
     from aiperf.config.phases import PhaseType
 
     # `--conversation-turn-mean` may be a list when used as a magic-list
@@ -562,41 +463,121 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
     sweep = _detect_cli_magic_sweep(cli)
     if sweep is not None and prof["type"] == PhaseType.FIXED_SCHEDULE:
         param_name, param_values = sweep
-        joined = ",".join(map(str, param_values))
-        raise ValueError(
-            f"Parameter sweeps (e.g., --{param_name} {joined}) cannot be "
-            "used with --fixed-schedule mode (including the auto-promotion "
-            "of trace datasets with per-record timestamps). Fixed schedule "
-            "replays exact timing patterns from the trace, which is "
-            "incompatible with varying parameter values. Use a single "
-            "parameter value, or pass --no-fixed-schedule to keep your "
-            "rate/concurrency mode and ignore the trace timestamps."
-        )
+        raise ValueError(fixed_schedule_sweep_message(param_name, param_values))
 
-    if (
-        not any(k in prof for k in ("requests", "duration", "sessions"))
-        and prof["type"] != PhaseType.FIXED_SCHEDULE
-    ):
-        # Why: when no bound is given for an unbounded run, default to
-        # 10 requests so the run terminates in a reasonable time.
-        # Deliberate override of the PhaseConfig default (which would
-        # leave it unbounded).
-        prof.setdefault("requests", 10)
+    if not _has_stop_condition(prof) and prof["type"] != PhaseType.FIXED_SCHEDULE:
+        _apply_default_stop_condition(prof, cli)
     apply_cancellation(prof, cli)
 
 
-def _maybe_auto_promote_trace(
-    prof: dict[str, Any], cli: CLIConfig, file_path: Path | None
-) -> None:
-    """Flip phase.type to FIXED_SCHEDULE if a trace dataset has timestamps."""
+_MIN_DEFAULT_REQUESTS = 10
+_DEFAULT_REQUESTS_PER_CONCURRENCY_SLOT = 2
+
+
+def _apply_default_stop_condition(prof: dict[str, Any], cli: CLIConfig) -> None:
+    """Bound a CLI run that set no requests, sessions, or duration.
+
+    PhaseConfig itself requires an explicit stop condition (YAML users must
+    choose one); this is the CLI-only default.
+    """
+    stop, message = _default_stop_condition(prof, cli)
+    prof.update(stop)
+    _logger.warning(message)
+
+
+def full_pass_stop_condition(dataset_name: str) -> tuple[dict[str, Any], str]:
+    """One full pass over every conversation, and the warning that announces it."""
+    from aiperf.config.phases import FULL_PASS_SESSIONS
+
+    return {"sessions": FULL_PASS_SESSIONS}, (
+        "No stop condition given; running one full pass over every "
+        f"conversation in {dataset_name}. "
+        "Pass --request-count, --num-conversations, or --benchmark-duration "
+        "to bound the run instead."
+    )
+
+
+def _default_stop_condition(
+    prof: dict[str, Any], cli: CLIConfig
+) -> tuple[dict[str, Any], str]:
+    """The stop condition ``_apply_default_stop_condition`` applies, and its warning."""
+    from aiperf.config.phases import PhaseType
+
+    # Scenarios lock their own timing mode and user-centric sizing is
+    # governed by users, so both keep the flat floor.
+    keeps_flat_floor = (
+        cli.scenario is not None or prof["type"] == PhaseType.USER_CENTRIC
+    )
+    if not keeps_flat_floor and _is_full_pass_dataset(cli):
+        return full_pass_stop_condition(
+            str(cli.public_dataset or cli.custom_dataset_type)
+        )
+
+    requests = _MIN_DEFAULT_REQUESTS
+    reason = ""
+    if prof["type"] == PhaseType.CONCURRENCY and not keeps_flat_floor:
+        # Sweeps and searches size every variation for the largest value so
+        # the busiest variation still saturates its slots.
+        concurrency = prof.get("concurrency") or 1
+        label = "concurrency"
+        if isinstance(concurrency, list):
+            concurrency = max(concurrency)
+            label = "largest swept concurrency"
+        searched = _search_space_upper_bound(cli, "concurrency")
+        if searched is not None:
+            concurrency = math.ceil(searched)
+            label = "largest searched concurrency"
+        requests = max(
+            _MIN_DEFAULT_REQUESTS,
+            concurrency * _DEFAULT_REQUESTS_PER_CONCURRENCY_SLOT,
+        )
+        reason = (
+            f" (max({_MIN_DEFAULT_REQUESTS}, "
+            f"{_DEFAULT_REQUESTS_PER_CONCURRENCY_SLOT} x {label} {concurrency}))"
+        )
+    return {"requests": requests}, (
+        f"No stop condition given; defaulting to {requests} requests{reason}. "
+        "Pass --request-count, --num-conversations, or --benchmark-duration "
+        "to change it."
+    )
+
+
+def _search_space_upper_bound(cli: CLIConfig, field: str) -> float | None:
+    """Upper bound of the ``--search-space`` dimension on ``phases.profiling.<field>``."""
+    dimension = _profiling_search_dimensions(cli).get(field)
+    return None if dimension is None else dimension.hi
+
+
+def _is_full_pass_dataset(cli: CLIConfig) -> bool:
+    """Whether the selected dataset is a suite that defaults to one full pass."""
+    from aiperf.plugin import plugins
+
+    if cli.public_dataset is not None:
+        return plugins.get_public_dataset_loader_metadata(
+            str(cli.public_dataset)
+        ).full_pass_by_default
+    if cli.custom_dataset_type is not None:
+        return plugins.get_dataset_loader_metadata(
+            str(cli.custom_dataset_type)
+        ).full_pass_by_default
+    return False
+
+
+def _has_stop_condition(prof: dict[str, Any]) -> bool:
+    return any(k in prof for k in _STOP_CONDITION_KEYS)
+
+
+def _auto_promotion_may_apply(prof: dict[str, Any], cli: CLIConfig) -> bool:
+    """Guards shared by the local and remote trace auto-promotion paths.
+
+    An unset --custom-dataset-type passes here; each caller decides what that means.
+    """
     from aiperf.config.phases import PhaseType
     from aiperf.plugin import plugins
 
     dataset_type = cli.custom_dataset_type
-    if (
-        dataset_type is None
-        or file_path is None
-        or cli.disable_auto_fixed_schedule
+    return not (
+        cli.disable_auto_fixed_schedule
         # A --scenario locks its own timing_mode (e.g. agentic_replay), which
         # would immediately conflict with an auto-promoted FIXED_SCHEDULE
         # phase in the scenario validator. v1 parity: only an EXPLICIT
@@ -605,46 +586,119 @@ def _maybe_auto_promote_trace(
         or cli.scenario is not None
         or _timeline_opt_out_suppresses_promotion(cli, dataset_type)
         or prof["type"] == PhaseType.FIXED_SCHEDULE
-        or not plugins.is_trace_dataset(str(dataset_type))
-        or not _trace_carries_timing(dataset_type, file_path)
+        or (
+            dataset_type is not None and not plugins.is_trace_dataset(str(dataset_type))
+        )
+    )
+
+
+def _fixed_schedule_conflicts(prof: dict[str, Any]) -> list[str]:
+    """Profiling keys FixedSchedulePhase rejects.
+
+    `prof` may hold these because of an explicit CLI flag OR because
+    _apply_search_space_shape_seeds seeded them from a --search-space
+    dimension, so the error names both sources.
+    """
+    return [k for k in _FIXED_SCHEDULE_CONFLICT_KEYS if k in prof]
+
+
+def _remote_fixed_schedule_conflicts(prof: dict[str, Any], cli: CLIConfig) -> list[str]:
+    """_fixed_schedule_conflicts plus the dataset options a fixed_schedule phase rejects.
+
+    For a local file these surface after promotion, from BenchmarkConfig's
+    phase/dataset compatibility check. A remote phase is validated before its
+    first record is known, so they must keep it from being promoted optimistically.
+    """
+    from aiperf.plugin.enums import DatasetSamplingStrategy
+
+    conflicts = _fixed_schedule_conflicts(prof)
+    sampling = cli.dataset_sampling_strategy
+    if sampling is not None and sampling != DatasetSamplingStrategy.SEQUENTIAL:
+        conflicts.append(f"--dataset-sampling-strategy {sampling}")
+    return conflicts
+
+
+def _maybe_auto_promote_trace(
+    prof: dict[str, Any], cli: CLIConfig, file_path: Path | None
+) -> None:
+    """Flip phase.type to FIXED_SCHEDULE if a trace dataset has timestamps."""
+    from aiperf.config.phases import PhaseType
+
+    if (
+        cli.custom_dataset_type is None
+        or file_path is None
+        or not _auto_promotion_may_apply(prof, cli)
+        or not _trace_carries_timing(cli.custom_dataset_type, file_path)
     ):
         return
 
-    # FixedSchedulePhase doesn't accept rate/users/smoothness. If the user
-    # explicitly opted into a rate-controlled mode against a timestamped
-    # trace, refuse the combo loudly rather than silently dropping their
-    # flag — they almost certainly want one or the other, not both. `prof`
-    # may hold these because of an explicit CLI flag OR because
-    # _apply_search_space_shape_seeds seeded them from a --search-space
-    # dimension -- "flags" alone would be unactionable in the latter case
-    # (there's no flag to drop), so name both sources.
-    conflicts = [k for k in ("rate", "users", "smoothness") if k in prof]
-    if conflicts:
-        raise ValueError(
-            "Trace dataset has per-record timestamps and would be "
-            "auto-promoted to fixed_schedule, but the following flags or "
-            f"--search-space dimensions are incompatible with "
-            f"fixed_schedule mode: {conflicts}. Either drop the "
-            "conflicting flags/dimensions to enable auto-fixed-schedule, "
-            "or pass --no-fixed-schedule to keep your user-selected timing "
-            "mode and ignore trace timestamps."
-        )
+    # If the user explicitly opted into a rate-controlled mode against a
+    # timestamped trace, refuse the combo loudly rather than silently dropping
+    # their flag — they almost certainly want one or the other, not both.
+    if conflicts := _fixed_schedule_conflicts(prof):
+        raise ValueError(auto_promote_conflict_message(conflicts))
     prof["type"] = PhaseType.FIXED_SCHEDULE
+
+
+def _defer_remote_auto_promotion(prof: dict[str, Any], cli: CLIConfig) -> None:
+    """Mirror _maybe_auto_promote_trace for a remote file whose first record is unknown.
+
+    Promotes optimistically (a promoted phase needs no stop condition, exactly like the
+    local path) and records how the access preflight must finish the decision. An
+    untyped remote is promoted too, since its manifest may still declare a trace format.
+    """
+    from aiperf.config.phases import PhaseType
+
+    if not _auto_promotion_may_apply(prof, cli):
+        return
+    conflicts = _remote_fixed_schedule_conflicts(prof, cli)
+    # A rate-shaped phase without a conflict key (--request-rate-series) cannot be
+    # built as fixed_schedule either; name its type so the error stays actionable.
+    if conflicts or prof["type"] != PhaseType.CONCURRENCY:
+        prof[REMOTE_FIXED_SCHEDULE_CHECK_KEY] = {
+            "promoted": False,
+            "conflict_error": auto_promote_conflict_message(
+                conflicts or [str(prof["type"])]
+            ),
+        }
+        return
+    if (sweep := _detect_cli_magic_sweep(cli)) is not None:
+        prof[REMOTE_FIXED_SCHEDULE_CHECK_KEY] = {
+            "promoted": False,
+            "conflict_error": fixed_schedule_sweep_message(*sweep),
+        }
+        return
+    check: dict[str, Any] = {"promoted": True, "conflict_error": None}
+    if not _has_stop_condition(prof):
+        # Computed while the phase is still concurrency, so a demoted run gets the
+        # bound and warning a local file without timestamps would have had.
+        stop, message = _default_stop_condition(prof, cli)
+        # A promotable remote is never a full-pass suite, so this is a request count.
+        if "requests" in stop:
+            check |= {
+                "demoted_requests": stop["requests"],
+                "demoted_stop_warning": message,
+            }
+    prof["type"] = PhaseType.FIXED_SCHEDULE
+    prof[REMOTE_FIXED_SCHEDULE_CHECK_KEY] = check
+
+
+def _is_dag_without_stop_condition(prof: dict[str, Any], cli: CLIConfig) -> bool:
+    from aiperf.plugin.enums import CustomDatasetType
+
+    dataset_type = cli.custom_dataset_type
+    return (
+        dataset_type is not None
+        and str(dataset_type) == str(CustomDatasetType.DAG_JSONL)
+        and not _has_stop_condition(prof)
+    )
 
 
 def _maybe_set_dag_root_sessions(
     prof: dict[str, Any], cli: CLIConfig, file_path: Path | None
 ) -> None:
     """For dag_jsonl with no stop condition, set ``sessions`` from root count."""
-    from aiperf.plugin.enums import CustomDatasetType
-
-    dataset_type = cli.custom_dataset_type
-    is_dag = dataset_type is not None and str(dataset_type) == str(
-        CustomDatasetType.DAG_JSONL
-    )
-    if not is_dag or file_path is None:
-        return
-    if any(k in prof for k in ("requests", "duration", "sessions")):
+    if file_path is None or not _is_dag_without_stop_condition(prof, cli):
         return
 
     from aiperf.config.dataset.resolver import _collect_dag_session_and_fork_ids
@@ -661,7 +715,15 @@ def _maybe_set_dag_root_sessions(
 def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> None:
     """Apply dataset-sensitive CLI defaults for trace/fixed/dag datasets."""
 
+    from aiperf.config.dataset.remote_ref import RemoteRef
     from aiperf.config.phases import PhaseType
+
+    if isinstance(cli.input_file, RemoteRef):
+        # The file does not exist locally yet; the access preflight finishes these
+        # decisions after it can read the first record (see dataset/remote/preflight.py).
+        _reject_remote_dag_without_stop_condition(prof, cli)
+        _defer_remote_auto_promotion(prof, cli)
+        return
 
     file_path: Path | None = cli.input_file if cli.input_file is not None else None
 
@@ -703,34 +765,16 @@ def _line_count_misreports_records(dataset_type: object) -> bool:
     return str(dataset_type) == str(CustomDatasetType.WEKA_TRACE)
 
 
-def _columnar_file_has_timestamp(path: Path) -> bool | None:
-    """Probe known columnar formats, or return None for another format."""
-    suffix = path.suffix.lower()
-    if suffix == ".parquet":
-        try:
-            import pyarrow as pa
-            import pyarrow.parquet as pq
-        except ImportError:
-            return False
-
-        try:
-            return "timestamp_start_unix_ms" in set(pq.read_schema(path).names)
-        except (OSError, pa.ArrowException):
-            return False
-    if suffix in {".arrow", ".ipc"}:
-        from aiperf.dataset.loader.baseten_trace import BasetenTraceDatasetLoader
-
-        return BasetenTraceDatasetLoader.can_load(filename=path)
-    return None
-
-
-def _has_timing_events_timestamp(data: dict) -> bool:
-    events = data.get("timing_events")
-    return bool(
-        events
-        and isinstance(events, list)
-        and isinstance(events[0], dict)
-        and events[0].get("timestamp") is not None
+def _reject_remote_dag_without_stop_condition(
+    prof: dict[str, Any], cli: CLIConfig
+) -> None:
+    """A remote dag_jsonl cannot be counted before download, so require a bound."""
+    if not _is_dag_without_stop_condition(prof, cli):
+        return
+    raise ValueError(
+        "--input-file is a remote reference, so AIPerf cannot count the DAG root "
+        "sessions before the run. Pass --conversation-num, --request-count, or "
+        "--benchmark-duration explicitly."
     )
 
 
@@ -761,7 +805,7 @@ def _timeline_opt_out_suppresses_promotion(
 def _trace_carries_timing(dataset_type: object, file_path: object) -> bool:
     """Whether a trace dataset has timing worth auto-promoting on.
 
-    ``_first_record_has_timestamp`` looks for a top-level ``timestamp`` key and
+    ``first_record_has_timestamp`` looks for a top-level ``timestamp`` key and
     refuses directories outright. A weka_trace keeps its timing in
     ``requests[].t`` and is documented as a *directory* of files, so neither is
     visible to that probe, and ``docs/tutorials/weka-trace.md`` documents
@@ -781,67 +825,31 @@ def _trace_carries_timing(dataset_type: object, file_path: object) -> bool:
 
     if str(dataset_type) == str(CustomDatasetType.WEKA_TRACE):
         return True
-    return _first_record_has_timestamp(file_path)
+    from aiperf.dataset.trace_timestamps import first_record_has_timestamp
 
-
-def _first_record_has_timestamp(file_path: object) -> bool:
-    """Return True when a trace file carries timestamp data."""
-    from pathlib import Path
-
-    from aiperf.common.utils import load_json_str, open_text_maybe_gzip
-
-    path = Path(file_path)
-    if not path.is_file():
-        return False
-    if (columnar_result := _columnar_file_has_timestamp(path)) is not None:
-        return columnar_result
-    try:
-        with open_text_maybe_gzip(path) as f:
-            for line in f:
-                if not (stripped := line.strip()):
-                    continue
-                try:
-                    data = load_json_str(stripped)
-                except (ValueError, TypeError):
-                    return False
-                if not isinstance(data, dict):
-                    return False
-                return data.get(
-                    "timestamp"
-                ) is not None or _has_timing_events_timestamp(data)
-    except (EOFError, gzip.BadGzipFile, zlib.error) as e:
-        _logger.warning(f"Truncated or corrupt gzip in '{file_path}': {e}")
-        return False
-    except (OSError, UnicodeDecodeError):
-        return False
-    return False
+    return first_record_has_timestamp(file_path)
 
 
 def _count_dataset_records(file_path: object) -> int:
     """Count records across JSONL, Parquet, or Arrow IPC input."""
     from pathlib import Path
 
+    from aiperf.common.record_files import count_parquet_rows, is_parquet_input
     from aiperf.common.utils import open_text_maybe_gzip
 
     path = Path(file_path)
     try:
+        if is_parquet_input(path):
+            try:
+                return count_parquet_rows(path)
+            except ValueError:
+                return 0
         if path.is_dir():
             total = 0
             for jsonl in path.rglob("*.jsonl"):
                 with open(jsonl, encoding="utf-8") as f:
                     total += sum(1 for line in f if line.strip())
             return total
-        if path.suffix.lower() == ".parquet" and path.is_file():
-            try:
-                import pyarrow as pa
-                import pyarrow.parquet as pq
-            except ImportError:
-                return 0
-
-            try:
-                return pq.ParquetFile(path).metadata.num_rows
-            except (OSError, pa.ArrowException):
-                return 0
         if path.suffix.lower() in {".arrow", ".ipc"} and path.is_file():
             from aiperf.dataset.loader.baseten_trace import (
                 count_baseten_records,

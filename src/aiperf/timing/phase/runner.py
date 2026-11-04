@@ -20,6 +20,7 @@ from aiperf.common.environment import Environment
 from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.mixins import TaskManagerMixin
 from aiperf.common.phase import phase_runtime_key
+from aiperf.config.dataset.truncation import end_conversation_on_truncation_enabled
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TimingMode
@@ -187,6 +188,22 @@ class PhaseRunner(TaskManagerMixin):
                     self._config = config.model_copy(
                         update={"total_expected_requests": warmup_count}
                     )
+
+        if config.sessions_from_dataset and metadata:
+            # Count only sampleable roots: the stop condition counts root
+            # sessions, and DAG children run inside their root's session.
+            num_sessions = len(metadata.sampleable_conversation_ids)
+            # A shared sampler an earlier phase (e.g. warmup) already advanced
+            # could otherwise repeat or skip conversations within this pass.
+            conversation_source.start_full_pass()
+            self._config = self._config.model_copy(
+                update={"expected_num_sessions": num_sessions}
+            )
+            self.info(
+                f"Phase {config.phase_name or config.phase}: sessions=all, running "
+                f"one full pass over {num_sessions:,} conversations"
+            )
+
         self._phase_publisher = phase_publisher
         self._credit_router = credit_router
         self._concurrency_manager = concurrency_manager
@@ -312,6 +329,17 @@ class PhaseRunner(TaskManagerMixin):
             conversation_source.dataset_metadata
         ):
             return
+        # Ending a root early would strand the branches the orchestrator spawns
+        # and later resumes through a join, so reject rather than miscount.
+        # Checked here because DAG-ness is only known once the dataset loads.
+        if self._run is not None and end_conversation_on_truncation_enabled(
+            self._run.cfg.get_default_dataset()
+        ):
+            raise ValueError(
+                "end_conversation_on_truncation (--end-conversation-on-truncation) "
+                "is not supported for DAG datasets or agentic replay; pass "
+                "--no-end-conversation-on-truncation."
+            )
         sticky_router = getattr(self._credit_router, "sticky_router", None)
         benchmark_id = self._run.benchmark_id if self._run is not None else "unknown"
         cache_bust_target = self._resolve_cache_bust_target()
@@ -1061,6 +1089,11 @@ class PhaseRunner(TaskManagerMixin):
             parts.append(
                 f"sessions: completed={stats.final_completed_sessions:,}, "
                 f"cancelled={stats.final_cancelled_sessions:,}"
+            )
+        if stats.sessions_ended_on_truncation:
+            parts.append(
+                f"ended_on_truncation={stats.sessions_ended_on_truncation:,} "
+                f"(skipped_turns={stats.turns_skipped_on_truncation:,})"
             )
         elapsed = stats.requests_elapsed_time
         parts.append(f"elapsed={elapsed:.2f}s")
