@@ -376,8 +376,12 @@ The controller pod pushes progress; the operator does not poll for it.
   `test /metadata/uid` op. Status pushes re-read the CR and compare the UID
   first, then send a phase-tested JSON patch. Before any phase exists they
   send a merge patch instead, or an untested JSON patch when `serverMetrics` is
-  included. Once the CR is terminal, pushes stop. Either way, a controller left over from a deleted CR does not
-  write to a new CR that reuses its name.
+  included. Once the CR is terminal, pushes stop. The UID check and the
+  status write are separate requests, and the status write tests only the
+  phase, so this is a check-then-write window rather than an absolute
+  guarantee: a controller left over from a deleted CR can still land a status
+  write on a new CR that reuses its name when the replacement happens after
+  the UID fence passes and the new CR has reached the same phase value.
 - **Heartbeat.** The annotation `aiperf.nvidia.com/controller-heartbeat` holds
   an RFC 3339 timestamp. The [heartbeat watchdog](#heartbeat-watchdog-and-recovery-engine)
   treats it as stale after `AIPERF_K8S_CONTROLLER_HEARTBEAT_EXPIRY_SECONDS`
