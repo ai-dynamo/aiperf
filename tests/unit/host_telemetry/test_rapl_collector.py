@@ -2,8 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for the RAPL host telemetry collector.
 
-These build a fake powercap tree on disk, so they need neither an Intel CPU nor
-root, and they run on every platform the rest of the suite runs on.
+Most of these build a fake powercap tree on disk, so they need neither an Intel
+CPU nor root. They do need a filesystem that allows a colon in a path
+component, because real domains are named `intel-rapl:N`, so they skip on
+Windows; see `make_domain`. The tests that do not build a tree run everywhere.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
+from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.models import ErrorDetails
 from aiperf.common.models.host_telemetry_models import (
     HostTelemetryMetrics,
@@ -41,7 +44,20 @@ def make_domain(
     energy: int | None,
     max_range: int | None = MAX_RANGE,
 ) -> Path:
-    """Create one fake powercap domain directory."""
+    """Create one fake powercap domain directory.
+
+    Skips on Windows rather than renaming the domain. Real powercap domains are
+    `intel-rapl:N` and `intel-rapl:N:M`, and the colon is exactly what the
+    discovery regexes match on, so a tree built with Windows-legal names would
+    pass while testing a layout that does not occur. The tests that do not need
+    a tree still run on every platform.
+    """
+    if IS_WINDOWS:
+        pytest.skip(
+            "powercap domain names contain ':', which Windows forbids in a path "
+            "component; renaming them would stop the discovery regexes from "
+            "matching what they match in production"
+        )
     d = parent / name
     d.mkdir(parents=True, exist_ok=True)
     (d / "name").write_text(label + "\n")
@@ -538,11 +554,7 @@ class TestUnparseableRange:
 class TestDomainOrdering:
     def test_double_digit_domains_sort_numerically(self, tmp_path: Path) -> None:
         for i in (0, 1, 2, 10, 11):
-            d = tmp_path / f"intel-rapl:{i}"
-            d.mkdir()
-            (d / "name").write_text(f"package-{i}")
-            (d / "energy_uj").write_text("1")
-            (d / "max_energy_range_uj").write_text("262143328850")
+            make_domain(tmp_path, f"intel-rapl:{i}", f"package-{i}", 1)
         order = [(d.index, d.domain_id) for d in discover_domains(tmp_path)]
         assert order == [
             (0, "intel-rapl:0"),
