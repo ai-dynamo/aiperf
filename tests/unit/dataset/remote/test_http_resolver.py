@@ -170,6 +170,28 @@ def _sidecar_app(sidecar: web.Response) -> web.Application:
     return app
 
 
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 405, 406, 410])
+@pytest.mark.asyncio
+async def test_client_error_on_sidecar_is_treated_as_absent(
+    http_server, status: int
+) -> None:
+    """Gateways and CDNs answer an unknown path with 400 or 405, not only 404."""
+    url = f"{await http_server(_sidecar_app(web.Response(status=status)))}/t.jsonl"
+    probe = await HTTPSourceResolver().probe(RemoteRef(ref=url))
+    assert probe.manifest is None and probe.manifest_sha256 is None
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+@pytest.mark.asyncio
+async def test_rate_limit_or_server_error_on_sidecar_is_transient(
+    http_server, status: int
+) -> None:
+    url = f"{await http_server(_sidecar_app(web.Response(status=status)))}/t.jsonl"
+    with pytest.raises(RemoteSourceError) as exc:
+        await HTTPSourceResolver().probe(RemoteRef(ref=url))
+    assert exc.value.kind == RemoteErrorKind.TRANSIENT
+
+
 @pytest.mark.asyncio
 async def test_html_sidecar_is_treated_as_absent(http_server) -> None:
     """SPA catch-alls and SSO landing pages answer any path with 200 HTML."""

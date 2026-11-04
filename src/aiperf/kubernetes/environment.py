@@ -155,6 +155,18 @@ class _HealthProbeSettings(BaseSettings):
         description="Consecutive startup probe failures before pod is killed. "
         "Total startup time = STARTUP_PERIOD_SECONDS * STARTUP_FAILURE_THRESHOLD",
     )
+    DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS: int = Field(
+        default=3600,
+        ge=60,
+        le=86400,
+        description="Startup time in seconds the dataset-manager container gets when the "
+        "run reads a remote dataset (hf://, s3://, http(s)://): it downloads before its "
+        "health server starts. Its startup probe failure threshold becomes "
+        "ceil(budget / STARTUP_PERIOD_SECONDS), never below STARTUP_FAILURE_THRESHOLD. "
+        "It registers only after the download, so the budget is also added to the "
+        "registration timeout of the controller-pod containers. "
+        "Read by the process that renders the JobSet (the operator, or the CLI in direct mode)",
+    )
 
 
 class _K8sZMQSettings(BaseSettings):

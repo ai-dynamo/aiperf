@@ -18,16 +18,16 @@ Everything downstream depends on how your server reports acceptance, so decide t
 
 | | Per-request | Server scrape |
 |---|---|---|
-| **Where the numbers come from** | `metrics.speculative_decoding` on each response body | The server's Prometheus `/metrics` endpoint, sampled during the run |
-| **Engines** | vLLM only, direct (not behind Dynamo, which strips the field) | vLLM, SGLang, TensorRT-LLM, NIM-LLM |
+| **Where the numbers come from** | Engine-specific acceptance details on each response body | The server's Prometheus `/metrics` endpoint, sampled during the run |
+| **Engines** | vLLM, SGLang v0.5.19+, TensorRT-LLM, direct to the engine | vLLM, SGLang, TensorRT-LLM, NIM-LLM |
 | **Runs needed for the 11-category matrix** | **One** | Eleven (one per category) |
 | **Scope of the numbers** | Exactly the requests AIPerf issued | The whole server for the sampled window |
-| **Extra AIPerf flags** | None | `--server-metrics` (on by default) |
-| **Server setup** | `--per-request-spec-decode-metrics summary` | none |
+| **Extra AIPerf flags** | SGLang: `--extra-inputs return_spec_tokens_details:true` | `--server-metrics` (on by default) |
+| **Server setup** | See [per-request prerequisites](spec-decode-metrics.md#prerequisites) | none |
 
 The per-request path is the better measurement wherever it is available: acceptance is attributed to individual requests rather than inferred from a whole-server counter delta, so nothing another client sends during your run can leak into the result, and you get distributions and a pooled histogram instead of a single ratio. It is also what collapses the eleven-run sweep into one run.
 
-If you are on SGLang or TensorRT-LLM, or your vLLM sits behind Dynamo, skip to [Portable path: server scrape](#portable-path-server-scrape). Everything else on this page - the datasets, the prepare step, the sampling defaults - applies to both paths.
+If your server does not return acceptance details, use [Portable path: server scrape](#portable-path-server-scrape). Everything else on this page - the datasets, the prepare step, the sampling defaults - applies to both paths.
 
 ---
 
@@ -45,6 +45,7 @@ These load all categories combined in a single dataset:
 | `speed_bench_throughput_8k` | 1,536 | ~8K input tokens, all 3 entropy tiers |
 | `speed_bench_throughput_16k` | 1,536 | ~16K input tokens, all 3 entropy tiers |
 | `speed_bench_throughput_32k` | 1,536 | ~32K input tokens, all 3 entropy tiers |
+| `speed_bench_throughput_100k` | 384 | ~100K input tokens, all 3 entropy tiers |
 
 On the per-request path these aggregate splits are the ones you want: every request keeps the category it came from, so one run over `speed_bench_qualitative` still produces a per-category breakdown.
 
@@ -66,9 +67,10 @@ Each of the 11 qualitative domains is also registered separately, for running on
 | `speed_bench_summarization` | Text summarization |
 | `speed_bench_writing` | Creative and technical writing |
 
-### Per-Entropy-Tier Throughput Datasets (512 prompts each)
+### Per-Entropy-Tier Throughput Datasets
 
 Each throughput ISL bucket is also available filtered by entropy tier:
+512 prompts per tier for 1K–32K, and 128 per tier for 100K.
 
 | Pattern | Tiers | Description |
 |---|---|---|
@@ -76,7 +78,7 @@ Each throughput ISL bucket is also available filtered by entropy tier:
 | `speed_bench_throughput_{ISL}_mixed` | Needle-in-a-haystack, exams | Moderate unpredictability |
 | `speed_bench_throughput_{ISL}_high_entropy` | Creative writing, dialogue | Highly unpredictable output |
 
-Where `{ISL}` is one of: `1k`, `2k`, `8k`, `16k`, `32k`.
+Where `{ISL}` is one of: `1k`, `2k`, `8k`, `16k`, `32k`, `100k`.
 
 ---
 
@@ -118,7 +120,7 @@ is only the extracted prompt text, which is far smaller: roughly 2 MB for
 large download is expected, not a sign of a truncated dataset -- AIPerf logs the
 row count and file size when it finishes so you can confirm. The result is
 cached under
-`.cache/aiperf/datasets/speed-bench/<config>.jsonl` and shared by every
+`.cache/aiperf/datasets/speed-bench/v1.1/<config>.jsonl` and shared by every
 category of that config, so only the first run pays for it. Delete the file to
 refetch.
 
@@ -126,6 +128,14 @@ That path is relative to the working directory you launch `aiperf` from, which
 every AIPerf public dataset shares. Running from a different directory resolves
 the config again from scratch, so run from a consistent directory -- or
 pre-stage the file as shown below -- if you want the cache to be reused.
+
+AIPerf vendors the [NeMo-Gym preparation script](https://github.com/NVIDIA-NeMo/Gym/blob/3a9b9eb981ab7a3ea0ebd517cbd4fca1d586768b/benchmarks/speed-bench/prepare.py)
+and pins the SPEED-Bench v1.1 dataset to commit
+`fa4e669bee2a4393c56aa8ed05a7c667897f9590`. The versioned cache directory
+keeps earlier prepared prompts separate; existing unversioned caches are not reused.
+When preparing files with the standalone script, select `--format raw` for
+AIPerf's `messages` JSONL format and `--dataset-revision
+fa4e669bee2a4393c56aa8ed05a7c667897f9590`.
 
 Resolution runs before AIPerf starts its services, so the download is not part
 of any measured run.
@@ -155,10 +165,45 @@ NOTICE: This dataset is governed by the [NVIDIA Evaluation Dataset License Agree
 
 ---
 
+## Using prepared files as custom datasets
+
+Custom loading reads an already prepared JSONL file; it does not download source
+rows or run the preparation script. All existing custom types remain available:
+`speed_bench_qualitative` and `speed_bench_throughput_{ISL}`, where `{ISL}` is
+`1k`, `2k`, `8k`, `16k`, `32k`, or `100k`.
+
+From an AIPerf checkout, prepare a split with the vendored NeMo-Gym script:
+
+```bash
+uv run python -m aiperf.dataset.loader.vendor.speed_bench_prepare \
+    --config throughput_100k \
+    --dataset-revision v1.1 \
+    --format raw \
+    --output-dir ./speed-bench-data
+
+aiperf profile \
+    --input-file ./speed-bench-data/throughput_100k.jsonl \
+    --custom-dataset-type speed_bench_throughput_100k \
+    --model <model> --url <url>
+```
+
+Replace `throughput_100k` in both commands with `qualitative` or another
+throughput split to prepare and load it. Preparation needs the source-dataset
+access described above. Once prepared, the custom loader can read the file
+offline. An explicit custom type also works if you rename the file.
+
+**Use `--format raw`.** This writes JSONL rows with benchmark metadata and a
+`messages` array containing `role` and `content`. Gym's default `--format gym`
+writes `responses_create_params` and `verifier_metadata`, which these custom
+loaders do not accept. Unresolved source rows containing `turns` placeholders
+are not prepared input either.
+
+---
+
 ## Pre-staging the dataset (air-gapped or CI)
 
 Resolution writes a single JSONL per config under
-`.cache/aiperf/datasets/speed-bench/`. To avoid every machine resolving it --
+`.cache/aiperf/datasets/speed-bench/v1.1/`. To avoid every machine resolving it --
 or to run on a host with no internet and no HuggingFace credentials -- resolve
 once somewhere connected and copy the file:
 
@@ -167,8 +212,9 @@ once somewhere connected and copy the file:
 aiperf profile --public-dataset speed_bench_qa --model <model> --url <url>
 
 # then copy the cache to the target machine
-scp .cache/aiperf/datasets/speed-bench/qualitative.jsonl \
-    target:/path/to/workdir/.cache/aiperf/datasets/speed-bench/
+ssh target 'mkdir -p /path/to/workdir/.cache/aiperf/datasets/speed-bench/v1.1'
+scp .cache/aiperf/datasets/speed-bench/v1.1/qualitative.jsonl \
+    target:/path/to/workdir/.cache/aiperf/datasets/speed-bench/v1.1/
 ```
 
 AIPerf uses a cached config as-is, so the target machine needs neither network
@@ -196,6 +242,22 @@ curl -s localhost:8000/v1/chat/completions \
 ```
 
 If that object is absent, the per-request path will silently produce nothing - see [When no acceptance numbers show up](#when-no-acceptance-numbers-show-up).
+
+---
+
+## SGLang per-request acceptance
+
+For SGLang v0.5.19+ with speculative decoding enabled, add
+`--extra-inputs return_spec_tokens_details:true` to the AIPerf commands below.
+In the `speed_bench_per_request` template, set
+`benchmark.endpoint.extra.return_spec_tokens_details: true`.
+The extension works with chat and completions, streaming and non-streaming.
+
+See the [SGLang adapter reference](../reference/spec-decode-acceptance.md#the-sglang-adapter)
+for the counters and formulas. The existing `--source auto` fallback also applies
+to SGLang: records, then summary, then server metrics.
+For older builds, use the `speed_bench_sweep` template with scraping enabled.
+The aggregate template disables scraping and cannot supply the server fallback.
 
 ---
 
@@ -337,7 +399,7 @@ aiperf profile --config speed_bench.yaml
 
 | `--source` | File read | Where the data came from | Columns per run |
 |---|---|---|---|
-| `records` | `profile_export.jsonl` | per-request `metrics.speculative_decoding` on each **response body** | one **per category** |
+| `records` | `profile_export.jsonl` | per-request acceptance details on each **response body** | one **per category** |
 | `summary` | `profile_export_aiperf.json` | the **same per-request data**, reduced by AIPerf to run-level scalars | one |
 | `server` | `server_metrics_export.json` | the engine's **Prometheus counters**, scraped during the run | one |
 
@@ -355,7 +417,7 @@ divided once. Averaging each request's own ratio would weight a 3-step request e
 with a 300-step one and give a different number.
 
 > [!WARNING]
-> **Gauge-based engines are not token-weighted.** SGLang exposes acceptance as a gauge
+> **Scraped gauges are not token-weighted.** SGLang exposes acceptance as a gauge
 > (`sglang:spec_accept_length`), as does TensorRT-LLM, and the report reads those as the
 > unweighted mean of the scrape samples - a time-average, in which an idle interval counts
 > as much as a busy one. The same applies to a vLLM build that publishes
@@ -407,7 +469,7 @@ aiperf profile \
 aiperf speed-bench-report ./artifacts/speed_bench_throughput_1k
 ```
 
-The matrix comes back with `low_entropy`, `mixed`, and `high_entropy` columns. Replace `1k` with `2k`, `8k`, `16k`, or `32k` for other input lengths.
+The matrix comes back with `low_entropy`, `mixed`, and `high_entropy` columns. Replace `1k` with `2k`, `8k`, `16k`, `32k`, or `100k` for other input lengths.
 
 ---
 
@@ -478,7 +540,7 @@ The `accept_rate` and `throughput` metrics work identically.
 
 ## Portable path: server scrape
 
-Use this when the per-request path is unavailable: SGLang, TensorRT-LLM, NIM-LLM containers, or a vLLM behind Dynamo (which strips the custom response field). Acceptance is read from the server's Prometheus endpoint during each run and written to `server_metrics_export.json`; the report computes acceptance length from vLLM's counters (`accepted_tokens / num_drafts + 1`), SGLang's `spec_accept_length` gauge, or a TensorRT-LLM equivalent.
+Use this when the per-request path is unavailable, including older SGLang builds or proxies that strip the custom response field. Acceptance is read from the server's Prometheus endpoint during each run and written to `server_metrics_export.json`; the report computes acceptance length from vLLM's counters (`accepted_tokens / num_drafts + 1`), SGLang's `spec_accept_length` gauge, or a TensorRT-LLM equivalent.
 
 Because the scrape is a whole-server measurement rather than a per-request one, the matrix needs one run per category.
 
