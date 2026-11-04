@@ -19,7 +19,6 @@ from PIL import Image as PILImage
 
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.control_structs import Command
-from aiperf.common.glibc_malloc import trim_heap
 from aiperf.common.enums import (
     CacheBustTarget,
     CommAddress,
@@ -31,6 +30,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import MemoryMapSerializationError
+from aiperf.common.glibc_malloc import trim_heap
 from aiperf.common.hooks import on_command, on_request, on_stop
 from aiperf.common.messages import (
     ConversationRequestMessage,
