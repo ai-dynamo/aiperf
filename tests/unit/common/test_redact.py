@@ -15,6 +15,7 @@ from aiperf.common.redact import (
     _SENSITIVE_HEADER_NAMES,
     REDACTED_VALUE,
     extract_sensitive_headers,
+    is_sensitive_header_name,
     redact_cli_command,
     redact_endpoint_spec,
     redact_headers,
@@ -1651,6 +1652,16 @@ class TestCliCommandRedaction:
                 "sk-json",
                 id="json-object",
             ),
+            param(
+                ["-HX-Acme-Token:sk-attached"],
+                "sk-attached",
+                id="attached-short-form",
+            ),
+            param(
+                ["-HX-Request-Id:42", "Authorization:Bearer sk-after-attached"],
+                "sk-after-attached",
+                id="value-after-attached-short-form",
+            ),
         ],
     )
     def test_header_values_gated_by_is_sensitive_header_name(self, header_args, secret):
@@ -1679,6 +1690,30 @@ class TestCliCommandRedaction:
         assert '"X-Trace":"abc"' in cmd
         assert "sk-json" not in cmd
         assert "'gpt2'" in cmd
+
+    @pytest.mark.parametrize(
+        "header_args",
+        [
+            param(["-HX-Acme-Token:sk-a"], id="attached"),
+            param(["-HX-Request-Id:42", "Authorization:Bearer sk-b"], id="attached-then-more"),
+            param(["-H=X-Acme-Token:sk-c"], id="equals"),
+            param(["--header", "X-Request-Id:42", "X-Tenant-Secret:sk-d"], id="long-multiple"),
+        ],
+    )  # fmt: skip
+    def test_parsed_sensitive_header_values_absent_from_cli_command(self, header_args):
+        """Every header the profile parser binds under a sensitive name must be
+        hidden in cli_command, whichever argv spelling produced it."""
+        from aiperf.cli_commands.profile import app
+
+        argv = ["--model", "gpt2", "--url", "http://localhost:8000", *header_args]
+        _cmd, bound, _ignored = app.parse_args(argv, exit_on_error=False, verbose=False)
+        headers = bound.arguments["cli_config"].headers
+        sensitive = [v for name, v in headers if is_sensitive_header_name(name)]
+        assert sensitive
+
+        cmd = self._build_cli_command(["aiperf", "profile", *argv])
+        for value in sensitive:
+            assert value.split()[-1] not in cmd
 
     def test_authorization_bearer_argv_redacted_in_cli_command(self):
         """Regression: argv with `--header Authorization:Bearer X` must be

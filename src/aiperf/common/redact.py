@@ -398,6 +398,12 @@ def _redact_cli_args(args: list) -> list:
             out.append(REDACTED_VALUE)
             redact_next = False
             continue
+        if isinstance(arg, str) and arg.startswith("-H") and arg[2:3] not in ("", "="):
+            # Cyclopts also accepts the value attached to the short flag
+            # (-HName:Value) and keeps consuming the tokens that follow.
+            in_header_window = True
+            out.append(f"-H{_redact_cli_header_value(arg[2:])}")
+            continue
         if isinstance(arg, str) and arg.startswith("-"):
             flag, eq, inline = arg.partition("=")
             in_header_window = flag in _CLI_HEADER_FLAGS
