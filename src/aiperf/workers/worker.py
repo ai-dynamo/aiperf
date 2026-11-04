@@ -7,6 +7,7 @@ import contextlib
 import os
 import time
 import uuid
+import weakref
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -840,6 +841,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Initialized when DatasetConfiguredNotification is received via factory
         self._dataset_client: DatasetClientStoreProtocol | None = None
         self._dataset_configured_event = asyncio.Event()
+        # One decoded Conversation per conversation_id, alive while any session
+        # on it is: sessions on the same conversation share the message dicts
+        # and content strings (UserSession.advance_turn gives each session
+        # private turn containers for the cache-bust mutations).
+        self._shared_conversations: weakref.WeakValueDictionary[str, Conversation] = (
+            weakref.WeakValueDictionary()
+        )
 
         # Keep initializing workers out of routing and stale-worker eviction.
         # Group-managed workers also poll for missed dataset broadcasts.
@@ -1304,8 +1312,11 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         DatasetDownloadedNotification to open the mmap.
         """
         self.session_manager.set_default_context_mode(msg.metadata.default_context_mode)
-        self._pending_dataset_metadata = msg.metadata
         if self._is_kubernetes:
+            # Only the download path reads the metadata again; locally the full
+            # per-conversation listing (~140 MB per worker on a 9.6k-conversation
+            # dataset) would otherwise stay referenced for the whole run.
+            self._pending_dataset_metadata = msg.metadata
             self.debug(
                 "Kubernetes mode: deferring dataset open until pod-local download"
             )
@@ -2342,10 +2353,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 context_mode=self.session_manager.default_context_mode,
             )
 
-        return await self._retrieve_conversation(
-            conversation_id=conversation_id,
-            credit_context=credit_context,
-        )
+        conversation = self._shared_conversations.get(conversation_id)
+        if conversation is None:
+            conversation = await self._retrieve_conversation(
+                conversation_id=conversation_id,
+                credit_context=credit_context,
+            )
+            self._shared_conversations[conversation_id] = conversation
+        return conversation
 
     async def _request_conversation_from_dataset_manager(
         self, conversation_id: str, credit_context: CreditContext
