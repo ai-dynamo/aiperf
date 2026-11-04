@@ -1697,6 +1697,8 @@ class TestCliCommandRedaction:
             param(["-HX-Acme-Token:sk-a"], id="attached"),
             param(["-HX-Request-Id:42", "Authorization:Bearer sk-b"], id="attached-then-more"),
             param(["-H=X-Acme-Token:sk-c"], id="equals"),
+            param(["-vHX-Acme-Token:sk-e"], id="clustered-attached"),
+            param(["-vH", "X-Acme-Token:sk-f"], id="clustered-separate"),
             param(["--header", "X-Request-Id:42", "X-Tenant-Secret:sk-d"], id="long-multiple"),
         ],
     )  # fmt: skip
