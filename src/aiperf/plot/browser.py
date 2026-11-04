@@ -2,16 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 """Browser guidance for static Plotly exports."""
 
-import platform
-
 from kaleido.errors import BrowserFailedError, ChromeNotFoundError
 
-from aiperf.common.constants import IS_LINUX
+from aiperf.common.constants import IS_LINUX_ARM64
 
 
 def is_linux_arm64() -> bool:
     """Return whether this host is running Linux on ARM64."""
-    return IS_LINUX and platform.machine().lower() in {"aarch64", "arm64"}
+    return IS_LINUX_ARM64
 
 
 def browser_installation_guidance() -> str:

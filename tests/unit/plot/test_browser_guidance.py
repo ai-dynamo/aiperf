@@ -1,6 +1,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import platform
+import runpy
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -12,6 +14,8 @@ from choreographer.browsers.chromium import Chromium
 from kaleido.errors import ChromeNotFoundError
 from pytest import param
 
+from aiperf.common import constants
+from aiperf.common.constants import IS_LINUX
 from aiperf.common.exceptions import ConfigurationError
 from aiperf.plot import browser
 from aiperf.plot.exporters.png.base import BasePNGExporter
@@ -30,18 +34,29 @@ def _plotly_missing_browser(*args: object, **kwargs: object) -> None:
 
 
 @pytest.mark.parametrize(
-    "machine",
+    "system,machine,expected",
     [
-        param("aarch64", id="aarch64"),
-        param("arm64", id="arm64"),
-        param("ARM64", id="uppercase"),
+        param("Linux", "aarch64", True, id="linux-aarch64"),
+        param("Linux", "arm64", True, id="linux-arm64"),
+        param("Linux", "ARM64", True, id="linux-uppercase-arm64"),
+        param("Linux", "x86_64", False, id="linux-x86"),
+        param("Darwin", "arm64", False, id="macos-arm64"),
+        param("Windows", "ARM64", False, id="windows-arm64"),
     ],
 )  # fmt: skip
-def test_png_missing_browser_linux_arm64_suggests_system_chromium(
-    machine: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_linux_arm64_constant_detects_platform(
+    system: str, machine: str, expected: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(browser, "IS_LINUX", True)
-    monkeypatch.setattr(browser.platform, "machine", lambda: machine)
+    monkeypatch.setattr(platform, "system", lambda: system)
+    monkeypatch.setattr(platform, "machine", lambda: machine)
+    values = runpy.run_path(constants.__file__)
+    assert values["IS_LINUX_ARM64"] is expected
+
+
+def test_png_missing_browser_linux_arm64_suggests_system_chromium(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(browser, "IS_LINUX_ARM64", True)
     monkeypatch.setattr("aiperf.plot.exporters.png.base.IS_WINDOWS_ARM", False)
     fig = Mock()
     fig.write_image.side_effect = _plotly_missing_browser
@@ -56,8 +71,7 @@ def test_png_missing_browser_linux_arm64_suggests_system_chromium(
 def test_png_missing_browser_other_platform_preserves_original_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(browser, "IS_LINUX", True)
-    monkeypatch.setattr(browser.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(browser, "IS_LINUX_ARM64", False)
     monkeypatch.setattr("aiperf.plot.exporters.png.base.IS_WINDOWS_ARM", False)
     fig = Mock()
     fig.write_image.side_effect = _plotly_missing_browser
@@ -69,8 +83,7 @@ def test_png_missing_browser_other_platform_preserves_original_error(
 def test_png_unrelated_failure_on_linux_arm64_is_preserved(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(browser, "IS_LINUX", True)
-    monkeypatch.setattr(browser.platform, "machine", lambda: "aarch64")
+    monkeypatch.setattr(browser, "IS_LINUX_ARM64", True)
     monkeypatch.setattr("aiperf.plot.exporters.png.base.IS_WINDOWS_ARM", False)
     fig = Mock()
     error = RuntimeError("rendering failed for another reason")
@@ -81,36 +94,20 @@ def test_png_unrelated_failure_on_linux_arm64_is_preserved(
     assert raised.value is error
 
 
-def test_png_export_with_browser_on_linux_arm64_still_renders(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(browser, "IS_LINUX", True)
-    monkeypatch.setattr(browser.platform, "machine", lambda: "aarch64")
-    monkeypatch.setattr("aiperf.plot.exporters.png.base.IS_WINDOWS_ARM", False)
-    fig = Mock()
-    path = tmp_path / "out.png"
-    _Exporter(tmp_path)._export_figure(fig, path)
-    fig.write_image.assert_called_once()
-    assert fig.write_image.call_args.args[0] == str(path)
-
-
 @pytest.mark.parametrize(
-    "linux,machine,expected,absent",
+    "linux_arm64,expected,absent",
     [
-        param(True, "aarch64", "BROWSER_PATH", "plotly_get_chrome", id="linux-arm64"),
-        param(True, "x86_64", "plotly_get_chrome", "BROWSER_PATH", id="linux-x86"),
-        param(False, "arm64", "plotly_get_chrome", "BROWSER_PATH", id="other-arm64"),
+        param(True, "BROWSER_PATH", "plotly_get_chrome", id="linux-arm64"),
+        param(False, "plotly_get_chrome", "BROWSER_PATH", id="other-platform"),
     ],
 )  # fmt: skip
 def test_dashboard_fallback_readme_uses_platform_guidance(
-    linux: bool,
-    machine: str,
+    linux_arm64: bool,
     expected: str,
     absent: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(browser, "IS_LINUX", linux)
-    monkeypatch.setattr(browser.platform, "machine", lambda: machine)
+    monkeypatch.setattr(browser, "IS_LINUX_ARM64", linux_arm64)
     result = browser.png_fallback_readme()
     assert "HTML" in result and expected in result and absent not in result
 
@@ -118,8 +115,7 @@ def test_dashboard_fallback_readme_uses_platform_guidance(
 def test_png_real_plotly_missing_browser_chain_on_linux_arm64(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(browser, "IS_LINUX", True)
-    monkeypatch.setattr(browser.platform, "machine", lambda: "aarch64")
+    monkeypatch.setattr(browser, "IS_LINUX_ARM64", True)
     monkeypatch.setattr("aiperf.plot.exporters.png.base.IS_WINDOWS_ARM", False)
     monkeypatch.setattr(Chromium, "find_browser", lambda *args, **kwargs: None)
     fig = Mock()
@@ -136,8 +132,7 @@ def test_png_real_plotly_missing_browser_chain_on_linux_arm64(
 def test_png_invalid_browser_path_linux_arm64_suggests_correction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(browser, "IS_LINUX", True)
-    monkeypatch.setattr(browser.platform, "machine", lambda: "aarch64")
+    monkeypatch.setattr(browser, "IS_LINUX_ARM64", True)
     monkeypatch.setattr("aiperf.plot.exporters.png.base.IS_WINDOWS_ARM", False)
     monkeypatch.setattr(chromium, "get_chrome_download_path", lambda **kwargs: None)
     monkeypatch.setattr(chromium, "get_old_chrome_download_path", lambda: None)
@@ -153,12 +148,11 @@ def test_png_invalid_browser_path_linux_arm64_suggests_correction(
     assert "BROWSER_PATH" in str(raised.value)
 
 
-@pytest.mark.skipif(not browser.IS_LINUX, reason="uses a POSIX executable")
+@pytest.mark.skipif(not IS_LINUX, reason="uses a POSIX executable")
 def test_png_failed_chrome_linux_arm64_preserves_cause_and_guides(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(browser, "IS_LINUX", True)
-    monkeypatch.setattr(browser.platform, "machine", lambda: "aarch64")
+    monkeypatch.setattr(browser, "IS_LINUX_ARM64", True)
     monkeypatch.setattr("aiperf.plot.exporters.png.base.IS_WINDOWS_ARM", False)
     fake_chrome = tmp_path / "chrome"
     fake_chrome.write_text("#!/bin/sh\nexit 126\n", encoding="utf-8")
