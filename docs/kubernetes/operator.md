@@ -684,10 +684,11 @@ reason as cancellation: a concurrent heartbeat write must not strand the CR in
 
 ## AIPerfSweep Handling
 
-A sweep runs many benchmark variations. The operator does not expand the sweep
-itself. Instead, it launches a **sweep-controller pod**, which creates one child
-`AIPerfJob` per (variation, trial) and runs the same `MultiRunOrchestrator` used
-by in-process sweeps. The user-facing guide is
+A sweep runs many benchmark variations. The operator expands a non-adaptive
+sweep only to count and cap its variations (`totalVariations`); it does not
+create child jobs itself. Instead, it launches a **sweep-controller pod**,
+which creates one child `AIPerfJob` per (variation, trial) and runs the same
+`MultiRunOrchestrator` used by in-process sweeps. The user-facing guide is
 [Running Sweeps on Kubernetes](../tutorials/sweeps.md#running-sweeps-on-kubernetes);
 for Bayesian optimization see [Adaptive Search on Kubernetes](adaptive-search.md).
 
