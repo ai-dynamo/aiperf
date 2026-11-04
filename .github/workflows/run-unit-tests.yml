@@ -49,7 +49,10 @@ jobs:
             "windows": "windows-latest",
             "windows-arm": "windows-11-arm",
         }
-        pr_subset = [("linux", "3.13"), ("macos", "3.12"), ("windows", "3.11")]
+        # Both matrices include this leg, so PR heads and their Codecov base
+        # are measured on the same interpreter.
+        coverage_leg = ("linux", "3.13")
+        pr_subset = [coverage_leg, ("macos", "3.12"), ("windows", "3.11")]
         full = not os.environ["REF"].startswith("refs/heads/pull-request/")
         legs = (
             [(o, py) for o in runners for py in ("3.11", "3.12", "3.13")]
@@ -58,7 +61,13 @@ jobs:
         )
         matrix = {
             "include": [
-                {"os": o, "python-version": py, "runner": runners[o]} for o, py in legs
+                {
+                    "os": o,
+                    "python-version": py,
+                    "runner": runners[o],
+                    "coverage": (o, py) == coverage_leg,
+                }
+                for o, py in legs
             ]
         }
         print(json.dumps(matrix, indent=2))
@@ -152,8 +161,8 @@ jobs:
         # builder pod. -n auto without this OOM-kills the runner agent.
         PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
       run: |
-        # Only collect coverage on the linux/3.12 leg where Codecov upload runs.
-        COV=${{ (matrix.os == 'linux' && matrix.python-version == '3.12') && '1' || '0' }}
+        # Only collect coverage on the leg where Codecov upload runs.
+        COV=${{ matrix.coverage && '1' || '0' }}
         make test-ci PYTHON_VERSION=${{ matrix.python-version }} COV=$COV
     # Mirrors POSIX ``make test-ci`` semantics: run BOTH tiers and
     # aggregate exit codes so unit-test failures don't mask component-
@@ -188,7 +197,7 @@ jobs:
       run: |
         uv run pytest tests/component_integration -n logical --dist=worksteal --tb=short -v -m 'not performance and not stress and not slow'
     - name: Upload results to Codecov
-      if: matrix.os == 'linux' && matrix.python-version == '3.12'
+      if: matrix.coverage
       uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
