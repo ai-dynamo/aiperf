@@ -136,10 +136,18 @@ def _supports_kwarg(obj: object, method_name: str, kwarg: str) -> bool:
         return False
 
 
+_OFFLINE_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
 def _is_offline_mode() -> bool:
-    """Check if HuggingFace offline mode is enabled via environment variables."""
-    return bool(os.environ.get("HF_HUB_OFFLINE", "")) or bool(
-        os.environ.get("TRANSFORMERS_OFFLINE", "")
+    """Check if HuggingFace offline mode is enabled via environment variables.
+
+    Parsed like HuggingFace does: ``0``/``false``/``no``/``off`` (or empty) mean
+    online, so ``HF_HUB_OFFLINE=0`` does not force offline mode.
+    """
+    return any(
+        os.environ.get(name, "").strip().lower() in _OFFLINE_TRUTHY
+        for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
     )
 
 

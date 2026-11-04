@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aiperf.common.tokenizer import Tokenizer
+from aiperf.common.tokenizer import Tokenizer, _is_offline_mode
 
 
 def _create_mock_response(status_code: int = 404) -> MagicMock:
@@ -222,6 +222,23 @@ class TestTokenizerAliasResolution:
         assert result.resolved_name == "bert-base-uncased"
         mock_model_info.assert_not_called()
         mock_list_models.assert_not_called()
+
+    @pytest.mark.parametrize("var", ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"])
+    @pytest.mark.parametrize("value", ["0", "false", "False", "no", "off", ""])
+    def test_resolve_alias_ignores_falsey_offline_env(
+        self, mock_model_info, mock_list_models, monkeypatch, var, value
+    ):
+        """``HF_HUB_OFFLINE=0`` (or false/no/off) must not force offline mode."""
+        monkeypatch.setenv(var, value)
+        assert _is_offline_mode() is False
+
+    @pytest.mark.parametrize("var", ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"])
+    @pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on", " 1 "])
+    def test_resolve_alias_honors_truthy_offline_env(
+        self, mock_model_info, mock_list_models, monkeypatch, var, value
+    ):
+        monkeypatch.setenv(var, value)
+        assert _is_offline_mode() is True
 
     def test_resolve_alias_skips_in_transformers_offline_mode(
         self, mock_model_info, mock_list_models, monkeypatch
