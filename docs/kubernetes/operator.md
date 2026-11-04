@@ -11,8 +11,8 @@ controller that turns `AIPerfJob` and `AIPerfSweep` custom resources into
 running benchmarks, watches them, collects their results onto a persistent
 volume, and serves those results over HTTP. This page explains how the operator
 works: what it creates, which phases and conditions it writes, how it detects
-failures, how completion and result harvesting are made exactly-once, and every
-knob that tunes that behavior.
+failures, how completion is claimed exactly once and orphaned harvests are
+recovered, and every knob that tunes that behavior.
 
 If you only want to run a benchmark, start with
 [Getting Started on Kubernetes](getting-started.md). For CR field syntax see the
@@ -547,8 +547,12 @@ path the handler clears its pending kopf patch. A stale patch would otherwise
 
 ## Completion and Result Harvesting
 
-Completion must happen exactly once, even with operator restarts, multiple
-detection paths, and user-editable annotations.
+The completion claim is acquired exactly once, even with operator restarts,
+multiple detection paths, and user-editable annotations: an atomic JSON-patch
+`test` op decides the winner. Harvesting under that claim is not exactly-once.
+`handle_completion` is not idempotent, and orphan-claim recovery re-runs it
+whenever a claim exists without a terminal phase and the benchmark appears
+complete, without checking whether the original handler is still draining.
 
 ![An eight-step sequence across four lanes. The controller pod signals completion through an annotation, the API server delivers the watch event, and the operator claims completion with an atomic JSON patch. Only the claim winner downloads the result files, writes and validates them on the results volume, publishes the run, finalizes the AIPerfJob status, and releases the controller.](../diagrams/operator/operator-completion.svg)
 
