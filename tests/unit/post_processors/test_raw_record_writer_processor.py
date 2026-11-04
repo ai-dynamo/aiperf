@@ -1,11 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import base64
+
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
-from aiperf.common.models import ParsedResponseRecord
+from aiperf.common.models import BinaryResponse, ParsedResponseRecord
 from aiperf.common.models.record_models import RawRecordInfo
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.flags.cli_config import CLIConfig
@@ -208,6 +211,52 @@ class TestRawRecordWriterProcessorProcessRecord:
 
 class TestRawRecordWriterProcessorFileFormat:
     """Test RawRecordWriterProcessor file format."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "payload_bytes",
+        [param(b'{"prompt":"test"}', id="fragment"), param(None, id="fallback")],
+    )  # fmt: skip
+    async def test_binary_response_jsonl_roundtrip_preserves_bytes(
+        self,
+        run_raw: BenchmarkRun,
+        sample_parsed_record: ParsedResponseRecord,
+        payload_bytes: bytes | None,
+    ) -> None:
+        """Both raw writer paths preserve binary bodies through JSONL readers."""
+        body = bytes(range(256))
+        sample_parsed_record.request.responses = [
+            BinaryResponse(123, body, "application/octet-stream")
+        ]
+        sample_parsed_record.request.request_info.payload_bytes = payload_bytes
+        async with raw_record_processor("binary-worker", run_raw) as processor:
+            await processor.observe(
+                RecordObserverContext(
+                    record=sample_parsed_record,
+                    metadata=create_metric_metadata(),
+                    produced={},
+                )
+            )
+
+        assert processor.dropped_record_count == 0
+        lines = processor.output_file.read_bytes().splitlines()
+        assert len(lines) == 1
+        dumped = orjson.loads(lines[0])
+        assert dumped["responses"][0]["raw_bytes"] == (
+            base64.urlsafe_b64encode(body).decode("ascii")
+        )
+        assert dumped.get("payload") == (
+            orjson.loads(payload_bytes) if payload_bytes is not None else None
+        )
+        for restored in (
+            RawRecordInfo.model_validate_json(lines[0]),
+            RawRecordInfo.model_validate(dumped),
+        ):
+            response = restored.responses[0]
+            assert isinstance(response, BinaryResponse)
+            assert response.raw_bytes == body
+            assert response.perf_ns == 123
+            assert response.content_type == "application/octet-stream"
 
     @pytest.mark.asyncio
     async def test_output_is_valid_jsonl_and_record_structure(

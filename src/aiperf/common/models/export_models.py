@@ -292,8 +292,8 @@ class JsonExportData(AIPerfBaseModel):
     #       but we are setting it here to guard against base model changes.
     model_config = ConfigDict(extra="allow")
 
-    # Increment on breaking changes to the export structure
-    SCHEMA_VERSION: ClassVar[str] = "1.4"
+    # Increment when the export structure changes.
+    SCHEMA_VERSION: ClassVar[str] = "1.7"
 
     schema_version: str | None = Field(
         default=None,
@@ -315,6 +315,18 @@ class JsonExportData(AIPerfBaseModel):
     inter_token_latency: JsonMetricResult | None = None
     output_token_throughput: JsonMetricResult | None = None
     output_token_throughput_per_user: JsonMetricResult | None = None
+    full_decode_duration: JsonMetricResult | None = Field(
+        default=None,
+        description="Client-observed duration from first parsed content through full request completion.",
+    )
+    full_response_inter_token_latency: JsonMetricResult | None = Field(
+        default=None,
+        description="Average token interval from first parsed content through full request completion.",
+    )
+    full_response_output_token_throughput_per_user: JsonMetricResult | None = Field(
+        default=None,
+        description="Per-request output token rate over the full decode duration.",
+    )
     output_sequence_length: JsonMetricResult | None = None
     input_sequence_length: JsonMetricResult | None = None
     goodput: JsonMetricResult | None = None
@@ -336,6 +348,16 @@ class JsonExportData(AIPerfBaseModel):
     input_config: BenchmarkConfig | None = None
     run_info: RunInfo | None = None
     was_cancelled: bool | None = None
+    runtime_submission_invalid_reasons: list[str] = Field(
+        default_factory=list,
+        description="Runtime reason tags that invalidate this run's scenario "
+        "submission (e.g. context-overflow rate exceeded), sourced from "
+        "ProfileResults.runtime_submission_invalid_reasons. Surfaced at the "
+        "top level (distinct from ``metadata.submission_invalid_reasons``, "
+        "which already merges these in) so multi-run aggregation can read "
+        "them back out of each run's export file without re-deriving the "
+        "merged verdict.",
+    )
     is_complete: bool | None = Field(
         default=None,
         description=(
@@ -348,6 +370,12 @@ class JsonExportData(AIPerfBaseModel):
         default=None,
         description="Human-readable cause when is_complete is False, else None.",
     )
+    server_metrics_error_summary: list[ErrorDetailsCount] | None = Field(
+        default=None,
+        description="Server-metrics collection failures, independent of inference "
+        "request errors. Present when collection reports errors or its container "
+        "restarted; completed inference measurements remain available.",
+    )
     error_summary: list[ErrorDetailsCount] | None = None
     start_time: datetime | None = None
     end_time: datetime | None = None
@@ -358,6 +386,21 @@ class JsonExportData(AIPerfBaseModel):
             "errored/truncated, parents suspended/resumed). Present only on "
             "DAG-shaped runs; absent for non-DAG benchmarks."
         ),
+    )
+    conversations_ended_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Conversation sessions ended early because a turn was truncated "
+        "by the output-token cap; a conversation replayed to fill --request-count "
+        "counts once per replay (end_conversation_on_truncation). Absent when "
+        "the option is off.",
+    )
+    turns_skipped_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Turns never sent because their conversation ended early on "
+        "a truncated turn, excluding turns the run's stop condition would not "
+        "have sent anyway. Absent when end_conversation_on_truncation is off.",
     )
     warmup_metrics: dict[str, JsonMetricResult] | None = Field(
         default=None,

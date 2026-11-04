@@ -10,8 +10,10 @@ import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
+from aiperf.credit.dispatch import ChildDispatchResult, TurnAdmission
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
@@ -253,6 +255,94 @@ class TestBasicCreditIssuance:
 
         assert result is False
 
+    async def test_turn_admission_refusal_releases_acquired_slots(
+        self, credit_issuer, mock_concurrency, mock_progress, mock_router
+    ):
+        """A quota refusal happens after acquisition and must release both slots."""
+        credit_issuer.set_turn_admission(lambda _turn: False)
+
+        result = await credit_issuer.issue_credit(make_turn())
+
+        assert result is False
+        mock_concurrency.release_prefill_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.release_session_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_progress.increment_sent.assert_not_called()
+        mock_router.send_credit.assert_not_called()
+
+    async def test_turn_admission_defer_degrades_to_false_on_blocking_path(
+        self, credit_issuer, mock_concurrency, mock_progress, mock_router
+    ):
+        """DEFER on the blocking issue_credit() path must degrade to False,
+        not raise or hang - the caller (e.g. AgenticReplayStrategy) is
+        responsible for tracking its own retry state before returning DEFER."""
+        credit_issuer.set_turn_admission(lambda _turn: TurnAdmission.DEFER)
+
+        result = await credit_issuer.issue_credit(make_turn())
+
+        assert result is False
+        mock_concurrency.release_prefill_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.release_session_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_progress.increment_sent.assert_not_called()
+        mock_router.send_credit.assert_not_called()
+
+    async def test_child_turn_admission_refusal_releases_prefill_slot(
+        self, credit_issuer, mock_concurrency, mock_progress, mock_router
+    ):
+        """DAG children share the same quota gate without owning a session slot."""
+        credit_issuer.set_turn_admission(lambda _turn: False)
+        child = TurnToSend(
+            conversation_id="child",
+            x_correlation_id="child-corr",
+            turn_index=0,
+            num_turns=1,
+            agent_depth=1,
+            parent_correlation_id="parent-corr",
+            root_correlation_id="root-corr",
+        )
+
+        result = await credit_issuer.dispatch_child_turn(child)
+
+        assert result is ChildDispatchResult.REJECTED
+        mock_concurrency.release_prefill_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.release_session_slot.assert_not_called()
+        mock_progress.increment_sent.assert_not_called()
+        mock_router.send_credit.assert_not_called()
+
+    async def test_child_turn_phase_deferral_preserves_distinct_result(
+        self, credit_issuer, mock_concurrency, mock_progress, mock_router
+    ):
+        """A handoff deferral is not collapsed into a terminal child rejection."""
+        credit_issuer.set_turn_admission(lambda _turn: TurnAdmission.DEFER)
+        child = TurnToSend(
+            conversation_id="child",
+            x_correlation_id="child-corr",
+            turn_index=0,
+            num_turns=1,
+            agent_depth=1,
+            parent_correlation_id="parent-corr",
+            root_correlation_id="root-corr",
+        )
+
+        result = await credit_issuer.dispatch_child_turn(child)
+
+        assert result is ChildDispatchResult.DEFERRED
+        mock_concurrency.release_prefill_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.release_session_slot.assert_not_called()
+        mock_progress.increment_sent.assert_not_called()
+        mock_router.send_credit.assert_not_called()
+
 
 # =============================================================================
 # Test: Slot Acquisition Failures
@@ -437,6 +527,35 @@ class TestStopConditionChecking:
         call_args = mock_concurrency.acquire_prefill_slot.call_args
         check_fn = call_args[0][1]  # Second positional arg is the check function
         assert check_fn == mock_stop_checker.can_send_any_turn
+
+    @pytest.mark.parametrize(
+        "depth,any_turn,child_turn,expected",
+        [
+            param(0, True, False, True, id="top_level_open"),
+            param(0, False, True, False, id="top_level_sending_complete"),
+            param(1, False, True, True, id="nested_after_conversation_cap"),
+            param(1, True, False, False, id="nested_duration_or_request_cap"),
+        ],
+    )  # fmt: skip
+    def test_can_dispatch_join_uses_depth_appropriate_check(
+        self, credit_issuer, mock_stop_checker, depth, any_turn, child_turn, expected
+    ):
+        mock_stop_checker.can_send_any_turn.return_value = any_turn
+        mock_stop_checker.can_send_child_turn.return_value = child_turn
+
+        assert credit_issuer.can_dispatch_join(depth) is expected
+
+    def test_can_dispatch_join_and_child_turn_false_after_stop_issuing(
+        self, credit_issuer, mock_stop_checker
+    ):
+        mock_stop_checker.can_send_any_turn.return_value = True
+        mock_stop_checker.can_send_child_turn.return_value = True
+
+        credit_issuer.stop_issuing()
+
+        assert credit_issuer.can_dispatch_join(0) is False
+        assert credit_issuer.can_dispatch_join(1) is False
+        assert credit_issuer.can_dispatch_child_turn() is False
 
 
 # =============================================================================
@@ -923,6 +1042,21 @@ class TestDispatchJoinTurnNoRequest:
 
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
         assert sent_credit.no_request is False
+
+    async def test_dispatch_join_turn_admission_defer_preserves_distinct_result(
+        self, credit_issuer, mock_concurrency, mock_progress, mock_router
+    ):
+        """A warmup handoff deferral must not become an issued join."""
+        credit_issuer.set_turn_admission(lambda _turn: TurnAdmission.DEFER)
+
+        result = await credit_issuer.dispatch_join_turn(self._pending(no_request=False))
+
+        assert result is ChildDispatchResult.DEFERRED
+        mock_concurrency.release_prefill_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_progress.increment_sent.assert_not_called()
+        mock_router.send_credit.assert_not_called()
 
 
 # =============================================================================

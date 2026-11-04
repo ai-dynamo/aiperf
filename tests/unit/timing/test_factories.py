@@ -65,7 +65,7 @@ class MockLifecycle:
 class MockSched:
     tasks: list = field(default_factory=list)
 
-    def schedule_later(self, delay: float, coro) -> None:
+    def schedule_later(self, delay: float, coro, **_kwargs) -> None:
         self.tasks.append((delay, coro))
 
     def cancel_all(self) -> None:

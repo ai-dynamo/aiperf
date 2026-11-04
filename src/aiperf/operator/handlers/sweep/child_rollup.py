@@ -9,6 +9,7 @@ rollup counts. Standalone AIPerfJobs are no-ops.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from aiperf.kubernetes.constants import (
@@ -57,8 +58,8 @@ __all__ = ["on_child_phase_transition"]
 
 async def on_child_phase_transition(
     *,
-    body: dict[str, Any],
-    status: dict[str, Any],
+    body: Mapping[str, Any],
+    status: Mapping[str, Any],
     name: str,
     namespace: str,
     **_: Any,
@@ -338,7 +339,7 @@ async def _advance_parent_phase_if_complete(
     )
 
 
-def _find_sweep_owner(child_body: dict[str, Any]) -> tuple[str, str] | None:
+def _find_sweep_owner(child_body: Mapping[str, Any]) -> tuple[str, str] | None:
     refs = (child_body.get("metadata") or {}).get("ownerReferences") or []
     for ref in refs:
         if (

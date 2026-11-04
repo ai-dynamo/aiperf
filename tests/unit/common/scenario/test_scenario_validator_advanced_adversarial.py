@@ -125,8 +125,8 @@ def test_ignore_eos_falsy_string_zero_violates() -> None:
     assert any(v.flag == "extra_inputs.ignore_eos" for v in exc_info.value.violations)
 
 
-def test_trace_idle_gap_cap_explicit_old_default_is_forbidden() -> None:
-    """Even the old 10-second value now violates faithful trace timing."""
+def test_trace_idle_gap_cap_explicit_old_default_is_allowed() -> None:
+    """The prior 10-second per-trace cap remains a valid explicit choice."""
     run = _build_run(
         streaming=True,
         extra={"ignore_eos": True},
@@ -137,11 +137,10 @@ def test_trace_idle_gap_cap_explicit_old_default_is_forbidden() -> None:
             "trace_idle_gap_cap_seconds": 10.0,
         },
     )
-    with pytest.raises(ScenarioLockError) as exc_info:
-        apply_scenario(run)
-    assert any(
-        v.flag == "--trace-idle-gap-cap-seconds" for v in exc_info.value.violations
-    )
+    outcome = apply_scenario(run)
+    assert outcome.violations == []
+    assert outcome.submission_valid is True
+    assert run.cfg.get_default_dataset().trace_idle_gap_cap_seconds == 10.0
 
 
 def test_unsafe_override_with_no_violations_returns_submission_valid_true() -> None:
@@ -197,3 +196,23 @@ def test_benchmark_duration_none_auto_fills_scenario_default() -> None:
     outcome = apply_scenario(run)
     assert outcome.violations == []
     assert run.cfg.get_profiling_phases()[0].duration == 1800.0
+
+
+def test_benchmark_duration_auto_fill_applies_default_grace_period() -> None:
+    """An auto-filled duration gets the CLI's default grace so in-flight requests drain."""
+    run = _build_run(streaming=True, extra={"ignore_eos": True})
+    phase = run.cfg.get_profiling_phases()[0]
+    phase.duration = None
+    phase.grace_period = None
+    apply_scenario(run)
+    assert phase.grace_period == 30.0
+
+
+def test_benchmark_duration_auto_fill_keeps_explicit_grace_period() -> None:
+    """An explicit grace period survives the duration auto-fill."""
+    run = _build_run(streaming=True, extra={"ignore_eos": True})
+    phase = run.cfg.get_profiling_phases()[0]
+    phase.duration = None
+    phase.grace_period = 120.0
+    apply_scenario(run)
+    assert phase.grace_period == 120.0

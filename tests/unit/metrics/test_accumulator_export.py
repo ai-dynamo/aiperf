@@ -23,4 +23,6 @@ async def test_cancelled_export_does_not_offload_live_column_store_read() -> Non
         assert await accumulator.export_results(context) is expected
 
     to_thread.assert_not_awaited()
-    accumulator._summarize_for_export_context.assert_called_once_with(context)
+    accumulator._summarize_for_export_context.assert_called_once_with(
+        context, include_timeslices=True
+    )

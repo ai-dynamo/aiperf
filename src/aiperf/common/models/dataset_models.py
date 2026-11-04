@@ -678,6 +678,20 @@ class DatasetMetadata(AIPerfBaseModel):
             return 0
         return self.total_turn_count / len(self.conversations)
 
+    @cached_property
+    def sampleable_conversation_ids(self) -> list[str]:
+        """Conversations the dataset sampler draws sessions from.
+
+        Only roots are sampled: DAG fork/spawn children belong to their root's
+        session and are dispatched by the BranchOrchestrator. Filters on
+        ``is_root`` rather than ``agent_depth == 0`` so SPAWN-mode children
+        (which keep ``agent_depth == 0`` for fresh-context semantics but carry
+        ``is_root=False``) are also excluded. Falls back to every conversation
+        when none is marked root.
+        """
+        roots = [c.conversation_id for c in self.conversations if c.is_root]
+        return roots or [c.conversation_id for c in self.conversations]
+
 
 class Conversation(AIPerfBaseModel):
     """A dataset representation of a full conversation.

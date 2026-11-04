@@ -49,11 +49,13 @@ from aiperf.common.messages.dataset_messages import (
 )
 from aiperf.common.mixins import ProcessHealthMixin
 from aiperf.common.models import (
+    AwsEventStreamMessage,
     Conversation,
     DatasetClientMetadata,
     DatasetMetadata,
     ErrorDetails,
     ExitErrorInfo,
+    Image,
     MemoryMapClientMetadata,
     ModelEndpointInfo,
     ParsedResponse,
@@ -86,6 +88,7 @@ from aiperf.common.scenario.context_overflow import is_context_overflow_response
 from aiperf.config.adaptive_scale_phase import (
     sla_filters_require_first_token_observation,
 )
+from aiperf.config.dataset.truncation import end_conversation_on_truncation_enabled
 from aiperf.credit.messages import (
     CancelCredits,
     CreditReturn,
@@ -105,6 +108,7 @@ from aiperf.dataset.protocols import DatasetClientStoreProtocol
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType
 from aiperf.records.payload_retention import resolve_strip_record_payload_bytes
+from aiperf.timing.strategies.cache_bust import rid_digest
 from aiperf.workers.clock_offset_tracker import ClockOffsetTracker
 from aiperf.workers.inference_client import InferenceClient
 from aiperf.workers.return_channel_probe import probe_return_channel
@@ -292,10 +296,14 @@ def _find_effective_raw_system(turn_list: list[Turn]) -> list[dict] | None:
 
     Mirrors ``base_endpoint._latest_turn_attr``: walks ``turn_list`` from the
     end and returns the first non-None ``raw_system``. Only ``MessagesEndpoint``
-    reads this field, and there it OUTRANKS both the conversation-level
-    ``system_message`` string and any system-role ``raw_messages`` entry — so a
-    ``SYSTEM_*`` marker written to either of those would be silently dropped
-    from the wire whenever a turn carries ``raw_system``.
+    reads this field, and there it outranks any system-role ``raw_messages``
+    entry — so a ``SYSTEM_*`` marker written to ``raw_messages`` would be
+    silently dropped from the wire whenever a turn carries ``raw_system``.
+
+    It does NOT outrank a conversation-level ``system_message``: that is
+    prepended as ``system`` block 0, ahead of these blocks. Callers marking
+    the front of the system section must therefore prefer ``system_message``
+    when both are present; callers marking the tail must prefer these blocks.
     """
     for turn in reversed(turn_list):
         if turn.raw_system is not None:
@@ -417,17 +425,76 @@ def _inject_marker_at_first_user(
         _inject_marker_into_first_user_text(user_turn, marker, is_prefix=is_prefix)
 
 
+def _suffix_media_uuids(turn_list: list[Turn], digest: str) -> None:
+    """Append ``-<digest>`` to every media ``uuid`` in ``turn_list``.
+
+    vLLM keys its multimodal processor and encoder caches (and the media part
+    of its prefix-cache block hashes) on a content part's ``uuid`` when the
+    request carries one, so the text marker alone leaves a replayed trajectory
+    free to reuse the media entries its earlier play filled. The digest is
+    constant per trajectory, so all of a session's turns send the same uuid for
+    the same media and keep reusing each other's entries. Covers OpenAI content
+    parts in ``raw_messages`` (any role, any media type) and ``Image.uuids``.
+
+    Message, part and ``Image`` objects are replaced, never edited, like the
+    marker injection helpers. A turn's list is rewritten only when one of its
+    items changes, so already-suffixed turns are not written to. Idempotent.
+    """
+    suffix = f"-{digest}"
+    for turn in turn_list:
+        if turn.raw_messages:
+            messages = [_suffix_message_uuids(m, suffix) for m in turn.raw_messages]
+            if _any_replaced(messages, turn.raw_messages):
+                turn.raw_messages[:] = messages
+        if turn.images:
+            images = [_suffix_image_uuids(image, suffix) for image in turn.images]
+            if _any_replaced(images, turn.images):
+                turn.images[:] = images
+
+
+def _any_replaced(new: list, old: list) -> bool:
+    return any(item is not before for item, before in zip(new, old, strict=True))
+
+
+def _suffix_message_uuids(message: dict, suffix: str) -> dict:
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return message
+    parts = [_suffix_part_uuid(part, suffix) for part in content]
+    if not _any_replaced(parts, content):
+        return message
+    return {**message, "content": parts}
+
+
+def _suffix_part_uuid(part: object, suffix: str) -> object:
+    uuid = part.get("uuid") if isinstance(part, dict) else None
+    if not isinstance(uuid, str) or not uuid or uuid.endswith(suffix):
+        return part
+    return {**part, "uuid": uuid + suffix}
+
+
+def _suffix_image_uuids(image: Image, suffix: str) -> Image:
+    if all(uuid.endswith(suffix) for uuid in image.uuids):
+        return image
+    uuids = [uuid if uuid.endswith(suffix) else uuid + suffix for uuid in image.uuids]
+    return image.model_copy(update={"uuids": uuids})
+
+
 def _apply_cache_bust(
     session: UserSession,
     credit: Credit,
     system_message: str | None,
+    *,
+    media_uuids: bool = False,
 ) -> str | None:
     """Dispatch cache-bust marker injection for a single credit.
 
     Mutates the appropriate turn's ``raw_messages`` (or ``texts``) in-place
     when the marker attaches to the trace's pre-rendered messages. Returns
     the (possibly modified) ``system_message`` string for the caller to
-    forward into request building.
+    forward into request building. With ``media_uuids``, also suffixes the
+    media uuids of the wire prefix with the marker's digest
+    (:func:`_suffix_media_uuids`).
 
     The system / first-user lookups walk ``turn_list`` forward rather than
     indexing ``[-1]``, so this works under both ``MESSAGE_ARRAY_WITH_RESPONSES``
@@ -452,13 +519,21 @@ def _apply_cache_bust(
     if not marker or target == CacheBustTarget.NONE:
         return system_message
 
+    prefix_turns = _effective_prefix_turns(session)
+    # Before the FORK return below: the marker belongs to the trajectory tree,
+    # so a FORK child suffixes with its parent's digest. The inherited parent
+    # turns already carry it and are left as they are; media in the child's
+    # own turns gets it too.
+    if media_uuids and (digest := rid_digest(marker)):
+        _suffix_media_uuids(prefix_turns, digest)
+
     # FORK children share the parent's KV cache by design: they seed turn_list
     # from the parent (the SAME Turn objects) and must send the parent's exact
     # prefix to hit its cache. The parent already injected its marker into those
     # shared turns, so the child inherits it for free — re-busting here would
     # diverge the child's prefix from the parent's (cache miss) AND mutate the
-    # parent's shared, read-only Turn objects (stacking markers). So cache-bust
-    # is a no-op for FORK children. SPAWN children start fresh (no shared turns)
+    # parent's shared, read-only Turn objects (stacking markers). So the marker
+    # is not injected for FORK children. SPAWN children start fresh (no shared turns)
     # and root sessions own their prefix, so both are busted normally.
     if (
         session.parent_correlation_id is not None
@@ -472,7 +547,6 @@ def _apply_cache_bust(
         CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
         CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
     )
-    prefix_turns = _effective_prefix_turns(session)
 
     if target in (
         CacheBustTarget.SYSTEM_PREFIX,
@@ -511,14 +585,28 @@ def _apply_system_target_cache_bust(
     :func:`_effective_prefix_turns`). Four sub-paths, ordered to match how the
     endpoint resolves the system field on the wire — marking a lower-precedence
     carrier would leave the bytes that actually ship unchanged:
-      1. ``raw_system`` present on any turn: it outranks both ``system_message``
-         and system-role ``raw_messages`` in ``MessagesEndpoint``, so the marker
-         goes there. Resolved over ``all_turns`` (not the prefix slice) because
-         ``_latest_turn_attr`` ignores ``reset_context``.
-      2. Conversation-level ``system_message`` present: marker applied every
+      1. Conversation-level ``system_message`` present: marker applied every
          turn (string mutation re-applied per credit). Unaffected by
          ``reset_context`` — the ``system_message`` rides on ``RequestInfo`` and
          is re-emitted every turn independent of ``build_messages``' reset.
+         Checked first for prefix targets because every system-aware endpoint
+         places it at or ahead of the other carriers: ``MessagesEndpoint``
+         makes it ``system`` block 0 in front of ``raw_system``, and
+         ``ChatEndpoint`` merges it into the front of a leading system
+         ``raw_messages`` entry. Marking a later carrier would leave a constant
+         leading block the server can still prefix-hit on, which is exactly
+         what ``SYSTEM_PREFIX`` must prevent.
+         For ``SYSTEM_SUFFIX`` the same wire order means ``system_message`` is
+         the tail only when no ``raw_system`` follows it: ``MessagesEndpoint``
+         ships ``[system_message, *raw_system]``, so a marker appended to
+         ``system_message`` would sit ahead of constant trailing blocks and
+         the shared bytes the suffix contract keeps cacheable would land after
+         it. Suffix therefore defers to step 2 when ``raw_system`` is present.
+      2. ``raw_system`` present on any turn (and either no ``system_message``
+         or a suffix target): it outranks system-role ``raw_messages`` in
+         ``MessagesEndpoint``, so the marker goes there. Resolved over
+         ``all_turns`` (not the prefix slice) because ``_latest_turn_attr``
+         ignores ``reset_context``.
       3. ``raw_messages`` first dict has ``role=="system"``: marker injected
          into the first system message of the prefix slice.
       4. No system anywhere -> first-user-turn fallback: marker injected
@@ -529,11 +617,11 @@ def _apply_system_target_cache_bust(
     Returns the (possibly modified) ``system_message``.
     """
     raw_system_blocks = _find_effective_raw_system(all_turns)
+    if system_message is not None and (is_prefix or raw_system_blocks is None):
+        return _apply_cache_bust_to_system_message(system_message, marker, target)
     if raw_system_blocks is not None:
         _inject_marker_into_raw_system(raw_system_blocks, marker, is_prefix=is_prefix)
         return system_message
-    if system_message is not None:
-        return _apply_cache_bust_to_system_message(system_message, marker, target)
     raw_system = _find_first_system_message(prefix_turns)
     if raw_system is not None:
         _inject_marker_into_raw_messages(raw_system, marker, is_prefix=is_prefix)
@@ -622,6 +710,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     - Final turn: Process and evict from cache
     - StickyCreditRouter ensures all turns route to same worker for cache hits
     """
+
+    reports_startup_failure = True
 
     def __init__(
         self,
@@ -780,6 +870,13 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # One-shot warning gate so cache-bust diagnostics don't spam logs at
         # high concurrency — the misconfiguration is the same for every credit.
         self._cache_bust_warning_shown: bool = False
+        self._cache_bust_media_uuids_enabled: bool = (
+            self.run.cfg.is_cache_bust_media_uuids_enabled()
+        )
+
+        self._end_conversation_on_truncation: bool = (
+            end_conversation_on_truncation_enabled(self.run.cfg.get_default_dataset())
+        )
 
         # Only used as a fallback when dataset client is not initialized
         # or was not available when the credit was dropped. Must be created here
@@ -1285,10 +1382,17 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         await self.publish(self.create_health_message(health))
 
     def create_health_message(self, health: ProcessHealth) -> WorkerHealthMessage:
+        # getattr: plugin transports written before this counter existed may
+        # lack it, and a raise here would stop health reports for the run.
+        stream_chunks = getattr(
+            self.inference_client.transport, "stream_chunks_received", 0
+        )
         return WorkerHealthMessage(
             service_id=self.service_id,
             health=health,
-            task_stats=self.task_stats,
+            task_stats=self.task_stats.model_copy(
+                update={"stream_chunks_received": stream_chunks}
+            ),
             pod_index=self._pod_index,
         )
 
@@ -1380,6 +1484,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             request_latency_ns=credit_context.request_latency_ns,
             inter_token_latency_ns=credit_context.inter_token_latency_ns,
             output_sequence_length=credit_context.output_sequence_length,
+            ended_on_truncation=credit_context.ended_on_truncation,
             worker_id=self.service_id,
         )
         self.execute_async(self.credit_return_push_client.send(credit_return))
@@ -1480,6 +1585,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 request_latency_ns=credit_context.request_latency_ns,
                 inter_token_latency_ns=credit_context.inter_token_latency_ns,
                 output_sequence_length=credit_context.output_sequence_length,
+                ended_on_truncation=credit_context.ended_on_truncation,
                 worker_id=self.service_id,
             )
             await self.credit_return_push_client.send(credit_return)
@@ -1511,6 +1617,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 type="CreditProcessingError",
                 code=500,
             )
+        failed_at_perf_ns = time.perf_counter_ns()
         await self._send_inference_result_message(
             RequestRecord(
                 request_info=RecordContext(
@@ -1528,9 +1635,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     parent_correlation_id=credit.parent_correlation_id,
                 ),
                 model_name=self.model_endpoint.primary_model_name,
-                timestamp_ns=time.time_ns(),
-                start_perf_ns=time.perf_counter_ns(),
-                end_perf_ns=time.perf_counter_ns(),
+                start_perf_ns=failed_at_perf_ns,
+                end_perf_ns=failed_at_perf_ns,
                 error=error,
             )
         )
@@ -1596,7 +1702,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         credit = credit_context.credit
 
-        async def on_first_token(ttft_ns: int, message: SSEMessage) -> bool:
+        async def on_first_token(
+            ttft_ns: int, message: SSEMessage | AwsEventStreamMessage
+        ) -> bool:
             parsed = self.inference_client.endpoint.parse_response(message)
             if parsed is None or parsed.data is None:
                 return False
@@ -1659,6 +1767,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             session,
             credit,
             session.conversation.system_message,
+            media_uuids=self._cache_bust_media_uuids_enabled,
         )
         self._maybe_warn_cache_bust_silent_drop(session, credit)
 
@@ -1673,7 +1782,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             credit_context, request_info, first_token_callback
         )
 
-        self._finalize_session_response(session, credit_context, record)
+        self._finalize_session_response(session, credit_context, record, request_info)
+        self._detect_ended_on_truncation(credit_context, record)
 
     async def _try_payload_bytes_fast_path(
         self,
@@ -1718,20 +1828,24 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             payload_bytes=payload_turn.payload_bytes,
             # Scalars only — payload_bytes carries the wire body; enrichment
             # reads max_tokens / timestamp off this turn for OSL-mismatch and
-            # schedule-lag metrics, and source_kind for per-row attribution.
+            # schedule-lag metrics, source_kind for per-row attribution, and
+            # audio_duration_seconds for the audio-duration and RTFx metrics.
             turns=[
                 Turn(
                     role="user",
                     max_tokens=payload_turn.max_tokens,
                     timestamp=payload_turn.timestamp,
                     source_kind=payload_turn.source_kind,
+                    audio_duration_seconds=payload_turn.audio_duration_seconds,
                 )
             ],
         )
+        request_info.num_choices = payload_turn.num_choices
         record = await self.inference_client.send_request(
             request_info, first_token_callback=first_token_callback
         )
         self._populate_response_metrics(credit_context, record)
+        self._detect_ended_on_truncation(credit_context, record)
         await self._send_inference_result_message(record)
         credit_context.record_emitted = True
         if record.error is not None:
@@ -1770,9 +1884,14 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         session: UserSession,
         credit_context: CreditContext,
         record: RequestRecord,
+        request_info: RequestInfo | None = None,
     ) -> None:
         """Store the assistant turn (when retained) and populate metrics from a
-        single response-processing pass, shared with the payload-bytes path."""
+        single response-processing pass, shared with the payload-bytes path.
+
+        ``request_info`` is the full request that produced ``record``; the
+        record itself only carries the slim ``RecordContext``.
+        """
         parsed_responses, assistant_turn = self._process_responses_for_record(
             record,
             capture_assistant_turn=session.should_store_response(),
@@ -1795,8 +1914,43 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 )
             )
         ):
-            session.store_response_id(extract_response_id(record))
+            compute_stored_flag = getattr(
+                self.inference_client.endpoint,
+                "stored_history_has_system_prompt",
+                None,
+            )
+            session.store_response_id(
+                extract_response_id(record),
+                system_prompt_in_history=bool(
+                    compute_stored_flag
+                    and request_info is not None
+                    and compute_stored_flag(request_info)
+                ),
+            )
         self._populate_response_metrics(credit_context, record, parsed_responses)
+
+    def _detect_ended_on_truncation(
+        self, credit_context: CreditContext, record: RequestRecord
+    ) -> None:
+        """Flag a truncated non-final root turn as the end of its conversation.
+
+        Follow-up prompts assume a complete prior answer, so once a turn is cut
+        off at the output-token cap the remaining turns would be measured
+        off-distribution (SPEED-Bench convention). DAG children are excluded:
+        their lifecycle belongs to the branch orchestrator.
+        """
+        credit = credit_context.credit
+        if (
+            not self._end_conversation_on_truncation
+            or credit.agent_depth != 0
+            or credit.is_final_turn
+            or record.has_error
+        ):
+            return
+        is_truncated = getattr(self.inference_client.endpoint, "is_truncated", None)
+        credit_context.ended_on_truncation = bool(
+            callable(is_truncated) and is_truncated(record)
+        )
 
     def _populate_response_metrics(
         self,
@@ -1937,15 +2091,18 @@ class Worker(BaseComponentService, ProcessHealthMixin):
     def _handle_terminal_disposition(
         self, credit: Credit, credit_context: CreditContext, x_correlation_id: str
     ) -> None:
-        """Evict on final turn, cancellation, or terminal context overflow.
+        """Evict on final turn, cancellation, terminal context overflow, or a
+        conversation ended early by a truncated turn.
 
         Context overflow on a non-final, non-cancelled turn is terminal for
         agentic_replay (lane recycled, no final/cancel credit follows), so it
-        must take the same eviction path.
+        must take the same eviction path. So must a truncation-ended
+        conversation: no further credit for the session will arrive.
         """
         if (
             credit.is_final_turn
             or credit_context.cancelled
+            or credit_context.ended_on_truncation
             or _is_terminal_context_overflow(credit, credit_context)
         ):
             self._release_and_evict_for_terminal(credit, x_correlation_id)
@@ -2101,6 +2258,9 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             source_kind=source_turn.source_kind if source_turn else None,
             turns=turns,
             previous_response_id=session.previous_response_id if session else None,
+            system_prompt_in_stored_history=session.system_prompt_in_stored_history
+            if session
+            else False,
             drop_perf_ns=credit_context.drop_perf_ns,
             credit_issued_ns=credit.issued_at_ns,
             system_message=system_message,
@@ -2204,6 +2364,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         # Check for error in conversation response
         if isinstance(conversation_response, ErrorMessage):
             error = conversation_response.error
+            failed_at_perf_ns = time.perf_counter_ns()
             await self._send_inference_result_message(
                 RequestRecord(
                     request_info=RecordContext(
@@ -2221,9 +2382,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                         parent_correlation_id=credit_context.credit.parent_correlation_id,
                     ),
                     model_name=self.model_endpoint.primary_model_name,
-                    timestamp_ns=time.time_ns(),
-                    start_perf_ns=time.perf_counter_ns(),
-                    end_perf_ns=time.perf_counter_ns(),
+                    start_perf_ns=failed_at_perf_ns,
+                    end_perf_ns=failed_at_perf_ns,
                     error=error,
                 )
             )
