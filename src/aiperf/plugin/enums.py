@@ -71,7 +71,7 @@ DatasetSourceScheme = plugins.create_enum(PluginType.DATASET_SOURCE_RESOLVER, "D
 
 EndpointTypeStr: TypeAlias = str
 EndpointType = plugins.create_enum(PluginType.ENDPOINT, "EndpointType", module=__name__)
-"""Dynamic enum for endpoint. Example: EndpointType.AUDIO_TRANSCRIPTION, EndpointType.IMAGE_GENERATION, EndpointType.VIDEO_GENERATION"""
+"""Dynamic enum for endpoint. Example: EndpointType.AUDIO_TRANSCRIPTION, EndpointType.IMAGE_RETRIEVAL, EndpointType.VIDEO_GENERATION"""
 
 TransportTypeStr: TypeAlias = str
 TransportType = plugins.create_enum(PluginType.TRANSPORT, "TransportType", module=__name__)

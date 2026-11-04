@@ -4,15 +4,54 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.enums import CreditPhase
 from aiperf.common.messages import MetricRecordsData
 from aiperf.common.models import MetricRecordMetadata
 from aiperf.metrics.accumulator import MetricsAccumulator
+from aiperf.plugin.enums import EndpointType
 from tests.unit.conftest import make_benchmark_run
 
 NS_PER_S = 1_000_000_000
 T0 = 1_780_000_000 * NS_PER_S
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "endpoint_type", [EndpointType.SPEECH, EndpointType.EMBEDDINGS, EndpointType.CHAT]
+)
+async def test_sweep_metrics_respect_endpoint_capabilities(
+    endpoint_type: EndpointType,
+) -> None:
+    """Run summaries and timeslices retain concurrency without inventing token metrics."""
+    acc = MetricsAccumulator(
+        make_benchmark_run(
+            endpoint_type=endpoint_type,
+            extra={
+                "artifacts": {"slice_duration": 1},
+            },
+        )
+    )
+    for second in range(3):
+        await acc.process_record(_record(second, second, CreditPhase.PROFILING))
+    summary = await acc.export_results(
+        ExportContext(
+            start_ns=T0,
+            end_ns=T0 + 3 * NS_PER_S,
+            phase=CreditPhase.PROFILING,
+        )
+    )
+    assert summary.timeslices
+    for results in [summary.results, *(s.metric_results for s in summary.timeslices)]:
+        assert "effective_concurrency" in results
+        for tag in (
+            "effective_decode_throughput",
+            "active_decode_throughput",
+            "tokens_in_flight",
+        ):
+            assert (tag in results) == (endpoint_type == EndpointType.CHAT)
 
 
 def _record(index: int, second: int, phase: CreditPhase) -> MetricRecordsData:

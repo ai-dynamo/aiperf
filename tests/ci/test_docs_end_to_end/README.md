@@ -43,6 +43,7 @@ check once, then every run command tagged with that name. The groups are:
 | `vllm-audio-openai` | audio input |
 | `vllm-video-openai` | video input |
 | `vllm-embeddings-openai` | embeddings |
+| `phonon-speech-openai` | generated PCM speech (CPU server) |
 
 **A new tutorial usually needs only an `aiperf-run` tag.** The setup and
 health-check blocks for each group already exist -- `docs/tutorial.md` for the

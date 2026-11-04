@@ -145,18 +145,21 @@ class SweepLineCurves:
         )
 
     def compute_metrics(
-        self, window_start: float, window_end: float
+        self, window_start: float, window_end: float, *, produces_tokens: bool = True
     ) -> dict[str, MetricResult]:
-        """Compute all sweep-line MetricResults for a time window."""
+        """Compute sweep metrics, retaining only concurrency for non-token endpoints."""
         results: dict[str, MetricResult] = {}
         for spec, (ts, values) in zip(
             SWEEP_LINE_METRIC_SPECS, self.curves(), strict=True
         ):
+            if not produces_tokens and spec.tag != "effective_concurrency":
+                continue
             stats = compute_time_weighted_stats(ts, values, window_start, window_end)
             results[spec.tag] = metric_result_from_sweep_line_stats(
                 spec.tag, spec.header, spec.unit, stats, scale=spec.scale
             )
-        self._compute_active_variants(results, window_start, window_end)
+        if produces_tokens:
+            self._compute_active_variants(results, window_start, window_end)
         return results
 
     def _compute_active_variants(

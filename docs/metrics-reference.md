@@ -47,6 +47,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [Video Peak Memory](#video-peak-memory)
   - [Audio Metrics](#audio-metrics)
     - [Audio Duration](#audio-duration)
+    - [Output Audio Metrics](#output-audio-metrics)
     - [Inverse Real-Time Factor (RTFx)](#inverse-real-time-factor-rtfx)
   - [Reasoning Metrics](#reasoning-metrics)
     - [Reasoning Token Count](#reasoning-token-count)
@@ -768,7 +769,7 @@ video_peak_memory = response.data.peak_memory_mb
 ## Audio Metrics
 
 > [!NOTE]
-> Metrics in this section require an audio input on the request (e.g., ASR datasets such as LibriSpeech, GigaSpeech, AMI, VoxPopuli). They are not computed for text-only or non-audio requests.
+> Input-audio metrics (`audio_duration` and `rtfx`) require an audio input on the request (e.g., ASR datasets such as LibriSpeech, GigaSpeech, AMI, VoxPopuli). They are not computed for text-only or non-audio requests.
 
 ### Audio Duration
 
@@ -795,6 +796,31 @@ rtfx = audio_duration_seconds / request_latency_seconds
 - Higher is better. A value of 10 means the server transcribed audio 10× faster than real-time playback.
 - RTFx < 1 means the server is slower than real-time and not suitable for live transcription.
 - Requires `audio_duration` and `request_latency` metrics to be computed first.
+
+---
+
+### Output Audio Metrics
+
+These metrics require an endpoint with `produces_audio` capability, such as
+`speech`. They describe successfully completed generated audio, independently
+of ASR input duration. No audio duration is counted for failed or cancelled
+requests.
+
+| Metric tag | Type | Definition | Unit |
+|---|---|---|---|
+| `output_audio_duration` | Record | Complete sample frames / sample rate | seconds |
+| `total_output_audio_duration` | Derived sum | Sum of successful output durations | seconds |
+| `output_audio_rtf` | Record | Request latency in seconds / output audio duration | ratio |
+| `output_audio_throughput` | Derived | Total successful output duration / observation wall time | audio seconds/sec |
+
+Lower output RTF is better; higher throughput is better. Observation wall time
+uses the same window as request throughput, including time spent on failures.
+This is not the mean of per-request inverse RTFs. PCM requires explicit sample
+rate and channel metadata; finite-length PCM WAV uses validated header metadata.
+The current speech endpoint buffers complete responses and does not report time
+to first audio. See [Speech Generation](tutorials/speech.md) for supported formats
+and a runnable example. `total_output_audio_duration` is exported but hidden
+from the console summary.
 
 ---
 
@@ -2548,6 +2574,7 @@ Metric flags are used to control when and how metrics are computed, displayed, a
 | <a id="flag-supports-video-only"></a>`SUPPORTS_VIDEO_ONLY` | Only computed for video endpoints | Requires video-capable endpoints; skipped for other endpoint types |
 | <a id="flag-usage-diff-only"></a>`USAGE_DIFF_ONLY` | Only computed when usage field data is available | Requires API responses to include usage field with token counts for comparison with client-computed values |
 | <a id="flag-produces-video-only"></a>`PRODUCES_VIDEO_ONLY` | Only computed for video-producing endpoints | Requires endpoints that produce video output (e.g., SGLang video generation) |
+| <a id="flag-produces-audio-only"></a>`PRODUCES_AUDIO_ONLY` | Only computed for audio-producing endpoints | Requires endpoints that produce audio output (e.g., `speech`) |
 
 ## Composite Flags
 

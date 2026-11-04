@@ -185,6 +185,7 @@ def _unit(tag: str) -> BaseMetricUnitInfo:
 class GenericMetricUnit(BaseMetricUnit):
     """Defines generic units for metrics. These dont have any extra information other than the tag, which is used for display purposes."""
 
+    AUDIO_SECONDS = _unit("audio seconds")
     BLOCKS = _unit("blocks")
     COUNT = _unit("count")
     ERRORS = _unit("errors")
@@ -352,6 +353,10 @@ class MetricOverTimeUnitInfo(BaseMetricUnitInfo):
 class MetricOverTimeUnit(BaseMetricUnit):
     """Defines the units for metrics that are a generic unit over a specific time unit."""
 
+    AUDIO_SECONDS_PER_SECOND = MetricOverTimeUnitInfo(
+        primary_unit=GenericMetricUnit.AUDIO_SECONDS,
+        time_unit=MetricTimeUnit.SECONDS,
+    )
     REQUESTS_PER_SECOND = MetricOverTimeUnitInfo(
         primary_unit=GenericMetricUnit.REQUESTS,
         time_unit=MetricTimeUnit.SECONDS,
@@ -821,6 +826,9 @@ class MetricFlags(Flag):
     the model is expected to stop well under (chain-of-thought answers finish
     early), so metrics that assume ``max_tokens`` is a target — notably the
     OSL-mismatch family — are meaningless there and only produce noise."""
+
+    PRODUCES_AUDIO_ONLY = 1 << 20
+    """Metrics for generated audio, independent of input-audio capabilities."""
 
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""

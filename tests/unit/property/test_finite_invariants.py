@@ -333,6 +333,10 @@ def _load_or_init_metric_baseline(current: list[str]) -> list[str]:
 # are not FiniteFloat. Most are: integer enums, free-form pass-through ints,
 # or fields validated downstream rather than at field level.
 NUMERIC_BOUNDS_WHITELIST: set[str] = {
+    # Nested PCMOutputConfig, not numeric leaves. The substring heuristic sees
+    # "int" in its module path "endpoint"; sample_rate and channels have gt=0.
+    "EndpointConfig.pcm_output",
+    "EndpointInfo.pcm_output",
     # SweepVariation.index: zero-based index, bounded by sweep size at
     # runtime; no useful field-level upper bound.
     "SweepVariation.index",
