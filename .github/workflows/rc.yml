@@ -65,7 +65,8 @@ jobs:
 
   prepare-rc:
     name: Prepare RC
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     outputs:
       release_version: ${{ steps.version.outputs.release_version }}
       rc_number:       ${{ steps.version.outputs.rc_number }}
@@ -107,7 +108,9 @@ jobs:
           fi
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
 
       - name: Compute versions and tags
         id: version
@@ -139,13 +142,12 @@ jobs:
 
   # ============================================================================
   # PHASE 2: AUTHORIZE
-  # Only active members of the ai-dynamo/devops team may stage. Checks BOTH
-  # github.actor and github.triggering_actor (actor does not re-resolve on
-  # re-runs). Every later job compares authorized_attempt to github.run_attempt,
-  # so "Re-run failed jobs" re-runs this gate and is re-checked against whoever
-  # triggered the re-run. Team membership needs an org-scoped token, so it is
-  # read with the release GitHub App installed on this repo (secrets in the
-  # automated-release environment).
+  # Only active members of the ai-dynamo/devops team may stage (see the
+  # ops-gate action). The gate runs here to fail a bad dispatch before any
+  # builder is booked, and again as the first step of every job that holds
+  # release credentials (check-registries, stage-*, trigger), so "Re-run failed
+  # jobs" is re-checked against whoever triggered the re-run even though this
+  # job is not re-run in that mode.
   # ============================================================================
 
   authorize:
@@ -154,55 +156,102 @@ jobs:
     runs-on: prod-aiperf-default-v1
     environment: automated-release
     timeout-minutes: 10
-    outputs:
-      authorized_attempt: ${{ steps.authorized.outputs.run_attempt }}
     steps:
-      - name: Mint app token (ops gate)
-        id: ops-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v3.2.0
+      - name: Checkout (gate action)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions
+
+      - uses: ./.github/actions/ops-gate
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
-      - name: Require release-ops team membership
-        env:
-          GH_TOKEN:         ${{ steps.ops-token.outputs.token }}
-          ORG:              ${{ github.repository_owner }}
-          TEAM:             devops
-          ACTOR:            ${{ github.actor }}
-          TRIGGERING_ACTOR: ${{ github.triggering_actor }}
+  # Registries are immutable: refuse an already-staged round BEFORE spending
+  # builder time, and before either staging job can write anything. Later
+  # attempts are retries of this same run and skip the check.
+  check-registries:
+    name: Check RC is unstaged
+    needs: [prepare-rc, authorize]
+    if: ${{ github.run_attempt == 1 }}
+    runs-on: prod-aiperf-default-v1
+    environment: automated-release
+    timeout-minutes: 10
+    env:
+      CRANE_VERSION: v0.20.2
+      CRANE_SHA256:  c14340087103ba9dadf61d45acd20675490fd0ccbd56ac7901fc1b502137f44b
+    steps:
+      - name: Checkout (gate action)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions
+
+      - uses: ./.github/actions/ops-gate
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Install crane
         run: |
           set -euo pipefail
-          for USER in $(printf '%s\n%s\n' "${ACTOR}" "${TRIGGERING_ACTOR}" | sort -u); do
-            HTTP=$(curl -sS -o "${RUNNER_TEMP}/membership.json" -w '%{http_code}' \
-              -H "Authorization: Bearer ${GH_TOKEN}" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/orgs/${ORG}/teams/${TEAM}/memberships/${USER}")
-            if [ "${HTTP}" != "200" ] || ! grep -Eq '"state"[[:space:]]*:[[:space:]]*"active"' "${RUNNER_TEMP}/membership.json"; then
-              echo "::error::@${USER} is not an active member of ${ORG}/${TEAM} (HTTP ${HTTP}); only release ops may stage a release."
-              exit 1
-            fi
-            echo "@${USER} authorized via ${ORG}/${TEAM}"
-          done
+          TARBALL="go-containerregistry_Linux_x86_64.tar.gz"
+          curl -fsSL \
+            "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/${TARBALL}" \
+            -o "${TARBALL}"
+          echo "${CRANE_SHA256}  ${TARBALL}" | sha256sum -c -
+          tar -xzf "${TARBALL}" crane
+          sudo mv crane /usr/local/bin/crane
+          rm "${TARBALL}"
 
-      - name: Authorized
-        id: authorized
+      - name: Require unstaged container tag and wheel
         env:
-          RC_TAG: ${{ needs.prepare-rc.outputs.rc_tag }}
+          NGC_TOKEN:              ${{ secrets.NGC_PUBLISH_TOKEN }}
+          NGC_USERNAME:           ${{ secrets.NGC_PUBLISH_USERNAME }}
+          NGC_STAGING_IMAGE_BASE: ${{ secrets.NGC_STAGING_IMAGE_BASE }}
+          ARTIFACTORY_URL:        ${{ secrets.ARTIFACTORY_URL }}
+          ARTIFACTORY_USER:       ${{ secrets.ARTIFACTORY_USER }}
+          ARTIFACTORY_TOKEN:      ${{ secrets.ARTIFACTORY_TOKEN }}
+          CONTAINER_TAG:          ${{ needs.prepare-rc.outputs.container_tag }}
+          WHEEL_FILENAME:         ${{ needs.prepare-rc.outputs.wheel_filename }}
         run: |
-          echo "Release authorized for ${RC_TAG}"
-          echo "run_attempt=${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          echo "${NGC_TOKEN}" | crane auth login nvcr.io \
+            --username "${NGC_USERNAME}" --password-stdin
+
+          # Only a definite "not found" counts as unstaged. Auth or transport
+          # errors fail closed instead of being read as an absent tag.
+          IMAGE="${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}"
+          if OUT=$(crane digest "${IMAGE}" 2>&1); then
+            echo "::error::${CONTAINER_TAG} is already staged on NGC; stage the next rc_round instead."
+            exit 1
+          elif ! grep -Eqi 'MANIFEST_UNKNOWN|NAME_UNKNOWN|manifest unknown|not found|404' <<<"${OUT}"; then
+            echo "::error::Could not determine whether ${CONTAINER_TAG} exists on NGC: ${OUT}"
+            exit 1
+          fi
+
+          HTTP=$(curl -sS -o /dev/null -I -w '%{http_code}' \
+            -u "${ARTIFACTORY_USER}:${ARTIFACTORY_TOKEN}" \
+            "${ARTIFACTORY_URL%/}/release/${WHEEL_FILENAME}")
+          case "${HTTP}" in
+            404) echo "${CONTAINER_TAG} and ${WHEEL_FILENAME} are unstaged." ;;
+            200) echo "::error::${WHEEL_FILENAME} is already staged on Artifactory; stage the next rc_round instead."; exit 1 ;;
+            *)   echo "::error::Could not determine whether ${WHEEL_FILENAME} exists on Artifactory (HTTP ${HTTP})."; exit 1 ;;
+          esac
 
   # ============================================================================
   # PHASE 3: BUILD
   # No environment: declaration - builder runners carry AWS credentials via IAM
-  # instance profile. The authorize gate above is what lets the build start.
+  # instance profile and no release credentials are used. The authorize gate
+  # above is what lets the build start.
   # ============================================================================
 
   build-container:
     name: Build Container (${{ matrix.arch }})
-    needs: [prepare-rc, authorize]
-    if: ${{ needs.authorize.outputs.authorized_attempt == github.run_attempt }}
+    needs: [prepare-rc, authorize, check-registries]
+    # check-registries is skipped on re-runs; only a failure blocks the build.
+    if: ${{ !failure() && !cancelled() }}
     # 90 min covers cold registry cache on both archs plus license extraction.
     timeout-minutes: 90
     strategy:
@@ -218,12 +267,13 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
         with:
           ref: ${{ needs.prepare-rc.outputs.resolved_sha }}
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78  # v7
 
       - name: Patch version in pyproject.toml and uv.lock
         uses: ./.github/actions/update-pyproject-version
@@ -234,48 +284,14 @@ jobs:
       - name: Verify uv.lock matches the patched pyproject.toml
         run: uv lock --check
 
-      # Embed the commit SHA two ways for redundant discoverability:
-      #   1. [project.urls] Repository = <commit URL> in pyproject.toml, which
-      #      lands in the wheel METADATA (pip show, importlib.metadata, SBOM
-      #      and vendor scanners).
-      #   2. src/aiperf/_build_info.py with COMMIT_SHA, shipped as a regular
-      #      module so `aiperf.__commit_sha__` works at runtime.
       - name: Embed commit SHA in wheel metadata
-        env:
-          COMMIT_SHA: ${{ needs.prepare-rc.outputs.resolved_sha }}
-          REPO:       ${{ github.repository }}
-        run: |
-          python3 - <<'PYEOF'
-          import os
-          from pathlib import Path
-
-          sha = os.environ["COMMIT_SHA"]
-          repo = os.environ["REPO"]
-          url = f"https://github.com/{repo}/commit/{sha}"
-
-          pyproject = Path("pyproject.toml")
-          text = pyproject.read_text()
-          entry = f'Repository = "{url}"'
-          if "[project.urls]" in text:
-              text = text.replace("[project.urls]", f"[project.urls]\n{entry}", 1)
-          else:
-              if not text.endswith("\n"):
-                  text += "\n"
-              text += f"\n[project.urls]\n{entry}\n"
-          pyproject.write_text(text)
-
-          Path("src/aiperf/_build_info.py").write_text(
-              "# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.\n"
-              "# SPDX-License-Identifier: Apache-2.0\n"
-              '"""Build-time metadata. Generated by the RC pipeline; do not edit."""\n'
-              "\n"
-              f'COMMIT_SHA = "{sha}"\n'
-          )
-          print(f"Embedded commit SHA in METADATA + _build_info.py: {sha}")
-          PYEOF
+        uses: ./.github/actions/embed-commit-sha
+        with:
+          commit-sha: ${{ needs.prepare-rc.outputs.resolved_sha }}
+          repository: ${{ github.repository }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f  # v3
 
       - name: Log in to ECR
         env:
@@ -333,13 +349,12 @@ jobs:
       - name: Upload wheel to S3 (amd64 only)
         if: matrix.arch == 'amd64'
         env:
-          S3_BUCKET:     ${{ secrets.S3_CI_WHEELS_BUCKET }}
-          WHEEL_VERSION: ${{ needs.prepare-rc.outputs.wheel_version }}
+          S3_BUCKET:      ${{ secrets.S3_CI_WHEELS_BUCKET }}
+          WHEEL_VERSION:  ${{ needs.prepare-rc.outputs.wheel_version }}
+          WHEEL_FILENAME: ${{ needs.prepare-rc.outputs.wheel_filename }}
         run: |
           set -euo pipefail
-          for WHEEL in $(find dist/ -maxdepth 1 -name "aiperf-*.whl" -type f); do
-            aws s3 cp "${WHEEL}" "s3://${S3_BUCKET}/aiperf/rc/${WHEEL_VERSION}/" --sse AES256
-          done
+          aws s3 cp "dist/${WHEEL_FILENAME}" "s3://${S3_BUCKET}/aiperf/rc/${WHEEL_VERSION}/" --sse AES256
 
       - name: Build and push ${{ matrix.arch }} image to ECR
         env:
@@ -401,7 +416,7 @@ jobs:
 
       - name: Upload license artifacts
         if: matrix.arch == 'amd64'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4  # v5
         with:
           name: license-artifacts-${{ needs.prepare-rc.outputs.wheel_version }}
           path: |
@@ -418,15 +433,17 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
         with:
           ref: ${{ needs.prepare-rc.outputs.resolved_sha }}
+          persist-credentials: false
 
       - name: Create multi-arch manifest on ECR
         uses: ./.github/actions/create-multiarch-manifest
         with:
           registry:       ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com
           aws-ecr-region: ${{ secrets.AWS_DEFAULT_REGION }}
+          crane-sha256:   c14340087103ba9dadf61d45acd20675490fd0ccbd56ac7901fc1b502137f44b
           target-image: >-
             ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_DEFAULT_REGION }}.amazonaws.com/aiperf:${{ needs.prepare-rc.outputs.container_tag }}
           source-images: >-
@@ -439,13 +456,25 @@ jobs:
 
   stage-container:
     name: Stage Container (ECR -> NGC Staging)
-    needs: [prepare-rc, authorize, create-multiarch-manifest-ecr]
-    if: ${{ needs.authorize.outputs.authorized_attempt == github.run_attempt }}
+    needs: [prepare-rc, create-multiarch-manifest-ecr]
     runs-on: prod-aiperf-default-v1
     environment: automated-release
+    timeout-minutes: 30
     env:
       CRANE_VERSION: v0.20.2
+      CRANE_SHA256:  c14340087103ba9dadf61d45acd20675490fd0ccbd56ac7901fc1b502137f44b
     steps:
+      - name: Checkout (gate action)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions
+
+      - uses: ./.github/actions/ops-gate
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Install crane
         run: |
           set -euo pipefail
@@ -453,6 +482,7 @@ jobs:
           curl -fsSL \
             "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/${TARBALL}" \
             -o "${TARBALL}"
+          echo "${CRANE_SHA256}  ${TARBALL}" | sha256sum -c -
           tar -xzf "${TARBALL}" crane
           sudo mv crane /usr/local/bin/crane
           rm "${TARBALL}"
@@ -482,13 +512,7 @@ jobs:
           ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com"
           CONTAINER_IMAGE="${NGC_STAGING_IMAGE_BASE}/aiperf:${CONTAINER_TAG}"
 
-          # Registries are immutable: a first attempt must never land on an
-          # already-staged round. Later attempts are retries of this same run.
-          if [ "${GITHUB_RUN_ATTEMPT}" = "1" ] && crane digest "${CONTAINER_IMAGE}" >/dev/null 2>&1; then
-            echo "::error::${CONTAINER_TAG} is already staged on NGC; stage the next rc_round instead."
-            exit 1
-          fi
-
+          # Already-staged rounds are rejected earlier by check-registries.
           for ARCH in amd64 arm64; do
             crane copy \
               "${ECR_REGISTRY}/aiperf:${CONTAINER_TAG}-${ARCH}" \
@@ -505,13 +529,24 @@ jobs:
 
   stage-wheel:
     name: Stage Wheel (S3 -> Artifactory)
-    needs: [prepare-rc, authorize, create-multiarch-manifest-ecr]
-    if: ${{ needs.authorize.outputs.authorized_attempt == github.run_attempt }}
+    needs: [prepare-rc, create-multiarch-manifest-ecr]
     # Use the builder runner: prod-aiperf-default-v1's role lacks s3:GetObject on
     # the wheels bucket.
     runs-on: prod-aiperf-builder-amd-v1
     environment: automated-release
+    timeout-minutes: 30
     steps:
+      - name: Checkout (gate action)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions
+
+      - uses: ./.github/actions/ops-gate
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Upload wheel from S3 to Artifactory
         env:
           S3_BUCKET:          ${{ secrets.S3_CI_WHEELS_BUCKET }}
@@ -562,12 +597,24 @@ jobs:
 
   trigger-gitlab-rc-pipeline:
     name: Trigger GitLab RC Pipeline
-    needs: [prepare-rc, authorize, stage-container, stage-wheel]
+    needs: [prepare-rc, stage-container, stage-wheel]
     runs-on:
       group: gitlab_ci_runners
     environment: automated-release
-    if: ${{ !inputs.skip_gitlab_trigger && needs.authorize.outputs.authorized_attempt == github.run_attempt }}
+    timeout-minutes: 15
+    if: ${{ !inputs.skip_gitlab_trigger }}
     steps:
+      - name: Checkout (gate action)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803  # v6
+        with:
+          persist-credentials: false
+          sparse-checkout: .github/actions
+
+      - uses: ./.github/actions/ops-gate
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Trigger GitLab pipeline
         env:
           GITLAB_TRIGGER_TOKEN:       ${{ secrets.GITLAB_TRIGGER_TOKEN }}
@@ -642,12 +689,13 @@ jobs:
     needs:
       - prepare-rc
       - authorize
+      - check-registries
       - build-container
       - create-multiarch-manifest-ecr
       - stage-container
       - stage-wheel
       - trigger-gitlab-rc-pipeline
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     if: always()
     steps:
