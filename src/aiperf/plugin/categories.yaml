@@ -376,7 +376,6 @@ host_telemetry_collector:
     rather than from an accelerator, and deliver them via callbacks.
     Sibling of gpu_telemetry_collector; the two are kept separate so that adding a
     host path changes nothing the shipped GPU collectors depend on.
-    One-to-one mapping based on host_telemetry_collector configuration.
 
 # =============================================================================
 # Search Recipe Category

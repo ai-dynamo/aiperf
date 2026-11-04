@@ -10,9 +10,9 @@ GPU-bound.
 
 This is a sibling rather than a widening of the existing category, so that it
 adds a host path without changing anything the three shipped GPU collectors
-depend on. If the maintainers would rather have one domain-tagged category, the
-collectors written against this protocol move across unchanged and only the
-registration differs.
+depend on. Collectors written against this protocol are not bound to that
+choice: moving them under a single domain-tagged category would change only
+their registration, not their code.
 """
 
 from __future__ import annotations

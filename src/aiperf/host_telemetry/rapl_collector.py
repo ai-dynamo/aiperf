@@ -13,8 +13,8 @@ RAPL exposes a cumulative energy counter per power domain under
 
 Two things about this interface decide most of the implementation.
 
-The counter wraps. `max_energy_range_uj` is typically around 2^32 microjoules,
-roughly 65 kJ, which a busy package can burn through in well under a minute.
+The counter wraps at `max_energy_range_uj`; a 65.5 kJ range takes about 262
+seconds to wrap at 250 W.
 A reader that subtracts consecutive samples without handling the wrap reports a
 large negative delta once per cycle, so the wrap is corrected here and the
 corrected total is what leaves the collector.
@@ -278,6 +278,11 @@ class RAPLTelemetryCollector(AIPerfLifecycleMixin):
         self._record_callback = record_callback
         self._error_callback = error_callback
         self._domains: list[RAPLDomain] = []
+        # Each domain carries wrap state that `collect` mutates, so two scrapes
+        # running at once can interleave and retain the wrong last raw reading.
+        # The background loop serializes itself, but `collect_and_process_metrics`
+        # is public, so the invariant is enforced here rather than assumed.
+        self._collect_lock = asyncio.Lock()
 
     @property
     def endpoint_url(self) -> str:
@@ -305,8 +310,7 @@ class RAPLTelemetryCollector(AIPerfLifecycleMixin):
         """Discover the readable RAPL domains on this host.
 
         Runs as an ON_INIT hook so the mixin's own ``initialize`` still drives
-        the CREATED -> INITIALIZED transition that ``start`` requires;
-        overriding ``initialize`` outright left the collector unstartable.
+        the CREATED -> INITIALIZED transition that ``start`` requires.
         Discovery happens in a thread for the same reason the sampling path
         does: sysfs reads against a wedged driver hang, and they would hang
         the event loop from here just as surely as from a sample.
@@ -339,10 +343,13 @@ class RAPLTelemetryCollector(AIPerfLifecycleMixin):
         """One-shot scrape, dispatched through the configured callback.
 
         The sysfs reads happen in a thread so a slow or hung read cannot stall
-        the event loop, mirroring the GPU collectors.
+        the event loop, mirroring the GPU collectors. Scrapes are serialized:
+        overlapping callers would interleave through each domain's wrap state
+        and leave the wrong last raw reading behind.
         """
         try:
-            records = await asyncio.to_thread(self.collect)
+            async with self._collect_lock:
+                records = await asyncio.to_thread(self.collect)
             if not records and self._domains:
                 # Total telemetry loss must not look like a healthy idle run:
                 # permission revocation or driver teardown lands here.
