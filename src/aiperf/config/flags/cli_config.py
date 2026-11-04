@@ -2391,6 +2391,20 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    continuation_dispatch: Annotated[
+        Literal["rate_slot", "direct"],
+        Field(
+            description="Schedule profiling continuation turns at the next rate slot "
+            "(rate_slot, default), or after think time without consuming a session "
+            "arrival slot (direct). Requires constant, poisson, or gamma request-rate "
+            "scheduling; concurrency and request limits still apply.",
+        ),
+        CLIParameter(
+            name=("--continuation-dispatch",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = "rate_slot"
+
     arrival_pattern: Annotated[
         ArrivalPattern,
         Field(

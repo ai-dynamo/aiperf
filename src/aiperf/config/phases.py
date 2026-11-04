@@ -565,6 +565,16 @@ class RatePhaseConfig(BasePhaseConfig):
         ),
     ]
 
+    continuation_dispatch: Annotated[
+        Literal["rate_slot", "direct"],
+        Field(
+            default="rate_slot",
+            description="Continuation scheduling for constant, poisson, and gamma phases. "
+            "rate_slot counts every turn against rate; direct paces session starts "
+            "and sends later turns after think time, subject to concurrency limits.",
+        ),
+    ]
+
     rate_ramp: Annotated[
         RampSpec,
         Field(
@@ -589,6 +599,16 @@ class RatePhaseConfig(BasePhaseConfig):
             raise ValueError("rate-controlled phases require rate or rate_series")
         if self.rate is not None and self.rate_series is not None:
             raise ValueError("rate and rate_series are mutually exclusive")
+        if self.continuation_dispatch == "direct" and (
+            self.type not in {PhaseType.CONSTANT, PhaseType.POISSON, PhaseType.GAMMA}
+            or self.adaptive_scale
+            or self.timing_mode not in {None, TimingMode.REQUEST_RATE}
+        ):
+            raise ValueError(
+                "continuation_dispatch='direct' requires constant, poisson, or gamma "
+                "request-rate scheduling; adaptive_scale and other timing modes "
+                "are unsupported"
+            )
         return self
 
 

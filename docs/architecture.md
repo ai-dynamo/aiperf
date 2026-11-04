@@ -240,7 +240,7 @@ The Timing Manager uses a **credit-based flow control system** to control when r
 - Each credit grants permission to send one request
 - The Timing Manager issues credits according to the configured timing mode:
   - **Fixed schedule mode**: Replays conversation traces at precise timestamps from dataset metadata
-  - **Request-rate mode**: Issues credits at a specific rate with configurable arrival patterns (constant, Poisson, gamma, concurrency burst)
+  - **Request-rate mode**: Issues credits at a specific rate with configurable arrival patterns (constant, Poisson, gamma, concurrency burst). Constant, Poisson, and gamma phases can opt into `continuation_dispatch: direct`: rate slots then start sessions, while root continuations use the phase scheduler after think time and retain the CreditIssuer stop and concurrency checks. The default `rate_slot` policy paces every turn.
   - **User-centric rate mode**: Each session acts as a separate user with calculated gaps between turns
 
 **Flow Control Benefits:**
