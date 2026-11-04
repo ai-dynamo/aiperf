@@ -89,7 +89,7 @@ def _warm_node(node: str) -> None:
         if _node_warmed:
             return
         try:
-            subprocess.run(
+            warm = subprocess.run(
                 [node, "--input-type=module", "-e", "0"],
                 capture_output=True,
                 stdin=subprocess.DEVNULL,
@@ -103,6 +103,14 @@ def _warm_node(node: str) -> None:
                 "this host cannot run node, which is not a result of the "
                 "dashboard script under test"
             ) from exc
+        if warm.returncode != 0:
+            # Do not mark a failed warm-up as warm: that would hide the host
+            # problem behind whichever test happens to run next. Leave the flag
+            # clear so the next call retries and reports the real failure.
+            raise RuntimeError(
+                f"node warm-up exited {warm.returncode}: "
+                f"{(warm.stderr or b'').decode(errors='replace').strip()[:400]}"
+            )
         _node_warmed = True
 
 
