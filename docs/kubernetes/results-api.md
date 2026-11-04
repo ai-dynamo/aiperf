@@ -464,6 +464,27 @@ The lookup tries `<filename>.zst` first, then `<filename>` as-is. `namespace` an
 
 `{filename}` is a path-style parameter, so files inside the run's allowlisted subdirectories (e.g. checkpoints) are addressable with their relative path — exactly the `name` the listing endpoint returned.
 
+With per-request export enabled (the default), Kubernetes runs expose
+`checkpoints/profile_export.jsonl` while requests are being measured. A custom
+`artifacts.prefix` (CLI: `--profile-export-prefix`) changes the basename in both locations. This
+checkpoint is a hard link to the streamed request export, so it adds no second
+in-memory buffer or on-disk copy in the controller. The existing partial-result
+recovery downloads it even if a sibling container dies before final export.
+It contains the usual request metadata, measured metrics, and request errors;
+it does not turn an interrupted benchmark into a completed one or reconstruct
+its final aggregate report.
+
+Records become recoverable after the JSONL writer flushes. The periodic flush
+interval is `AIPERF_METRICS_EXPORT_FLUSH_INTERVAL` (default 1 second); records
+still buffered when the process is killed can be lost. Treat an interrupted
+checkpoint as a stream of complete JSON lines and ignore an incomplete final
+line. Disabling per-request export or setting `AIPERF_RECORD_CHECKPOINT_INTERVAL=0`
+disables this checkpoint. It cannot survive loss of the controller's results
+volume, and it does not bound server-metrics memory growth.
+After final readiness commits, the live hard link is removed and the complete
+request stream is served from its normal top-level artifact path. This also
+avoids hard links in completed directory downloads made with `kubectl cp`.
+
 **Content negotiation for stored `.zst` files**
 
 | Client `Accept-Encoding` | Response `Content-Encoding` | Server action |
@@ -512,6 +533,11 @@ Stream the whole run epoch as a zip bundle, `Content-Disposition`-named after th
 ### `GET /api/v1/results/{namespace}/{job_id}/runs/{epoch}/profile_export`
 
 Quick-export alias for that run's summary JSON, so a caller does not need to know whether the artifact prefix changed the filename. Takes one query parameter, `format`, constrained to `json` (it exists so csv/parquet shortcuts can be added without a new route).
+
+The primary `profile_export_aiperf.json` includes `server_metrics_error_summary`
+when collection reports errors or its optional producer dies. A run can retain
+all measured inference requests while losing server telemetry; this field makes
+that distinction machine-readable. See [long-run collection and failure handling](../server-metrics/server-metrics.md#long-runs-and-collection-failures).
 
 ---
 

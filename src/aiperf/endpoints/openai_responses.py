@@ -428,6 +428,31 @@ class ResponsesEndpoint(BaseEndpoint):
                 resp_id = candidate
         return resp_id
 
+    def is_truncated(self, record: RequestRecord) -> bool:
+        """True when the final Response object is ``status: "incomplete"`` with
+        ``incomplete_details.reason == "max_output_tokens"``.
+
+        The object lives under ``response`` for streaming lifecycle events
+        (terminal event ``response.incomplete``) and at the top level for a
+        non-streaming body. Walks in reverse so the terminal status wins.
+        """
+        for response in reversed(record.responses):
+            json_obj = response.get_json()
+            if not isinstance(json_obj, dict):
+                continue
+            nested = json_obj.get("response")
+            source = nested if isinstance(nested, dict) else json_obj
+            status = source.get("status")
+            if status is None:
+                continue
+            details = source.get("incomplete_details")
+            return (
+                status == "incomplete"
+                and isinstance(details, dict)
+                and details.get("reason") == "max_output_tokens"
+            )
+        return False
+
     def _store_requested(self) -> bool:
         """Whether the run requested server-side storage via endpoint ``extra``.
 
@@ -659,7 +684,8 @@ class ResponsesEndpoint(BaseEndpoint):
         tokens:
 
         - ``message`` items contribute their ``output_text`` parts.
-        - ``reasoning`` items contribute their ``summary_text`` parts.
+        - ``reasoning`` items contribute their ``reasoning_text`` parts, or
+          their ``summary_text`` parts when there are none.
         - ``function_call`` items contribute ``name`` + ``arguments`` -
           the model generated those tokens, and the server's
           ``usage.completion_tokens`` already counts them, so client-side
@@ -723,25 +749,39 @@ class ResponsesEndpoint(BaseEndpoint):
         """
         item_type = item.get("type")
         if item_type == "reasoning":
-            ResponsesEndpoint._collect_reasoning_summary(item, reasoning_parts)
+            ResponsesEndpoint._collect_reasoning(item, reasoning_parts)
         elif item_type == "message":
             ResponsesEndpoint._collect_message_content(item, text_parts)
         elif item_type == "function_call":
             ResponsesEndpoint._collect_function_call(item, tool_call_parts)
 
     @staticmethod
-    def _collect_reasoning_summary(
-        item: dict[str, Any], reasoning_parts: list[str]
-    ) -> None:
-        """Append non-empty ``summary_text`` strings from a reasoning item."""
-        summary = item.get("summary")
-        if not isinstance(summary, list):
-            return
-        for part in summary:
-            if isinstance(part, dict) and part.get("type") == "summary_text":
-                text = part.get("text")
-                if text:
-                    reasoning_parts.append(text)
+    def _collect_reasoning(item: dict[str, Any], reasoning_parts: list[str]) -> None:
+        """Append a reasoning item's text: its ``reasoning_text`` content parts,
+        else its ``summary_text`` parts.
+
+        ``reasoning_text`` is the full reasoning, matching the streaming
+        ``response.reasoning_text.delta`` events; servers such as vLLM serving
+        gpt-oss return it with an empty ``summary``. A summary condenses the
+        same reasoning, so taking both would count it twice.
+        """
+        reasoning_parts.extend(
+            ResponsesEndpoint._part_texts(item.get("content"), "reasoning_text")
+            or ResponsesEndpoint._part_texts(item.get("summary"), "summary_text")
+        )
+
+    @staticmethod
+    def _part_texts(parts: Any, part_type: str) -> list[str]:
+        if not isinstance(parts, list):
+            return []
+        return [
+            part["text"]
+            for part in parts
+            if isinstance(part, dict)
+            and part.get("type") == part_type
+            and isinstance(part.get("text"), str)
+            and part["text"]
+        ]
 
     @staticmethod
     def _collect_message_content(item: dict[str, Any], text_parts: list[str]) -> None:

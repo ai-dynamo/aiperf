@@ -622,6 +622,30 @@ class MessagesEndpoint(BaseEndpoint):
                     final.setdefault(key, value)
         return parsed
 
+    def is_truncated(self, record: RequestRecord) -> bool:
+        """True when the reported ``stop_reason`` is ``"max_tokens"``.
+
+        Non-streaming carries it at the top level of the ``message`` body;
+        streaming carries it on the ``message_delta`` event's ``delta``.
+        """
+        for response in reversed(record.responses):
+            json_obj = response.get_json()
+            if not isinstance(json_obj, dict):
+                continue
+            event_type = json_obj.get("type")
+            if event_type == EventType.MESSAGE:
+                stop_reason = json_obj.get("stop_reason")
+            elif event_type == EventType.MESSAGE_DELTA:
+                delta = json_obj.get("delta")
+                stop_reason = (
+                    delta.get("stop_reason") if isinstance(delta, dict) else None
+                )
+            else:
+                continue
+            if stop_reason is not None:
+                return stop_reason == "max_tokens"
+        return False
+
     def build_assistant_turn(self, record: RequestRecord) -> Turn | None:
         """Capture text + thinking + ``tool_use`` blocks from an Anthropic
         response for replay.

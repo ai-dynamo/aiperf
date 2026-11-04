@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -111,3 +112,91 @@ class TestPhasePublisher:
         await pub.request_profile_cancel()
         sender.assert_awaited_once()
         mock_pub_client.publish.assert_not_called()
+
+    async def test_update_server_metrics_runtime_status_active(
+        self, mock_pub_client: MagicMock
+    ) -> None:
+        pub = PhasePublisher(
+            pub_client=mock_pub_client,
+            service_id="tm-001",
+            profile_cancel_sender=AsyncMock(),
+        )
+        assert pub.server_metrics_runtime_active is False
+        assert pub.server_metrics_collector_count == 0
+
+        pub.update_server_metrics_runtime_status(
+            enabled=True,
+            endpoints_reachable=[
+                "http://localhost:8000/metrics",
+                "http://localhost:8001/metrics",
+            ],
+        )
+        assert pub.server_metrics_runtime_active is True
+        assert pub.server_metrics_collector_count == 2
+
+    async def test_update_server_metrics_runtime_status_inactive_when_unreachable(
+        self, mock_pub_client: MagicMock
+    ) -> None:
+        pub = PhasePublisher(
+            pub_client=mock_pub_client,
+            service_id="tm-001",
+            profile_cancel_sender=AsyncMock(),
+        )
+        pub.update_server_metrics_runtime_status(
+            enabled=False,
+            endpoints_reachable=[],
+        )
+        assert pub.server_metrics_runtime_active is False
+        assert pub.server_metrics_collector_count == 0
+
+        # enabled=True with empty reachable list is still inactive
+        pub.update_server_metrics_runtime_status(
+            enabled=True,
+            endpoints_reachable=[],
+        )
+        assert pub.server_metrics_runtime_active is False
+        assert pub.server_metrics_collector_count == 0
+
+    async def test_wait_for_warmup_boundary_ready_returns_on_ready(
+        self, mock_pub_client: MagicMock
+    ) -> None:
+        ready = asyncio.Event()
+        pub = PhasePublisher(
+            pub_client=mock_pub_client,
+            service_id="tm-001",
+            profile_cancel_sender=AsyncMock(),
+            warmup_boundary_ready=ready,
+        )
+        asyncio.get_running_loop().call_later(0.01, ready.set)
+        assert await pub.wait_for_warmup_boundary_ready(5.0) is True
+
+    async def test_wait_for_warmup_boundary_ready_times_out(
+        self, mock_pub_client: MagicMock
+    ) -> None:
+        pub = PhasePublisher(
+            pub_client=mock_pub_client,
+            service_id="tm-001",
+            profile_cancel_sender=AsyncMock(),
+            warmup_boundary_ready=asyncio.Event(),
+        )
+        assert await pub.wait_for_warmup_boundary_ready(0.01) is False
+
+    async def test_wait_for_warmup_boundary_ready_stops_on_cancel_event(
+        self, mock_pub_client: MagicMock
+    ) -> None:
+        """A cancel during the wait returns promptly instead of running the full budget."""
+        cancel_event = asyncio.Event()
+        pub = PhasePublisher(
+            pub_client=mock_pub_client,
+            service_id="tm-001",
+            profile_cancel_sender=AsyncMock(),
+            warmup_boundary_ready=asyncio.Event(),
+        )
+        loop = asyncio.get_running_loop()
+        loop.call_later(0.01, cancel_event.set)
+        start = loop.time()
+        assert (
+            await pub.wait_for_warmup_boundary_ready(30.0, cancel_event=cancel_event)
+            is False
+        )
+        assert loop.time() - start < 5.0

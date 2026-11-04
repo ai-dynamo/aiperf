@@ -40,9 +40,13 @@ Examples:
     print(f"Workers: {Environment.WORKER.CPU_UTILIZATION_FACTOR}")
 """
 
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, Self
 
+import orjson
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -411,7 +415,11 @@ class _DatasetSettings(BaseSettings):
         description="If True, AIPerf reuses memory-mapped dataset files across runs whose "
         "input bytes, tokenizer identity, and prompt/input settings are byte-identical. "
         "Set to False to force every run to re-tokenize and re-write its mmap files. "
-        "Cache misses still produce byte-identical mmap files to a non-cached run.",
+        "Cache misses still produce byte-identical mmap files to a non-cached run. "
+        "Kubernetes pods default to False, since the default cache directory is on their "
+        "read-only root filesystem; to turn it back on, podTemplate.env must also set "
+        "AIPERF_DATASET_MMAP_CACHE_DIR to a writable directory (a mounted volume, to "
+        "reuse the cache across runs).",
     )
     MMAP_CACHE_DIR: Path | None = Field(
         default=None,
@@ -424,6 +432,19 @@ class _DatasetSettings(BaseSettings):
         "version), not from the environment. To force a re-tokenize, set "
         "AIPERF_DATASET_MMAP_CACHE_ENABLED=false, point this variable at a fresh directory, "
         "or delete the cache directory.",
+    )
+    REMOTE_CACHE_DIR: Path | None = Field(
+        default=None,
+        description="Directory for `s3://` and `https://` dataset downloads and the "
+        "remote-dataset index. If None, defaults to ~/.cache/aiperf/remote. `hf://` "
+        "files live in the standard Hugging Face cache (HF_HOME). No automatic "
+        "eviction is implemented -- delete the directory to reclaim disk.",
+    )
+    REMOTE_OFFLINE: bool = Field(
+        default=False,
+        description="If True, remote `--input-file` references (hf://, s3://, https://) "
+        "are served only from the local cache, with no network calls. "
+        "HF_HUB_OFFLINE=1 has the same effect.",
     )
     MMAP_PREFAULT: bool = Field(
         default=True,
@@ -1384,12 +1405,57 @@ class _ServerMetricsSettings(BaseSettings):
         env_parse_enums=True,
     )
 
+    STORAGE_MAX_BYTES: int = Field(
+        default=16 * 1024**3,
+        ge=1024 * 1024,
+        description="Maximum backing-file size in bytes for disk-backed "
+        "server-metrics histories, including array-growth allocations. Disk blocks "
+        "are consumed only as samples arrive. Exhaustion stops server metrics "
+        "with an explicit collection error while inference results still export.",
+    )
+    STORAGE_FLUSH_BYTES: int = Field(
+        default=8 * 1024**2,
+        ge=4096,
+        description="Bytes of server-metrics writes between disk flushes and "
+        "page-cache releases. Numeric histories use the artifact filesystem, "
+        "limiting the resident write working set instead of retaining all "
+        "numeric history in memory.",
+    )
+    MAX_SERIES: int = Field(
+        default=20_000,
+        ge=1,
+        description="Maximum distinct endpoint/name/label server-metrics series "
+        "per run. Bounds in-memory series metadata, including dynamically changing "
+        "labels. Exceeding the limit stops collection with an explicit error "
+        "while inference results still export.",
+    )
+
     COLLECTION_FLUSH_PERIOD: float = Field(
         ge=0.0,
         le=30.0,
         default=2.0,
-        description="Time in seconds to continue collecting metrics after profiling completes, "
-        "allowing server-side metrics to flush/finalize before shutting down (default: 2.0s)",
+        description=(
+            "Time in seconds to wait for server-side metrics to flush/finalize "
+            "at phase boundaries: after warmup completes (before profiling "
+            "starts) and after profiling completes (before shutdown). "
+            "The warmup flush/ack barrier runs only when server metrics "
+            "collection is runtime-active (reachable collectors). "
+            "Default: 2.0s."
+        ),
+    )
+    WARMUP_BOUNDARY_TIMEOUT: float | None = Field(
+        ge=0.0,
+        le=3600.0,
+        default=None,
+        description=(
+            "Optional override in seconds for PhaseRunner's wait for "
+            "SERVER_METRICS_WARMUP_BOUNDARY_READY after warmup completes. "
+            "When unset or 0, the timeout is derived as "
+            "COLLECTION_FLUSH_PERIOD + SCRAPE_TIMEOUT * (N + 2) + 5, where N "
+            "is the reachable collector count from ServerMetricsStatusMessage. "
+            "The wait and fail-closed abort on timeout apply only when "
+            "collection is runtime-active."
+        ),
     )
     PROFILE_COMPLETE_RELAY_TIMEOUT: float = Field(
         ge=1.0,
@@ -2663,6 +2729,58 @@ class _Environment(BaseSettings):
         default_factory=_ZMQSettings,
         description="ZMQ communication settings",
     )
+
+    @contextmanager
+    def defaults(
+        self, values: dict[str, dict[str, str | int | float | bool]]
+    ) -> Iterator[None]:
+        """Scope missing settings to this process and children spawned within the context."""
+        previous: dict[str, BaseSettings] = {}
+        inserted: dict[str, tuple[str, str]] = {}
+        try:
+            for group, fields in values.items():
+                settings = getattr(self, group)
+                updates = {}
+                for key, value in fields.items():
+                    if key not in type(settings).model_fields:
+                        raise ValueError(f"Unknown environment setting: {group}.{key}")
+                    env_key = f"{settings.model_config['env_prefix']}{key}"
+                    if (
+                        env_key not in os.environ
+                        and key not in settings.model_fields_set
+                    ):
+                        os.environ[env_key] = str(value)
+                        inserted[env_key] = (group, key)
+                        updates[key] = value
+                previous[group] = settings
+                updated = type(settings)(**{**settings.model_dump(), **updates})
+                updated.__pydantic_fields_set__ = (
+                    settings.model_fields_set | updates.keys()
+                )
+                setattr(self, group, updated)
+            if values:
+                validated = type(self).model_validate(self.model_dump())
+                for group in type(self).model_fields:
+                    settings = getattr(self, group)
+                    normalized = getattr(validated, group)
+                    previous.setdefault(group, settings)
+                    normalized.__pydantic_fields_set__ = (
+                        settings.model_fields_set.copy()
+                    )
+                    setattr(self, group, normalized)
+                for env_key, (group, key) in inserted.items():
+                    value = getattr(getattr(self, group), key)
+                    os.environ[env_key] = (
+                        orjson.dumps(value, default=list).decode()
+                        if isinstance(value, list | set | dict)
+                        else str(value)
+                    )
+            yield
+        finally:
+            for group, settings in previous.items():
+                setattr(self, group, settings)
+            for key in inserted:
+                os.environ.pop(key, None)
 
     @model_validator(mode="after")
     def validate_dev_mode(self) -> Self:

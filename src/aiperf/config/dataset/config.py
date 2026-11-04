@@ -40,10 +40,16 @@ from aiperf.config.dataset.content import (
     PromptSelectionConfig,
     RankingsConfig,
 )
+from aiperf.config.dataset.remote_ref import (
+    RemoteFixedScheduleCheck,
+    RemoteRef,
+    coerce_remote_ref,
+)
 from aiperf.config.dataset.system_prompt import SystemPromptMixin
 from aiperf.config.dataset.trace import (
     SynthesisConfig,
 )
+from aiperf.config.dataset.truncation import EndOnTruncationMixin
 from aiperf.config.dataset.video import (
     VIDEO_AUDIO_CODEC_MAP,
     VideoAudioConfig,
@@ -88,7 +94,7 @@ _DatasetName = Annotated[
 
 
 # Dataset type variants using discriminated unions
-class SyntheticDataset(SystemPromptMixin):
+class SyntheticDataset(SystemPromptMixin, EndOnTruncationMixin):
     """
     Synthetic dataset configuration.
 
@@ -284,7 +290,7 @@ class SyntheticDataset(SystemPromptMixin):
         return self
 
 
-class FileDataset(SystemPromptMixin):
+class FileDataset(SystemPromptMixin, EndOnTruncationMixin):
     """
     File-based dataset configuration.
 
@@ -292,7 +298,8 @@ class FileDataset(SystemPromptMixin):
     Supports trace replay and custom sampling strategies.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    # A raw presigned URL in ``path`` would otherwise be echoed in ValidationError text.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     name: _DatasetName
 
@@ -302,10 +309,14 @@ class FileDataset(SystemPromptMixin):
     ]
 
     path: Annotated[
-        Path | None,
+        Path | RemoteRef | None,
+        # Before Path coercion: Path("hf://x") collapses "//" and corrupts the reference.
+        BeforeValidator(coerce_remote_ref),
         Field(
             default=None,
-            description="Path to file or directory containing benchmark dataset. "
+            description="Path to file or directory containing benchmark dataset, or a "
+            "remote reference: `hf://[datasets/]<org>/<repo>[@<rev>][/<path>]`, "
+            "`s3://<bucket>/<key>[?versionId=<id>]`, or an `https://`/`http://` URL. "
             "Can be absolute or relative. Mutually exclusive with `records:`. "
             "Supported formats depend on the format field: "
             "JSONL for single_turn/multi_turn, JSONL (optionally gzipped) for "
@@ -624,6 +635,16 @@ class FileDataset(SystemPromptMixin):
         ),
     ]
 
+    remote_fixed_schedule_check: Annotated[
+        RemoteFixedScheduleCheck | None,
+        Field(
+            default=None,
+            description="Internal: set by the CLI for a remote `--input-file` and cleared by the "
+            "dataset preflight once the first record decides fixed-schedule auto-promotion. "
+            "Do not set in YAML.",
+        ),
+    ]
+
     cache_bust: Annotated[
         CacheBustConfig,
         Field(
@@ -809,7 +830,7 @@ class FileDataset(SystemPromptMixin):
         return self
 
 
-class PublicDataset(SystemPromptMixin):
+class PublicDataset(SystemPromptMixin, EndOnTruncationMixin):
     """
     Public dataset configuration.
 

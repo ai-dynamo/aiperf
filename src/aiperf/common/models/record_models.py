@@ -528,6 +528,20 @@ class ProfileResults(AIPerfBaseModel):
         "runs. Forwarded to profile_export_aiperf.json under the "
         "``branch_stats`` key when present.",
     )
+    conversations_ended_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Conversation sessions ended early because a turn was truncated "
+        "by the output-token cap; a conversation replayed to fill --request-count "
+        "counts once per replay. None when end_conversation_on_truncation is off.",
+    )
+    turns_skipped_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Turns never sent because their conversation ended early on "
+        "a truncated turn, excluding turns the run's stop condition would not "
+        "have sent anyway. None when end_conversation_on_truncation is off.",
+    )
     context_overflow_count: int = Field(
         default=0,
         ge=0,
@@ -1622,12 +1636,24 @@ def first_content_chunk_completion_tokens(
     that value is the number of tokens delivered through the first content chunk.
     Returns ``None`` when no content chunk carries usage (e.g. the server only
     reports the final total), so callers fall back to assuming one token in the
-    first chunk.
+    first chunk. An explicit empty first chunk (``--allow-empty-content``) sets
+    TTFT without delivering a token, so its count is 0 with or without usage.
     """
-    for response in responses:
-        if response.data and response.usage:
+    content = [response for response in responses if response.data]
+    if content and is_explicit_empty_chunk(content[0]):
+        return 0
+    for response in content:
+        if response.usage:
             return response.usage.completion_tokens
     return None
+
+
+def is_explicit_empty_chunk(response: ParsedResponse) -> bool:
+    """Whether a retained ``--allow-empty-content`` chunk decoded to an empty string."""
+    return (
+        isinstance(response.data, TextResponseData | ReasoningResponseData)
+        and not response.data.get_text()
+    )
 
 
 @dataclass(slots=True)
@@ -1809,10 +1835,11 @@ class ParsedResponseRecord:
 
     @cached_property
     def content_responses(self) -> list[ParsedResponse]:
-        """Get only responses with actual content (data is not None or empty).
+        """Get parsed content responses on the shared metric timeline.
 
-        This excludes usage-only or [DONE] responses that may appear at the end of streaming responses.
-        Useful for timing metrics that should measure content delivery.
+        Explicit empty chat strings may be present when endpoint extraction is
+        configured to retain them. Usage-only, metadata-only, null-data, and
+        [DONE] responses are excluded.
         """
         return [response for response in self.responses if response.data]
 
@@ -1850,7 +1877,7 @@ class ParsedResponseRecord:
             err = InvalidInferenceResultError("Invalid inference result")
             if len(self.responses) == 0 or len(self.content_responses) == 0:
                 err.add_note(
-                    "No responses with actual content were received from the server (only usage/metadata, null/empty data, or [DONE] markers)"
+                    "No parsed content responses were received from the server (only usage/metadata, null data, or [DONE] markers)"
                 )
             if self.start_perf_ns <= 0 or self.start_perf_ns >= sys.maxsize:
                 err.add_note(
