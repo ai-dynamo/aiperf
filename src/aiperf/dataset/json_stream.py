@@ -121,19 +121,25 @@ async def iter_json_bytes(value: Any, *, pretty: bool = False) -> AsyncIterator[
         yield chunk
 
 
-async def iter_concatenated_json_bytes(
-    values: Iterable[Any], sizes: list[int]
-) -> AsyncIterator[bytes]:
-    """Yield the compact JSON of each value back to back.
+def json_parts(value: Any) -> Iterator[bytes]:
+    """Compact JSON of ``value`` as parts, each from a bounded native call."""
+    return _parts(value, pretty=False)
 
-    Small values share a chunk, and so a thread handoff, instead of paying one
-    each. Appends each value's encoded byte size to ``sizes`` once encoded.
+
+async def iter_record_chunks(
+    records: Iterable[Iterable[bytes]], sizes: list[int]
+) -> AsyncIterator[bytes]:
+    """Yield the parts of each record back to back.
+
+    Small records share a chunk, and so a thread handoff, instead of paying one
+    each. Records are consumed on the worker thread, so lazy encoding stays off
+    the event loop. Appends each record's byte size to ``sizes`` once produced.
     """
 
     def parts() -> Iterator[bytes]:
-        for value in values:
+        for record in records:
             size = 0
-            for part in _parts(value, pretty=False):
+            for part in record:
                 size += len(part)
                 yield part
             sizes.append(size)

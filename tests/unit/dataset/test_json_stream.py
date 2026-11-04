@@ -20,8 +20,9 @@ from aiperf.dataset.dataset_manager import DatasetManager
 from aiperf.dataset.json_stream import (
     _CHUNK_SIZE,
     _STRING_CHARS,
-    iter_concatenated_json_bytes,
     iter_json_bytes,
+    iter_record_chunks,
+    json_parts,
 )
 from aiperf.dataset.memory_map_utils import (
     MemoryMapDatasetBackingStore,
@@ -55,7 +56,9 @@ async def test_concatenated_small_values_share_one_chunk() -> None:
     """Small turns share a thread handoff and still report their own sizes."""
     values = [{"turn": i, "text": "x" * i} for i in range(1_000)]
     sizes: list[int] = []
-    chunks = [chunk async for chunk in iter_concatenated_json_bytes(values, sizes)]
+    chunks = [
+        chunk async for chunk in iter_record_chunks(map(json_parts, values), sizes)
+    ]
     encoded = [orjson.dumps(value) for value in values]
     assert len(chunks) == 1
     assert chunks[0] == b"".join(encoded)

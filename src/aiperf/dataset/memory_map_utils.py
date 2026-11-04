@@ -58,7 +58,7 @@ from aiperf.common.models import (
     MemoryMapClientMetadata,
     Turn,
 )
-from aiperf.dataset.json_stream import iter_concatenated_json_bytes
+from aiperf.dataset.json_stream import iter_record_chunks, json_parts
 from aiperf.endpoints.payload_extraction import count_choices
 
 _logger = AIPerfLogger(__name__)
@@ -201,59 +201,13 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         Raises:
             RuntimeError: If already finalized
         """
-        if self._finalized:
-            raise RuntimeError("Cannot add conversations after finalization")
-
-        if self._format == MemoryMapFormat.PAYLOAD_BYTES:
-            # Pre-encode each turn's raw_payload and write the bytes directly;
-            # workers replay these verbatim with no deserialization. Persist
-            # turn scalars in the index so metric enrichment can restore
-            # max_tokens / scheduled_send_ms / source_kind / audio_duration_seconds
-            # without the full Conversation.
-            sizes: list[int] = []
-            start_offset = self._current_offset
-            async for chunk in iter_concatenated_json_bytes(
-                (turn.raw_payload for turn in conversation.turns), sizes
-            ):
-                await self._write_bytes(chunk)
-                self._current_offset += len(chunk)
-            turn_offsets: list[PayloadOffset] = []
-            for turn, size in zip(conversation.turns, sizes, strict=True):
-                turn_offsets.append(
-                    PayloadOffset(
-                        offset=start_offset,
-                        size=size,
-                        max_tokens=_resolve_turn_max_tokens(turn),
-                        timestamp=turn.timestamp,
-                        source_kind=turn.source_kind,
-                        audio_duration_seconds=turn.audio_duration_seconds,
-                        num_choices=count_choices(turn.raw_payload)
-                        if isinstance(turn.raw_payload, dict)
-                        else 1,
-                    )
-                )
-                start_offset += size
-            self._payload_offsets[conversation_id] = turn_offsets
-        else:
-            conv_bytes = await asyncio.to_thread(
-                lambda: conversation.model_dump_json().encode("utf-8")
-            )
-            # Track uncompressed offset (workers need this after decompression)
-            self._offsets[conversation_id] = ConversationOffset(
-                offset=self._current_offset, size=len(conv_bytes)
-            )
-            self._current_offset += len(conv_bytes)
-            await self._write_bytes(conv_bytes)
-
-        self._session_ids.append(conversation_id)
-
-        if len(self._session_ids) % 1000 == 0:
-            self.debug(
-                f"Streamed {len(self._session_ids)} conversations ({self._current_offset} bytes)"
-            )
+        await self.add_conversations({conversation_id: conversation})
 
     async def add_conversations(self, conversations: dict[str, Conversation]) -> None:
         """Add multiple conversations (written immediately to file).
+
+        Small conversations share encoder chunks and writes, so a large dataset
+        pays one thread handoff per MiB rather than per conversation.
 
         Args:
             conversations: Dictionary mapping session IDs to Conversation objects
@@ -263,8 +217,64 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         """
         if self._finalized:
             raise RuntimeError("Cannot add conversations after finalization")
+
+        payload_bytes = self._format == MemoryMapFormat.PAYLOAD_BYTES
+        if payload_bytes:
+            # Pre-encode each turn's raw_payload and write the bytes directly;
+            # workers replay these verbatim with no deserialization.
+            records = (
+                json_parts(turn.raw_payload)
+                for conversation in conversations.values()
+                for turn in conversation.turns
+            )
+        else:
+            records = (
+                (conversation.model_dump_json().encode("utf-8"),)
+                for conversation in conversations.values()
+            )
+        sizes: list[int] = []
+        offset = self._current_offset
+        async for chunk in iter_record_chunks(records, sizes):
+            await self._write_bytes(chunk)
+            self._current_offset += len(chunk)
+
+        # Offsets are uncompressed: workers read after decompression.
+        record_sizes = iter(sizes)
         for conversation_id, conversation in conversations.items():
-            await self.add_conversation(conversation_id, conversation)
+            if payload_bytes:
+                # Persist turn scalars in the index so metric enrichment can
+                # restore max_tokens / scheduled_send_ms / source_kind /
+                # audio_duration_seconds without the full Conversation.
+                turn_offsets: list[PayloadOffset] = []
+                for turn in conversation.turns:
+                    size = next(record_sizes)
+                    turn_offsets.append(
+                        PayloadOffset(
+                            offset=offset,
+                            size=size,
+                            max_tokens=_resolve_turn_max_tokens(turn),
+                            timestamp=turn.timestamp,
+                            source_kind=turn.source_kind,
+                            audio_duration_seconds=turn.audio_duration_seconds,
+                            num_choices=count_choices(turn.raw_payload)
+                            if isinstance(turn.raw_payload, dict)
+                            else 1,
+                        )
+                    )
+                    offset += size
+                self._payload_offsets[conversation_id] = turn_offsets
+            else:
+                size = next(record_sizes)
+                self._offsets[conversation_id] = ConversationOffset(
+                    offset=offset, size=size
+                )
+                offset += size
+            self._session_ids.append(conversation_id)
+
+        self.debug(
+            lambda: f"Streamed {len(self._session_ids)} conversations "
+            f"({self._current_offset} bytes)"
+        )
 
     async def finalize(self) -> None:
         """Finalize by closing data file and writing index.
