@@ -64,13 +64,14 @@ from aiperf.config.cli_parameter import CLIParameter, Groups
 from aiperf.config.endpoint import EndpointDefaults
 from aiperf.config.loader.parsing import (
     normalize_http_urls,
-    parse_file,
     parse_float_or_float_list,
+    parse_input_file,
     parse_int_or_int_list,
     parse_str_as_numeric_dict,
     parse_str_or_dict_as_tuple_list,
     parse_str_or_list,
     parse_str_or_list_of_positive_values,
+    raise_rejected_input_file,
     reject_moved_custom_dataset_type,
     require_turn_mean_at_least_one,
 )
@@ -181,6 +182,20 @@ class CLIConfig(BaseConfig):
             group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.STREAMING
+
+    allow_empty_content: Annotated[
+        bool,
+        Field(
+            description="Retain explicitly empty content or reasoning strings as "
+            "timed responses for streaming OpenAI Chat Completions. This changes "
+            "TTFT and all metrics using the shared response timeline, but TTFO "
+            "still requires non-empty output and empty strings add no tokens.",
+        ),
+        CLIParameter(
+            name=("--allow-empty-content",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.ALLOW_EMPTY_CONTENT
 
     urls: Annotated[
         list[str],
@@ -702,11 +717,16 @@ class CLIConfig(BaseConfig):
     input_file: Annotated[
         Any,
         Field(
-            description="Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. "
+            description="Path to file or directory containing benchmark dataset, or a remote "
+            "reference (`hf://<org>/<repo>[@<rev>][/<path>]`, `s3://<bucket>/<key>`, `https://...`) "
+            "downloaded into a local cache before the run. Required when using `--custom-dataset-type`. "
             "Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), "
             "Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
         ),
-        BeforeValidator(parse_file),
+        # Runs bottom-up: a failed parse becomes a redacted value, then raises, so
+        # a presigned URL's signature never appears in the ValidationError.
+        BeforeValidator(raise_rejected_input_file),
+        BeforeValidator(parse_input_file),
         CLIParameter(
             name=("--input-file",),
             group=Groups.INPUT,
@@ -1413,6 +1433,22 @@ class CLIConfig(BaseConfig):
             group=Groups.CACHE_BUST,
         ),
     ] = CacheBustTarget.NONE
+
+    cache_bust_media_uuids: Annotated[
+        bool,
+        Field(
+            description=(
+                "Append the trajectory's RID digest to every media `uuid`, so a replay "
+                "cannot hit vLLM's multimodal cache entries from an earlier play. "
+                "Requires a RID --cache-bust target and --endpoint-type chat. "
+                "See [cache-bust.md](reference/cache-bust.md)."
+            ),
+        ),
+        CLIParameter(
+            name=("--cache-bust-media-uuids",),
+            group=Groups.CACHE_BUST,
+        ),
+    ] = False
 
     ##############################################################################
     # Prefix Prompt
@@ -2594,7 +2630,7 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             description="Lock all benchmark invariants for a named scenario "
-            "(e.g. 'inferencex-agentx-mvp'). Conflicts with the locked "
+            "('agentx' or 'inferencex-agentx-mvp'). Conflicts with the locked "
             "invariants raise ScenarioLockError at startup unless "
             "--unsafe-override is also passed. Distinct from the sweep "
             "``scenarios`` strategy (hand-picked named runs).",

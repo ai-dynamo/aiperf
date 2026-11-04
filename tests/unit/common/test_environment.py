@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import os
 from unittest.mock import patch
 
 import pytest
@@ -862,3 +863,30 @@ class TestUISettingsRealtimeMetricsInterval:
 
         settings = _UISettings(REALTIME_METRICS_INTERVAL=configured)
         assert settings.realtime_metrics_interval(UIType(ui_type.lower())) == expected
+
+
+class TestEnvironmentDefaultsExplicitSettingsWin:
+    """Each "already explicit" guard in ``defaults()`` must hold on its own."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_keepidle(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("AIPERF_HTTP_TCP_KEEPIDLE", raising=False)
+
+    def test_programmatic_setting_is_not_overridden(self) -> None:
+        settings = _Environment()
+        settings.HTTP = _HTTPSettings(TCP_KEEPIDLE=33)
+
+        with settings.defaults({"HTTP": {"TCP_KEEPIDLE": 90}}):
+            assert settings.HTTP.TCP_KEEPIDLE == 33
+            assert "AIPERF_HTTP_TCP_KEEPIDLE" not in os.environ
+
+    def test_env_var_exported_after_load_is_kept_for_children_and_after_exit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = _Environment()
+        monkeypatch.setenv("AIPERF_HTTP_TCP_KEEPIDLE", "33")
+
+        with settings.defaults({"HTTP": {"TCP_KEEPIDLE": 90}}):
+            assert settings.HTTP.TCP_KEEPIDLE != 90
+            assert os.environ["AIPERF_HTTP_TCP_KEEPIDLE"] == "33"
+        assert os.environ["AIPERF_HTTP_TCP_KEEPIDLE"] == "33"

@@ -411,6 +411,37 @@ async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
     await store.stop()
 
 
+@pytest.mark.asyncio
+async def test_payload_mmap_persists_sequence_count(tmp_path, monkeypatch):
+    """The index counts sequences at build time, so the worker can restore
+    them after stripping payload bytes without decoding each request."""
+    from aiperf.dataset.memory_map_utils import PayloadOffset
+
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+    store = MemoryMapDatasetBackingStore(
+        benchmark_id="test_payload_choices", format=MemoryMapFormat.PAYLOAD_BYTES
+    )
+    await store.initialize()
+    payloads = [{"prompt": ["a", "b"], "n": 2}, {"messages": [], "model": "m"}]
+    conv = Conversation(
+        session_id="conv-1",
+        turns=[Turn(role="user", raw_payload=p) for p in payloads],
+    )
+    await store.add_conversation("conv-1", conv)
+    await store.finalize()
+
+    metadata = store.get_client_metadata()
+    client = MemoryMapDatasetClient(metadata.data_file_path, metadata.index_file_path)
+    assert [client.get_payload_turn("conv-1", i).num_choices for i in (0, 1)] == [
+        4,
+        1,
+    ]
+    assert PayloadOffset(offset=0, size=0).num_choices == 1
+
+    client.close()
+    await store.stop()
+
+
 @pytest.mark.parametrize("value", [0.0, -1.0, float("inf"), float("nan")])
 def test_payload_offset_audio_duration_seconds_rejects_non_positive_or_non_finite(
     value,
