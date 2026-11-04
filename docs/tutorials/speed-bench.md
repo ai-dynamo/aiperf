@@ -212,6 +212,7 @@ once somewhere connected and copy the file:
 aiperf profile --public-dataset speed_bench_qa --model <model> --url <url>
 
 # then copy the cache to the target machine
+ssh target 'mkdir -p /path/to/workdir/.cache/aiperf/datasets/speed-bench/v1.1'
 scp .cache/aiperf/datasets/speed-bench/v1.1/qualitative.jsonl \
     target:/path/to/workdir/.cache/aiperf/datasets/speed-bench/v1.1/
 ```
