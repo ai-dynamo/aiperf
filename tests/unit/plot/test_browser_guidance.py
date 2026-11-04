@@ -7,6 +7,7 @@ from unittest.mock import Mock
 import plotly.graph_objects as go
 import plotly.io as pio
 import pytest
+from choreographer.browsers import chromium
 from choreographer.browsers.chromium import Chromium
 from kaleido.errors import ChromeNotFoundError
 from pytest import param
@@ -130,3 +131,54 @@ def test_png_real_plotly_missing_browser_chain_on_linux_arm64(
         _Exporter(tmp_path)._export_figure(fig, tmp_path / "out.png")
     assert "BROWSER_PATH" in str(raised.value)
     assert "plotly_get_chrome" not in str(raised.value)
+
+
+def test_png_invalid_browser_path_linux_arm64_suggests_correction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(browser, "IS_LINUX", True)
+    monkeypatch.setattr(browser.platform, "machine", lambda: "aarch64")
+    monkeypatch.setattr("aiperf.plot.exporters.png.base.IS_WINDOWS_ARM", False)
+    monkeypatch.setattr(chromium, "get_chrome_download_path", lambda **kwargs: None)
+    monkeypatch.setattr(chromium, "get_old_chrome_download_path", lambda: None)
+    monkeypatch.setenv("BROWSER_PATH", str(tmp_path / "missing"))
+    fig = Mock()
+    fig.write_image.side_effect = lambda *args, **kwargs: pio.to_image(
+        go.Figure(), format="png"
+    )
+
+    with pytest.raises(ConfigurationError) as raised:
+        _Exporter(tmp_path)._export_figure(fig, tmp_path / "out.png")
+    assert "correct or unset" in str(raised.value)
+    assert "BROWSER_PATH" in str(raised.value)
+
+
+@pytest.mark.skipif(not browser.IS_LINUX, reason="uses a POSIX executable")
+def test_png_failed_chrome_linux_arm64_preserves_cause_and_guides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(browser, "IS_LINUX", True)
+    monkeypatch.setattr(browser.platform, "machine", lambda: "aarch64")
+    monkeypatch.setattr("aiperf.plot.exporters.png.base.IS_WINDOWS_ARM", False)
+    fake_chrome = tmp_path / "chrome"
+    fake_chrome.write_text("#!/bin/sh\nexit 126\n", encoding="utf-8")
+    fake_chrome.chmod(0o700)
+    monkeypatch.setattr(
+        chromium, "get_chrome_download_path", lambda **kwargs: fake_chrome
+    )
+    system_chromium = tmp_path / "system-chromium"
+    system_chromium.touch()
+    monkeypatch.setenv("BROWSER_PATH", str(system_chromium))
+    assert Chromium.find_browser(skip_local=False) == str(fake_chrome)
+    fig = Mock()
+    fig.write_image.side_effect = lambda *args, **kwargs: pio.to_image(
+        go.Figure(), format="png"
+    )
+
+    with pytest.raises(ConfigurationError) as raised:
+        _Exporter(tmp_path)._export_figure(fig, tmp_path / "out.png")
+    assert "could not start" in str(raised.value)
+    assert "Choreographer" in str(raised.value)
+    assert "incompatible" in str(raised.value)
+    assert raised.value.__cause__ is not None
+    assert browser.is_browser_start_failure(raised.value.__cause__)

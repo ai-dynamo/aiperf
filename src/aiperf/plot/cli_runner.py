@@ -127,7 +127,9 @@ def run_plot_controller(
     """Generate plots from AIPerf profiling data.
 
     Note: PNG export requires Chrome or Chromium. On Linux ARM64, install system
-    Chromium and set BROWSER_PATH to its executable if it is not on PATH.
+    Chromium and set BROWSER_PATH if it is not on PATH. Correct or unset a stale
+    BROWSER_PATH; remove any incompatible Chrome downloaded by Choreographer,
+    which may take precedence.
 
     Args:
         paths: Paths to profiling run directories. Defaults to ./artifacts if not specified.

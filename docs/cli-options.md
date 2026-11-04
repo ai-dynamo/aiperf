@@ -7453,7 +7453,7 @@ Generate visualizations from AIPerf profiling data.
 
 On first run, automatically creates ~/.aiperf/plot_config.yaml which you can edit to customize plots, including experiment classification (baseline vs treatment runs). Use --config to specify a different config file.
 
-_**Note:** PNG export requires Chrome or Chromium for kaleido. On Linux ARM64, install system Chromium and, if it is not on PATH, set `BROWSER_PATH` to its executable._
+_**Note:** PNG export requires Chrome or Chromium for kaleido. On Linux ARM64, install system Chromium and set `BROWSER_PATH` if it is not on PATH. Correct or unset a stale `BROWSER_PATH`; remove any incompatible Chrome downloaded by Choreographer, which may take precedence._
 
 _**Note:** The plot command expects default export filenames (e.g., `profile_export.jsonl`). Runs created with `--profile-export-file` or custom `--profile-export-prefix` use different filenames and will not be detected by the plot command._
 
