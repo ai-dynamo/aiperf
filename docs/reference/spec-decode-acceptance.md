@@ -297,8 +297,9 @@ Multi-sequence responses contain a list of detail objects. AIPerf excludes that
 list because one record cannot attribute request-level usage to one sequence.
 A completions request with several prompts and `n=1` returns one object for the
 first prompt only. AIPerf also excludes it, because the request generates one
-sequence for each prompt. Missing counters, malformed histograms, and inconsistent totals produce no
-acceptance record. SGLang v0.5.19 omits the details when no verify step ran.
+sequence for each prompt. Missing counters, malformed histograms, and
+inconsistent totals produce no acceptance record. SGLang v0.5.19 omits the
+details when no verify step ran.
 
 Without valid per-request acceptance data, SPEED-Bench uses its existing
 `auto` fallback: records, then summary, then server metrics. Keep server scraping
