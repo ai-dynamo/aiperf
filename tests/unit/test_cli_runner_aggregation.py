@@ -307,7 +307,7 @@ class TestSummarizeAndExport:
             param("search", True, id="one-point-search-cli-with-no-feasible-point"),
         ],
     )  # fmt: skip
-    def test_single_success_exports_and_returns_zero(
+    def test_summarize_and_export_and_run_multi_benchmark_single_success_exit_zero(
         self, mode: str, through_cli: bool, tmp_path: Path
     ) -> None:
         """SLA infeasibility is a search outcome, not a benchmark execution failure."""
@@ -399,7 +399,7 @@ class TestSummarizeAndExport:
             param([True, True, False], 0, 1, id="two-successes-with-failure"),
         ],
     )  # fmt: skip
-    def test_existing_failure_and_multi_run_behavior_is_preserved(
+    def test_summarize_and_export_run_outcomes_match_exit_and_aggregation_counts(
         self,
         successes: list[bool],
         expected_exit: int,
@@ -427,7 +427,9 @@ class TestSummarizeAndExport:
         assert exit_code == expected_exit
         assert aggregate.await_count == expected_aggregations
 
-    def test_single_success_propagates_aggregation_errors(self, tmp_path: Path) -> None:
+    def test_summarize_and_export_single_success_aggregation_error_propagates(
+        self, tmp_path: Path
+    ) -> None:
         """Successful benchmark execution does not imply aggregation completed."""
         result = _successful_result(label="c10_t0", concurrency=10, throughput=100.0)
         with (
