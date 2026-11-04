@@ -51,10 +51,12 @@ def _error(
     stage: RemoteStage,
     what: str,
     hint: str,
+    connection_failed: bool = False,
 ) -> RemoteSourceError:
     return RemoteSourceError(
-        ref=ref.display, kind=kind, stage=stage, what=what, hint=hint
-    )
+        ref=ref.display, kind=kind, stage=stage, what=what, hint=hint,
+        connection_failed=connection_failed,
+    )  # fmt: skip
 
 
 def _http_error(
@@ -105,7 +107,7 @@ def _io_error(
         return _error(
             ref, kind=RemoteErrorKind.TRANSIENT, stage=stage,
             what=redact_string(f"the connection failed ({type(e).__name__}: {e})"),
-            hint="Check network access and retry",
+            hint="Check network access and retry", connection_failed=True,
         )  # fmt: skip
     return None
 
@@ -139,7 +141,7 @@ def _translate(
         return mapped or _error(
             ref, kind=RemoteErrorKind.TRANSIENT, stage=stage,
             what="Hugging Face could not be reached",
-            hint="Check network access and retry",
+            hint="Check network access and retry", connection_failed=True,
         )  # fmt: skip
     if isinstance(e, GatedRepoError):
         return _error(
@@ -582,6 +584,23 @@ class HFSourceResolver:
                 headers=headers,
                 ref_display=probe.ref.display,
             )
+
+    async def fetch_file(self, probe: ProbeResult, relpath: str) -> Path:
+        """Download one repo file at the pinned commit into the shared HF cache.
+
+        The later ``snapshot_download`` of the folder finds it there and skips it.
+        """
+        from huggingface_hub import hf_hub_download
+
+        ref = probe.ref
+        repo, sha = ref.parsed.location, ref.resolved_version
+        local = await _hf_call(
+            ref,
+            lambda: hf_hub_download(
+                repo_id=repo, filename=relpath, repo_type="dataset", revision=sha
+            ),
+        )
+        return Path(str(local))
 
     async def materialize(self, probe: ProbeResult) -> ResolvedSource:
         from huggingface_hub import hf_hub_download, snapshot_download

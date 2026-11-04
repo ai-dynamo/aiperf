@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Annotated, Any
 
 from cyclopts import App, Parameter
@@ -114,12 +116,17 @@ def _build_cr_spec_and_config(
 
     from aiperf.config import AIPerfConfig
     from aiperf.config.flags.resolver import apply_cli_overrides, deep_merge
+    from aiperf.kubernetes.remote_datasets import pin_remote_datasets_for_kubernetes
     from aiperf.kubernetes.spec_converter import extract_benchmark_config
+    from aiperf.kubernetes.sweep_routing import requires_sweep_controller
 
     spec = copy.deepcopy(dict(raw.get("spec", {})))
     config = extract_benchmark_config(spec)
     if cli_config is not None:
         config = apply_cli_overrides(config, cli_config)
+    pin_remote_datasets_for_kubernetes(
+        config.benchmark, sweep=requires_sweep_controller(config)
+    )
 
     # Replace every Config-v2 envelope field, not just benchmark. This keeps
     # variables/randomSeed/plot aliases canonical and ensures CLI envelope
@@ -140,7 +147,9 @@ def _build_cr_spec_and_config(
     )
 
     validate_kubernetes_credential_transport(
-        config.benchmark.endpoint, dc.pod_template.env
+        config.benchmark.endpoint,
+        dc.pod_template.env,
+        datasets=config.benchmark.datasets,
     )
     dc_dict = dc.model_dump(
         mode="json", by_alias=True, exclude_unset=True, exclude_none=True
@@ -187,8 +196,13 @@ def _resolve_spec_and_name(
     """Resolve the AIPerfJob spec, AIPerfConfig, and benchmark name.
 
     Handles both paths: a raw AIPerfJob CR YAML file (CR-format) and
-    plain CLI flags / benchmark config (flag-format).
+    plain CLI flags / benchmark config (flag-format). Remote dataset
+    references are pinned on this machine before the spec is rendered; that
+    calls ``asyncio.run``, so the async command runs this in a worker thread.
     """
+    from aiperf.kubernetes.remote_datasets import pin_remote_datasets_for_kubernetes
+    from aiperf.kubernetes.sweep_routing import requires_sweep_controller
+
     config_file = cli_config.config_file
     cr_raw = _try_load_aiperfjob_cr(config_file) if config_file is not None else None
     if cr_raw is not None:
@@ -199,11 +213,14 @@ def _resolve_spec_and_name(
         name = kube_options.name or cr_name or generate_benchmark_name(config)
     else:
         config = resolve_config(cli_config, config_file)
+        pin_remote_datasets_for_kubernetes(
+            config.benchmark, sweep=requires_sweep_controller(config)
+        )
         spec = kube_options.to_crd_spec(config)
         name = kube_options.name or generate_benchmark_name(config)
-    from aiperf.kubernetes.spec_converter import reject_remote_datasets_for_kubernetes
+    from aiperf.kubernetes.remote_datasets import report_remote_dataset_checks
 
-    reject_remote_datasets_for_kubernetes(config)
+    report_remote_dataset_checks(config.benchmark, spec)
     return spec, config, name
 
 
@@ -393,10 +410,16 @@ async def profile(
 
     kube_options = kube_options or KubeOptions()
     with cli_utils.exit_on_error(title="Error Running Kubernetes Benchmark"):
+        from aiperf.kubernetes import console as kube_console
         from aiperf.kubernetes.cli_helpers import resolve_benchmark_namespace
 
         _check_config_file_for_sweep_keys(cli_config.config_file)
-        spec, config, name = _resolve_spec_and_name(cli_config, kube_options)
+        # --dry-run stdout is the CR payload; keep resolution warnings off it.
+        quiet = kube_console.machine_readable_stdout() if dry_run else nullcontext()
+        with quiet:
+            spec, config, name = await asyncio.to_thread(
+                _resolve_spec_and_name, cli_config, kube_options
+            )
         _check_resolved_config_for_sweep(config)
         namespace = resolve_benchmark_namespace(
             kube_options.namespace,
