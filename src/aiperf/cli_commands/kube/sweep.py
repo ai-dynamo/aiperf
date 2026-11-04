@@ -11,8 +11,10 @@ rest of the YAML becomes ``AIPerfSweep.spec.benchmark``.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import re
+from contextlib import nullcontext
 from typing import TYPE_CHECKING, Annotated, Any, NamedTuple
 
 from cyclopts import App, Parameter
@@ -90,12 +92,16 @@ async def sweep(
             --trials 5 --cooldown 30
     """
     from aiperf import cli_utils
+    from aiperf.kubernetes import console as kube_console
     from aiperf.kubernetes.cli_helpers import resolve_benchmark_namespace
 
     kube_options = kube_options or KubeOptions()
     config_file = cli_config.config_file
-    with cli_utils.exit_on_error(title="Error Running Kubernetes Sweep"):
-        cr_dict = _build_sweep_cr_dict(
+    # --dry-run stdout is the CR JSON; keep resolution warnings off it.
+    quiet = kube_console.machine_readable_stdout() if dry_run else nullcontext()
+    with cli_utils.exit_on_error(title="Error Running Kubernetes Sweep"), quiet:
+        cr_dict = await asyncio.to_thread(
+            _build_sweep_cr_dict,
             config_file=config_file,
             cli_config=cli_config,
             kube_options=kube_options,
@@ -114,8 +120,6 @@ async def sweep(
         cr_dict.setdefault("metadata", {})["namespace"] = namespace
         if dry_run:
             import orjson
-
-            from aiperf.kubernetes import console as kube_console
 
             kube_console.emit_raw(
                 orjson.dumps(cr_dict, option=orjson.OPT_INDENT_2).decode()
@@ -237,7 +241,15 @@ def _normalized_config_parts(
     in-cluster.
     """
     from aiperf.config import AIPerfConfig, load_config_from_mapping
-    from aiperf.config.flags.resolver import apply_cli_overrides
+    from aiperf.config.flags._config_flag_routing import (
+        hoisted_block_adjusting_fields,
+        reject_cli_flags_against_hoisted_blocks,
+    )
+    from aiperf.config.flags.resolver import (
+        apply_cli_overrides,
+        apply_deferred_sweep_overrides,
+    )
+    from aiperf.kubernetes.remote_datasets import pin_remote_datasets_for_kubernetes
     from aiperf.kubernetes.spec_converter import (
         dataset_names,
         restore_jinja_templates,
@@ -249,8 +261,17 @@ def _normalized_config_parts(
         **copy.deepcopy(envelope_extras),
     }
     config = load_config_from_mapping(envelope, file_path=file_path)
+    deferred: frozenset[str] = frozenset()
     if cli_config is not None:
-        config = apply_cli_overrides(config, cli_config)
+        reject_cli_flags_against_hoisted_blocks(cli_config, sweep_cfg=sweep_cfg)
+        # The resolver cannot see the hoisted blocks, so flags that adjust
+        # them are held back and applied once the blocks are merged below.
+        deferred = hoisted_block_adjusting_fields(
+            cli_config, sweep_cfg=sweep_cfg, multirun_cfg=multirun_cfg
+        )
+        config = apply_cli_overrides(config, cli_config, deferred_fields=deferred)
+    # Pinned once here, every child AIPerfJob inherits the same version.
+    pin_remote_datasets_for_kubernetes(config.benchmark, sweep=True)
     rendered = config.model_dump(
         mode="json",
         by_alias=True,
@@ -279,6 +300,12 @@ def _normalized_config_parts(
         normalized_multirun = deep_merge(normalized_multirun, cli_multirun)
     elif cli_multirun is not None:
         normalized_multirun = cli_multirun
+    if deferred:
+        apply_deferred_sweep_overrides(
+            {"sweep": normalized_sweep, "multiRun": normalized_multirun},
+            cli_config,
+            deferred,
+        )
     normalized_extras: dict[str, Any] = {}
     for name, model_field in AIPerfConfig.model_fields.items():
         if name in {"benchmark", "sweep", "multi_run"}:
@@ -400,8 +427,13 @@ def _finalized_spec(spec: dict[str, Any]) -> dict[str, Any]:
     )
 
     validate_kubernetes_credential_transport(
-        validated.benchmark.endpoint, validated.pod_template.env
+        validated.benchmark.endpoint,
+        validated.pod_template.env,
+        datasets=validated.benchmark.datasets,
     )
+    from aiperf.kubernetes.remote_datasets import report_remote_dataset_checks
+
+    report_remote_dataset_checks(validated.benchmark, spec)
     dumped = validated.model_dump(
         mode="json", by_alias=True, exclude_unset=True, exclude_none=True
     )

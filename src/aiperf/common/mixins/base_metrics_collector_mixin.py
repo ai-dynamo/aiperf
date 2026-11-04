@@ -30,8 +30,8 @@ JSON_CONTENT_TYPE_PREFIX = "application/json"
 OPENMETRICS_CONTENT_TYPE_PREFIX = "application/openmetrics-text"
 
 # A stalling endpoint (headers sent, then no chunk delivery) is bounded by
-# `sock_read` rather than the collection cadence, so scrapes can pile up
-# in-flight when the read timeout dwarfs the interval between them. This
+# `sock_read` rather than the collection cadence, so a periodic scrape can
+# block later ticks when the read timeout dwarfs the interval between them. This
 # multiplier only flags configurations far outside that relationship -
 # it stays above the built-in defaults' own ratio (~90x) so it doesn't
 # fire on an unmodified install.
@@ -275,6 +275,7 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         # (see IncompatibleMetricsEndpointError). Subsequent collection cycles
         # short-circuit so we don't spam parse failures at the scrape interval.
         self._endpoint_disabled: bool = False
+        self._collection_task: asyncio.Task | None = None
         super().__init__(**kwargs)
 
     @property
@@ -438,9 +439,8 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
     async def is_url_reachable(self) -> bool:
         """Check if metrics endpoint is accessible before starting collection.
 
-        Tests endpoint reachability using a two-phase approach:
-        1. HEAD request (lightweight, doesn't fetch content)
-        2. GET request fallback if HEAD not supported (some servers disable HEAD)
+        Probes with GET; see `_check_reachability_with_session` for why a HEAD
+        pre-flight is unsafe here.
 
         Uses existing session if available (during lifecycle), otherwise creates
         a temporary session for pre-initialization testing. This allows reachability
@@ -475,6 +475,15 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
     ) -> bool:
         """Check reachability using a specific session.
 
+        Uses GET rather than a cheaper HEAD pre-flight. Servers are free to
+        reject HEAD, and some answer it with a body, which RFC 9110 forbids --
+        Triton's /metrics frontend routes every non-GET method through an error
+        path that writes `{"error":"Method Not Allowed"}` to the response
+        buffer. aiohttp >= 3.14 reports those stray bytes as a bad status line,
+        either on the HEAD itself or on whatever request next reuses the
+        keep-alive connection, so a HEAD pre-flight could report a perfectly
+        healthy endpoint as unreachable.
+
         Args:
             session: aiohttp session to use for the check
 
@@ -482,16 +491,16 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
             True if endpoint is reachable with HTTP 200
         """
         try:
-            # Try HEAD first for efficiency
-            async with session.head(
-                self._endpoint_url, allow_redirects=False
-            ) as response:
-                if response.status == 200:
-                    return True
-            # Fall back to GET if HEAD is not supported
             async with session.get(self._endpoint_url) as response:
                 return response.status == 200
-        except (TimeoutError, aiohttp.ClientError):
+        except (TimeoutError, aiohttp.ClientError) as exc:
+            # Both halves are redacted: the endpoint may embed userinfo, and
+            # some aiohttp errors (InvalidUrlClientError) render the requested
+            # URL verbatim in their repr, credentials included.
+            self.debug(
+                f"Reachability probe failed for {self._display_url}: "
+                f"{redact_url(repr(exc))}"
+            )
             return False
 
     @background_task(immediate=True, interval=lambda self: self.collection_interval)
@@ -502,18 +511,19 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         collection every collection_interval seconds. The @background_task decorator
         handles automatic lifecycle management and cancellation on stop.
 
-        Uses execute_async (fire-and-forget) rather than await so the next
-        scrape starts on schedule rather than after the previous one
-        completes; a slow scrape doesn't delay subsequent ones. When
-        ``collection_interval`` is shorter than scrape latency, multiple
-        scrapes can be in flight simultaneously — see the
-        ``IncompatibleMetricsEndpointError`` handler for the dedup +
-        last-response-hash invariant that keeps that case correct.
-
-        This pattern is critical for accurate rate measurements on fast-changing
-        metrics where scrape timing jitter would introduce measurement error.
+        Cadence remains fixed, but a tick is skipped while the preceding
+        scrape is still fetching or processing. Slow endpoints and disk writes
+        therefore cannot accumulate an unbounded queue of response payloads.
         """
-        self.execute_async(self.collect_and_process_metrics())
+        if self._endpoint_disabled or (
+            self._collection_task is not None and not self._collection_task.done()
+        ):
+            return
+        self._collection_task = self.execute_async(self.collect_and_process_metrics())
+
+    def disable(self) -> None:
+        """Stop scheduling scrapes after a terminal collection-resource failure."""
+        self._endpoint_disabled = True
 
     async def collect_and_process_metrics(self) -> None:
         """Collect metrics from endpoint with error handling.
@@ -541,12 +551,9 @@ class BaseMetricsCollectorMixin(AIPerfLifecycleMixin, ABC, Generic[TRecord]):
         try:
             await self._collect_and_process_metrics()
         except IncompatibleMetricsEndpointError as e:
-            # `_collect_metrics_loop` fires `execute_async` every interval
-            # without awaiting prior cycles; under TRT-LLM /metrics latency
-            # several scrape coroutines can be in flight when the first one
-            # raises, all reaching this except block. Synchronously
-            # check-and-set the flag (no awaits before the set) so only the
-            # first arrival logs and notifies — the rest short-circuit.
+            # Baseline and phase-boundary calls bypass the periodic single-flight
+            # guard and can overlap a scrape. Set the flag before awaiting so
+            # only the first failure logs and notifies.
             if self._endpoint_disabled:
                 return
             self._endpoint_disabled = True

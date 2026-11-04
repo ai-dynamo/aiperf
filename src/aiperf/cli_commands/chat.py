@@ -92,8 +92,8 @@ async def _consume_stream(
     Returns ``(responses, output_parts, reasoning_parts, last_usage)``.
 
     Raises:
-        SSEResponseError: if the server signals a mid-stream ``event: error``
-            after a 200 OK (surfaced instead of reported as a truncated reply).
+        SSEResponseError: if the server sends a named or structured mid-stream
+            SSE error after a 200 OK instead of a complete reply.
     """
     responses: list[ParsedResponse] = []
     output_parts: list[str] = []
@@ -189,9 +189,7 @@ async def _run_turn(
     print(format_stats(compute_record_metrics(record), reasoning_tokens))
     # Fall back to the reasoning text only when the reply had no visible content,
     # so a reasoning-only turn isn't recorded as an empty assistant message.
-    # Intentionally content-only when content exists: unlike profile's per-chunk
-    # build_assistant_turn (which concatenates reasoning + content), we don't
-    # resend reasoning, matching how chat APIs replay assistant turns.
+    # Same answer-else-reasoning rule as BaseEndpoint.build_assistant_turn.
     return "".join(output_parts) or "".join(reasoning_parts)
 
 

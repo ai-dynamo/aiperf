@@ -33,6 +33,11 @@ If you're benchmarking against an inference server running on **AMD ROCm GPUs** 
 
 AIPerf provides GPU telemetry collection with the `--gpu-telemetry` flag. Here's how it works:
 
+DCGM collection runs on a fixed interval. If the previous scrape is still
+fetching or processing, the collector skips that tick instead of queuing another
+scrape. Slow endpoints can therefore produce fewer samples than the configured
+interval would suggest.
+
 ### How the `--gpu-telemetry` Flag Works
 
 | Usage | Command | What Gets Collected (If Available) | Console Display | Dashboard View | CSV/JSON Export |
@@ -415,7 +420,7 @@ The nvidia-ml-py library (pynvml) collects the following metrics directly from t
 | Metric | Description | Unit |
 |--------|-------------|------|
 | `nvidia_power_usage` | Current power draw | W |
-| `nvidia_energy_consumption` | Total energy since boot | MJ |
+| `nvidia_energy_consumption` | Total energy since boot (see note below) | MJ |
 | `nvidia_gpu_utilization` | GPU compute utilization | % |
 | `nvidia_memory_utilization` | Memory controller utilization | % |
 | `nvidia_memory_used` | Framebuffer memory in use | GB |
@@ -428,6 +433,14 @@ The nvidia-ml-py library (pynvml) collects the following metrics directly from t
 
 > [!NOTE]
 > Not all metrics are available on all GPU models. AIPerf gracefully handles missing metrics and reports only what the hardware supports.
+
+> [!NOTE]
+> `nvidia_energy_consumption` needs the NVML total-energy counter, which requires Volta or
+> newer and a driver that exports `nvmlDeviceGetTotalEnergyConsumption`. AIPerf probes it
+> once at startup; where it is absent the field is omitted for that GPU and a warning names
+> the requirement, rather than the run finishing silently without energy. Power efficiency
+> metrics are still produced, derived from the power gauge instead. See
+> [Energy source](../metrics-reference.md#gpu-power-efficiency-metrics).
 
 ## Comparing DCGM vs pynvml
 

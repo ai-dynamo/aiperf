@@ -25,6 +25,7 @@ class TestMockServerConfig:
         assert config.workers == 1
         assert config.ttft == 20.0
         assert config.itl == 5.0
+        assert config.emit_empty_chat_content is False
         assert config.log_level == "INFO"
         assert config.verbose is False
         assert config.error_rate == 0.0

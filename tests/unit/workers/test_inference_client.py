@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import contextlib
+import time
 import warnings
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,6 +19,7 @@ from aiperf.common.models.model_endpoint_info import (
     ModelListInfo,
 )
 from aiperf.common.models.record_models import RequestInfo, RequestRecord
+from aiperf.common.monotonic_clock import process_clock
 from aiperf.common.redact import REDACTED_VALUE
 from aiperf.plugin.enums import EndpointType, TransportType
 from aiperf.workers.inference_client import InferenceClient, detect_transport_from_url
@@ -182,6 +184,23 @@ class TestInferenceClient:
         assert "Authorization" in request_info.endpoint_headers
         assert request_info.endpoint_headers["Authorization"] == REDACTED_VALUE
         assert request_info.endpoint_headers["X-Custom"] == "value"
+
+    @pytest.mark.asyncio
+    async def test_transport_exception_record_uses_process_clock(
+        self, inference_client, sample_request_info, monkeypatch
+    ):
+        """An error record's wall start comes from the process clock, not a fresh wall read."""
+        process_clock()
+        # A wall-clock step must not move the error record's exported start.
+        monkeypatch.setattr(time, "time_ns", lambda: 0)
+        inference_client.transport.send_request = AsyncMock(
+            side_effect=RuntimeError("boom")
+        )
+
+        record = await inference_client.send_request(sample_request_info)
+
+        assert record.error is not None
+        assert record.timestamp_ns == process_clock().wall_ns_at(record.start_perf_ns)
 
     @pytest.mark.asyncio
     async def test_send_request_sets_endpoint_params(
@@ -425,6 +444,43 @@ class TestInferenceClient:
         assert result.request_info.audio_duration_seconds == 12.5
         assert result.request_info.scheduled_send_ms == 42.5
         assert "turns" not in result.request_info.model_dump()
+
+    def test_finalize_request_record_uses_last_turn_audio_duration_seconds(
+        self, inference_client
+    ):
+        """audio_duration_seconds must be hoisted from the dispatched (last) turn."""
+        first_turn = Turn(
+            texts=[Text(contents=["first turn"])],
+            role="user",
+            audio_duration_seconds=10.0,
+        )
+        second_turn = Turn(
+            texts=[Text(contents=["second turn"])],
+            role="user",
+            audio_duration_seconds=25.0,
+        )
+        request_info = RequestInfo(
+            model_endpoint=inference_client.model_endpoint,
+            turns=[first_turn, second_turn],
+            turn_index=1,
+            credit_num=0,
+            credit_phase=CreditPhase.PROFILING,
+            x_request_id="test-id",
+            x_correlation_id="test-corr",
+            conversation_id="test-conv",
+        )
+        record = RequestRecord(
+            request_info=request_info,
+            start_perf_ns=1000,
+            timestamp_ns=1000,
+            end_perf_ns=2000,
+        )
+
+        result = inference_client._finalize_request_record(
+            record=record, request_info=request_info
+        )
+
+        assert result.request_info.audio_duration_seconds == 25.0
 
     @pytest.mark.parametrize(
         "strip,expected_payload_bytes",

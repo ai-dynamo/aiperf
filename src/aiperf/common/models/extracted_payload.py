@@ -33,6 +33,13 @@ class ExtractedPayload(AIPerfBaseModel):
         "in ``messages`` are deliberately excluded here so the chat-template "
         "path does not count them twice.",
     )
+    num_choices: int = Field(
+        default=1,
+        ge=1,
+        description="Sequences requested per prompt (the OpenAI ``n`` "
+        "parameter); 1 when the payload does not set it. Usage is reported per "
+        "request, so it spans all of them.",
+    )
     image_count: int = Field(
         default=0,
         description="Count of image content parts in the payload.",

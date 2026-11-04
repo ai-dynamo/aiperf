@@ -133,6 +133,11 @@ class _AtomicAIPerfJobApi:
                 status=422,
                 reason=f"json patch precondition failed for {namespace}/{name}: {exc}",
             ) from exc
+        # Like the real apiserver, every successful write bumps resourceVersion,
+        # so a second patch built from the same snapshot fails its RV test.
+        metadata = self.live_body.setdefault("metadata", {})
+        if str(metadata.get("resourceVersion", "")).isdigit():
+            metadata["resourceVersion"] = str(int(metadata["resourceVersion"]) + 1)
         return deepcopy(self.live_body)
 
     async def get_namespaced_custom_object(self, **_: Any) -> dict[str, Any]:

@@ -15,7 +15,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 import aiohttp
 import kopf
@@ -45,6 +45,7 @@ from aiperf.kubernetes.crd_models import (
     ControllerFetchResult,
     MetricsSummary,
 )
+from aiperf.kubernetes.dataset_startup import POD_PREFIX, scrub_message
 from aiperf.kubernetes.environment import K8sEnvironment
 from aiperf.kubernetes.jobset import controller_dns_name
 from aiperf.kubernetes.phase import Phase, as_phase, format_timestamp, parse_timestamp
@@ -315,6 +316,14 @@ def _container_startup_issues(pod: Any) -> list[PodStartupIssue]:
     pod_status = _resource_field(pod, "status")
     metadata = _resource_field(pod, "metadata")
     pod_name = _resource_field(metadata, "name", default="") or "unknown"
+    pod_spec = _resource_field(pod, "spec")
+    restartable_metrics = any(
+        _resource_field(container, "name") == Containers.SERVER_METRICS_MANAGER
+        and _resource_field(container, "restartPolicy", "restart_policy") == "Always"
+        for container in (
+            _resource_field(pod_spec, "initContainers", "init_containers") or []
+        )
+    )
     statuses = [
         *(
             _resource_field(
@@ -336,6 +345,12 @@ def _container_startup_issues(pod: Any) -> list[PodStartupIssue]:
             category = "ContainerConfig"
             terminal = True
         elif reason in CRASH_LOOP_WAITING_REASONS:
+            if (
+                restartable_metrics
+                and _resource_field(container_status, "name")
+                == Containers.SERVER_METRICS_MANAGER
+            ):
+                continue
             category = "CrashLoop"
             restarts = int(
                 _resource_field(container_status, "restartCount", "restart_count", 0)
@@ -1976,7 +1991,6 @@ def _startup_failure_claim_ops(
     """Build the atomic parent preconditions for stable-blocker cleanup."""
     metadata = body.get("metadata") or {}
     status = body.get("status") or {}
-    annotations = metadata.get("annotations")
     operations: list[dict[str, Any]] = [
         {"op": "test", "path": "/metadata/uid", "value": metadata.get("uid")},
         {
@@ -1984,24 +1998,10 @@ def _startup_failure_claim_ops(
             "path": "/metadata/resourceVersion",
             "value": metadata.get("resourceVersion"),
         },
-        {"op": "test", "path": "/spec", "value": deepcopy(body.get("spec") or {})},
         {"op": "test", "path": "/status/phase", "value": status.get("phase")},
-        {
-            "op": "test",
-            "path": f"/status/{STARTUP_ISSUE_STATUS_KEY}",
-            "value": deepcopy(status.get(STARTUP_ISSUE_STATUS_KEY)),
-        },
     ]
-    if annotations is None:
+    if metadata.get("annotations") is None:
         operations.append({"op": "add", "path": "/metadata/annotations", "value": {}})
-    else:
-        operations.append(
-            {
-                "op": "test",
-                "path": "/metadata/annotations",
-                "value": deepcopy(annotations),
-            }
-        )
     operations.append(
         {
             "op": "add",
@@ -2801,6 +2801,56 @@ def _terminated_state(status: Any) -> Any | None:
     return terminated
 
 
+def _termination_detail(terminated: Any) -> str:
+    """The container's termination message as one redacted line ('' when absent).
+
+    With ``FallbackToLogsOnError`` the message is the log tail, which can span
+    lines and quote URLs, headers or tokens, so it goes through the same
+    ``scrub_message`` the pod applies to its own line.
+    """
+    message = _resource_field(terminated, "message")
+    if not isinstance(message, str):
+        return ""
+    return scrub_message(message)
+
+
+class _ContainerFailure(NamedTuple):
+    """A non-sidecar container that exited non-zero."""
+
+    name: str
+    exit_code: int
+    reason: str
+    message: str
+
+
+def _container_failure(status: Any) -> _ContainerFailure | None:
+    """The failure of a non-sidecar container that exited non-zero, if it did."""
+    name = _resource_field(status, "name", default="") or ""
+    if name == Containers.RESULTS_SIDECAR:
+        return None
+    terminated = _terminated_state(status)
+    if not terminated:
+        return None
+    exit_code = int(_resource_field(terminated, "exitCode", "exit_code", 0) or 0)
+    if exit_code == 0:
+        return None
+    reason = _resource_field(terminated, "reason") or "Error"
+    return _ContainerFailure(name, exit_code, reason, _termination_detail(terminated))
+
+
+def _failure_rank(failure: _ContainerFailure) -> int:
+    """Sort key: the dataset-manager's own line, then control-plane, then the rest.
+
+    A dataset startup failure can take the control-plane down with it; the
+    dataset-manager's ``POD_PREFIX`` line is then the cause, not a bystander.
+    """
+    if failure.name == Containers.DATASET_MANAGER and failure.message.startswith(
+        POD_PREFIX
+    ):
+        return 0
+    return 1 if failure.name == Containers.CONTROL_PLANE else 2
+
+
 def _get_terminated_controller_info(pod: Any) -> tuple[int, str] | None:
     """Return (exit_code, reason) if any control-plane container died non-zero.
 
@@ -2809,7 +2859,12 @@ def _get_terminated_controller_info(pod: Any) -> tuple[int, str] | None:
     that OOMKilled left salvage un-triggered and the job hung until its
     timeout with a generic message. Any non-zero exit among them is grounds to
     salvage; ``control-plane`` is still preferred when several have died so
-    the reported reason names the primary failure.
+    the reported reason names the primary failure, unless the dataset-manager
+    left its ``POD_PREFIX`` line, which names the cause.
+
+    The container's termination message, when there is one, is appended after
+    ``": "``: the dataset-manager writes the redacted cause of a dataset
+    failure there, and it is the only copy that survives the JobSet's deletion.
 
     Returns None if nothing terminated non-zero, or if the sidecar is missing
     (salvage reads results through it).
@@ -2818,32 +2873,19 @@ def _get_terminated_controller_info(pod: Any) -> tuple[int, str] | None:
     statuses = (
         _resource_field(pod_status, "containerStatuses", "container_statuses") or []
     )
-    sidecar_status = _container_status_by_name(statuses, Containers.RESULTS_SIDECAR)
-    if sidecar_status is None:
+    if _container_status_by_name(statuses, Containers.RESULTS_SIDECAR) is None:
         return None
 
-    failures: list[tuple[str, int, str]] = []
-    for status in statuses:
-        name = _resource_field(status, "name", default="") or ""
-        if name == Containers.RESULTS_SIDECAR:
-            continue
-        terminated = _terminated_state(status)
-        if not terminated:
-            continue
-        exit_code = int(_resource_field(terminated, "exitCode", "exit_code", 0) or 0)
-        if exit_code == 0:
-            continue
-        failures.append(
-            (name, exit_code, _resource_field(terminated, "reason") or "Error")
-        )
-
+    failures = [f for f in map(_container_failure, statuses) if f is not None]
     if not failures:
         return None
-    failures.sort(key=lambda f: f[0] != Containers.CONTROL_PLANE)
-    name, exit_code, reason = failures[0]
-    if name != Containers.CONTROL_PLANE:
-        reason = f"{reason} (container {name})"
-    return exit_code, reason
+    failure = min(failures, key=_failure_rank)
+    reason = failure.reason
+    if failure.name != Containers.CONTROL_PLANE:
+        reason = f"{reason} (container {failure.name})"
+    if failure.message:
+        reason = f"{reason}: {failure.message}"
+    return failure.exit_code, reason
 
 
 async def handle_pod_recovery_event(
@@ -3129,6 +3171,17 @@ async def _recover_from_partial_checkpoints(
     events.failed(body, job_id, error)
 
 
+def _is_dataset_failure(reason: str) -> bool:
+    """Whether a terminated-controller reason carries the dataset-manager's own line.
+
+    ``_get_terminated_controller_info`` appends the termination message after
+    the first ``": "``. Only a message that starts with ``POD_PREFIX`` is a
+    dataset failure: an OOMKilled dataset-manager, or one whose message is a
+    crash's log tail, is not.
+    """
+    return reason.partition(": ")[2].startswith(POD_PREFIX)
+
+
 async def _fail_unrecoverable_controller(
     *,
     body: dict[str, Any],
@@ -3156,6 +3209,10 @@ async def _fail_unrecoverable_controller(
         "ControllerTerminated",
         "Controller terminated before exporting recoverable result files",
     )
+    if _is_dataset_failure(reason):
+        sb.conditions.set_false(
+            ConditionType.DATASET_READY, "DatasetUnavailable", error
+        )
     sb.finalize()
     events.failed(body, job_id, error)
 
@@ -3175,35 +3232,38 @@ async def _salvage_terminated_controller_results(
     """Dispatch the claimed salvage branches for a terminated controller.
 
     Tries, in order: partial checkpoint files, live CR status metrics, and
-    finally the unrecoverable-failure path. Exactly one branch runs; every
-    branch stamps a terminal FAILED phase and deletes the JobSet. Callers
-    MUST hold the durable completion claim before invoking.
+    finally the unrecoverable-failure path. A dataset failure goes straight to
+    the last: no request ran, and only that path reports the pod's message.
+    Exactly one branch runs; every branch stamps a terminal FAILED phase and
+    deletes the JobSet. Callers MUST hold the durable completion claim before
+    invoking.
     """
     custom = client.CustomObjectsApi(api)
-    if result.checkpoints:
-        await _recover_from_partial_checkpoints(
+    if not _is_dataset_failure(reason):
+        if result.checkpoints:
+            await _recover_from_partial_checkpoints(
+                body=body,
+                result=result,
+                namespace=namespace,
+                jobset_name=jobset_name,
+                job_id=job_id,
+                sb=sb,
+                custom=custom,
+                status=status,
+            )
+            return
+
+        if await _recover_from_live_status(
             body=body,
-            result=result,
+            status=status,
             namespace=namespace,
             jobset_name=jobset_name,
             job_id=job_id,
+            reason=reason,
             sb=sb,
             custom=custom,
-            status=status,
-        )
-        return
-
-    if await _recover_from_live_status(
-        body=body,
-        status=status,
-        namespace=namespace,
-        jobset_name=jobset_name,
-        job_id=job_id,
-        reason=reason,
-        sb=sb,
-        custom=custom,
-    ):
-        return
+        ):
+            return
 
     await _fail_unrecoverable_controller(
         body=body,

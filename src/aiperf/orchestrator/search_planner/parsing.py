@@ -19,6 +19,8 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+from pydantic import ValidationError
+
 from aiperf.config.sweep.adaptive import SearchSpaceDimension, SLAFilter
 from aiperf.orchestrator.search_planner.multi_tier_models import SLOTier
 
@@ -91,7 +93,16 @@ def _parse_one_dim(raw: str) -> SearchSpaceDimension:
         ) from e
     if hi <= lo:
         raise TypeError(f"--search-space {raw!r}: hi ({hi}) must be > lo ({lo}).")
-    return SearchSpaceDimension(path=path, lo=lo, hi=hi, kind=kind)
+    try:
+        return SearchSpaceDimension(path=path, lo=lo, hi=hi, kind=kind)
+    except ValidationError as e:
+        messages = "; ".join(
+            error["msg"].removeprefix("Value error, ")
+            for error in e.errors(
+                include_url=False, include_context=False, include_input=False
+            )
+        )
+        raise TypeError(f"--search-space {raw!r}: {messages}") from None
 
 
 def parse_sla_filter(value: str) -> SLAFilter:

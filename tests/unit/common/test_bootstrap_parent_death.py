@@ -165,11 +165,13 @@ def _pid_alive(pid: int) -> bool:
     except PermissionError:
         return True
     # Distinguish a live process from a zombie awaiting reap by its parent.
+    # The process can be reaped between the kill() above and this read: a
+    # /proc entry that vanishes after open() makes read() raise ESRCH.
     try:
         with open(f"/proc/{pid}/stat") as f:
             state = f.read().split(") ", 1)[1][0]
         return state != "Z"
-    except (FileNotFoundError, IndexError):
+    except (FileNotFoundError, ProcessLookupError, IndexError):
         return False
 
 

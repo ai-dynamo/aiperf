@@ -32,6 +32,9 @@ def extract_inputs(
     ``BaseEndpoint.extract_payload_inputs`` directly.
     """
     result = ExtractedPayload()
+    n = payload.get("n")
+    if isinstance(n, int) and n > 1:
+        result.num_choices = n
     # Reverse index the part-type set: ``{"text": MediaType.TEXT,
     # "image_url": MediaType.IMAGE, ...}``. Built per-call - the map is
     # small and per-part lookup is O(1).

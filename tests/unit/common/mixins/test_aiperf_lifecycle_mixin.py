@@ -1,12 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
 from unittest.mock import patch
 
 import pytest
 
 from aiperf.common.enums import LifecycleState
 from aiperf.common.exceptions import InvalidStateError
+from aiperf.common.hooks import on_start
 from aiperf.common.mixins import AIPerfLifecycleMixin
 
 
@@ -178,3 +180,62 @@ class TestAIPerfLifecycleBasic:
         assert lifecycle_component.id in str(lifecycle_component)
         assert lifecycle_component.id in repr(lifecycle_component)
         assert "state=" in repr(lifecycle_component)
+
+
+class _BlocksInStart(AIPerfLifecycleMixin):
+    """Parks in its @on_start hook until cancelled."""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.entered_start = asyncio.Event()
+
+    @on_start
+    async def _block(self) -> None:
+        self.entered_start.set()
+        await asyncio.Event().wait()
+
+
+class _ChildFailsInStart(AIPerfLifecycleMixin):
+    """Raises CancelledError from a hook without the task being cancelled -- how
+    a failed child lifecycle's _fail() surfaces in its parent."""
+
+    @on_start
+    async def _child_failed(self) -> None:
+        raise asyncio.CancelledError("child failed") from ValueError(
+            "No AWS credentials found"
+        )
+
+
+class TestCancellationThroughTheTransitionHandler:
+    """The transition handler turns a CancelledError into a failure unless the
+    task itself is being cancelled. Both sides are exercised on the real
+    start() path, not an override of it."""
+
+    @pytest.mark.asyncio
+    async def test_cancelling_the_lifecycle_task_propagates_without_a_failure(
+        self,
+    ) -> None:
+        component = _BlocksInStart()
+        await component.initialize()
+        task = asyncio.create_task(component.start())
+        await component.entered_start.wait()
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        assert component.state != LifecycleState.FAILED
+        assert component._exit_errors == []
+
+    @pytest.mark.asyncio
+    async def test_a_child_failure_without_task_cancellation_fails_the_parent(
+        self,
+    ) -> None:
+        component = _ChildFailsInStart()
+        await component.initialize()
+
+        with pytest.raises(asyncio.CancelledError):
+            await component.start()
+
+        assert component.state == LifecycleState.FAILED
+        assert "No AWS credentials found" in str(component._exit_errors[0])

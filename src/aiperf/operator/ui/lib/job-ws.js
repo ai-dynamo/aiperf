@@ -22,6 +22,7 @@ import {
   normalizeServerMetrics,
   aggregateSparklineSnapshot,
 } from '../components/server-metrics/helpers.js';
+import { API_BASE } from './base-path.js';
 
 const SUBSCRIBE_TYPES = ['realtime_metrics', 'realtime_server_metrics'];
 const RECONNECT_DELAY_MS = 2000;
@@ -119,7 +120,7 @@ export function openJobWs(ns, name, onUpdate) {
   function connect() {
     if (closed) return;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${protocol}//${window.location.host}/api/v1/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/ws`;
+    const url = `${protocol}//${window.location.host}${API_BASE}/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/ws`;
     ws = new WebSocket(url);
 
     ws.onopen = () => {

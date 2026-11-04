@@ -21,7 +21,7 @@ If you already have a Kubernetes cluster with GPU nodes and `kubectl` configured
 
 ### Option A: Use an Existing Cluster
 
-Any Kubernetes v1.24+ cluster with NVIDIA GPUs works. You need:
+Use Kubernetes v1.29+ for the default server-metrics collection, which runs as a restartable native sidecar. Kubernetes v1.24–1.28 requires `benchmark.serverMetrics.enabled: false` (or `--no-server-metrics`). You need:
 
 - `kubectl` configured to talk to the cluster
 - GPU nodes with the NVIDIA device plugin installed
@@ -155,6 +155,20 @@ kubectl get pods -n dynamo-system
 ```
 
 ### Install the AIPerf Operator
+
+The chart is published to GitHub Container Registry with every AIPerf release:
+
+```bash
+helm install aiperf-operator \
+  oci://ghcr.io/ai-dynamo/charts/aiperf-operator \
+  --version X.Y.Z \
+  --namespace aiperf-system \
+  --create-namespace
+```
+
+Set `X.Y.Z` to match your local `aiperf` CLI. Omitting `--version` installs the latest stable release; prereleases and suffixed releases such as `X.Y.Z-post.1` need an explicit `--version`. The chart's default operator and benchmark image is `nvcr.io/nvidia/aiperf:<chart version>`. The chart installs both CRDs itself. The packaged chart and standalone CRD manifests attached to each [GitHub Release](https://github.com/ai-dynamo/aiperf/releases) are for GitOps pipelines; do not `kubectl apply` them before `helm install`.
+
+From a source checkout, install the local chart instead:
 
 ```bash
 helm install aiperf-operator deploy/helm/aiperf-operator \

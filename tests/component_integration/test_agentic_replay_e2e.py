@@ -216,7 +216,7 @@ def _make_running_scheduler() -> MagicMock:
     scheduler = MagicMock()
     scheduled: list[asyncio.Task] = []
 
-    def _schedule_later(_delay, coro):
+    def _schedule_later(_delay, coro, **_kwargs):
         scheduled.append(asyncio.ensure_future(coro))
 
     scheduler.schedule_later.side_effect = _schedule_later
