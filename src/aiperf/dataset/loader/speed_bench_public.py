@@ -23,7 +23,7 @@ from aiperf.plugin.enums import DatasetSamplingStrategy
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
-SPEED_BENCH_CACHE_DIR = AIPERF_DATASET_CACHE_DIR / "speed-bench"
+SPEED_BENCH_CACHE_DIR = AIPERF_DATASET_CACHE_DIR / "speed-bench" / "v1.1"
 # ``--hf-subset`` is a user-facing override that becomes a filename.
 _CONFIG_NAME_RE = re.compile(r"[A-Za-z0-9_-]+")
 HLE_ACCESS_URL = "https://huggingface.co/datasets/cais/hle"
@@ -31,12 +31,12 @@ HLE_ACCESS_URL = "https://huggingface.co/datasets/cais/hle"
 # Pinned so the rows -- and therefore the source URLs the vendored resolver
 # fetches -- cannot change under a run. An unpinned load would let an upstream
 # edit redirect resolution at arbitrary hosts.
-SPEED_BENCH_REVISION = "487aa718444e816458d1a0a52bfce7a454285cf4"
+SPEED_BENCH_REVISION = "fa4e669bee2a4393c56aa8ed05a7c667897f9590"
 
 # Hosts the published dataset legitimately sources prompt text from. Row
 # ``source`` values drive what the vendored resolver fetches, so anything
 # outside this set is refused before a request is made. Enumerated from the
-# dataset itself across all six configs at SPEED_BENCH_REVISION, not from the
+# dataset itself across all seven configs at SPEED_BENCH_REVISION, not from the
 # docs -- see test_allowlist_covers_every_published_source_host, which refetches
 # and fails if a revision bump introduces a host not listed here.
 _ALLOWED_SOURCE_HOSTS = frozenset(
@@ -79,11 +79,9 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
 
     Two invariants make the result trustworthy:
 
-    * **Whole-config resolution only.** Upstream consumes a module-global RNG
-      while reconstructing HLE throughput prompts, so a row's text depends on
-      how many rows preceded it. Resolving an entire config in upstream's own
-      row order reproduces its output exactly; resolving a category subset does
-      not. Categories are therefore filtered *after* resolution, never before.
+    * **Whole-config resolution only.** Resolve every row in upstream order,
+      then filter categories so they remain views over the same prepared data.
+      Upstream scopes source caches to each resolution call.
     * **Complete data or an error.** A partially-resolved config is rejected
       rather than benchmarked, so a selector name always means the same rows.
     """
@@ -359,7 +357,6 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
         try:
             from datasets import load_dataset as hf_load_dataset
 
-            cls._reset_resolver_state(speed_bench_prepare)
             dataset = hf_load_dataset(
                 hf_dataset_name,
                 config,
@@ -436,20 +433,6 @@ class SpeedBenchPublicLoader(BasePublicDatasetLoader):
                 f"from each row's source, so AIPerf refuses hosts outside the "
                 f"published set ({', '.join(sorted(_ALLOWED_SOURCE_HOSTS))})."
             )
-
-    @staticmethod
-    def _reset_resolver_state(speed_bench_prepare: Any) -> None:
-        """Re-seed the vendored resolver's module-global RNG.
-
-        Upstream seeds ``HLE_RNG`` once at import and consumes it while building
-        throughput prompts, so resolving a second config in the same process
-        continues from the first one's stream and produces prompts that differ
-        from a fresh process. Re-seeding per config restores the property that
-        a config's output depends only on the config.
-        """
-        import numpy as np
-
-        speed_bench_prepare.HLE_RNG = np.random.default_rng(42)
 
     @classmethod
     def _reject_unresolved(
