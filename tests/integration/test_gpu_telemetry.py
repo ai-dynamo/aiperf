@@ -9,6 +9,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.models.telemetry_models import TelemetryRecord
+from aiperf.common.redact import REDACTED_VALUE
 from aiperf.gpu_telemetry.constants import AMDSMI_SOURCE_IDENTIFIER
 from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 
@@ -197,6 +198,68 @@ class TestGpuTelemetry:
         # Verify no GPU telemetry files were created
         jsonl_files = list(result.artifacts_dir.glob("*gpu_telemetry*.jsonl"))
         assert len(jsonl_files) == 0, f"Unexpected GPU telemetry files: {jsonl_files}"
+
+
+DCGM_SECRET = "dcgm-integration-secret-REDACT-67890"
+_TEXT_SUFFIXES = {".json", ".jsonl", ".csv", ".log", ".yaml", ".yml", ".txt"}
+
+
+@pytest.mark.skipif(
+    platform.system() in ("Darwin", "Windows"),
+    reason="Requires NVIDIA GPUs for DCGM telemetry (only available on Linux CI; DCGM is Linux-only).",
+)
+@pytest.mark.integration
+@pytest.mark.asyncio
+class TestGpuTelemetryCredentialRedaction:
+    """A DCGM endpoint URL with userinfo credentials is scraped with the real URL,
+    but the secret must not reach any artifact, the console or the logs.
+
+    The ``input_config`` echo of ``--gpu-telemetry`` in the JSON exports is
+    excluded on purpose: redacting the user's own config is out of scope here.
+    """
+
+    async def test_credentialed_dcgm_url_never_reaches_artifacts_console_or_logs(
+        self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, temp_output_dir
+    ):
+        urls = [
+            url.replace("http://", f"http://telemetry:{DCGM_SECRET}@", 1)
+            for url in aiperf_mock_server.dcgm_urls
+        ]
+        result = await cli.run(
+            f"""
+            aiperf profile                 --model nvidia/llama-3.1-nemotron-70b-instruct                 --url {aiperf_mock_server.url}                 --tokenizer builtin                 --endpoint-type chat                 --gpu-telemetry {" ".join(urls)}                 --streaming                 --request-count 10                 --concurrency 1                 --workers-max 1                 --verbose
+            """
+        )
+        assert result.has_gpu_telemetry
+
+        endpoints = result.json.telemetry_data.endpoints
+        assert len(endpoints) == 2
+        for source_url in endpoints:
+            assert DCGM_SECRET not in source_url
+            assert REDACTED_VALUE in source_url
+
+        export_file = result.artifacts_dir / "gpu_telemetry_export.jsonl"
+        lines = export_file.read_text(encoding="utf-8").splitlines()
+        assert lines
+        for line in lines:
+            record = TelemetryRecord.model_validate_json(line)
+            assert REDACTED_VALUE in record.telemetry_source_url
+
+        assert DCGM_SECRET not in result.stdout
+        assert DCGM_SECRET not in result.stderr
+
+        for path in temp_output_dir.rglob("*"):
+            if not path.is_file() or path.suffix not in _TEXT_SUFFIXES:
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace")
+            if path.suffix == ".json":
+                data = orjson.loads(content)
+                if isinstance(data, dict):
+                    data.pop("input_config", None)
+                content = orjson.dumps(data).decode()
+            assert DCGM_SECRET not in content, (
+                f"DCGM credential leaked into {path.relative_to(temp_output_dir)}"
+            )
 
 
 @pytest.mark.integration
