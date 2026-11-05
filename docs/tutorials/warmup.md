@@ -72,6 +72,64 @@ JSON Export: artifacts/your-model-chat-rate10/profile_export_aiperf.json
 
 This sends 50 warmup requests before the 500 profiling requests begin. Warmup metrics are discarded.
 
+## Separate Warmup and Profiling Conversation Pools
+
+By default, warmup and profiling share the same dataset sampler. A conversation
+used during warmup can be selected again during profiling, including when the
+sampler wraps. This can be desirable when measuring a warmed prefix cache.
+
+For synthetic datasets, `--warmup-dataset-entries N` reserves the first N generated
+conversations for warmup and leaves the rest for profiling. Each pool uses the
+configured sampling strategy independently, so even random sampling or repeated
+passes cannot select a warmup conversation during profiling. Warmup draws do not
+advance the profiling sampler's random state.
+
+```bash
+aiperf profile --model meta-llama/Llama-3.1-8B-Instruct \
+    --url http://localhost:8000 --endpoint-type chat \
+    --concurrency 160 --warmup-request-count 160 --request-count 320 \
+    --num-dataset-entries 480 --warmup-dataset-entries 160 \
+    --dataset-sampling-strategy shuffle --random-seed 42 \
+    --export-outputs-json
+```
+
+The total pool has 480 conversations: 160 reserved for warmup and 320 for profiling.
+`--num-dataset-entries` still specifies the total generated count; AIPerf does not
+silently increase it. Each pool may repeat internally when its phase sends more
+sessions than the pool contains. Request counts count turns, whereas pool sizes
+count whole conversations, including all turns in a multi-turn conversation.
+With `sessions: all`, a phase visits only its own pool.
+
+The equivalent YAML dataset block is:
+
+```yaml
+dataset:
+  type: synthetic
+  entries: 480
+  warmup_entries: 160
+  sampling: shuffle
+```
+
+A warmup phase is required, and N must be smaller than the loaded conversation
+count so profiling has at least one conversation. Zero restores shared sampling,
+including as a CLI override of `warmup_entries` in a YAML config. File/public
+datasets, scenarios, fixed schedules, and agentic replay are not supported by this
+option. Multiple warmup phases share the warmup pool; multiple profiling phases
+share the profiling pool. Seamless phase transitions keep separate samplers.
+
+This isolates **conversation identities**, not arbitrary shared prefixes. Common
+system messages, configured prefix prompts, or identical generated content can
+still hit the server's cache. No cache is flushed and no request text is changed.
+Use [cache busting](../reference/cache-bust.md) when payload-level isolation is required.
+The existing `warmup_isolation_*` cache-bust targets change payloads instead of
+partitioning the dataset.
+
+For a reproducible audit, retain the resolved configuration, `inputs.json`, and
+`outputs.json`. The output artifact's `warmup` and `data` arrays contain actual
+`conversation_id` selections; their ID sets must be disjoint when this option is
+enabled. Within-phase repetitions remain visible rather than being deduplicated
+from the results.
+
 ## Warmup Trigger Options
 
 You can trigger warmup with **count-based** or **duration-based** stopping:

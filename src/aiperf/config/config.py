@@ -598,6 +598,29 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
+    def validate_warmup_dataset_partition(self) -> Self:
+        """Keep partitioning on synthetic, independently sampled phases."""
+        partitioned = [d for d in self.datasets if getattr(d, "warmup_entries", 0)]
+        if not partitioned:
+            return self
+        if any(d is not self.get_default_dataset() for d in partitioned):
+            raise ValueError("warmup_entries is only supported on the default dataset")
+        if not self.get_warmup_phases():
+            raise ValueError(
+                "warmup_entries (--warmup-dataset-entries) requires a warmup phase"
+            )
+        if self.scenario is not None or any(
+            phase.type == "fixed_schedule" or phase.timing_mode == "agentic_replay"
+            for phase in self.phases
+        ):
+            raise ValueError(
+                "warmup_entries (--warmup-dataset-entries) is not supported with "
+                "scenarios, fixed_schedule, or agentic_replay; these modes own "
+                "their replay selection and phase continuity"
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_cache_bust_compatibility(self) -> Self:
         """Refuse cache-bust when endpoint metadata does not support it.
 

@@ -31,7 +31,10 @@ from aiperf.credit.callback_handler import CreditCallbackHandler
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import DatasetSamplingStrategy, PluginType, TimingMode
 from aiperf.timing.concurrency import ConcurrencyManager
-from aiperf.timing.conversation_source import ConversationSource
+from aiperf.timing.conversation_source import (
+    ConversationSource,
+    partition_warmup_dataset,
+)
 from aiperf.timing.phase.runner import PhaseRunner
 from aiperf.timing.request_cancellation import RequestCancellationSimulator
 from aiperf.timing.session_tree import SessionTreeRegistry
@@ -191,6 +194,12 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._run = run
         self._reject_full_pass_with_random_sampling()
 
+        warmup_metadata = None
+        if config.warmup_dataset_entries:
+            warmup_metadata, self._dataset_metadata = partition_warmup_dataset(
+                dataset_metadata, config.warmup_dataset_entries
+            )
+
         # Create dataset sampler
         SamplerClass = plugins.get_class(
             PluginType.DATASET_SAMPLER,
@@ -254,6 +263,23 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 self._dataset_sampler,
                 benchmark_id=benchmark_id,
                 cache_bust_target=cache_bust_target,
+            )
+        self._warmup_conversation_source = (
+            ConversationSource(
+                warmup_metadata,
+                SamplerClass(
+                    conversation_ids=warmup_metadata.sampleable_conversation_ids
+                ),
+                benchmark_id=benchmark_id,
+                cache_bust_target=cache_bust_target,
+            )
+            if warmup_metadata is not None
+            else None
+        )
+        if warmup_metadata is not None:
+            self.info(
+                f"Disjoint dataset pools: {len(warmup_metadata.conversations)} warmup, "
+                f"{len(self._dataset_metadata.conversations)} profiling conversations"
             )
         self._concurrency_manager = ConcurrencyManager()
         self._session_tree_registry = (
@@ -401,7 +427,12 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
 
             runner = PhaseRunner(
                 config=phase_config,
-                conversation_source=self._conversation_source,
+                conversation_source=(
+                    self._warmup_conversation_source
+                    if phase_config.phase == CreditPhase.WARMUP
+                    and self._warmup_conversation_source is not None
+                    else self._conversation_source
+                ),
                 phase_publisher=self._phase_publisher,
                 credit_router=self._credit_router,
                 concurrency_manager=self._concurrency_manager,

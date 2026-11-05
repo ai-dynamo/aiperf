@@ -149,6 +149,12 @@ class TimingConfig(AIPerfBaseModel):
         "across concurrency lanes when concurrency exceeds the loaded pool. "
         "Defaults to False so over-subscription requires explicit opt-in.",
     )
+    warmup_dataset_entries: int = Field(
+        default=0,
+        ge=0,
+        description="Number of leading synthetic conversations reserved for warmup. "
+        "Zero preserves shared sampling across phases.",
+    )
     cache_bust_enabled: bool = Field(
         default=False,
         description="Whether the active dataset has a non-NONE cache-bust "
@@ -227,6 +233,9 @@ class TimingConfig(AIPerfBaseModel):
             trajectory_start_max_ratio=trajectory_max,
             allow_dataset_wrap=allow_dataset_wrap,
             cache_bust_enabled=cache_bust_enabled,
+            warmup_dataset_entries=getattr(
+                cfg.get_default_dataset(), "warmup_entries", 0
+            ),
         )
 
 

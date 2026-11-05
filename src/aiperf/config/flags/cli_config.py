@@ -2652,6 +2652,21 @@ class CLIConfig(BaseConfig):
     ##############################################################################
     # Warmup
     ##############################################################################
+    warmup_dataset_entries: Annotated[
+        int,
+        Field(
+            ge=0,
+            description="Reserve the first N synthetic dataset conversations for "
+            "warmup only; profiling samples the remaining entries. Zero keeps "
+            "the shared pool (default). Requires warmup and N smaller than "
+            "--num-dataset-entries. Does not modify prompts or flush server caches.",
+        ),
+        CLIParameter(
+            name=("--warmup-dataset-entries",),
+            group=Groups.WARMUP,
+        ),
+    ] = 0
+
     warmup_request_count: Annotated[
         int | None,
         Field(

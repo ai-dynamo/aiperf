@@ -123,6 +123,18 @@ class SyntheticDataset(SystemPromptMixin, EndOnTruncationMixin):
         ),
     ]
 
+    warmup_entries: Annotated[
+        int,
+        Field(
+            default=0,
+            ge=0,
+            description="Reserve the first N generated conversations for warmup only. "
+            "Profiling samples exclusively from the remaining entries. Zero keeps "
+            "the shared pool (default). Must be smaller than entries. Pools may "
+            "repeat internally; disjoint IDs do not guarantee disjoint prefixes.",
+        ),
+    ]
+
     random_seed: Annotated[
         int | None,
         Field(
@@ -274,6 +286,15 @@ class SyntheticDataset(SystemPromptMixin, EndOnTruncationMixin):
         if isinstance(data, dict):
             _hoist_synthetic_prompt_fields(data)
         return data
+
+    @model_validator(mode="after")
+    def _validate_warmup_entries(self) -> SyntheticDataset:
+        if self.warmup_entries >= self.entries:
+            raise ValueError(
+                "warmup_entries (--warmup-dataset-entries) must be smaller than "
+                "entries (--num-dataset-entries), leaving at least one profiling entry"
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_turns_at_least_one(self) -> SyntheticDataset:
