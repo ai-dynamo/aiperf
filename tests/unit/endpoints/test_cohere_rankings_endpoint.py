@@ -186,6 +186,27 @@ class TestCohereRankingsEndpoint:
         assert rankings[1]["index"] == 2
         assert rankings[1]["score"] == 0.10
 
+    def test_extract_rankings_from_top_level_list(self, converter):
+        """SGLang's /v1/rerank returns a bare list of {index, score} items."""
+        mock_json = [
+            {"index": 1, "score": 0.87, "document": "b"},
+            {"index": 0, "score": 0.02, "document": "a"},
+        ]
+
+        rankings = converter.extract_rankings(mock_json)
+        assert rankings == [{"index": 1, "score": 0.87}, {"index": 0, "score": 0.02}]
+
+    def test_extract_rankings_top_level_list_skips_items_without_score(self, converter):
+        """Items missing a score are skipped instead of yielding score: None."""
+        mock_json = [
+            {"index": 0},
+            {"index": 1, "score": None},
+            {"index": 2, "score": 0.5},
+        ]
+
+        rankings = converter.extract_rankings(mock_json)
+        assert rankings == [{"index": 2, "score": 0.5}]
+
     def test_extra_body_shallow_merges_into_payload(self, converter, model_endpoint):
         turn = Turn(
             texts=[
