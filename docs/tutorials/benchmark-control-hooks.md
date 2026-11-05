@@ -139,7 +139,14 @@ The profiler URLs replace only profiler targets. KV-cache reset still
 uses the inference endpoint origins. Profiler paths are joined to each
 unique control origin; any URL path or query is ignored. All profiler
 targets receive the same start body and the configured endpoint auth
-headers. When `start_body` is omitted, start uses an empty body. Stop and
+headers. Profiler URLs must not contain userinfo (`user:password@`); use
+endpoint authentication headers instead. YAML profiler URLs require an
+`http://` or `https://` scheme; the CLI also accepts scheme-less host/port
+values and prepends `http://`.
+
+When `--server-profiler-start-body` is supplied with a YAML config, its
+JSON object replaces the YAML `start_body` completely, including when the
+CLI object is empty. When `start_body` is omitted, start uses an empty body. Stop and
 cache-reset requests keep their empty bodies.
 
 ## Defaults and relative paths

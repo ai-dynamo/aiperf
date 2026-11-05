@@ -14,6 +14,7 @@ from pydantic import (
     HttpUrl,
     JsonValue,
     field_serializer,
+    field_validator,
 )
 
 from aiperf.common.finite import FiniteFloat
@@ -108,6 +109,19 @@ class ServerProfilerConfig(BaseConfig):
             json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
         ),
     ] = None
+
+    @field_validator("urls")
+    @classmethod
+    def _reject_url_userinfo(cls, value: list[HttpUrl] | None) -> list[HttpUrl] | None:
+        """Profiler credentials use the endpoint's supported header transport."""
+        if value is not None and any(
+            url.username is not None or url.password is not None for url in value
+        ):
+            raise ValueError(
+                "Profiler URLs must not include userinfo; configure endpoint "
+                "authentication headers instead."
+            )
+        return value
 
     @field_serializer("urls")
     def _redact_urls(self, value: list[HttpUrl] | None, info: Any) -> list[str] | None:

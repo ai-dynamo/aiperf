@@ -110,11 +110,19 @@ def test_server_profiler_rejects_invalid_start_body(body: object) -> None:
         ServerProfilerConfig(start_body=body)
 
 
-def test_server_profiler_redacts_url_credentials_in_serialized_config() -> None:
-    cfg = ServerProfilerConfig(urls=["http://user:secret@worker:9090"])
+@pytest.mark.parametrize(
+    "url", ["http://user:secret@worker:9090", "http://user@worker:9090"]
+)
+def test_server_profiler_rejects_url_userinfo(url: str) -> None:
+    with pytest.raises(ValidationError, match="authentication headers"):
+        ServerProfilerConfig(urls=[url])
+
+
+def test_server_profiler_redacts_url_query_credentials_in_serialized_config() -> None:
+    cfg = ServerProfilerConfig(urls=["http://worker:9090?token=secret"])
     assert "secret" not in str(cfg.model_dump())
     assert (
-        "user:secret@" in cfg.model_dump(context={"include_secrets": True})["urls"][0]
+        "token=secret" in cfg.model_dump(context={"include_secrets": True})["urls"][0]
     )
 
 
