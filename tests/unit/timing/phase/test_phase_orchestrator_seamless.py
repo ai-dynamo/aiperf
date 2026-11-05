@@ -4,8 +4,7 @@
 
 Seamless non-final phases run their return-wait detached (``PhaseRunner.run()``
 returns without awaiting it), and several runners can be active at once. These
-tests cover the two ways a fatal request-free control-node failure would
-otherwise be lost or mis-attributed:
+tests cover control-node error routing and fatal phase error propagation:
 
 - ``_record_control_fatal_error`` must record on EVERY active runner, not the
   callback handler's single mutable ``progress`` slot (which may point at the
@@ -36,7 +35,7 @@ def _fake_runner() -> MagicMock:
     r.recorded_errors = []
     r.record_control_fatal_error.side_effect = r.recorded_errors.append
     r.return_wait_task = None
-    r.control_fatal_error = None
+    r.fatal_phase_error = None
     return r
 
 
@@ -78,13 +77,13 @@ def test_on_seamless_phase_error_keeps_first() -> None:
 
 @pytest.mark.asyncio
 async def test_await_outstanding_seamless_waits_captures_recorded_fatal() -> None:
-    """A seamless runner whose detached wait recorded a fatal control-node
+    """A seamless runner whose detached wait recorded a fatal phase
     failure surfaces it into ``_seamless_phase_error`` (so ``_execute_phases``
     re-raises), even when the task's done-callback has not fired."""
     orch = _bare_orchestrator()
     runner = _fake_runner()
     err = RuntimeError("late control-node failure")
-    runner.control_fatal_error = err
+    runner.fatal_phase_error = err
     orch._active_runners = [runner]
 
     await orch._await_outstanding_seamless_waits()

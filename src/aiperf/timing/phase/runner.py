@@ -416,7 +416,7 @@ class PhaseRunner(TaskManagerMixin):
         self, callback: Callable[[BaseException], None]
     ) -> None:
         """Set callback to invoke when a seamless non-final phase's detached
-        return-wait task ends with a fatal control-node failure.
+        return-wait task ends with a fatal phase failure.
 
         ``PhaseRunner.run()`` returns without awaiting the seamless return-wait
         task, so raising inside it would only reject the background task and
@@ -429,13 +429,12 @@ class PhaseRunner(TaskManagerMixin):
     def return_wait_task(self) -> asyncio.Task | None:
         """The detached seamless return-wait task (None unless this phase is
         seamless non-final). The orchestrator awaits it as a barrier so a late
-        fatal control-node failure surfaces before the run reports success."""
+        fatal phase failure surfaces before the run reports success."""
         return self._return_wait_task
 
     @property
-    def control_fatal_error(self) -> BaseException | None:
-        """A fatal request-free control-node failure recorded on this phase's
-        progress tracker, if any (see ``record_control_fatal_error``)."""
+    def fatal_phase_error(self) -> BaseException | None:
+        """The first fatal phase error recorded on the progress tracker, if any."""
         return self._progress.fatal_error
 
     def record_control_fatal_error(self, error: BaseException) -> None:
@@ -509,8 +508,8 @@ class PhaseRunner(TaskManagerMixin):
             ramper.stop()
         self._scheduler.cancel_all()
 
-    def _raise_if_control_node_failed(self) -> None:
-        """Re-raise a recorded scheduler or request-free control-node failure."""
+    def _raise_if_phase_failed(self) -> None:
+        """Re-raise the first fatal phase error recorded on the progress tracker."""
         if self._progress.fatal_error is not None:
             raise self._progress.fatal_error
 
@@ -528,17 +527,13 @@ class PhaseRunner(TaskManagerMixin):
         # unretrieved-task-exception, and treat it as a phase failure.
         task_exc = None if task.cancelled() else task.exception()
 
-        # Seamless path: a fatal request-free control-node failure (recorded on
-        # the progress tracker during the background wait, or raised by the task
-        # itself) must not be reported as a clean phase completion. Forward it to
-        # the orchestrator so the RUN fails -- the sync path raises
-        # ``_raise_if_control_node_failed`` for this, but the seamless task is
-        # never awaited, so we propagate via the error callback instead.
+        # run() returns before the detached wait completes, so forward fatal
+        # phase failures through the orchestrator's error callback.
         fatal = self._progress.fatal_error or task_exc
         if fatal is not None:
             self.error(
                 lambda: (
-                    "fatal request-free control-node failure in seamless "
+                    "Fatal phase failure in seamless "
                     f"phase {self._config.phase}: {fatal!r}"
                 )
             )
@@ -802,7 +797,7 @@ class PhaseRunner(TaskManagerMixin):
         self._execution_task = self.execute_async(strategy.execute_phase())
 
         await self._wait_for_sending_complete(strategy)
-        self._raise_if_control_node_failed()
+        self._raise_if_phase_failed()
 
         if self._was_cancelled:
             if not self._lifecycle.is_complete:
@@ -828,11 +823,11 @@ class PhaseRunner(TaskManagerMixin):
         else:
             await self._wait_for_returning_complete(strategy, phase_id=phase_id)
             self._progress_task.cancel()
-            # Surface a fatal control-node failure recorded during the wait.
+            # Surface a fatal phase error recorded during the wait.
             # Checked HERE -- after the wait returns via ANY of its exit paths,
             # including the "all credits already returned" fast path that the
             # fatal-error callback itself unblocks -- so it is never swallowed.
-            self._raise_if_control_node_failed()
+            self._raise_if_phase_failed()
 
         for ramper in self._rampers:
             ramper.stop()

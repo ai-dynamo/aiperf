@@ -6,7 +6,7 @@ The post-loop barrier in ``_execute_phases`` only inspects runners still in
 ``_active_runners``, and a seamless phase's complete-callback removes the runner
 from that list as soon as it drains. So for a phase that drains before the loop
 ends, ``set_phase_error_callback`` is the ONLY route by which a fatal
-request-free control-node failure can fail the run. It must be installed
+phase failure can fail the run. It must be installed
 regardless of whether the phase also defers a server-profiler stop.
 """
 
@@ -79,7 +79,7 @@ async def test_seamless_non_final_runner_always_gets_error_callback(
         runner = MagicMock()
         runner.run = MagicMock(return_value=_noop())
         runner.return_wait_task = None
-        runner.control_fatal_error = None
+        runner.fatal_phase_error = None
         created.append(runner)
         return runner
 

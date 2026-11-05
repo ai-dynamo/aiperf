@@ -50,7 +50,7 @@ def _fake_runner_factory(runners: list[MagicMock], *, fail_first: bool):
     def make_runner(**_kwargs: object) -> MagicMock:
         runner = MagicMock()
         runner.return_wait_task = None
-        runner.control_fatal_error = None
+        runner.fatal_phase_error = None
         is_first = not runners
 
         async def run(**_run_kwargs: object) -> None:
