@@ -129,6 +129,13 @@ content. Convergence-based trials use the same policy. The authored workload and
 subsequent per-trial `run_config.json` files can omit the warmup phase while
 retaining `warmup_entries`.
 
+Kubernetes sweep children retain the same boundary. The operator recognizes a
+later trial through its existing sweep owner reference and trial labels, and
+carries that provenance through child validation and deployment conversion.
+There is no workload flag to bypass warmup validation: standalone jobs, the first
+trial, and authored configurations still require warmup. Pool-size and supported-
+mode checks remain in force for every child.
+
 This isolates **conversation identities**, not arbitrary shared prefixes. Common
 system messages, configured prefix prompts, or identical generated content can
 still hit the server's cache. No cache is flushed and no request text is changed.

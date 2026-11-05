@@ -1017,7 +1017,13 @@ class AIPerfConfig(BaseConfig):
     @model_validator(mode="after")
     def validate_partition_warmup(self, info: ValidationInfo) -> Self:
         """Validate the declared workload before strategies derive per-trial configs."""
-        if not (info.context and info.context.get("defer_warmup_dataset_partition")):
+        if not (
+            info.context
+            and (
+                info.context.get("defer_warmup_dataset_partition")
+                or info.context.get("derived_warmup_partition")
+            )
+        ):
             self.benchmark.require_partition_warmup()
         return self
 
