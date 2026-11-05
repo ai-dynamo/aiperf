@@ -331,14 +331,16 @@ async def test_adopt_existing_files_compress_only_missing_zst_raises(
 
 @pytest.mark.asyncio
 async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
-    """PAYLOAD_BYTES index must round-trip max_tokens, timestamp, and source_kind.
+    """PAYLOAD_BYTES index must round-trip max_tokens, timestamp, source_kind,
+    and audio_duration_seconds.
 
     Turn scalars live outside the wire body for some loaders (e.g. mooncake
-    ``output_length`` / ``timestamp``, SPEED-Bench and Weka ``source_kind``).
-    Persisting them on PayloadOffset keeps OSL-mismatch and schedule-lag metrics
-    alive on the verbatim path, and keeps each record attributable to the
-    dataset row it came from -- without it a per-category split collapses to a
-    single run-level label.
+    ``output_length`` / ``timestamp``, SPEED-Bench and Weka ``source_kind``,
+    self-reported ``audio_duration_seconds`` for custom ASR datasets).
+    Persisting them on PayloadOffset keeps OSL-mismatch, schedule-lag, and
+    audio-duration/RTFx metrics alive on the verbatim path, and keeps each
+    record attributable to the dataset row it came from -- without it a
+    per-category split collapses to a single run-level label.
     """
     from aiperf.dataset.memory_map_utils import (
         PayloadOffset,
@@ -364,6 +366,7 @@ async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
                 max_tokens=128,
                 timestamp=42.5,
                 source_kind="coding",
+                audio_duration_seconds=30.0,
             )
         ],
     )
@@ -381,12 +384,14 @@ async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
     assert entry.max_tokens == 128
     assert entry.timestamp == 42.5
     assert entry.source_kind == "coding"
+    assert entry.audio_duration_seconds == 30.0
     assert orjson.loads(entry.payload_bytes) == payload
 
     turn = turn_from_payload_turn(entry)
     assert turn.max_tokens == 128
     assert turn.timestamp == 42.5
     assert turn.source_kind == "coding"
+    assert turn.audio_duration_seconds == 30.0
     assert turn.raw_payload == payload
 
     # Wire-JSON fallback recovers max_tokens when index scalars are absent
@@ -394,6 +399,7 @@ async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
     legacy = PayloadOffset(offset=0, size=0)
     assert legacy.max_tokens is None
     assert legacy.source_kind is None
+    assert legacy.audio_duration_seconds is None
     assert (
         max_tokens_from_wire_payload({"max_completion_tokens": 16, "messages": []})
         == 16
@@ -403,3 +409,86 @@ async def test_payload_mmap_persists_turn_scalars(tmp_path, monkeypatch):
 
     client.close()
     await store.stop()
+
+
+@pytest.mark.asyncio
+async def test_payload_mmap_persists_sequence_count(tmp_path, monkeypatch):
+    """The index counts sequences at build time, so the worker can restore
+    them after stripping payload bytes without decoding each request."""
+    from aiperf.dataset.memory_map_utils import PayloadOffset
+
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+    store = MemoryMapDatasetBackingStore(
+        benchmark_id="test_payload_choices", format=MemoryMapFormat.PAYLOAD_BYTES
+    )
+    await store.initialize()
+    payloads = [{"prompt": ["a", "b"], "n": 2}, {"messages": [], "model": "m"}]
+    conv = Conversation(
+        session_id="conv-1",
+        turns=[Turn(role="user", raw_payload=p) for p in payloads],
+    )
+    await store.add_conversation("conv-1", conv)
+    await store.finalize()
+
+    metadata = store.get_client_metadata()
+    client = MemoryMapDatasetClient(metadata.data_file_path, metadata.index_file_path)
+    assert [client.get_payload_turn("conv-1", i).num_choices for i in (0, 1)] == [
+        4,
+        1,
+    ]
+    assert PayloadOffset(offset=0, size=0).num_choices == 1
+
+    client.close()
+    await store.stop()
+
+
+@pytest.mark.parametrize("value", [0.0, -1.0, float("inf"), float("nan")])
+def test_payload_offset_audio_duration_seconds_rejects_non_positive_or_non_finite(
+    value,
+):
+    from aiperf.dataset.memory_map_utils import PayloadOffset
+
+    with pytest.raises(ValueError):
+        PayloadOffset(offset=0, size=0, audio_duration_seconds=value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fmt", [MemoryMapFormat.CONVERSATION, MemoryMapFormat.PAYLOAD_BYTES]
+)  # fmt: skip
+async def test_add_conversations_shares_one_write_across_small_conversations(
+    tmp_path, monkeypatch, fmt
+):
+    """A batch of small conversations is one write and still reads back."""
+    monkeypatch.setenv("AIPERF_DATASET_MMAP_BASE_PATH", str(tmp_path))
+    store = MemoryMapDatasetBackingStore(benchmark_id=f"test_batch_{fmt}", format=fmt)
+    await store.initialize()
+    payloads = {f"conv-{i}": [{"i": i}, {"text": "x" * i}] for i in range(200)}
+    writes = []
+    original_write = store._write_bytes
+
+    async def record_write(data: bytes) -> None:
+        writes.append(data)
+        await original_write(data)
+
+    monkeypatch.setattr(store, "_write_bytes", record_write)
+    await store.add_conversations(
+        {sid: _make_raw_conversation(sid, turns) for sid, turns in payloads.items()}
+    )
+    await store.finalize()
+    assert len(writes) == 1
+
+    metadata = store.get_client_metadata()
+    client = MemoryMapDatasetClient(metadata.data_file_path, metadata.index_file_path)
+    try:
+        assert client.index.conversation_ids == list(payloads)
+        for sid, turns in payloads.items():
+            if fmt == MemoryMapFormat.PAYLOAD_BYTES:
+                for index, payload in enumerate(turns):
+                    assert orjson.loads(client.get_payload_bytes(sid, index)) == payload
+            else:
+                conversation = client.get_conversation(sid)
+                assert [turn.raw_payload for turn in conversation.turns] == turns
+    finally:
+        client.close()
+        await store.stop()

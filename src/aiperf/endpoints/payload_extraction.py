@@ -20,6 +20,23 @@ from aiperf.common.enums import MediaType
 from aiperf.common.models import ExtractedPayload
 
 
+def count_choices(payload: dict[str, Any]) -> int:
+    """Sequences a request generates: ``n`` times the batched completions prompts."""
+    n = payload.get("n")
+    n = n if isinstance(n, int) and n > 1 else 1
+    prompt = payload.get("prompt")
+    # A completions prompt list of strings or token lists is a batch; a flat
+    # token-id list is one prompt. Each batched prompt gets its own n choices.
+    num_prompts = (
+        len(prompt)
+        if isinstance(prompt, list)
+        and prompt
+        and all(isinstance(p, str | list) for p in prompt)
+        else 1
+    )
+    return n * num_prompts
+
+
 def extract_inputs(
     payload: dict[str, Any],
     part_types: dict[MediaType, set[str]],
@@ -31,10 +48,7 @@ def extract_inputs(
     ``inputs``. Endpoints with a non-standard payload shape override
     ``BaseEndpoint.extract_payload_inputs`` directly.
     """
-    result = ExtractedPayload()
-    n = payload.get("n")
-    if isinstance(n, int) and n > 1:
-        result.num_choices = n
+    result = ExtractedPayload(num_choices=count_choices(payload))
     # Reverse index the part-type set: ``{"text": MediaType.TEXT,
     # "image_url": MediaType.IMAGE, ...}``. Built per-call - the map is
     # small and per-part lookup is O(1).

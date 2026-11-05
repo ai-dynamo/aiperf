@@ -85,6 +85,7 @@ def _prepare_direct_deploy(
     )
 
     source_endpoint = config.benchmark.endpoint
+    source_datasets = config.benchmark.datasets
     config_dict = config.model_dump(
         mode="python",
         exclude_unset=True,
@@ -108,7 +109,9 @@ def _prepare_direct_deploy(
     )
 
     validate_kubernetes_credential_transport(
-        source_endpoint, deploy_config.pod_template.env
+        source_endpoint,
+        deploy_config.pod_template.env,
+        datasets=source_datasets,
     )
     # Only bump TTL when the user didn't explicitly set --ttl-seconds; the
     # direct-mode default keeps pods alive longer so results can be pulled.

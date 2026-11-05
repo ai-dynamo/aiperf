@@ -20,9 +20,9 @@ AIPerf handles this polling workflow automatically.
 ## References
 
 For the most up-to-date information, please refer to the following resources:
-- [SGLang Diffusion OpenAI API Reference](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/api/openai_api.md)
-- [SGLang Diffusion Installation Guide](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/installation.md)
-- [SGLang Diffusion CLI Reference](https://github.com/sgl-project/sglang/blob/main/docs/diffusion/api/cli.md)
+- [SGLang Diffusion OpenAI API Reference](https://docs.sglang.ai/docs/sglang-diffusion/api/openai_api)
+- [SGLang Diffusion Installation Guide](https://docs.sglang.ai/docs/sglang-diffusion/installation)
+- [SGLang Diffusion CLI Reference](https://docs.sglang.ai/docs/sglang-diffusion/api/cli)
 - [OpenAI Videos API](https://platform.openai.com/docs/api-reference/videos)
 
 ## Supported Models
