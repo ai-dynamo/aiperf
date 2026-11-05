@@ -1234,6 +1234,18 @@ class TestRedactCliCommandUrlFlags:
                 ["--url", "@host1", "@host2"],
                 id="multi-url-scheme-less-bare-userinfo-quoted",
             ),
+            param(
+                "aiperf profile --server-profiler-url user1:pass1@worker1:9090 user2:pass2@worker2:9090",
+                ["user1:pass1", "user2:pass2"],
+                ["--server-profiler-url", "@worker1:9090", "@worker2:9090"],
+                id="profiler-multi-url-scheme-less-userinfo",
+            ),
+            param(
+                "aiperf profile --server-profiler-url 'user1:pass1@worker1:9090?token=first-secret' 'user2:pass2@worker2:9090'",
+                ["user1:pass1", "user2:pass2", "first-secret"],
+                ["--server-profiler-url", "@worker1:9090", "@worker2:9090"],
+                id="profiler-multi-url-quoted-userinfo-and-query",
+            ),
         ],
     )  # fmt: skip
     def test_multi_url_consume_multiple_redacts_all(

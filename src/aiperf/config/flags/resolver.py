@@ -1259,6 +1259,8 @@ def _apply_server_profiler_override(
 ) -> None:
     profiler_fields = {
         "server_profiler",
+        "server_profiler_urls",
+        "server_profiler_start_body",
         "server_profiler_start_path",
         "server_profiler_stop_path",
         "server_profiler_timeout_seconds",
@@ -1289,6 +1291,8 @@ _CONTROL_HOOK_ENABLE_FLAGS: tuple[tuple[str, str, frozenset[str]], ...] = (
         "server_profiler",
         frozenset(
             {
+                "server_profiler_urls",
+                "server_profiler_start_body",
                 "server_profiler_start_path",
                 "server_profiler_stop_path",
                 "server_profiler_timeout_seconds",

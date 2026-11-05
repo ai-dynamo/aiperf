@@ -87,12 +87,60 @@ benchmark:
 | `--reset-kv-cache-path` | `endpoint.reset_kv_cache.path` |
 | `--reset-kv-cache-timeout-seconds` | `endpoint.reset_kv_cache.timeout_seconds` |
 | `--server-profiler` | Enable profiler with defaults |
+| `--server-profiler-url` | `endpoint.server_profiler.urls` (repeatable) |
+| `--server-profiler-start-body` | `endpoint.server_profiler.start_body` (JSON object) |
 | `--server-profiler-start-path` | `endpoint.server_profiler.start_path` |
 | `--server-profiler-stop-path` | `endpoint.server_profiler.stop_path` |
 | `--server-profiler-timeout-seconds` | `endpoint.server_profiler.timeout_seconds` |
 
-Setting any path/timeout override also enables the corresponding hook
+Setting any profiler URL/body or path/timeout override also enables the corresponding hook
 (same as passing `true` / `--reset-kv-cache` / `--server-profiler`).
+
+## Separate profiler control server
+
+The profiler may run on a different server or port from the inference
+endpoint. For example, Dynamo routes inference through a frontend while
+the SGLang worker exposes profiling controls on its system server:
+
+```yaml
+benchmark:
+  models: [your-model]
+  endpoint:
+    url: http://frontend:8000
+    type: chat
+    server_profiler:
+      urls: [http://worker:9090]
+      start_path: /engine/control/start_profile
+      stop_path: /engine/control/stop_profile
+      start_body:
+        num_steps: 20
+        output_dir: /profiles/capture
+        profile_id: capture
+        activities: [CPU, GPU]
+  phases:
+    - name: warmup
+      type: concurrency
+      concurrency: 8
+      requests: 50
+    - name: profiling
+      type: concurrency
+      concurrency: 8
+      requests: 500
+```
+
+AIPerf completes warmup before sending the start request. The worker
+receives the JSON object with `Content-Type: application/json`. Native
+`num_steps` limits engine forward iterations, independently of AIPerf's
+request count: the engine can finish capture while AIPerf continues its
+workload. AIPerf still sends stop after the profiling phase; a server that
+reports an already-stopped profiler may produce a stop warning.
+
+The profiler URLs replace only profiler targets. KV-cache reset still
+uses the inference endpoint origins. Profiler paths are joined to each
+unique control origin; any URL path or query is ignored. All profiler
+targets receive the same start body and the configured endpoint auth
+headers. When `start_body` is omitted, start uses an empty body. Stop and
+cache-reset requests keep their empty bodies.
 
 ## Defaults and relative paths
 
@@ -101,6 +149,8 @@ Setting any path/timeout override also enables the corresponding hook
 | Reset path | `/reset_prefix_cache` |
 | Profiler start path | `/start_profile` |
 | Profiler stop path | `/stop_profile` |
+| Profiler URLs | Inference endpoint origins |
+| Profiler start body | Empty body |
 | Timeouts | 30s when unset (independent of `endpoint.timeout`) |
 | `reset_kv_cache` retry budget | 60s when unset |
 
@@ -114,7 +164,8 @@ that's transiently busy with unrelated control-plane
 work (e.g. finishing a profiler stop) when starting the next run.
 
 Paths must be **relative** (start with `/`) and must not contain `://`.
-AIPerf joins each path to every endpoint URL origin. Absolute URLs in
+AIPerf joins each path to every endpoint URL origin, or the explicit
+profiler origins when `server_profiler.urls` is set. Absolute URLs in
 `path` / `start_path` / `stop_path` are rejected at config validation.
 
 Control hooks require HTTP transport. Non-HTTP transports raise a

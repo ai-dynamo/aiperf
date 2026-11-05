@@ -202,6 +202,7 @@ _URL_FLAG_ALT = "|".join(
     for f in (
         "--url",
         "-u",
+        "--server-profiler-url",
         "--otel-url",
         "--mlflow-tracking-uri",
         "--input-file",
@@ -256,7 +257,9 @@ _URL_QUERY_PARAMETER_PATTERN = re.compile(r"([?&])([^=&#]*)=([^&#]*)")
 # Flag tokens that open a ``consume_multiple=True`` URL-value window. Only
 # these flags have the multi-value leak — ``--otel-url`` / ``--mlflow-tracking-uri``
 # take a single value and are already covered by ``_URL_FLAG_PATTERN``.
-_MULTI_VALUE_URL_FLAGS: frozenset[str] = frozenset({"--url", "-u"})
+_MULTI_VALUE_URL_FLAGS: frozenset[str] = frozenset(
+    {"--url", "-u", "--server-profiler-url"}
+)
 
 
 def _redact_url_flag_match(match: re.Match[str]) -> str:

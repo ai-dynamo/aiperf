@@ -7,7 +7,14 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from pydantic import BeforeValidator, ConfigDict, Field
+from pydantic import (
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    HttpUrl,
+    JsonValue,
+    field_serializer,
+)
 
 from aiperf.common.finite import FiniteFloat
 from aiperf.config.base import BaseConfig
@@ -81,7 +88,39 @@ class ResetKvCacheConfig(BaseConfig):
 
 
 class ServerProfilerConfig(BaseConfig):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+
+    urls: Annotated[
+        list[HttpUrl] | None,
+        Field(
+            default=None,
+            min_length=1,
+            description="Profiler control server URLs. When unset, uses the "
+            "inference endpoint origins. Paths and queries are ignored.",
+        ),
+    ] = None
+    start_body: Annotated[
+        dict[str, JsonValue] | None,
+        Field(
+            default=None,
+            description="JSON object sent with profiler start requests. "
+            "When unset, sends an empty body.",
+            json_schema_extra={"x-kubernetes-preserve-unknown-fields": True},
+        ),
+    ] = None
+
+    @field_serializer("urls")
+    def _redact_urls(self, value: list[HttpUrl] | None, info: Any) -> list[str] | None:
+        """Apply the endpoint URL credential policy to profiler targets."""
+        if value is None:
+            return None
+        from aiperf.common.redact import redact_url
+
+        urls = [str(url) for url in value]
+        context = getattr(info, "context", None)
+        if isinstance(context, dict) and context.get("include_secrets"):
+            return urls
+        return [redact_url(url) for url in urls]
 
     timeout_seconds: Annotated[
         FiniteFloat | None,

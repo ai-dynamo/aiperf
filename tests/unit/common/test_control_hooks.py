@@ -113,6 +113,66 @@ def test_prepared_control_hooks_dedupe_same_origin_across_url_paths() -> None:
     ]
 
 
+def test_profiler_targets_and_body_do_not_change_cache_reset_targets() -> None:
+    body = {"num_steps": 20, "output_dir": "/profiles/capture"}
+    endpoint = EndpointConfig.model_validate(
+        {
+            "urls": ["http://frontend:8000/v1/chat/completions"],
+            "reset_kv_cache": True,
+            "server_profiler": {
+                "urls": ["http://worker:9090/path", "http://worker:9090/other"],
+                "start_path": "/engine/control/start_profile",
+                "stop_path": "/engine/control/stop_profile",
+                "start_body": body,
+            },
+        }
+    )
+    hooks = prepare_endpoint_control_hooks(endpoint)
+    assert hooks.reset_urls == ["http://frontend:8000/reset_prefix_cache"]
+    assert hooks.profiler_start_urls == [
+        "http://worker:9090/engine/control/start_profile"
+    ]
+    assert hooks.profiler_stop_urls == [
+        "http://worker:9090/engine/control/stop_profile"
+    ]
+    assert hooks.profiler_start_body == body
+
+
+@pytest.mark.asyncio
+async def test_profiler_start_sends_body_but_stop_does_not() -> None:
+    hooks = prepare_endpoint_control_hooks(
+        EndpointConfig.model_validate(
+            {
+                "urls": ["http://frontend:8000"],
+                "server_profiler": {
+                    "urls": ["http://worker:9090"],
+                    "start_body": {},
+                },
+            }
+        )
+    )
+    with patch(
+        "aiperf.common.control_hooks.control_plane_post", new_callable=AsyncMock
+    ) as post:
+        await start_server_profiler(hooks, {})
+        await stop_server_profiler(hooks, {})
+    assert post.await_args_list == [
+        call(
+            url="http://worker:9090/start_profile",
+            headers={},
+            timeout_s=30.0,
+            signer=None,
+            json_body={},
+        ),
+        call(
+            url="http://worker:9090/stop_profile",
+            headers={},
+            timeout_s=30.0,
+            signer=None,
+        ),
+    ]
+
+
 def _hooks(
     *,
     reset_urls: list[str] | None = None,

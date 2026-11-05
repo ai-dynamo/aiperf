@@ -7,6 +7,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
+import orjson
 import pytest
 from aiohttp import web
 
@@ -40,6 +41,48 @@ async def test_control_plane_post_succeeds_on_2xx() -> None:
         await control_plane_post(url=url, headers={}, timeout_s=2.0)
     finally:
         await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_control_plane_post_signs_and_sends_exact_json_bytes() -> None:
+    payload = {
+        "num_steps": 20,
+        "output_dir": "/profiles/capture",
+        "activities": ["CPU", "GPU"],
+    }
+    expected = orjson.dumps(payload)
+    original_headers = {"X-Test": "1", "content-type": "text/plain"}
+    signed: list[bytes] = []
+
+    class _BodySigner:
+        async def sign(
+            self, method: str, url: str, headers: dict[str, str], body: bytes | None
+        ) -> SignedRequest:
+            assert method == "POST"
+            assert headers["Content-Type"] == "application/json"
+            assert body == expected
+            signed.append(body)
+            return SignedRequest(headers={**headers, "X-Signed": "yes"})
+
+    async def collect(request: web.Request) -> web.Response:
+        assert await request.read() == expected
+        assert request.content_type == "application/json"
+        assert request.headers["X-Signed"] == "yes"
+        return web.Response(status=204)
+
+    runner, url = await _run_server(collect)
+    try:
+        await control_plane_post(
+            url=url,
+            headers=original_headers,
+            timeout_s=2.0,
+            signer=cast(Any, _BodySigner()),
+            json_body=payload,
+        )
+    finally:
+        await runner.cleanup()
+    assert signed == [expected]
+    assert original_headers == {"X-Test": "1", "content-type": "text/plain"}
 
 
 @pytest.mark.asyncio
