@@ -10,12 +10,16 @@ from unittest.mock import mock_open, patch
 
 import numpy as np
 import pytest
+from pytest import param
 
+from aiperf.common.enums import PromptCorpus
 from aiperf.common.exceptions import ConfigurationError
+from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import (
     PrefixPromptConfig,
     PromptConfig,
 )
+from aiperf.dataset.generator.coding_content import CodingContentGenerator
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader import parallel_convert as pc
 
@@ -34,7 +38,7 @@ def real_prompt_generator(mock_tokenizer_cls):
 
 
 def _drive_worker_inproc(
-    pg: PromptGenerator,
+    pg: PromptGenerator | CodingContentGenerator,
     sessions: list[tuple[str, list[dict]]],
     trace_id: str,
     block_size: int,
@@ -71,6 +75,56 @@ def _drive_worker_inproc(
         shm.close()
         shm.unlink()
     return results
+
+
+@pytest.mark.parametrize(
+    "corpus",
+    [param(PromptCorpus.SONNET, id="sonnet"), param(PromptCorpus.CODING, id="coding")],
+)  # fmt: skip
+def test_build_token_sequence_one_token_blocks_rejected_and_partials_supported(
+    corpus: PromptCorpus,
+) -> None:
+    tokenizer = Tokenizer.from_pretrained("builtin")
+    config = PromptConfig(block_size=8)
+    generator = (
+        CodingContentGenerator(config, tokenizer)
+        if corpus == PromptCorpus.CODING
+        else PromptGenerator(prompts=config, prefix_prompts=None, tokenizer=tokenizer)
+    )
+    trace_id = "block-size-boundary"
+    generator._hash_id_corpus_rng.set_trace_id(trace_id)
+    trace = {"hash_ids": [101, 102], "input_length": 2}
+    with pytest.raises(ConfigurationError, match="block_size >= 2"):
+        generator._build_token_sequence(2, trace["hash_ids"], 1)
+    with pytest.raises(ConfigurationError, match="block_size >= 2"):
+        _drive_worker_inproc(generator, [("s1", [trace])], trace_id, 1)
+
+    trace = {"hash_ids": [101, 102, 103], "input_length": 17}
+    tokens = generator._build_token_sequence(17, trace["hash_ids"], 8)
+    parallel = _drive_worker_inproc(generator, [("s1", [trace])], trace_id, 8)
+    _, turns = parallel[0]
+    _, _, parallel_prompt, _ = turns[0]
+    assert len(tokens) == 17
+    assert len(generator._cache[103]) == 1
+    assert parallel_prompt == tokenizer.decode(tokens)
+
+
+def test_process_batch_literal_text_with_one_token_blocks_preserved() -> None:
+    tokenizer = Tokenizer.from_pretrained("builtin")
+    generator = PromptGenerator(
+        prompts=PromptConfig(block_size=1),
+        prefix_prompts=None,
+        tokenizer=tokenizer,
+    )
+    trace = {
+        "hash_ids": [101, 102],
+        "input_length": 2,
+        "text_input": "recorded prompt",
+    }
+
+    results = _drive_worker_inproc(generator, [("s1", [trace])], "literal-text", 1)
+
+    assert results == [("s1", [(None, None, "recorded prompt", None)])]
 
 
 def test_parallel_convert_matches_in_process(real_prompt_generator):

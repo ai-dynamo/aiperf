@@ -29,7 +29,7 @@ from aiperf.common.hooks import on_init, on_start, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.credit.callback_handler import CreditCallbackHandler
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import PluginType, TimingMode
+from aiperf.plugin.enums import DatasetSamplingStrategy, PluginType, TimingMode
 from aiperf.timing.concurrency import ConcurrencyManager
 from aiperf.timing.conversation_source import ConversationSource
 from aiperf.timing.phase.runner import PhaseRunner
@@ -189,27 +189,15 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._control_headers = control_headers or {}
         self._control_signer = control_signer
         self._run = run
+        self._reject_full_pass_with_random_sampling()
 
         # Create dataset sampler
         SamplerClass = plugins.get_class(
             PluginType.DATASET_SAMPLER,
             self._dataset_metadata.sampling_strategy,
         )
-        # Only root conversations are sampled by the strategy. DAG
-        # children belong to their root's session and are dispatched by
-        # the BranchOrchestrator on credit return — sampling them as
-        # roots would create duplicate root sessions. Filter on
-        # ``is_root`` rather than ``agent_depth == 0`` so SPAWN-mode
-        # children (which keep ``agent_depth == 0`` for fresh-context
-        # semantics but carry ``is_root=False``) are also excluded.
-        root_conv_ids = [
-            c.conversation_id
-            for c in self._dataset_metadata.conversations
-            if getattr(c, "is_root", True)
-        ]
         self._dataset_sampler = SamplerClass(
-            conversation_ids=root_conv_ids
-            or [c.conversation_id for c in self._dataset_metadata.conversations]
+            conversation_ids=self._dataset_metadata.sampleable_conversation_ids
         )
 
         # Long-lived components (shared across phases).
@@ -313,6 +301,25 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._seamless_phase_error: BaseException | None = None
         # Set by cancel(); stops _execute_phases from starting any later phase.
         self._cancelled = False
+
+    def _reject_full_pass_with_random_sampling(self) -> None:
+        """Refuse ``sessions: all`` under random sampling, which draws with replacement.
+
+        A full pass stops after one session per conversation; drawing with
+        replacement would repeat some conversations and skip others while the
+        run still reports a full pass.
+        """
+        if self._dataset_metadata.sampling_strategy != DatasetSamplingStrategy.RANDOM:
+            return
+        for pc in self._config.phase_configs:
+            if pc.sessions_from_dataset:
+                raise ValueError(
+                    f"Phase '{pc.phase_name or pc.phase}' sets sessions: all (one "
+                    "full pass over every conversation), but the dataset uses random "
+                    "sampling, which can repeat some conversations and skip others. "
+                    "Use --dataset-sampling-strategy sequential or shuffle, or bound "
+                    "the run with --num-conversations (sessions: N in YAML)."
+                )
 
     def _record_control_fatal_error(self, error: BaseException) -> None:
         """Record a fatal request-free control-node failure.

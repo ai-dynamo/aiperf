@@ -102,7 +102,8 @@ class WandbDataExporter(AIPerfLoggerMixin):
                     "summary_metrics": wandb.Table(
                         columns=["Metric", *ConsoleMetricsExporter.STAT_COLUMN_KEYS],
                         data=self._build_metric_table_rows(),
-                    )
+                    ),
+                    **self._build_metric_scalars(),
                 }
             )
             artifact_files = self._collect_artifact_files()
@@ -139,6 +140,31 @@ class WandbDataExporter(AIPerfLoggerMixin):
                 return name
             return f"{name} ({record.unit})"
 
+        rows: list[list[Any]] = []
+        for record, cls in self._visible_metrics():
+            row: list[Any] = [label(record, cls)]
+            for stat in ConsoleMetricsExporter.STAT_COLUMN_KEYS:
+                value = getattr(record, stat, None)
+                row.append(round(float(value), 2) if is_finite_value(value) else None)
+            rows.append(row)
+        return rows
+
+    def _build_metric_scalars(self) -> dict[str, float]:
+        """The table's finite cells as ``metrics/<tag>/<stat>`` scalars, which
+        wandb panels can plot and compare across runs, unlike table cells.
+        Incomplete results log none: their metrics must not be compared.
+        """
+        if not self._results.is_complete:
+            return {}
+        return {
+            f"metrics/{record.tag}/{stat}": float(value)
+            for record, _ in self._visible_metrics()
+            for stat in ConsoleMetricsExporter.STAT_COLUMN_KEYS
+            if is_finite_value(value := getattr(record, stat, None))
+        }
+
+    def _visible_metrics(self) -> list[tuple[Any, Any]]:
+        """The (record, metric class) pairs of the console table, in its order."""
         visible = [
             (record, cls)
             for record in self._results.records or []
@@ -147,15 +173,7 @@ class WandbDataExporter(AIPerfLoggerMixin):
             and cls.console_group in (ConsoleMetricsExporter.console_groups or ())
         ]
         visible.sort(key=lambda rc: rc[1].display_order or sys.maxsize)
-
-        rows: list[list[Any]] = []
-        for record, cls in visible:
-            row: list[Any] = [label(record, cls)]
-            for stat in ConsoleMetricsExporter.STAT_COLUMN_KEYS:
-                value = getattr(record, stat, None)
-                row.append(round(float(value), 2) if is_finite_value(value) else None)
-            rows.append(row)
-        return rows
+        return visible
 
     def _build_config_payload(self) -> dict[str, Any]:
         # The full resolved benchmark config; JSON-mode serializers redact

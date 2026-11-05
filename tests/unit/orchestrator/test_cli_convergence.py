@@ -56,7 +56,11 @@ def _make_plan(
 ) -> BenchmarkPlan:
     """Build a BenchmarkPlan with convergence settings."""
     cfg = _make_config(
-        artifacts={"dir": artifact_dir} if artifact_dir is not None else {},
+        artifacts={
+            **({"dir": artifact_dir} if artifact_dir is not None else {}),
+            "records": False if export_level == "summary" else ["jsonl"],
+            "raw": export_level == "raw",
+        },
     )
     convergence = (
         ConvergenceConfig(
@@ -480,7 +484,7 @@ class TestValidateConvergenceConfig:
     def test_no_op_when_not_adaptive(self):
         from aiperf.cli_runner._strategy import validate_convergence_config
 
-        plan = _make_plan(trials=3, convergence_metric=None)
+        plan = _make_plan(trials=3, convergence_metric=None, export_level="summary")
         # Must not raise even with export_level=summary etc.
         validate_convergence_config(plan)
 

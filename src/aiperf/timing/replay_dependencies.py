@@ -187,6 +187,33 @@ class ReplayBarrierCoordinator:
         self._root_idle_gap_cap_seconds = root_idle_gap_cap_seconds
         self._root_idle_jumps = 0
         self._root_idle_seconds_skipped = 0.0
+        if scheduler is not None and root_idle_gap_cap_seconds is not None:
+            scheduler.set_group_task_observer(self._on_root_timer_done)
+
+    def _on_root_timer_done(self, root_id: str) -> None:
+        """Keep enforcing an expired idle cap past timers that issued nothing.
+
+        The cap advances a tree's timers relative to its earliest pending
+        one, assuming that timer ends the idle gap. Control timers (a gated
+        parent's join replay deadline) can run without issuing a request,
+        leaving the tree idle with its real next request still far away.
+        Re-enforcing once such a timer's coroutine returns closes that gap;
+        a timer that did issue a request cleared ``idle_cap_expired`` in
+        ``observe_issued``, so the cap stays out of a busy tree.
+        """
+        state = self._roots.get(root_id)
+        if (
+            state is None
+            or not self._active
+            or not state.idle_cap_expired
+            or state.idle_watchdog is not None
+        ):
+            return
+        _logger.debug(
+            lambda: f"Idle watchdog root={root_id}: re-enforcing after a timer "
+            "ran without issuing a request"
+        )
+        self._enforce_root_idle_cap(root_id)
 
     def _root_state(self, root_id: str) -> _RootBarrierState:
         return self._roots.setdefault(
@@ -197,12 +224,18 @@ class ReplayBarrierCoordinator:
         """Track one request reaching the wire and cancel its idle watchdog."""
         if not self._active:
             return
-        state = self._root_state(credit.effective_root_correlation_id)
+        root_id = credit.effective_root_correlation_id
+        state = self._root_state(root_id)
         state.in_flight += 1
         state.idle_cap_expired = False
         if state.idle_watchdog is not None:
             state.idle_watchdog.cancel()
             state.idle_watchdog = None
+            _logger.debug(
+                lambda: f"Idle watchdog root={root_id}: cancelled by "
+                f"{credit.conversation_id}#{credit.turn_index} issue, "
+                f"in_flight={state.in_flight}"
+            )
 
     def observe_idle_root(self, root_id: str) -> None:
         """Start monitoring a known-idle tree with pending runtime work.
@@ -293,21 +326,31 @@ class ReplayBarrierCoordinator:
         if state.in_flight == 0:
             state.idle_cap_expired = False
             self._arm_root_idle_watchdog(root_id, state)
+        else:
+            _logger.debug(
+                lambda: f"Idle watchdog root={root_id}: not armed after "
+                f"{credit.conversation_id}#{credit.turn_index} completed, "
+                f"in_flight={state.in_flight}"
+            )
 
     def _arm_root_idle_watchdog(self, root_id: str, state: _RootBarrierState) -> None:
         """Advance only this tree's timers after a fully idle capped gap."""
         cap = self._root_idle_gap_cap_seconds
-        if (
-            cap is None
-            or cap < 0
-            or self._scheduler is None
-            or state.idle_watchdog is not None
-        ):
+        if cap is None or cap < 0 or self._scheduler is None:
+            return
+        if state.idle_watchdog is not None:
+            _logger.debug(
+                lambda: f"Idle watchdog root={root_id}: already armed, not re-armed"
+            )
             return
         loop = asyncio.get_running_loop()
         delay = 0.0 if state.idle_cap_expired else cap
         state.idle_watchdog = loop.call_later(
             delay, self._enforce_root_idle_cap, root_id
+        )
+        _logger.debug(
+            lambda: f"Idle watchdog root={root_id}: armed for {delay:.3f}s, "
+            f"in_flight={state.in_flight}"
         )
 
     def _enforce_root_idle_cap(self, root_id: str) -> None:
@@ -316,10 +359,32 @@ class ReplayBarrierCoordinator:
             return
         state.idle_watchdog = None
         if state.in_flight != 0 or self._scheduler is None:
+            _logger.debug(
+                lambda: f"Idle watchdog root={root_id}: fired with "
+                f"in_flight={state.in_flight}, nothing advanced"
+            )
             return
         state.idle_cap_expired = True
+        running = self._scheduler.running_count_for_group(root_id)
+        if running:
+            # A started grouped timer may still be on its way to the wire
+            # (awaiting a prefill slot or the credit send) without having
+            # reached ``observe_issued``; the tree is not idle. Leave the
+            # expired cap for that timer to settle: if it issues,
+            # ``observe_issued`` clears it; if it returns without issuing,
+            # ``_on_root_timer_done`` re-enforces once it is no longer counted.
+            _logger.debug(
+                lambda: f"Idle watchdog root={root_id}: deferred, "
+                f"running_group_tasks={running}"
+            )
+            return
         shifted = self._scheduler.cap_pending_delay_for_group(root_id, 0.0)
         if shifted <= 0:
+            scheduler = self._scheduler
+            _logger.debug(
+                lambda: f"Idle watchdog root={root_id}: fired but advanced nothing, "
+                f"pending_timers={scheduler.pending_count_for_group(root_id)}"
+            )
             return
         self._root_idle_jumps += 1
         self._root_idle_seconds_skipped += shifted

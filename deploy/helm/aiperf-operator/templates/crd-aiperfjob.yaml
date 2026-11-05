@@ -220,6 +220,11 @@ spec:
                         description: Enable streaming (Server-Sent Events) responses. Required for accurate TTFT (time to
                           first token) measurement. Server must support streaming for this to work.
                         default: false
+                      allowEmptyContent:
+                        type: boolean
+                        description: Retain explicitly empty content or reasoning strings as timed responses for streaming
+                          OpenAI Chat Completions. This changes the shared response timeline without adding output tokens.
+                        default: false
                       transport:
                         type: string
                         enum:
