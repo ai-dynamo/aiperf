@@ -14,11 +14,13 @@ exact cross-play warming the marker exists to defeat.
 """
 
 import hashlib
+import re
 from typing import Protocol
 
 from aiperf.common.enums import CacheBustTarget
 
 _DIGEST_LEN = 12  # 12 hex chars = 48 bits, ample for in-run uniqueness
+_RID_MARKER = re.compile(r"\[rid:([0-9a-f]+)\]")
 
 _MARKER_TOKEN_SAMPLES = 8
 
@@ -29,6 +31,12 @@ WARMUP_ISOLATION_MARKER = "[warmup]\n\n"
 WARMUP_ISOLATION_TARGETS = (
     CacheBustTarget.WARMUP_ISOLATION_SYSTEM,
     CacheBustTarget.WARMUP_ISOLATION_FIRST_TURN,
+)
+RID_TARGETS = (
+    CacheBustTarget.SYSTEM_PREFIX,
+    CacheBustTarget.SYSTEM_SUFFIX,
+    CacheBustTarget.FIRST_TURN_PREFIX,
+    CacheBustTarget.FIRST_TURN_SUFFIX,
 )
 
 
@@ -126,6 +134,20 @@ def build_cache_bust_marker(
     if target in (CacheBustTarget.SYSTEM_PREFIX, CacheBustTarget.FIRST_TURN_PREFIX):
         return f"{rid}\n\n"
     return f"\n\n{rid}"
+
+
+def rid_digest(marker: str | None) -> str | None:
+    """Return the digest inside a RID marker built by :func:`build_cache_bust_marker`.
+
+    ``None`` when there is no marker, and for the constant warmup-isolation
+    marker, which carries no per-trajectory digest:
+    ``rid_digest("\\n\\n[rid:a3f9b2c1d4e5]") == "a3f9b2c1d4e5"`` and
+    ``rid_digest(WARMUP_ISOLATION_MARKER) is None``.
+    """
+    if not marker:
+        return None
+    match = _RID_MARKER.search(marker)
+    return match.group(1) if match else None
 
 
 def estimate_marker_token_cost(

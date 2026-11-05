@@ -36,9 +36,10 @@ class ExtractedPayload(AIPerfBaseModel):
     num_choices: int = Field(
         default=1,
         ge=1,
-        description="Sequences requested per prompt (the OpenAI ``n`` "
-        "parameter); 1 when the payload does not set it. Usage is reported per "
-        "request, so it spans all of them.",
+        description="Sequences the request generates: the OpenAI ``n`` "
+        "parameter times the number of batched completions prompts; 1 for a "
+        "single prompt without ``n``. Usage is reported per request, so it "
+        "spans all of them.",
     )
     image_count: int = Field(
         default=0,

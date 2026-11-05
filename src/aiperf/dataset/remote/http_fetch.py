@@ -65,6 +65,7 @@ def _transport_error(
         stage=stage,
         what=f"the connection failed ({type(exc).__name__}: {exc})",
         hint="Check network access and retry",
+        connection_failed=True,
     )
 
 

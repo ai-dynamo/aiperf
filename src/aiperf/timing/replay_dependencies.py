@@ -388,7 +388,7 @@ class ReplayBarrierCoordinator:
             return
         self._root_idle_jumps += 1
         self._root_idle_seconds_skipped += shifted
-        _logger.info(
+        _logger.debug(
             "Per-trace idle cap advanced replay root %s by %.3fs",
             root_id,
             shifted,
