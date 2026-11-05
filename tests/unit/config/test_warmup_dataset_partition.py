@@ -202,3 +202,61 @@ def test_final_partition_constraints_are_not_skipped(
     )
     with pytest.raises(ValueError, match=match):
         resolve_config(CLIConfig(warmup_request_count=4), partitioned_yaml)
+
+
+@pytest.mark.parametrize(
+    "source",
+    ["cli", "yaml_partition_cli_accuracy", "yaml_accuracy_cli_warmup"],
+)
+def test_accuracy_partition_rejected_before_dataset_loading(
+    partitioned_yaml: Path,
+    source: str,
+) -> None:
+    args = {"warmup_request_count": 4}
+    if source == "cli":
+        args.update(
+            model_names=["test"],
+            request_count=8,
+            conversation_num_dataset_entries=12,
+            warmup_dataset_entries=4,
+            accuracy_benchmark="mmlu",
+        )
+        path = None
+    else:
+        path = partitioned_yaml
+        if source == "yaml_partition_cli_accuracy":
+            args["accuracy_benchmark"] = "mmlu"
+        else:
+            path.write_text(
+                path.read_text(encoding="utf-8") + "  accuracy:\n    benchmark: mmlu\n",
+                encoding="utf-8",
+            )
+    with pytest.raises(
+        ValueError, match="--warmup-dataset-entries.*--accuracy-benchmark"
+    ):
+        resolve_config(CLIConfig(**args), path)
+
+
+@pytest.mark.parametrize(
+    "benchmark,reserved",
+    [
+        param(None, 4, id="accuracy_disabled"),
+        param("mmlu", 0, id="explicit_zero_with_accuracy"),
+    ],
+)  # fmt: skip
+def test_accuracy_partition_guard_preserves_supported_configs(
+    partitioned_yaml: Path,
+    benchmark: str | None,
+    reserved: int,
+) -> None:
+    partitioned_yaml.write_text(
+        partitioned_yaml.read_text(encoding="utf-8")
+        + f"  accuracy:\n    benchmark: {benchmark if benchmark else 'null'}\n",
+        encoding="utf-8",
+    )
+    args = {"warmup_dataset_entries": reserved}
+    if reserved:
+        args["warmup_request_count"] = 4
+    config = resolve_config(CLIConfig(**args), partitioned_yaml)
+    assert config.benchmark.get_default_dataset().warmup_entries == reserved
+    assert config.benchmark.accuracy.enabled is (benchmark is not None)

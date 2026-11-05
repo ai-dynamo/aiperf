@@ -1373,7 +1373,7 @@ Convert scenario lock errors to warnings; stamps submission_valid=false in the a
 
 #### `--warmup-dataset-entries` `<int>`
 
-Reserve the first N synthetic dataset conversations for warmup only; profiling samples the remaining entries. Zero keeps the shared pool (default). Requires warmup and N smaller than --num-dataset-entries. Does not modify prompts or flush server caches.
+Reserve the first N synthetic dataset conversations for warmup only; profiling samples the remaining entries. Zero keeps the shared pool (default). Requires warmup and N smaller than --num-dataset-entries. Not supported with --accuracy-benchmark. Does not modify prompts or flush server caches.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `0`_
 
@@ -3040,7 +3040,7 @@ Convert scenario lock errors to warnings; stamps submission_valid=false in the a
 
 #### `--warmup-dataset-entries` `<int>`
 
-Reserve the first N synthetic dataset conversations for warmup only; profiling samples the remaining entries. Zero keeps the shared pool (default). Requires warmup and N smaller than --num-dataset-entries. Does not modify prompts or flush server caches.
+Reserve the first N synthetic dataset conversations for warmup only; profiling samples the remaining entries. Zero keeps the shared pool (default). Requires warmup and N smaller than --num-dataset-entries. Not supported with --accuracy-benchmark. Does not modify prompts or flush server caches.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `0`_
 
@@ -4702,7 +4702,7 @@ Convert scenario lock errors to warnings; stamps submission_valid=false in the a
 
 #### `--warmup-dataset-entries` `<int>`
 
-Reserve the first N synthetic dataset conversations for warmup only; profiling samples the remaining entries. Zero keeps the shared pool (default). Requires warmup and N smaller than --num-dataset-entries. Does not modify prompts or flush server caches.
+Reserve the first N synthetic dataset conversations for warmup only; profiling samples the remaining entries. Zero keeps the shared pool (default). Requires warmup and N smaller than --num-dataset-entries. Not supported with --accuracy-benchmark. Does not modify prompts or flush server caches.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `0`_
 
@@ -6871,7 +6871,7 @@ Convert scenario lock errors to warnings; stamps submission_valid=false in the a
 
 #### `--warmup-dataset-entries` `<int>`
 
-Reserve the first N synthetic dataset conversations for warmup only; profiling samples the remaining entries. Zero keeps the shared pool (default). Requires warmup and N smaller than --num-dataset-entries. Does not modify prompts or flush server caches.
+Reserve the first N synthetic dataset conversations for warmup only; profiling samples the remaining entries. Zero keeps the shared pool (default). Requires warmup and N smaller than --num-dataset-entries. Not supported with --accuracy-benchmark. Does not modify prompts or flush server caches.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `0`_
 

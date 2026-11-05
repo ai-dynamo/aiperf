@@ -614,6 +614,13 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
             return self
         if any(d is not self.get_default_dataset() for d in partitioned):
             raise ValueError("warmup_entries is only supported on the default dataset")
+        if self.accuracy is not None and self.accuracy.enabled:
+            raise ValueError(
+                "warmup_entries (--warmup-dataset-entries) cannot be used with "
+                "--accuracy-benchmark: accuracy mode loads benchmark problems "
+                "and grades against their unpartitioned order. Set "
+                "--warmup-dataset-entries 0 to keep shared sampling."
+            )
         if not self.get_warmup_phases():
             raise ValueError(
                 "warmup_entries (--warmup-dataset-entries) requires a warmup phase"

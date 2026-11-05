@@ -113,9 +113,13 @@ dataset:
 A warmup phase is required, and N must be smaller than the loaded conversation
 count so profiling has at least one conversation. Zero restores shared sampling,
 including as a CLI override of `warmup_entries` in a YAML config. File/public
-datasets, scenarios, fixed schedules, and agentic replay are not supported by this
-option. Multiple warmup phases share the warmup pool; multiple profiling phases
-share the profiling pool. Seamless phase transitions keep separate samplers.
+datasets, scenarios, fixed schedules, agentic replay, and accuracy benchmarking
+(`--accuracy-benchmark`) are not supported by this option. Accuracy mode loads
+benchmark problems rather than synthetic conversations; its answer ordering cannot
+be partitioned by this option. Set `--warmup-dataset-entries 0` to use shared
+sampling with accuracy mode. Multiple warmup phases share the warmup pool; multiple
+profiling phases share the profiling pool. Seamless phase transitions keep separate
+samplers.
 
 This isolates **conversation identities**, not arbitrary shared prefixes. Common
 system messages, configured prefix prompts, or identical generated content can

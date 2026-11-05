@@ -132,7 +132,8 @@ class SyntheticDataset(SystemPromptMixin, EndOnTruncationMixin):
             description="Reserve the first N generated conversations for warmup only. "
             "Profiling samples exclusively from the remaining entries. Zero keeps "
             "the shared pool (default). Must be smaller than entries. Pools may "
-            "repeat internally; disjoint IDs do not guarantee disjoint prefixes.",
+            "repeat internally; disjoint IDs do not guarantee disjoint prefixes. "
+            "Not supported when accuracy benchmarking is enabled.",
         ),
     ]
 
