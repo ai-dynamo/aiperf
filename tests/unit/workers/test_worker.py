@@ -1106,6 +1106,7 @@ class TestPayloadBytesFastPath:
             timestamp=1234.5,
             source_kind="coding",
             audio_duration_seconds=30.0,
+            num_choices=2,
         )
 
         success_record = RequestRecord(
@@ -1131,6 +1132,7 @@ class TestPayloadBytesFastPath:
         assert sent_request_info.turns[0].source_kind == "coding"
         assert sent_request_info.turns[0].audio_duration_seconds == 30.0
         assert sent_request_info.source_kind == "coding"
+        assert sent_request_info.num_choices == 2
 
     async def test_retrieve_conversation_for_session_restores_scalars(
         self, mock_worker, sample_credit_context
