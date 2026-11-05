@@ -70,8 +70,7 @@ class UsagePromptCacheWriteTokensMetric(BaseUsageRecordMetric[int]):
 
     Counts API-reported prompt tokens written to cache: nested
     cache_write_tokens (Moonshot and vLLM Responses), nested created_cache_tokens
-    (vLLM Chat),
-    cache_creation_input_tokens (Anthropic), or cacheWriteInputTokens
+    (vLLM Chat), cache_creation_input_tokens (Anthropic), or cacheWriteInputTokens
     (Bedrock). Missing or explicitly unreported counts raise NoMetricValue.
 
     LARGER_IS_BETTER is intentionally omitted: writes can enable subsequent

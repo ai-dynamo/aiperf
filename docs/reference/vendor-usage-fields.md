@@ -121,7 +121,7 @@ vLLM may emit `prompt_tokens_details: null` and `completion_tokens_details: null
 
 The [context-caching documentation](https://platform.kimi.com/docs/guide/context-caching) reports cache writes under `usage.prompt_tokens_details.cache_write_tokens` for Chat Completions and `usage.input_tokens_details.cache_write_tokens` for Responses. Both map to `Usage.prompt_cache_write_tokens` and the existing per-record and total cache-write metrics, including streaming final usage. Their `prompt_tokens` / `input_tokens` already include cache reads and writes; AIPerf does not add the write count to those totals.
 
-Messages uses the existing Anthropic-shaped `cache_creation_input_tokens` and disjoint input accounting. No write count is inferred from input minus cache reads. Missing/null writes, or an optional `cache_write_tokens_reported: false` placeholder, remain unknown rather than becoming zero.
+Messages uses the existing Anthropic-shaped `cache_creation_input_tokens` and disjoint input accounting. No write count is inferred from input minus cache reads. Missing/null writes remain unknown rather than becoming zero.
 
 ### SGLang
 
