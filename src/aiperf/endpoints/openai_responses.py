@@ -608,7 +608,9 @@ class ResponsesEndpoint(BaseEndpoint):
         if data is not None:
             return ParsedResponse(perf_ns=perf_ns, data=data)
 
-        if event_type == "response.completed":
+        # A stream cut off by max_output_tokens ends in response.incomplete, whose
+        # response object carries usage exactly as response.completed does.
+        if event_type in ("response.completed", "response.incomplete"):
             resp = json_obj.get("response") or {}
             usage = resp.get("usage") or None
             if usage:
