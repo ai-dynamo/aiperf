@@ -50,6 +50,17 @@ Shutdown begins only after profiling has started and every registered domain has
 either completed or been evicted after a confirmed service failure. This lifecycle
 gate prevents an empty startup barrier from being mistaken for completed results.
 
+When services run as local processes, workers are not required services: they are
+spawned on demand after the core services register, and losing one while others
+can still start is a degraded run rather than a failed one. A worker that fails
+during start-up reports the failure to the System Controller before exiting. One
+that dies without reporting (killed by a signal, or crashing before its comms are
+up) is caught by polling its process until it registers, and counts as failed with
+its exit code after about two seconds, which leaves room for a report. Once
+no spawned worker can still start, the controller cancels the run and surfaces the
+workers' own error, since nothing will ever send a request, instead of waiting out
+the credit router's registration timeout (`AIPERF_SERVICE_START_TIMEOUT`).
+
 Kubernetes result publication is a fail-closed filesystem transaction. Before
 a controller starts benchmark work, and again immediately before export, it
 durably removes any stale ready marker and atomically installs a processing
@@ -71,6 +82,8 @@ The Dataset Manager handles all aspects of input data management during benchmar
 - Writing dataset to memory-mapped files, enabling workers to access data directly without message passing
 - Supporting custom dataset types, such as MoonCake traces, for advanced benchmarking scenarios
 - Managing the lifecycle of datasets, including initialization, iteration, and cleanup
+
+**Remote `--input-file` references.** A `--input-file` of the form `hf://...`, `s3://...`, or `https://...` is parsed into a `RemoteRef` and resolved by the `dataset_source_resolver` plugin registered for its scheme. Resolution runs in two dataset preflight stages: the access stage probes the source, pins one exact version, applies the publisher's `aiperf.json` manifest, and settles fixed-schedule auto-promotion from the first record; the materialize stage, after the endpoint probe, downloads the pinned version into a version-keyed local cache. `DatasetManager` and the composers only ever see a cached local path, so a remote dataset replays exactly like the same file on disk. See [Run a Published Trace](tutorials/remote-datasets.md).
 
 ### Timing Manager
 
@@ -106,6 +119,22 @@ Workers are the processes that send HTTP requests to the inference server and me
 - Run multiple workers (e.g., 10, 50, 100+) to support different workload patterns
 - No coordination between workers
 - Adding more workers increases load capacity and request rates
+
+Workers announce connectivity before dataset initialization. They enter the
+credit routing pool only after their dataset opens, in both local and Kubernetes
+modes. Until then, the router excludes them from stale-worker eviction. Dataset
+opening and page preloading run in a background thread so that initialization
+does not occupy the worker event loop. Existing startup timeouts still bound
+initialization, and heartbeat eviction still applies to dispatchable workers.
+Local workers use the existing dataset status query to recover a notification
+that arrived before they subscribed. They retry after a timeout or an
+unconfigured response until the dataset opens or the worker stops.
+
+Dataset saving streams `inputs.json` and verbatim turn payloads in bounded JSON
+chunks. String escaping also uses bounded chunks, so a single large turn does
+not require a document-sized `orjson.dumps` call that holds Python's global
+interpreter lock. Output formatting, conversation order, and byte offsets stay
+the same.
 
 ### Record Processor
 
@@ -149,6 +178,8 @@ Prometheus snapshots remain inside Server Metrics Manager:
 | `accuracy` | Record Processor (`AccuracyRecordProcessor`) | `RecordsMessage` | `AccuracyAccumulator`, `AccuracyJSONLWriter` |
 | `gpu_telemetry` | GPU Telemetry Manager | `TelemetryRecordsMessage` | `GPUTelemetryAccumulator`, GPU JSONL writer |
 | `server_metrics` | Server Metrics Manager | None (manager-local callback) | `ServerMetricsAccumulator`, server-metrics JSONL writer, both hosted by Server Metrics Manager |
+
+Live request-metric summaries omit per-timeslice statistics. Per-timeslice request statistics are computed by `MetricsAccumulator.export_results()` for final exports and plots, avoiding unused timeslice calculations during each live update. Live summaries skip sweep curves unless the UI is the interactive dashboard, because the progress log does not use their 14 metrics. Final exports retain those metrics. Every non-dashboard run (including `--api-port` WebSocket and `/metrics` subscribers, and Kubernetes runs, which force `--ui simple`) omits them from live `RealtimeMetricsMessage` payloads. Server-metric time series are independent of this path.
 
 **Two-stage record processing.** The `RecordProcessorService` runs two roles per parsed response (mirroring the accumulator/stream-exporter split on the consumer side): **producers** (`record_processor` category) parse and emit one finished typed record on a declared `record_type` channel — `MetricRecordProcessor` → `MetricRecordsData` (`metric_records`), `AccuracyRecordProcessor` → `AccuracyRecordsData` (`accuracy`) — and **observers** (`record_observer` category, e.g. the raw-record and outputs-json writers) receive a `RecordObserverContext` (the parsed record + all producer outputs keyed by `record_type`) and act without emitting a channel record. Each producer's output carries its own serialized `record_type` discriminator, so the service ships **one generic `RecordsMessage`** per request — `{metadata, records: list[RecordData], error}` — and the `RecordsManager` dispatches each record to its channel handlers by `record.record_type` (no per-type message classes, no type-sniffing). The metric record is the canonical per-request record that drives the phase-completion lockstep, keyed off the message metadata.
 
@@ -339,6 +370,13 @@ a result, an error, or an explicit "no handler" response. See
 Registration is deliberately the *second* readiness proof a service gives: it
 runs after the event-bus connection probe succeeds, so a registered service has
 demonstrated both planes are live.
+
+The registration's `instance_id` remains stable across reconnects and changes
+when the service process restarts. The controller uses it to detect optional
+server-metrics history loss promptly, release the failed producer from the
+result barrier, and export inference results with an explicit telemetry error.
+Server-metrics numeric histories live on the artifact filesystem with finite
+disk and series budgets; see [long-run collection behavior](server-metrics/server-metrics.md#long-runs-and-collection-failures).
 
 **Heartbeats are sent on both planes, on purpose.** Every service emits a
 `Heartbeat` struct on the control channel *and* a `HeartbeatMessage` on the event

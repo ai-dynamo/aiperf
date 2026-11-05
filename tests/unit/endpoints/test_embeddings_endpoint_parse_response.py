@@ -305,6 +305,29 @@ def test_embeddings_usage_reaches_response_record() -> None:
     assert record.final_usage == usage
 
 
+def test_embeddings_empty_data_with_usage_is_invalid() -> None:
+    endpoint = EmbeddingsEndpoint(create_model_endpoint(EndpointType.EMBEDDINGS))
+    response = TextResponse(
+        perf_ns=2,
+        content_type="application/json",
+        text=orjson.dumps(
+            {"data": [], "usage": {"prompt_tokens": 8, "total_tokens": 8}}
+        ).decode(),
+    )
+    request = RequestRecord(
+        responses=[response], status=200, start_perf_ns=1, end_perf_ns=3
+    )
+
+    parsed, _ = endpoint.process_responses(request, capture_assistant_turn=False)
+    record = ParsedResponseRecord(request=request, responses=parsed)
+    record.create_error_from_invalid()
+
+    assert parsed == []
+    assert not record.valid
+    assert record.has_error
+    assert record.request.error.type == "InvalidInferenceResultError"
+
+
 @pytest.mark.parametrize("usage", [{}, "unexpected"])
 def test_embeddings_unusable_usage_preserves_result(usage: object) -> None:
     """Optional malformed telemetry must not discard a valid embedding."""

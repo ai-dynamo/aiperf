@@ -1,19 +1,108 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import time
+
+import orjson
 import pytest
-from pydantic import BaseModel, Field, SerializeAsAny
+from pydantic import BaseModel, Field, SerializeAsAny, ValidationError
+from pytest import param
 
 from aiperf.common.messages import InferenceResultsMessage
 from aiperf.common.models import (
+    AwsEventStreamMessage,
+    BinaryResponse,
     MetricResult,
     ProfileResults,
     RequestRecord,
     SSEField,
     SSEMessage,
+    TextResponse,
     TimesliceResult,
+    record_models,
 )
 from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.common.monotonic_clock import MonotonicClock, process_clock
+
+
+class TestRequestRecordTimestampAnchor:
+    """An omitted ``timestamp_ns`` must be the wall time of ``start_perf_ns``."""
+
+    def test_omitted_timestamp_is_wall_time_of_start_perf(self) -> None:
+        start_perf_ns = time.perf_counter_ns() - 500_000_000
+        record = RequestRecord(start_perf_ns=start_perf_ns)
+        assert record.timestamp_ns == process_clock().wall_ns_at(start_perf_ns)
+
+    def test_explicit_timestamp_is_kept(self) -> None:
+        record = RequestRecord(timestamp_ns=123, start_perf_ns=456)
+        assert record.timestamp_ns == 123
+
+    def test_omitted_timestamp_stays_out_of_fields_set(self) -> None:
+        # A fifth fields-set entry resizes the set: +512 B on every in-flight
+        # record, which the memory estimator's constants do not budget for.
+        record = RequestRecord(start_perf_ns=456)
+        assert "timestamp_ns" not in record.model_fields_set
+
+    def test_fully_defaulted_record_is_in_the_wall_clock_domain(self) -> None:
+        record = RequestRecord()
+        assert abs(record.timestamp_ns - time.time_ns()) < 1_000_000_000
+
+    def test_deserialized_timestamp_is_not_re_anchored(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        payload = RequestRecord(start_perf_ns=time.perf_counter_ns()).model_dump_json()
+        sent = RequestRecord.model_validate_json(payload).timestamp_ns
+        # A receiving process has a different anchor; it must not re-derive.
+        monkeypatch.setattr(
+            record_models, "process_clock", lambda: MonotonicClock(0, 10**18)
+        )
+        assert RequestRecord.model_validate_json(payload).timestamp_ns == sent
+
+
+class TestBinaryResponse:
+    """Binary response construction and record validation preserve the contract."""
+
+    def test_python_construction_and_dump_preserve_raw_bytes(self) -> None:
+        """Python construction and dumps retain bytes and the slots layout."""
+        body = bytes(range(256))
+        positional = BinaryResponse(123, body, "application/octet-stream")
+        keyword = BinaryResponse(
+            perf_ns=123, raw_bytes=body, content_type="application/octet-stream"
+        )
+        record = RequestRecord(responses=[positional])
+
+        assert positional == keyword
+        assert not hasattr(positional, "__dict__")
+        assert positional.get_raw() == body
+        assert positional.get_text() is None
+        assert positional.get_json() is None
+        assert record.model_dump()["responses"][0]["raw_bytes"] == body
+        assert positional.raw_bytes == body
+
+    @pytest.mark.parametrize(
+        "encoded",
+        [param("!", id="invalid-character"), param("a", id="invalid-length")],
+    )  # fmt: skip
+    @pytest.mark.parametrize("json_mode", [False, True])
+    def test_malformed_base64_response_rejected(
+        self, encoded: str, json_mode: bool
+    ) -> None:
+        """Both record validation routes reject malformed base64 bodies."""
+        data = {"responses": [{"perf_ns": 123, "raw_bytes": encoded}]}
+        with pytest.raises(ValidationError):
+            if json_mode:
+                RequestRecord.model_validate_json(orjson.dumps(data))
+            else:
+                RequestRecord.model_validate(data)
+
+    def test_valid_base64_response_decoded_without_legacy_text_detection(self) -> None:
+        """An ambiguous legacy text value is always interpreted as base64."""
+        record = RequestRecord.model_validate(
+            {"responses": [{"perf_ns": 123, "raw_bytes": "abcd"}]}
+        )
+
+        assert isinstance(record.responses[0], BinaryResponse)
+        assert record.responses[0].raw_bytes == b"i\xb7\x1d"
 
 
 class TestProfileResults:
@@ -281,6 +370,77 @@ class TestSSEMessageDataclass:
         msg = SSEMessage.parse("data: first\ndata: second", perf_ns=1)
 
         assert msg.extract_data_content() == "first\nsecond"
+
+
+class TestAwsEventStreamMessageDataclass:
+    """Test that AwsEventStreamMessage dataclass works correctly.
+
+    Distinct from SSEMessage: this represents one already-reassembled
+    PayloadPart line (SageMaker's eventstream format), not a multi-field
+    SSE message -- so there is no `.parse()`/`.packets`, just a flat `line`.
+    """
+
+    def test_get_text_returns_line(self) -> None:
+        msg = AwsEventStreamMessage(
+            perf_ns=1, line='{"key": "value"}', raw_line=b'data: {"key": "value"}\n'
+        )
+        assert msg.get_text() == '{"key": "value"}'
+
+    def test_get_text_returns_none_for_empty_line(self) -> None:
+        msg = AwsEventStreamMessage(perf_ns=1, line="", raw_line=b"\n")
+        assert msg.get_text() is None
+
+    def test_get_raw_returns_raw_line_not_processed_line(self) -> None:
+        """get_raw() must return the undecoded wire bytes, distinct from the
+        processed `line` get_text()/get_json() use -- not a redundant alias
+        for the same processed value."""
+        msg = AwsEventStreamMessage(
+            perf_ns=1, line="raw content", raw_line=b"data: raw content\n"
+        )
+        assert msg.get_raw() == b"data: raw content\n"
+        assert msg.get_raw() != msg.get_text()
+
+    def test_get_json_parses_valid_json(self) -> None:
+        msg = AwsEventStreamMessage(
+            perf_ns=1, line='{"key": "value"}', raw_line=b'{"key": "value"}\n'
+        )
+        assert msg.get_json() == {"key": "value"}
+
+    def test_get_json_returns_none_for_done_sentinel(self) -> None:
+        msg = AwsEventStreamMessage(perf_ns=1, line="[DONE]", raw_line=b"[DONE]\n")
+        assert msg.get_json() is None
+
+    def test_get_json_returns_none_for_empty_line(self) -> None:
+        msg = AwsEventStreamMessage(perf_ns=1, line="", raw_line=b"\n")
+        assert msg.get_json() is None
+
+    def test_get_json_returns_none_for_malformed_json(self) -> None:
+        msg = AwsEventStreamMessage(
+            perf_ns=1, line="{not valid json", raw_line=b"{not valid json\n"
+        )
+        assert msg.get_json() is None
+
+    def test_pydantic_union_roundtrip_preserves_type(self) -> None:
+        """A AwsEventStreamMessage must survive a Pydantic union field
+        roundtrip as itself -- not get misrouted into SSEMessage or
+        TextResponse, which sit in the same RequestRecord.responses union."""
+
+        class Wrapper(BaseModel):
+            responses: SerializeAsAny[
+                list[SSEMessage | AwsEventStreamMessage | TextResponse | BinaryResponse]
+            ] = Field(default_factory=list)
+
+        msg = AwsEventStreamMessage(
+            perf_ns=123, line='{"delta":"tok"}', raw_line=b'data: {"delta":"tok"}\n'
+        )
+        wrapper = Wrapper(responses=[msg])
+        json_bytes = wrapper.model_dump_json().encode()
+        restored = Wrapper.model_validate_json(json_bytes)
+
+        assert isinstance(restored.responses[0], AwsEventStreamMessage)
+        assert restored.responses[0].perf_ns == 123
+        assert restored.responses[0].line == '{"delta":"tok"}'
+        assert restored.responses[0].raw_line == b'data: {"delta":"tok"}\n'
 
 
 class TestMetricResultSumField:

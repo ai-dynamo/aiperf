@@ -5,7 +5,9 @@
 #
 # Triggers:
 #   push          — runs for trusted main, release, and mirrored PR branch
-#                   pushes.
+#                   pushes. There is no paths filter: detect-changes decides
+#                   whether the GPU matrix runs, by comparing the
+#                   parser-extracted server config across the pushed range.
 #   workflow_call — invoked by nightly.yml so the nightly stays green.
 
 name: Test Docs End-to-End
@@ -44,20 +46,88 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Trusted push and workflow_call events have no PR base/head to
-          # compare; the push paths filter already removed unrelated changes.
-          if [[ "${{ github.event_name }}" != "pull_request" ]]; then
+          # PRs reach this workflow as pushes to pull-request/NNN mirror
+          # branches, so github.event_name is never "pull_request" here and a
+          # PR-only comparison would skip the hash check on every run.
+          #
+          # Head comes from the worktree rather than github.sha because
+          # workflow_call passes source_ref, so under nightly the checked-out
+          # commit and github.sha are different commits.
+          HEAD=$(git rev-parse HEAD)
+
+          # On a PR mirror branch, compare against the merge-base with main
+          # rather than against the previous push. event.before only spans the
+          # latest push, so a push that changes a tagged command followed by a
+          # push that does not compares clean and skips -- the first push's
+          # change is already inside the "base". The merge-base covers every
+          # change the branch introduces, so no push can hide behind another.
+          # main and release/* keep event.before: their merge-base with main is
+          # the branch itself, which would compare nothing.
+          if [[ "$GITHUB_REF" == refs/heads/pull-request/* || -n "${{ inputs.source_ref }}" ]]; then
+            # Not --depth=1: grafting a shallow fetch onto the fetch-depth: 0
+            # clone above leaves merge-base with no reachable common ancestor.
+            git fetch --no-tags origin main 2>/dev/null || true
+            BASE=$(git merge-base origin/main "$HEAD" 2>/dev/null || true)
+          else
+            BASE="${{ github.event.before }}"
+          fi
+
+          # A new branch or a force-push can still leave no usable base.
+          # Fall back to the merge-base with main, and to running the test
+          # when even that is unavailable.
+          if [[ -z "$BASE" || "$BASE" == "0000000000000000000000000000000000000000" ]] \
+            || ! git cat-file -e "$BASE^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin main 2>/dev/null || true
+            if ! BASE=$(git merge-base origin/main "$HEAD" 2>/dev/null); then
+              echo "::warning::No comparable base; running GPU test."
+              echo "run_test=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+
+          if [[ "$BASE" == "$HEAD" ]]; then
+            echo "::notice::Base equals head; running GPU test."
             echo "run_test=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          BASE="${{ github.event.pull_request.base.sha }}"
-          HEAD="${{ github.event.pull_request.head.sha }}"
-
-          # Safety net: any change under the test runner directory always runs
-          # the test (covers parser.py, test_runner.py, constants, etc.).
-          if git diff --name-only "$BASE" "$HEAD" -- 'tests/ci/test_docs_end_to_end/' | grep -q .; then
-            echo "Test runner code changed; running GPU test."
+          # Safety net: paths the config hash cannot see, but that decide
+          # whether a tagged command still works.
+          #
+          # dump_config_hash.py hashes the tagged markdown only, so a code
+          # change that invalidates a documented command leaves the hash
+          # identical and the matrix skips -- renaming a dataset in
+          # plugins.yaml breaks the tagged command in docs/tutorials/sharegpt.md
+          # without changing a byte of markdown. Rather than all of src/, which
+          # would run the GPU matrix on roughly two thirds of pushes, this
+          # lists the surface a documented command is written against: the
+          # plugin registry, the config and CLI layers, and the enums whose
+          # members appear verbatim in tutorial flags. A behavior change
+          # deeper in the stack is left to nightly.
+          #
+          # The harness and its image are here too because the matrix cannot
+          # validate a change to how it is built or invoked if that change is
+          # itself what decides to skip the matrix.
+          SAFETY_NET_PATHS=(
+            'tests/ci/test_docs_end_to_end/'
+            '.github/workflows/test-docs-end-to-end.yml'
+            'Dockerfile'
+            'src/aiperf/plugin/'
+            'src/aiperf/config/'
+            'src/aiperf/common/enums/'
+            'src/aiperf/cli.py'
+            'src/aiperf/cli_utils.py'
+            'src/aiperf/cli_commands/'
+            'src/aiperf/cli_runner/'
+          )
+          if ! CHANGED=$(git diff --name-only "$BASE" "$HEAD" -- "${SAFETY_NET_PATHS[@]}"); then
+            echo "::warning::Could not diff safety-net paths; running GPU test."
+            echo "run_test=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -n "$CHANGED" ]]; then
+            echo "Harness or documented-command surface changed; running GPU test:"
+            echo "$CHANGED"
             echo "run_test=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -148,4 +218,16 @@ jobs:
 
       - name: Cleanup Docker containers
         if: always()
-        run: docker compose -f docker-compose.yml down || true
+        # The harness starts containers with plain `docker run --name
+        # aiperf-test-<pid>` (test_runner.py), never compose, and this repo
+        # ships no docker-compose.yml -- the previous `compose down` here was
+        # a no-op, so a run killed mid-test leaked its container onto the
+        # self-hosted runner and flaked the next job that reused the name.
+        # --filter name= is a substring match, so anchor it: an unrelated
+        # container such as `other-aiperf-test-debug` would otherwise be
+        # removed from a shared self-hosted runner. No `|| true`: xargs -r
+        # already handles an empty list, so a real docker failure should
+        # surface rather than be reported as a successful cleanup.
+        run: |
+          docker ps -aq --filter 'name=^aiperf-test-' \
+            | xargs -r docker rm -f

@@ -115,16 +115,20 @@ AIPerfJob recovery callbacks also pin the parent resource version and accept
 JobSet state only when its controller owner API version, kind, name, and UID
 match the callback's immutable parent UID. Timeout, startup-failure, and result
 salvage cleanup re-read that ownership and delete with the JobSet UID as a
-precondition. A stable startup-blocker deadline first atomically adds
-`aiperf.nvidia.com/startup-failure-claimed` with JSON Patch tests for the
-parent UID, resource version, spec cancellation state, phase, exact
-`status.startupIssue`, and annotation map. The annotation-map test makes this
-failure-cleanup claim mutually exclusive with the durable completion claim;
-only the winner may enter JobSet deletion. A matching persisted failure claim
-resumes cleanup after an operator restart. Pod watches and stale-heartbeat
-recovery only persist critical startup diagnosis; the cached-state deadline is
-the sole path that may claim, delete, and terminalize that blocker. JobSet
-failure events use the same ownership fence before a direct status patch.
+precondition. A stable startup-blocker deadline first re-reads the live parent
+and requires a matching UID, a non-terminal phase, no spec or in-process
+cancellation, no completion claim, no foreign failure claim, and a
+`status.startupIssue` fingerprint matching the cached blocker. It then
+atomically adds `aiperf.nvidia.com/startup-failure-claimed` with JSON Patch
+tests for the parent UID, the resource version of that live read, and phase.
+The resource-version test fences every other write, including the durable
+completion claim, so the failure-cleanup claim and completion claim are
+mutually exclusive; only the winner may enter JobSet deletion. A matching
+persisted failure claim resumes cleanup after an operator restart. Pod watches
+and stale-heartbeat recovery only persist critical startup diagnosis; the
+cached-state deadline is the sole path that may claim, delete, and terminalize
+that blocker. JobSet failure events use the same ownership fence before a
+direct status patch.
 Event status changes are rebased onto the fenced live status so every condition
 type not demonstrably changed by the event survives concurrent controller
 writes. Pod events resolve the full Pod to batch Job to JobSet to AIPerfJob
@@ -169,9 +173,24 @@ likewise each run in their own container inside a worker pod.
 | `records-manager` | Aggregates results from workers |
 | `api` | WebSocket + HTTP on port 9090 |
 | `gpu-telemetry-manager` | GPU metrics via DCGM (optional) |
-| `server-metrics-manager` | Prometheus metrics (optional) |
+| `server-metrics-manager` | Prometheus metrics (optional restartable native sidecar in `initContainers`) |
 | `results-sidecar` | Serves exported results after controller exit (port 9091) |
 | `event-bus-proxy` | XPUB/XSUB ZMQ proxy sidecar (`AIPERF_K8S_EVENT_BUS_SIDECAR_ENABLED=true` by default; isolates pub/sub I/O from the SystemController process) |
+
+The server-metrics sidecar uses `restartPolicy: Always` (Kubernetes 1.29+).
+It has a liveness probe but no startup/readiness probe: registration needs the
+controller to start first, and optional telemetry must not gate pod readiness.
+An OOM or liveness restart therefore restarts only this sidecar, without failing
+the Job. User init containers still run before it. The operator excludes this
+optional sidecar's crash loops from fatal startup diagnosis.
+
+Each control-channel `Registration` carries a process-stable `instance_id`.
+Reconnecting preserves it; restarting changes it. A metrics restart after
+initialization retires the old result producer even when it happens faster than
+the heartbeat watchdog. Retired producers cannot rejoin the result barrier or
+replace the recorded failure with a late result. Watchdog eviction follows the
+same export contract: inference continues, the primary JSON names incomplete
+server metrics, and the controller exports before reporting a degraded run.
 
 Per-container health ports run 8080-8088 (`AIPERF_K8S_PORT_*_HEALTH`); the API
 service is on 9090 and the results sidecar on 9091.
@@ -363,6 +382,36 @@ access.
 └── index.dat         # Decompressed index
 ```
 
+### Remote Dataset Sources
+
+`hf://`, `s3://` and `https://` dataset paths (`FileDataset.path` as a `RemoteRef`) are
+resolved before the dataset-manager composes, never by workers.
+
+| Stage | Where | Code |
+|---|---|---|
+| Pin (access stage) | `aiperf kube profile/generate/sweep`, on the CLI host, before the CR is rendered | `aiperf.kubernetes.remote_datasets.pin_remote_datasets_for_kubernetes` (runs `preflight_remote_access`; auth-class failures on `hf://` and `s3://` leave the ref unpinned) |
+| Pod-credential check | CLI host before submission; operator workload preflight | `check_remote_datasets`, with needs-auth from `aiperf.dataset.remote.anonymous` |
+| CR validation | `prepare_workload_spec` | `validate_remote_datasets_for_kubernetes` rejects the CLI-only `remoteFixedScheduleCheck` marker and unredacted credentials |
+| Rehydrate presigned URLs | dataset-manager container, after endpoint credentials | `apply_injected_dataset_urls` (Secret-backed `AIPERF_INJECTED_DATASET_URLS`, matched by `RemoteRef.canonical`); every other container pops the variable |
+| Pin if unpinned, download | dataset-manager container, before `bootstrap_and_run_service` | `preflight_datasets_for_run` |
+| Report a failure | dataset-manager container | `aiperf.kubernetes.dataset_startup.write_termination_message` writes `/dev/termination-log` (`[dataset-manager pod] ...`, at most 4 KiB); the container sets `terminationMessagePolicy: FallbackToLogsOnError` |
+| Surface a failure | operator | `_get_terminated_controller_info` appends `terminated.message`; `_fail_unrecoverable_controller` sets `status.error` and, for a message with the `[dataset-manager pod]` prefix, `DatasetReady=False` (`DatasetUnavailable`) |
+
+The dataset-manager's startup order is endpoint credentials, then dataset URL rehydration,
+then `preflight_datasets_for_run`, then bootstrap (`aiperf.cli_commands.service`). The health
+server starts in bootstrap, so a long download runs while the startup probe is failing; see
+[Large datasets and the startup probe](../tutorials/remote-datasets.md#large-datasets-and-the-startup-probe).
+
+The pin rides inside the CR as `path: {ref, resolved_version}`, so the serialized run stays
+the single source of truth. When the dataset-manager pod pins an unpinned ref, the version
+and any manifest defaults exist only in that container's copy of the run; this is the
+documented gap for `kubectl`-applied resources and for CLI hosts without read access. The
+dataset-manager and control-plane containers mount the `remote-cache` emptyDir at
+`/aiperf/remote-cache` (`AIPERF_DATASET_REMOTE_CACHE_DIR`), so the control-plane's exporter
+can read the cache index for provenance. `redact_endpoint_spec` redacts dataset paths in every
+spec the operator persists or serves. `aiperf kube debug` reads `status.error` and the
+`DatasetReady` condition through `diagnose_job_failure`.
+
 ## 6. Benchmark Execution Flow
 
 ```mermaid
@@ -384,6 +433,13 @@ flowchart LR
 5. **Workers** - Make LLM API calls once their `WorkerGroupManager` reports group-local readiness, then generate raw records
 6. **RecordProcessor** - Computes metrics (latency, TTFT, throughput)
 7. **RecordsManager** - Aggregates results from all workers
+
+The RecordsManager's per-request JSONL stream is also available under
+`checkpoints/` before final export when request export and checkpointing are
+enabled. Both names refer to the same file. The API and results sidecar expose
+the checkpoint independently of the results-ready marker, so the operator can
+recover flushed request metrics after an interrupted export. Recovery retains
+the run's failed status; the checkpoint is not a final aggregate report.
 
 ### Service Discovery
 
@@ -903,7 +959,12 @@ Sensitive endpoint fields never rely on the ConfigMap copy. JSON
 serialization redacts them, and `aiperf service --benchmark-run` restores them
 from the Secret-backed `AIPERF_INJECTED_API_KEY`/`OPENAI_API_KEY`,
 `AIPERF_INJECTED_HEADERS`, and `AIPERF_INJECTED_ENDPOINT_URLS` environment
-variables. Generation and operator reconciliation fail closed when the
+variables. Presigned dataset URLs travel the same way, through
+`AIPERF_INJECTED_DATASET_URLS`, which the JobSet builder renders into the dataset-manager
+container only (`build_env_vars(dataset_downloader=...)`); the AIPerfSweep controller's
+container is rendered without it too, since child jobs take it from the sweep spec.
+Generation and operator
+reconciliation fail closed when the
 corresponding `valueFrom.secretKeyRef` mapping is absent.
 `aiperf service` requires `--benchmark-run` and never resolves per-container
 benchmark flags.
@@ -943,7 +1004,7 @@ The kopf operator registers sweep-lifecycle handlers in `src/aiperf/operator/mai
 - `@kopf.on.field AIPerfSweep field=status.aggregation.phase new=Complete` plus `@kopf.on.resume` — triggers `handlers/sweep/_aggregate_fetch.fetch_sweep_aggregate_to_disk` to pull the cross-variation aggregate off the sweep-controller's `emptyDir` results-sidecar before the JobSet is reaped, and resumes an interrupted harvest after an operator restart. The fetch reports `(downloaded, listed)` counts; a partial harvest (`downloaded < listed`) or a missing/unparsable `aggregate.json` raises `kopf.TemporaryError` so the JobSet — and with it the only other copy of the artifacts — stays alive for re-harvest. During commit, the operator materializes every child `sweep.json` backlink on its PVC from the canonical `children.json` manifest before status publication. Delayed callbacks carry the parent CR's immutable UID, verify the live parent and exact JobSet owner API version/kind/name/UID with `controller: true`, and publish status with a JSON Patch UID test before advancing `latest.txt` or the runs index. Only a full harvest with a parseable `aggregate.json` and durable child lineage on the PVC publishes the operator-backed `aggregateRef`, flips `resultsAvailable` to true, and deletes that exact JobSet with its resource UID as a delete precondition. A same-name replacement makes the old callback a no-op; transient reads and status-validation failures against the current owner retry.
 - `@kopf.on.delete AIPerfSweep` — cooperatively cancels only AIPerfJobs whose exact owner kind/name/UID matches the deleting sweep; sweep labels narrow discovery but never establish ownership. Kubernetes owner-reference GC tears down the sweep-controller JobSet and RBAC.
 - `@kopf.timer` `cleanup_old_sweeps` — TTL reaper for terminal `AIPerfSweep`s, evaluated at the operator monitor cadence rather than the daily result-retention cadence. A completed aggregate is not eligible until the operator-backed result reference is published, so even `ttlSecondsAfterFinished: 0` cannot delete the only `emptyDir` copy during harvest. Parent deletion uses the timer body's immutable UID as a Kubernetes delete precondition, so a stale timer cannot reap a same-name replacement.
-- `@kopf.on.field AIPerfJob field=status.phase` (handler in `handlers/sweep/child_rollup.py`) — this one is on **child AIPerfJobs**, not the AIPerfSweep CRD: for AIPerfJob children whose `ownerReferences` include an `AIPerfSweep`, it recomputes the parent's `runStates`/`currentChildRef`/`lastChildEvent`. The rollup step is a no-op for a standalone AIPerfJob, but the same registration always also mirrors the new phase into the runs index (`handlers/lifecycle.record_phase_transition`).
+- `@kopf.on.field AIPerfJob field=status.phase` (handler in `handlers/sweep/child_rollup.py`) — this one is on **child AIPerfJobs**, not the AIPerfSweep CRD: for AIPerfJob children whose `ownerReferences` include an `AIPerfSweep`, it recomputes the parent's `runStates`/`currentChildRef`/`lastChildEvent`. The rollup step is a no-op for a standalone AIPerfJob, but the same registration always also mirrors the new phase into the runs index (`handlers/lifecycle.record_phase_transition`). The ownership fence (`_child_phase_buckets._is_owned_child`) type-guards with `collections.abc.Mapping`, not `dict`, because kopf delivers `body` as a `kopf.Body` view.
 
 Sweep **result** retention is process-level rather than a CR timer. After the
 runs-index bootstrap and once per day, the operator scans durable sweep epoch

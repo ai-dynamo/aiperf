@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.common.enums import (
     AudioFormat,
@@ -90,6 +91,22 @@ def test_audio_config_custom_values():
     assert config.depths == [16, 24]
     assert config.sample_rates == [44.1, 48.0]
     assert config.channels == 2
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        param("sample_rates", id="sample-rates"),
+        param("depths", id="bit-depths"),
+    ],
+)  # fmt: skip
+def test_audio_config_empty_choices_raises_validation_error(field: str) -> None:
+    """Reject empty choice lists before the audio generator samples them."""
+    with pytest.raises(ValidationError) as exc_info:
+        AudioConfig(**{field: []})
+
+    assert exc_info.value.errors()[0]["loc"] == (field,)
+    assert exc_info.value.errors()[0]["type"] == "too_short"
 
 
 class TestVideoAudioConfigDefaults:

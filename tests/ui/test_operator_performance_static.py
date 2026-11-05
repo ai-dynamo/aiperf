@@ -18,15 +18,15 @@ _JSON_STRINGIFY_RE = re.compile(r"JSON\.stringify\(")
 
 # These are bounded/persistence/transport cases, not render-loop or deep-diff cases.
 _ALLOWED_JSON_STRINGIFY_CALLS = {
-    ("components/artifacts-card.js", 184),
-    ("components/artifacts-card.js", 228),
+    ("components/artifacts-card.js", 185),
+    ("components/artifacts-card.js", 229),
     # saveHiddenCols -> localStorage. Serializing a short Set of column names for
     # persistence is not a render or effect diff, which is what this guard exists
     # to catch. Was line 52; moved when readoutDecimals was added above it.
     ("components/job-table.js", 72),
     ("components/server-metrics/helpers.js", 173),
     ("lib/api.js", 112),
-    ("lib/job-ws.js", 127),
+    ("lib/job-ws.js", 128),
 }
 
 # Existing debt: dependency is a short list of child names, not full child objects.

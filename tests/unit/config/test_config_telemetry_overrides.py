@@ -19,9 +19,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pytest import param
 
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
+from aiperf.config.loader.plan import build_benchmark_plan
 
 
 def cli(**kwargs: object) -> CLIConfig:
@@ -130,6 +132,48 @@ def test_network_latency_mean_routes(base_yaml: Path) -> None:
 def test_network_latency_automatic_routes(base_yaml: Path) -> None:
     resolved = resolve_config(cli(network_latency_automatic=True), base_yaml)
     assert resolved.benchmark.network_latency.enabled is True
+
+
+@pytest.mark.parametrize(
+    "mean_ms", [param(None, id="automatic"), param(5.0, id="fixed-rtt")]
+)  # fmt: skip
+@pytest.mark.parametrize(
+    "overrides", [param({}, id="yaml-only"), param({"streaming": True}, id="unrelated-cli")]
+)  # fmt: skip
+def test_network_latency_yaml_survives_unset_cli_flags(
+    base_yaml: Path, mean_ms: float | None, overrides: dict[str, object]
+) -> None:
+    """Unrelated CLI flags preserve both automatic and fixed-RTT YAML modes."""
+    mean = "null" if mean_ms is None else str(mean_ms)
+    base_yaml.write_text(
+        base_yaml.read_text()
+        + f"  networkLatency: {{enabled: true, meanMs: {mean}, pingInterval: 1.5}}\n"
+    )
+
+    resolved = resolve_config(cli(**overrides), base_yaml)
+
+    plan = build_benchmark_plan(resolved)
+    for benchmark in [resolved.benchmark, *plan.configs]:
+        network_latency = benchmark.network_latency
+        assert network_latency.enabled is True
+        assert network_latency.mean_ms == mean_ms
+        assert network_latency.ping_interval == 1.5
+        assert network_latency.should_probe is (mean_ms is None)
+
+
+def test_network_latency_explicit_disable_overrides_yaml(base_yaml: Path) -> None:
+    """An explicitly false flag still takes precedence over the YAML value."""
+    base_yaml.write_text(base_yaml.read_text() + "  networkLatency: {enabled: true}\n")
+
+    resolved = resolve_config(cli(network_latency_automatic=False), base_yaml)
+
+    assert resolved.benchmark.network_latency.enabled is False
+
+
+def test_network_latency_interval_without_mode_still_errors(base_yaml: Path) -> None:
+    """A lone interval flag must be validated rather than silently dropped."""
+    with pytest.raises(ValueError, match="only applies when"):
+        resolve_config(cli(network_latency_ping_interval=0.5), base_yaml)
 
 
 # ---------------------------------------------------------------------------

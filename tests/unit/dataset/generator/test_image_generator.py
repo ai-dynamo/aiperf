@@ -415,6 +415,30 @@ class TestImageGeneratorNoiseMode:
 class TestImageGeneratorCustomDirectory:
     """Tests for custom directory source mode."""
 
+    @pytest.mark.parametrize("matching_sibling", [False, True])
+    def test_custom_directory_treats_brackets_literally(
+        self, tmp_path: Path, matching_sibling: bool
+    ) -> None:
+        source = tmp_path / "images[1]"
+        source.mkdir()
+        Image.new("RGB", (5, 5), color="blue").save(source / "source.png")
+        if matching_sibling:
+            sibling = tmp_path / "images1"
+            sibling.mkdir()
+            Image.new("RGB", (5, 5), color="red").save(sibling / "other.png")
+
+        config = make_image_config(
+            width_mean=5,
+            width_stddev=0,
+            height_mean=5,
+            height_stddev=0,
+            source=source,
+        )
+        result = ImageGenerator(config).generate()
+        image_bytes = base64.b64decode(result.split(",", 1)[1])
+        with Image.open(BytesIO(image_bytes)) as image:
+            assert image.getpixel((0, 0)) == (0, 0, 255)
+
     def test_custom_directory_loads_images(self, tmp_path):
         img = Image.new("RGB", (5, 5), color="blue")
         img.save(tmp_path / "test.png")
@@ -429,6 +453,31 @@ class TestImageGeneratorCustomDirectory:
         generator = ImageGenerator(config)
         result = generator.generate()
         assert result.startswith("data:image/png;base64,")
+
+    def test_custom_directory_32bit_integer_tiff_source(self, tmp_path):
+        """A 32-bit integer TIFF stays mode ``I`` through open and resize.
+        Guards that PNG output still encodes it (Pillow 13 cannot write mode
+        ``I`` as PNG) instead of aborting dataset generation.
+        """
+        Image.new("I", (5, 5), color=70000).save(tmp_path / "depth.tif")
+
+        config = ImageConfig(
+            batch_size=1,
+            width=ImageWidthConfig(mean=10, stddev=0),
+            height=ImageHeightConfig(mean=10, stddev=0),
+            format=ImageFormat.PNG,
+            source=tmp_path,
+        )
+        generator = ImageGenerator(config)
+        result = generator.generate()
+
+        prefix = "data:image/png;base64,"
+        assert result.startswith(prefix)
+        with Image.open(
+            BytesIO(base64.b64decode(result.removeprefix(prefix)))
+        ) as image:
+            assert image.size == (10, 10)
+            assert image.mode == "I;16"
 
     def test_custom_directory_shuffle_cycle_uses_pool_once(self, tmp_path):
         colors = {

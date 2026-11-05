@@ -16,6 +16,7 @@ from aiperf.common.enums import ServiceRegistrationStatus
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError
 from aiperf.common.types import ServiceTypeT
+from aiperf.plugin.enums import ServiceType
 
 if IS_WINDOWS:
     # Windows multiprocessing has no fork context — ``ForkProcess`` is
@@ -68,6 +69,12 @@ class MultiProcessServiceManager(BaseServiceManager):
         super().__init__(required_services, **kwargs)
         self.multi_process_info: list[MultiProcessRunInfo] = []
         self.log_queue = log_queue
+        # Kept past reaping: a worker's SERVICE_ERROR can arrive after the
+        # registration-wait reaper has dropped it from multi_process_info.
+        self._spawned_worker_ids: set[str] = set()
+        # Exit codes of processes the registration wait reaped, which removes
+        # their entries: the controller's start-up diagnosis reads them later.
+        self._reaped_exit_codes: dict[str, int | None] = {}
 
     async def run_service(
         self, service_type: ServiceTypeT, num_replicas: int = 1
@@ -111,6 +118,8 @@ class MultiProcessServiceManager(BaseServiceManager):
                     service_id=service_id,
                 )
             )
+            if service_type == ServiceType.WORKER:
+                self._spawned_worker_ids.add(service_id)
 
     async def stop_service(
         self, service_type: ServiceTypeT, service_id: str | None = None
@@ -231,6 +240,32 @@ class MultiProcessServiceManager(BaseServiceManager):
 
             raise AIPerfError("Some services failed to register within timeout") from e
 
+    def spawned_worker_ids(self) -> frozenset[str]:
+        """Every worker spawned here, including those already reaped.
+
+        The SystemController uses this to recognize a start-up failure from one
+        of its own unregistered workers. The reaper may drop a dead worker
+        before its SERVICE_ERROR arrives, so identity cannot come from
+        ``multi_process_info``; whether a worker can still start is
+        ``get_service_liveness``'s question.
+        """
+        return frozenset(self._spawned_worker_ids)
+
+    def live_worker_ids(self) -> frozenset[str]:
+        """Workers whose process is alive, in one pass over the process list.
+
+        The controller asks this once per worker start-up report rather than
+        calling ``get_service_liveness`` for every worker, which is a linear
+        scan each, made staggered failures cubic in the worker count.
+        """
+        return frozenset(
+            info.service_id
+            for info in self.multi_process_info
+            if info.service_type == ServiceType.WORKER
+            and info.process is not None
+            and info.process.is_alive()
+        )
+
     def get_service_liveness(self, service_id: str) -> bool | None:
         """Answer liveness from the real ``multiprocessing.Process`` handle.
 
@@ -243,7 +278,14 @@ class MultiProcessServiceManager(BaseServiceManager):
         for info in self.multi_process_info:
             if info.service_id == service_id:
                 return info.process is not None and info.process.is_alive()
-        return None
+        # Spawned here but since reaped: known dead, not unknown.
+        return False if service_id in self._spawned_worker_ids else None
+
+    def get_service_exit_code(self, service_id: str) -> int | None:
+        for info in self.multi_process_info:
+            if info.service_id == service_id and info.process is not None:
+                return info.process.exitcode
+        return self._reaped_exit_codes.get(service_id)
 
     def _reap_dead_processes_during_registration(
         self, required_counts: "Counter[ServiceTypeT]"
@@ -273,13 +315,22 @@ class MultiProcessServiceManager(BaseServiceManager):
                     f"Required service {info.service_id} died before "
                     f"registering (exit code {exit_code})"
                 )
-            self.warning(
-                f"Optional service {info.service_id!r} exited before "
-                f"registering (exit code {exit_code}); continuing "
-                f"benchmark without it."
-            )
             required_counts[info.service_type] -= 1
+            self._reaped_exit_codes[info.service_id] = exit_code
             self.multi_process_info.remove(info)
+            if info.service_type == ServiceType.WORKER:
+                # Not "continuing without it": whether the run can continue is
+                # the SystemController's start-up decision, not this wait's.
+                self.warning(
+                    f"Worker {info.service_id!r} exited before registering "
+                    f"(exit code {exit_code})."
+                )
+            else:
+                self.warning(
+                    f"Optional service {info.service_id!r} exited before "
+                    f"registering (exit code {exit_code}); continuing "
+                    f"benchmark without it."
+                )
 
     async def _wait_for_process(self, info: MultiProcessRunInfo) -> None:
         """Force-kill a service process that is still alive after bus shutdown.

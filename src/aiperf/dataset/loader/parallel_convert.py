@@ -128,6 +128,8 @@ def _process_batch(
     Each trace dict must have ``input_length``, ``output_length``,
     ``timestamp``, ``delay``, and optionally ``hash_ids`` and ``text_input``.
     """
+    from aiperf.dataset.generator.prompt import reject_separator_only_blocks
+
     assert _worker_state is not None
     hash_rng = _worker_state.hash_rng
     corpus = _worker_state.corpus
@@ -163,6 +165,7 @@ def _process_batch(
                 # Literal prompt provided by the trace (no generation needed).
                 prompt = trace["text_input"]
             elif trace.get("hash_ids"):
+                reject_separator_only_blocks(block_size, sep_token)
                 # Generate prompt from hash_id blocks. All blocks are full-sized
                 # except the last. Mirror the serial
                 # PromptGenerator._build_token_sequence guard: when hash_ids

@@ -12,8 +12,9 @@ AIPerf captures this as an **engine-neutral per-request record** so the metrics
 layer can reason about acceptance without knowing which engine produced it.
 
 This page documents the record, the adapter interface that fills it, and the
-vLLM adapter (the first supported engine). SGLang and TensorRT-LLM adapters are
-future work and reuse the same record.
+supported engines: vLLM, TensorRT-LLM, and SGLang. They emit genuinely different
+payloads -- different field names and different placement in the response -- and
+the adapter layer is what keeps that difference from reaching the metrics layer.
 
 ## The engine-neutral record
 
@@ -26,7 +27,7 @@ drafting such as DSpark-style adaptive verification.
 
 | Field | Description |
 | --- | --- |
-| `engine` | Serving engine that produced the stats (e.g. `vllm`). |
+| `engine` | Serving engine that produced the stats: `vllm`, `tensorrt_llm`, or `sglang`. Set by the adapter for provenance; no metric branches on it. |
 | `mean_acceptance_length` | Mean tokens per verify step including the bonus token: `1 + num_accepted_draft_tokens / num_spec_steps`. Ranges `1.0` … `num_spec_tokens + 1`. |
 | `draft_acceptance_rate` | `num_accepted_draft_tokens / num_draft_tokens`. Draft-only. |
 | `acceptance_histogram` | Sparse `{accepted_draft_count: num_steps}` map with **integer** keys. Zero-count buckets omitted. Excludes the bonus token. |
@@ -49,11 +50,32 @@ spec-decode shape. It reads the raw payload captured on the parsed responses
 so nothing engine-specific leaks into the metrics layer.
 
 Adapters are a plugin category (`spec_decode_adapter`) and are resolved by
-**auto-detection**, mirroring custom-dataset-loader detection: the parser walks
-registered adapters in priority order and uses the first whose `can_adapt`
-recognizes the payload by its engine-specific signature — so an adapter claims
-only its own payloads and defers on a foreign one. Both methods are classmethods
-(adapters are stateless).
+**auto-detection**: AIPerf never learns which engine it is pointed at, so every
+payload is offered to every registered adapter, and each recognizes its own by
+an engine-specific signature. Both methods are classmethods (adapters are
+stateless).
+
+Detection therefore depends on those signatures being **disjoint**, and each
+adapter's signature must contain at least one key the other engines do not emit.
+The current signatures are:
+
+| Adapter | Signature keys |
+| --- | --- |
+| vLLM | `acceptance_histogram`, `num_spec_steps`, `mean_acceptance_length` |
+| TensorRT-LLM | `total_accepted_draft_tokens`, `total_draft_tokens` |
+| SGLang | `spec_num_correct_drafts`, `spec_num_proposed_drafts`, `spec_verify_ct` |
+
+`mean_acceptance_length` is load-bearing: the other two vLLM keys are also
+emitted by TensorRT-LLM, so a signature without it lets the vLLM adapter claim
+a TRT-LLM payload. Its `adapt()` then raises `KeyError` on the missing key, so
+every TRT-LLM record is dropped with only a warning in the log.
+
+Plugin **priority does not order detection**: `priority` resolves conflicts only
+between plugins registering the same *name*, so `iter_all` yields declaration
+order from `plugins.yaml`. Rather than let YAML line order decide, the parser
+collects every match and, if more than one adapter claims a payload, logs a
+warning and produces **no record** — an ambiguous payload is a bug in AIPerf's
+signatures, and dropping it is better than attributing it arbitrarily.
 
 ```python
 @runtime_checkable
@@ -66,7 +88,7 @@ class SpecDecodeAdapterProtocol(Protocol):
 
 ```mermaid
 flowchart LR
-    R["Raw response<br/>metrics.speculative_decoding"]
+    R["Raw response<br/>root metrics.speculative_decoding (vLLM)<br/>or choices[].speculative_decoding (TRT-LLM)<br/>or sglext.spec_tokens_details (SGLang)"]
     P["ParsedResponse<br/>.spec_decode_stats (raw dict)"]
     A["Engine adapter<br/>(auto-detected)"]
     N["SpecDecodeAcceptanceRecord<br/>(engine-neutral)"]
@@ -109,15 +131,28 @@ The wire object maps to the record one-to-one, except:
 - The `detailed` level adds `per_step_accepted` / `per_step_drafted`; `summary`
   omits them (they stay `None`).
 - `mean_acceptance_length` / `draft_acceptance_rate` are taken verbatim
-  (the server already computes them safely, including the zero-step case).
+  (the server already computes them safely).
 
 ### Missing-field and edge cases
 
-- **Field absent** (spec decode off, or the request had no verify steps): the
+- **Field absent** (spec decode off, or per-request reporting not enabled): the
   record is `None` and dependent metrics simply do not show. This is the common
   case and is not an error.
-- **Zero-step / fully-rejected**: reported verbatim (empty or `{0: N}`
-  histogram, `mean_acceptance_length == 1.0`).
+- **Zero-step** (`num_spec_steps == 0`): the record is `None`. vLLM always
+  sends a payload, even for a request that never ran a verify step
+  (`max_tokens: 1`, EOS as the first token, an NGram drafter that never
+  matched), while TensorRT-LLM sends none. AIPerf drops the vLLM record, so the
+  per-request metrics average only over requests that speculated instead of
+  counting these as acceptance length 1.0 and rate 0%. The drop is logged at
+  debug only and counted in
+  [`spec_decode_zero_step_requests`](../metrics-reference.md#zero-step-requests).
+  The raw payload is still visible on the wire and in `--export-level raw`
+  output. A zero-step payload must also report zero drafts; one with
+  `num_draft_tokens > 0` is malformed (see below).
+- **Fully-rejected** (`num_spec_steps > 0`, every step in bucket `j=0`):
+  reported verbatim (`{0: N}` histogram, `mean_acceptance_length == 1.0`,
+  `draft_acceptance_rate == 0.0`). This is real speculation that failed, so it
+  counts.
 - **Malformed payload**: the adapter degrades to `None` rather than raising, so
   one bad response cannot abort a run. Records whose aggregate counts contradict
   each other (histogram not summing to `num_spec_steps`, etc.) are rejected the
@@ -127,8 +162,147 @@ The wire object maps to the record one-to-one, except:
   for `n > 1` on both endpoints, and additionally for **multi-prompt** requests
   on completions (`prompt: ["a", "b"]`), where timestamps would span prompts.
   Because the object is at the response root -- not per-choice -- AIPerf simply
-  reads it as present or absent; no client-side suppression is needed, and such
-  requests yield no record. AIPerf sends one prompt per request, so in practice
-  only `n > 1` triggers this.
+  reads it as present or absent, and such requests yield no record. AIPerf also
+  drops the record for every engine when a request generates more than one
+  sequence: `n > 1`, or a completions request with several prompts
+  (`--batch-size-text` above 1).
 - **Behind Dynamo** the custom field is currently stripped, so this path is
   direct-to-vLLM only.
+
+## The TensorRT-LLM adapter
+
+`TRTLLMSpecDecodeAdapter` reads TensorRT-LLM's **per-choice**
+`speculative_decoding` object. Unlike vLLM's, it rides the choice rather than the
+response root — the placement TRT-LLM already uses for its
+`avg_decoded_tokens_per_iter` field. In streaming it arrives on the **terminal
+chunk's choice** (the one carrying `finish_reason`), not on a trailing usage
+chunk.
+
+```json
+{
+  "index": 0,
+  "message": {"role": "assistant", "content": "..."},
+  "finish_reason": "stop",
+  "avg_decoded_tokens_per_iter": 2.1,
+  "speculative_decoding": {
+    "acceptance_rate": 0.5,
+    "total_accepted_draft_tokens": 30,
+    "total_draft_tokens": 60,
+    "num_spec_steps": 20,
+    "acceptance_histogram": [8, 0, 6, 6],
+    "num_spec_tokens": 3
+  }
+}
+```
+
+Read that as: 20 verify steps; 8 accepted nothing, 6 accepted 2 drafts, 6
+accepted all 3. So 30 accepted of 60 proposed, and 2.5 tokens emitted per step
+instead of 1.
+
+The mapping to the record differs from vLLM's in three ways:
+
+- **Different field names.** `acceptance_rate` → `draft_acceptance_rate`,
+  `total_accepted_draft_tokens` → `num_accepted_draft_tokens`,
+  `total_draft_tokens` → `num_draft_tokens`. These are TensorRT-LLM's own names
+  for the quantities, already used internally for the same counters.
+- **`mean_acceptance_length` is derived, not read.** TRT-LLM does not report
+  it. Its per-choice `avg_decoded_tokens_per_iter` is a different quantity: it
+  averages decoded tokens over every decoding iteration, including iterations
+  that drafted nothing, so it reads lower whenever some iterations did not
+  draft. The adapter computes `1 + num_accepted_draft_tokens / num_spec_steps` — the
+  record's own definition — so the reported length can never contradict the
+  histogram it sits beside.
+- **`per_step_accepted` / `per_step_drafted` are never populated.** TRT-LLM keeps
+  per-*position* vectors (a survival curve), not per-step sequences, so it has no
+  per-step data to report. This is a real fidelity gap versus vLLM's `detailed`
+  level.
+
+`acceptance_histogram` uses the same dense `list[int]` encoding as vLLM's and is
+inflated by the same shared helper.
+
+### Enabling it
+
+TensorRT-LLM has no CLI flag for metrics; these are `TorchLlmArgs` fields set
+through the YAML passed to `--extra_llm_api_options`. Enablement is two-level —
+the server declares the capability once, and the client asks per request, so
+requests that do not ask pay nothing:
+
+```yaml
+# extra-llm-api-config.yaml
+per_request_spec_decode_stats: true
+```
+
+```bash
+trtllm-serve <model> --extra_llm_api_options extra-llm-api-config.yaml
+```
+
+That server-side field is the entire opt-in: a client sends nothing extra, so
+AIPerf discovers the payload by shape exactly as it does for vLLM. It is
+deliberately independent of `return_perf_metrics`, which also mounts the
+Prometheus endpoint.
+
+### Missing-field and edge cases
+
+- **`num_spec_tokens` is `null` under `draft_len_schedule`**, where the per-step
+  draft bound varies by batch size. This is legal and expected: the record's
+  field is optional, and the histogram-length cross-check is skipped. The
+  record's identity validators still apply in full.
+- **PyTorch backend only.** The C++/TRT path populates spec metrics via
+  `updateNumTokensPerIteration` and has no per-position vectors, so the field is
+  simply absent there.
+- **Absent when the request never drafted**, rather than reported as zeros.
+  Because TensorRT-LLM never sends a zero-step payload, the adapter treats one
+  as malformed and logs a warning, unlike the quiet drop on vLLM.
+- **`n > 1`**: because the payload is per-choice, a response carrying more than
+  one choice is suppressed client-side — a single per-request record cannot
+  attribute request-level `completion_tokens` to one sequence.
+- **Tree drafting** (EAGLE3 dynamic-tree, Medusa) works unchanged: the histogram
+  counts how many steps produced each output length and encodes no
+  parent/child structure.
+
+## The SGLang adapter
+
+SGLang v0.5.19+ supports `return_spec_tokens_details: true` on OpenAI chat and
+completions requests. Add `--extra-inputs return_spec_tokens_details:true` to
+`aiperf profile`, or set `benchmark.endpoint.extra.return_spec_tokens_details: true`
+in the YAML configuration. The server needs speculative decoding enabled.
+
+The response contains `sglext.spec_tokens_details`. Streaming responses send it
+on a separate chunk with empty `choices`, independently of the usage chunk.
+AIPerf retains that chunk and reads these fields:
+
+| SGLang field | Record field |
+| --- | --- |
+| `spec_num_correct_drafts` | `num_accepted_draft_tokens` |
+| `spec_num_proposed_drafts` | `num_draft_tokens` |
+| `spec_verify_ct` | `num_spec_steps` |
+| `spec_correct_drafts_histogram` | `acceptance_histogram`, converted from a dense list to a sparse map |
+
+AIPerf derives acceptance length as `1 + accepted / steps` and acceptance rate
+as `accepted / proposed`. SGLang's `spec_accept_length` uses completion tokens,
+which include the prefill output token. Copying that average changes the metric.
+The response reports no fixed draft bound or ordered per-step arrays, so those
+optional record fields remain `None`.
+
+SGLang computes `spec_num_proposed_drafts` as
+`spec_verify_ct × (speculative_num_draft_tokens − 1)`. For a chain drafter, this
+count equals the draft tokens on the verified path. For a tree drafter
+(`--speculative-eagle-topk` above 1), it counts every draft node in the tree. One
+step accepts at most `speculative_num_steps` tokens along one path, so the draft
+acceptance rate of a tree drafter has a lower maximum. If two drafters have
+different shapes, do not compare their draft acceptance rates across engines or
+server configurations. Acceptance length does not use this denominator.
+
+Multi-sequence responses contain a list of detail objects. AIPerf excludes that
+list because one record cannot attribute request-level usage to one sequence.
+A completions request with several prompts and `n=1` returns one object for the
+first prompt only. AIPerf also excludes it, because the request generates one
+sequence for each prompt. Missing counters, malformed histograms, and
+inconsistent totals produce no acceptance record. SGLang v0.5.19 omits the
+details when no verify step ran.
+
+Without valid per-request acceptance data, SPEED-Bench uses its existing
+`auto` fallback: records, then summary, then server metrics. Keep server scraping
+enabled for that fallback. For a category matrix from server metrics, run each
+category separately. The legacy SGLang gauge average remains sensitive to idle
+scrapes. Use `--source records` to require per-request data without fallback.

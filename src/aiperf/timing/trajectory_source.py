@@ -420,28 +420,33 @@ class TrajectorySource(ConversationSource):
             _logger.info(row)
 
     @property
-    def warmup_credit_count(self) -> int:
-        """Number of streams warmup will dispatch a priming request for.
+    def warmup_credit_counts_by_lane(self) -> tuple[int, ...]:
+        """Number of mandatory snapshot primers dispatched on each lane.
 
         One per session active (mid-flight) at t*: any stream with a turn
         before t* (``warmup_turn_index`` is not None), INCLUDING a parent
         gated on a child join (it sent turn n-1 before t* and is waiting to
         send the join turn n, so n-1 is still its warmup turn). Streams whose
-        first request is at/after t* contribute nothing to warm. PhaseRunner
-        re-anchors the warmup barrier to this count, so it must match the
-        warmup dispatch loop exactly.
+        first request is at/after t* contribute nothing to warm.
         """
-        total = 0
+        counts: list[int] = []
         for trajectory in self.trajectories:
             if trajectory.snapshot is None:
-                total += 1
+                counts.append(1)
             else:
-                total += sum(
-                    1
-                    for state in trajectory.snapshot.states
-                    if state.warmup_turn_index is not None
+                counts.append(
+                    sum(
+                        1
+                        for state in trajectory.snapshot.states
+                        if state.warmup_turn_index is not None
+                    )
                 )
-        return total
+        return tuple(counts)
+
+    @property
+    def warmup_credit_count(self) -> int:
+        """Total mandatory snapshot primers across all trajectory lanes."""
+        return sum(self.warmup_credit_counts_by_lane)
 
     def _build_trajectories(self) -> list[Trajectory]:
         """Sample one trajectory per concurrency lane straight from the sampler.

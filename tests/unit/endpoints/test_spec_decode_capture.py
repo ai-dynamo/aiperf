@@ -13,6 +13,7 @@ from typing import Any, TypeVar
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import ModelSelectionStrategy
 from aiperf.common.models.model_endpoint_info import (
@@ -26,6 +27,7 @@ from aiperf.endpoints.base_endpoint import BaseEndpoint
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.plugin.enums import EndpointType
+from tests.unit.spec_decode.test_sglang_adapter import SUMMARY_PAYLOAD
 
 STATS = {
     "mean_acceptance_length": 1.5,
@@ -172,3 +174,151 @@ class TestCompletionsSpecDecodeCapture:
         parsed = completions_endpoint.parse_response(_mock_response(json_obj))
         assert parsed is not None
         assert parsed.spec_decode_stats is None
+
+
+# TensorRT-LLM attaches its payload per choice rather than at the response root,
+# using its own field names. Shape mirrors the TRT-LLM adapter's tests.
+TRTLLM_STATS = {
+    "acceptance_rate": 0.5,
+    "total_accepted_draft_tokens": 30,
+    "total_draft_tokens": 60,
+    "num_spec_steps": 20,
+    "acceptance_histogram": [8, 0, 6, 6],
+    "num_spec_tokens": 3,
+}
+
+
+class TestPerChoiceCapture:
+    """The per-choice placement TensorRT-LLM uses, on both endpoints.
+
+    One case per endpoint rather than per endpoint-and-stream-shape: the capture
+    helper is a pure function of the response body and never inspects the
+    endpoint type, ``object``, or whether the payload arrived on a stream chunk.
+    Both endpoints are kept because they have separate ``_parse_json_response``
+    implementations, each calling the helper independently, so a single case
+    would leave the other call site untested.
+    """
+
+    def test_chat_non_streaming(self, chat_endpoint: ChatEndpoint) -> None:
+        json_obj = {
+            "object": "chat.completion",
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "hi"},
+                    "finish_reason": "stop",
+                    "speculative_decoding": TRTLLM_STATS,
+                }
+            ],
+        }
+        parsed = chat_endpoint.parse_response(_mock_response(json_obj))
+        assert parsed is not None
+        assert parsed.spec_decode_stats == TRTLLM_STATS
+
+    def test_completions_non_streaming(
+        self, completions_endpoint: CompletionsEndpoint
+    ) -> None:
+        json_obj = {
+            "object": "text_completion",
+            "choices": [
+                {
+                    "text": "hi",
+                    "finish_reason": "stop",
+                    "speculative_decoding": TRTLLM_STATS,
+                }
+            ],
+        }
+        parsed = completions_endpoint.parse_response(_mock_response(json_obj))
+        assert parsed is not None
+        assert parsed.spec_decode_stats == TRTLLM_STATS
+
+    def test_multi_choice_is_suppressed(self, chat_endpoint: ChatEndpoint) -> None:
+        """``n > 1`` non-streaming: a single per-request record cannot attribute
+        request-level usage to one sequence, so no payload is captured."""
+        json_obj = {
+            "object": "chat.completion",
+            "choices": [
+                {"message": {"content": "a"}, "speculative_decoding": TRTLLM_STATS},
+                {"message": {"content": "b"}, "speculative_decoding": TRTLLM_STATS},
+            ],
+        }
+        parsed = chat_endpoint.parse_response(_mock_response(json_obj))
+        assert parsed is not None
+        assert parsed.spec_decode_stats is None
+
+    def test_root_placement_wins_when_both_present(
+        self, chat_endpoint: ChatEndpoint
+    ) -> None:
+        """Not expected on the wire, but the precedence must be deterministic."""
+        json_obj = {
+            "object": "chat.completion",
+            "choices": [
+                {"message": {"content": "hi"}, "speculative_decoding": TRTLLM_STATS}
+            ],
+            "metrics": {"speculative_decoding": STATS},
+        }
+        parsed = chat_endpoint.parse_response(_mock_response(json_obj))
+        assert parsed is not None
+        assert parsed.spec_decode_stats == STATS
+
+    def test_non_dict_per_choice_payload_ignored(
+        self, chat_endpoint: ChatEndpoint
+    ) -> None:
+        json_obj = {
+            "object": "chat.completion",
+            "choices": [{"message": {"content": "hi"}, "speculative_decoding": "x"}],
+        }
+        parsed = chat_endpoint.parse_response(_mock_response(json_obj))
+        assert parsed is not None
+        assert parsed.spec_decode_stats is None
+
+
+@pytest.mark.parametrize(
+    "endpoint_name, body",
+    [
+        param("chat_endpoint", {"object": "chat.completion", "choices": [{"message": {"role": "assistant", "content": "hi"}}]}, id="chat"),
+        param("chat_endpoint", {"object": "chat.completion.chunk", "choices": []}, id="streaming_chat"),
+        param("completions_endpoint", {"object": "text_completion", "choices": [{"text": "hi"}]}, id="completions"),
+        param("completions_endpoint", {"object": "text_completion", "choices": []}, id="streaming_completions"),
+    ],
+)  # fmt: skip
+def test_sglang_capture(
+    request: pytest.FixtureRequest, endpoint_name: str, body: dict[str, Any]
+) -> None:
+    endpoint = request.getfixturevalue(endpoint_name)
+    body = {**body, "sglext": {"spec_tokens_details": SUMMARY_PAYLOAD}}
+    parsed = endpoint.parse_response(_mock_response(body))
+    assert parsed is not None
+    assert parsed.spec_decode_stats == SUMMARY_PAYLOAD
+
+
+@pytest.mark.parametrize(
+    "extension",
+    [
+        param(None, id="null"),
+        param([], id="list"),
+        param("bad", id="string"),
+        param({}, id="empty"),
+        param({"spec_tokens_details": None}, id="null_details"),
+        param({"spec_tokens_details": []}, id="empty_details"),
+        param({"spec_tokens_details": [SUMMARY_PAYLOAD]}, id="multi_sequence_details"),
+    ],
+)  # fmt: skip
+def test_sglang_malformed_or_multi_sequence_extension_is_ignored(
+    extension: Any,
+) -> None:
+    assert BaseEndpoint.extract_spec_decode_stats({"sglext": extension}) is None
+
+
+def test_sglang_multi_prompt_completion_is_suppressed(
+    completions_endpoint: CompletionsEndpoint,
+) -> None:
+    """Two prompts with ``n=1``: SGLang reports the first prompt's details as an
+    object, which cannot be attributed to the usage of both prompts."""
+    body = {
+        "object": "text_completion",
+        "choices": [{"index": 0, "text": "a"}, {"index": 1, "text": "b"}],
+        "sglext": {"spec_tokens_details": SUMMARY_PAYLOAD},
+    }
+    parsed = completions_endpoint.parse_response(_mock_response(body))
+    assert parsed is not None
+    assert parsed.spec_decode_stats is None

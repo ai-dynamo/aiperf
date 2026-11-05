@@ -593,9 +593,45 @@ def _decorate_endpoint_node(node: dict[str, Any]) -> None:
     # that and then trip the type-vs-template rule attached just below.
     if isinstance(props.get("type"), dict):
         props["type"].pop("default", None)
+
+    # A SageMaker endpoint legitimately omits `urls`: the runtime host is derived
+    # from `awsRegion` by the before-validator in config/endpoint.py. Keeping
+    # `urls` structurally required would have the apiserver reject that resource
+    # before any Python validator ran, making the derivation unreachable from
+    # Kubernetes. The "urls or an endpoint name" requirement cannot move into CEL:
+    # `urls` is a typeless preserve-unknown field (it also accepts a single
+    # string), CEL cannot see it, and a rule selecting it makes the apiserver
+    # reject the whole CRD. Like the model/dataset shorthand requirement in
+    # _decorate_aiperf_config_node, EndpointConfig enforces it and the operator
+    # reports it as status.phase=Failed.
+    endpoint_required = node.get("required")
+    if isinstance(endpoint_required, list) and "urls" in endpoint_required:
+        node["required"] = [r for r in endpoint_required if r != "urls"]
+        if not node["required"]:
+            del node["required"]
+
     _add_validation_rules(
         node,
         (
+            {
+                # The derived URL and the SigV4 credential scope both come from
+                # the region, so an endpoint name without one is rejected by
+                # EndpointConfig. Mirrored here so `kubectl apply` reports it
+                # instead of the resource being admitted and the job failing.
+                # size() as well as has() on both fields: EndpointConfig treats
+                # an empty name as unset and rejects an empty region, but has()
+                # is true for `""`.
+                "rule": (
+                    "!has(self.sagemaker) || "
+                    "!has(self.sagemaker.endpointName) || "
+                    "size(self.sagemaker.endpointName) == 0 || "
+                    "(has(self.awsRegion) && size(self.awsRegion) > 0)"
+                ),
+                "message": (
+                    "endpoint.awsRegion is required when "
+                    "endpoint.sagemaker.endpointName is set"
+                ),
+            },
             # Tier 1B — type=template requires template.
             {
                 "rule": (

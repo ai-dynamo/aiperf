@@ -15,11 +15,14 @@ Covers the delayed-join semantics:
 
 from __future__ import annotations
 
+import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from aiperf.common.enums import ConversationBranchMode, CreditPhase, PrerequisiteKind
+from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.models import (
     ConversationBranchInfo,
     ConversationMetadata,
@@ -27,8 +30,10 @@ from aiperf.common.models import (
     TurnMetadata,
     TurnPrerequisite,
 )
+from aiperf.credit.dispatch import ChildDispatchResult
 from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.branch_orchestrator import BranchOrchestrator
+from aiperf.timing.trajectory_source import ConversationState
 from tests.unit.timing._shared_helpers import _mk_conv, _mk_source
 
 
@@ -71,6 +76,249 @@ def _k5_metadata() -> list[ConversationMetadata]:
     c0 = _mk_conv("c0", [TurnMetadata()], [])
     c1 = _mk_conv("c1", [TurnMetadata()], [])
     return [root, c0, c1]
+
+
+def _timed_k1_metadata(
+    *,
+    delay_ms: float | None = 198_046.0,
+) -> list[ConversationMetadata]:
+    """Parent and child matching the two-readiness join shape from #1231.
+
+    Times are normalized by subtracting the source root start (110.893s):
+    the previous parent ends at 31.042s, the child ends at 47.658s, and the
+    gated parent is due at 229.088s. Thus the parent's ordinary end-to-start
+    delay is 198.046s and its source-aligned post-child residual is 181.430s.
+    """
+    branch = ConversationBranchInfo(
+        branch_id="root:0",
+        child_conversation_ids=["child"],
+        mode=ConversationBranchMode.SPAWN,
+    )
+    root = _mk_conv(
+        "root",
+        [
+            TurnMetadata(
+                timestamp_ms=0.0,
+                api_time_ms=31_042.0,
+                branch_ids=[branch.branch_id],
+            ),
+            TurnMetadata(
+                timestamp_ms=229_088.0,
+                delay_ms=delay_ms,
+                prerequisites=[
+                    TurnPrerequisite(
+                        kind=PrerequisiteKind.SPAWN_JOIN,
+                        branch_id=branch.branch_id,
+                    )
+                ],
+            ),
+        ],
+        [branch],
+    )
+    child = _mk_conv(
+        "child",
+        [TurnMetadata(timestamp_ms=21_181.0, api_time_ms=26_477.0)],
+        [],
+    )
+    return [root, child]
+
+
+def _timed_join_orchestrator(
+    *,
+    delay_ms: float | None = 198_046.0,
+    scheduler: MagicMock | LoopScheduler | None = None,
+    allow_accelerated_warmup: bool = False,
+) -> tuple[BranchOrchestrator, MagicMock, MagicMock]:
+    cs = _mk_source(_timed_k1_metadata(delay_ms=delay_ms))
+    child_session = MagicMock(
+        x_correlation_id="corr-child",
+        metadata=cs.get_metadata("child"),
+        effective_root_correlation_id="corr-root",
+    )
+    cs.start_branch_child.return_value = child_session
+    issuer = MagicMock()
+    issuer.dispatch_first_turn = AsyncMock(return_value=True)
+    issuer.dispatch_join_turn = AsyncMock(return_value=True)
+    scheduler = scheduler or MagicMock()
+    orchestrator = BranchOrchestrator(
+        conversation_source=cs,
+        credit_issuer=issuer,
+        allow_accelerated_warmup=allow_accelerated_warmup,
+        scheduler=scheduler,
+    )
+    return orchestrator, issuer, scheduler
+
+
+@pytest.mark.asyncio
+async def test_join_fast_child_waits_for_recorded_parent_deadline() -> None:
+    """A fast child cannot erase the parent's recorded residual think time."""
+    orch, issuer, scheduler = _timed_join_orchestrator()
+
+    assert await orch.intercept(_mk_credit("root", "corr-root", 0)) is True
+    delay_s, deadline_coro = scheduler.schedule_later.call_args.args
+    assert delay_s == pytest.approx(198.046)
+    metadata = orch._cs.get_metadata("root")
+    child = orch._cs.get_metadata("child")
+    source_child_end_ms = child.turns[0].timestamp_ms + child.turns[0].api_time_ms
+    assert metadata.turns[1].timestamp_ms - source_child_end_ms == pytest.approx(
+        181_430.0
+    )
+
+    await orch.on_child_leaf_reached("corr-child")
+    issuer.dispatch_join_turn.assert_not_awaited()
+    assert orch._active_joins["corr-root"].is_satisfied
+
+    await deadline_coro
+    issuer.dispatch_join_turn.assert_awaited_once()
+    assert orch.stats.parents_resumed == 1
+
+
+@pytest.mark.asyncio
+async def test_join_slow_child_releases_at_child_completion_without_extra_delay() -> (
+    None
+):
+    """A child finishing after the deadline releases immediately, not delay later."""
+    orch, issuer, scheduler = _timed_join_orchestrator()
+
+    assert await orch.intercept(_mk_credit("root", "corr-root", 0)) is True
+    deadline_coro = scheduler.schedule_later.call_args.args[1]
+    await deadline_coro
+    issuer.dispatch_join_turn.assert_not_awaited()
+
+    await orch.on_child_leaf_reached("corr-child")
+    issuer.dispatch_join_turn.assert_awaited_once()
+    assert orch.stats.parents_resumed == 1
+
+
+@pytest.mark.asyncio
+async def test_accelerated_warmup_compresses_join_time_but_keeps_child_gate() -> None:
+    """Zero-idle warmup removes replay time, never the subagent dependency."""
+    orch, issuer, scheduler = _timed_join_orchestrator(allow_accelerated_warmup=True)
+    orch.start_accelerated_warmup()
+
+    assert await orch.intercept(_mk_credit("root", "corr-root", 0)) is True
+    scheduler.schedule_later.assert_not_called()
+    pending = orch._active_joins["corr-root"]
+    assert pending.replay_deadline_elapsed
+    assert not pending.is_satisfied
+    issuer.dispatch_join_turn.assert_not_awaited()
+
+    await orch.on_child_leaf_reached("corr-child")
+
+    issuer.dispatch_join_turn.assert_awaited_once()
+    assert orch.stats.parents_resumed == 1
+
+
+@pytest.mark.asyncio
+async def test_join_derives_deadline_from_timestamps_when_delay_is_absent() -> None:
+    """Timestamp/api_time metadata retains the same end-to-start invariant."""
+    orch, _, scheduler = _timed_join_orchestrator(delay_ms=None)
+
+    assert await orch.intercept(_mk_credit("root", "corr-root", 0)) is True
+    delay_s, deadline_coro = scheduler.schedule_later.call_args.args
+    assert delay_s == pytest.approx(198.046)
+    deadline_coro.close()
+
+
+@pytest.mark.asyncio
+async def test_join_deadline_uses_shared_scheduler_idle_cap() -> None:
+    """The system-idle cap may advance time but never bypass the child gate."""
+    scheduler = LoopScheduler()
+    orch, issuer, _ = _timed_join_orchestrator(
+        delay_ms=60_000.0,
+        scheduler=scheduler,
+    )
+
+    assert await orch.intercept(_mk_credit("root", "corr-root", 0)) is True
+    assert scheduler.pending_count == 1
+    assert scheduler.cap_pending_delay(0.0) == pytest.approx(60.0, abs=0.02)
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert scheduler.pending_count == 0
+    issuer.dispatch_join_turn.assert_not_awaited()
+
+    await orch.on_child_leaf_reached("corr-child")
+    issuer.dispatch_join_turn.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_phase_stop_drains_join_whose_child_already_finished() -> None:
+    """Cancelling a future deadline cannot strand a satisfied active join."""
+    orch, issuer, scheduler = _timed_join_orchestrator()
+    issuer.dispatch_join_turn.return_value = False
+
+    assert await orch.intercept(_mk_credit("root", "corr-root", 0)) is True
+    scheduler.schedule_later.call_args.args[1].close()
+    await orch.on_child_leaf_reached("corr-child")
+    assert orch.has_pending_branch_work()
+
+    await orch.expire_replay_deadlines()
+
+    issuer.dispatch_join_turn.assert_awaited_once()
+    assert orch.stats.joins_suppressed == 1
+    assert not orch.has_pending_branch_work()
+
+
+@pytest.mark.asyncio
+async def test_phase_stop_then_child_completion_drains_join() -> None:
+    """A child returning after phase stop still closes the gated parent."""
+    orch, issuer, scheduler = _timed_join_orchestrator()
+    issuer.dispatch_join_turn.return_value = False
+
+    assert await orch.intercept(_mk_credit("root", "corr-root", 0)) is True
+    scheduler.schedule_later.call_args.args[1].close()
+    await orch.expire_replay_deadlines()
+    issuer.dispatch_join_turn.assert_not_awaited()
+
+    await orch.on_child_leaf_reached("corr-child")
+
+    issuer.dispatch_join_turn.assert_awaited_once()
+    assert orch.stats.joins_suppressed == 1
+    assert not orch.has_pending_branch_work()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_join_uses_absolute_replay_offset_and_child_gate() -> None:
+    """A parent already blocked at t* keeps its profiling-relative deadline."""
+    cs = _mk_source(_timed_k1_metadata())
+    issuer = MagicMock()
+    issuer.dispatch_join_turn = AsyncMock(return_value=True)
+    scheduler = MagicMock()
+    orch = BranchOrchestrator(
+        conversation_source=cs,
+        credit_issuer=issuer,
+        scheduler=scheduler,
+    )
+    parent = ConversationState(
+        conversation_id="root",
+        x_correlation_id="corr-root",
+        next_turn_index=1,
+        waiting_on_children=True,
+        join_target_turn_index=1,
+    )
+    child = ConversationState(
+        conversation_id="child",
+        x_correlation_id="corr-child",
+        next_turn_index=0,
+        agent_depth=1,
+        parent_correlation_id="corr-root",
+        root_correlation_id="corr-root",
+        join_target_turn_index=1,
+        branch_id="root:0",
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+
+    orch.seed_snapshot(
+        (parent, child),
+        join_release_delays_ms={"corr-root": 181_430.0},
+    )
+    delay_s, deadline_coro = scheduler.schedule_later.call_args.args
+    assert delay_s == pytest.approx(181.430)
+
+    await orch.on_child_leaf_reached("corr-child")
+    issuer.dispatch_join_turn.assert_not_awaited()
+    await deadline_coro
+    issuer.dispatch_join_turn.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -150,7 +398,7 @@ async def test_breeze_through_applies_between_round_think_time():
 
     slept: list[float] = []
 
-    async def _capture(seconds: float) -> None:
+    async def _capture(seconds: float, _still_sendable: object) -> None:
         slept.append(seconds)
 
     orch._sleep_think_ms = _capture
@@ -169,6 +417,112 @@ async def test_breeze_through_applies_between_round_think_time():
     assert suspended is True
     issuer.dispatch_join_turn.assert_awaited_once()
     assert slept == [0.4]  # 400 ms authored think-time honored on the breeze path
+
+
+def _spine_gate_harness(
+    think_ms: float, *, with_scheduler: bool = True
+) -> tuple[BranchOrchestrator, MagicMock, LoopScheduler | None]:
+    """K=5 parent whose turn-5 gate is a request-free spine gate with ``think_ms`` of think-time.
+
+    Without a scheduler no replay-deadline timer is armed, so the join releases
+    as soon as its children finish and goes straight into the think-time sleep.
+    """
+    metadata = _k5_metadata()
+    gate_turn = metadata[0].turns[5]
+    gate_turn.no_request = True
+    gate_turn.delay_ms = think_ms
+    cs = _mk_source(metadata)
+
+    def _start(
+        parent_correlation_id, child_conversation_id, agent_depth, branch_mode, **kwargs
+    ):
+        s = MagicMock()
+        s.x_correlation_id = f"corr-{child_conversation_id}"
+        return s
+
+    cs.start_branch_child = MagicMock(side_effect=_start)
+    issuer = MagicMock()
+    issuer.dispatch_first_turn = AsyncMock(return_value=True)
+    issuer.dispatch_join_turn = AsyncMock(return_value=ChildDispatchResult.REJECTED)
+    issuer.can_dispatch_join = MagicMock(return_value=True)
+    scheduler = LoopScheduler() if with_scheduler else None
+    orch = BranchOrchestrator(
+        conversation_source=cs, credit_issuer=issuer, scheduler=scheduler
+    )
+    return orch, issuer, scheduler
+
+
+async def _suspend_parent_at_gate(orch: BranchOrchestrator) -> None:
+    await orch.intercept(_mk_credit("root", "corr-root", 0))
+    for t in range(1, 4):
+        await orch.intercept(_mk_credit("root", "corr-root", t))
+    assert await orch.intercept(_mk_credit("root", "corr-root", 4)) is True
+
+
+@pytest.mark.asyncio
+async def test_join_released_at_sending_cutoff_skips_think_time():
+    """A spine join released by a cutoff that refuses its gated turn (duration, cancel, request cap) must not sleep its think-time first: the sleep would only hold PhaseRunner's sending-complete step."""
+    orch, issuer, scheduler = _spine_gate_harness(think_ms=1e9)
+    assert scheduler is not None
+    await _suspend_parent_at_gate(orch)
+    orch.park_child_turn("corr-c0")
+    orch.park_child_turn("corr-c1")
+
+    issuer.can_dispatch_join.return_value = False
+    scheduler.cancel_all_pending()
+    await asyncio.wait_for(orch.expire_replay_deadlines(), timeout=1.0)
+
+    issuer.dispatch_join_turn.assert_awaited_once()
+    assert orch.stats.joins_suppressed == 1
+
+
+@pytest.mark.asyncio
+async def test_think_time_sleep_running_at_sending_cutoff_wakes():
+    """A think-time sleep that began before a cutoff refusing its gated turn wakes instead of running out its full interval."""
+    orch, issuer, _ = _spine_gate_harness(think_ms=1e9, with_scheduler=False)
+    await _suspend_parent_at_gate(orch)
+    await orch.on_child_leaf_reached("corr-c0")
+    release = asyncio.create_task(orch.on_child_leaf_reached("corr-c1"))
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert not release.done(), "the join release should be sleeping its think-time"
+    issuer.dispatch_join_turn.assert_not_awaited()
+
+    issuer.can_dispatch_join.return_value = False
+    await orch.expire_replay_deadlines()
+    await asyncio.wait_for(release, timeout=1.0)
+
+    issuer.dispatch_join_turn.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_think_time_kept_when_join_still_sendable_at_cutoff():
+    """When sending stops but the gated turn is still admissible (a nested spine
+    after --num-conversations stops root sending), the cutoff wake must not
+    shorten the think-time before the next round."""
+    orch, issuer, _ = _spine_gate_harness(think_ms=200.0, with_scheduler=False)
+    issuer.dispatch_join_turn = AsyncMock(return_value=ChildDispatchResult.ISSUED)
+    await _suspend_parent_at_gate(orch)
+    await orch.on_child_leaf_reached("corr-c0")
+    start = time.perf_counter()
+    release = asyncio.create_task(orch.on_child_leaf_reached("corr-c1"))
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    await orch.expire_replay_deadlines()
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert not release.done(), "a still-sendable join must keep sleeping"
+    issuer.dispatch_join_turn.assert_not_awaited()
+
+    await asyncio.wait_for(release, timeout=1.0)
+    # The full think-time must elapse. asyncio may fire a timer up to one
+    # loop-clock resolution early, under 1 us on every supported loop
+    # (Windows < 3.13 included, via PerfCounterSelectorEventLoop).
+    assert time.perf_counter() - start >= 0.2 - 1e-6
+    issuer.dispatch_join_turn.assert_awaited_once()
+    issuer.can_dispatch_join.assert_called_with(0)
+    assert orch.stats.parents_resumed == 1
 
 
 @pytest.mark.asyncio
@@ -388,6 +742,46 @@ async def test_delayed_join_stop_condition_fires_during_gap_suppresses_join():
 
     assert orch.stats.joins_suppressed == 1
     assert orch.stats.parents_resumed == 0
+
+
+@pytest.mark.asyncio
+async def test_delayed_join_admission_defer_stays_pending_until_retry():
+    """A temporary join deferral retains the gate and retries without suppression."""
+    cs = _mk_source(_k5_metadata())
+
+    def _start(
+        parent_correlation_id, child_conversation_id, agent_depth, branch_mode, **kwargs
+    ):
+        session = MagicMock()
+        session.x_correlation_id = f"corr-{child_conversation_id}"
+        return session
+
+    cs.start_branch_child = MagicMock(side_effect=_start)
+    issuer = MagicMock()
+    issuer.dispatch_first_turn = AsyncMock(return_value=ChildDispatchResult.ISSUED)
+    issuer.dispatch_join_turn = AsyncMock(
+        side_effect=[
+            ChildDispatchResult.DEFERRED,
+            ChildDispatchResult.ISSUED,
+        ]
+    )
+    orch = BranchOrchestrator(conversation_source=cs, credit_issuer=issuer)
+
+    await orch.intercept(_mk_credit("root", "corr-root", 0))
+    await orch.intercept(_mk_credit("root", "corr-root", 4))
+    await orch.on_child_leaf_reached("corr-c0")
+    await orch.on_child_leaf_reached("corr-c1")
+
+    assert "corr-root" in orch._active_joins
+    assert orch.stats.parents_resumed == 0
+    assert orch.stats.joins_suppressed == 0
+
+    await orch.expire_replay_deadlines()
+
+    assert issuer.dispatch_join_turn.await_count == 2
+    assert "corr-root" not in orch._active_joins
+    assert orch.stats.parents_resumed == 1
+    assert orch.stats.joins_suppressed == 0
 
 
 @pytest.mark.asyncio

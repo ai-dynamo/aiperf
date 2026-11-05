@@ -19,9 +19,14 @@ def _make_strategy(
     branch_orchestrator: MagicMock | None = None,
     dispatch_result: bool = True,
     delay_ms: float | None = None,
+    phase: CreditPhase = CreditPhase.PROFILING,
+    accelerated_warmup: bool = False,
 ) -> tuple[AgenticReplayStrategy, MagicMock, MagicMock]:
     """Build a strategy with only the attributes ``_dispatch_next_turn`` reads."""
     strategy = AgenticReplayStrategy.__new__(AgenticReplayStrategy)
+    strategy.config = MagicMock(phase=phase)
+    strategy._cache_warmup_duration = None
+    strategy._cache_warmup_requests_per_lane = 10 if accelerated_warmup else None
 
     conversation_source = MagicMock()
     conversation_source.get_next_turn_metadata.return_value = TurnMetadata(
@@ -105,6 +110,25 @@ async def test_child_at_cap_routes_to_on_child_stopped() -> None:
 
 
 @pytest.mark.asyncio
+async def test_child_at_warmup_quota_is_preserved_for_profiling_handoff() -> None:
+    """A resumable warmup refusal must not prematurely satisfy the parent join."""
+    orch = MagicMock()
+    orch.on_child_stopped = AsyncMock()
+    strategy, issuer, _ = _make_strategy(
+        branch_orchestrator=orch,
+        dispatch_result=False,
+        phase=CreditPhase.WARMUP,
+        accelerated_warmup=True,
+    )
+
+    await strategy._dispatch_next_turn(_child_credit())
+
+    issuer.dispatch_child_turn.assert_awaited_once()
+    issuer.issue_credit.assert_not_called()
+    orch.on_child_stopped.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_child_at_cap_without_orchestrator_swallows_silently() -> None:
     """No orchestrator wired: refusal must not raise."""
     strategy, issuer, _ = _make_strategy(
@@ -141,6 +165,40 @@ async def test_child_delayed_schedules_chokepoint_coro_not_issue_credit() -> Non
     await coro
     issuer.dispatch_child_turn.assert_awaited_once()
     orch.on_child_stopped.assert_awaited_once_with("child-xcid")
+
+
+@pytest.mark.asyncio
+async def test_child_delayed_parks_turn_until_timer_fires() -> None:
+    """A delayed child continuation is parked with the orchestrator and claimed when its timer fires."""
+    orch = MagicMock()
+    orch.try_claim_parked_child_turn.return_value = True
+    strategy, issuer, scheduler = _make_strategy(
+        branch_orchestrator=orch, delay_ms=250.0
+    )
+
+    await strategy._dispatch_next_turn(_child_credit())
+
+    orch.park_child_turn.assert_called_once_with("child-xcid")
+    _, coro = scheduler.schedule_later.call_args.args
+    await coro
+    orch.try_claim_parked_child_turn.assert_called_once_with("child-xcid")
+    issuer.dispatch_child_turn.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_child_delayed_stopped_at_cutoff_is_not_dispatched() -> None:
+    """A parked child already stopped at the sending cutoff does not dispatch when a stale timer body runs."""
+    orch = MagicMock()
+    orch.try_claim_parked_child_turn.return_value = False
+    strategy, issuer, scheduler = _make_strategy(
+        branch_orchestrator=orch, delay_ms=250.0
+    )
+
+    await strategy._dispatch_next_turn(_child_credit())
+    _, coro = scheduler.schedule_later.call_args.args
+    await coro
+
+    issuer.dispatch_child_turn.assert_not_called()
 
 
 # Root continuation keeps issue_credit

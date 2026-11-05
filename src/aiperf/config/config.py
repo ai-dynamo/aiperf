@@ -556,6 +556,30 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
+    def validate_hf_mooncake_replay(self) -> Self:
+        from aiperf.plugin.enums import EndpointType, PhaseType, PublicDatasetType
+
+        if (
+            getattr(self.get_default_dataset(), "dataset", None)
+            != PublicDatasetType.MOONCAKE_HF
+        ):
+            return self
+        if self.endpoint.type != EndpointType.CHAT:
+            raise ValueError("mooncake_hf requires --endpoint-type chat")
+        if any(p.type == PhaseType.FIXED_SCHEDULE for p in self.phases):
+            raise ValueError(
+                "mooncake_hf has no recorded timing; use concurrency or request-rate, "
+                "not --fixed-schedule"
+            )
+        if keys := {"messages", "input", "model", "tools"}.intersection(
+            self.endpoint.extra
+        ):
+            raise ValueError(
+                f"mooncake_hf: --extra-inputs must not override {sorted(keys)}"
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_phase_dataset_compatibility(self) -> Self:
         """Validate that each phase is compatible with the dataset.
 
@@ -580,9 +604,12 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         Cache-bust markers are minted by every timing strategy and injected by
         the worker into structured endpoint turns. Endpoint plugins opt in via
         ``supports_cache_bust`` metadata; timing mode is not a restriction.
+        ``media_uuids`` is further limited to the chat endpoint, the only one
+        that sends ``Image.uuids``, like ``--uuid-and-strip``.
         """
         from aiperf.common.enums import CacheBustTarget
         from aiperf.plugin import plugins
+        from aiperf.plugin.enums import EndpointType
 
         if self.get_cache_bust_target() == CacheBustTarget.NONE:
             return self
@@ -593,6 +620,14 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 "cache-bust is not supported by endpoint "
                 f"{self.endpoint.type}; select an endpoint whose plugin metadata "
                 "sets supports_cache_bust=true"
+            )
+        if (
+            self.is_cache_bust_media_uuids_enabled()
+            and self.endpoint.type != EndpointType.CHAT
+        ):
+            raise ValueError(
+                "--cache-bust-media-uuids requires endpoint type 'chat', "
+                f"got '{self.endpoint.type}'"
             )
 
         return self
@@ -751,7 +786,8 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
     def validate_agentic_cache_warmup(self) -> Self:
         """Restrict accelerated cache warmup to the agentic_replay timing mode.
 
-        ``--agentic-cache-warmup-duration`` is consumed solely by
+        The mutually exclusive duration and deterministic request-budget modes
+        are consumed solely by
         ``aiperf.timing.config._build_agentic_warmup_config``, which only runs
         when the profiling phases resolve to AGENTIC_REPLAY. On any other run
         the value is silently dropped, so an unguarded flag is a no-op the user
@@ -772,11 +808,26 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         from aiperf.timing.config import _is_agentic_replay
 
         profiling_phases = self.get_profiling_phases()
-        if not any(
+        has_duration = any(
             getattr(phase, "agentic_cache_warmup_duration", None) is not None
             for phase in profiling_phases
-        ):
+        )
+        has_request_budget = any(
+            getattr(phase, "warmup_requests_per_lane", None) is not None
+            for phase in profiling_phases
+        )
+        if not has_duration and not has_request_budget:
             return self
+
+        if any(
+            getattr(phase, "warmup_requests_per_lane", None) is not None
+            and getattr(phase, "agentic_cache_warmup_duration", None) is not None
+            for phase in profiling_phases
+        ) or (has_duration and has_request_budget):
+            raise ValueError(
+                "--warmup-requests-per-lane and "
+                "--agentic-cache-warmup-duration are mutually exclusive."
+            )
 
         if self.scenario is not None:
             from aiperf.common.scenario.registry import get_scenario
@@ -784,7 +835,7 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
             scenario_timing_mode = get_scenario(self.scenario).timing_mode
             if scenario_timing_mode != TimingMode.AGENTIC_REPLAY:
                 raise ValueError(
-                    "--agentic-cache-warmup-duration requires the agentic_replay "
+                    "agentic cache warmup requires the agentic_replay "
                     f"timing mode; scenario {self.scenario!r} locks "
                     f"timing_mode={scenario_timing_mode}."
                 )
@@ -792,7 +843,7 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
 
         if not _is_agentic_replay(profiling_phases):
             raise ValueError(
-                "--agentic-cache-warmup-duration requires the agentic_replay "
+                "agentic cache warmup requires the agentic_replay "
                 "timing mode (set today by --scenario inferencex-agentx-mvp); "
                 "the profiling phase(s) are not agentic_replay."
             )

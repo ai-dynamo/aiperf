@@ -1,6 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import io
 import logging
+import sys
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -9,6 +12,7 @@ from aiperf.common.logging import (
     CustomRichHandler,
     MultiProcessLogHandler,
     _create_basic_handler,
+    install_preflight_handler,
     setup_child_process_logging,
     setup_rich_logging,
 )
@@ -120,6 +124,62 @@ class TestSetupRichLogging:
         root = logging.getLogger()
         file_handlers = [h for h in root.handlers if isinstance(h, logging.FileHandler)]
         assert len(file_handlers) == 1
+
+    def test_log_file_is_utf8_whatever_the_locale(self, monkeypatch, mock_run):
+        """The sweep table only renders on a TTY, where this file is the sink that
+        can be narrower than the message: a FileHandler with no encoding opens in
+        the locale's code page, cp1252 on a default Windows box."""
+        monkeypatch.setattr("aiperf.common.logging.is_tty", lambda: True)
+        monkeypatch.setattr(
+            "io.text_encoding", lambda encoding, stacklevel=2: encoding or "cp1252"
+        )
+
+        setup_rich_logging(mock_run)
+
+        file_handler = next(
+            h
+            for h in logging.getLogger().handlers
+            if isinstance(h, logging.FileHandler)
+        )
+        rule = "━" * 8
+        file_handler.emit(
+            logging.LogRecord("t", logging.INFO, __file__, 1, rule, None, None)
+        )
+        file_handler.flush()
+        assert rule in Path(file_handler.baseFilename).read_text(encoding="utf-8")
+
+    def test_rich_logging_replaces_the_preflight_handler(self, monkeypatch, mock_run):
+        """Left in place, the preflight stderr handler printed every later line a
+        second time next to the rich console."""
+        monkeypatch.setattr("aiperf.common.logging.is_tty", lambda: True)
+        # pytest attaches its own capture handlers to root during a test.
+        monkeypatch.setattr(logging.getLogger(), "handlers", [])
+        assert install_preflight_handler()
+
+        setup_rich_logging(mock_run)
+
+        kinds = sorted(type(h).__name__ for h in logging.getLogger().handlers)
+        assert kinds == ["CustomRichHandler", "FileHandler"]
+
+    def test_preflight_handler_defers_to_existing_logging(self, monkeypatch):
+        existing = logging.NullHandler()
+        monkeypatch.setattr(logging.getLogger(), "handlers", [existing])
+
+        assert not install_preflight_handler()
+        assert logging.getLogger().handlers == [existing]
+
+    def test_preflight_handler_survives_a_narrow_stderr(self, monkeypatch):
+        raw = io.BytesIO()
+        stderr = io.TextIOWrapper(raw, encoding="cp1252", errors="strict", newline="")
+        monkeypatch.setattr(sys, "stderr", stderr)
+        monkeypatch.setattr(logging.getLogger(), "handlers", [])
+        assert install_preflight_handler()
+
+        logging.getLogger("t").info("rule ━━ end")
+        stderr.flush()
+
+        written = raw.getvalue().decode("cp1252")
+        assert "rule ?? end" in written
 
 
 # ---------------------------------------------------------------------------

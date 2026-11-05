@@ -16,6 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 from pytest import param
 
 from aiperf.config.flags import CLIConfig
@@ -121,3 +122,55 @@ def test_search_space_unresolvable_phase_selector_is_skipped(tmp_path: Path) -> 
     )
 
     assert config.benchmark.phases[0].type == "concurrency"
+
+
+@pytest.mark.parametrize("source", ["cli", "yaml"])
+def test_search_space_invalid_dimension_rejected_before_run(
+    tmp_path: Path, source: str
+) -> None:
+    path, lo, kind = "phases.profiling.rate", 0, "real"
+    body = _yaml("gamma", "rate: 10\n      smoothness: 1")
+    flags = CLIConfig()
+    if source == "cli":
+        flags = CLIConfig(search_space=[f"{path}:{lo},10:{kind}"], **_SEARCH_FLAGS)
+    else:
+        body += f"""\
+sweep:
+  type: adaptive_search
+  max_iterations: 20
+  objectives:
+    - metric: time_to_first_token
+      direction: minimize
+  search_space:
+    - path: {path}
+      lo: {lo}
+      hi: 10
+      kind: {kind}
+"""
+    config_file = _write(tmp_path, body)
+    error_type = TypeError if source == "cli" else ValidationError
+    with pytest.raises(error_type, match="lower bound must be > 0"):
+        resolve_config(flags, config_file)
+
+
+def test_yaml_search_space_keeps_authored_phase_and_values(tmp_path: Path) -> None:
+    body = (
+        _yaml("gamma", "rate: 10\n      smoothness: 1")
+        + """\
+sweep:
+  type: adaptive_search
+  max_iterations: 20
+  objectives:
+    - metric: time_to_first_token
+      direction: minimize
+  search_space:
+    - path: phases.measured.smoothness
+      lo: 0.1
+      hi: 2
+"""
+    )
+    config = resolve_config(CLIConfig(), _write(tmp_path, body))
+
+    phase = config.benchmark.phases[0]
+    assert (phase.type, phase.rate, phase.smoothness) == ("gamma", 10, 1)
+    assert config.sweep.search_space[0].path == "phases.measured.smoothness"
