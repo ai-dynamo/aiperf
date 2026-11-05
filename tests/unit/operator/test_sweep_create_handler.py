@@ -1162,6 +1162,25 @@ async def test_create_sweep_controller_jobset_enables_dns_hostnames(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_create_sweep_controller_jobset_omits_injected_dataset_urls(
+    monkeypatch,
+):
+    """Only a child's dataset-manager may hold presigned dataset URLs; the
+    sweep-controller container is rendered without their Secret."""
+    secret_ref = {"secretKeyRef": {"name": "aiperf-dataset-urls", "key": "urls"}}
+    workload_spec = _valid_workload_spec(
+        env=[
+            {"name": "HTTP_PROXY", "value": "http://proxy"},
+            {"name": "AIPERF_INJECTED_DATASET_URLS", "valueFrom": secret_ref},
+        ]
+    )
+    body = await _capture_jobset_body(monkeypatch, workload_spec)
+    names = {e["name"] for e in _container_from_jobset(body)["env"]}
+    assert "AIPERF_INJECTED_DATASET_URLS" not in names
+    assert "HTTP_PROXY" in names
+
+
+@pytest.mark.asyncio
 async def test_create_sweep_controller_jobset_merges_user_env_reserved_wins(
     monkeypatch,
 ):

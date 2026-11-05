@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.constants import IS_WINDOWS
 from aiperf.config.flags.cli_config import CLIConfig
@@ -382,6 +383,7 @@ class TestComputeCacheKey:
             "weka_aux_reduction_ratio",
             "weka_worker_group_min",
             "weka_tool_shaped_messages",
+            "weka_fork_parent_messages",
             "weka_seam_max_gap_seconds",
             "weka_seam_min_overlap_ratio",
             "block_size",
@@ -605,6 +607,27 @@ def _populate_entry(
 
 
 class TestLookupAndPopulate:
+    def test_mooncake_hf_larger_request_limit_does_not_reuse_smoke_cache(self) -> None:
+        keys = [
+            mmap_cache.compute_cache_key_from_run(
+                make_run_from_cli(
+                    CLIConfig(
+                        model_names=["test-model"],
+                        random_seed=42,
+                        hf_mooncake_dataset="example/trajectories",
+                        conversation_num_dataset_entries=6,
+                        request_count=request_count,
+                    )
+                )
+            )
+            for request_count in (2, 12)
+        ]
+        smoke_key, full_key = keys
+        assert smoke_key is not None and full_key is not None
+        _populate_entry(mmap_cache.cache_dir(), cache_key=smoke_key)
+        assert mmap_cache.lookup(smoke_key, compressed=False) is not None
+        assert mmap_cache.lookup(full_key, compressed=False) is None
+
     def test_lookup_returns_none_when_no_entry(self) -> None:
         assert mmap_cache.lookup("deadbeef" * 4, compressed=False) is None
 
@@ -656,7 +679,7 @@ class TestLookupAndPopulate:
         raw["version"] = 22
         manifest_path.write_bytes(orjson.dumps(raw))
 
-        assert mmap_cache.MANIFEST_VERSION == 27
+        assert mmap_cache.MANIFEST_VERSION == 29
         assert mmap_cache.lookup("pre-overlap-frontier", compressed=False) is None
 
     def test_lookup_compressed_mismatch_returns_none(self, tmp_path: Path) -> None:
@@ -1198,6 +1221,36 @@ class TestComputeCacheKeyRunGates:
 class TestSettingsPayloadFromRun:
     """Field extraction from the resolved run into the cache-key payload."""
 
+    @pytest.mark.parametrize(
+        "flags",
+        [
+            param({"hf_mooncake_dataset": "other/repo"}, id="repo"),
+            param({"hf_dataset_subset": "other-subset"}, id="subset"),
+            param({"hf_mooncake_split": "train"}, id="split"),
+            param({"mooncake_trace_to_hf_mapping": ["messages=turns"]}, id="mapping"),
+            param({"dataset_filters": ["model=other-model", "benchmark=original-benchmark"]}, id="model_filter"),
+        ],
+    )  # fmt: skip
+    def test_mooncake_hf_source_changes_cache_key(
+        self, flags: dict[str, object]
+    ) -> None:
+        base = {
+            "model_names": ["test-model"],
+            "random_seed": 42,
+            "hf_mooncake_dataset": "original/repo",
+            "hf_dataset_subset": "original-subset",
+            "mooncake_trace_to_hf_mapping": ["messages=history"],
+            "dataset_filters": ["model=original-model", "benchmark=original-benchmark"],
+        }
+        before = mmap_cache.compute_cache_key_from_run(
+            make_run_from_cli(CLIConfig(**base))
+        )
+        after = mmap_cache.compute_cache_key_from_run(
+            make_run_from_cli(CLIConfig(**(base | flags)))
+        )
+        assert before is not None and after is not None
+        assert before != after
+
     def test_prompt_dump_excludes_cache_bust(self) -> None:
         run = make_run_from_cli(CLIConfig(model_names=["test-model"]))
         payload = mmap_cache._settings_payload_from_run(run)
@@ -1217,19 +1270,49 @@ class TestSettingsPayloadFromRun:
         )
         assert mmap_cache._public_dataset_source_from_run(run) == {"plugin": "sharegpt"}
 
-    def test_public_dataset_source_includes_hf_identity(self) -> None:
+    @pytest.mark.parametrize(
+        "flags,expected",
+        [
+            param(
+                {"public_dataset": "mmstar"},
+                {"hf_dataset_name": "Lin-Chen/MMStar"},
+                id="registered_repo",
+            ),
+            param(
+                {"hf_weka_dataset": "example/weka"},
+                {"hf_dataset_name": "example/weka"},
+                id="weka_runtime_repo",
+            ),
+            param(
+                {
+                    "hf_mooncake_dataset": "example/trajectories",
+                    "hf_dataset_subset": "custom-subset",
+                    "mooncake_trace_to_hf_mapping": ["messages=turns"],
+                    "dataset_filters": ["model=source/model", "benchmark=source-benchmark"],
+                },
+                {
+                    "hf_dataset_name": "example/trajectories",
+                    "hf_split": "test",
+                    "hf_subset": "custom-subset",
+                    "mooncake_trace_to_hf_mapping": {"messages": "turns"},
+                },
+                id="mooncake_runtime_repo",
+            ),
+            param(
+                {"hf_mooncake_dataset": "example/trajectories", "hf_mooncake_split": "train"},
+                {"hf_dataset_name": "example/trajectories", "hf_split": "train"},
+                id="mooncake_split_override",
+            ),
+        ],
+    )  # fmt: skip
+    def test_public_dataset_source_includes_hf_identity(
+        self, flags: dict[str, object], expected: dict[str, object]
+    ) -> None:
         """An HF-backed public dataset keys on the resolved HF source."""
-        from aiperf.plugin.enums import PublicDatasetType
-
-        run = make_run_from_cli(
-            CLIConfig(
-                model_names=["test-model"],
-                public_dataset=PublicDatasetType.MMSTAR,
-            )
-        )
+        run = make_run_from_cli(CLIConfig(model_names=["test-model"], **flags))
         source = mmap_cache._public_dataset_source_from_run(run)
         assert source is not None
-        assert source["hf_dataset_name"] == "Lin-Chen/MMStar"
+        assert source.items() >= expected.items()
         assert "hf_split" in source
 
     def test_public_dataset_source_none_for_file_dataset(self, tmp_path: Path) -> None:
@@ -1244,6 +1327,20 @@ class TestSettingsPayloadFromRun:
             )
         )
         assert mmap_cache._public_dataset_source_from_run(run) is None
+
+    def test_weka_fork_parent_messages_keys_payload(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The fork flag changes cached child turns, so it must change the key."""
+        from aiperf.common.environment import Environment
+
+        run = make_run_from_cli(CLIConfig(model_names=["test-model"]))
+        monkeypatch.setattr(Environment.DATASET, "WEKA_FORK_PARENT_MESSAGES", True)
+        on = mmap_cache._settings_payload_from_run(run)
+        monkeypatch.setattr(Environment.DATASET, "WEKA_FORK_PARENT_MESSAGES", False)
+        off = mmap_cache._settings_payload_from_run(run)
+        assert on["weka_fork_parent_messages"] is True
+        assert off["weka_fork_parent_messages"] is False
 
 
 class TestAcquireCacheLockBypassAndFallback:

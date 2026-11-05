@@ -102,6 +102,10 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
+        with:
+          # check_docs_e2e_tags.py diffs the PR against its base, which needs
+          # shared history; the default shallow clone has none.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -110,6 +114,14 @@ jobs:
 
       - name: Check all docs are listed in index.yml
         run: python tools/check_docs_index.py
+
+      - name: Check new docs carry docs-e2e tags
+        # Scoped to newly added files: an untagged guide is never executed by
+        # test_docs_end_to_end, so its commands rot silently. The existing
+        # untagged backlog is tracked separately and does not fail this gate.
+        run: |
+          python tools/check_docs_e2e_tags.py \
+            --base "${{ github.event.pull_request.base.sha }}"
 
 
   #############################################################################

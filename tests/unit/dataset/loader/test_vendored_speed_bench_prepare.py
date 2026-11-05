@@ -17,8 +17,8 @@ VENDORED = (
     / "src/aiperf/dataset/loader/vendor/speed_bench_prepare.py"
 )
 
-UPSTREAM_COMMIT = "5ac8609a56ac941540b10c92e68d556e6343cd4c"
-UPSTREAM_SHA256 = "a551be4df541474e54e21b480022b0cbb66c2da068fda61b2a64bd3223bbbed2"
+UPSTREAM_COMMIT = "3a9b9eb981ab7a3ea0ebd517cbd4fca1d586768b"
+UPSTREAM_SHA256 = "640de89c585d6e7a7ad8a5e09ef3621c3471e459e992848d1387f43d7e47ec8a"
 
 
 def test_vendored_prepare_script_is_unmodified():
@@ -37,14 +37,14 @@ def test_vendored_prepare_script_is_unmodified():
 
     assert digest == UPSTREAM_SHA256, (
         f"{VENDORED.name} no longer matches upstream commit {UPSTREAM_COMMIT}. "
-        "Do not edit vendored files: fix it upstream in NVIDIA-NeMo/Skills, "
+        "Do not edit vendored files: fix it upstream in NVIDIA-NeMo/Gym, "
         "then re-vendor and update UPSTREAM_COMMIT/UPSTREAM_SHA256 together."
     )
 
 
 UPSTREAM_URL = (
-    "https://raw.githubusercontent.com/NVIDIA-NeMo/Skills/"
-    f"{UPSTREAM_COMMIT}/nemo_skills/dataset/speed-bench/prepare.py"
+    "https://raw.githubusercontent.com/NVIDIA-NeMo/Gym/"
+    f"{UPSTREAM_COMMIT}/benchmarks/speed-bench/prepare.py"
 )
 
 

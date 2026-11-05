@@ -19,7 +19,7 @@ A mock server for integration testing and performance benchmarking of LLM applic
 - [**Error Injection**](#error-injection): Reproducible fault testing with configurable error rates
 - [**Deterministic Responses**](#token-generation): Hash-based generation for identical outputs
 - [**Fast Mode**](#quick-start): Zero-latency mode (`--fast`) for integration testing
-- [**Corpus**](#corpus): Pre-tokenized corpus loaded from aiperf's shakespeare.txt for deterministic output
+- [**Corpus**](#tokenizer-options): Pre-tokenized corpus loaded from aiperf's shakespeare.txt for deterministic output
 - [**Request Recording**](#request-recording): Per-request ISL + requested OSL capture with JSONL output and a shutdown summary
 
 ### Supported Endpoints
@@ -112,6 +112,7 @@ Configuration via CLI arguments or environment variables (`MOCK_SERVER_` prefix)
 | `--host` | | `127.0.0.1` | Bind address |
 | `--workers` | `-w` | `1` | Uvicorn worker count |
 | `--fast` | `-f` | `false` | Zero latency mode |
+| `--emit-empty-chat-content` | | `false` | Emit one explicit empty content chunk before streaming Chat Completions output |
 | `--log-level` | | `INFO` | Logging level (DEBUG/INFO/WARNING/ERROR/CRITICAL) |
 | `--verbose` | `-v` | `false` | Debug logging (overrides log-level) |
 | `--access-logs` | | `false` | HTTP access logs |

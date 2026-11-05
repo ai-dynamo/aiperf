@@ -23,6 +23,7 @@ from aiperf_mock_server import MockServerConfig
 from aiperf_mock_server import serve as aiperf_mock_server_serve
 
 from aiperf.common.logging import AIPerfLogger
+from tests.harness.ci_shard import ci_shard_from_env, select_ci_shard
 from tests.harness.subprocess import _new_process_group_kwargs
 from tests.harness.utils import (
     AIPerfCLI,
@@ -147,6 +148,31 @@ def setup_integration_tokenizer():
     os.environ.pop("TRANSFORMERS_OFFLINE", None)
 
 
+def pytest_configure(config: pytest.Config) -> None:
+    """Validate the CI shard settings before any test is collected.
+
+    This runs in the xdist controller before workers start, so a bad
+    AIPERF_SHARD_INDEX / AIPERF_SHARD_TOTAL fails with a clear usage error
+    (raised inside a worker it only surfaces as an xdist INTERNALERROR).
+    """
+    ci_shard_from_env(os.environ)
+
+
+def _apply_ci_shard(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Keep only this CI shard's tests when AIPERF_SHARD_TOTAL > 1 (no-op when unset).
+
+    Round-robin over the deterministic collection order (before marker
+    deselection), so every xdist worker computes the same subset.
+    """
+    index, total = ci_shard_from_env(os.environ)
+    if total <= 1:
+        return
+    keep, drop = select_ci_shard(items, index, total)
+    if drop:
+        config.hook.pytest_deselected(items=drop)
+        items[:] = keep
+
+
 def pytest_collection_modifyitems(config, items):
     """Auto-retry integration tests on Windows to absorb parallel-race flakes.
 
@@ -158,6 +184,7 @@ def pytest_collection_modifyitems(config, items):
     fail only in parallel. Retry up to 2 times to mask that residual
     contention. Linux runs are unaffected (no marker added there).
     """
+    _apply_ci_shard(config, items)
     if sys.platform != "win32":
         return
     flaky = pytest.mark.flaky(reruns=2, reruns_delay=5)

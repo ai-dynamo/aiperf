@@ -19,6 +19,7 @@ from aiperf.common.models import (
     RequestRecord,
 )
 from aiperf.common.redact import redact_headers
+from aiperf.endpoints.payload_extraction import count_choices
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TransportType
 
@@ -131,6 +132,7 @@ class InferenceClient(AIPerfLifecycleMixin):
         # and the server's form parser would reject them (422, prompt=null).
         wire_payload: dict[str, Any] | bytes = formatted_payload
         if isinstance(formatted_payload, dict):
+            request_info.num_choices = count_choices(formatted_payload)
             encoded = orjson.dumps(formatted_payload)
             request_info.payload_bytes = encoded
             is_multipart = (
@@ -240,21 +242,11 @@ class InferenceClient(AIPerfLifecycleMixin):
         record: RequestRecord,
         request_info: RequestInfo,
     ) -> RequestRecord:
-        """Enrich a RequestRecord with the original request info.
-
-        The hoisted metric inputs ``max_tokens``, ``audio_duration_seconds``,
-        and ``scheduled_send_ms`` live only on the originating turn — they are
-        NOT ``RecordContext`` fields on ``request_info`` and so are not copied
-        by the downcast in ``_enrich_request_record``. Populate them explicitly
-        so the record processor (``osl_mismatch`` / ``audio_duration`` /
-        ``replay_send_schedule_offset`` metrics) reads them directly off the
-        slim record without the full ``turns`` list on the wire:
-        ``max_tokens`` and ``scheduled_send_ms`` from the dispatch (last) turn,
-        ``audio_duration_seconds`` from the first turn (ASR requests are
-        single-turn; mirrors the pre-hoist ``turns[0]`` read).
+        """Enrich a RequestRecord with the original request info, hoisting
+        per-turn values (``max_tokens``, ``audio_duration_seconds``,
+        ``scheduled_send_ms``) from the dispatched (last) turn.
         """
         last_turn = request_info.turns[-1] if request_info.turns else None
-        first_turn = request_info.turns[0] if request_info.turns else None
         turn_model = last_turn.model if last_turn else None
         record.model_name = turn_model or self.model_endpoint.primary_model_name
         self._enrich_request_record(record, request_info)
@@ -262,7 +254,7 @@ class InferenceClient(AIPerfLifecycleMixin):
         if record.request_info is not None:
             record.request_info.max_tokens = last_turn.max_tokens if last_turn else None
             record.request_info.audio_duration_seconds = (
-                first_turn.audio_duration_seconds if first_turn else None
+                last_turn.audio_duration_seconds if last_turn else None
             )
             record.request_info.scheduled_send_ms = (
                 float(last_turn.timestamp)

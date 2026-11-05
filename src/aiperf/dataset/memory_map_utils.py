@@ -29,6 +29,7 @@ import asyncio
 import mmap
 import os
 import tempfile
+import threading
 import types
 import weakref
 from contextlib import suppress
@@ -48,6 +49,7 @@ from aiperf.common.exceptions import (
     MemoryMapFileOperationError,
     MemoryMapSerializationError,
 )
+from aiperf.common.finite import FiniteFloat
 from aiperf.common.hooks import on_init, on_stop
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
@@ -56,6 +58,8 @@ from aiperf.common.models import (
     MemoryMapClientMetadata,
     Turn,
 )
+from aiperf.dataset.json_stream import iter_record_chunks, json_parts
+from aiperf.endpoints.payload_extraction import count_choices
 
 _logger = AIPerfLogger(__name__)
 
@@ -119,6 +123,8 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         self._data_file = None
         self._raw_data_file = None
         self._stream_writer = None
+        # A cancelled await does not stop an executor write; serialize close with it.
+        self._stream_lock = threading.Lock()
         self._current_offset = 0
         self._offsets: dict[str, ConversationOffset] = {}
         self._payload_offsets: dict[str, list[PayloadOffset]] = {}
@@ -164,9 +170,24 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
     async def _write_bytes(self, data: bytes) -> None:
         """Write bytes to the active output (compressed stream or async file)."""
         if self._compress_only:
-            self._stream_writer.write(data)
+            await asyncio.to_thread(self._write_compressed, data)
         else:
             await self._data_file.write(data)
+
+    def _write_compressed(self, data: bytes) -> None:
+        """Write through the zstd stream without racing shutdown."""
+        with self._stream_lock:
+            self._stream_writer.write(data)
+
+    def _close_compressed(self) -> None:
+        """Flush and close after any outstanding executor write finishes."""
+        with self._stream_lock:
+            try:
+                if self._stream_writer is not None:
+                    self._stream_writer.close()
+            finally:
+                if self._raw_data_file is not None:
+                    self._raw_data_file.close()
 
     async def add_conversation(
         self, conversation_id: str, conversation: Conversation
@@ -180,48 +201,13 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         Raises:
             RuntimeError: If already finalized
         """
-        if self._finalized:
-            raise RuntimeError("Cannot add conversations after finalization")
-
-        if self._format == MemoryMapFormat.PAYLOAD_BYTES:
-            # Pre-encode each turn's raw_payload and write the bytes directly;
-            # workers replay these verbatim with no deserialization. Persist
-            # turn scalars in the index so metric enrichment can restore
-            # max_tokens / scheduled_send_ms / source_kind without the full
-            # Conversation.
-            turn_offsets: list[PayloadOffset] = []
-            for turn in conversation.turns:
-                payload_bytes = orjson.dumps(turn.raw_payload)
-                turn_offsets.append(
-                    PayloadOffset(
-                        offset=self._current_offset,
-                        size=len(payload_bytes),
-                        max_tokens=_resolve_turn_max_tokens(turn),
-                        timestamp=turn.timestamp,
-                        source_kind=turn.source_kind,
-                    )
-                )
-                self._current_offset += len(payload_bytes)
-                await self._write_bytes(payload_bytes)
-            self._payload_offsets[conversation_id] = turn_offsets
-        else:
-            conv_bytes = conversation.model_dump_json().encode("utf-8")
-            # Track uncompressed offset (workers need this after decompression)
-            self._offsets[conversation_id] = ConversationOffset(
-                offset=self._current_offset, size=len(conv_bytes)
-            )
-            self._current_offset += len(conv_bytes)
-            await self._write_bytes(conv_bytes)
-
-        self._session_ids.append(conversation_id)
-
-        if len(self._session_ids) % 1000 == 0:
-            self.debug(
-                f"Streamed {len(self._session_ids)} conversations ({self._current_offset} bytes)"
-            )
+        await self.add_conversations({conversation_id: conversation})
 
     async def add_conversations(self, conversations: dict[str, Conversation]) -> None:
         """Add multiple conversations (written immediately to file).
+
+        Small conversations share encoder chunks and writes, so a large dataset
+        pays one thread handoff per MiB rather than per conversation.
 
         Args:
             conversations: Dictionary mapping session IDs to Conversation objects
@@ -231,8 +217,64 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
         """
         if self._finalized:
             raise RuntimeError("Cannot add conversations after finalization")
+
+        payload_bytes = self._format == MemoryMapFormat.PAYLOAD_BYTES
+        if payload_bytes:
+            # Pre-encode each turn's raw_payload and write the bytes directly;
+            # workers replay these verbatim with no deserialization.
+            records = (
+                json_parts(turn.raw_payload)
+                for conversation in conversations.values()
+                for turn in conversation.turns
+            )
+        else:
+            records = (
+                (conversation.model_dump_json().encode("utf-8"),)
+                for conversation in conversations.values()
+            )
+        sizes: list[int] = []
+        offset = self._current_offset
+        async for chunk in iter_record_chunks(records, sizes):
+            await self._write_bytes(chunk)
+            self._current_offset += len(chunk)
+
+        # Offsets are uncompressed: workers read after decompression.
+        record_sizes = iter(sizes)
         for conversation_id, conversation in conversations.items():
-            await self.add_conversation(conversation_id, conversation)
+            if payload_bytes:
+                # Persist turn scalars in the index so metric enrichment can
+                # restore max_tokens / scheduled_send_ms / source_kind /
+                # audio_duration_seconds without the full Conversation.
+                turn_offsets: list[PayloadOffset] = []
+                for turn in conversation.turns:
+                    size = next(record_sizes)
+                    turn_offsets.append(
+                        PayloadOffset(
+                            offset=offset,
+                            size=size,
+                            max_tokens=_resolve_turn_max_tokens(turn),
+                            timestamp=turn.timestamp,
+                            source_kind=turn.source_kind,
+                            audio_duration_seconds=turn.audio_duration_seconds,
+                            num_choices=count_choices(turn.raw_payload)
+                            if isinstance(turn.raw_payload, dict)
+                            else 1,
+                        )
+                    )
+                    offset += size
+                self._payload_offsets[conversation_id] = turn_offsets
+            else:
+                size = next(record_sizes)
+                self._offsets[conversation_id] = ConversationOffset(
+                    offset=offset, size=size
+                )
+                offset += size
+            self._session_ids.append(conversation_id)
+
+        self.debug(
+            lambda: f"Streamed {len(self._session_ids)} conversations "
+            f"({self._current_offset} bytes)"
+        )
 
     async def finalize(self) -> None:
         """Finalize by closing data file and writing index.
@@ -246,14 +288,7 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
                 "and index are already written and cannot be re-finalized."
             )
 
-        index = MemoryMapDatasetIndex(
-            conversation_ids=self._session_ids,
-            format=self._format,
-            offsets=self._offsets,
-            payload_offsets=self._payload_offsets,
-            total_size=self._current_offset,
-        )
-        index_bytes = index.model_dump_json(by_alias=True).encode("utf-8")
+        index_bytes = await asyncio.to_thread(self._serialize_index)
 
         if self._compress_only:
             await self._finalize_compressed(index_bytes)
@@ -262,11 +297,23 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
 
         self._finalized = True
 
+    def _serialize_index(self) -> bytes:
+        """Build and serialize the index off the event loop."""
+        index = MemoryMapDatasetIndex(
+            conversation_ids=self._session_ids,
+            format=self._format,
+            offsets=self._offsets,
+            payload_offsets=self._payload_offsets,
+            total_size=self._current_offset,
+        )
+        return index.model_dump_json(by_alias=True).encode("utf-8")
+
     async def _finalize_compressed(self, index_bytes: bytes) -> None:
         """Close zstd stream and write compressed index."""
-        self._stream_writer.close()
-        self._raw_data_file.close()
-        compressed_data_size = self._compressed_data_path.stat().st_size
+        await asyncio.to_thread(self._close_compressed)
+        compressed_data_size = (
+            await asyncio.to_thread(self._compressed_data_path.stat)
+        ).st_size
 
         self.info(
             f"Compressed data file finalized: {len(self._session_ids)} conversations, "
@@ -364,12 +411,8 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
     @on_stop
     async def _cleanup(self) -> None:
         """Close file handles and delete temp files."""
-        if self._stream_writer is not None:
-            with suppress(Exception):
-                self._stream_writer.close()
-        if self._raw_data_file is not None:
-            with suppress(Exception):
-                self._raw_data_file.close()
+        with suppress(Exception):
+            await asyncio.to_thread(self._close_compressed)
         if self._data_file is not None and not self._data_file.closed:
             await self._data_file.close()
 
@@ -412,7 +455,9 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
         self.debug(
             lambda: f"Opening memory-mapped files: data={self._data_path}, index={self._index_path}"
         )
-        self._client = MemoryMapDatasetClient(self._data_path, self._index_path)
+        self._client = await asyncio.to_thread(
+            MemoryMapDatasetClient, self._data_path, self._index_path
+        )
         self.debug(
             lambda: f"Memory-mapped client store initialized with "
             f"{len(self._client.index.conversation_ids)} conversations"
@@ -524,6 +569,25 @@ class PayloadOffset(AIPerfBaseModel):
             "PAYLOAD_BYTES path."
         ),
     )
+    audio_duration_seconds: FiniteFloat | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Audio duration in seconds from Turn.audio_duration_seconds. "
+            "Restored onto reconstructed Turns so the audio-duration and "
+            "RTFx metrics stay live on the PAYLOAD_BYTES path."
+        ),
+    )
+    num_choices: int = Field(
+        default=1,
+        ge=1,
+        description=(
+            "Sequences the payload generates (``n`` times the batched "
+            "completions prompts), counted once at build time. Restored onto "
+            "the request context so the spec-decode multi-sequence guard "
+            "survives payload-bytes stripping without decoding on the worker."
+        ),
+    )
 
 
 # Wire-body keys that encode the same Turn.max_tokens scalar across endpoints.
@@ -542,6 +606,8 @@ class PayloadTurnData:
     max_tokens: int | None = None
     timestamp: int | float | None = None
     source_kind: str | None = None
+    audio_duration_seconds: float | None = None
+    num_choices: int = 1
 
 
 def max_tokens_from_wire_payload(payload: dict[str, Any] | None) -> int | None:
@@ -600,6 +666,7 @@ def turn_from_payload_turn(entry: PayloadTurnData) -> Turn:
         max_tokens=max_tokens,
         timestamp=entry.timestamp,
         source_kind=entry.source_kind,
+        audio_duration_seconds=entry.audio_duration_seconds,
     )
 
 
@@ -859,8 +926,9 @@ class MemoryMapDatasetClient:
     ) -> PayloadTurnData | None:
         """Get payload bytes plus turn scalars for a specific turn.
 
-        Scalars (``max_tokens``, ``timestamp``, ``source_kind``) are restored
-        from the index when present. When ``max_tokens`` is missing (legacy indexes or turns
+        Scalars (``max_tokens``, ``timestamp``, ``source_kind``,
+        ``audio_duration_seconds``) are restored from the index when present.
+        When ``max_tokens`` is missing (legacy indexes or turns
         that never set it on the Turn), it is recovered from wire JSON keys
         ``max_tokens`` / ``max_completion_tokens`` / ``max_output_tokens``.
 
@@ -895,6 +963,8 @@ class MemoryMapDatasetClient:
             max_tokens=max_tokens,
             timestamp=offset_info.timestamp,
             source_kind=offset_info.source_kind,
+            audio_duration_seconds=offset_info.audio_duration_seconds,
+            num_choices=offset_info.num_choices,
         )
 
     def close(self) -> None:

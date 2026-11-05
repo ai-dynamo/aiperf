@@ -4,6 +4,7 @@
 import { html, render } from 'htm/preact';
 import { useState, useEffect } from 'preact/hooks';
 import { route, matchRoute } from './lib/router.js';
+import { API_BASE } from './lib/base-path.js';
 import { globalError } from './lib/state.js';
 import { initTheme } from './lib/theme-switch.js';
 import { TopNav } from './components/top-nav.js';
@@ -41,7 +42,7 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
-    fetch('/api/v1/config/features')
+    fetch(`${API_BASE}/config/features`)
       .then((r) => (r.ok ? r.json() : null))
       .then((f) => { if (!cancelled && f) setFeatures(f); })
       .catch(() => { /* features stay default — no Plots link */ });
