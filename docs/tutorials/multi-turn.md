@@ -262,6 +262,10 @@ phase, including with `--config`; warmup keeps its own policy and can be configu
 independently in YAML. User-centric, fixed-schedule, adaptive, and agentic-replay
 timing do not support direct session-arrival pacing.
 
+The generated JSON Schema checks these policy constraints for phase lists,
+single-phase objects, and the `warmup`/`profiling` shorthands. It accepts either
+`continuation_dispatch` or `continuationDispatch`; supplying both is an error.
+
 This approach is useful for:
 - Modeling either request arrivals or session arrivals explicitly
 - Avoiding thundering herd problems during testing
