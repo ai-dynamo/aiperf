@@ -16,19 +16,20 @@ which is materialized into every shard.
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "tests/ci/test_docs_end_to_end"))
-
-from parser import MarkdownParser  # noqa: E402
 
 _CREATES = re.compile(r"(?:cat\s*>|cat\s*<<\S*\s*>)\s*(\S+)")
 _READS = re.compile(r"--input-file\s+(\S+)")
 
 
 def test_no_block_reads_a_file_another_block_wrote() -> None:
+    # Imported inside the test: the autouse fixture in ``conftest.py`` puts
+    # the harness on ``sys.path`` for the duration of a test and takes its
+    # generic module names back out afterwards.
+    from parser import MarkdownParser
+
     offenders: list[str] = []
     for doc in sorted((REPO / "docs").rglob("*.md")):
         parser = MarkdownParser()

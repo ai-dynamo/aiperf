@@ -96,7 +96,10 @@ def test_the_trace_replay_fixture_ships_with_its_consumer(shard_total: int) -> N
             creator = next(
                 i for i, b in enumerate(bodies) if "custom_trace.jsonl << " in b
             )
-            assert creator < consumer, "the fixture must run before its consumer"
+            # ``<=``, not ``<``: the guide may carry the heredoc and the
+            # profile in one tagged block, in which case both indices name
+            # that single command and the ordering holds inside its body.
+            assert creator <= consumer, "the fixture must run before its consumer"
 
 
 def test_shards_stay_balanced() -> None:
