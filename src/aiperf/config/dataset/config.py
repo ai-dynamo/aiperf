@@ -291,6 +291,7 @@ class SyntheticDataset(SystemPromptMixin, EndOnTruncationMixin):
 
     @model_validator(mode="after")
     def _validate_warmup_entries(self, info: ValidationInfo) -> SyntheticDataset:
+        """Check the final pool boundary after deferred CLI resolution."""
         if info.context and info.context.get("defer_warmup_dataset_partition"):
             return self
         if self.warmup_entries >= self.entries:

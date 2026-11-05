@@ -20,6 +20,7 @@ from aiperf.timing.config import TimingConfig
 
 @pytest.fixture
 def partitioned_plan() -> BenchmarkPlan:
+    """Resolve an authored two-trial plan with default warmup skipping."""
     config = resolve_config(
         CLIConfig(
             model_names=["test"],
@@ -40,6 +41,7 @@ def test_two_trials_preserve_partition_through_runtime_serialization(
     tmp_path: Path,
     adaptive: bool,
 ) -> None:
+    """Retain the reserved pool through fixed and convergence trial transport."""
     if adaptive:
         partitioned_plan.multi_run.convergence = ConvergenceConfig(
             metric="time_to_first_token"
@@ -73,6 +75,7 @@ def test_two_trials_preserve_partition_through_runtime_serialization(
 def test_initial_plan_still_requires_declared_warmup(
     partitioned_plan: BenchmarkPlan,
 ) -> None:
+    """Distinguish invalid initial plans from valid no-warmup trial copies."""
     strategy = build_strategy(partitioned_plan, MagicMock())
     runtime_cfg = strategy.get_next_config(
         partitioned_plan.configs[0],

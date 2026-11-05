@@ -20,6 +20,7 @@ from aiperf.timing.phase_orchestrator import PhaseOrchestrator
 
 
 def _metadata(strategy: DatasetSamplingStrategy) -> DatasetMetadata:
+    """Build varied conversation lengths to expose stale subset counters."""
     return DatasetMetadata(
         conversations=[
             ConversationMetadata(
@@ -35,6 +36,7 @@ def _metadata(strategy: DatasetSamplingStrategy) -> DatasetMetadata:
 def test_phase_sources_are_disjoint_and_warmup_independent(
     strategy: DatasetSamplingStrategy,
 ) -> None:
+    """Keep wrapped phase pools disjoint and profiling RNG independent."""
     metadata = _metadata(strategy)
     # Exercise metadata cached before partitioning: counts must be recomputed.
     assert metadata.total_turn_count == 21
@@ -42,6 +44,7 @@ def test_phase_sources_are_disjoint_and_warmup_independent(
     config = TimingConfig(phase_configs=[], warmup_dataset_entries=2)
 
     def create() -> PhaseOrchestrator:
+        """Build independent sources from the same unmodified metadata."""
         return PhaseOrchestrator(
             config=config,
             dataset_metadata=metadata,
@@ -71,6 +74,7 @@ def test_phase_sources_are_disjoint_and_warmup_independent(
 
 @pytest.mark.asyncio
 async def test_sessions_all_uses_profiling_partition_size() -> None:
+    """Stop a full pass at the profiling subset size."""
     _, metadata = partition_warmup_dataset(
         _metadata(DatasetSamplingStrategy.SHUFFLE), 2
     )
@@ -94,5 +98,6 @@ async def test_sessions_all_uses_profiling_partition_size() -> None:
 
 @pytest.mark.parametrize("count", [0, 6, 7])
 def test_loaded_partition_cannot_be_empty(count: int) -> None:
+    """Reject reservations leaving no loaded profiling conversations."""
     with pytest.raises(ValueError, match="loaded profiling"):
         partition_warmup_dataset(_metadata(DatasetSamplingStrategy.SEQUENTIAL), count)
