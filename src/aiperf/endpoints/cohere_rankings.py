@@ -30,7 +30,9 @@ class CohereRankingsEndpoint(BaseRankingsEndpoint):
         """
         if isinstance(json_obj, list):
             return [
-                {"index": r.get("index"), "score": r.get("score")} for r in json_obj
+                {"index": r.get("index"), "score": r["score"]}
+                for r in json_obj
+                if r.get("score") is not None
             ]
         results = json_obj.get("results", [])
         rankings = [
