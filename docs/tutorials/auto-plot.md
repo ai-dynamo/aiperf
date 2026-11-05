@@ -32,7 +32,7 @@ After the run, the artifact tree looks like:
 
 ```text
 artifacts/
-└── Llama-3.1-8B-Instruct-concurrency16/
+└── Qwen_Qwen3-0.6B-openai-chat-concurrency16/
     ├── profile_export.jsonl
     ├── profile_export_aiperf.json
     ├── profile_export_aiperf.csv
