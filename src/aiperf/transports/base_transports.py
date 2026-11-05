@@ -6,7 +6,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from typing import Protocol, runtime_checkable
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from aiperf.auth.base_signer import SignedRequest
 from aiperf.common.environment import Environment
@@ -73,6 +73,9 @@ class TransportProtocol(AIPerfLifecycleProtocol, Protocol):
 
     def get_url(self, request_info: RequestInfo) -> str: ...
 
+    @property
+    def stream_chunks_received(self) -> int: ...
+
     async def send_request(
         self, request_info: RequestInfo, payload: RequestInputT
     ) -> RequestRecord: ...
@@ -124,6 +127,16 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
             Dictionary of transport-specific HTTP headers
         """
         return {}
+
+    @property
+    def stream_chunks_received(self) -> int:
+        """Running count of streamed response chunks received by this transport.
+
+        Reported in worker health so the progress-stall watchdog can tell a
+        request that is still streaming from one that is stuck. Transports that
+        do not stream report 0, which leaves the watchdog on completions alone.
+        """
+        return 0
 
     def build_headers(self, request_info: RequestInfo) -> dict[str, str]:
         """Compose final headers from universal, endpoint, and transport sources.
@@ -210,17 +223,20 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
         parsed = urlparse(base_url)
 
         # Parse existing query params from URL
-        existing_params = parse_qs(parsed.query, keep_blank_values=True)
-        # Flatten from lists to single values (take first)
-        params = {k: v[0] if v else "" for k, v in existing_params.items()}
+        params = parse_qsl(parsed.query, keep_blank_values=True)
 
         # Merge endpoint params (these override existing params)
         if request_info.endpoint_params:
-            params.update(request_info.endpoint_params)
+            params = [
+                (key, value)
+                for key, value in params
+                if key not in request_info.endpoint_params
+            ]
+            params.extend(request_info.endpoint_params.items())
 
         # Rebuild URL with merged params
         if params:
-            return urlunparse(parsed._replace(query=urlencode(params)))
+            return urlunparse(parsed._replace(query=urlencode(params, doseq=True)))
 
         return base_url
 

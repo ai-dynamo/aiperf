@@ -5,6 +5,7 @@ import { html } from 'htm/preact';
 import { useState, useEffect, useRef } from 'preact/hooks';
 import { api, isTokenRequiredError, poll, setSessionToken } from '../lib/api.js';
 import { openJobWs } from '../lib/job-ws.js';
+import { API_BASE } from '../lib/base-path.js';
 import { buildRunSelectorRows } from '../lib/run-selector.js';
 import { phaseColor, colors, palette } from '../lib/theme.js';
 import { deriveJobRunState } from './job-detail-state.js';
@@ -574,6 +575,7 @@ const LARGER_IS_BETTER_SLO_TAGS = new Set([
   'total_token_throughput',
   'e2e_output_token_throughput',
   'prefill_throughput_per_user',
+  'image_throughput',
 ]);
 
 const SLO_PRETTY_LABEL = {
@@ -1482,7 +1484,7 @@ export function JobDetail({ namespace, name, epoch }) {
   const pendingCancelRef = useRef(null);
 
   const resultsBase = epoch
-    ? `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(epoch)}`
+    ? `${API_BASE}/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(epoch)}`
     : null;
 
 

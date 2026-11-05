@@ -10,13 +10,7 @@ never asked for.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
-
-REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "tests/ci/test_docs_end_to_end"))
-
-from parser import MarkdownParser  # noqa: E402
 
 EXAMPLE_DOC = """\
 # How to tag a guide
@@ -64,6 +58,8 @@ aiperf profile --model m
 
 
 def _parse(tmp_path: Path, **docs: str) -> dict:
+    from parser import MarkdownParser
+
     for name, text in docs.items():
         (tmp_path / f"{name}.md").write_text(text)
     return MarkdownParser().parse_directory(str(tmp_path))
@@ -119,3 +115,46 @@ def test_an_indented_marker_does_not_close_the_fence(tmp_path) -> None:
     command.
     """
     assert _parse(tmp_path, indented=INDENTED_CLOSER_DOC) == {}
+
+
+INLINE_CODE_PARAGRAPH_DOC = """\
+```aiperf``` is the CLI this guide uses.
+
+<!-- setup-real-endpoint-server -->
+```bash
+docker run -d nginx
+```
+
+<!-- health-check-real-endpoint-server -->
+```bash
+echo ok
+```
+
+<!-- aiperf-run-real-endpoint-server -->
+```bash
+aiperf profile --model m
+```
+<!-- /aiperf-run-real-endpoint-server -->
+"""
+
+
+def test_a_paragraph_opening_with_inline_code_is_not_a_fence(tmp_path) -> None:
+    """CommonMark forbids a backtick in a backtick fence's info string.
+
+    Accepting one opens a block that stays open until the next three
+    backticks, so every tag in between is skipped. The failure is silent and
+    one-directional: the guide's commands simply stop being collected, the
+    suite still reports green, and nothing says coverage shrank.
+    """
+    servers = _parse(tmp_path, guide=INLINE_CODE_PARAGRAPH_DOC)
+
+    assert set(servers) == {"real"}
+    assert len(servers["real"].aiperf_commands) == 1
+    assert servers["real"].setup_command is not None
+    assert servers["real"].health_check_command is not None
+
+
+def test_a_tilde_fence_may_still_carry_backticks_in_its_info_string(tmp_path) -> None:
+    """The restriction is specific to backtick fences, so do not over-reject."""
+    doc = "~~~`weird`\n<!-- aiperf-run-real-endpoint-server -->\n~~~\n"
+    assert _parse(tmp_path, tilde=doc) == {}

@@ -136,6 +136,10 @@ class CreditReturn(
             output sequence length.
         output_sequence_length: Output sequence length in tokens from usage
             data, when available.
+        ended_on_truncation: True when the worker ended this root conversation
+            early because the turn was truncated by the output-token cap and
+            end_conversation_on_truncation is enabled. The timing side treats
+            the return as the session's final turn and skips its remaining turns.
         worker_id: Returning worker's id. Only stamped on the PUSH/PULL return
             channel (CommAddress.CREDIT_RETURN), where there is no ZMQ envelope
             identity; None on the ROUTER/DEALER path (identity comes from the
@@ -149,6 +153,7 @@ class CreditReturn(
     request_latency_ns: int | None = None
     inter_token_latency_ns: float | None = None
     output_sequence_length: int | None = None
+    ended_on_truncation: bool = False
     worker_id: str | None = None
 
 

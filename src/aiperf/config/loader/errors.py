@@ -6,11 +6,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
+
+from pydantic import ValidationError
+
+from aiperf.common.redact import redact_text, redact_url
 
 
 class ConfigurationError(Exception):
     """
     Exception raised for configuration loading errors.
+
+    The message and context are redacted, because they often quote config
+    values such as a presigned dataset URL.
 
     Attributes:
         message: Human-readable error description.
@@ -24,17 +32,48 @@ class ConfigurationError(Exception):
         file_path: Path | str | None = None,
         context: str | None = None,
     ):
-        self.message = message
+        self.message = redact_text(message)
         self.file_path = file_path
-        self.context = context
+        self.context = redact_text(context) if context else context
 
-        parts = [message]
+        parts = [self.message]
         if file_path:
             parts.append(f"File: {file_path}")
-        if context:
-            parts.append(f"Context: {context}")
+        if self.context:
+            parts.append(f"Context: {self.context}")
 
         super().__init__("\n".join(parts))
+
+
+def describe_validation_error(error: ValidationError) -> str:
+    """Render a ValidationError without echoing credential-bearing input.
+
+    Pydantic truncates a long ``input_value`` to its first and last characters,
+    so the tail of a presigned signature can appear with no parameter name
+    beside it for text redaction to find. When any failing input carries a
+    credential, the inputs are left out of the message altogether.
+    """
+    details = error.errors(include_url=False)
+    if not any(_carries_credential(detail.get("input")) for detail in details):
+        return str(error)
+    count = len(details)
+    lines = [f"{count} validation error{'s' if count != 1 else ''} for {error.title}"]
+    for detail in details:
+        lines.append(".".join(str(part) for part in detail["loc"]))
+        lines.append(f"  {detail['msg']} [type={detail['type']}]")
+    return "\n".join(lines)
+
+
+def _carries_credential(value: Any) -> bool:
+    if isinstance(value, str):
+        return redact_url(value) != value
+    if isinstance(value, dict):
+        return any(
+            _carries_credential(k) or _carries_credential(v) for k, v in value.items()
+        )
+    if isinstance(value, list | tuple | set):
+        return any(_carries_credential(item) for item in value)
+    return False
 
 
 class MissingEnvironmentVariableError(ConfigurationError):

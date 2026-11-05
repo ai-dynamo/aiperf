@@ -53,6 +53,9 @@ _logger = AIPerfLogger(__name__)
 _SSE_COMMENT_FIELD_NAME = "comment"
 _SSE_DATA_FIELD_NAME = "data"
 _SSE_DATA_PREFIX = "data:"
+# ASCII padding only: str.strip() would also eat U+0085/U+2028/U+2029 and
+# \x0b-\x0c/\x1c-\x1f, which are data, not SSE whitespace.
+_SSE_PADDING = " \t"
 
 
 class MetricResult(JsonMetricResult):
@@ -525,6 +528,20 @@ class ProfileResults(AIPerfBaseModel):
         "runs. Forwarded to profile_export_aiperf.json under the "
         "``branch_stats`` key when present.",
     )
+    conversations_ended_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Conversation sessions ended early because a turn was truncated "
+        "by the output-token cap; a conversation replayed to fill --request-count "
+        "counts once per replay. None when end_conversation_on_truncation is off.",
+    )
+    turns_skipped_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Turns never sent because their conversation ended early on "
+        "a truncated turn, excluding turns the run's stop condition would not "
+        "have sent anyway. None when end_conversation_on_truncation is off.",
+    )
     context_overflow_count: int = Field(
         default=0,
         ge=0,
@@ -761,14 +778,17 @@ class SSEMessage:
                 packets=[
                     SSEField(
                         name=_SSE_DATA_FIELD_NAME,
-                        value=raw_message[len(_SSE_DATA_PREFIX) :].strip(),
+                        value=raw_message[len(_SSE_DATA_PREFIX) :].strip(_SSE_PADDING),
                     )
                 ],
             )
 
         message = cls(perf_ns=perf_ns)
-        for line in raw_message.splitlines():
-            if not (line := line.strip()):
+        # SSE fields end at CR/LF; Unicode line separators belong to the data.
+        if "\r" in raw_message:
+            raw_message = raw_message.replace("\r\n", "\n").replace("\r", "\n")
+        for line in raw_message.split("\n"):
+            if not (line := line.strip(_SSE_PADDING)):
                 continue
 
             prev_value = message.packets[-1].value if message.packets else None
@@ -791,7 +811,9 @@ class SSEMessage:
             parts = line.split(":", 1)
             if len(parts) < 2:
                 # Fields without a colon have no value, so the whole line is the field name
-                message.packets.append(SSEField(name=parts[0].strip(), value=None))
+                message.packets.append(
+                    SSEField(name=parts[0].strip(_SSE_PADDING), value=None)
+                )
                 continue
 
             field_name, value = parts
@@ -800,11 +822,14 @@ class SSEMessage:
                 # Field name is empty, so this is a comment
                 field_name = _SSE_COMMENT_FIELD_NAME
 
-            # Spec says strip only one leading space; we strip() all whitespace
+            # Spec says strip only one leading space; we strip all ASCII padding
             # to normalize inconsistent servers for downstream exact comparisons
             # (e.g. "[DONE]", "error").
             message.packets.append(
-                SSEField(name=field_name.strip(), value=value.strip())
+                SSEField(
+                    name=field_name.strip(_SSE_PADDING),
+                    value=value.strip(_SSE_PADDING),
+                )
             )
 
         return message
@@ -1071,6 +1096,16 @@ class RecordContext(AIPerfBaseModel):
         "continuation turns and non-fixed-schedule datasets.",
     )
 
+    num_choices: int | None = Field(
+        default=None,
+        ge=1,
+        description="Sequences the request generates: ``n`` times the batched "
+        "completions prompts. Set by ``inference_client`` for formatted "
+        "payloads and by the worker from the mmap index for pre-encoded ones, "
+        "so the spec-decode multi-sequence guard survives payload-bytes "
+        "stripping.",
+    )
+
     # --- Cache-bust marker (sourced from Credit, exported in raw JSONL) -------
 
     cache_bust_marker: str | None = Field(
@@ -1163,6 +1198,12 @@ class RequestInfo(RecordContext):
         description="Response ID from the previous turn (e.g. 'resp_<hash>') "
         "used for stateful chaining in the Responses API.",
     )
+    system_prompt_in_stored_history: bool = Field(
+        default=False,
+        description="Whether the stored server-side history behind "
+        "previous_response_id already contains the system prompt as an input "
+        "item. Only meaningful when previous_response_id is set.",
+    )
 
 
 def _wall_ns_at_start_perf(data: dict[str, Any]) -> int:
@@ -1179,6 +1220,9 @@ def _wall_ns_at_start_perf(data: dict[str, Any]) -> int:
 
 class RequestRecord(AIPerfBaseModel):
     """Record of a request with its associated responses."""
+
+    _redirect_locations: tuple[str, ...] = PrivateAttr(default=())
+    """Download redirect metadata, local to the transport and never serialized."""
 
     _parsed_responses_cache: list[ParsedResponse] | None = PrivateAttr(default=None)
     """Memoized endpoint-final parsed responses, local to this process and never
@@ -1602,12 +1646,24 @@ def first_content_chunk_completion_tokens(
     that value is the number of tokens delivered through the first content chunk.
     Returns ``None`` when no content chunk carries usage (e.g. the server only
     reports the final total), so callers fall back to assuming one token in the
-    first chunk.
+    first chunk. An explicit empty first chunk (``--allow-empty-content``) sets
+    TTFT without delivering a token, so its count is 0 with or without usage.
     """
-    for response in responses:
-        if response.data and response.usage:
+    content = [response for response in responses if response.data]
+    if content and is_explicit_empty_chunk(content[0]):
+        return 0
+    for response in content:
+        if response.usage:
             return response.usage.completion_tokens
     return None
+
+
+def is_explicit_empty_chunk(response: ParsedResponse) -> bool:
+    """Whether a retained ``--allow-empty-content`` chunk decoded to an empty string."""
+    return (
+        isinstance(response.data, TextResponseData | ReasoningResponseData)
+        and not response.data.get_text()
+    )
 
 
 @dataclass(slots=True)
@@ -1789,10 +1845,11 @@ class ParsedResponseRecord:
 
     @cached_property
     def content_responses(self) -> list[ParsedResponse]:
-        """Get only responses with actual content (data is not None or empty).
+        """Get parsed content responses on the shared metric timeline.
 
-        This excludes usage-only or [DONE] responses that may appear at the end of streaming responses.
-        Useful for timing metrics that should measure content delivery.
+        Explicit empty chat strings may be present when endpoint extraction is
+        configured to retain them. Usage-only, metadata-only, null-data, and
+        [DONE] responses are excluded.
         """
         return [response for response in self.responses if response.data]
 
@@ -1830,7 +1887,7 @@ class ParsedResponseRecord:
             err = InvalidInferenceResultError("Invalid inference result")
             if len(self.responses) == 0 or len(self.content_responses) == 0:
                 err.add_note(
-                    "No responses with actual content were received from the server (only usage/metadata, null/empty data, or [DONE] markers)"
+                    "No parsed content responses were received from the server (only usage/metadata, null data, or [DONE] markers)"
                 )
             if self.start_perf_ns <= 0 or self.start_perf_ns >= sys.maxsize:
                 err.add_note(

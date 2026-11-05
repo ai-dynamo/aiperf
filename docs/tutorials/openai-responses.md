@@ -19,7 +19,7 @@ AIPerf's `responses` endpoint type handles the key differences between the Respo
 | Chat Completions | Responses API |
 |---|---|
 | `messages` array | `input` array |
-| `system` role message | Top-level `instructions` field |
+| `system` role message | Top-level `instructions` field (see [System Instructions](#system-instructions) for the authored-system-item case) |
 | `max_completion_tokens` | `max_output_tokens` |
 | `{"type": "text", ...}` content | `{"type": "input_text", ...}` content |
 | `{"type": "image_url", ...}` content | `{"type": "input_image", ...}` content |
@@ -140,6 +140,14 @@ aiperf profile \
 ```
 
 This generates a synthetic system prompt of approximately 50 tokens and places it in the `"instructions"` field of the Responses API payload, rather than adding a system message to the input array. The same prompt is shared across all requests in the session.
+
+### When the dataset authors its own system item
+
+A custom dataset whose turns carry authored messages that go through the Responses formatter (for example `mooncake_trace` or `dag_jsonl` rows with a `messages` array) may already carry a leading `{"role": "system", ...}` input item. (Datasets that author complete request payloads — `raw_payload`, `inputs_json` — bypass the formatter and are rejected outright when combined with a system prompt; see [Adding a System Prompt](custom-dataset.md#adding-a-system-prompt).) Shipping that alongside `instructions` would give the server two system prompts, so AIPerf merges instead: the `--system-prompt` / `--system-prompt-file` text is prepended to the authored item's content (joined with a blank line), the merged item stays at index 0 of `input`, and `instructions` is omitted. This mirrors how the `chat` endpoint handles the same collision and keeps the system prompt as the leading wire bytes, which `--cache-bust system-prefix` relies on.
+
+`instructions` is only dropped in that collision case. With no authored system item, the prompt goes to `instructions` as described above.
+
+With stateful chaining (`--extra-inputs store:true`), the server replays the merged item from stored history on every later request in the chain. Top-level `instructions` is not carried across `previous_response_id`, so AIPerf also omits `instructions` from those chained requests to avoid sending the system prompt twice. AIPerf tracks this per stored response, alongside the response ID it chains onto: a request that fails never enters stored history, so it does not count, and the next request chains onto the last successful response and resends `instructions` if that response's history does not carry the prompt. A `reset_context` turn starts a new chain and clears the state; a forked conversation inherits its parent's. An explicit `previous_response_id` in `extra` (endpoint or per-turn) wins: chaining onto a different response resends the prompt, and `null` breaks the chain, so the request ships the full conversation as a stateless request would.
 
 ---
 
@@ -327,7 +335,7 @@ aiperf profile \
     --request-count 20
 ```
 
-When `--use-server-token-count` is enabled with streaming, AIPerf automatically sets `stream_options.include_usage` in the request payload to receive usage data in the `response.completed` event.
+When `--use-server-token-count` is enabled with streaming, AIPerf automatically sets `stream_options.include_usage` in the request payload to receive usage data in the terminal `response.completed` or `response.incomplete` event.
 
 ---
 
@@ -411,7 +419,10 @@ For reference, AIPerf processes these Responses API streaming events:
 | `response.function_call_arguments.delta` | Tool call arguments delta |
 | `response.output_text.done` | Final text (fallback for providers that emit text only in done events) |
 | `response.completed` | Usage statistics and response ID |
+| `response.incomplete` | Usage statistics (terminal event of a stream cut off by `max_output_tokens`) |
 | All other events | Skipped |
 
 This enables accurate measurement of TTFT, ITL, and token throughput metrics when streaming is enabled.
+
+For non-streaming responses, AIPerf reads content from the response's `output[]` items: `reasoning_text` parts of `reasoning` items (matching `response.reasoning_text.delta`), `output_text` parts of `message` items, and `name` and `arguments` of `function_call` items. A `reasoning` item without `reasoning_text` parts contributes its `summary_text` parts instead; the two are never combined, since a summary restates the same reasoning. The first non-empty source in the order reasoning, message, function call populates the parsed response (the same precedence as chat completions): message text is kept alongside reasoning, but function-call arguments are not counted when reasoning is present.
 

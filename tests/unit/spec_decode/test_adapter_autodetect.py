@@ -22,9 +22,11 @@ from aiperf.common.models import ParsedResponse, SpecDecodeAcceptanceRecord
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.records.inference_result_parser import InferenceResultParser
+from aiperf.spec_decode.sglang_adapter import SGLangSpecDecodeAdapter
 from aiperf.spec_decode.trtllm_adapter import TRTLLMSpecDecodeAdapter
 from aiperf.spec_decode.vllm_adapter import VLLMSpecDecodeAdapter
 from tests.harness import mock_plugin
+from tests.unit.spec_decode.test_sglang_adapter import SUMMARY_PAYLOAD as SGLANG_PAYLOAD
 from tests.unit.spec_decode.test_trtllm_adapter import (
     SUMMARY_PAYLOAD as TRTLLM_PAYLOAD,
 )
@@ -32,6 +34,10 @@ from tests.unit.spec_decode.test_vllm_adapter import SUMMARY_PAYLOAD
 
 
 def test_adapters_are_registered() -> None:
+    assert (
+        plugins.get_class(PluginType.SPEC_DECODE_ADAPTER, "sglang")
+        is SGLangSpecDecodeAdapter
+    )
     assert (
         plugins.get_class(PluginType.SPEC_DECODE_ADAPTER, "vllm").__name__
         == "VLLMSpecDecodeAdapter"
@@ -66,6 +72,7 @@ class TestCrossClaim:
         for payload, engine in (
             (SUMMARY_PAYLOAD, "vllm"),
             (TRTLLM_PAYLOAD, "tensorrt_llm"),
+            (SGLANG_PAYLOAD, "sglang"),
         ):
             responses = [
                 ParsedResponse(perf_ns=1, spec_decode_stats=payload),

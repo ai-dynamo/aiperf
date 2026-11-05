@@ -9,8 +9,7 @@ import {
   markFreshnessSuccess,
   setError,
 } from './state.js';
-
-const BASE = '/api/v1';
+import { API_BASE } from './base-path.js';
 
 // Number of consecutive `poll()` failures before we surface the
 // app-level "Operator API unreachable" banner. Two ticks dampens
@@ -88,14 +87,14 @@ export function isTokenRequiredError(err) {
 async function mutatingFetch(path, opts = {}) {
   const token = getSessionToken();
   if (!token) throw new TokenRequiredError();
-  const resp = await fetch(`${BASE}${path}`, {
+  const resp = await fetch(`${API_BASE}${path}`, {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}`, ...opts.headers },
     ...opts,
   });
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);
     if (resp.status === 401) clearSessionToken();
-    throw httpError(resp, `${BASE}${path}`, text);
+    throw httpError(resp, `${API_BASE}${path}`, text);
   }
   if (resp.status === 204) return null;
   return resp.json();
@@ -152,7 +151,7 @@ export function httpStatusOf(err) {
  * @returns {Promise<any>}
  */
 async function apiFetch(path, opts = {}) {
-  const url = `${BASE}${path}`;
+  const url = `${API_BASE}${path}`;
   const resp = await fetch(url, {
     headers: { 'Content-Type': 'application/json', ...opts.headers },
     ...opts,
@@ -321,8 +320,8 @@ export const api = {
     const idSeg = encodeURIComponent(jobId);
     const file = encodeURIComponent(filename);
     const url = epoch && epoch !== 'latest'
-      ? `${BASE}/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}/${file}`
-      : `${BASE}/results/${nsSeg}/${idSeg}/${file}`;
+      ? `${API_BASE}/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}/${file}`
+      : `${API_BASE}/results/${nsSeg}/${idSeg}/${file}`;
 
     let resp;
     try {
@@ -390,7 +389,7 @@ export const api = {
     const nsSeg = encodeURIComponent(ns);
     const idSeg = encodeURIComponent(jobId);
     const epSeg = encodeURIComponent(epoch);
-    const url = `${BASE}/results/${nsSeg}/${idSeg}/runs/${epSeg}/profile_export`;
+    const url = `${API_BASE}/results/${nsSeg}/${idSeg}/runs/${epSeg}/profile_export`;
     const resp = await fetch(url);
     if (!resp.ok) {
       const err = new Error(`fetchRunSummary ${ns}/${jobId}/${epoch}: ${resp.status}`);
@@ -418,21 +417,21 @@ export const api = {
     }
     const nsSeg = encodeURIComponent(ns);
     const idSeg = encodeURIComponent(jobId);
-    return `${BASE}/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}.zip`;
+    return `${API_BASE}/results/${nsSeg}/${idSeg}/runs/${encodeURIComponent(epoch)}.zip`;
   },
 
   sweepArtifactListUrl(ns, sweepName, epoch) {
     const nsSeg = encodeURIComponent(ns);
     const sweepSeg = encodeURIComponent(sweepName);
     const epSeg = encodeURIComponent(epoch);
-    return `${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts`;
+    return `${API_BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts`;
   },
 
   sweepArtifactBundleUrl(ns, sweepName, epoch) {
     const nsSeg = encodeURIComponent(ns);
     const sweepSeg = encodeURIComponent(sweepName);
     const epSeg = encodeURIComponent(epoch);
-    return `${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts.zip`;
+    return `${API_BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts.zip`;
   },
 
   sweepArtifactFileUrl(ns, sweepName, epoch, filename) {
@@ -440,7 +439,7 @@ export const api = {
     const sweepSeg = encodeURIComponent(sweepName);
     const epSeg = encodeURIComponent(epoch);
     const fileSeg = filename.split('/').map(encodeURIComponent).join('/');
-    return `${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/${fileSeg}`;
+    return `${API_BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/${fileSeg}`;
   },
 
   sweepProfileExportUrl(ns, sweepName, epoch, format = 'json') {
@@ -448,7 +447,7 @@ export const api = {
     const sweepSeg = encodeURIComponent(sweepName);
     const epSeg = encodeURIComponent(epoch);
     const formatSeg = encodeURIComponent(format);
-    return `${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/profile_export?format=${formatSeg}`;
+    return `${API_BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/profile_export?format=${formatSeg}`;
   },
 };
 
@@ -472,7 +471,7 @@ async function getJobLogs(ns, name, opts) {
   if (container) params.set('container', container);
   if (follow) params.set('follow', '1');
   if (tailLines != null) params.set('tail_lines', String(tailLines));
-  const url = `${BASE}/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/logs?${params}`;
+  const url = `${API_BASE}/jobs/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/logs?${params}`;
   const resp = await fetch(url, { headers: { Accept: 'text/plain' }, signal });
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);
@@ -499,7 +498,7 @@ async function getSweepLogs(ns, name, opts) {
   if (container) params.set('container', container);
   if (follow) params.set('follow', '1');
   if (tailLines != null) params.set('tail_lines', String(tailLines));
-  const url = `${BASE}/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/logs?${params}`;
+  const url = `${API_BASE}/sweeps/${encodeURIComponent(ns)}/${encodeURIComponent(name)}/logs?${params}`;
   const resp = await fetch(url, { headers: { Accept: 'text/plain' }, signal });
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);

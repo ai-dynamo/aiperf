@@ -10,16 +10,8 @@ much of ``docs/`` can ever be covered by the end-to-end test.
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-
 import pytest
 from pytest import param
-
-HARNESS = Path(__file__).resolve().parents[3] / "tests/ci/test_docs_end_to_end"
-sys.path.insert(0, str(HARNESS))
-
-from test_runner import inject_ui_type  # noqa: E402
 
 
 @pytest.mark.parametrize(
@@ -32,6 +24,8 @@ from test_runner import inject_ui_type  # noqa: E402
     ],
 )  # fmt: skip
 def test_inject_ui_type_adds_the_flag_when_absent(command: str) -> None:
+    from test_runner import inject_ui_type
+
     assert inject_ui_type(command, "simple").startswith(
         "aiperf profile --ui-type simple"
     )
@@ -47,12 +41,16 @@ def test_inject_ui_type_adds_the_flag_when_absent(command: str) -> None:
     ],
 )  # fmt: skip
 def test_inject_ui_type_defers_to_an_explicit_choice(command: str) -> None:
+    from test_runner import inject_ui_type
+
     assert inject_ui_type(command, "simple") == command
     assert command.count("--ui") == 1
 
 
 def test_injected_command_never_repeats_the_parameter() -> None:
     """cyclopts exits 1 on a repeated parameter, so this is the load-bearing claim."""
+    from test_runner import inject_ui_type
+
     for command in (
         "aiperf profile --model m",
         "aiperf profile --model m --ui-type none",
@@ -81,6 +79,8 @@ def test_quoted_text_does_not_change_ui_injection(command: str) -> None:
     UI on and the command hangs in CI. Rewriting a quoted ``aiperf profile``
     corrupts the payload the guide meant to send.
     """
+    from test_runner import inject_ui_type
+
     injected = inject_ui_type(command)
 
     assert injected.count("--ui-type") == command.count("--ui-type") + 1
@@ -108,6 +108,8 @@ def test_a_commented_command_is_not_the_invocation(command: str) -> None:
     Injecting into the comment leaves the real invocation interactive, and it
     then hangs until the watchdog kills it.
     """
+    from test_runner import inject_ui_type
+
     injected = inject_ui_type(command)
 
     real_line = injected.splitlines()[-1]
@@ -116,5 +118,174 @@ def test_a_commented_command_is_not_the_invocation(command: str) -> None:
 
 
 def test_a_hash_inside_quotes_is_not_a_comment() -> None:
+    from test_runner import inject_ui_type
+
     injected = inject_ui_type('echo "# not a comment" && aiperf profile --model m')
+    assert "aiperf profile --ui-type simple --model m" in injected
+
+
+def test_a_commented_ui_flag_does_not_silence_the_real_invocation() -> None:
+    """The flag in a comment is text bash never runs.
+
+    Reading it as the guide's own choice skips injection entirely, so the
+    harness only appears to control the UI of the command that does run.
+    """
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type(
+        "# aiperf profile --ui-type none\naiperf profile --model m"
+    )
+
+    assert injected.splitlines()[0] == "# aiperf profile --ui-type none"
+    assert injected.splitlines()[1] == "aiperf profile --ui-type simple --model m"
+
+
+def test_an_escaped_quote_does_not_hide_the_invocation() -> None:
+    """A backslash-escaped apostrophe outside quotes opens nothing.
+
+    Treating it as a quote leaves the scanner inside a string for the rest of
+    the block, so every invocation after it becomes invisible and silently
+    runs without the flag.
+    """
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type("echo It\\'s here\naiperf profile --model m")
+
+    assert "aiperf profile --ui-type simple --model m" in injected
+
+
+def test_every_invocation_in_a_block_is_injected() -> None:
+    """A guide that profiles twice must not leave the second one interactive."""
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type("aiperf profile --model a\naiperf profile --model b")
+
+    assert injected.count("--ui-type simple") == 2
+
+
+def test_one_invocations_explicit_choice_does_not_cover_another() -> None:
+    """The check is per invocation, over that invocation's own arguments."""
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type(
+        "aiperf profile --model a\naiperf profile --model b --ui-type none"
+    )
+
+    assert injected.splitlines()[0] == "aiperf profile --ui-type simple --model a"
+    assert injected.splitlines()[1] == "aiperf profile --model b --ui-type none"
+
+
+@pytest.mark.parametrize(
+    "heredoc",
+    [
+        param("<<'EOF'\nExplain why the sky's blue.\nEOF", id="single-quoted-delimiter"),
+        param('<<"EOF"\nExplain why the sky\'s blue.\nEOF', id="double-quoted-delimiter"),
+        param("<<EOF\nExplain why the sky's blue.\nEOF", id="bare-delimiter"),
+        param("<<-EOF\n\tExplain why the sky's blue.\n\tEOF", id="tab-stripped-delimiter"),
+    ],
+)  # fmt: skip
+def test_an_apostrophe_in_a_heredoc_body_does_not_hide_the_invocation(
+    heredoc: str,
+) -> None:
+    """A heredoc body is data the command writes, not shell syntax.
+
+    Read as syntax, the apostrophe in ``sky's`` opens a quote that never
+    closes, so the invocation underneath looks quoted and is skipped. The
+    command then runs with whatever UI it defaults to and the simple-UI
+    output for that test is lost.
+    """
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type(
+        f"cat > prompts.txt {heredoc}\naiperf profile --model m --input-file prompts.txt"
+    )
+
+    assert "aiperf profile --ui-type simple --model m" in injected
+
+
+def test_a_flag_inside_a_heredoc_body_is_not_the_guide_choosing_a_ui() -> None:
+    """The body is written to a file, so a flag quoted there is not passed."""
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type(
+        "cat > notes.txt <<'EOF'\nrun it with --ui-type none\nEOF\n"
+        "aiperf profile --model m"
+    )
+
+    assert "aiperf profile --ui-type simple --model m" in injected
+
+
+def test_a_here_string_is_not_read_as_a_heredoc() -> None:
+    """``<<<`` takes a word on the same line and opens no body.
+
+    Swallowing the rest of the block as a heredoc body would hide every
+    invocation after it, which is the same failure in the other direction.
+    """
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type(
+        "cat <<< 'seed'\naiperf profile --model m",
+    )
+
+    assert "aiperf profile --ui-type simple --model m" in injected
+
+
+def test_an_unspaced_here_string_is_not_read_as_a_heredoc() -> None:
+    """``<<<WORD`` has a ``<<`` one character in, which must not open a body.
+
+    Read as a heredoc it would take ``WORD`` as the delimiter and swallow
+    every line until one matched, hiding the invocations underneath.
+    """
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type("cat <<<SEED\naiperf profile --model m")
+
+    assert "aiperf profile --ui-type simple --model m" in injected
+
+
+def test_the_second_of_two_heredocs_on_one_line_is_still_data() -> None:
+    """``cat <<A <<B`` opens two bodies that run back to back.
+
+    Waiting for another opener before starting the second leaves its first
+    line looking executable, so an invocation written there is rewritten in
+    a file the guide meant to write verbatim.
+    """
+    from test_runner import inject_ui_type
+
+    command = "cat <<A <<B\nfirst\nA\naiperf profile --model m\nB\nprintf 'AFTER\\n'"
+
+    assert inject_ui_type(command) == command
+
+
+def test_an_apostrophe_in_the_second_heredoc_body_does_not_hide_the_invocation() -> (
+    None
+):
+    """The same miss in the other direction: data read as syntax."""
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type(
+        "cat <<A <<B\nfirst\nA\nsky's blue\nB\naiperf profile --model m"
+    )
+
+    assert "aiperf profile --ui-type simple --model m" in injected
+
+
+@pytest.mark.parametrize(
+    "arithmetic",
+    [
+        param("N=$((1<<2))", id="dollar-arithmetic"),
+        param("((N = 1 << 2))", id="arithmetic-command"),
+        param("N=$(( (1<<2) + 3 ))", id="nested-parentheses"),
+    ],
+)  # fmt: skip
+def test_a_shift_inside_arithmetic_is_not_a_heredoc_opener(arithmetic: str) -> None:
+    """``<<`` shifts inside ``$(( ))``; it opens no body.
+
+    Read as a heredoc it would take the right operand as the delimiter and
+    swallow every line until one matched, hiding the invocation underneath.
+    """
+    from test_runner import inject_ui_type
+
+    injected = inject_ui_type(f"{arithmetic}\naiperf profile --model m")
+
     assert "aiperf profile --ui-type simple --model m" in injected

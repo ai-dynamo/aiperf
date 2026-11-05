@@ -17,17 +17,11 @@ is why no tagged guide ever tripped this. A runtime reader does trip it, and
 from __future__ import annotations
 
 import subprocess
-import sys
-from pathlib import Path
 
 import pytest
+from pytest import param
 
 from aiperf.common.constants import IS_WINDOWS
-
-REPO = Path(__file__).resolve().parents[3]
-sys.path.insert(0, str(REPO / "tests/ci/test_docs_end_to_end"))
-
-from test_runner import build_command_exec_argv  # noqa: E402
 
 # A block whose first command reads stdin, followed by one that must still run.
 SWALLOWING_BLOCK = "cat\necho AFTER_RAN"
@@ -39,7 +33,12 @@ needs_bash = pytest.mark.skipif(
 
 def test_the_command_is_an_argv_element_not_a_shell_string() -> None:
     """Interpolating it into a shell string is what mangles quoted JSON."""
-    argv = build_command_exec_argv("container", """--extra-inputs '{"a": 0}'""")
+    from constants import AIPERF_COMMAND_TIMEOUT
+    from test_runner import build_command_exec_argv
+
+    argv = build_command_exec_argv(
+        "container", """--extra-inputs '{"a": 0}'""", AIPERF_COMMAND_TIMEOUT
+    )
 
     assert argv[-2:] == ["-c", """--extra-inputs '{"a": 0}'"""]
     assert "-s" not in argv, "a script on stdin is readable by the commands it runs"
@@ -47,13 +46,21 @@ def test_the_command_is_an_argv_element_not_a_shell_string() -> None:
 
 def test_stdin_is_not_attached_to_the_exec() -> None:
     """``-i`` is what would hand the commands an open stdin to consume."""
-    assert "-i" not in build_command_exec_argv("container", "aiperf profile")
+    from constants import AIPERF_COMMAND_TIMEOUT
+    from test_runner import build_command_exec_argv
+
+    assert "-i" not in build_command_exec_argv(
+        "container", "aiperf profile", AIPERF_COMMAND_TIMEOUT
+    )
 
 
 @needs_bash
 def test_a_command_that_reads_stdin_does_not_swallow_the_block() -> None:
     """The real shell, invoked the way the runner invokes it."""
-    argv = build_command_exec_argv("unused", SWALLOWING_BLOCK)
+    from constants import AIPERF_COMMAND_TIMEOUT
+    from test_runner import build_command_exec_argv
+
+    argv = build_command_exec_argv("unused", SWALLOWING_BLOCK, AIPERF_COMMAND_TIMEOUT)
     # Drop the docker prefix; the shell behaviour is what is under test.
     proc = subprocess.run(
         argv[argv.index("bash") :],
@@ -84,8 +91,13 @@ def test_stdin_delivery_is_what_broke() -> None:
 @needs_bash
 def test_a_heredoc_still_works() -> None:
     """The pattern most tagged guides actually use; resolved while parsing."""
+    from constants import AIPERF_COMMAND_TIMEOUT
+    from test_runner import build_command_exec_argv
+
     argv = build_command_exec_argv(
-        "unused", "cat << 'EOF'\nline one\nline two\nEOF\necho DONE"
+        "unused",
+        "cat << 'EOF'\nline one\nline two\nEOF\necho DONE",
+        AIPERF_COMMAND_TIMEOUT,
     )
     proc = subprocess.run(
         argv[argv.index("bash") :],
@@ -96,3 +108,132 @@ def test_a_heredoc_still_works() -> None:
 
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.split() == ["line", "one", "line", "two", "DONE"]
+
+
+def test_the_deadline_is_enforced_inside_the_container() -> None:
+    """Killing the host-side `docker exec` client leaves its in-container child
+    running: verified with real containers, the exec'd process survived
+    `killpg(SIGKILL)` and kept the port and artifact paths busy for the next
+    command. The deadline has to travel into the container with the command."""
+    from test_runner import build_command_exec_argv
+
+    argv = build_command_exec_argv("container", "aiperf profile", 900)
+    assert "timeout" in argv, "no in-container deadline"
+    # Indexed from the end: a container literally named "timeout" would
+    # otherwise make argv.index() find the wrong element.
+    deadline = int(argv[-4])
+    # The command's deadline, unmodified. Padding it would let the host
+    # watchdog fire first and tear down the stream the child is still
+    # reporting its shutdown on.
+    assert deadline == 900, "the in-container deadline must be the command's"
+    assert any(a.startswith("--kill-after=") for a in argv), (
+        "a command that ignores SIGTERM would outlive its own deadline"
+    )
+    # The command still arrives as one argv element after `bash -c`.
+    assert argv[-1] == "aiperf profile"
+    assert argv[-2] == "-c"
+
+
+def test_a_per_command_timeout_reaches_the_container() -> None:
+    """`timeout=` on a run tag must move the in-container deadline too, or the
+    guide's override applies only to the host watchdog."""
+    from data_types import Command
+    from test_runner import build_command_exec_argv, resolve_command_timeout
+
+    cmd = Command(
+        tag_name="aiperf-run-demo-endpoint-server",
+        command="aiperf profile",
+        file_path="g.md",
+        start_line=1,
+        end_line=3,
+        timeout=42,
+    )
+    argv = build_command_exec_argv(
+        "container", cmd.command, resolve_command_timeout(cmd)
+    )
+    assert int(argv[-4]) == 42, (
+        "a per-command timeout= must move the in-container deadline with it"
+    )
+
+
+def test_the_guard_reports_which_side_won_the_race() -> None:
+    """A watchdog kill leaves the command alive inside the container until its
+    own later deadline. The reader has to know that happened, or it starts the
+    next documented command against a server the previous one is still
+    loading, and blames the overlap on the wrong command."""
+    from test_runner import _ProcessGroupKillGuard
+
+    class _Running:
+        pid = 1
+
+        def poll(self):  # noqa: ANN201 - test double
+            return None
+
+    # Watchdog fired first: the reader must be told.
+    guard = _ProcessGroupKillGuard()
+    assert guard.mark_killing_if_running(_Running()) is True
+    assert guard.mark_finished() is True, "a watchdog kill was not reported"
+
+    # Command exited on its own: nothing is left running, so no wait.
+    guard = _ProcessGroupKillGuard()
+    assert guard.mark_finished() is False
+    assert guard.mark_killing_if_running(_Running()) is False, (
+        "the watchdog must not kill a process the reader already reaped"
+    )
+
+
+def test_the_host_watchdog_waits_out_the_in_container_deadline() -> None:
+    """The watchdog kills the `docker exec` client, which closes the stream the
+    child reports on while it shuts down. It must not fire until the container's
+    own TERM-then-KILL sequence has had its full run."""
+    from constants import (
+        CONTAINER_TIMEOUT_KILL_GRACE,
+        HOST_WATCHDOG_BACKSTOP_MARGIN,
+    )
+    from test_runner import build_command_exec_argv
+
+    deadline = int(build_command_exec_argv("container", "aiperf profile", 900)[-4])
+    backstop = 900 + CONTAINER_TIMEOUT_KILL_GRACE + HOST_WATCHDOG_BACKSTOP_MARGIN
+    assert backstop > deadline + CONTAINER_TIMEOUT_KILL_GRACE, (
+        "the watchdog must outlast the in-container SIGTERM/SIGKILL sequence"
+    )
+
+
+def test_an_in_container_timeout_is_still_reported_as_one() -> None:
+    """With the watchdog demoted to a backstop it no longer fires on an ordinary
+    timeout, so the exit code is what tells a timeout apart from a plain
+    failure. Losing this would report every timeout as a bare non-zero exit."""
+    from test_runner import timed_out_in_container
+
+    assert timed_out_in_container(124), "timeout signalled at the deadline"
+    assert timed_out_in_container(137), "--kill-after had to SIGKILL"
+    assert not timed_out_in_container(0)
+    assert not timed_out_in_container(1)
+    assert not timed_out_in_container(None)
+
+
+@pytest.mark.parametrize(
+    ("returncode", "elapsed", "expected"),
+    [
+        param(124, 30.1, True, id="signalled-at-the-deadline"),
+        param(137, 40.2, True, id="sigkilled-after-the-grace"),
+        param(124, 0.2, False, id="the-command-ran-its-own-timeout"),
+        param(137, 0.1, False, id="oom-killed-inside-the-container"),
+        param(1, 0.1, False, id="ordinary-failure"),
+        param(0, 45.0, False, id="slow-but-successful"),
+    ],
+)  # fmt: skip
+def test_only_a_late_exit_is_blamed_on_the_deadline(
+    returncode: int, elapsed: float, expected: bool
+) -> None:
+    """124/137 do not prove this deadline ended the command.
+
+    A documented command running its own ``timeout`` exits 124 immediately,
+    and an OOM kill inside the container exits 137. Blaming the deadline for
+    either sends a reader hunting a slow benchmark that never happened. The
+    host clock starts before the container's timer, so a real timeout always
+    measures at or past the deadline and the guard cannot reject one.
+    """
+    from test_runner import deadline_ended_the_command
+
+    assert deadline_ended_the_command(returncode, elapsed, 30) is expected

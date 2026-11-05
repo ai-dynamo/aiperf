@@ -3,6 +3,7 @@
 """Unit tests for dataset sampling strategies."""
 
 import pytest
+from pytest import param
 
 from aiperf.dataset.dataset_samplers import (
     RandomSampler,
@@ -244,3 +245,60 @@ class TestSamplerStatistics:
 
         for count in counts.values():
             assert count == num_batches
+
+
+class TestStartFullPass:
+    """A full pass's next N draws cover every conversation exactly once."""
+
+    @pytest.mark.parametrize(
+        "prior_draws",
+        [
+            param(0, id="fresh"),
+            param(3, id="mid_first_pass"),
+            param(10, id="pass_boundary"),
+            param(13, id="mid_later_pass"),
+        ],
+    )  # fmt: skip
+    def test_shuffle_start_full_pass_next_n_draws_cover_every_conversation_once(
+        self, prior_draws: int, conversation_ids: list[str]
+    ) -> None:
+        sampler = ShuffleSampler(conversation_ids)
+        for _ in range(prior_draws):
+            sampler.next_conversation_id()
+
+        sampler.start_full_pass()
+        full_pass = [
+            sampler.next_conversation_id() for _ in range(len(conversation_ids))
+        ]
+
+        assert sorted(full_pass) == sorted(conversation_ids)
+
+    def test_shuffle_start_full_pass_draws_earlier_phase_conversations_last(
+        self, conversation_ids: list[str]
+    ) -> None:
+        sampler = ShuffleSampler(conversation_ids)
+        warmup = [sampler.next_conversation_id() for _ in range(3)]
+
+        sampler.start_full_pass()
+        full_pass = [
+            sampler.next_conversation_id() for _ in range(len(conversation_ids))
+        ]
+
+        assert full_pass[-3:] == warmup
+
+    @pytest.mark.parametrize(
+        "prior_draws",
+        [param(3, id="mid_pass"), param(7, id="wrapped")],
+    )  # fmt: skip
+    def test_sequential_any_n_consecutive_draws_cover_every_conversation_once(
+        self, prior_draws: int, conversation_ids: list[str]
+    ) -> None:
+        sampler = SequentialSampler(conversation_ids)
+        for _ in range(prior_draws):
+            sampler.next_conversation_id()
+
+        full_pass = [
+            sampler.next_conversation_id() for _ in range(len(conversation_ids))
+        ]
+
+        assert sorted(full_pass) == sorted(conversation_ids)

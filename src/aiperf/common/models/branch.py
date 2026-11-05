@@ -16,10 +16,11 @@ class ConversationBranchInfo(AIPerfBaseModel):
 
     One primitive unifies aiperf's native FORK semantics (child inherits
     parent turn_list + sticky-routes to parent worker) with SPAWN semantics
-    (fresh context, sticky co-locate while the parent entry is live, no
-    SPAWN refcount bump; optionally dispatched before the parent's first
-    turn). The ``mode`` field discriminates the two; the ``dispatch_timing``
-    field gates pre-session SPAWN.
+    (fresh context, starts on the parent's worker when its entry is live,
+    then pins under its own id, no parent refcount bump; optionally
+    dispatched before the parent's first turn). The ``mode`` field
+    discriminates the two; the ``dispatch_timing`` field gates pre-session
+    SPAWN.
 
     Disambiguation note: this "branch" is a DAG conversation branch (a
     parent turn fanning out to one or more child conversations). Not a
