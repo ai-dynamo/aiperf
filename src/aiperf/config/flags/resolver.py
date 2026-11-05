@@ -216,7 +216,11 @@ def _resolve_config_envelopes(
         if pre_overrides
         else copy.deepcopy(yaml_dict)
     )
-    base_config = AIPerfConfig.model_validate(pre_merged)
+    # Dataset and warmup CLI overrides have not landed in this typed recipe
+    # preview. Check their cross-field partition constraints on the final merge.
+    base_config = AIPerfConfig.model_validate(
+        pre_merged, context={"defer_warmup_dataset_partition": True}
+    )
     base_dataset = base_config.benchmark.datasets[0]
 
     overrides = build_cli_overrides(cli_config, benchmark_config=base_config.benchmark)

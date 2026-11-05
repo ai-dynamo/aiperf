@@ -22,6 +22,7 @@ from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
+    ValidationInfo,
     model_validator,
 )
 
@@ -288,7 +289,9 @@ class SyntheticDataset(SystemPromptMixin, EndOnTruncationMixin):
         return data
 
     @model_validator(mode="after")
-    def _validate_warmup_entries(self) -> SyntheticDataset:
+    def _validate_warmup_entries(self, info: ValidationInfo) -> SyntheticDataset:
+        if info.context and info.context.get("defer_warmup_dataset_partition"):
+            return self
         if self.warmup_entries >= self.entries:
             raise ValueError(
                 "warmup_entries (--warmup-dataset-entries) must be smaller than "

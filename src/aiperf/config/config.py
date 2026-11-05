@@ -34,7 +34,14 @@ from __future__ import annotations
 import difflib
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.config.accuracy import (
@@ -598,8 +605,10 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
-    def validate_warmup_dataset_partition(self) -> Self:
+    def validate_warmup_dataset_partition(self, info: ValidationInfo) -> Self:
         """Keep partitioning on synthetic, independently sampled phases."""
+        if info.context and info.context.get("defer_warmup_dataset_partition"):
+            return self
         partitioned = [d for d in self.datasets if getattr(d, "warmup_entries", 0)]
         if not partitioned:
             return self

@@ -109,3 +109,96 @@ def test_file_dataset_flag_is_rejected_by_name(tmp_path: Path) -> None:
                 request_count=8,
             )
         )
+
+
+@pytest.fixture
+def partitioned_yaml(tmp_path: Path) -> Path:
+    path = tmp_path / "partitioned.yaml"
+    path.write_text(
+        """schemaVersion: '2.0'
+benchmark:
+  model: test
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: synthetic
+    entries: 12
+    warmup_entries: 4
+  profiling:
+    type: concurrency
+    concurrency: 1
+    requests: 8
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.parametrize(
+    "overrides,reserved,warmup_requests",
+    [
+        param({"warmup_request_count": 4}, 4, 4, id="add_warmup"),
+        param({"warmup_dataset_entries": 0}, 0, None, id="disable_partition"),
+    ],
+)  # fmt: skip
+def test_yaml_partition_eligibility_uses_final_cli_config(
+    partitioned_yaml: Path,
+    overrides: dict,
+    reserved: int,
+    warmup_requests: int | None,
+) -> None:
+    config = resolve_config(CLIConfig(**overrides), partitioned_yaml)
+    benchmark = config.benchmark
+    run = BenchmarkRun(
+        benchmark_id="test", cfg=benchmark, artifact_dir=partitioned_yaml.parent
+    )
+    assert TimingConfig.from_run(run).warmup_dataset_entries == reserved
+    assert [phase.requests for phase in benchmark.get_warmup_phases()] == (
+        [warmup_requests] if warmup_requests is not None else []
+    )
+    assert benchmark.get_profiling_phases()[0].requests == 8
+
+
+def test_cli_zero_can_disable_yaml_partition_at_pool_boundary(
+    partitioned_yaml: Path,
+) -> None:
+    partitioned_yaml.write_text(
+        partitioned_yaml.read_text(encoding="utf-8").replace(
+            "entries: 12", "entries: 4"
+        ),
+        encoding="utf-8",
+    )
+    config = resolve_config(CLIConfig(warmup_dataset_entries=0), partitioned_yaml)
+    assert config.benchmark.get_default_dataset().warmup_entries == 0
+    assert config.benchmark.get_default_dataset().entries == 4
+
+
+def test_yaml_partition_still_requires_warmup_after_merge(
+    partitioned_yaml: Path,
+) -> None:
+    with pytest.raises(ValueError, match="requires a warmup phase"):
+        resolve_config(CLIConfig(), partitioned_yaml)
+
+
+@pytest.mark.parametrize(
+    "old,new,match",
+    [
+        param("entries: 12", "entries: 4", "must be smaller", id="pool_boundary"),
+        param(
+            "requests: 8", "requests: 8\n    timing_mode: agentic_replay",
+            "not supported with", id="replay_continuity",
+        ),
+    ],
+)  # fmt: skip
+def test_final_partition_constraints_are_not_skipped(
+    partitioned_yaml: Path,
+    old: str,
+    new: str,
+    match: str,
+) -> None:
+    partitioned_yaml.write_text(
+        partitioned_yaml.read_text(encoding="utf-8").replace(old, new),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=match):
+        resolve_config(CLIConfig(warmup_request_count=4), partitioned_yaml)
