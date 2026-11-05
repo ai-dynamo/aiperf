@@ -14,6 +14,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+from pytest import param
+
 from aiperf.common.models import (
     ExtractedPayload,
     InferenceServerResponse,
@@ -23,6 +26,7 @@ from aiperf.common.models import (
 from aiperf.endpoints.base_endpoint import BaseEndpoint
 from aiperf.endpoints.nim_image_retrieval import ImageRetrievalEndpoint
 from aiperf.endpoints.openai_chat import ChatEndpoint
+from aiperf.endpoints.openai_completions import CompletionsEndpoint
 from aiperf.endpoints.openai_responses import ResponsesEndpoint
 from aiperf.plugin.enums import EndpointType
 from tests.unit.endpoints.conftest import create_model_endpoint
@@ -30,6 +34,12 @@ from tests.unit.endpoints.conftest import create_model_endpoint
 
 def _chat() -> ChatEndpoint:
     return ChatEndpoint(model_endpoint=create_model_endpoint(EndpointType.CHAT))
+
+
+def _completions() -> CompletionsEndpoint:
+    return CompletionsEndpoint(
+        model_endpoint=create_model_endpoint(EndpointType.COMPLETIONS)
+    )
 
 
 def _responses() -> ResponsesEndpoint:
@@ -153,6 +163,22 @@ class TestFlatFieldFallbacks:
     def test_completions_prompt_list(self):
         result = _chat().extract_payload_inputs({"prompt": ["a", "b"]})
         assert result.texts == ["a", "b"]
+
+    @pytest.mark.parametrize(
+        "payload, expected",
+        [
+            param({"prompt": "a"}, 1, id="single_prompt"),
+            param({"prompt": [1, 2, 3]}, 1, id="token_id_prompt"),
+            param({"prompt": ["a", "b"]}, 2, id="two_prompts"),
+            param({"prompt": [[1, 2], [3]]}, 2, id="two_token_prompts"),
+            param({"prompt": ["a", "b"], "n": 3}, 6, id="two_prompts_n3"),
+            param({"prompt": [], "n": 2}, 2, id="empty_prompt_list_n2"),
+        ],
+    )  # fmt: skip
+    def test_completions_num_choices(self, payload: dict[str, Any], expected: int):
+        """SGLang reports one prompt's spec-decode details for a batched
+        ``n=1`` request, so every batched prompt must count as a sequence."""
+        assert _completions().extract_payload_inputs(payload).num_choices == expected
 
     def test_embeddings_input_string(self):
         result = _chat().extract_payload_inputs({"input": "to embed"})
@@ -332,6 +358,18 @@ class TestChatMessagesField:
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "hi"},
         ]
+
+    def test_tool_result_preserves_call_id_for_chat_template(self) -> None:
+        message = {
+            "role": "tool",
+            "content": "Sunny",
+            "tool_call_id": "abc123def",
+        }
+
+        result = _chat().extract_payload_inputs({"messages": [message]})
+
+        assert result.messages == [message]
+        assert result.texts == ["Sunny"]
 
     def test_chat_mixed_content_concatenates_text_parts(self):
         payload = {
