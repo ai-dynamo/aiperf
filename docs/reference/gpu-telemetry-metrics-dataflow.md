@@ -91,8 +91,9 @@ flowchart LR
 - **NVIDIA lane** (green): `DCGMTelemetryCollector` and `PyNVMLTelemetryCollector`
   write `nvidia_*` fields on `TelemetryMetrics`. The DCGM path maps raw DCGM field
   names via `DCGM_TO_FIELD_MAPPING`; both stamp `platform="nvidia"`.
-- **AMD lane** (red): `AMDSMITelemetryCollector` writes `amd_power` /
-  `amd_energy_consumption` and stamps `platform="amd"`.
+- **AMD lane** (red): `AMDSMITelemetryCollector` (local) and
+  `AMDDMETelemetryCollector` (remote, Device Metrics Exporter) write `amd_power` /
+  `amd_energy_consumption`; both stamp `platform="amd"`.
 - **Shared** (blue): the single `TelemetryHierarchy`, the aggregation entry point,
   the token/concurrency inputs, the `console_group` routing, the warning banner,
   and the per-GPU / file exporters.

@@ -55,53 +55,217 @@ def _local_collector_keywords() -> dict[str, Any]:
     }
 
 
+_DETECT_TIMEOUT_SEC = 5.0
+"""Budget for the AMD exporter probe.
+
+Every bare URL is probed concurrently, so this is the most the check adds to
+startup however many endpoints there are. A Device Metrics Exporter answering
+its first scrape after sitting idle has taken over a second on an MI300X node,
+and a probe that gives up then leaves an AMD endpoint on the DCGM collector.
+"""
+
+_AMD_EXPORTER_MARKERS = ("gpu_package_power", "gpu_gfx_activity")
+
+
+def _detect_amd_exporter(urls: list[str]) -> bool:
+    """True when any of ``urls`` serves AMD Device Metrics Exporter metrics.
+
+    CLI conversion is synchronous, but ``aiperf kube`` commands convert inside
+    their own event loop, where ``asyncio.run`` is not allowed; the probe then
+    gets a loop of its own on a worker thread.
+    """
+    import asyncio
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_probe_amd_exporters(urls))
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, _probe_amd_exporters(urls)).result()
+
+
+async def _probe_amd_exporters(urls: list[str]) -> bool:
+    import asyncio
+
+    import aiohttp
+
+    from aiperf.transports.aiohttp_client import create_tcp_connector
+    from aiperf.transports.http_defaults import AioHttpDefaults
+
+    async with aiohttp.ClientSession(
+        connector=create_tcp_connector(),
+        timeout=aiohttp.ClientTimeout(total=_DETECT_TIMEOUT_SEC),
+        trust_env=AioHttpDefaults.TRUST_ENV,
+    ) as session:
+        found = await asyncio.gather(
+            *(_serves_amd_metrics(session, url) for url in urls)
+        )
+    return any(found)
+
+
+async def _serves_amd_metrics(session: Any, url: str) -> bool:
+    import aiohttp
+
+    from aiperf.common.aiperf_logger import AIPerfLogger
+    from aiperf.common.redact import redact_url
+
+    try:
+        async with session.get(url) as response:
+            if response.status != 200:
+                return False
+            content = await response.text(errors="replace")
+    except (aiohttp.ClientError, TimeoutError) as e:
+        # Not silent: a probe that fails leaves the endpoint on the DCGM
+        # default, and an AMD exporter treated as DCGM collects nothing.
+        shown = redact_url(url)
+        reason = (
+            f"no response within {_DETECT_TIMEOUT_SEC:g} s"
+            if isinstance(e, TimeoutError)
+            else f"{type(e).__name__}: {redact_url(str(e))}"
+        )
+        AIPerfLogger(__name__).warning(
+            f"Could not probe {shown} for AMD GPU telemetry metrics ({reason}). "
+            f"Treating it as a DCGM endpoint. Pass 'amd_dme:{shown}' to select "
+            f"the AMD collector explicitly."
+        )
+        return False
+    return any(marker in content for marker in _AMD_EXPORTER_MARKERS)
+
+
+def _split_collector_prefix(item: str) -> tuple[Any, str]:
+    """Split a ``collector:url`` item, when the prefix names a real collector.
+
+    Returns ``(collector_type, url)`` if the part before the first colon is a
+    known collector, otherwise ``(None, item)`` so the caller treats the whole
+    string as a URL. A prefix followed by a scheme can only have been meant as
+    a collector, so an unknown one there is a typo and is rejected rather than
+    folded into a URL that cannot resolve.
+    """
+    from aiperf.common.redact import redact_url
+    from aiperf.plugin.enums import GPUTelemetryCollectorType
+
+    prefix, _, remainder = item.partition(":")
+    try:
+        return GPUTelemetryCollectorType(prefix.upper()), remainder
+    except (ValueError, KeyError):
+        if remainder.startswith(("http://", "https://")):
+            valid = ", ".join(
+                sorted(f"'{c.lower()}'" for c in GPUTelemetryCollectorType)
+            )
+            raise ValueError(
+                f"Unknown GPU telemetry collector '{prefix}' in "
+                f"'{redact_url(item)}'. Valid collectors: {valid}."
+            ) from None
+        return None, item
+
+
+def _resolve_local_collector(collector_type: Any, selected: Any) -> Any:
+    """Adopt a local collector keyword, refusing a second conflicting one."""
+    from aiperf.plugin import plugins
+
+    current_is_local = plugins.get_gpu_telemetry_collector_metadata(
+        collector_type
+    ).is_local
+    if current_is_local and collector_type != selected:
+        raise ValueError(
+            "Conflicting local GPU telemetry collectors: "
+            f"'{collector_type}' and '{selected}'. Choose exactly one."
+        )
+    return selected
+
+
+def _resolve_metrics_file(item: str) -> Path:
+    csv_path = Path(item)
+    if not csv_path.exists():
+        raise ValueError(f"GPU metrics file not found: {item}")
+    return csv_path
+
+
+def _resolve_prefixed_url(collector_type: Any, item: str) -> tuple[Any, str, bool]:
+    """Resolve a ``collector:url`` item to ``(collector_type, url, named)``.
+
+    When the prefix does not name a collector the whole item is the URL, which
+    is what keeps bare ``host:port`` working. ``named`` reports whether the user
+    actually chose a collector here, so the caller knows whether the URL is still
+    a candidate for auto-detection.
+    """
+    selected_collector, remainder = _split_collector_prefix(item)
+    if selected_collector is None:
+        return collector_type, _url(item), False
+    return selected_collector, _url(remainder), True
+
+
 def _classify_gpu_telemetry_items(
     items: list[str],
     *,
     local_keywords: dict[str, Any],
     collector_type: Any,
     mode: Any,
-) -> tuple[Any, Any, list[str], Path | None]:
+) -> tuple[Any, Any, list[str], Path | None, list[str]]:
     """Walk ``--gpu-telemetry`` items, classify each into collector/mode/url/csv.
 
-    Returns the resolved ``(collector_type, mode, urls, metrics_file)``.
+    Returns the resolved
+    ``(collector_type, mode, urls, metrics_file, detect_urls)``.
+
+    ``detect_urls`` are the bare URLs to probe for collector auto-detection,
+    and it is empty as soon as any item names a collector, by prefix or by
+    keyword. The collector applies to every endpoint, so a probe of a sibling
+    bare URL must not overrule an explicit ``dcgm:<url>``.
     """
     from aiperf.common.enums import GPUTelemetryMode
-    from aiperf.plugin import plugins
 
     urls: list[str] = []
+    unprefixed_urls: list[str] = []
+    named_collector = False
     metrics_file: Path | None = None
 
+    # Guard clauses rather than an if/elif chain: an elif is a nested If in the
+    # AST, so a five-way chain inside this loop trips the nesting-depth check.
     for item in items:
         lowered = item.lower()
-        if lowered in local_keywords:
-            selected = local_keywords[lowered]
-            current_is_local = plugins.get_gpu_telemetry_collector_metadata(
-                collector_type
-            ).is_local
-            if current_is_local and collector_type != selected:
-                raise ValueError(
-                    "Conflicting local GPU telemetry collectors: "
-                    f"'{collector_type}' and '{selected}'. Choose exactly one."
-                )
-            collector_type = selected
-        elif lowered == "dashboard":
-            mode = GPUTelemetryMode.REALTIME_DASHBOARD
-        elif item.endswith(".csv"):
-            csv_path = Path(item)
-            if not csv_path.exists():
-                raise ValueError(f"GPU metrics file not found: {item}")
-            metrics_file = csv_path
-        elif item.startswith("http") or ":" in item:
-            urls.append(_url(item))
-        else:
-            valid_kw = ", ".join(f"'{k}'" for k in sorted(local_keywords))
-            raise ValueError(
-                f"Invalid GPU telemetry item: {item}. Valid options are: "
-                f"{valid_kw}, 'dashboard', '.csv' file, and URLs."
-            )
 
-    return collector_type, mode, urls, metrics_file
+        if lowered in local_keywords:
+            collector_type = _resolve_local_collector(
+                collector_type, local_keywords[lowered]
+            )
+            named_collector = True
+            continue
+
+        if lowered == "dashboard":
+            mode = GPUTelemetryMode.REALTIME_DASHBOARD
+            continue
+
+        if item.endswith(".csv"):
+            metrics_file = _resolve_metrics_file(item)
+            continue
+
+        if item.startswith("http"):
+            resolved = _url(item)
+            urls.append(resolved)
+            unprefixed_urls.append(resolved)
+            continue
+
+        if ":" in item:
+            collector_type, url, named = _resolve_prefixed_url(collector_type, item)
+            urls.append(url)
+            named_collector = named_collector or named
+            # A scheme-less `host:port/path` reaches this branch because of the
+            # colon, but the user named no collector, so it is a bare URL for
+            # detection purposes just like an `http://` one.
+            if not named:
+                unprefixed_urls.append(url)
+            continue
+        valid_kw = ", ".join(f"'{k}'" for k in sorted(local_keywords))
+        raise ValueError(
+            f"Invalid GPU telemetry item: {item}. Valid options are: "
+            f"{valid_kw}, 'dashboard', '.csv' file, and URLs."
+        )
+
+    detect_urls = [] if named_collector else unprefixed_urls
+    return collector_type, mode, urls, metrics_file, detect_urls
 
 
 def _warn_if_local_collector_with_remote_urls(
@@ -139,6 +303,9 @@ def build_gpu_telemetry(cli: CLIConfig) -> dict[str, Any]:
     metrics file exists at convert time, and warns when a local collector
     is paired with non-localhost server URLs.
     """
+    from aiperf.common.metric_utils import normalize_metrics_endpoint_url
+    from aiperf.plugin.enums import GPUTelemetryCollectorType
+
     cli_set = cli.model_fields_set
     if "no_gpu_telemetry" in cli_set and "gpu_telemetry" in cli_set:
         raise ValueError(
@@ -150,12 +317,21 @@ def build_gpu_telemetry(cli: CLIConfig) -> dict[str, Any]:
     if not cli.gpu_telemetry:
         return {"enabled": True}
 
-    collector_type, mode, urls, metrics_file = _classify_gpu_telemetry_items(
-        cli.gpu_telemetry,
-        local_keywords=_local_collector_keywords(),
-        collector_type=cli._gpu_telemetry_collector_type,
-        mode=cli._gpu_telemetry_mode,
+    collector_type, mode, urls, metrics_file, detect_urls = (
+        _classify_gpu_telemetry_items(
+            cli.gpu_telemetry,
+            local_keywords=_local_collector_keywords(),
+            collector_type=cli._gpu_telemetry_collector_type,
+            mode=cli._gpu_telemetry_mode,
+        )
     )
+
+    # Probe the URL the collector will scrape: the telemetry manager appends
+    # /metrics to a pathless endpoint, and an exporter answers 404 at its root.
+    if detect_urls and _detect_amd_exporter(
+        [normalize_metrics_endpoint_url(url) for url in detect_urls]
+    ):
+        collector_type = GPUTelemetryCollectorType.AMD_DME
 
     cli._gpu_telemetry_collector_type = collector_type
     cli._gpu_telemetry_mode = mode
