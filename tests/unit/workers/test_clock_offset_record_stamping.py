@@ -74,8 +74,8 @@ def test_request_record_carries_clock_offset() -> None:
         param(True, ["WorkerConnected"], id="kubernetes-defers-dispatchable"),
         param(
             False,
-            ["WorkerConnected", "WorkerDispatchable"],
-            id="local-dispatchable-immediately",
+            ["WorkerConnected"],
+            id="local-defers-dispatchable",
         ),
     ],
 )  # fmt: skip
@@ -105,6 +105,7 @@ async def test_worker_announces_connectivity_without_awaiting_the_rtt_probe(
     worker._measure_baseline_rtt = MagicMock(side_effect=lambda: "probe-coro")
     worker.execute_async = MagicMock(side_effect=probe_coros.append)
     worker.credit_dealer_client = AsyncMock()
+    worker.conversation_request_client = AsyncMock()
     worker.credit_dealer_client.send = AsyncMock(
         side_effect=lambda msg: sent.append(type(msg).__name__)
     )
@@ -114,6 +115,8 @@ async def test_worker_announces_connectivity_without_awaiting_the_rtt_probe(
     worker.pod_lifecycle_dealer_client = None
     worker._ensure_group_dataset_state_retry = MagicMock()
     worker._complete_group_startup_flow = AsyncMock()
+    worker._dataset_configured_event = MagicMock()
+    worker._dataset_configured_event.is_set.return_value = False
     worker._mark_worker_ready = AsyncMock(
         side_effect=lambda: sent.append("WorkerDispatchable")
     )
@@ -121,7 +124,6 @@ async def test_worker_announces_connectivity_without_awaiting_the_rtt_probe(
     await Worker._send_worker_ready_message(worker)
 
     assert sent == expected_sent
-    # Dispatched, never awaited on this path -- in both modes.
     assert probe_coros == (["probe-coro"] if group_managed else [])
 
 

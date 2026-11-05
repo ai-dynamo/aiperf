@@ -25,6 +25,7 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "sagemaker_target_model",
         "sagemaker_inference_component_name",
         "sagemaker_target_variant",
+        "allow_empty_content",
         "connection_reuse_strategy",
         "custom_endpoint",
         "download_video_content",
@@ -91,6 +92,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "conversation_turn_delay_ratio",
         # ----- prompt modality -----
         "cache_bust",
+        "cache_bust_media_uuids",
         "prompt_batch_size",
         "prompt_corpus",
         "prompt_input_tokens_mean",

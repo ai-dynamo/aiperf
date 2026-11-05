@@ -19,6 +19,7 @@ from aiperf.common.models import (
     RequestRecord,
 )
 from aiperf.common.redact import redact_headers
+from aiperf.endpoints.payload_extraction import count_choices
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, TransportType
 
@@ -131,6 +132,7 @@ class InferenceClient(AIPerfLifecycleMixin):
         # and the server's form parser would reject them (422, prompt=null).
         wire_payload: dict[str, Any] | bytes = formatted_payload
         if isinstance(formatted_payload, dict):
+            request_info.num_choices = count_choices(formatted_payload)
             encoded = orjson.dumps(formatted_payload)
             request_info.payload_bytes = encoded
             is_multipart = (
