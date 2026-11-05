@@ -31,7 +31,7 @@ on:
         description: "Runner label for the notifier job. Needs a POSIX runner with bash, jq, and curl."
         required: false
         type: string
-        default: ubuntu-latest
+        default: ubuntu-24.04
       ignored_jobs:
         description: "Newline-separated substrings; failed jobs whose names contain one are not reported."
         required: false

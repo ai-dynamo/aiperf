@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   kubernetes-audit-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     env:
       K8S_TEST_CLUSTER: aiperf-audit-${{ github.run_id }}-${{ github.run_attempt }}
@@ -162,7 +162,7 @@ jobs:
               echo "Diagnostics artifact: \`k8s-audit-logs-${{ github.run_id }}-${{ github.run_attempt }}\` (7 day retention)"
             fi
             echo ""
-            echo "- Runner: \`ubuntu-latest\`"
+            echo "- Runner: \`ubuntu-24.04\`"
             echo "- Python: \`3.12\`"
             echo "- Cluster: \`${K8S_TEST_CLUSTER}\`"
             echo "- Command: \`make kubernetes-audit-tests-ci args=--k8s-skip-build\`"

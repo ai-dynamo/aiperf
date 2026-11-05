@@ -98,7 +98,7 @@ jobs:
   docs-index-check:
     name: Docs Index Completeness Check
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -137,7 +137,7 @@ jobs:
       github.ref_type != 'tag' &&
       (github.event.inputs.tag == '' || github.event.inputs.tag == null) &&
       !(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/pull-request/'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Determine context
         id: ctx
@@ -315,7 +315,7 @@ jobs:
     if: |
       github.event_name == 'pull_request' ||
       (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/pull-request/'))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       should_run: ${{ steps.decide.outputs.should_run }}
       pr_number: ${{ steps.decide.outputs.pr_number }}
@@ -369,7 +369,7 @@ jobs:
     name: Preview docs (non-blocking)
     needs: preview-context
     if: needs.preview-context.outputs.should_run == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     continue-on-error: true
     steps:
       - name: Checkout source branch
@@ -537,7 +537,7 @@ jobs:
     if: |
       github.ref_type == 'tag' ||
       (github.event_name == 'workflow_dispatch' && github.event.inputs.tag != '' && github.event.inputs.tag != null)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Determine version tag
         id: version

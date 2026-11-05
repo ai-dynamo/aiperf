@@ -20,7 +20,7 @@ permissions:
 jobs:
   comment-install-instructions:
     name: Comment with install instructions
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Post or update install instructions
         uses: actions/github-script@v7

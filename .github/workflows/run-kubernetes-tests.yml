@@ -27,7 +27,7 @@ permissions:
 
 jobs:
   operator-ui-e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     steps:
@@ -70,7 +70,7 @@ jobs:
     #
     # To re-enable on push: delete this `if:` line.
     if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Serial live deployments, hermetic chaos-adapter contracts, and cold
     # cluster setup need multi-hour headroom, including diagnostics time.
     timeout-minutes: 240
@@ -210,7 +210,7 @@ jobs:
               echo "Diagnostics artifact: \`k8s-ci-logs-${{ github.run_id }}-${{ github.run_attempt }}\` (7 day retention)"
             fi
             echo ""
-            echo "- Runner: \`ubuntu-latest\`"
+            echo "- Runner: \`ubuntu-24.04\`"
             echo "- Python: \`3.12\`"
             echo "- Cluster: \`${K8S_TEST_CLUSTER}\`"
             echo "- Command: \`make kubernetes-tests-ci args=--k8s-skip-build\`"
