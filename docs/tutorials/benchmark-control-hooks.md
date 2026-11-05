@@ -98,56 +98,36 @@ Setting any profiler URL/body or path/timeout override also enables the correspo
 
 ## Separate profiler control server
 
-The profiler may run on a different server or port from the inference
-endpoint. For example, Dynamo routes inference through a frontend while
-the SGLang worker exposes profiling controls on its system server:
+Set profiler targets and backend-specific start parameters independently
+of the inference endpoint. This Dynamo-SGLang configuration fragment uses
+the worker's system server:
 
 ```yaml
 benchmark:
-  models: [your-model]
   endpoint:
     url: http://frontend:8000
-    type: chat
     server_profiler:
       urls: [http://worker:9090]
       start_path: /engine/control/start_profile
       stop_path: /engine/control/stop_profile
-      start_body:
-        num_steps: 20
-        output_dir: /profiles/capture
-        profile_id: capture
-        activities: [CPU, GPU]
-  phases:
-    - name: warmup
-      type: concurrency
-      concurrency: 8
-      requests: 50
-    - name: profiling
-      type: concurrency
-      concurrency: 8
-      requests: 500
+      start_body: {num_steps: 20, output_dir: /profiles/capture}
 ```
 
-AIPerf completes warmup before sending the start request. The worker
-receives the JSON object with `Content-Type: application/json`. Native
-`num_steps` limits engine forward iterations, independently of AIPerf's
-request count: the engine can finish capture while AIPerf continues its
-workload. AIPerf still sends stop after the profiling phase; a server that
-reports an already-stopped profiler may produce a stop warning.
+For Dynamo-vLLM, use `start_body: {profile_prefix: capture}` instead;
+`num_steps` and `output_dir` are SGLang parameters. The JSON body is sent
+with `Content-Type: application/json` after warmup. A native capture limit
+does not change AIPerf's load limit. Stop runs after the profiling phase,
+and failures produce a warning.
 
-The profiler URLs replace only profiler targets. KV-cache reset still
-uses the inference endpoint origins. Profiler paths are joined to each
-unique control origin; any URL path or query is ignored. All profiler
-targets receive the same start body and the configured endpoint auth
-headers. Profiler URLs must not contain userinfo (`user:password@`); use
-endpoint authentication headers instead. YAML profiler URLs require an
-`http://` or `https://` scheme; the CLI also accepts scheme-less host/port
-values and prepends `http://`.
+KV-cache reset still uses inference origins. Profiler URLs use unique
+origins, ignoring paths and queries. Targets share the start body and
+endpoint auth headers; URL userinfo (`user:password@`) is unsupported.
+YAML requires `http://` or `https://`; the CLI also accepts scheme-less
+host/port values and prepends `http://`.
 
-When `--server-profiler-start-body` is supplied with a YAML config, its
-JSON object replaces the YAML `start_body` completely, including when the
-CLI object is empty. When `start_body` is omitted, start uses an empty body. Stop and
-cache-reset requests keep their empty bodies.
+`--server-profiler-start-body` replaces the YAML body completely, including
+with `{}`. Omitted start bodies, stop requests and cache resets use empty
+bodies.
 
 ## Defaults and relative paths
 

@@ -44,12 +44,16 @@ async def test_control_plane_post_succeeds_on_2xx() -> None:
 
 
 @pytest.mark.asyncio
-async def test_control_plane_post_signs_and_sends_exact_json_bytes() -> None:
-    payload = {
-        "num_steps": 20,
-        "output_dir": "/profiles/capture",
-        "activities": ["CPU", "GPU"],
-    }
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param({"num_steps": 20, "output_dir": "/profiles/capture", "activities": ["CPU", "GPU"]}, id="sglang"),
+        pytest.param({"profile_prefix": "test-capture"}, id="vllm"),
+    ],
+)  # fmt: skip
+async def test_control_plane_post_signs_and_sends_exact_json_bytes(
+    payload: dict[str, Any],
+) -> None:
     expected = orjson.dumps(payload)
     original_headers = {"X-Test": "1", "content-type": "text/plain"}
     signed: list[bytes] = []

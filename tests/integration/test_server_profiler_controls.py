@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Single-session profiling with a separate control origin and a mock step bound."""
+"""Single-session profiling with a separate control origin."""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -33,10 +33,9 @@ async def _serve(app: web.Application) -> AsyncIterator[str]:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_separate_profiler_starts_after_warmup_and_does_not_bound_load(
+async def test_separate_profiler_starts_after_warmup_and_load_finishes(
     cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, tmp_path: Path
 ) -> None:
-    """Mock auto-stop models control behavior, not real GPU forward steps."""
     tokenizer = Tokenizer(
         models.WordLevel({f"token{i}": i for i in range(256)}, unk_token="token0")
     )
@@ -48,27 +47,18 @@ async def test_separate_profiler_starts_after_warmup_and_does_not_bound_load(
 
     events: list[str] = []
     start_bodies: list[dict[str, Any]] = []
-    expected_body = {
-        "num_steps": 2,
-        "profile_id": "test-capture",
-        "output_dir": "/tmp/test-capture",
-        "activities": ["CPU", "GPU"],
-    }
-    profiler_active = False
-    profiled_responses = 0
+    expected_body = {"num_steps": 2, "output_dir": "/tmp/test-capture"}
 
     async def start(request: web.Request) -> web.Response:
-        nonlocal profiler_active
         assert request.content_type == "application/json"
         start_bodies.append(await request.json())
         events.append("profiler.start")
-        profiler_active = True
         return web.Response(status=200)
 
     async def stop(request: web.Request) -> web.Response:
         assert await request.read() == b""
         events.append("profiler.stop")
-        return web.Response(status=500, text="mock profiler already stopped")
+        return web.Response(status=500, text="mock profiler stop failed")
 
     admin = web.Application()
     admin.router.add_post("/engine/control/start_profile", start)
@@ -77,7 +67,6 @@ async def test_separate_profiler_starts_after_warmup_and_does_not_bound_load(
     async with aiohttp.ClientSession() as session:
 
         async def forward(request: web.Request) -> web.Response:
-            nonlocal profiler_active, profiled_responses
             if request.path == "/v1/chat/completions":
                 events.append("inference.request")
             async with session.request(
@@ -89,11 +78,6 @@ async def test_separate_profiler_starts_after_warmup_and_does_not_bound_load(
                 body = await response.read()
                 if request.path == "/v1/chat/completions":
                     events.append("inference.complete")
-                    if profiler_active:
-                        profiled_responses += 1
-                        if profiled_responses == expected_body["num_steps"]:
-                            profiler_active = False
-                            events.append("mock.auto_stop")
                 return web.Response(
                     status=response.status,
                     body=body,
@@ -115,7 +99,6 @@ async def test_separate_profiler_starts_after_warmup_and_does_not_bound_load(
                     --concurrency 1
                     --workers-max 1
                     --ui {defaults.ui}
-                    --server-profiler
                     --server-profiler-url {admin_url}
                     --server-profiler-start-path /engine/control/start_profile
                     --server-profiler-stop-path /engine/control/stop_profile
@@ -128,10 +111,8 @@ async def test_separate_profiler_starts_after_warmup_and_does_not_bound_load(
     assert start_bodies == [expected_body]
     assert events.count("profiler.start") == events.count("profiler.stop") == 1
     start_index = events.index("profiler.start")
-    auto_stop_index = events.index("mock.auto_stop")
     request_pair = ["inference.request", "inference.complete"]
     assert events[:start_index] == request_pair * 5
-    assert events[start_index + 1 : auto_stop_index] == request_pair * 2
-    assert events[auto_stop_index + 1 : -1] == request_pair * 13
+    assert events[start_index + 1 : -1] == request_pair * 15
     assert events[-1] == "profiler.stop"
     assert "server_profiler stop failed" in result.log

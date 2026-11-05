@@ -138,41 +138,6 @@ def test_profiler_targets_and_body_do_not_change_cache_reset_targets() -> None:
     assert hooks.profiler_start_body == body
 
 
-@pytest.mark.asyncio
-async def test_profiler_start_sends_body_but_stop_does_not() -> None:
-    hooks = prepare_endpoint_control_hooks(
-        EndpointConfig.model_validate(
-            {
-                "urls": ["http://frontend:8000"],
-                "server_profiler": {
-                    "urls": ["http://worker:9090"],
-                    "start_body": {},
-                },
-            }
-        )
-    )
-    with patch(
-        "aiperf.common.control_hooks.control_plane_post", new_callable=AsyncMock
-    ) as post:
-        await start_server_profiler(hooks, {})
-        await stop_server_profiler(hooks, {})
-    assert post.await_args_list == [
-        call(
-            url="http://worker:9090/start_profile",
-            headers={},
-            timeout_s=30.0,
-            signer=None,
-            json_body={},
-        ),
-        call(
-            url="http://worker:9090/stop_profile",
-            headers={},
-            timeout_s=30.0,
-            signer=None,
-        ),
-    ]
-
-
 def _hooks(
     *,
     reset_urls: list[str] | None = None,
@@ -431,6 +396,7 @@ async def test_stop_server_profiler_posts_to_each_stop_url() -> None:
             "http://b:8000/stop_profile",
         ]
     )
+    hooks.profiler_start_body = {"num_steps": 20}
     headers = {"X-Test": "1"}
     with patch(
         "aiperf.common.control_hooks.control_plane_post",
@@ -454,7 +420,10 @@ async def test_stop_server_profiler_posts_to_each_stop_url() -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_server_profiler_posts_to_each_start_url() -> None:
+@pytest.mark.parametrize("body", [None, {}, {"num_steps": 20}])
+async def test_start_server_profiler_posts_to_each_start_url(
+    body: dict[str, int] | None,
+) -> None:
     hooks = _hooks(
         profiler_start_urls=[
             "http://a:8000/start_profile",
@@ -465,6 +434,8 @@ async def test_start_server_profiler_posts_to_each_start_url() -> None:
             "http://b:8000/stop_profile",
         ],
     )
+    hooks.profiler_start_body = body
+    body_kwargs = {"json_body": body} if body is not None else {}
     headers = {"Authorization": "Bearer t"}
     with patch(
         "aiperf.common.control_hooks.control_plane_post",
@@ -477,12 +448,14 @@ async def test_start_server_profiler_posts_to_each_start_url() -> None:
                 headers=headers,
                 timeout_s=2.5,
                 signer=None,
+                **body_kwargs,
             ),
             call(
                 url="http://b:8000/start_profile",
                 headers=headers,
                 timeout_s=2.5,
                 signer=None,
+                **body_kwargs,
             ),
         ]
 
