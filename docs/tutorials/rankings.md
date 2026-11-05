@@ -10,6 +10,9 @@ AIPerf supports benchmarking **ranking and reranking models**, including those s
 **Hugging Face Text Embeddings Inference (TEI)** or **Cohere Re-Rank APIs**.
 These models take a query and one or more passages, returning a similarity or relevance score.
 
+Client-side Input Sequence Length includes the query and every passage sent in
+the request, for NIM, Cohere, and Hugging Face TEI ranking endpoints.
+
 ---
 
 ## Section 1. Profile Hugging Face TEI Re-Rank Models

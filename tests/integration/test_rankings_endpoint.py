@@ -47,6 +47,8 @@ class TestRankingsEndpoint:
         )
 
         assert result.request_count == defaults.request_count
+        assert result.json.input_sequence_length is not None
+        assert result.json.input_sequence_length.avg > 0
 
     async def test_rankings_with_synthetic_data(
         self, cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer
@@ -73,3 +75,5 @@ class TestRankingsEndpoint:
         )
 
         assert result.request_count == defaults.request_count
+        assert result.json.input_sequence_length is not None
+        assert result.json.input_sequence_length.avg > 0
