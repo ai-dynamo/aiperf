@@ -420,13 +420,19 @@ def _apply_phase_specific_routes(prof: dict[str, Any], cli: CLIConfig) -> None:
         prof[output_key] = getattr(cli, attr_name)
 
 
-def _apply_continuation_dispatch(prof: dict[str, Any], cli: CLIConfig) -> None:
-    """Route the opt-in continuation policy only onto open-loop rate phases."""
+def _apply_continuation_dispatch(
+    prof: dict[str, Any], cli: CLIConfig, *, validate: bool = True
+) -> None:
+    """Route the continuation policy, validating the rendered phase type.
+
+    The resolver disables validation only when replaying an already-validated
+    override onto the retained pre-Jinja envelope.
+    """
     from aiperf.config.phases import CONTINUATION_DISPATCH_PHASE_TYPES
 
     if "continuation_dispatch" not in cli.model_fields_set:
         return
-    if prof.get("type") not in CONTINUATION_DISPATCH_PHASE_TYPES:
+    if validate and prof.get("type") not in CONTINUATION_DISPATCH_PHASE_TYPES:
         raise ValueError(
             "--continuation-dispatch requires constant, poisson, or gamma "
             "request-rate scheduling"

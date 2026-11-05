@@ -12,6 +12,7 @@ from aiperf.common.enums import CreditPhase
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags._converter_profiling import build_profiling
 from aiperf.config.flags.resolver import resolve_config
+from aiperf.config.loader.plan import build_benchmark_plan
 from aiperf.config.phases import PhaseConfig
 from aiperf.plugin.enums import ArrivalPattern, TimingMode
 from aiperf.timing.config import (
@@ -134,6 +135,88 @@ benchmark:
     warmup, profiling = config.benchmark.phases
     assert warmup.continuation_dispatch == "rate_slot"
     assert profiling.continuation_dispatch == policy
+
+
+@pytest.mark.parametrize("phase_type", ["constant", "poisson", "gamma"])
+@pytest.mark.parametrize("policy", [None, "rate_slot", "direct"])
+@pytest.mark.parametrize("sweep", [False, True])
+def test_templated_phase_policy_matches_executed_plan(
+    tmp_path: Path, phase_type: str, policy: str | None, sweep: bool
+) -> None:
+    """CLI policy overrides reach both rendered validation and sweep execution."""
+    config_path = tmp_path / "templated-rate.yaml"
+    config_path.write_text(
+        f"""variables:
+  ptype: {phase_type}
+benchmark:
+  model: test-model
+  endpoint: {{url: 'http://localhost:8000'}}
+  dataset: {{type: synthetic}}
+  phases:
+    - {{name: warmup, type: constant, rate: 4, requests: 3}}
+    - name: profiling
+      type: "{{{{ ptype }}}}"
+      rate: 4
+      requests: 9
+      continuationDispatch: rate_slot
+"""
+        + (
+            "sweep:\n  type: grid\n  parameters:\n"
+            "    phases.profiling.requests: [9, 12]\n"
+            if sweep
+            else ""
+        ),
+        encoding="utf-8",
+    )
+    cli = CLIConfig() if policy is None else CLIConfig(continuation_dispatch=policy)
+    config = resolve_config(cli, config_path)
+    plan = build_benchmark_plan(config)
+    expected_policy = policy or "rate_slot"
+
+    assert config.benchmark.phases[1].type == phase_type
+    assert config.benchmark.phases[1].continuation_dispatch == expected_policy
+    assert len(plan.configs) == (2 if sweep else 1)
+    assert {run.phases[1].requests for run in plan.configs} == (
+        {9, 12} if sweep else {9}
+    )
+    for run in plan.configs:
+        warmup, profiling = run.phases
+        assert warmup.continuation_dispatch == "rate_slot"
+        assert profiling.type == phase_type
+        assert profiling.continuation_dispatch == expected_policy
+
+
+@pytest.mark.parametrize("policy", ["rate_slot", "direct"])
+@pytest.mark.parametrize(
+    "phase_type, fields",
+    [
+        param("concurrency", "concurrency: 1", id="concurrency"),
+        param("fixed_schedule", "", id="fixed-schedule"),
+        param("user_centric", "rate: 4\n      users: 1", id="user-centric"),
+    ],
+)  # fmt: skip
+def test_templated_incompatible_phase_policy_names_flag(
+    tmp_path: Path, policy: str, phase_type: str, fields: str
+) -> None:
+    """Rendered incompatible phases still reject the explicitly supplied flag."""
+    config_path = tmp_path / "incompatible.yaml"
+    config_path.write_text(
+        f"""variables:
+  ptype: {phase_type}
+benchmark:
+  model: test-model
+  endpoint: {{url: 'http://localhost:8000'}}
+  dataset: {{type: synthetic}}
+  phases:
+    - name: profiling
+      type: "{{{{ ptype }}}}"
+      requests: 9
+      {fields}
+""",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="--continuation-dispatch"):
+        resolve_config(CLIConfig(continuation_dispatch=policy), config_path)
 
 
 @pytest.mark.parametrize(

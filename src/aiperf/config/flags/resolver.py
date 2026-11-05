@@ -1678,7 +1678,7 @@ def _apply_phase_loadgen_overrides(
         target, cli, loadgen_set, decision=phase_shape_decision
     )
     _apply_rate_series_override(target, cli, loadgen_set)
-    _apply_continuation_dispatch(target, cli)
+    _apply_continuation_dispatch(target, cli, validate=phase_shape_decision is None)
     return decision
 
 

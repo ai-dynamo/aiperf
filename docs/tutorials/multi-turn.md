@@ -262,8 +262,10 @@ lifecycle rules under either policy.
 
 In YAML, set `continuation_dispatch: direct` on a `constant`, `poisson`, or
 `gamma` phase. The default is `rate_slot`. The CLI flag overrides the profiling
-phase, including with `--config`; warmup keeps its own policy and can be configured
-independently in YAML. User-centric, fixed-schedule, adaptive, and agentic-replay
+phase, including with `--config` when its `type` uses a Jinja variable. Compatibility
+is checked against the rendered phase type, and the override also applies to sweep
+runs. Warmup keeps its own policy and can be configured independently in YAML.
+User-centric, fixed-schedule, adaptive, and agentic-replay
 timing do not support direct session-arrival pacing.
 
 The generated JSON Schema checks these policy constraints for phase lists,
