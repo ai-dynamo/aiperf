@@ -40,10 +40,16 @@ from aiperf.config.dataset.content import (
     PromptSelectionConfig,
     RankingsConfig,
 )
+from aiperf.config.dataset.remote_ref import (
+    RemoteFixedScheduleCheck,
+    RemoteRef,
+    coerce_remote_ref,
+)
 from aiperf.config.dataset.system_prompt import SystemPromptMixin
 from aiperf.config.dataset.trace import (
     SynthesisConfig,
 )
+from aiperf.config.dataset.truncation import EndOnTruncationMixin
 from aiperf.config.dataset.video import (
     VIDEO_AUDIO_CODEC_MAP,
     VideoAudioConfig,
@@ -88,7 +94,7 @@ _DatasetName = Annotated[
 
 
 # Dataset type variants using discriminated unions
-class SyntheticDataset(SystemPromptMixin):
+class SyntheticDataset(SystemPromptMixin, EndOnTruncationMixin):
     """
     Synthetic dataset configuration.
 
@@ -284,7 +290,7 @@ class SyntheticDataset(SystemPromptMixin):
         return self
 
 
-class FileDataset(SystemPromptMixin):
+class FileDataset(SystemPromptMixin, EndOnTruncationMixin):
     """
     File-based dataset configuration.
 
@@ -292,7 +298,8 @@ class FileDataset(SystemPromptMixin):
     Supports trace replay and custom sampling strategies.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    # A raw presigned URL in ``path`` would otherwise be echoed in ValidationError text.
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     name: _DatasetName
 
@@ -302,10 +309,14 @@ class FileDataset(SystemPromptMixin):
     ]
 
     path: Annotated[
-        Path | None,
+        Path | RemoteRef | None,
+        # Before Path coercion: Path("hf://x") collapses "//" and corrupts the reference.
+        BeforeValidator(coerce_remote_ref),
         Field(
             default=None,
-            description="Path to file or directory containing benchmark dataset. "
+            description="Path to file or directory containing benchmark dataset, or a "
+            "remote reference: `hf://[datasets/]<org>/<repo>[@<rev>][/<path>]`, "
+            "`s3://<bucket>/<key>[?versionId=<id>]`, or an `https://`/`http://` URL. "
             "Can be absolute or relative. Mutually exclusive with `records:`. "
             "Supported formats depend on the format field: "
             "JSONL for single_turn/multi_turn, JSONL (optionally gzipped) for "
@@ -572,15 +583,14 @@ class FileDataset(SystemPromptMixin):
         Field(
             default=None,
             ge=0.0,
-            description="Hard ceiling (seconds) for idle gaps within each individual trace. "
-            "For Weka trace replay, AIPerf looks at all parent and subagent request "
-            "submission timestamps within one root trace, compresses long gaps between "
-            "consecutive request submissions, and derives turn delays from the "
-            "compressed per-trace timeline. Original request api_time values are not "
-            "used to decide these idle gaps. When set for Weka, this takes precedence over "
-            "`--inter-turn-delay-cap-seconds` so individual parent/subagent-line "
-            "delays are not separately capped. Defaults to None (no per-trace "
-            "idle-gap compression).",
+            description="Hard ceiling (seconds) for observed runtime idle time within "
+            "each AgentX trajectory tree. The idle clock covers initial future work and "
+            "restarts when the final in-flight request across the root and all descendant "
+            "streams completes. If no request from that tree reaches the wire before the "
+            "cap, AIPerf uniformly advances "
+            "only that tree's pending replay timers. Dataset timestamps are unchanged, "
+            "and request order, spawn/join dependencies, and replay barriers remain "
+            "authoritative. Defaults to None (no per-trace runtime idle cap).",
         ),
     ]
 
@@ -622,6 +632,16 @@ class FileDataset(SystemPromptMixin):
                 "(filter-then-cap before entries). Not a DatasetManager tokenize "
                 "filter; rejected for non-Weka formats."
             ),
+        ),
+    ]
+
+    remote_fixed_schedule_check: Annotated[
+        RemoteFixedScheduleCheck | None,
+        Field(
+            default=None,
+            description="Internal: set by the CLI for a remote `--input-file` and cleared by the "
+            "dataset preflight once the first record decides fixed-schedule auto-promotion. "
+            "Do not set in YAML.",
         ),
     ]
 
@@ -810,7 +830,7 @@ class FileDataset(SystemPromptMixin):
         return self
 
 
-class PublicDataset(SystemPromptMixin):
+class PublicDataset(SystemPromptMixin, EndOnTruncationMixin):
     """
     Public dataset configuration.
 
@@ -885,6 +905,27 @@ class PublicDataset(SystemPromptMixin):
         ),
     ]
 
+    hf_mooncake_dataset: str | None = Field(
+        default=None,
+        min_length=1,
+        description="HuggingFace repository for mooncake_hf; required for this loader. "
+        "The CLI flag --hf-mooncake-dataset auto-selects this loader.",
+    )
+
+    hf_mooncake_split: str | None = Field(
+        default=None,
+        min_length=1,
+        pattern=r"\S",
+        description="HuggingFace split override for mooncake_hf (e.g. train or test). "
+        "Unset uses the plugin default, test. Only supported by mooncake_hf.",
+    )
+
+    mooncake_trace_to_hf_mapping: dict[str, str] = Field(
+        default_factory=dict,
+        description="Mooncake target field to dotted source column path for mooncake_hf. "
+        "Supports messages, session_id, tools, output_length, extra, and extra.PARAMETER.",
+    )
+
     hf_weka_dataset: Annotated[
         str | None,
         Field(
@@ -927,11 +968,10 @@ class PublicDataset(SystemPromptMixin):
         Field(
             default=None,
             ge=0.0,
-            description="Hard ceiling (seconds) for idle gaps within each "
-            "individual trace for HF-backed Weka replay (mirror of "
-            "``FileDataset.trace_idle_gap_cap_seconds``). When set, takes "
-            "precedence over ``inter_turn_delay_cap_seconds``. Defaults to "
-            "None (no per-trace idle-gap compression).",
+            description="Hard ceiling (seconds) for observed runtime idle time within "
+            "each AgentX trajectory tree for HF-backed Weka replay (mirror of "
+            "``FileDataset.trace_idle_gap_cap_seconds``). Dataset timestamps remain "
+            "unchanged. Defaults to None (no per-trace runtime idle cap).",
         ),
     ]
 
@@ -1095,6 +1135,48 @@ class PublicDataset(SystemPromptMixin):
                 "weka_nested_timestamp_basis (--weka-nested-timestamp-basis) "
                 f"only applies to Weka public datasets; got dataset {self.dataset}."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_hf_mooncake(self) -> PublicDataset:
+        is_mooncake_hf = self.dataset == PublicDatasetType.MOONCAKE_HF
+        for field in ("hf_mooncake_dataset", "hf_mooncake_split"):
+            if getattr(self, field) is not None and not is_mooncake_hf:
+                raise ValueError(
+                    f"{field} (--{field.replace('_', '-')}) can only be used with "
+                    "dataset mooncake_hf (--public-dataset mooncake_hf)"
+                )
+        if is_mooncake_hf:
+            repo = (self.hf_mooncake_dataset or "").strip()
+            if not repo:
+                raise ValueError(
+                    "dataset mooncake_hf (--public-dataset mooncake_hf) requires a "
+                    "non-empty hf_mooncake_dataset (--hf-mooncake-dataset) HuggingFace repo"
+                )
+            self.hf_mooncake_dataset = repo
+        if self.mooncake_trace_to_hf_mapping and not is_mooncake_hf:
+            raise ValueError(
+                "mooncake_trace_to_hf_mapping (--mooncake-trace-to-hf-mapping) can only be used with "
+                "dataset mooncake_hf (--public-dataset mooncake_hf)"
+            )
+        for target, source in self.mooncake_trace_to_hf_mapping.items():
+            if target not in {
+                "session_id",
+                "messages",
+                "tools",
+                "output_length",
+                "extra",
+            } and (
+                not target.startswith("extra.") or not target[6:] or "." in target[6:]
+            ):
+                raise ValueError(
+                    f"--mooncake-trace-to-hf-mapping target {target!r} is unsupported; use session_id, "
+                    "messages, tools, output_length, extra, or extra.PARAMETER"
+                )
+            if not source or any(not part for part in source.split(".")):
+                raise ValueError(
+                    f"--mooncake-trace-to-hf-mapping {target}: invalid source path {source!r}"
+                )
         return self
 
     @model_validator(mode="after")

@@ -12,7 +12,7 @@ This document provides attribution information for public domain assets used in 
 ### Shakespeare Complete Works
 
 **Asset Information:**
-- **File(s)**: [`aiperf/dataset/generator/assets/shakespeare.txt`](aiperf/dataset/generator/assets/shakespeare.txt)
+- **File(s)**: [`src/aiperf/dataset/generator/assets/shakespeare.txt`](src/aiperf/dataset/generator/assets/shakespeare.txt)
 - **Author**: William Shakespeare (1564-1616)
 - **License**: Public Domain
 - **Status**: Works created before copyright law; no restrictions apply
@@ -27,10 +27,10 @@ This document provides attribution information for public domain assets used in 
 
 **Asset Information:**
 - **Files**:
-  - [`aiperf/dataset/generator/assets/source_images/0bfd8fdf-457f-43c8-9253-a2346d37d26a_1024.jpg`](aiperf/dataset/generator/assets/source_images/0bfd8fdf-457f-43c8-9253-a2346d37d26a_1024.jpg) - [Object 103QTD](https://www.getty.edu/art/collection/object/103QTD)
-  - [`aiperf/dataset/generator/assets/source_images/119544eb-9bbf-47d1-8d93-a51de6370295_861.jpg`](aiperf/dataset/generator/assets/source_images/119544eb-9bbf-47d1-8d93-a51de6370295_861.jpg) - [Object 103SNG](https://www.getty.edu/art/collection/object/103SNG)
-  - [`aiperf/dataset/generator/assets/source_images/1ba066e0-7291-4ef4-8a6e-e8724af7f046_865.jpg`](aiperf/dataset/generator/assets/source_images/1ba066e0-7291-4ef4-8a6e-e8724af7f046_865.jpg) - [Object 10962M](https://www.getty.edu/art/collection/object/10962M)
-  - [`aiperf/dataset/generator/assets/source_images/c946f826-4a9a-4ca2-b891-9f791d38092b_1024.jpg`](aiperf/dataset/generator/assets/source_images/c946f826-4a9a-4ca2-b891-9f791d38092b_1024.jpg) - [Object 103RQ6](https://www.getty.edu/art/collection/object/103RQ6)
+  - [`src/aiperf/dataset/generator/assets/source_images/0bfd8fdf-457f-43c8-9253-a2346d37d26a_1024.jpg`](src/aiperf/dataset/generator/assets/source_images/0bfd8fdf-457f-43c8-9253-a2346d37d26a_1024.jpg) - [Object 103QTD](https://www.getty.edu/art/collection/object/103QTD)
+  - [`src/aiperf/dataset/generator/assets/source_images/119544eb-9bbf-47d1-8d93-a51de6370295_861.jpg`](src/aiperf/dataset/generator/assets/source_images/119544eb-9bbf-47d1-8d93-a51de6370295_861.jpg) - [Object 103SNG](https://www.getty.edu/art/collection/object/103SNG)
+  - [`src/aiperf/dataset/generator/assets/source_images/1ba066e0-7291-4ef4-8a6e-e8724af7f046_865.jpg`](src/aiperf/dataset/generator/assets/source_images/1ba066e0-7291-4ef4-8a6e-e8724af7f046_865.jpg) - [Object 10962M](https://www.getty.edu/art/collection/object/10962M)
+  - [`src/aiperf/dataset/generator/assets/source_images/c946f826-4a9a-4ca2-b891-9f791d38092b_1024.jpg`](src/aiperf/dataset/generator/assets/source_images/c946f826-4a9a-4ca2-b891-9f791d38092b_1024.jpg) - [Object 103RQ6](https://www.getty.edu/art/collection/object/103RQ6)
 - **License**: CC0 1.0 Universal (Public Domain Dedication)
 - **Attribution** (recommended): Digital image courtesy of Getty's Open Content Program
 

@@ -141,9 +141,14 @@ def _stamp_scenario_submission_metadata(
     """
     base_config = plan.configs[0]
 
-    from aiperf.dataset.provenance import public_dataset_provenance
+    from aiperf.dataset.provenance import (
+        public_dataset_provenance,
+        remote_dataset_provenance,
+    )
 
-    dataset = public_dataset_provenance(base_config)
+    dataset = public_dataset_provenance(base_config) or remote_dataset_provenance(
+        base_config
+    )
     if dataset is not None:
         aggregate.metadata["dataset"] = dataset
 
@@ -206,6 +211,19 @@ def _stamp_scenario_submission_metadata(
     aggregate.metadata["_was_cancelled"] = any(
         getattr(r, "was_cancelled", False) for r in results
     )
+    aggregate.metadata["_runtime_submission_invalid_reasons"] = (
+        _merge_runtime_invalid_reasons(results)
+    )
+
+
+def _merge_runtime_invalid_reasons(results: list) -> list[str]:
+    """Union per-run runtime-invalid reason tags, preserving first-seen order."""
+    merged: list[str] = []
+    for r in results:
+        for reason in getattr(r, "runtime_submission_invalid_reasons", []) or []:
+            if reason not in merged:
+                merged.append(reason)
+    return merged
 
 
 def _maybe_compute_detailed(

@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import math
+import time
+from collections.abc import Callable
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,21 +26,22 @@ from aiperf.common.models.model_endpoint_info import (  # noqa: E402
 from aiperf.plugin.enums import EndpointType  # noqa: E402
 
 
-async def _pump_until(condition, *, max_iterations: int = 5000) -> None:
-    """Pump the event loop until `condition()` is true or the iteration budget
-    is exhausted.
+async def _pump_until(
+    condition: Callable[[], bool], *, timeout_s: float = 10.0
+) -> None:
+    """Pump the event loop until `condition()` is true or `timeout_s` of real
+    time has elapsed.
 
-    A fixed pump count is flaky under parallel test execution (xdist): CPU
-    contention across workers changes how many event-loop iterations a given
-    wall-clock/scheduling slice actually buys, so a background task under
-    test may need meaningfully more yields to complete the same number of
-    loop iterations. Polling a condition is only as slow as the real work
-    takes, and still bounded so a genuinely stuck test fails instead of
-    hanging.
+    The work being waited on runs on asyncio.to_thread worker threads, which
+    the event loop does not drive: yielding only gives a thread the chance
+    to finish, it does not make it finish. Any yield-count budget is
+    therefore a hidden wall-clock budget (5000 yields was ~140 ms), and a
+    descheduled worker thread on a loaded xdist runner outlasts it. Bounding
+    by real time keeps the test fast when the threads are quick and still
+    fails, rather than hangs, when the background task is truly stuck.
     """
-    for _ in range(max_iterations):
-        if condition():
-            return
+    deadline = time.monotonic() + timeout_s
+    while not condition() and time.monotonic() < deadline:
         await asyncio.sleep(0)
 
 

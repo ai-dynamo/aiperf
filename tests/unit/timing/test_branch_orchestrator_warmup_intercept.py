@@ -8,7 +8,21 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from aiperf.common.enums import ConversationBranchMode, CreditPhase
+from aiperf.common.enums import (
+    ConversationBranchMode,
+    CreditPhase,
+    PrerequisiteKind,
+)
+from aiperf.common.models import (
+    ConversationBranchInfo,
+    ConversationMetadata,
+    DatasetMetadata,
+    TurnMetadata,
+    TurnPrerequisite,
+)
+from aiperf.credit.dispatch import ChildDispatchResult
+from aiperf.credit.structs import Credit
+from aiperf.plugin.enums import DatasetSamplingStrategy
 from aiperf.timing.branch_orchestrator import BranchOrchestrator
 
 
@@ -95,3 +109,82 @@ async def test_profiling_credit_with_same_source_does_process():
     assert cs.start_branch_child.call_count == 2
     assert issuer.dispatch_first_turn.await_count == 2
     assert orch.stats.children_spawned == 2
+
+
+@pytest.mark.asyncio
+async def test_quota_deferred_child_starts_preserve_parent_join_for_handoff():
+    """Warmup quota deferral retains the exact parent-to-child join graph."""
+    branch_id = "root:spawn"
+    child_ids = ["child-a", "child-b", "child-c"]
+    branch = ConversationBranchInfo(
+        branch_id=branch_id,
+        child_conversation_ids=child_ids,
+        mode=ConversationBranchMode.SPAWN,
+    )
+    parent = ConversationMetadata(
+        conversation_id="root",
+        turns=[
+            TurnMetadata(branch_ids=[branch_id]),
+            TurnMetadata(
+                prerequisites=[
+                    TurnPrerequisite(
+                        kind=PrerequisiteKind.SPAWN_JOIN,
+                        branch_id=branch_id,
+                    )
+                ]
+            ),
+        ],
+        branches=[branch],
+    )
+    children = [
+        ConversationMetadata(
+            conversation_id=child_id,
+            turns=[TurnMetadata()],
+            is_root=False,
+            agent_depth=1,
+            parent_conversation_id="root",
+        )
+        for child_id in child_ids
+    ]
+    source = MagicMock()
+    source.dataset_metadata = DatasetMetadata(
+        conversations=[parent, *children],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    source.get_metadata.return_value = parent
+
+    def start_child(*, child_conversation_id: str, **_kwargs):
+        child = MagicMock()
+        child.conversation_id = child_conversation_id
+        child.x_correlation_id = f"corr-{child_conversation_id}"
+        return child
+
+    source.start_branch_child.side_effect = start_child
+    issuer = MagicMock()
+    issuer.dispatch_first_turn = AsyncMock(return_value=ChildDispatchResult.DEFERRED)
+    orchestrator = BranchOrchestrator(
+        conversation_source=source,
+        credit_issuer=issuer,
+        allow_accelerated_warmup=True,
+    )
+    orchestrator.start_accelerated_warmup()
+    parent_credit = Credit(
+        id=0,
+        phase=CreditPhase.WARMUP,
+        conversation_id="root",
+        x_correlation_id="root-corr",
+        turn_index=0,
+        num_turns=2,
+        issued_at_ns=0,
+        branch_mode=ConversationBranchMode.SPAWN,
+    )
+
+    assert await orchestrator.intercept(parent_credit) is True
+
+    blocked, memberships = orchestrator.snapshot_annotations()
+    assert blocked == {"root-corr": 1}
+    assert memberships == {
+        f"corr-{child_id}": [(branch_id, 1)] for child_id in child_ids
+    }
+    assert orchestrator.stats.children_spawned == 3
+    assert orchestrator.stats.children_truncated == 0

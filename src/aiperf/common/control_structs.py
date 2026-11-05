@@ -65,6 +65,9 @@ class Registration(Struct, frozen=True, kw_only=True, tag_field="t", tag="reg"):
     into the shutdown barrier via ``ResultJoinCoordinator.register``.
     """
 
+    instance_id: str | None = None
+    """Stable process identity distinguishing reconnects from container restarts."""
+
 
 class Heartbeat(Struct, frozen=True, kw_only=True, tag_field="t", tag="hb"):
     """Periodic heartbeat (fire-and-forget)."""

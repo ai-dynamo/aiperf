@@ -163,12 +163,11 @@ def _collect_tool_use(part: dict[str, Any], result: ExtractedPayload) -> None:
 
 
 def _collect_tool_result(part: dict[str, Any], result: ExtractedPayload) -> None:
-    """Collect text from one tool_result block.
+    """Collect text and image counts from one tool_result block.
 
     ``content`` is either a string (legacy shorthand) or a list of
-    ``{"type":"text","text":...}`` blocks. Other block types (image,
-    etc.) are skipped here - image content already counts via the base
-    walk's image branch when it encounters the part's ``type``.
+    ``{"type":"text","text":...}`` and image blocks. The base walk
+    handles only top-level content parts, so nested images count here.
     """
     content = part.get("content")
     if isinstance(content, str):
@@ -184,6 +183,8 @@ def _collect_tool_result(part: dict[str, Any], result: ExtractedPayload) -> None
             text = sub.get("text")
             if isinstance(text, str) and text:
                 result.texts.append(text)
+        elif sub.get("type") == "image":
+            result.image_count += 1
 
 
 # --- Assistant-replay accumulators (streaming + non-streaming responses) -----
@@ -621,6 +622,30 @@ class MessagesEndpoint(BaseEndpoint):
                 for key, value in earlier.items():
                     final.setdefault(key, value)
         return parsed
+
+    def is_truncated(self, record: RequestRecord) -> bool:
+        """True when the reported ``stop_reason`` is ``"max_tokens"``.
+
+        Non-streaming carries it at the top level of the ``message`` body;
+        streaming carries it on the ``message_delta`` event's ``delta``.
+        """
+        for response in reversed(record.responses):
+            json_obj = response.get_json()
+            if not isinstance(json_obj, dict):
+                continue
+            event_type = json_obj.get("type")
+            if event_type == EventType.MESSAGE:
+                stop_reason = json_obj.get("stop_reason")
+            elif event_type == EventType.MESSAGE_DELTA:
+                delta = json_obj.get("delta")
+                stop_reason = (
+                    delta.get("stop_reason") if isinstance(delta, dict) else None
+                )
+            else:
+                continue
+            if stop_reason is not None:
+                return stop_reason == "max_tokens"
+        return False
 
     def build_assistant_turn(self, record: RequestRecord) -> Turn | None:
         """Capture text + thinking + ``tool_use`` blocks from an Anthropic

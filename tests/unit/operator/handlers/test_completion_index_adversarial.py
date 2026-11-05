@@ -17,6 +17,7 @@ runs_index bootstrap behavior, covered by
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncGenerator, Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -650,11 +651,26 @@ class TestCompletionIndexFailureIsolation:
         def gather_during_transient_gap(
             *args: Any, **kwargs: Any
         ) -> tuple[bytes | None, int, str | None, int]:
+            original_mtime_ns = (run / "profile_export_aiperf.json").stat().st_mtime_ns
             (run / "profile_export_aiperf.json").unlink()
             (run / "profile_export_aiperf.csv").unlink()
             gathered = original_gather(*args, **kwargs)
-            _write_result_file(tmp_path, "profile_export_aiperf.json", json_payload)
-            _write_result_file(tmp_path, "profile_export_aiperf.csv", csv_payload)
+            recreated = [
+                _write_result_file(
+                    tmp_path, "profile_export_aiperf.json", json_payload
+                ),
+                _write_result_file(tmp_path, "profile_export_aiperf.csv", csv_payload),
+            ]
+            # The recreated exports have the same bytes, so the operator's
+            # (name, size, mtime_ns) fingerprint can only see the gap through
+            # mtime. Linux stamps mtime from a coarse clock tick, so a rewrite in
+            # the same tick keeps the original mtime and the test flaked. Moving
+            # mtime forward keeps this test about the fail-closed path. We fixed
+            # the test rather than the operator: identical exports recreated
+            # within one tick still pass the fingerprint check (AIP-2218).
+            later_mtime_ns = original_mtime_ns + 1_000_000_000
+            for path in recreated:
+                os.utime(path, ns=(later_mtime_ns, later_mtime_ns))
             return gathered
 
         update_index = AsyncMock(return_value=True)

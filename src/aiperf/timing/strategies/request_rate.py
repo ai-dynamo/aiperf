@@ -12,6 +12,7 @@ from aiperf.common.constants import IS_LINUX, MILLIS_PER_SECOND, NANOS_PER_SECON
 from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.utils import yield_to_event_loop
+from aiperf.credit.dispatch import ChildDispatchResult
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -361,9 +362,11 @@ class RequestRateStrategy(AIPerfLoggerMixin):
 
         if credit.agent_depth > 0:
             if meta.delay_ms is not None:
+                if self._branch_orchestrator is not None:
+                    self._branch_orchestrator.park_child_turn(credit.x_correlation_id)
                 self._scheduler.schedule_later(
                     meta.delay_ms / MILLIS_PER_SECOND,
-                    self._issue_child_continuation_or_release(turn, credit),
+                    self._issue_parked_child_continuation(turn, credit),
                 )
             else:
                 await self._issue_child_continuation_or_release(turn, credit)
@@ -377,6 +380,24 @@ class RequestRateStrategy(AIPerfLoggerMixin):
             )
         else:
             self._continuation_turns.put_nowait(turn)
+
+    async def _issue_parked_child_continuation(
+        self, turn: TurnToSend, child_returning_credit: Credit
+    ) -> None:
+        """Timer body for a delayed child continuation parked with the orchestrator.
+
+        If ``PhaseRunner`` cancelled this timer at the sending cutoff, the
+        orchestrator has already stopped the child, so nothing is dispatched.
+        """
+        if (
+            self._branch_orchestrator is None
+            or self._branch_orchestrator.try_claim_parked_child_turn(
+                child_returning_credit.x_correlation_id
+            )
+        ):
+            await self._issue_child_continuation_or_release(
+                turn, child_returning_credit
+            )
 
     async def _issue_child_continuation_or_release(
         self, turn: TurnToSend, child_returning_credit: Credit
@@ -401,11 +422,14 @@ class RequestRateStrategy(AIPerfLoggerMixin):
         credit NOT on wire" with "credit issued, was the final one". Calling
         ``on_child_stopped`` in the latter case prematurely drains a child
         whose return is still in flight, leading to a deadlock when that
-        return arrives at an empty join. ``dispatch_child_turn`` returns
-        True iff the credit was actually sent on the wire.
+        return arrives at an empty join. ``dispatch_child_turn`` gives the
+        caller an explicit issued/deferred/rejected disposition.
         """
+        result = ChildDispatchResult.normalize(
+            await self._credit_issuer.dispatch_child_turn(turn)
+        )
         if (
-            not await self._credit_issuer.dispatch_child_turn(turn)
+            result is ChildDispatchResult.REJECTED
             and self._branch_orchestrator is not None
         ):
             try:

@@ -20,6 +20,8 @@ from aiperf.common.endpoint_auth import auth_headers_for_endpoint
 
 if TYPE_CHECKING:
     from aiperf.config import BenchmarkPlan
+    from aiperf.config.config import BenchmarkConfig
+    from aiperf.config.resolution.plan import BenchmarkRun
 
 # Re-export for callers still importing the private name; prefer
 # ``auth_headers_for_endpoint`` from ``aiperf.common.endpoint_auth``.
@@ -168,19 +170,16 @@ def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:
     assumed to share an endpoint.
     """
     import asyncio
-    import logging
 
     cfg = plan.configs[0].endpoint
     if cfg.wait_for_model_timeout <= 0:
         return
 
+    from aiperf.common.logging import install_preflight_handler
+
     # Preflight runs before rich logging is installed; install a minimal
     # stderr handler so probe lines are visible.
-    if not logging.getLogger().handlers:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        )
+    install_preflight_handler()
 
     from aiperf.common.endpoint_auth import endpoint_signer
     from aiperf.common.readiness_probe import wait_for_endpoint
@@ -263,19 +262,27 @@ def _call_optional_hook(
 
 
 def _preflight_dataset_access(plan: BenchmarkPlan) -> None:
-    """Verify gated public datasets are reachable before anything expensive.
+    """Verify gated public datasets and remote files are reachable before anything expensive.
 
     Why: access to a gated dataset is granted per user through a browser, so it
     cannot be fixed mid-run. Probing first turns a multi-GB download that ends
     in a 403 -- or a wait on a model that was never going to be used -- into an
     immediate, actionable message.
+
+    Remote input files are also pinned to one version here, and their
+    fixed-schedule auto-promotion is settled, so this must run before anything
+    reads a config's profiling phase.
     """
     for LoaderClass, kwargs in _public_dataset_loaders(plan):
         _call_optional_hook(LoaderClass, "preflight_access", kwargs)
 
+    from aiperf.dataset.remote.preflight import preflight_remote_access
+
+    preflight_remote_access(plan.configs)
+
 
 def _preflight_dataset_materialize(plan: BenchmarkPlan) -> None:
-    """Fetch and cache public datasets that need resolution before services start.
+    """Fetch and cache public datasets and remote input files before services start.
 
     Why: ``DatasetManager`` performs dataset setup while ``TimingManager``
     blocks on the profiling handshake, so a large download there trips
@@ -290,11 +297,9 @@ def _preflight_dataset_materialize(plan: BenchmarkPlan) -> None:
     # yet, and a multi-GB fetch with no output looks like a hang. That check
     # returns early when endpoint waiting is disabled, so don't rely on it
     # having installed the handler.
-    if not logging.getLogger().handlers:
-        logging.basicConfig(
-            level=logging.INFO,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        )
+    from aiperf.common.logging import install_preflight_handler
+
+    if install_preflight_handler():
         # Root INFO also switches on httpx's per-request logging, and resolution
         # makes hundreds of requests -- including the 404s `datasets` expects
         # while probing for a legacy loading script before falling back to
@@ -307,18 +312,80 @@ def _preflight_dataset_materialize(plan: BenchmarkPlan) -> None:
     for LoaderClass, kwargs in _public_dataset_loaders(plan):
         _call_optional_hook(LoaderClass, "preflight_materialize", kwargs)
 
+    from aiperf.dataset.remote.preflight import preflight_remote_materialize
 
-def preflight_public_datasets_for_run(run) -> None:
-    """Run the public-dataset preflights for a single serialized ``BenchmarkRun``.
+    preflight_remote_materialize(plan.configs)
+
+
+def _has_unpinned_remote_dataset(cfg: BenchmarkConfig) -> bool:
+    from aiperf.config.dataset import FileDataset
+    from aiperf.config.dataset.remote_ref import RemoteRef
+
+    dataset = cfg.get_default_dataset()
+    return (
+        isinstance(dataset, FileDataset)
+        and isinstance(dataset.path, RemoteRef)
+        and dataset.path.resolved_version is None
+    )
+
+
+def _reject_open_fixed_schedule_choice(cfg: BenchmarkConfig) -> None:
+    """Refuse a run whose phase type still waits on the trace's first record.
+
+    The access stage would settle it by rewriting the profiling phase, but only
+    in this pod's copy of the run; every other pod keeps the phases the
+    controller rendered. The CLI settles it before submission and the operator
+    rejects a resource that carries it, so reaching here means the serialized
+    run was produced some other way.
+    """
+    from aiperf.config.dataset import FileDataset
+    from aiperf.config.loader.errors import ConfigurationError
+
+    dataset = cfg.get_default_dataset()
+    if (
+        not isinstance(dataset, FileDataset)
+        or dataset.remote_fixed_schedule_check is None
+    ):
+        return
+    raise ConfigurationError(
+        f"Dataset {dataset.path} still has its fixed-schedule choice open "
+        "(remote_fixed_schedule_check is set). Settling it here would change the "
+        "profiling phase in the dataset-manager pod only, while every other pod "
+        "keeps the phases it was given. The choice must be made before "
+        "submission: pass --fixed-schedule or --no-fixed-schedule, or submit "
+        "from a machine that can read the source."
+    )
+
+
+def preflight_datasets_for_run(run: BenchmarkRun) -> None:
+    """Run every dataset preflight for one serialized ``BenchmarkRun``.
 
     The Kubernetes ``aiperf service`` entry point never calls ``run_benchmark``,
-    so without this the gate probe and the resolution download would both fall
-    inside ``DatasetManager``'s configure step and trip
+    so without this the gate probe and the downloads would fall inside
+    ``DatasetManager``'s configure step and trip
     ``AIPERF_DATASET_CONFIGURATION_TIMEOUT``. Only the dataset_manager container
     calls this: it is the sole service that composes the dataset, and every
-    other pod would download the same multi-GB resolution into a private
-    filesystem for nothing.
+    other pod would download the same data into a private filesystem for nothing.
+
+    Public datasets run their access and materialize hooks. A remote file
+    dataset runs the access stage only when it arrives unpinned (the CLI host
+    could not read it, or the resource was applied with kubectl), then the
+    materialize stage, which downloads the pinned version and verifies the pin.
+
+    Raises:
+        ConfigurationError: The default dataset still carries
+            ``remote_fixed_schedule_check``; the pod must never change phases.
     """
+    _reject_open_fixed_schedule_choice(run.cfg)
     for LoaderClass, kwargs in _public_dataset_loaders_for_configs([run.cfg]):
         _call_optional_hook(LoaderClass, "preflight_access", kwargs)
         _call_optional_hook(LoaderClass, "preflight_materialize", kwargs)
+
+    from aiperf.dataset.remote.preflight import (
+        preflight_remote_access,
+        preflight_remote_materialize,
+    )
+
+    if _has_unpinned_remote_dataset(run.cfg):
+        preflight_remote_access([run.cfg])
+    preflight_remote_materialize([run.cfg])

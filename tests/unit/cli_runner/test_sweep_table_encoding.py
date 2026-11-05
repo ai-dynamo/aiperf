@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+import sys
+from types import SimpleNamespace
+
+import pytest
+
+from aiperf.cli_runner._sweep_table import SweepTableLogger
+
+_BOX_DRAWING = "\u2500\u2501"
+
+
+@pytest.mark.parametrize(
+    ("encoding", "expect_box_drawing"),
+    [
+        ("utf-8", True),
+        ("UTF-8", True),
+        (None, False),
+        ("cp1252", False),
+        ("not-a-codec", False),
+    ],
+)
+def test_box_style_follows_the_stdout_encoding(
+    monkeypatch: pytest.MonkeyPatch, encoding: str | None, expect_box_drawing: bool
+) -> None:
+    monkeypatch.setattr(sys, "stdout", SimpleNamespace(encoding=encoding))
+
+    style = str(SweepTableLogger._box_style())
+
+    if expect_box_drawing:
+        assert any(ch in style for ch in _BOX_DRAWING)
+    else:
+        assert style.isascii(), "a narrow sink needs a style it can encode"

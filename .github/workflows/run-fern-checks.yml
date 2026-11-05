@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 name: "Fern Docs Checks"
 
@@ -19,10 +19,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v6
-    - name: Set up Node.js 20
+    - name: Set up Node.js 22
       uses: actions/setup-node@v5
       with:
-        node-version: "20"
+        node-version: "22"
     - name: Install Fern CLI
       run: npm install -g fern-api@$(jq -r '.version' fern/fern.config.json)
     - name: Set up Python 3.12

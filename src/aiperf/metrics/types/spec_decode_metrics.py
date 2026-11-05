@@ -27,6 +27,7 @@ from aiperf.common.exceptions import NoMetricValue
 from aiperf.common.models import ParsedResponseRecord
 from aiperf.common.models.spec_decode_models import SpecDecodeAcceptanceRecord
 from aiperf.metrics import BaseDerivedMetric, BaseRecordMetric
+from aiperf.metrics.base_aggregate_counter_metric import BaseAggregateCounterMetric
 from aiperf.metrics.derived_sum_metric import DerivedSumMetric
 from aiperf.metrics.metric_dicts import MetricRecordDict, MetricResultsDict
 
@@ -179,6 +180,34 @@ class SpecDecodeStepsMetric(BaseSpecDecodeRecordMetric[int]):
     required_metrics = None
 
     spec_decode_field = "num_spec_steps"
+
+
+class SpecDecodeZeroStepRequestsMetric(BaseAggregateCounterMetric[int]):
+    """Requests whose engine reported spec-decode stats but ran no verify step.
+
+    These carry no acceptance record, so every per-request metric above skips
+    them. Counting them separately tells "speculation never fired" (e.g. an
+    NGram drafter that never matched, or ``max_tokens: 1``) apart from spec
+    decode being off, and says how many requests the per-request means exclude.
+    Absent when the count would be zero.
+    """
+
+    tag = "spec_decode_zero_step_requests"
+    header = "Zero-Step Requests"
+    short_header = "Zero-Step Requests"
+    short_header_hide_unit = True
+    unit = GenericMetricUnit.REQUESTS
+    flags = MetricFlags.NO_INDIVIDUAL_RECORDS
+    console_group = MetricConsoleGroup.SPEC_DECODE
+    display_order = 5045
+    required_metrics = None
+
+    def _parse_record(
+        self, record: ParsedResponseRecord, record_metrics: MetricRecordDict
+    ) -> int:
+        if not record.spec_decode_zero_step:
+            raise NoMetricValue("The request ran at least one verify step.")
+        return 1
 
 
 class SpecDecodeAcceptedDraftTokensMetric(BaseSpecDecodeRecordMetric[int]):
