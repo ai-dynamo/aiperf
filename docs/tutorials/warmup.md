@@ -121,6 +121,14 @@ sampling with accuracy mode. Multiple warmup phases share the warmup pool; multi
 profiling phases share the profiling pool. Seamless phase transitions keep separate
 samplers.
 
+Multi-run trials keep the reservation even when the default
+`disable_warmup_after_first` policy skips warmup on trials 2..N. Every trial
+continues excluding its reserved entries; skipping warmup does not put them back
+in the profiling pool. Normal per-trial seed settings still control regenerated
+content. Convergence-based trials use the same policy. The authored workload and initial plan must still declare warmup;
+subsequent per-trial `run_config.json` files can omit the warmup phase while
+retaining `warmup_entries`.
+
 This isolates **conversation identities**, not arbitrary shared prefixes. Common
 system messages, configured prefix prompts, or identical generated content can
 still hit the server's cache. No cache is flushed and no request text is changed.

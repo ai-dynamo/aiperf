@@ -621,10 +621,6 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 "and grades against their unpartitioned order. Set "
                 "--warmup-dataset-entries 0 to keep shared sampling."
             )
-        if not self.get_warmup_phases():
-            raise ValueError(
-                "warmup_entries (--warmup-dataset-entries) requires a warmup phase"
-            )
         if self.scenario is not None or any(
             phase.type == "fixed_schedule" or phase.timing_mode == "agentic_replay"
             for phase in self.phases
@@ -635,6 +631,20 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 "their replay selection and phase continuity"
             )
         return self
+
+    def require_partition_warmup(self) -> None:
+        """Require warmup in authored workloads, not derived trial copies.
+
+        Trial strategies may omit warmup after the first trial while retaining
+        the reservation so profiling continues to exclude the same pool.
+        """
+        if (
+            getattr(self.get_default_dataset(), "warmup_entries", 0)
+            and not self.get_warmup_phases()
+        ):
+            raise ValueError(
+                "warmup_entries (--warmup-dataset-entries) requires a warmup phase"
+            )
 
     @model_validator(mode="after")
     def validate_cache_bust_compatibility(self) -> Self:
@@ -1003,6 +1013,13 @@ class AIPerfConfig(BaseConfig):
     # it None and fall back to `model_dump()` (no body templating, but every
     # other path still works).
     _raw_envelope: dict[str, Any] | None = PrivateAttr(default=None)
+
+    @model_validator(mode="after")
+    def validate_partition_warmup(self, info: ValidationInfo) -> Self:
+        """Validate the declared workload before strategies derive per-trial configs."""
+        if not (info.context and info.context.get("defer_warmup_dataset_partition")):
+            self.benchmark.require_partition_warmup()
+        return self
 
     @model_validator(mode="before")
     @classmethod
