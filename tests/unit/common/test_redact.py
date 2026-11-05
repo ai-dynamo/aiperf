@@ -1701,6 +1701,10 @@ class TestCliCommandRedaction:
             param(["-vH", "X-Acme-Token:sk-f"], id="clustered-separate"),
             param(["-vH=X-Request-Id:42", "X-Acme-Token:sk-g"], id="clustered-equals-then-more"),
             param(["-H", "X-Request-Id:ok", "-1:01", "X-Tenant-Secret:sk-h"], id="number-shaped-value"),
+            param(["-H", ' {"Ocp-Apim-Subscription-Key":"sk-i"}'], id="json-leading-space"),
+            param(["-H", ' {"\\u004fcp-Apim-Subscription-Key":"sk-j"}'], id="json-escaped-name"),
+            param(["-H", '["Ocp-Apim-Subscription-Key:sk-k"]'], id="json-list-of-strings"),
+            param(["-H", '[["Ocp-Apim-Subscription-Key", "sk-l"]]'], id="json-list-of-pairs"),
             param(["--header", "X-Request-Id:42", "X-Tenant-Secret:sk-d"], id="long-multiple"),
         ],
     )  # fmt: skip

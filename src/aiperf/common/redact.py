@@ -374,17 +374,27 @@ def _attached_short_header_value(arg: str) -> str | None:
 def _redact_cli_header_value(value: Any) -> Any:
     """Redact one ``--header`` value through :func:`is_sensitive_header_name`.
 
-    Accepts the same shapes as ``parse_str_or_dict_as_tuple_list``: a JSON
-    object or comma-separated ``Name:Value`` pairs. Only the values of
-    sensitive names are replaced, so benign headers stay readable.
+    Accepts the same shapes the profile parser does: JSON (an object, or a
+    list of pairs or ``Name:Value`` strings) or comma-separated ``Name:Value``
+    pairs. Only the values of sensitive names are replaced, so benign headers
+    stay readable.
     """
     if not isinstance(value, str):
         return value
-    if value.startswith("{"):
+    stripped = value.strip()
+    if stripped[:1] in ("{", "["):
+        # Cyclopts JSON-decodes a token that starts with { or [ after
+        # whitespace before the header validator sees it, so classify the
+        # decoded names (escapes included) and hide anything undecodable.
+        from aiperf.config.loader.parsing import parse_str_or_dict_as_tuple_list
+
         try:
-            parsed = orjson.loads(value)
-        except orjson.JSONDecodeError:
+            parsed = orjson.loads(stripped)
+            pairs = parse_str_or_dict_as_tuple_list(parsed) or []
+        except (orjson.JSONDecodeError, ValueError):
             return REDACTED_VALUE
+        if not any(is_sensitive_header_name(str(name)) for name, _ in pairs):
+            return value
         if not isinstance(parsed, dict):
             return REDACTED_VALUE
         return orjson.dumps(
