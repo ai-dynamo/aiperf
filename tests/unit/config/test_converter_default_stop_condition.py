@@ -54,6 +54,7 @@ def _stop_fields(prof: dict[str, Any]) -> dict[str, Any]:
         param({"request_rate": 5.0, "concurrency": 80}, {"requests": 10}, id="request_rate_with_concurrency_cap"),
         param({"public_dataset": "sharegpt", "concurrency": 80}, {"requests": 160}, id="non_suite_public_dataset"),
         param({"public_dataset": "speed_bench_coding", "concurrency": 80}, {"sessions": "all"}, id="speed_bench_category"),
+        param({"public_dataset": "speed_bench_throughput_100k"}, {"sessions": "all"}, id="speed_bench_100k"),
         param({"public_dataset": "spec_al_mtbench", "request_rate": 5.0}, {"sessions": "all"}, id="spec_al_request_rate"),
     ],
 )  # fmt: skip
@@ -68,11 +69,17 @@ def test_build_profiling_malformed_search_space_raises_parser_error() -> None:
         build_profiling(_make_cli(search_space=["concurrency:64:int"]))
 
 
-def test_build_profiling_custom_suite_dataset_runs_full_pass(tmp_path: Path) -> None:
-    input_file = tmp_path / "qualitative.jsonl"
+@pytest.mark.parametrize(
+    "split",
+    [param("qualitative", id="qualitative"), param("throughput_100k", id="100k")],
+)  # fmt: skip
+def test_build_profiling_custom_suite_dataset_runs_full_pass(
+    tmp_path: Path, split: str
+) -> None:
+    input_file = tmp_path / f"{split}.jsonl"
     input_file.write_text('{"question_id": "q", "messages": []}\n')
     cli = _make_cli(
-        custom_dataset_type="speed_bench_qualitative",
+        custom_dataset_type=f"speed_bench_{split}",
         input_file=str(input_file),
         concurrency=80,
     )
