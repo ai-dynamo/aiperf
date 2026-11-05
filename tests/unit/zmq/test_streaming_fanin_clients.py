@@ -19,6 +19,7 @@ from aiperf.common.exceptions import NotInitializedError
 from aiperf.credit.messages import CreditReturn, WorkerToRouterMessage
 from aiperf.zmq.streaming_pull_client import ZMQStreamingPullClient
 from aiperf.zmq.streaming_push_client import ZMQStreamingPushClient
+from tests.harness.utils import EVENT_WAIT_HANG_GUARD_S
 
 # ============================================================================
 # ZMQStreamingPushClient
@@ -296,7 +297,9 @@ class TestStreamingPullClientReceiver:
         await client.start()
 
         try:
-            await asyncio.wait_for(handler_called.wait(), timeout=1.0)
+            await asyncio.wait_for(
+                handler_called.wait(), timeout=EVENT_WAIT_HANG_GUARD_S
+            )
             assert isinstance(received, CreditReturn)
             assert received.credit.id == sample_credit_return.credit.id
         finally:
@@ -317,7 +320,7 @@ class TestStreamingPullClientReceiver:
         warned = asyncio.Event()
         with patch.object(client, "warning", side_effect=lambda *a, **k: warned.set()):
             await client.start()
-            await asyncio.wait_for(warned.wait(), timeout=1.0)
+            await asyncio.wait_for(warned.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
             await client.stop()
 
     @pytest.mark.asyncio
@@ -340,7 +343,7 @@ class TestStreamingPullClientReceiver:
         await client.start()
         # Waiting for a delivery guarantees the @background_task has installed
         # the FD reader, avoiding a race on start() scheduling.
-        await asyncio.wait_for(delivered.wait(), timeout=1.0)
+        await asyncio.wait_for(delivered.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
         assert client._fd_reader is not None
 
         await client.stop()
