@@ -19,7 +19,9 @@ import json
 import re
 import shutil
 import subprocess
+import sys
 import threading
+import warnings
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -45,9 +47,11 @@ _DASHBOARD_HTML = _REPO_ROOT / "src" / "aiperf" / "api" / "static" / "dashboard.
 _NODE_TIMEOUT_SECONDS = 45 if IS_WINDOWS else 15
 
 # Budget for the one-time warm-up launch. Windows CI runners pay an AV/Defender
-# scan of `node.EXE` (and of the freshly-written files it loads) before node can
-# execute anything; that scan belongs to the host, not to the script under test,
-# so it gets its own -- generous but still bounded -- budget.
+# scan of `node.EXE` itself before node can execute anything; that scan belongs
+# to the host, not to the script under test, so it gets its own -- generous but
+# still bounded -- budget. The warm-up loads none of a test's freshly-written
+# modules, so scanning those still counts against that test's own budget; the
+# single retry in `_run_node` is what absorbs that cost in practice.
 _NODE_WARMUP_TIMEOUT_SECONDS = 300 if IS_WINDOWS else 60
 
 
@@ -64,8 +68,12 @@ _NODE_REASON = "node binary not on PATH"
 
 # Warm-up state. pytest-xdist gives each worker its own process, so this is
 # exactly "once per worker": the first node launch of that worker pays the host
-# cold start, and no later test does.
+# cold start, and no later test does. A failed warm-up is remembered and
+# re-raised by every later call: on a host that cannot start node at all, one
+# clear failure per worker beats re-paying the full warm-up budget for every
+# node test the worker runs (a 300s budget times ~18 tests hangs the job).
 _node_warmed = False
+_node_warm_error: RuntimeError | None = None
 _node_warm_lock = threading.Lock()
 
 
@@ -78,14 +86,15 @@ def _warm_node(node: str) -> None:
     a 45s script budget on ``adversarial-test.mjs`` while the same script runs
     in well under a second warm. Warming up first keeps the script budget about
     the script.
-
-    Uses the ES-module entry path the adversarial scripts use, so the module
-    loader is warm too.
     """
-    global _node_warmed
+    global _node_warmed, _node_warm_error
+    if _node_warm_error is not None:
+        raise _node_warm_error
     if _node_warmed:
         return
     with _node_warm_lock:
+        if _node_warm_error is not None:
+            raise _node_warm_error
         if _node_warmed:
             return
         try:
@@ -97,20 +106,19 @@ def _warm_node(node: str) -> None:
                 check=False,
             )
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(
+            _node_warm_error = RuntimeError(
                 "node did not start within "
                 f"{_NODE_WARMUP_TIMEOUT_SECONDS}s of the warm-up budget; "
                 "this host cannot run node, which is not a result of the "
                 "dashboard script under test"
-            ) from exc
+            )
+            raise _node_warm_error from exc
         if warm.returncode != 0:
-            # Do not mark a failed warm-up as warm: that would hide the host
-            # problem behind whichever test happens to run next. Leave the flag
-            # clear so the next call retries and reports the real failure.
-            raise RuntimeError(
+            _node_warm_error = RuntimeError(
                 f"node warm-up exited {warm.returncode}: "
                 f"{(warm.stderr or b'').decode(errors='replace').strip()[:400]}"
             )
+            raise _node_warm_error
         _node_warmed = True
 
 
@@ -127,6 +135,7 @@ def _run_node(
     if the launch exceeds ``timeout``. One cold-start stall therefore costs a
     duplicate run instead of a red build, while a script that genuinely never
     exits still fails: it exhausts both budgets and raises ``TimeoutExpired``.
+    A retry emits a warning so an absorbed stall is visible in CI output.
     ``stdin`` is closed so a child that tries to read a terminal can never block
     on the runner's inherited console handle.
     """
@@ -149,6 +158,13 @@ def _run_node(
             )
         except subprocess.TimeoutExpired as exc:
             last_timeout = exc
+            # Surface the retry in CI output: a script that only passes on its
+            # second launch is a real hang being absorbed, and should be visible.
+            warnings.warn(
+                f"node launch of {argv!r} exceeded its {timeout}s budget; "
+                "retrying once with identical argv",
+                stacklevel=2,
+            )
     assert last_timeout is not None
     raise last_timeout
 
@@ -912,27 +928,37 @@ class TestRunNodeRetryBudget:
     """
 
     @pytest.mark.skipif(_node_binary() is None, reason=_NODE_REASON)
-    def test_one_stalled_launch_is_retried_and_passes(self, tmp_path: Path) -> None:
-        """A launch that overruns its budget is retried once, same argv."""
-        marker = tmp_path / "stalled-once"
-        script = tmp_path / "stall-once.mjs"
-        script.write_text(
-            "import {existsSync, writeFileSync} from 'node:fs';\n"
-            f"const marker = {json.dumps(str(marker))};\n"
-            "if (!existsSync(marker)) {\n"
-            "  writeFileSync(marker, '1');\n"
-            # Never exits: stands in for a launch stalled in the host, not a
-            # script waiting on something the test controls. The second launch
-            # sees the marker and exits normally, with identical argv.
-            "  setInterval(() => {}, 1000);\n"
-            "} else {\n"
-            "  console.log('warm');\n"
-            "}\n"
-        )
+    def test_one_stalled_launch_is_retried_and_passes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A launch that overruns its budget is retried once, same argv.
+
+        The stall is injected by patching ``subprocess.run`` rather than by
+        writing a script that hangs, so the first launch raises
+        ``TimeoutExpired`` deterministically and the test never depends on how
+        fast node starts on a loaded runner. Only the retry runs node for real.
+        """
+        script = tmp_path / "script.mjs"
+        script.write_text("console.log('warm');\n")
+
+        spawns: list[list[str]] = []
+        real_run = subprocess.run
+
+        def _stall_once_run(
+            args: Sequence[str], **kwargs: Any
+        ) -> subprocess.CompletedProcess:
+            if str(script) in args:
+                spawns.append(list(args))
+                if len(spawns) == 1:
+                    raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+            return real_run(args, **kwargs)
+
+        monkeypatch.setattr(subprocess, "run", _stall_once_run)
 
         proc = _run_node([str(script)], timeout=2.0, text=True)
 
-        assert marker.exists(), "the retried launch did not follow a stalled one"
+        assert len(spawns) == 2, "expected exactly one retry"
+        assert spawns[0] == spawns[1], "the retry must reuse identical argv"
         assert proc.returncode == 0, proc.stderr
         assert proc.stdout.strip() == "warm"
 
@@ -970,3 +996,75 @@ class TestRunNodeRetryBudget:
 
         assert len(spawns) == 2, "expected exactly one retry"
         assert spawns[0] == spawns[1], "the retry must reuse identical argv"
+
+
+class TestWarmNode:
+    """``_warm_node`` pays the cold start once per worker and remembers failures."""
+
+    @pytest.fixture
+    def _cold_node(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Reset the per-process warm-up state and fake the binary lookup, so
+        these tests drive the warm-up path without needing node on PATH."""
+        module = sys.modules[__name__]
+        monkeypatch.setattr(module, "_node_warmed", False)
+        monkeypatch.setattr(module, "_node_warm_error", None)
+        monkeypatch.setattr(module, "_node_binary", lambda: "node")
+
+    def test_two_run_node_calls_share_one_warm_up(
+        self, _cold_node: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        warm_ups: list[list[str]] = []
+
+        def _fake_run(
+            args: Sequence[str], **kwargs: Any
+        ) -> subprocess.CompletedProcess:
+            if "--input-type=module" in args:
+                warm_ups.append(list(args))
+            return subprocess.CompletedProcess(args, 0, b"", b"")
+
+        monkeypatch.setattr(subprocess, "run", _fake_run)
+
+        _run_node(["--check", "a.js"])
+        _run_node(["--check", "b.js"])
+
+        assert len(warm_ups) == 1
+
+    def test_warm_up_timeout_raises_and_is_not_retried(
+        self, _cold_node: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        warm_ups: list[list[str]] = []
+
+        def _fake_run(
+            args: Sequence[str], **kwargs: Any
+        ) -> subprocess.CompletedProcess:
+            warm_ups.append(list(args))
+            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+        monkeypatch.setattr(subprocess, "run", _fake_run)
+
+        with pytest.raises(RuntimeError, match="did not start within"):
+            _run_node(["--check", "a.js"])
+        with pytest.raises(RuntimeError, match="did not start within"):
+            _run_node(["--check", "a.js"])
+
+        assert len(warm_ups) == 1, "a failed warm-up must not be re-paid per test"
+
+    def test_warm_up_nonzero_exit_raises_with_stderr_and_is_not_retried(
+        self, _cold_node: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        warm_ups: list[list[str]] = []
+
+        def _fake_run(
+            args: Sequence[str], **kwargs: Any
+        ) -> subprocess.CompletedProcess:
+            warm_ups.append(list(args))
+            return subprocess.CompletedProcess(args, 2, b"", b"boom: node is broken")
+
+        monkeypatch.setattr(subprocess, "run", _fake_run)
+
+        with pytest.raises(RuntimeError, match="node warm-up exited 2: boom"):
+            _run_node(["--check", "a.js"])
+        with pytest.raises(RuntimeError, match="node warm-up exited 2: boom"):
+            _run_node(["--check", "a.js"])
+
+        assert len(warm_ups) == 1, "a failed warm-up must not be re-paid per test"
