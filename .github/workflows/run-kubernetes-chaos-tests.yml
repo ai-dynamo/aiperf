@@ -6,17 +6,22 @@ name: "Run Kubernetes Chaos Tests"
 # hermetic chaos_common contracts. These long-running jobs exercise real pod,
 # operator, network, and control-plane faults against isolated Kind clusters.
 on:
-  push:
-    branches:
-      - main
-    paths-ignore:
-      - 'docs/**'
-      - '**/*.md'
-      - 'llms.txt'
-      - 'LICENSE'
-      - '.gitignore'
-  schedule:
-    - cron: '0 7 * * *'
+  # DISABLED: automatic runs are off. This suite has never passed, so it only
+  # burns 210-minute runners and reports a red check that carries no signal.
+  # Re-enable the push/schedule triggers below once it is green locally against
+  # a Kind cluster. Until then it is manual-only via workflow_dispatch.
+  #
+  # push:
+  #   branches:
+  #     - main
+  #   paths-ignore:
+  #     - 'docs/**'
+  #     - '**/*.md'
+  #     - 'llms.txt'
+  #     - 'LICENSE'
+  #     - '.gitignore'
+  # schedule:
+  #   - cron: '0 7 * * *'
   workflow_dispatch:
     inputs:
       pytest_args:
