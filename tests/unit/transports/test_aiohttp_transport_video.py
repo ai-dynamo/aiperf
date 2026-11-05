@@ -1020,7 +1020,7 @@ class TestVideoDownloadDoesNotSignForeignUrls:
 
 
 class TestSameOriginPortHandling:
-    """``_same_origin`` decides whether a server-chosen download URL may be
+    """``same_origin`` decides whether a server-chosen download URL may be
     signed with the endpoint's AWS credentials, so both its answers matter: a
     false negative silently skips signing a legitimate same-origin download,
     and a raise escapes the guard the docstring promises."""
@@ -1029,37 +1029,37 @@ class TestSameOriginPortHandling:
         """`https://host` and `https://host:443` are the same origin. Comparing
         `.port` literally makes the first None and the second 443, so a
         same-origin download would be treated as foreign and go unsigned."""
-        from aiperf.transports.aiohttp_transport import _same_origin
+        from aiperf.common.url_origin import same_origin
 
-        assert _same_origin("https://example.com/a", "https://example.com:443/b")
-        assert _same_origin("https://example.com:443/a", "https://example.com/b")
-        assert _same_origin("http://example.com/a", "http://example.com:80/b")
-        assert _same_origin("http://example.com:80/a", "http://example.com/b")
+        assert same_origin("https://example.com/a", "https://example.com:443/b")
+        assert same_origin("https://example.com:443/a", "https://example.com/b")
+        assert same_origin("http://example.com/a", "http://example.com:80/b")
+        assert same_origin("http://example.com:80/a", "http://example.com/b")
 
     def test_a_non_default_port_still_distinguishes_origins(self) -> None:
         """Normalizing defaults must not collapse genuinely different ports."""
-        from aiperf.transports.aiohttp_transport import _same_origin
+        from aiperf.common.url_origin import same_origin
 
-        assert not _same_origin("https://example.com:8443/a", "https://example.com/b")
-        assert not _same_origin("http://example.com:8080/a", "http://example.com/b")
+        assert not same_origin("https://example.com:8443/a", "https://example.com/b")
+        assert not same_origin("http://example.com:8080/a", "http://example.com/b")
 
-    def test_a_scheme_mismatch_is_never_the_same_origin(self) -> None:
+    def test_a_scheme_mismatch_is_never_thesame_origin(self) -> None:
         """http://host:443 shares a port number with https://host but is not
         the same origin -- normalization must stay scheme-aware."""
-        from aiperf.transports.aiohttp_transport import _same_origin
+        from aiperf.common.url_origin import same_origin
 
-        assert not _same_origin("http://example.com:443/a", "https://example.com/b")
+        assert not same_origin("http://example.com:443/a", "https://example.com/b")
 
     def test_an_unparseable_port_fails_closed_instead_of_raising(self) -> None:
         """`urlsplit` accepts the string and only raises when `.port` is read,
         so reading it outside the guarded block lets ValueError escape into the
         caller -- the opposite of the fail-closed contract in the docstring."""
-        from aiperf.transports.aiohttp_transport import _same_origin
+        from aiperf.common.url_origin import same_origin
 
-        assert not _same_origin(
+        assert not same_origin(
             "https://example.com:notaport/a", "https://example.com/b"
         )
-        assert not _same_origin(
+        assert not same_origin(
             "https://example.com/a", "https://example.com:notaport/b"
         )
 

@@ -917,17 +917,25 @@ class BranchOrchestrator:
             self.stats.graphs_admitted += 1
 
         parent_corr = credit.x_correlation_id
+        branch_ids = self.get_branch_ids(credit)
+        if not branch_ids and getattr(credit, "no_request", False):
+            self.stats.graphs_completed_to_end += 1
+            self._cs.forget_ordinal(credit.x_correlation_id)
+
+        if self._schedule_stopped.is_set() and (
+            not self._issuer.can_dispatch_child_turn()
+            or (
+                not credit.is_final_turn
+                and not self._issuer.can_dispatch_join(credit.agent_depth)
+            )
+        ):
+            self._discard_undispatchable_future_joins(parent_corr)
+            self._notify_drain()
+            return False
 
         async with self._parent_locks[parent_corr]:
-            branch_ids = self.get_branch_ids(credit)
             if branch_ids:
                 await self._spawn_children_and_register_gates(credit, branch_ids)
-            elif getattr(credit, "no_request", False):
-                # Terminal request-free gate (no branches to spawn): all rounds
-                # drained, so this graph instance reached END. All think-times
-                # are resolved, so drop its sampling ordinal to bound the map.
-                self.stats.graphs_completed_to_end += 1
-                self._cs.forget_ordinal(credit.x_correlation_id)
 
             # Breeze-through: the parent's next turn is a gate whose children
             # already drained before the parent arrived. Rather than let the
@@ -1732,7 +1740,17 @@ class BranchOrchestrator:
                 releasable.append(pending)
         for pending in releasable:
             await self._release_blocked_join(pending)
+        for parent_corr in list(self._future_joins):
+            self._discard_undispatchable_future_joins(parent_corr)
         self._notify_drain()
+
+    def _discard_undispatchable_future_joins(self, parent_corr: str) -> None:
+        for gated_idx, pending in list(self._future_joins.get(parent_corr, {}).items()):
+            if pending.total_outstanding == 0 and not self._issuer.can_dispatch_join(
+                pending.parent_agent_depth
+            ):
+                self._pop_future_join(parent_corr, gated_idx)
+        self._release_parent_slot_if_drained(parent_corr)
 
     async def _satisfy_prerequisite(
         self,
@@ -1771,11 +1789,16 @@ class BranchOrchestrator:
         if child_corr in outstanding.completed:
             return None
         outstanding.completed.add(child_corr)
-        if not pending.is_satisfied:
-            return None
         if pending.is_blocked and pending.can_release:
             return self._active_joins.pop(parent_corr, None)
         if pending.is_blocked:
+            return None
+        if pending.total_outstanding == 0 and not self._issuer.can_dispatch_join(
+            pending.parent_agent_depth
+        ):
+            self._pop_future_join(parent_corr, gated_idx)
+            return None
+        if not pending.is_satisfied:
             return None
         # Satisfied before the parent arrived. A request-free SPINE gate carries
         # between-round think-time, so leave it in place (marked satisfied) for
@@ -2058,8 +2081,10 @@ class BranchOrchestrator:
         """
         if self._cleaning_up:
             return
+        self._discard_undispatchable_future_joins(child_x_correlation_id)
         entries = self._child_to_join.get(child_x_correlation_id)
         if not entries:
+            self._notify_drain()
             return
         self.stats.children_truncated += 1
         await self._handle_child_done(child_x_correlation_id, entries)

@@ -1011,6 +1011,18 @@ class TestResponsesEndpointParseResponse:
                 {"input_tokens": 10, "output_tokens": 20},
                 id="streaming_completed",
             ),
+            param(
+                {
+                    "type": "response.incomplete",
+                    "response": {
+                        "status": "incomplete",
+                        "incomplete_details": {"reason": "max_output_tokens"},
+                        "usage": {"input_tokens": 10, "output_tokens": 16},
+                    },
+                },
+                {"input_tokens": 10, "output_tokens": 16},
+                id="streaming_incomplete",
+            ),
         ],
     )  # fmt: skip
     def test_parse_response_extracts_usage(self, endpoint, json_data, expected_usage):

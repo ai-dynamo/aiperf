@@ -64,13 +64,14 @@ from aiperf.config.cli_parameter import CLIParameter, Groups
 from aiperf.config.endpoint import EndpointDefaults
 from aiperf.config.loader.parsing import (
     normalize_http_urls,
-    parse_file,
     parse_float_or_float_list,
+    parse_input_file,
     parse_int_or_int_list,
     parse_str_as_numeric_dict,
     parse_str_or_dict_as_tuple_list,
     parse_str_or_list,
     parse_str_or_list_of_positive_values,
+    raise_rejected_input_file,
     reject_moved_custom_dataset_type,
     require_turn_mean_at_least_one,
 )
@@ -181,6 +182,20 @@ class CLIConfig(BaseConfig):
             group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.STREAMING
+
+    allow_empty_content: Annotated[
+        bool,
+        Field(
+            description="Retain explicitly empty content or reasoning strings as "
+            "timed responses for streaming OpenAI Chat Completions. This changes "
+            "TTFT and all metrics using the shared response timeline, but TTFO "
+            "still requires non-empty output and empty strings add no tokens.",
+        ),
+        CLIParameter(
+            name=("--allow-empty-content",),
+            group=Groups.ENDPOINT,
+        ),
+    ] = EndpointDefaults.ALLOW_EMPTY_CONTENT
 
     urls: Annotated[
         list[str],
@@ -702,11 +717,16 @@ class CLIConfig(BaseConfig):
     input_file: Annotated[
         Any,
         Field(
-            description="Path to file or directory containing benchmark dataset. Required when using `--custom-dataset-type`. "
+            description="Path to file or directory containing benchmark dataset, or a remote "
+            "reference (`hf://<org>/<repo>[@<rev>][/<path>]`, `s3://<bucket>/<key>`, `https://...`) "
+            "downloaded into a local cache before the run. Required when using `--custom-dataset-type`. "
             "Supported formats depend on dataset type: JSONL for `single_turn`/`multi_turn`, JSONL for `mooncake_trace`/`bailian_trace` (timestamped traces), "
             "Parquet for `baseten_trace`, directories for `random_pool`. File is parsed according to `--custom-dataset-type` specification.",
         ),
-        BeforeValidator(parse_file),
+        # Runs bottom-up: a failed parse becomes a redacted value, then raises, so
+        # a presigned URL's signature never appears in the ValidationError.
+        BeforeValidator(raise_rejected_input_file),
+        BeforeValidator(parse_input_file),
         CLIParameter(
             name=("--input-file",),
             group=Groups.INPUT,
@@ -1216,6 +1236,32 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    end_conversation_on_truncation: Annotated[
+        bool | None,
+        Field(
+            default=None,
+            description="End a multi-turn conversation after any turn the server "
+            "truncated at the output-token cap (`finish_reason=length`, Anthropic "
+            "`stop_reason=max_tokens`, or an incomplete Responses API reply) and "
+            "skip its remaining turns. The truncated turn is still measured. "
+            "Follow-up prompts assume a complete prior answer, so sending them "
+            "after a cut-off reply measures off-distribution generations. Default: "
+            "on for SPEED-Bench qualitative datasets (public `speed_bench_qualitative` "
+            "and `speed_bench_<category>`, custom `speed_bench_qualitative`) and "
+            "`spec_al_mtbench`, off otherwise. Counts of ended conversations and "
+            "skipped turns (per conversation session) are logged "
+            "and written to `profile_export_aiperf.json`. Conflicts with "
+            "`--extra-inputs ignore_eos:true`, which truncates every turn. "
+            "Rejected at startup for DAG datasets and agentic replay. "
+            "Maps to the dataset's ``end_conversation_on_truncation``.",
+        ),
+        CLIParameter(
+            name=("--end-conversation-on-truncation",),
+            negative="--no-end-conversation-on-truncation",
+            group=Groups.CONVERSATION_INPUT,
+        ),
+    ] = None
+
     max_idle_gap_cap_seconds: Annotated[
         float | None,
         Field(
@@ -1387,6 +1433,22 @@ class CLIConfig(BaseConfig):
             group=Groups.CACHE_BUST,
         ),
     ] = CacheBustTarget.NONE
+
+    cache_bust_media_uuids: Annotated[
+        bool,
+        Field(
+            description=(
+                "Append the trajectory's RID digest to every media `uuid`, so a replay "
+                "cannot hit vLLM's multimodal cache entries from an earlier play. "
+                "Requires a RID --cache-bust target and --endpoint-type chat. "
+                "See [cache-bust.md](reference/cache-bust.md)."
+            ),
+        ),
+        CLIParameter(
+            name=("--cache-bust-media-uuids",),
+            group=Groups.CACHE_BUST,
+        ),
+    ] = False
 
     ##############################################################################
     # Prefix Prompt
@@ -2379,8 +2441,11 @@ class CLIConfig(BaseConfig):
     request_count: Annotated[
         Any,
         Field(
-            description="The maximum number of requests to send. If not set, will be automatically determined based "
-            "on the timing mode and dataset size. For synthetic datasets, this will be `max(10, concurrency * 2)`. "
+            description="The maximum number of requests to send. When none of `--request-count`, `--num-conversations`, "
+            "or `--benchmark-duration` is set, the run is bounded automatically: trace datasets replay every record, "
+            "`dag_jsonl` runs every root session, benchmark suites (SPEED-Bench, `spec_al_*`, `spec_bench`) run one full "
+            "pass over every loaded conversation, concurrency runs send `max(10, 2 * concurrency)` requests (the largest "
+            "value for a `--concurrency` sweep or `--search-space` concurrency range), and request-rate and user-centric runs send 10. "
             "Pass a comma-separated list (e.g. `--request-count 100,500,1000`) to sweep over multiple "
             "request counts; the converter promotes the list to a sweep on phases.profiling.requests "
             "before AIPerfConfig validation.",
@@ -2565,7 +2630,7 @@ class CLIConfig(BaseConfig):
         Field(
             default=None,
             description="Lock all benchmark invariants for a named scenario "
-            "(e.g. 'inferencex-agentx-mvp'). Conflicts with the locked "
+            "('agentx' or 'inferencex-agentx-mvp'). Conflicts with the locked "
             "invariants raise ScenarioLockError at startup unless "
             "--unsafe-override is also passed. Distinct from the sweep "
             "``scenarios`` strategy (hand-picked named runs).",

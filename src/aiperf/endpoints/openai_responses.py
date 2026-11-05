@@ -428,6 +428,31 @@ class ResponsesEndpoint(BaseEndpoint):
                 resp_id = candidate
         return resp_id
 
+    def is_truncated(self, record: RequestRecord) -> bool:
+        """True when the final Response object is ``status: "incomplete"`` with
+        ``incomplete_details.reason == "max_output_tokens"``.
+
+        The object lives under ``response`` for streaming lifecycle events
+        (terminal event ``response.incomplete``) and at the top level for a
+        non-streaming body. Walks in reverse so the terminal status wins.
+        """
+        for response in reversed(record.responses):
+            json_obj = response.get_json()
+            if not isinstance(json_obj, dict):
+                continue
+            nested = json_obj.get("response")
+            source = nested if isinstance(nested, dict) else json_obj
+            status = source.get("status")
+            if status is None:
+                continue
+            details = source.get("incomplete_details")
+            return (
+                status == "incomplete"
+                and isinstance(details, dict)
+                and details.get("reason") == "max_output_tokens"
+            )
+        return False
+
     def _store_requested(self) -> bool:
         """Whether the run requested server-side storage via endpoint ``extra``.
 
@@ -583,7 +608,9 @@ class ResponsesEndpoint(BaseEndpoint):
         if data is not None:
             return ParsedResponse(perf_ns=perf_ns, data=data)
 
-        if event_type == "response.completed":
+        # A stream cut off by max_output_tokens ends in response.incomplete, whose
+        # response object carries usage exactly as response.completed does.
+        if event_type in ("response.completed", "response.incomplete"):
             resp = json_obj.get("response") or {}
             usage = resp.get("usage") or None
             if usage:

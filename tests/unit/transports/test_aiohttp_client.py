@@ -279,10 +279,11 @@ class TestAioHttpClient:
         if callback:
             callback.assert_awaited_once()
 
-    @pytest.mark.parametrize("failed", [False, True])
+    @pytest.mark.parametrize("status", ["failed", "completed", "incomplete"])
     async def test_responses_transport_failure_prevents_structured_replay(
-        self, aiohttp_client: AioHttpClient, failed: bool
+        self, aiohttp_client: AioHttpClient, status: str
     ) -> None:
+        failed = status == "failed"
         item = {
             "type": "function_call",
             "id": "fc_1",
@@ -290,17 +291,23 @@ class TestAioHttpClient:
             "name": "lookup",
             "arguments": "{}",
         }
+        delta = {
+            "type": "response.function_call_arguments.delta",
+            "delta": "{}",
+            "item_id": "fc_1",
+        }
         done = {"type": "response.output_item.done", "item": item}
         terminal = {
-            "type": "response.failed" if failed else "response.completed",
+            "type": f"response.{status}",
             "response": {
-                "status": "failed" if failed else "completed",
+                "status": status,
                 "output": [item],
                 "error": {"message": "Generation failed"} if failed else None,
             },
         }
         body = b"".join(
-            b"data: " + orjson.dumps(event) + b"\n\n" for event in (done, terminal)
+            b"data: " + orjson.dumps(event) + b"\n\n"
+            for event in (delta, done, terminal)
         )
 
         async def handler(request: web.Request) -> web.Response:
@@ -318,13 +325,14 @@ class TestAioHttpClient:
 
         assert record.has_error is failed
         assert [response.get_json() for response in record.responses] == (
-            [done] if failed else [done, terminal]
+            [delta, done] if failed else [delta, done, terminal]
         )
         model_endpoint = create_model_endpoint(EndpointType.RESPONSES, streaming=True)
         endpoint = ResponsesEndpoint(model_endpoint)
-        _, assistant_turn = endpoint.process_responses(
+        parsed, assistant_turn = endpoint.process_responses(
             record, capture_assistant_turn=True
         )
+        assert any(response.data is not None for response in parsed)
         root = {"role": "user", "content": "root"}
         child = {"role": "user", "content": "child"}
         turns = [Turn(raw_messages=[root])]
@@ -334,7 +342,11 @@ class TestAioHttpClient:
         payload = endpoint.format_payload(
             create_request_info(model_endpoint=model_endpoint, turns=turns)
         )
-        assert payload["input"] == ([root, child] if failed else [root, item, child])
+        fallback = {"role": "assistant", "content": "{}", "type": "message"}
+        expected = (
+            [root, item, child] if status == "completed" else [root, fallback, child]
+        )
+        assert payload["input"] == expected
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

@@ -20,8 +20,20 @@ class CohereRankingsEndpoint(BaseRankingsEndpoint):
         }
         return payload
 
-    def extract_rankings(self, json_obj: dict[str, Any]) -> list[dict[str, Any]]:
-        """Extract ranking results from Cohere Rankings API response."""
+    def extract_rankings(
+        self, json_obj: dict[str, Any] | list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Extract ranking results from a Cohere Rankings API response.
+
+        Also accepts the bare list of ``{index, score}`` items that SGLang's
+        ``/v1/rerank`` returns.
+        """
+        if isinstance(json_obj, list):
+            return [
+                {"index": r.get("index"), "score": r["score"]}
+                for r in json_obj
+                if r.get("score") is not None
+            ]
         results = json_obj.get("results", [])
         rankings = [
             {"index": r.get("index"), "score": r.get("relevance_score")}

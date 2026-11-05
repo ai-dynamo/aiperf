@@ -95,10 +95,15 @@ class MetricsJsonExporter(MetricsBaseExporter):
             warmup_metrics=prepared_warmup_metrics or None,
         )
 
-        from aiperf.dataset.provenance import public_dataset_provenance
+        from aiperf.dataset.provenance import (
+            public_dataset_provenance,
+            remote_dataset_provenance,
+        )
 
         run_metadata: dict[str, object] = {}
-        dataset = public_dataset_provenance(self._cfg)
+        dataset = public_dataset_provenance(self._cfg) or remote_dataset_provenance(
+            self._cfg
+        )
         if dataset is not None:
             run_metadata["dataset"] = dataset
         metric_duration_coverage = getattr(
@@ -228,12 +233,21 @@ class MetricsJsonExporter(MetricsBaseExporter):
     def _splice_run_level_aggregates(self, export_data: JsonExportData) -> None:
         """Attach optional run-level aggregates that live on ``ProfileResults``
         outside the metric dict. Each is omitted from the export (``exclude_none``)
-        when absent: ``branch_stats`` on non-DAG runs, the pooled spec-decode
+        when absent: ``branch_stats`` on non-DAG runs, the truncation early-end
+        counts when end_conversation_on_truncation is off, the pooled spec-decode
         acceptance histogram when spec decode is off.
         """
         branch_stats = getattr(self._results, "branch_stats", None)
         if branch_stats is not None:
             export_data.branch_stats = branch_stats
+
+        for field in (
+            "conversations_ended_on_truncation",
+            "turns_skipped_on_truncation",
+        ):
+            value = getattr(self._results, field, None)
+            if value is not None:
+                setattr(export_data, field, value)
 
         spec_decode_histogram = getattr(
             self._results, "pooled_spec_decode_acceptance_histogram", None
