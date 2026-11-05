@@ -7,15 +7,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import orjson
 import pytest
 from pytest import param
+from tokenizers import Tokenizer as NativeTokenizer
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import WhitespaceSplit
+from transformers import PreTrainedTokenizerFast
 
 from aiperf.common.models import (
     ErrorDetails,
     ParsedResponse,
+    ReasoningResponseData,
     RequestInfo,
     RequestRecord,
     SpecDecodeAcceptanceRecord,
     TextResponse,
     TextResponseData,
+    Turn,
     Usage,
 )
 from aiperf.endpoints.anthropic_messages import MessagesEndpoint
@@ -163,7 +169,7 @@ class TestInvalidRecords:
 
         assert record.has_error
         assert record.error.type == "InvalidInferenceResultError"
-        assert "No responses with actual content" in record.error.message
+        assert "No parsed content responses" in record.error.message
         assert result.token_counts.input == 8
         assert result.responses == []
 
@@ -301,10 +307,56 @@ class TestAsyncTokenizerEncode:
         assert result.output == 3
         assert spy_tokenizer.encode.called
 
+    async def test_empty_strings_do_not_change_client_output_token_count(
+        self, setup_inference_parser: InferenceResultParser, spy_tokenizer: MagicMock
+    ) -> None:
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+        baseline = [ParsedResponse(perf_ns=200, data=TextResponseData(text="hello"))]
+        with_empty = [
+            ParsedResponse(perf_ns=100, data=TextResponseData(text="")),
+            baseline[0],
+            ParsedResponse(
+                perf_ns=300,
+                data=ReasoningResponseData(reasoning="", content=None),
+            ),
+            ParsedResponse(perf_ns=400, data=TextResponseData(text="")),
+        ]
+
+        baseline_counts = (
+            await setup_inference_parser._compute_client_side_token_counts(
+                RequestRecord(model_name="test-model"), baseline
+            )
+        )
+        empty_counts = await setup_inference_parser._compute_client_side_token_counts(
+            RequestRecord(model_name="test-model"), with_empty
+        )
+
+        assert baseline_counts.output == empty_counts.output == 1
+        assert baseline_counts.reasoning is None
+        assert empty_counts.reasoning is None
+
 
 @pytest.mark.asyncio
 class TestServerTokenCount:
     """Tests for --use-server-token-count flag functionality."""
+
+    async def test_empty_responses_do_not_change_server_reported_token_count(
+        self, server_token_parser: InferenceResultParser
+    ) -> None:
+        responses = [
+            ParsedResponse(perf_ns=100, data=TextResponseData(text="")),
+            ParsedResponse(
+                perf_ns=200,
+                data=TextResponseData(text="hello"),
+                usage={"prompt_tokens": 10, "completion_tokens": 7},
+            ),
+            ParsedResponse(perf_ns=300, data=TextResponseData(text="")),
+        ]
+
+        counts = await server_token_parser._compute_server_token_counts(responses)
+
+        assert counts.input == 10
+        assert counts.output == 7
 
     async def test_uses_server_values(
         self, server_token_parser, request_record, spy_tokenizer
@@ -386,6 +438,32 @@ class TestServerTokenCount:
         # OSL = output + reasoning = 20 + 32 = 52; first chunk (32) < OSL, decode = 20.
         assert result.token_counts.output == 20
         assert result.token_counts.reasoning == 32
+
+    @pytest.mark.parametrize("empty_chunk_usage", [0, None])
+    async def test_first_content_chunk_is_zero_for_explicit_empty_chunk(
+        self, per_chunk_usage_parser, request_record, empty_chunk_usage
+    ):
+        """An explicit empty first chunk (--allow-empty-content) sets TTFT without a
+        token, so the count is 0 whether it reports zero usage or none."""
+        setup_parser_responses(
+            per_chunk_usage_parser,
+            [
+                ParsedResponse(
+                    perf_ns=1000,
+                    data=TextResponseData(text=""),
+                    usage=None
+                    if empty_chunk_usage is None
+                    else Usage({"completion_tokens": empty_chunk_usage}),
+                ),
+                make_parsed_response(text="hello", completion_tokens=4),
+                make_parsed_response(text=" world", completion_tokens=8),
+            ],
+        )
+
+        result = await per_chunk_usage_parser.process_valid_record(request_record)
+
+        assert result.token_counts.first_content_chunk_tokens == 0
+        assert result.token_counts.output == 8
 
     async def test_first_content_chunk_not_read_without_per_chunk_usage(
         self, server_token_parser, request_record
@@ -803,7 +881,7 @@ class TestMalformedResponseEndToEnd:
         assert record.has_error
         # Honest cause: "no content from server", NOT a parser-internal ValueError.
         assert record.error.type == "InvalidInferenceResultError"
-        assert "No responses with actual content" in str(record.error)
+        assert "No parsed content responses" in str(record.error)
         assert "Unsupported OpenAI object type" not in str(record.error)
         assert result.responses == []
 
@@ -852,6 +930,46 @@ class TestChatTemplateAwareTokenization:
         assert kwargs["tokenize"] is True
         assert kwargs["add_generation_prompt"] is True
         # Bare encode is NOT called when the template path succeeds.
+        tokenizer.encode.assert_not_called()
+
+    async def test_real_tool_result_template_preserves_templated_isl(
+        self,
+        setup_inference_parser: InferenceResultParser,
+        sample_turn: Turn,
+    ) -> None:
+        native = NativeTokenizer(WordLevel({"[UNK]": 0}, unk_token="[UNK]"))
+        native.pre_tokenizer = WhitespaceSplit()
+        inner = PreTrainedTokenizerFast(
+            tokenizer_object=native,
+            unk_token="[UNK]",
+            chat_template=(
+                "{% for message in messages %}"
+                "{% if message.role == 'tool' %}"
+                "{% if message.tool_call_id is not defined %}"
+                "{{ raise_exception('Tool results require tool_call_id') }}"
+                "{% endif %}{{ message.tool_call_id }} "
+                "{% endif %}{{ message.role }} {{ message.content }} "
+                "{% endfor %}assistant"
+            ),
+        )
+        tokenizer = MagicMock()
+        tokenizer._tokenizer = inner
+        tokenizer.encode.side_effect = inner.encode
+        setup_inference_parser.get_tokenizer = AsyncMock(return_value=tokenizer)
+        messages = [
+            {"role": "user", "content": "Weather?"},
+            {"role": "tool", "content": "Sunny", "tool_call_id": "abc123def"},
+        ]
+        info = create_test_request_info(turns=[sample_turn])
+        info.payload_bytes = orjson.dumps({"messages": messages})
+        record = RequestRecord(request_info=info, model_name="test-model")
+
+        result = await setup_inference_parser.compute_input_token_count(record)
+
+        expected = inner.apply_chat_template(
+            messages, tokenize=True, add_generation_prompt=True, return_dict=False
+        )
+        assert result == len(expected)
         tokenizer.encode.assert_not_called()
 
     async def test_chat_template_messages_passed_with_role_and_content(
@@ -1203,6 +1321,26 @@ class TestSpecDecodeRequestCardinality:
         result = await self._parse(
             server_token_parser, self._with_n(request_record, 2), spy_tokenizer
         )
+        assert result.spec_decode_acceptance is None
+
+    async def test_multi_prompt_request_with_one_payload_yields_none(
+        self, server_token_parser, request_record, spy_tokenizer
+    ):
+        """SGLang streams one prompt's details for a batched ``n=1`` request."""
+        payload = orjson.loads(request_record.request_info.payload_bytes)
+        payload.pop("n", None)
+        payload["prompt"] = ["first prompt", "second prompt"]
+        request_record.request_info.payload_bytes = orjson.dumps(payload)
+        result = await self._parse(server_token_parser, request_record, spy_tokenizer)
+        assert result.spec_decode_acceptance is None
+
+    async def test_stripped_payload_uses_worker_sequence_count(
+        self, server_token_parser, request_record, spy_tokenizer
+    ):
+        """The worker counts sequences before it strips the payload bytes."""
+        request_record.request_info.payload_bytes = None
+        request_record.request_info.num_choices = 2
+        result = await self._parse(server_token_parser, request_record, spy_tokenizer)
         assert result.spec_decode_acceptance is None
 
 

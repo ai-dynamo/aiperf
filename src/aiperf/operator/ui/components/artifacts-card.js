@@ -5,6 +5,7 @@ import { html } from 'htm/preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { fmtBytes as defaultFmtBytes } from '../lib/format.js';
 import { palette } from '../lib/theme.js';
+import { API_BASE } from '../lib/base-path.js';
 import { LoadingPanel, Spinner } from './spinner.js';
 
 const PREVIEWABLE = new Set(['json', 'csv', 'txt', 'ansi']);
@@ -299,7 +300,7 @@ function fileTypeChip(filename) {
 
 function resultFileUrl(namespace, name, epoch, fileName) {
   const encodedFileName = fileName.split('/').map(encodeURIComponent).join('/');
-  return `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(epoch)}/${encodedFileName}`;
+  return `${API_BASE}/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(epoch)}/${encodedFileName}`;
 }
 
 function selectedEmptyKey({ resolvedEpoch, isCompleted, isRunning }) {
@@ -341,7 +342,7 @@ export function ArtifactsCard({
   const canBuildFileUrls = fileUrl != null || resolvedEpoch != null;
   const downloadAllUrl = bundleUrl ?? (resolvedEpoch != null && api?.resultBundleUrl ? api.resultBundleUrl(namespace, name, resolvedEpoch) : null);
   const resolvedQuickExportUrl = quickExportUrl ?? (resolvedEpoch != null
-    ? `/api/v1/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(resolvedEpoch)}/profile_export?format=json`
+    ? `${API_BASE}/results/${encodeURIComponent(namespace)}/${encodeURIComponent(name)}/runs/${encodeURIComponent(resolvedEpoch)}/profile_export?format=json`
     : null);
   const artifactSummary = [
     `${files.length} file${files.length === 1 ? '' : 's'}`,

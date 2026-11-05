@@ -3,12 +3,14 @@
 
 """Tests for HuggingFace cache detection in the tokenizer module."""
 
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
 
 import pytest
+from pytest import param
 
-from aiperf.common.tokenizer import Tokenizer, _is_hf_cached
+from aiperf.common.exceptions import TokenizerError
+from aiperf.common.tokenizer import Tokenizer, _is_hf_cached, _is_local_path
 
 
 @pytest.fixture
@@ -168,7 +170,7 @@ class TestTokenizerOnlyRepoCacheLoad:
         monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
         monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
 
-        seen_kwargs: dict[str, object] = {}
+        seen_kwargs: dict[str, str] = {}
 
         def fake_from_pretrained(name_or_path, **kwargs):
             seen_kwargs["name_or_path"] = name_or_path
@@ -225,7 +227,7 @@ class TestTokenizerOnlyRepoCacheLoad:
 
         monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
 
-        seen: dict[str, object] = {}
+        seen: dict[str, str] = {}
 
         def fake_from_pretrained(name_or_path, **kwargs):
             seen["name_or_path"] = name_or_path
@@ -248,6 +250,92 @@ class TestTokenizerOnlyRepoCacheLoad:
         # infers everything from the directory contents.
         assert "revision" not in seen
         assert "local_files_only" not in seen
+
+
+class TestOfflineLocalPathLoad:
+    """Offline workers must load the same local directory the online parent loads.
+
+    Worker pools (``parallel_decode``, ``parallel_convert``) force
+    ``HF_HUB_OFFLINE=1`` and reload the tokenizer by name. Online,
+    transformers loads any existing directory before consulting the hub, so
+    every row below is a local load in the parent. Offline, handing these
+    names to ``snapshot_download`` raised ``HFValidationError`` (anchored
+    paths) or missed the cache (relative paths) and broke the process pool,
+    or silently loaded a different cached tokenizer (shadowed repo id).
+    """
+
+    @pytest.fixture
+    def offline_loader(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> dict[str, str]:
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+
+        def fail_snapshot_download(*args, **kwargs):
+            raise AssertionError(
+                f"snapshot_download must not see a local path: {args} {kwargs}"
+            )
+
+        monkeypatch.setattr("huggingface_hub.snapshot_download", fail_snapshot_download)
+        seen: dict[str, str] = {}
+
+        def fake_from_pretrained(name_or_path, **kwargs):
+            seen["name_or_path"] = name_or_path
+            return _FakeHfTokenizer()
+
+        monkeypatch.setattr(
+            "transformers.AutoTokenizer.from_pretrained", fake_from_pretrained
+        )
+        return seen
+
+    @pytest.mark.parametrize(
+        ("rel_dir", "absolute"),
+        [
+            param("tok", True, id="absolute-path"),
+            param("./tok", False, id="dot-slash-relative"),
+            param("models/tok", False, id="relative-no-dot-slash"),
+            param("tok", False, id="bare-dir-in-cwd"),
+            param("Org/Model", False, id="cwd-dir-shadows-repo-id"),
+        ],
+    )  # fmt: skip
+    def test_from_pretrained_offline_local_dir_loads_that_dir(
+        self,
+        tmp_path: Path,
+        offline_loader: dict[str, str],
+        rel_dir: str,
+        absolute: bool,
+    ) -> None:
+        local_dir = tmp_path / rel_dir
+        local_dir.mkdir(parents=True)
+        name = str(local_dir) if absolute else rel_dir
+
+        Tokenizer.from_pretrained(name, resolve_alias=False)
+
+        assert Path(offline_loader["name_or_path"]).resolve() == local_dir.resolve()
+
+    def test_from_pretrained_offline_missing_local_path_raises_clear_error(
+        self, tmp_path: Path, offline_loader: dict[str, str]
+    ) -> None:
+        with pytest.raises(TokenizerError, match="is not a directory"):
+            Tokenizer.from_pretrained(str(tmp_path / "missing"), resolve_alias=False)
+
+        assert "name_or_path" not in offline_loader
+
+    def test_is_local_path_treats_posix_absolute_path_as_local_on_windows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``WindowsPath("/data/x").is_absolute()`` is False; the anchor is not."""
+
+        class _NonexistentWindowsPath(PureWindowsPath):
+            def is_dir(self) -> bool:
+                return False
+
+        monkeypatch.setattr("aiperf.common.tokenizer.Path", _NonexistentWindowsPath)
+
+        assert _NonexistentWindowsPath("/data/models/x").is_absolute() is False
+        assert _is_local_path("/data/models/x") is True
+        assert _is_local_path("Org/Model") is False
 
 
 class _FakeHfTokenizer:

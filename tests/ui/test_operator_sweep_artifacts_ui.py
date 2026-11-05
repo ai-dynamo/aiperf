@@ -27,10 +27,10 @@ def test_api_exports_encoded_sweep_artifact_url_helpers() -> None:
     src = _source(_API_JS)
 
     expected_helpers = {
-        "sweepArtifactListUrl": "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts`",
-        "sweepArtifactBundleUrl": "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts.zip`",
-        "sweepArtifactFileUrl": "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/${fileSeg}`",
-        "sweepProfileExportUrl": "`${BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/profile_export?format=${formatSeg}`",
+        "sweepArtifactListUrl": "`${API_BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts`",
+        "sweepArtifactBundleUrl": "`${API_BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts.zip`",
+        "sweepArtifactFileUrl": "`${API_BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/${fileSeg}`",
+        "sweepProfileExportUrl": "`${API_BASE}/sweeps/${nsSeg}/${sweepSeg}/epochs/${epSeg}/artifacts/profile_export?format=${formatSeg}`",
     }
     for helper, expected_return in expected_helpers.items():
         assert f"{helper}(" in src, f"api must export {helper}"
