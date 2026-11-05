@@ -215,7 +215,9 @@ class PhaseRunner(TaskManagerMixin):
         self._on_phase_error: Callable[[BaseException], None] | None = None
 
         # Per-phase components - order matters
-        self._scheduler = LoopScheduler()
+        self._scheduler = LoopScheduler(
+            exception_handler=self._on_scheduled_task_failed
+        )
         self._lifecycle = PhaseLifecycle(self._config)
         self._progress = PhaseProgressTracker(self._config)
         self._stop_checker = StopConditionChecker(
@@ -446,6 +448,12 @@ class PhaseRunner(TaskManagerMixin):
         """
         self._progress.record_fatal_error(error)
 
+    def _on_scheduled_task_failed(self, task: asyncio.Task) -> None:
+        """Wake phase waits when detached issuance fails, retaining the first cause."""
+        if (error := task.exception()) is not None:
+            self._progress.record_fatal_error(error)
+            self._progress.all_credits_sent_event.set()
+
     def _is_phase_complete(self) -> bool:
         """Return True if the request-count cap has been reached AND no DAG
         children are still in flight.
@@ -502,9 +510,7 @@ class PhaseRunner(TaskManagerMixin):
         self._scheduler.cancel_all()
 
     def _raise_if_control_node_failed(self) -> None:
-        """Re-raise a fatal request-free control-node failure recorded on the
-        progress tracker (via the router's fatal-error sink), so the phase exits
-        with a visible error instead of reporting the graph as complete."""
+        """Re-raise a recorded scheduler or request-free control-node failure."""
         if self._progress.fatal_error is not None:
             raise self._progress.fatal_error
 
@@ -796,6 +802,7 @@ class PhaseRunner(TaskManagerMixin):
         self._execution_task = self.execute_async(strategy.execute_phase())
 
         await self._wait_for_sending_complete(strategy)
+        self._raise_if_control_node_failed()
 
         if self._was_cancelled:
             if not self._lifecycle.is_complete:

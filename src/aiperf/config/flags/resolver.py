@@ -1650,7 +1650,7 @@ def _apply_phase_loadgen_overrides(
     from aiperf.config.flags._converter_profiling import (
         _AGENTIC_REPLAY_ROUTES,
         _apply_agentic_replay_fields,
-        apply_continuation_dispatch,
+        _apply_continuation_dispatch,
     )
 
     decision = phase_shape_decision or _PhaseShapeDecision()
@@ -1678,7 +1678,7 @@ def _apply_phase_loadgen_overrides(
         target, cli, loadgen_set, decision=phase_shape_decision
     )
     _apply_rate_series_override(target, cli, loadgen_set)
-    apply_continuation_dispatch(target, cli)
+    _apply_continuation_dispatch(target, cli)
     return decision
 
 

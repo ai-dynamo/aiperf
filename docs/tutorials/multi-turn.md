@@ -243,7 +243,7 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
-By default, `--request-rate` counts **all turns**, including continuations.
+By default, `--request-rate` counts **all root-session turns**, including continuations.
 After a turn completes and its think time elapses, the continuation waits for
 the next arrival slot and takes priority over new sessions. For fixed four-turn
 conversations, a rate of 5 requests/second therefore does not mean 5 session
@@ -255,6 +255,10 @@ think time, without consuming another rate slot. Session and prefill concurrency
 limits still apply, so backpressure can delay dispatch. `--request-count` still
 limits all requests, and duration/cancellation still stop continuation issuance.
 Reported request throughput continues to count requests, not session starts.
+
+`continuation_dispatch` controls only **root continuation turns** (`agent_depth == 0`).
+DAG children (`agent_depth > 0`) follow their existing direct-dispatch and branch
+lifecycle rules under either policy.
 
 In YAML, set `continuation_dispatch: direct` on a `constant`, `poisson`, or
 `gamma` phase. The default is `rate_slot`. The CLI flag overrides the profiling

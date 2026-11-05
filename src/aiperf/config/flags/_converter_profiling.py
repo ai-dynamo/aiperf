@@ -395,7 +395,7 @@ def _apply_phase_specific_routes(prof: dict[str, Any], cli: CLIConfig) -> None:
     phase_type = prof["type"]
     fields_set = cli.model_fields_set
 
-    apply_continuation_dispatch(prof, cli)
+    _apply_continuation_dispatch(prof, cli)
 
     for output_key, attr_name in _GAMMA_ONLY_ROUTES:
         if attr_name not in fields_set:
@@ -420,17 +420,13 @@ def _apply_phase_specific_routes(prof: dict[str, Any], cli: CLIConfig) -> None:
         prof[output_key] = getattr(cli, attr_name)
 
 
-def apply_continuation_dispatch(prof: dict[str, Any], cli: CLIConfig) -> None:
+def _apply_continuation_dispatch(prof: dict[str, Any], cli: CLIConfig) -> None:
     """Route the opt-in continuation policy only onto open-loop rate phases."""
-    from aiperf.config.phases import PhaseType
+    from aiperf.config.phases import CONTINUATION_DISPATCH_PHASE_TYPES
 
     if "continuation_dispatch" not in cli.model_fields_set:
         return
-    if prof.get("type") not in {
-        PhaseType.CONSTANT,
-        PhaseType.POISSON,
-        PhaseType.GAMMA,
-    }:
+    if prof.get("type") not in CONTINUATION_DISPATCH_PHASE_TYPES:
         raise ValueError(
             "--continuation-dispatch requires constant, poisson, or gamma "
             "request-rate scheduling"

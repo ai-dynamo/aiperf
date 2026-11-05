@@ -37,11 +37,17 @@ from aiperf.plugin.enums import PhaseType, PhaseTypeStr, RampType, TimingMode
 FULL_PASS_SESSIONS: Final = "all"
 """``sessions`` value that runs every loaded conversation exactly once."""
 
+CONTINUATION_DISPATCH_PHASE_TYPES: Final = frozenset(
+    {PhaseType.CONSTANT, PhaseType.POISSON, PhaseType.GAMMA}
+)
+"""Phase types supporting the root continuation dispatch policy."""
+
 __all__ = [
     "FULL_PASS_SESSIONS",
     "BasePhaseConfig",
     "CancellationConfig",
     "ConcurrencyPhase",
+    "CONTINUATION_DISPATCH_PHASE_TYPES",
     "ConstantPhase",
     "DEFAULT_UNBOUNDED_REQUESTS",
     "DurationSpec",
@@ -569,9 +575,10 @@ class RatePhaseConfig(BasePhaseConfig):
         Literal["rate_slot", "direct"],
         Field(
             default="rate_slot",
-            description="Continuation scheduling for constant, poisson, and gamma phases. "
+            description="Root continuation scheduling for constant, poisson, and gamma phases. "
             "rate_slot counts every turn against rate; direct paces session starts "
-            "and sends later turns after think time, subject to concurrency limits.",
+            "and sends later root turns after think time, subject to concurrency limits. "
+            "DAG children use their independent dispatch path.",
         ),
     ]
 
@@ -600,7 +607,7 @@ class RatePhaseConfig(BasePhaseConfig):
         if self.rate is not None and self.rate_series is not None:
             raise ValueError("rate and rate_series are mutually exclusive")
         if self.continuation_dispatch == "direct" and (
-            self.type not in {PhaseType.CONSTANT, PhaseType.POISSON, PhaseType.GAMMA}
+            self.type not in CONTINUATION_DISPATCH_PHASE_TYPES
             or self.adaptive_scale
             or self.timing_mode not in {None, TimingMode.REQUEST_RATE}
         ):
