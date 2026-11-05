@@ -27,6 +27,7 @@ from dash import Input, Output, State, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 from ruamel.yaml import YAML
 
+from aiperf.plot.browser import png_fallback_readme
 from aiperf.plot.config import PlotConfig
 from aiperf.plot.constants import (
     ALL_STAT_KEYS,
@@ -1736,16 +1737,7 @@ def register_export_png_callback(
 
             # Add README only if PNG export failed and fell back to HTML
             if export_format == "png" and html_fallback_used[0]:
-                readme = """AIPerf Dashboard Plots - Exported as HTML
-
-Chrome rendering failed, so PNG export was unavailable.
-Plots have been exported as interactive HTML files instead.
-
-To enable PNG export in the future, run:
-    plotly_get_chrome
-
-HTML files can be opened in any web browser and are fully interactive.
-"""
+                readme = png_fallback_readme()
                 zip_file.writestr("README.txt", readme.encode())
 
         # Generate filename with timestamp
@@ -1961,16 +1953,7 @@ HTML files can be opened in any web browser and are fully interactive.
 
             # Add README if any PNG conversion fell back to HTML
             if export_format == "png" and html_fallback_used[0]:
-                readme = """AIPerf Dashboard Plots - Exported as HTML
-
-Chrome rendering failed, so PNG export was unavailable.
-Plots have been exported as interactive HTML files instead.
-
-To enable PNG export in the future, run:
-    plotly_get_chrome
-
-HTML files can be opened in any web browser and are fully interactive.
-"""
+                readme = png_fallback_readme()
                 zip_file.writestr("README.txt", readme.encode())
 
         # Generate filename with timestamp
