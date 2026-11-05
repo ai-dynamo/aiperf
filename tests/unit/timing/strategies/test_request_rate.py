@@ -368,7 +368,7 @@ async def test_high_res_pacer_os_error_falls_back_to_event_loop_timers() -> None
 
 
 class _ControlledClock:
-    """A perf clock the test advances explicitly, never the wall clock.
+    """A perf clock pinned at one instant, never the wall clock.
 
     The rate loop's first deadline is ``started_at_perf_ns + next_interval()``
     and it is compared against ``time.perf_counter()`` read a few statements
@@ -391,11 +391,8 @@ class _ControlledClock:
     def perf_counter(self) -> float:
         return self.now
 
-    def advance(self, seconds: float) -> None:
-        self.now += seconds
 
-
-class _PerfStartSampledWhenRead:
+class _ControlledClockLifecycle:
     """Phase lifecycle whose start stamp comes from the controlled clock."""
 
     def __init__(self, clock: _ControlledClock) -> None:
@@ -455,7 +452,7 @@ async def test_execute_phase_cancelled_mid_pace_drains_pacer_and_closes(
             self.closed = True
 
     clock = _ControlledClock()
-    lifecycle = _PerfStartSampledWhenRead(clock)
+    lifecycle = _ControlledClockLifecycle(clock)
     conversation_source = MagicMock()
     conversation_source.next.return_value.build_first_turn.return_value = object()
     if setup_delay:
