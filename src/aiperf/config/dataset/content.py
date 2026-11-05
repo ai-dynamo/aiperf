@@ -43,6 +43,7 @@ from aiperf.config.types import (
     SequenceDistributionEntry,
     validate_probability_distribution,
 )
+from aiperf.timing.strategies.cache_bust import RID_TARGETS
 
 
 def _parse_image_source(value: object) -> object:
@@ -83,6 +84,11 @@ class CacheBustConfig(BaseConfig):
     during the WARMUP phase; during PROFILING the marker is ``None`` so the
     profiling request arrives clean. These targets are phase-aware and do NOT use
     a per-trajectory digest. Incompatible with ``agentic_replay`` timing mode.
+
+    ``media_uuids`` extends a RID target to media: the ``uuid`` of every media
+    content part gets the trajectory's digest as a suffix, so a replayed
+    trajectory cannot reuse the server's multimodal cache entries for the same
+    media either.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -101,6 +107,27 @@ class CacheBustConfig(BaseConfig):
             ),
         ),
     ]
+
+    media_uuids: Annotated[
+        bool,
+        Field(
+            default=False,
+            description=(
+                "Append the trajectory's RID digest to every media `uuid`, so a "
+                "replay cannot hit vLLM's multimodal cache entries from an earlier "
+                "play. Requires a RID target and the chat endpoint."
+            ),
+        ),
+    ]
+
+    @model_validator(mode="after")
+    def _media_uuids_need_rid_target(self) -> Self:
+        if self.media_uuids and self.target not in RID_TARGETS:
+            raise ValueError(
+                "--cache-bust-media-uuids requires a RID --cache-bust target "
+                f"({', '.join(map(str, RID_TARGETS))}), got {self.target}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _record_explicit_set_flags(self) -> Self:
@@ -623,6 +650,7 @@ class AudioConfig(BaseConfig):
         list[float],
         Field(
             default_factory=lambda: [16.0],
+            min_length=1,
             description="List of audio sample rates in kHz to randomly select from. "
             "Common values: 8.0 (telephony), 16.0 (speech), 44.1 (CD quality), "
             "48.0 (professional). Specify multiple values for mixed-quality testing.",
@@ -633,6 +661,7 @@ class AudioConfig(BaseConfig):
         list[int],
         Field(
             default_factory=lambda: [16],
+            min_length=1,
             description="List of audio bit depths in bits to randomly select from. "
             "Each audio file is assigned a random depth from this list. "
             "Common values: 8 (low quality), 16 (CD quality), 24 (professional), "

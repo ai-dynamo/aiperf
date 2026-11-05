@@ -7,6 +7,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from aiperf.config.dataset.remote_ref import RemoteRef
     from aiperf.dataset.remote.models import ProbeResult, ResolvedSource
 
@@ -25,4 +27,8 @@ class SourceResolverProtocol(Protocol):
 
     async def materialize(self, probe: ProbeResult) -> ResolvedSource:
         """Download the probed version into the cache."""
+        ...
+
+    async def fetch_file(self, probe: ProbeResult, relpath: str) -> Path:
+        """Download one file of a probed folder into the cache; return its local path."""
         ...

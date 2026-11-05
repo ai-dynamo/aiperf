@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import pytest
 from pytest import param
 
+from aiperf.common.models import ErrorDetails
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.post_processors.strategies.genai_semconv import (
     METRIC_NAME_MAP,
@@ -56,6 +57,22 @@ class TestClassifyErrorType:
     )  # fmt: skip
     def test_error_type_mapping(self, error_type: str, expected: str) -> None:
         error = SimpleNamespace(code=None, type=error_type, cause_chain=[], message="")
+        assert _classify_error_type(error) == expected
+
+    @pytest.mark.parametrize(
+        "error_type,code,expected",
+        [
+            param("RequestCancellationError", 499, "cancelled", id="request-cancellation"),
+            param("TimeoutError", 504, "timeout", id="video-poll-deadline"),
+        ],
+    )  # fmt: skip
+    def test_error_type_wins_over_synthetic_status(
+        self, error_type: str, code: int, expected: str
+    ) -> None:
+        """The transport gives --request-cancellation-rate aborts the synthetic
+        status 499 and video-poll deadlines 504, and neither is a server response.
+        """
+        error = ErrorDetails(type=error_type, message="synthetic", code=code)
         assert _classify_error_type(error) == expected
 
     def test_cause_chain_timeout(self) -> None:
