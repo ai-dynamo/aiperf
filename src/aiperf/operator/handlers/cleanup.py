@@ -402,9 +402,20 @@ async def on_aiperfjob_delete_index_cleanup(
             job_id,
             exc,
         )
-    published = await asyncio.to_thread(
-        _published_epochs, base, namespace, job_id, epochs
-    )
+    try:
+        published = await asyncio.to_thread(
+            _published_epochs, base, namespace, job_id, epochs
+        )
+    except OSError as exc:
+        # Unreadable marker means publication is unknown; keep every row
+        # rather than discard results that may have been published.
+        logger.warning(
+            "Cannot check published epochs for %s/%s during on_delete: %s",
+            namespace,
+            job_id,
+            exc,
+        )
+        return
     for epoch in epochs - published:
         try:
             await runs_index.delete_run(namespace, job_id, epoch)

@@ -577,3 +577,39 @@ class TestOnDeleteIndexCleanup:
             assert await runs_index.list_runs_for_job(namespace, job_id) == []
         finally:
             await runs_index.close()
+
+    @pytest.mark.asyncio
+    async def test_on_delete_marker_stat_error_retains_rows_and_does_not_raise(
+        self, tmp_path: Path
+    ) -> None:
+        """An unreadable epoch dir must not escape the kopf delete handler.
+
+        Publication is unknown, so every row stays rather than risking the
+        loss of published results, and the CR finalizer is not left retrying.
+        """
+        base = tmp_path / "results"
+        namespace = "bench"
+        job_id = "unreadable-epoch"
+        epoch = "1730000000"
+        run_dir(base, namespace, job_id, epoch).mkdir(parents=True)
+
+        await runs_index.open(base / ".aiperf_index.sqlite")
+        try:
+            await runs_index.upsert_run_created(namespace, job_id, epoch, spec={})
+
+            with (
+                mock_patch.object(OperatorEnvironment.RESULTS, "DIR", base),
+                mock_patch.object(
+                    cleanup_handler,
+                    "_published_epochs",
+                    side_effect=PermissionError(13, "Permission denied"),
+                ),
+            ):
+                await cleanup_handler.on_aiperfjob_delete_index_cleanup(
+                    namespace, job_id, {}
+                )
+
+            rows = await runs_index.list_runs_for_job(namespace, job_id)
+            assert [row.epoch for row in rows] == [epoch]
+        finally:
+            await runs_index.close()
