@@ -197,7 +197,7 @@ class SyntheticDataset(SystemPromptMixin, EndOnTruncationMixin):
         Field(
             default=None,
             description="Number of request-response turns per conversation. "
-            "Can be a fixed integer or {mean, stddev} distribution. "
+            "Can be a fixed integer or a supported sampling distribution. "
             "Each turn consists of a user message and model response. "
             "Set to 1 for single-turn interactions. "
             "Multi-turn conversations enable testing of context retention "
@@ -210,7 +210,7 @@ class SyntheticDataset(SystemPromptMixin, EndOnTruncationMixin):
         Field(
             default=None,
             description="Delay in milliseconds between consecutive turns within a "
-            "multi-turn conversation. Can be a fixed value or {mean, stddev} distribution. "
+            "multi-turn conversation. Can be a fixed value or a supported sampling distribution. "
             "Simulates user think time between receiving a response and sending "
             "the next message. Only applies when turns > 1. "
             "Set to 0 for back-to-back turns.",
@@ -221,9 +221,10 @@ class SyntheticDataset(SystemPromptMixin, EndOnTruncationMixin):
         float,
         Field(
             ge=0.0,
+            allow_inf_nan=False,
             default=1.0,
             description="Multiplier for scaling all turn delays. "
-            "Applied after mean/stddev calculation: actual_delay = calculated_delay * ratio. "
+            "Applied after sampling: actual_delay = sampled_delay * ratio. "
             "Values < 1 speed up conversations, > 1 slow them down. "
             "Set to 0 to eliminate delays entirely.",
         ),
@@ -287,6 +288,8 @@ class SyntheticDataset(SystemPromptMixin, EndOnTruncationMixin):
                 f"(got {self.turns.expected_value}); set --conversation-turn-mean "
                 "to at least 1 or omit it for single-turn conversations."
             )
+        if self.turns is not None:
+            self.turns.positive_integer_bounds()
         return self
 
 
