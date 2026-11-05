@@ -120,6 +120,8 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
     pre-hoist behavior.
     """
 
+    reads_parquet = True
+
     _hoist_leading_system_message: ClassVar[bool] = True
     """Hoist a leading text-only system turn into ``conversation.system_message``.
 
@@ -272,6 +274,7 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
             delay=self._delay_cap_tracker.clamp(single_turn.delay),
             role=single_turn.role,
             max_tokens=single_turn.output_length,
+            audio_duration_seconds=single_turn.audio_duration_seconds,
             extra_body=single_turn.extra,
         )
 

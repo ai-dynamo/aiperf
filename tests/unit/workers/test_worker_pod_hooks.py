@@ -74,9 +74,10 @@ class TestStartupStateReporting:
         assert mock_worker.publish.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_startup_reaches_ready(self, mock_worker: Worker) -> None:
-        """The started fixture worker has already run its @on_start hook."""
-        assert mock_worker._startup_state == WorkerStartupState.READY
+    async def test_startup_waits_for_dataset(self, mock_worker: Worker) -> None:
+        """Starting the service alone must not announce dispatchability."""
+        assert mock_worker._startup_state == WorkerStartupState.WAITING_FOR_DATASET
+        assert not mock_worker._worker_ready_event.is_set()
 
     @pytest.mark.asyncio
     async def test_shutdown_reports_shutting_down(self, mock_worker: Worker) -> None:

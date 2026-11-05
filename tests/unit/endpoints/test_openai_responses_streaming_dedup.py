@@ -24,6 +24,7 @@ from aiperf.common.models.record_models import (
     ReasoningResponseData,
     TextResponseData,
     ToolCallResponseData,
+    find_last_non_empty_usage,
 )
 from aiperf.endpoints.openai_responses import ResponsesEndpoint
 from aiperf.plugin.enums import EndpointType
@@ -161,6 +162,36 @@ class TestResponsesStreamingOutputTokenDedup:
 
         # The stream-terminal usage is still surfaced for server-token-count mode.
         assert any(p.usage is not None for p in parsed)
+
+    def test_truncated_stream_surfaces_usage_from_incomplete_event(self, endpoint):
+        """A stream stopped by max_output_tokens ends in ``response.incomplete``
+        instead of ``response.completed``; server-token-count mode reads its usage
+        from that terminal event, so losing it would drop OSL for the request.
+        """
+        events = [
+            {"type": "response.created", "response": {}},
+            *[
+                {"type": "response.output_text.delta", "delta": d}
+                for d in OUTPUT_DELTAS
+            ],
+            {"type": "response.output_text.done", "text": OUTPUT_TEXT},
+            {
+                "type": "response.incomplete",
+                "response": {
+                    "status": "incomplete",
+                    "incomplete_details": {"reason": "max_output_tokens"},
+                    "usage": {"input_tokens": 5, "output_tokens": 8},
+                },
+            },
+        ]
+
+        usage = find_last_non_empty_usage(
+            endpoint.extract_response_data(_record(events))
+        )
+
+        assert usage is not None
+        assert usage.prompt_tokens == 5
+        assert usage.completion_tokens == 8
 
     def test_non_streaming_full_response_extracts_output_once(
         self, endpoint, tokenizer

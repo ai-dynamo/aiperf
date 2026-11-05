@@ -173,9 +173,24 @@ likewise each run in their own container inside a worker pod.
 | `records-manager` | Aggregates results from workers |
 | `api` | WebSocket + HTTP on port 9090 |
 | `gpu-telemetry-manager` | GPU metrics via DCGM (optional) |
-| `server-metrics-manager` | Prometheus metrics (optional) |
+| `server-metrics-manager` | Prometheus metrics (optional restartable native sidecar in `initContainers`) |
 | `results-sidecar` | Serves exported results after controller exit (port 9091) |
 | `event-bus-proxy` | XPUB/XSUB ZMQ proxy sidecar (`AIPERF_K8S_EVENT_BUS_SIDECAR_ENABLED=true` by default; isolates pub/sub I/O from the SystemController process) |
+
+The server-metrics sidecar uses `restartPolicy: Always` (Kubernetes 1.29+).
+It has a liveness probe but no startup/readiness probe: registration needs the
+controller to start first, and optional telemetry must not gate pod readiness.
+An OOM or liveness restart therefore restarts only this sidecar, without failing
+the Job. User init containers still run before it. The operator excludes this
+optional sidecar's crash loops from fatal startup diagnosis.
+
+Each control-channel `Registration` carries a process-stable `instance_id`.
+Reconnecting preserves it; restarting changes it. A metrics restart after
+initialization retires the old result producer even when it happens faster than
+the heartbeat watchdog. Retired producers cannot rejoin the result barrier or
+replace the recorded failure with a late result. Watchdog eviction follows the
+same export contract: inference continues, the primary JSON names incomplete
+server metrics, and the controller exports before reporting a degraded run.
 
 Per-container health ports run 8080-8088 (`AIPERF_K8S_PORT_*_HEALTH`); the API
 service is on 9090 and the results sidecar on 9091.
@@ -367,6 +382,36 @@ access.
 └── index.dat         # Decompressed index
 ```
 
+### Remote Dataset Sources
+
+`hf://`, `s3://` and `https://` dataset paths (`FileDataset.path` as a `RemoteRef`) are
+resolved before the dataset-manager composes, never by workers.
+
+| Stage | Where | Code |
+|---|---|---|
+| Pin (access stage) | `aiperf kube profile/generate/sweep`, on the CLI host, before the CR is rendered | `aiperf.kubernetes.remote_datasets.pin_remote_datasets_for_kubernetes` (runs `preflight_remote_access`; auth-class failures on `hf://` and `s3://` leave the ref unpinned) |
+| Pod-credential check | CLI host before submission; operator workload preflight | `check_remote_datasets`, with needs-auth from `aiperf.dataset.remote.anonymous` |
+| CR validation | `prepare_workload_spec` | `validate_remote_datasets_for_kubernetes` rejects the CLI-only `remoteFixedScheduleCheck` marker and unredacted credentials |
+| Rehydrate presigned URLs | dataset-manager container, after endpoint credentials | `apply_injected_dataset_urls` (Secret-backed `AIPERF_INJECTED_DATASET_URLS`, matched by `RemoteRef.canonical`); every other container pops the variable |
+| Pin if unpinned, download | dataset-manager container, before `bootstrap_and_run_service` | `preflight_datasets_for_run` |
+| Report a failure | dataset-manager container | `aiperf.kubernetes.dataset_startup.write_termination_message` writes `/dev/termination-log` (`[dataset-manager pod] ...`, at most 4 KiB); the container sets `terminationMessagePolicy: FallbackToLogsOnError` |
+| Surface a failure | operator | `_get_terminated_controller_info` appends `terminated.message`; `_fail_unrecoverable_controller` sets `status.error` and, for a message with the `[dataset-manager pod]` prefix, `DatasetReady=False` (`DatasetUnavailable`) |
+
+The dataset-manager's startup order is endpoint credentials, then dataset URL rehydration,
+then `preflight_datasets_for_run`, then bootstrap (`aiperf.cli_commands.service`). The health
+server starts in bootstrap, so a long download runs while the startup probe is failing; see
+[Large datasets and the startup probe](../tutorials/remote-datasets.md#large-datasets-and-the-startup-probe).
+
+The pin rides inside the CR as `path: {ref, resolved_version}`, so the serialized run stays
+the single source of truth. When the dataset-manager pod pins an unpinned ref, the version
+and any manifest defaults exist only in that container's copy of the run; this is the
+documented gap for `kubectl`-applied resources and for CLI hosts without read access. The
+dataset-manager and control-plane containers mount the `remote-cache` emptyDir at
+`/aiperf/remote-cache` (`AIPERF_DATASET_REMOTE_CACHE_DIR`), so the control-plane's exporter
+can read the cache index for provenance. `redact_endpoint_spec` redacts dataset paths in every
+spec the operator persists or serves. `aiperf kube debug` reads `status.error` and the
+`DatasetReady` condition through `diagnose_job_failure`.
+
 ## 6. Benchmark Execution Flow
 
 ```mermaid
@@ -388,6 +433,13 @@ flowchart LR
 5. **Workers** - Make LLM API calls once their `WorkerGroupManager` reports group-local readiness, then generate raw records
 6. **RecordProcessor** - Computes metrics (latency, TTFT, throughput)
 7. **RecordsManager** - Aggregates results from all workers
+
+The RecordsManager's per-request JSONL stream is also available under
+`checkpoints/` before final export when request export and checkpointing are
+enabled. Both names refer to the same file. The API and results sidecar expose
+the checkpoint independently of the results-ready marker, so the operator can
+recover flushed request metrics after an interrupted export. Recovery retains
+the run's failed status; the checkpoint is not a final aggregate report.
 
 ### Service Discovery
 
@@ -907,7 +959,12 @@ Sensitive endpoint fields never rely on the ConfigMap copy. JSON
 serialization redacts them, and `aiperf service --benchmark-run` restores them
 from the Secret-backed `AIPERF_INJECTED_API_KEY`/`OPENAI_API_KEY`,
 `AIPERF_INJECTED_HEADERS`, and `AIPERF_INJECTED_ENDPOINT_URLS` environment
-variables. Generation and operator reconciliation fail closed when the
+variables. Presigned dataset URLs travel the same way, through
+`AIPERF_INJECTED_DATASET_URLS`, which the JobSet builder renders into the dataset-manager
+container only (`build_env_vars(dataset_downloader=...)`); the AIPerfSweep controller's
+container is rendered without it too, since child jobs take it from the sweep spec.
+Generation and operator
+reconciliation fail closed when the
 corresponding `valueFrom.secretKeyRef` mapping is absent.
 `aiperf service` requires `--benchmark-run` and never resolves per-container
 benchmark flags.

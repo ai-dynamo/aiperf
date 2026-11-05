@@ -198,7 +198,14 @@ _CLI_SECRET_PATTERNS: Sequence[re.Pattern[str]] = (
 # non-credential URL parts. Kept separate from _CLI_SECRET_PATTERNS because the
 # replacement is structural (strip userinfo) rather than wholesale (<redacted>).
 _URL_FLAG_ALT = "|".join(
-    re.escape(f) for f in ("--url", "-u", "--otel-url", "--mlflow-tracking-uri")
+    re.escape(f)
+    for f in (
+        "--url",
+        "-u",
+        "--otel-url",
+        "--mlflow-tracking-uri",
+        "--input-file",
+    )
 )
 # Match: (flag)(sep)(open quote?)(value)(close quote?)
 # Group 1: flag + separator, group 2: optional open quote, group 3: raw value,
@@ -397,6 +404,37 @@ def build_cli_command() -> str:
     return redact_cli_command(cmd)
 
 
+def is_sensitive_query_parameter_name(name: str) -> bool:
+    """Return True when a raw query parameter name denotes a credential.
+
+    A server percent-decodes the parameter name before dispatching, so
+    ``api%5Fkey``, ``%61pi_key`` and ``api_key`` all name the same parameter.
+    Matching the raw text alone therefore lets any encoded spelling smuggle a
+    secret through unredacted, so the name is decoded before matching.
+    """
+    try:
+        decoded_name = unquote_plus(name, errors="strict")
+    except UnicodeDecodeError:
+        # Undecodable octets cannot name a sensitive parameter on the
+        # server either; fall back to the raw text rather than dropping it.
+        decoded_name = name
+    return (
+        _SENSITIVE_URL_QUERY_PARAMETER_NAME_PATTERN.fullmatch(decoded_name) is not None
+    )
+
+
+def has_sensitive_query_parameters(url: str) -> bool:
+    """Return True when the URL carries a credential-bearing query parameter.
+
+    Uses the same name matching as :func:`redact_url`, so a URL for which this
+    returns True is exactly one whose query ``redact_url`` rewrites.
+    """
+    return any(
+        is_sensitive_query_parameter_name(match.group(2))
+        for match in _URL_QUERY_PARAMETER_PATTERN.finditer(url)
+    )
+
+
 def _redact_sensitive_query_parameters(url: str) -> str:
     """Replace the value of every credential-carrying query parameter.
 
@@ -404,22 +442,15 @@ def _redact_sensitive_query_parameters(url: str) -> str:
     re-emitted byte-for-byte. Rebuilding the URL through ``urlsplit``/
     ``urlencode`` would additionally normalize escaping, parameter ordering and
     path bytes, changing URLs that carry no credentials at all.
-
-    A server percent-decodes the parameter name before dispatching, so
-    ``api%5Fkey``, ``%61pi_key`` and ``api_key`` all name the same parameter.
-    Matching the raw text alone therefore lets any encoded spelling smuggle a
-    secret through unredacted, so the name is decoded before matching.
     """
 
     def _redact_parameter(match: re.Match[str]) -> str:
-        separator, name = match.group(1), match.group(2)
-        try:
-            decoded_name = unquote_plus(name, errors="strict")
-        except UnicodeDecodeError:
-            # Undecodable octets cannot name a sensitive parameter on the
-            # server either; fall back to the raw text rather than dropping it.
-            decoded_name = name
-        if not _SENSITIVE_URL_QUERY_PARAMETER_NAME_PATTERN.fullmatch(decoded_name):
+        separator, name, value = match.group(1), match.group(2), match.group(3)
+        # An already-redacted value is kept so redaction stays idempotent;
+        # in free text the value span also covers trailing punctuation.
+        if not is_sensitive_query_parameter_name(name) or value.startswith(
+            REDACTED_VALUE
+        ):
             return match.group(0)
         return f"{separator}{name}={REDACTED_VALUE}"
 
@@ -451,22 +482,26 @@ def redact_url(url: str) -> str:
     return _redact_sensitive_query_parameters(result)
 
 
-def redact_endpoint_spec(spec: dict[str, Any]) -> dict[str, Any]:
-    """Return a credential-safe copy of a CR spec or benchmark configuration.
+_WHITESPACE_RUN = re.compile(r"(\s+)")
 
-    Kubernetes CRs use the public ``apiKey`` spelling while Python model dumps
-    may use ``api_key``. Both shapes cross persistence and API boundaries, so
-    the canonical redactor intentionally handles both without normalizing the
-    rest of the user-authored document.
+
+def redact_text(text: str) -> str:
+    """``redact_url`` for free text that may embed URLs.
+
+    ``redact_url`` treats everything after a sensitive query value as part of that
+    value, so applying it to a whole sentence would swallow the words after the
+    URL. Redacting each whitespace-delimited token keeps the sentence readable.
     """
-    redacted = deepcopy(spec)
-    benchmark = redacted.get("benchmark", redacted)
-    if not isinstance(benchmark, dict):
-        return redacted
-    endpoint = benchmark.get("endpoint")
-    if not isinstance(endpoint, dict):
-        return redacted
+    return "".join(
+        part if part.isspace() else redact_url(part)
+        for part in _WHITESPACE_RUN.split(text)
+    )
 
+
+def _redact_endpoint_fields(endpoint: Any) -> None:
+    """Redact one endpoint mapping in place (both ``apiKey`` and ``api_key`` shapes)."""
+    if not isinstance(endpoint, dict):
+        return
     for key in ("apiKey", "api_key"):
         if endpoint.get(key) is not None:
             endpoint[key] = REDACTED_VALUE
@@ -483,4 +518,42 @@ def redact_endpoint_spec(spec: dict[str, Any]) -> dict[str, Any]:
             endpoint[key] = [
                 redact_url(url) if isinstance(url, str) else url for url in urls
             ]
+
+
+def _redact_dataset_path(dataset: Any) -> None:
+    """Redact one dataset's ``path``: a string, or a pinned ``{ref, resolved_version}``."""
+    if not isinstance(dataset, dict):
+        return
+    path = dataset.get("path")
+    if isinstance(path, str):
+        dataset["path"] = redact_url(path)
+    elif isinstance(path, dict) and isinstance(path.get("ref"), str):
+        path["ref"] = redact_url(path["ref"])
+
+
+def _redact_dataset_paths(benchmark: dict[str, Any]) -> None:
+    """Redact every dataset path in a benchmark: ``datasets`` (list or map) and ``dataset``."""
+    datasets = benchmark.get("datasets")
+    if isinstance(datasets, dict):
+        datasets = list(datasets.values())
+    for dataset in datasets if isinstance(datasets, list) else []:
+        _redact_dataset_path(dataset)
+    _redact_dataset_path(benchmark.get("dataset"))
+
+
+def redact_endpoint_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """Return a credential-safe copy of a CR spec or benchmark configuration.
+
+    Kubernetes CRs use the public ``apiKey`` spelling while Python model dumps
+    may use ``api_key``. Both shapes cross persistence and API boundaries, so
+    the canonical redactor intentionally handles both without normalizing the
+    rest of the user-authored document. Dataset paths are redacted as well: a
+    presigned dataset URL is a credential.
+    """
+    redacted = deepcopy(spec)
+    benchmark = redacted.get("benchmark", redacted)
+    if not isinstance(benchmark, dict):
+        return redacted
+    _redact_endpoint_fields(benchmark.get("endpoint"))
+    _redact_dataset_paths(benchmark)
     return redacted

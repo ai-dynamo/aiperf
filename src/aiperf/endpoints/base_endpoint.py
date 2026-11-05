@@ -95,6 +95,39 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         """
         return None
 
+    def is_truncated(self, record: RequestRecord) -> bool:
+        """True when the server reports the response stopped because it hit the
+        output-token cap (``max_tokens``).
+
+        Endpoints without a stop-reason signal return False.
+        """
+        return False
+
+    @staticmethod
+    def _choices_finish_reason_is_length(record: RequestRecord) -> bool:
+        """OpenAI ``choices[0].finish_reason == "length"`` check, shared by the
+        Chat Completions and Completions endpoints.
+
+        Walks responses in reverse so a stream is decided by its last
+        finish-bearing chunk (the trailing usage-only chunk has empty
+        ``choices`` and is skipped) without scanning every token chunk.
+        """
+        for response in reversed(record.responses):
+            json_obj = response.get_json()
+            if not isinstance(json_obj, dict):
+                continue
+            choices = json_obj.get("choices")
+            if (
+                not isinstance(choices, list)
+                or not choices
+                or not isinstance(choices[0], dict)
+            ):
+                continue
+            finish_reason = choices[0].get("finish_reason")
+            if finish_reason is not None:
+                return finish_reason == "length"
+        return False
+
     def process_responses(
         self,
         record: RequestRecord,
@@ -118,7 +151,7 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     def extract_spec_decode_stats(json_obj: dict[str, Any]) -> dict[str, Any] | None:
         """Capture the raw speculative-decoding payload, wherever the engine put it.
 
-        Two placements are recognized, because the engines genuinely differ:
+        Three placements are recognized:
 
         - **Response root** ``metrics.speculative_decoding`` (vLLM), on the body
           non-streaming or on the trailing usage chunk (empty ``choices``)
@@ -128,13 +161,19 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
           the body non-streaming or on the terminal chunk's choice (the one
           carrying ``finish_reason``) streaming, when the server sets
           ``per_request_spec_decode_stats``.
+        - **Response extension** ``sglext.spec_tokens_details`` (SGLang),
+          on the body or a separate streaming chunk with empty ``choices``,
+          when the request sets ``return_spec_tokens_details: true``.
+          Multi-sequence responses use a list, which is excluded.
 
-        Root wins when both somehow appear. Captured verbatim and uninterpreted
-        so a ``SpecDecodeAdapterProtocol`` owns the engine-specific
+        Root wins when multiple placements appear. Captured verbatim and
+        uninterpreted so a ``SpecDecodeAdapterProtocol`` owns the engine-specific
         interpretation downstream; None when absent.
 
-        A response with more than one choice is an ``n > 1`` non-streaming
-        request; its per-choice payload is suppressed because a single
+        A response with more than one choice is an ``n > 1`` or multi-prompt
+        non-streaming request; its per-choice and SGLang payloads are
+        suppressed (SGLang reports only the first prompt's details as an
+        object when ``n == 1``) because a single
         per-request record cannot attribute request-level usage to one sequence
         -- reporting one choice's acceptance alongside all choices' token count
         would be a mixed, misleading record. (``n > 1`` streaming is suppressed
@@ -150,9 +189,18 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
                 return stats
 
         choices = json_obj.get("choices")
+        if isinstance(choices, list) and len(choices) > 1:
+            return None
+
+        sglext = json_obj.get("sglext")
+        if isinstance(sglext, dict):
+            stats = sglext.get("spec_tokens_details")
+            if isinstance(stats, dict):
+                return stats
+
         if (
             not isinstance(choices, list)
-            or len(choices) != 1
+            or not choices
             or not isinstance(choices[0], dict)
         ):
             return None
@@ -167,16 +215,16 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         that inherit the parent's history - see what the model actually said.
 
         The default implementation captures plain text plus the ``content``
-        field of any ``ReasoningResponseData``. When a response carries only
-        ``reasoning`` (some servers and the mock return everything in that
-        field with empty ``content`` - e.g. Qwen3-style outputs), the
-        reasoning text is used as a fallback so FORK-mode DAG children
-        still inherit a non-empty parent context. Endpoints whose responses
-        carry structured fields beyond plain text (e.g. chat ``tool_calls``
-        / ``function_call``) should override this to preserve those fields
-        verbatim by returning a Turn whose ``raw_messages`` re-renders as
-        the same assistant message - that way ``build_messages`` extends
-        them back into the wire body unchanged.
+        field of any ``ReasoningResponseData``, dropping ``reasoning`` the
+        way chat templates drop prior-turn thinking. When the whole reply
+        carries only ``reasoning`` (a turn truncated mid-thinking, or the
+        mock server's Qwen3-style output), the reasoning text is used as a
+        fallback so FORK-mode DAG children still inherit a non-empty parent
+        context. Endpoints whose responses carry structured fields beyond
+        plain text (e.g. chat ``tool_calls`` / ``function_call``) should
+        override this to preserve those fields verbatim by returning a Turn
+        whose ``raw_messages`` re-renders as the same assistant message - that
+        way ``build_messages`` extends them back into the wire body unchanged.
 
         Returns ``None`` when the record has no replayable assistant content
         (error response, empty body, etc.).
@@ -190,21 +238,22 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         parsed_responses: list[ParsedResponse],
     ) -> Turn | None:
         """Build the default text-only assistant turn from parsed responses."""
-        output_texts: list[str] = []
+        answer_texts: list[str] = []
+        reasoning_texts: list[str] = []
         for response in parsed_responses:
             if not response.data:
                 continue
             if isinstance(response.data, ReasoningResponseData):
                 if response.data.content:
-                    output_texts.append(response.data.content)
-                elif response.data.reasoning:
-                    # Reasoning-only fallback: without this, FORK children
-                    # of a Qwen3-style/mock-server response would inherit
-                    # a parent context with no captured assistant turn.
-                    output_texts.append(response.data.reasoning)
+                    answer_texts.append(response.data.content)
+                if response.data.reasoning:
+                    reasoning_texts.append(response.data.reasoning)
             else:
-                output_texts.append(response.data.get_text())
-        resp_text = "".join(output_texts)
+                answer_texts.append(response.data.get_text())
+        # Decided once per reply, not per parsed response: a streamed reply
+        # splits reasoning and answer across chunks, and replaying both glues
+        # the thinking into the answer.
+        resp_text = "".join(answer_texts) or "".join(reasoning_texts)
         if not resp_text:
             return None
         return Turn(role="assistant", texts=[Text(contents=[resp_text])])

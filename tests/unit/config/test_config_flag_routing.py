@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pytest import param
 
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags._section_fields import (
@@ -92,10 +93,19 @@ def test_unrouted_phase_flag_raises(base_yaml: Path) -> None:
         resolve_config(cli(disable_auto_fixed_schedule=True), base_yaml)
 
 
-def test_dataset_type_switch_flag_raises(base_yaml: Path) -> None:
-    """--hf-weka-dataset implies a public dataset, switching the type."""
-    with pytest.raises(ConfigurationError, match=r"--hf-weka-dataset"):
-        resolve_config(cli(hf_weka_dataset="some/dataset"), base_yaml)
+@pytest.mark.parametrize(
+    "field,flag",
+    [
+        param("hf_weka_dataset", "--hf-weka-dataset", id="weka"),
+        param("hf_mooncake_dataset", "--hf-mooncake-dataset", id="mooncake"),
+    ],
+)  # fmt: skip
+def test_dataset_type_switch_flag_raises(
+    base_yaml: Path, field: str, flag: str
+) -> None:
+    """HF repository flags imply a public dataset, switching the type."""
+    with pytest.raises(ConfigurationError, match=flag):
+        resolve_config(cli(**{field: "some/dataset"}), base_yaml)
 
 
 def test_error_names_every_offending_flag(base_yaml: Path) -> None:
@@ -137,6 +147,53 @@ def test_no_flags_with_config_is_fine(base_yaml: Path) -> None:
     """A bare --config invocation must not trip the guard."""
     resolved = resolve_config(cli(), base_yaml)
     assert resolved.benchmark.models.items[0].name == "test-model"
+
+
+@pytest.mark.parametrize("split", [None, "validation"])
+def test_hf_trace_overrides_merge_with_yaml(tmp_path: Path, split: str | None) -> None:
+    config = tmp_path / "hf.yaml"
+    config.write_text(
+        """\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint: {type: chat, url: "http://localhost:8000"}
+  dataset:
+    type: public
+    dataset: mooncake_hf
+    hf_mooncake_dataset: original/repo
+    hf_subset: original-subset
+    hf_mooncake_split: train
+    mooncake_trace_to_hf_mapping: {messages: history, tools: functions}
+    filters: {model: original-model, benchmark: original-benchmark}
+  phases: {type: concurrency, concurrency: 2, sessions: 3}
+"""
+    )
+    resolved = resolve_config(
+        cli(
+            **({"hf_mooncake_split": split} if split is not None else {}),
+            hf_dataset_subset="new-subset",
+            mooncake_trace_to_hf_mapping=[
+                "messages=turns",
+                "extra.temperature=params.temperature",
+            ],
+            dataset_filters=["model=new-model"],
+        ),
+        config,
+    )
+    dataset = resolved.benchmark.get_default_dataset()
+    assert dataset.hf_mooncake_dataset == "original/repo"
+    assert dataset.hf_subset == "new-subset"
+    assert dataset.hf_mooncake_split == (split or "train")
+    assert dataset.mooncake_trace_to_hf_mapping == {
+        "messages": "turns",
+        "tools": "functions",
+        "extra.temperature": "params.temperature",
+    }
+    assert dataset.filters == {
+        "model": "new-model",
+        "benchmark": "original-benchmark",
+    }
 
 
 # ---------------------------------------------------------------------------

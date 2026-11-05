@@ -76,6 +76,11 @@ treated as a bare hostname.
 There is **no `gpuTelemetry.*` section in the Helm chart**. Endpoint
 configuration is a per-run CLI flag, not a cluster-wide operator setting.
 
+DCGM collection runs on a fixed interval. If the previous scrape is still
+fetching or processing, the collector skips that tick instead of queuing another
+scrape. Slow endpoints can therefore produce fewer samples than the configured
+interval would suggest.
+
 ## Sidecar container
 
 When `gpu_telemetry_enabled=True`, the JobSet builder injects a dedicated
