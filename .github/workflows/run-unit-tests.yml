@@ -22,14 +22,16 @@ concurrency:
   cancel-in-progress: ${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
 
 jobs:
-  # PR copies run one leg per OS so a vetted head gets fast feedback; the
-  # merge queue, main, and release branches run the full matrix before code
-  # lands. Windows ARM and BoTorch run only in the full matrix.
+  # Copies of PRs into main run one leg per OS so a vetted head gets fast
+  # feedback, and the merge queue runs the full matrix before code lands.
+  # Release branches have no merge queue, so copies of PRs into them run the
+  # full matrix. Windows ARM and BoTorch run only in the full matrix.
   select-matrix:
     name: Select Test Matrix
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions: {}
+    permissions:
+      pull-requests: read
     outputs:
       matrix: ${{ steps.select.outputs.matrix }}
       full: ${{ steps.select.outputs.full }}
@@ -39,9 +41,23 @@ jobs:
       shell: python
       env:
         REF: ${{ github.ref }}
+        REPO: ${{ github.repository }}
+        GH_TOKEN: ${{ github.token }}
       run: |
         import json
         import os
+        import urllib.request
+
+        def pr_base(number):
+            req = urllib.request.Request(
+                f"https://api.github.com/repos/{os.environ['REPO']}/pulls/{number}",
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return json.load(resp)["base"]["ref"]
 
         runners = {
             "linux": "prod-aiperf-builder-amd-v1",
@@ -53,7 +69,11 @@ jobs:
         # are measured on the same interpreter.
         coverage_leg = ("linux", "3.13")
         pr_subset = [coverage_leg, ("macos", "3.12"), ("windows", "3.11")]
-        full = not os.environ["REF"].startswith("refs/heads/pull-request/")
+        copy_prefix = "refs/heads/pull-request/"
+        ref = os.environ["REF"]
+        full = not ref.startswith(copy_prefix) or pr_base(
+            ref.removeprefix(copy_prefix)
+        ).startswith("release/")
         legs = (
             [(o, py) for o in runners for py in ("3.11", "3.12", "3.13")]
             if full
