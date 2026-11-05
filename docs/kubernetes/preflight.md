@@ -64,7 +64,7 @@ advisory checks is reported as `WARN`; completed results are retained.
 |---|---|---|
 | Trigger | `kopf.on.create` for `AIPerfJob` | `aiperf kube preflight` |
 | Inputs | Fully resolved `DeploymentConfig`, `KubernetesDeployment`, `AIPerfConfig` | CLI flags only |
-| Check count | 19 | 14 |
+| Check count | 20 | 14 |
 | On FAIL | CR → `Failed`, `kopf.PermanentError` raised | CLI exits 1, JSON output on stdout if `-o json` |
 | Source | `src/aiperf/operator/preflight/_checker.py` | `src/aiperf/kubernetes/preflight.py:CLIPreflightChecker` |
 
@@ -477,6 +477,28 @@ still run. See `OperatorPreflightChecker._resource_mode_skip`.
 - **Fix**: `kubectl create secret -n <namespace>` for missing names, or grant
   `get secrets` to the caller.
 
+### Remote Datasets (operator and CLI)
+
+- **Validates**: every `hf://`, `s3://` or `https://` dataset reference against the pod
+  spec's credentials. Whether a source needs credentials is decided anonymously (Hugging Face
+  metadata read without a token, an unsigned S3 `HeadObject`, the URL's own query), so the
+  operator needs no access to the pod's credentials. `aiperf kube profile`, `generate` and
+  `sweep` run the same function before submission; it is not part of `aiperf kube preflight`.
+- **Source**: `src/aiperf/kubernetes/remote_datasets.py:check_remote_datasets`,
+  `src/aiperf/operator/preflight/_workload.py:_check_remote_datasets`
+- **Status**:
+  - `skip` — no remote dataset reference.
+  - `fail` — a private or gated Hugging Face repo with no Secret-backed `HF_TOKEN`, no
+    `HF_TOKEN_PATH` env, and no Secret mounted at `/aiperf/hf_home/token`; a presigned URL
+    that has already expired.
+  - `warn` — a non-public S3 object with no `AWS_*` env and the default service account
+    (IRSA, Pod Identity and node roles are invisible from the spec); a presigned URL that
+    expires within an hour; a Hugging Face repo that could not be checked.
+  - `pass` — otherwise.
+- **Fix**: the hint names the `--env-from-secrets` line to add. Expiry is read from
+  `X-Amz-Date` + `X-Amz-Expires`, `X-Goog-Date` + `X-Goog-Expires`, an epoch-seconds
+  `Expires` (CloudFront canned policy, S3 SigV2), or the Azure SAS `se` field.
+
 ### Image Reference (operator) / Image Pull (CLI)
 
 - **Validates**: the configured image has a well-formed reference and a pull path
@@ -581,6 +603,7 @@ Several checks `skip` automatically when they have nothing to validate:
 | Node Selector Match | `nodeSelector` not set |
 | Tolerations | `tolerations` not set |
 | Secrets | no secrets referenced |
+| Remote Datasets | no `hf://`, `s3://` or `https://` dataset reference |
 | Kueue Queue | Kueue CRD not installed *and* no `scheduling.queueName` requested |
 | Endpoint Connectivity (CLI) | `--endpoint-url` not passed |
 | Image Pull (CLI) | `--image` not passed |

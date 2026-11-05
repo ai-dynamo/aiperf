@@ -39,3 +39,33 @@ INFERENCEX_AGENTX_MVP = ScenarioSpec(
     require_cache_bust=CacheBustTarget.FIRST_TURN_PREFIX,
     minimum_profile_metric_coverage_ratio=0.95,
 )
+
+
+AGENTX = INFERENCEX_AGENTX_MVP.model_copy(
+    update={
+        "name": "agentx",
+        "default_benchmark_duration_seconds": 3600,
+        "default_trajectory_start_min_ratio": 0.25,
+        "default_trajectory_start_max_ratio": 0.75,
+        "cli_defaults": {
+            "endpoint_type": "chat",
+            "streaming": True,
+            "stats_interval": 30,
+            "random_seed": 42,
+            "failed_request_threshold": 0.10,
+            "warmup_requests_per_lane": 10,
+            "warmup_grace_period": 1800,
+            "trace_idle_gap_cap_seconds": 300,
+            "use_server_token_count": True,
+            "no_gpu_telemetry": True,
+            "conversation_num_dataset_entries": 393,
+            "slice_duration": 1.0,
+        },
+        "environment_defaults": {
+            "DATASET": {"CONFIGURATION_TIMEOUT": 1800},
+            "SERVICE": {"PROFILE_CONFIGURE_TIMEOUT": 1800},
+            "UI": {"REALTIME_METRICS_ENABLED": True},
+            "HTTP": {"TCP_USER_TIMEOUT": 900000},
+        },
+    }
+)

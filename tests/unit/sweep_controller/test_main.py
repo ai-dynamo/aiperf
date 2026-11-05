@@ -740,3 +740,25 @@ def test_load_aggregate_for_cr_skips_malformed_pareto_keeps_others(tmp_path: Pat
     assert "children" not in bundle, (
         "malformed children.json must be skipped, not poison the bundle"
     )
+
+
+def test_script_entrypoint_drops_injected_dataset_urls_before_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The sweep controller never downloads; presigned URLs must not stay in its env."""
+    import os
+
+    from aiperf.common.endpoint_credentials import AIPERF_INJECTED_DATASET_URLS
+    from aiperf.sweep_controller import main as sweep_controller_main
+
+    monkeypatch.setenv(AIPERF_INJECTED_DATASET_URLS, '["https://h/t.jsonl?sig=s"]')
+    seen: list[bool] = []
+
+    def fake_run(coro) -> int:
+        coro.close()
+        seen.append(AIPERF_INJECTED_DATASET_URLS in os.environ)
+        return 0
+
+    monkeypatch.setattr(sweep_controller_main.asyncio, "run", fake_run)
+    assert sweep_controller_main._script_entrypoint() == 0
+    assert seen == [False]

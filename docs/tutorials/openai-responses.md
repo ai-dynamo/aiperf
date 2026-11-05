@@ -333,7 +333,7 @@ aiperf profile \
     --request-count 20
 ```
 
-When `--use-server-token-count` is enabled with streaming, AIPerf automatically sets `stream_options.include_usage` in the request payload to receive usage data in the `response.completed` event.
+When `--use-server-token-count` is enabled with streaming, AIPerf automatically sets `stream_options.include_usage` in the request payload to receive usage data in the terminal `response.completed` or `response.incomplete` event.
 
 ---
 
@@ -417,6 +417,7 @@ For reference, AIPerf processes these Responses API streaming events:
 | `response.function_call_arguments.delta` | Tool call arguments delta |
 | `response.output_text.done` | Final text (fallback for providers that emit text only in done events) |
 | `response.completed` | Usage statistics and response ID |
+| `response.incomplete` | Usage statistics (terminal event of a stream cut off by `max_output_tokens`) |
 | All other events | Skipped |
 
 This enables accurate measurement of TTFT, ITL, and token throughput metrics when streaming is enabled.

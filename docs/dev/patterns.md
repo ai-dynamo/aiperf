@@ -7,6 +7,38 @@ sidebar-title: Code Patterns
 
 Code examples for common development tasks. Referenced from CLAUDE.md.
 
+## Scenario Defaults
+
+Registered `ScenarioSpec` instances can declare optional `cli_defaults` and
+`environment_defaults` dictionaries. Both are empty by default, preserving
+existing scenarios.
+
+```python
+cli_defaults = {"stats_interval": 10, "use_server_token_count": True}
+environment_defaults = {"HTTP": {"TCP_USER_TIMEOUT": 60000}}
+```
+
+For flag-based `aiperf profile` commands, the converter fills omitted CLI fields
+before building the benchmark config. Explicit flags win, including `False` and
+zero. Preset keys must name declared CLI fields, and their values use normal CLI
+type parsing. Presets also use the existing duration and trajectory default fields.
+Explicit GPU telemetry and server-metrics enable/disable flags, and explicit
+`--request-rate`/`--request-rate-series`, suppress the opposite preset default. Scenario invariants still apply.
+The CLI preset does not supply benchmark values for `--config`; YAML continues
+to own those values.
+
+`aiperf profile` applies runtime defaults with
+`Environment.defaults(spec.environment_defaults)`. Keys refer to existing
+settings subsystems and scalar fields, using their exact declared names (for
+example, `HTTP.TCP_KEEPIDLE`). Unknown or incorrectly cased field names are rejected.
+The context uses each subsystem's
+environment prefix and Pydantic validation, preserves explicitly configured
+values, and sets missing environment variables for newly spawned children.
+Previous parent settings and inserted variables are restored on exit, including
+exceptions. This process-wide context is intended for sequential local profiling;
+it does not configure independently launched services or Kubernetes pods.
+Settings already captured during imports or plan construction are unaffected.
+
 ## CLI Command Pattern
 
 Commands live in `src/aiperf/cli_commands/`, one file per command. They are
@@ -367,6 +399,43 @@ from aiperf.plugin.enums import PluginType
 
 EndpointClass = plugins.get_class(PluginType.ENDPOINT, 'chat')
 ```
+
+## Remote Dataset Sources Pattern
+
+A remote `--input-file` scheme (`hf://`, `s3://`, `https://`) is handled by a `dataset_source_resolver` plugin, one per URI scheme. The preflight in `src/aiperf/dataset/remote/preflight.py` drives it through the scheme-agnostic `dataset/remote/service.py` (retries, offline mode, caching), so consumers only read a cached local path.
+
+Adding a scheme needs two things:
+
+1. A parser branch in `parse_remote_ref` (`src/aiperf/config/dataset/remote_ref.py`), including the scheme in `SUPPORTED_SCHEMES`. Unknown schemes fail at parse time with the list of supported ones.
+2. A `SourceResolverProtocol` implementation registered under `dataset_source_resolver` in `plugins.yaml`, with the scheme as the plugin name.
+
+```python
+class SourceResolverProtocol(Protocol):
+    async def probe(self, ref: RemoteRef) -> ProbeResult:
+        """Check existence and access, pin the version, and read any manifest."""
+
+    async def read_prefix(self, probe: ProbeResult, nbytes: int) -> tuple[bytes, bool]:
+        """Return up to ``nbytes`` leading bytes and whether they are the whole file."""
+
+    async def materialize(self, probe: ProbeResult) -> ResolvedSource:
+        """Download the probed version into the cache."""
+```
+
+```yaml
+# plugins.yaml
+dataset_source_resolver:
+  myscheme:
+    class: my_package.resolver:MySchemeResolver
+    description: Resolves myscheme://... references.
+```
+
+Rules a resolver must follow:
+
+- Raise `RemoteSourceError` with a `RemoteErrorKind` and a hint that names the fix; `TRANSIENT` errors are retried by the service.
+- Never put a presigned query value or token in an error, log, or result: use `RemoteRef.display` and `redact_url`.
+- Write downloads with `stream_to_file` / `write_atomically` from `dataset/remote/cache.py` so an interrupted download leaves no partial file, and place them under `entry_dir(ref)`.
+- Raise `changed_after_pin` when the remote no longer matches the pinned version.
+- Block only in worker threads (`asyncio.to_thread`); the preflight entry points are sync and call `asyncio.run`.
 
 ## Error Handling Pattern
 
