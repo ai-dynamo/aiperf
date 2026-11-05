@@ -112,6 +112,7 @@ Configuration via CLI arguments or environment variables (`MOCK_SERVER_` prefix)
 | `--host` | | `127.0.0.1` | Bind address |
 | `--workers` | `-w` | `1` | Uvicorn worker count |
 | `--fast` | `-f` | `false` | Zero latency mode |
+| `--emit-empty-chat-content` | | `false` | Emit one explicit empty content chunk before streaming Chat Completions output |
 | `--log-level` | | `INFO` | Logging level (DEBUG/INFO/WARNING/ERROR/CRITICAL) |
 | `--verbose` | `-v` | `false` | Debug logging (overrides log-level) |
 | `--access-logs` | | `false` | HTTP access logs |

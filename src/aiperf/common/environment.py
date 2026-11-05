@@ -40,9 +40,13 @@ Examples:
     print(f"Workers: {Environment.WORKER.CPU_UTILIZATION_FACTOR}")
 """
 
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, Self
 
+import orjson
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -376,11 +380,11 @@ class _DatasetSettings(BaseSettings):
         ge=0.1,
         le=100000.0,
         default=10.0,
-        description="Timeout in seconds for the one-shot DatasetConfigStatusRequest "
-        "a RecordProcessor/RecordsManager sends to DatasetManager when it hasn't yet "
-        "received DatasetConfiguredNotification. Recovers a subscriber that finished "
-        "subscribing after DatasetManager already published the one-shot notification, "
-        "instead of blocking for the full CONFIGURATION_TIMEOUT.",
+        description="Timeout in seconds for each DatasetConfigStatusRequest a "
+        "RecordProcessor, RecordsManager, or local Worker sends to DatasetManager when "
+        "it hasn't yet received DatasetConfiguredNotification. Recovers a subscriber "
+        "that finished subscribing after DatasetManager already published the one-shot "
+        "notification, instead of blocking for the full CONFIGURATION_TIMEOUT.",
     )
     BASETEN_SESSION_COLUMN: Literal["provided_session_id", "poor_man_session_id"] = (
         Field(
@@ -394,10 +398,11 @@ class _DatasetSettings(BaseSettings):
         gt=0.0,
         le=60.0,
         default=1.0,
-        description="Seconds between polls of pod-local dataset state while a worker "
-        "waits to become dispatchable. The dataset arrives via one-shot broadcasts; "
-        "a worker container that subscribes after they fire recovers by polling its "
-        "WorkerGroupManager at this interval instead of waiting forever.",
+        description="Seconds between dataset state polls while a worker waits to "
+        "become dispatchable. The dataset arrives via one-shot broadcasts; a worker "
+        "that subscribes after they fire recovers by polling at this interval instead "
+        "of waiting forever: its WorkerGroupManager in Kubernetes, or DatasetManager "
+        "in local mode.",
     )
     MMAP_BASE_PATH: Path | None = Field(
         default=None,
@@ -411,7 +416,11 @@ class _DatasetSettings(BaseSettings):
         description="If True, AIPerf reuses memory-mapped dataset files across runs whose "
         "input bytes, tokenizer identity, and prompt/input settings are byte-identical. "
         "Set to False to force every run to re-tokenize and re-write its mmap files. "
-        "Cache misses still produce byte-identical mmap files to a non-cached run.",
+        "Cache misses still produce byte-identical mmap files to a non-cached run. "
+        "Kubernetes pods default to False, since the default cache directory is on their "
+        "read-only root filesystem; to turn it back on, podTemplate.env must also set "
+        "AIPERF_DATASET_MMAP_CACHE_DIR to a writable directory (a mounted volume, to "
+        "reuse the cache across runs).",
     )
     MMAP_CACHE_DIR: Path | None = Field(
         default=None,
@@ -424,6 +433,19 @@ class _DatasetSettings(BaseSettings):
         "version), not from the environment. To force a re-tokenize, set "
         "AIPERF_DATASET_MMAP_CACHE_ENABLED=false, point this variable at a fresh directory, "
         "or delete the cache directory.",
+    )
+    REMOTE_CACHE_DIR: Path | None = Field(
+        default=None,
+        description="Directory for `s3://` and `https://` dataset downloads and the "
+        "remote-dataset index. If None, defaults to ~/.cache/aiperf/remote. `hf://` "
+        "files live in the standard Hugging Face cache (HF_HOME). No automatic "
+        "eviction is implemented -- delete the directory to reclaim disk.",
+    )
+    REMOTE_OFFLINE: bool = Field(
+        default=False,
+        description="If True, remote `--input-file` references (hf://, s3://, https://) "
+        "are served only from the local cache, with no network calls. "
+        "HF_HUB_OFFLINE=1 has the same effect.",
     )
     MMAP_PREFAULT: bool = Field(
         default=True,
@@ -2708,6 +2730,58 @@ class _Environment(BaseSettings):
         default_factory=_ZMQSettings,
         description="ZMQ communication settings",
     )
+
+    @contextmanager
+    def defaults(
+        self, values: dict[str, dict[str, str | int | float | bool]]
+    ) -> Iterator[None]:
+        """Scope missing settings to this process and children spawned within the context."""
+        previous: dict[str, BaseSettings] = {}
+        inserted: dict[str, tuple[str, str]] = {}
+        try:
+            for group, fields in values.items():
+                settings = getattr(self, group)
+                updates = {}
+                for key, value in fields.items():
+                    if key not in type(settings).model_fields:
+                        raise ValueError(f"Unknown environment setting: {group}.{key}")
+                    env_key = f"{settings.model_config['env_prefix']}{key}"
+                    if (
+                        env_key not in os.environ
+                        and key not in settings.model_fields_set
+                    ):
+                        os.environ[env_key] = str(value)
+                        inserted[env_key] = (group, key)
+                        updates[key] = value
+                previous[group] = settings
+                updated = type(settings)(**{**settings.model_dump(), **updates})
+                updated.__pydantic_fields_set__ = (
+                    settings.model_fields_set | updates.keys()
+                )
+                setattr(self, group, updated)
+            if values:
+                validated = type(self).model_validate(self.model_dump())
+                for group in type(self).model_fields:
+                    settings = getattr(self, group)
+                    normalized = getattr(validated, group)
+                    previous.setdefault(group, settings)
+                    normalized.__pydantic_fields_set__ = (
+                        settings.model_fields_set.copy()
+                    )
+                    setattr(self, group, normalized)
+                for env_key, (group, key) in inserted.items():
+                    value = getattr(getattr(self, group), key)
+                    os.environ[env_key] = (
+                        orjson.dumps(value, default=list).decode()
+                        if isinstance(value, list | set | dict)
+                        else str(value)
+                    )
+            yield
+        finally:
+            for group, settings in previous.items():
+                setattr(self, group, settings)
+            for key in inserted:
+                os.environ.pop(key, None)
 
     @model_validator(mode="after")
     def validate_dev_mode(self) -> Self:

@@ -133,6 +133,27 @@ Injects `\n\n[rid:xxx]` at the end of the first user turn content. The system me
 
 Both warmup and profiling payloads are identical (same digest for the same trajectory).
 
+### `media_uuids`
+
+With a RID target, `media_uuids: true` (CLI: `--cache-bust-media-uuids`) also appends the digest to
+the `uuid` of every media content part. vLLM keys its multimodal processor and encoder caches on
+that uuid, so without it a replay reuses the media entries of an earlier play. Requires the `chat`
+endpoint.
+
+```yaml
+cache_bust:
+  target: system_suffix
+  media_uuids: true
+```
+
+```json
+{"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}, "uuid": "7146300953534850500-a3f9b2c1d4e5"}
+```
+
+All turns of a trajectory share the digest. Media without a `uuid` is unchanged. A uuid-only
+reference (no media data) also gets the suffix, so it misses unless the same play sent the media
+earlier, for example when `agentic_replay` starts a play mid-trajectory.
+
 ## Warmup-Isolation Targets
 
 `warmup_isolation_system` and `warmup_isolation_first_turn` use a constant marker

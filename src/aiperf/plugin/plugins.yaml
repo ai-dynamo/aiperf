@@ -743,6 +743,14 @@ custom_dataset_loader:
     metadata:
       full_pass_by_default: true
 
+  speed_bench_throughput_100k:
+    class: aiperf.dataset.loader.speed_bench:SpeedBenchThroughput100KLoader
+    description: |
+      SPEED-Bench throughput split at ~100K input tokens from HuggingFace (nvidia).
+      384 prompts across 3 entropy tiers for speculative decoding throughput benchmarking.
+    metadata:
+      full_pass_by_default: true
+
   tracelab:
     class: aiperf.dataset.loader.tracelab_trace:TraceLabTraceDatasetLoader
     description: |
@@ -1468,6 +1476,15 @@ gpu_telemetry_collector:
 # One-to-one mapping based on grader configuration or benchmark default.
 # =============================================================================
 spec_decode_adapter:
+  sglang:
+    class: aiperf.spec_decode.sglang_adapter:SGLangSpecDecodeAdapter
+    description: |
+      Reads SGLang's ``sglext.spec_tokens_details`` response extension when
+      the request sets ``return_spec_tokens_details: true``. Derives acceptance
+      from per-request counters and fills the engine-neutral record for chat
+      and completions, streaming and non-streaming.
+    metadata: {}
+
   vllm:
     class: aiperf.spec_decode.vllm_adapter:VLLMSpecDecodeAdapter
     description: |
@@ -2871,6 +2888,53 @@ public_dataset_loader:
       category: high_entropy
       full_pass_by_default: true
 
+  speed_bench_throughput_100k:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 100K split (384 prompts, ~100k input tokens).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_100k
+      multi_turn: true
+      full_pass_by_default: true
+
+  speed_bench_throughput_100k_low_entropy:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 100K low_entropy tier (128 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_100k
+      multi_turn: true
+      category: low_entropy
+      full_pass_by_default: true
+
+  speed_bench_throughput_100k_mixed:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 100K mixed tier (128 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_100k
+      multi_turn: true
+      category: mixed
+      full_pass_by_default: true
+
+  speed_bench_throughput_100k_high_entropy:
+    class: aiperf.dataset.loader.speed_bench_public:SpeedBenchPublicLoader
+    description: |
+      SPEED-Bench throughput 100K high_entropy tier (128 prompts).
+    metadata:
+      hf_dataset_name: nvidia/SPEED-Bench
+      hf_split: test
+      hf_subset: throughput_100k
+      multi_turn: true
+      category: high_entropy
+      full_pass_by_default: true
+
   h_cua_perf:
     class: aiperf.dataset.loader.h_cua_perf:HCuaPerfDatasetLoader
     description: |
@@ -2888,6 +2952,31 @@ public_dataset_loader:
       hf_dataset_name: Hcompany/h_cua_perf
       hf_split: train
       is_trace: true
+
+dataset_source_resolver:
+  hf:
+    class: aiperf.dataset.remote.hf:HFSourceResolver
+    description: |
+      Resolves hf://[datasets/]<org>/<repo>[@<rev>][/<path>] to a Hugging Face dataset repo.
+      A file path downloads that file (optional <file>.aiperf.json sidecar); a repo or folder
+      needs an aiperf.json manifest unless it holds parquet in the layout datasets.push_to_hub
+      writes. Pins the commit SHA; files live in the HF cache.
+  https:
+    class: aiperf.dataset.remote.http:HTTPSourceResolver
+    description: |
+      Downloads a single dataset file from an https:// URL (including presigned S3/GCS
+      URLs). Redirects are followed with per-hop origin checks; the cache is keyed by ETag
+      or Last-Modified.
+  http:
+    class: aiperf.dataset.remote.http:HTTPSourceResolver
+    description: |
+      Same as https, for plain http:// URLs (internal mirrors).
+  s3:
+    class: aiperf.dataset.remote.s3:S3SourceResolver
+    description: |
+      Resolves s3://<bucket>/<key>[?versionId=<id>] with botocore's default credential chain
+      (env vars, ~/.aws, SSO, IRSA/pod identity, instance role). AWS_ENDPOINT_URL_S3 targets
+      S3-compatible stores (MinIO, Ceph, R2). Requires the aiperf[aws] extra.
 
 # =============================================================================
 # ZMQ Proxies

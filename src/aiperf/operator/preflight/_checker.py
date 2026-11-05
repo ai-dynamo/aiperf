@@ -45,7 +45,7 @@ class OperatorPreflightChecker(
 ):
     """Validates cluster readiness before deploying an AIPerfJob.
 
-    Runs 19 checks across 3 tiers. Blocking checks (FAIL) prevent resource
+    Runs 20 checks across 3 tiers. Blocking checks (FAIL) prevent resource
     creation. Warning checks (WARN) are logged but do not block.
 
     Sibling: ``aiperf.kubernetes.preflight.CLIPreflightChecker`` handles
@@ -148,6 +148,7 @@ class OperatorPreflightChecker(
             self._check_resource_quotas,
             self._check_memory_estimation,
             self._check_secrets,
+            self._check_remote_datasets,
             self._check_image_reference,
             self._check_dns,
             self._check_network_policies,
