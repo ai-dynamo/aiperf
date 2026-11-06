@@ -294,6 +294,13 @@ def build_command_exec_argv(
     exec stream attached while the child shuts down, so whatever it reports on
     the way out is still captured. The host watchdog is only a backstop for
     what this cannot reach.
+
+    ``set -e`` leads the block because bash otherwise reports only the last
+    command's status. A tagged block may hold several ``aiperf profile``
+    invocations, and without this an earlier one can abort -- stall timeout,
+    bad flag, unreachable server -- while the block still exits 0 and the
+    shard still passes. No tagged guide relies on a non-zero intermediate
+    status; none pipes into ``grep``/``head`` or uses ``||``.
     """
     return [
         "docker",
@@ -304,7 +311,7 @@ def build_command_exec_argv(
         str(timeout_seconds),
         "bash",
         "-c",
-        command,
+        f"set -e\n{command}",
     ]
 
 
