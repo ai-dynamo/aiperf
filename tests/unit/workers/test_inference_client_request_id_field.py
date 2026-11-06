@@ -52,6 +52,7 @@ def _client(
     field: str | None,
     formatted: dict | None = None,
 ) -> InferenceClient:
+    """Build an InferenceClient with mocked plugins and REQUEST_ID_FIELD set to ``field``."""
     monkeypatch.setattr(Environment.ENDPOINT, "REQUEST_ID_FIELD", field)
     transport_entry = MagicMock()
     transport_entry.name = TransportType.HTTP.value
@@ -62,6 +63,7 @@ def _client(
     endpoint.format_payload.return_value = formatted or {}
 
     def get_class(protocol, name):
+        """Return factories for the mocked endpoint and transport plugins."""
         if protocol == "endpoint":
             return lambda **kwargs: endpoint
         if protocol == "transport":
@@ -89,6 +91,7 @@ def _request_info(
     turns: list[Turn] | None = None,
     payload_bytes: bytes | None = None,
 ) -> RequestInfo:
+    """Build a profiling-phase RequestInfo whose x_request_id is REQUEST_ID."""
     return RequestInfo(
         model_endpoint=model_endpoint,
         turns=turns if turns is not None else [],
@@ -103,6 +106,7 @@ def _request_info(
 
 
 async def _sent_body(client: InferenceClient, info: RequestInfo) -> dict:
+    """Send ``info`` through a mocked transport and return the decoded wire body."""
     client.transport.send_request = AsyncMock(
         return_value=RequestRecord(request_info=info)
     )
