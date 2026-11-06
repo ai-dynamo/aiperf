@@ -146,9 +146,9 @@ class TotalUsagePromptCacheWriteTokensMetric(
     Total API-reported prompt cache-write (cache creation) tokens across all
     requests.
 
-    Sums the per-request cache-write counts (Anthropic top-level
-    cache_creation_input_tokens). Will be empty for OpenAI workloads since
-    OpenAI does not surface cache writes.
+    Sums reported counts normalized by Usage.prompt_cache_write_tokens from
+    Moonshot, vLLM, Anthropic, Bedrock and compatible servers. Unreported
+    records are excluded; the total is unavailable when all are unreported.
 
     Formula:
         ```

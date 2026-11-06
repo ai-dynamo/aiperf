@@ -96,6 +96,10 @@ class Usage(dict):
         "cache_creation_input_tokens",  # Anthropic
         "cacheWriteInputTokens",  # AWS Bedrock
     ]
+    CACHE_WRITE_DETAILS_KEYS: ClassVar[list[str]] = [
+        "cache_write_tokens",  # Moonshot Chat Completions / Responses
+        "created_cache_tokens",  # vLLM
+    ]
     CACHE_MISS_TOP_LEVEL_KEYS: ClassVar[list[str]] = [
         "prompt_cache_miss_tokens",  # DeepSeek
     ]
@@ -347,14 +351,32 @@ class Usage(dict):
     def prompt_cache_write_tokens(self) -> int | None:
         """Get cached prompt-token writes (cache creations).
 
-        Reported only by APIs that bill cache writes separately:
-        - Anthropic: top-level cache_creation_input_tokens.
-        - AWS Bedrock: top-level cacheWriteInputTokens.
+        Check prompt details before input details; each object accepts the
+        first present cache_write_tokens or created_cache_tokens alias. This
+        shared lookup also accepts aliases from compatible servers. Only when
+        neither object has a write field, fall back to cache_creation_input_tokens
+        (Anthropic), then cacheWriteInputTokens (AWS Bedrock).
 
-        OpenAI / DeepSeek / Gemini do not surface writes — writes happen
-        transparently or are not separately billed — so this property returns
-        None for those shapes.
+        Missing/null or invalid nested counts remain unknown; a nonnegative
+        integer, including explicit zero, is a reported count.
+        A present cache_write_tokens paired with cache_write_tokens_reported=False
+        marks a compatibility placeholder, not a measured count; it stops
+        lookup just like a present null. These are API token
+        observations, not physical transfer bytes or a billing calculation.
         """
+        for details_key in self.PROMPT_DETAILS_KEYS:
+            details = self.get(details_key)
+            if not isinstance(details, dict):
+                continue
+            for key in self.CACHE_WRITE_DETAILS_KEYS:
+                if key in details:
+                    if (
+                        key == "cache_write_tokens"
+                        and details.get("cache_write_tokens_reported") is False
+                    ):
+                        return None
+                    value = details[key]
+                    return value if type(value) is int and value >= 0 else None
         return self._first_present(self.CACHE_WRITE_TOP_LEVEL_KEYS)
 
     @property
