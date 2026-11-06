@@ -40,7 +40,13 @@ from tests.kubernetes.helpers.benchmark import (
     BenchmarkDeployer,
     BenchmarkResult,
 )
-from tests.kubernetes.helpers.cluster import ClusterConfig, ClusterRuntime, LocalCluster
+from tests.kubernetes.helpers.cluster import (
+    ClusterConfig,
+    ClusterRuntime,
+    CpuOvercommitReconciler,
+    LocalCluster,
+    kind_cluster_node_names,
+)
 from tests.kubernetes.helpers.helm import HelmClient, HelmDeployer, HelmValues
 from tests.kubernetes.helpers.images import ImageConfig, ImageManager
 from tests.kubernetes.helpers.kubectl import KubectlClient
@@ -153,6 +159,28 @@ class K8sTestSettings:
     By default these are skipped to protect shared cluster state.
     """
 
+    node_cpu_overcommit: int = 0
+    """Opt-in fake CPU capacity floor (whole cores) for local Kind nodes.
+
+    0 (default) disables. When > 0, the local_cluster fixture patches every
+    Kind node's advertised capacity/allocatable up to the floor so the
+    scheduler admits production-sized pod requests on small CI runners, and
+    re-applies it on an interval (kubelet re-asserts real capacity within
+    seconds). Applied only to fixture-managed Kind clusters whose nodes carry
+    the kind:// providerID marker — never to existing/remote clusters. The
+    audit CI workflow sets this to 32; see helpers/cluster.py for the full
+    rationale.
+    """
+
+    kind_sized_job_pods: bool = False
+    """Opt-in: override operator job-pod resource requests with the
+    Kind-sized KIND_JOB_POD_ENV values in helpers/operator.py.
+
+    False (default) keeps the operator's production-calibrated requests.
+    The audit CI workflow opts in; other suites opt in from their own
+    configuration when they want the smaller footprint.
+    """
+
     @property
     def cluster_runtime(self) -> ClusterRuntime:
         """Get the cluster runtime enum value."""
@@ -192,6 +220,8 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-job-node-selector", "K8S_TEST_JOB_NODE_SELECTOR", None, "str", "Comma-separated key=value node selector for benchmark pods (e.g. kubernetes.io/arch=amd64)"),
     ("--k8s-tolerate-gpu-nodes", "K8S_TEST_TOLERATE_GPU_NODES", None, "bool", "Add tolerations for GPU node taints (nvidia.com/gpu, kubernetes.io/arch=arm64) so pods can run on GPU nodes"),
     ("--k8s-allow-disruptive", "K8S_TEST_ALLOW_DISRUPTIVE", None, "bool", "Allow tests marked k8s_disruptive that make cluster-wide mutations (e.g. CRD deletion); skipped by default"),
+    ("--k8s-node-cpu-overcommit", "K8S_TEST_NODE_CPU_OVERCOMMIT", "0", "int", "Opt-in fake CPU capacity floor (cores) for local Kind nodes so production-sized pod requests schedule on small CI runners; 0 (default) disables"),
+    ("--k8s-kind-sized-job-pods", "K8S_TEST_KIND_SIZED_JOB_PODS", None, "bool", "Opt-in Kind-sized job-pod resource requests (KIND_JOB_POD_ENV) instead of the operator's production defaults"),
 ]  # fmt: skip
 
 
@@ -301,6 +331,7 @@ def _resolve_settings(config: pytest.Config) -> K8sTestSettings:
         "skip_operator_deploy",
         "tolerate_gpu_nodes",
         "allow_disruptive",
+        "kind_sized_job_pods",
     ):
         if resolved.get(key) is None:
             resolved[key] = False
@@ -788,7 +819,47 @@ async def local_cluster(
         else:
             await cluster.create(force=not s.reuse_cluster)
 
-    yield cluster
+    # Local Kind nodes on small CI runners cannot admit the operator's
+    # production-sized pod requests (one AIPerfJob wants ~6 CPUs across its
+    # controller and worker pods; a 4-vCPU ubuntu-latest runner cannot fit
+    # that beside kube-system, the mock server, and the operator pod itself).
+    # Suites may opt into raising the nodes' advertised CPU floor so the test
+    # workload schedules (the audit CI workflow sets
+    # K8S_TEST_NODE_CPU_OVERCOMMIT=32). Kubelet re-asserts real capacity on
+    # every node-status sync, so a daemon-thread reconciler re-applies the
+    # patch on an interval — it must not be an asyncio task on this fixture's
+    # package-scoped loop, which is suspended for the entire duration of each
+    # function-scoped test loop. Only fixture-managed Kind clusters are
+    # patched, and apply_cpu_overcommit_sync additionally requires each node's
+    # providerID to carry the kind:// locality marker before touching it.
+    overcommit_reconciler: CpuOvercommitReconciler | None = None
+    if cluster.runtime == ClusterRuntime.KIND and s.node_cpu_overcommit > 0:
+        # Locality anchor: the allowlist comes from `kind get nodes`, which
+        # queries the LOCAL Docker daemon by container label — never the
+        # Kubernetes API of the context under test. A kubectl context
+        # repointed at a remote Kind cluster would list the remote nodes,
+        # which are not in this allowlist, so nothing gets patched. Without
+        # a locally verifiable node set there is no safe patch.
+        expected_nodes = await kind_cluster_node_names(cluster.name)
+        if not expected_nodes:
+            raise RuntimeError(
+                f"--k8s-node-cpu-overcommit={s.node_cpu_overcommit} was "
+                f"requested but 'kind get nodes --name {cluster.name}' found "
+                "no local Kind nodes; cannot verify patch locality, refusing "
+                "to fake capacity"
+            )
+        overcommit_reconciler = CpuOvercommitReconciler(
+            cluster.context, s.node_cpu_overcommit, expected_nodes
+        )
+        # Eager apply must succeed: without it the first benchmark pods race
+        # kubelet's next capacity re-assertion and may never schedule.
+        await asyncio.to_thread(overcommit_reconciler.start)
+
+    try:
+        yield cluster
+    finally:
+        if overcommit_reconciler is not None:
+            await asyncio.to_thread(overcommit_reconciler.stop)
 
     # Cleanup
     if not s.skip_cleanup and not s.reuse_cluster:
@@ -1985,6 +2056,7 @@ async def operator_deployer(
         image_pull_policy=k8s_settings.image_pull_policy,
         image_pull_secret=k8s_settings.image_pull_secret,
         operator_namespace=k8s_settings.operator_namespace,
+        kind_sized_job_pods=k8s_settings.kind_sized_job_pods,
     )
 
     # Skip CRD install when using an existing remote cluster (CRDs already present)

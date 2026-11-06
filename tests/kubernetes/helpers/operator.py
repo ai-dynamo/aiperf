@@ -36,6 +36,45 @@ CR (AIPerfJob or AIPerfSweep) is applied — kubectl apply returns when the
 apiserver accepts the CRD object, not when ``Established=True`` is set."""
 
 
+KIND_JOB_POD_ENV: tuple[str, ...] = (
+    # Worker pod CPU is the only worker-pod override: 4 vCPU is the binding
+    # CI constraint. MEMORY deliberately stays at the 6Gi product default —
+    # the shipped 10-worker/10-record-processor topology enforces a 162Mi
+    # per-worker import floor (split_worker_pod_resources), which needs a
+    # >= ~5Gi pod budget; a 2Gi override makes JobSet rendering raise
+    # ValueError instead of scheduling.
+    "AIPERF_K8S_WORKER_POD_CPU=1000m",
+    "AIPERF_K8S_SYSTEM_CONTROLLER_CPU=75m",
+    "AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY=192Mi",
+    "AIPERF_K8S_TIMING_MANAGER_CPU=50m",
+    "AIPERF_K8S_TIMING_MANAGER_MEMORY=192Mi",
+    "AIPERF_K8S_DATASET_MANAGER_CPU=50m",
+    "AIPERF_K8S_DATASET_MANAGER_MEMORY=256Mi",
+    "AIPERF_K8S_RECORDS_MANAGER_CPU=75m",
+    "AIPERF_K8S_RECORDS_MANAGER_MEMORY=256Mi",
+    "AIPERF_K8S_API_CPU=75m",
+    "AIPERF_K8S_API_MEMORY=256Mi",
+    "AIPERF_K8S_GPU_TELEMETRY_MANAGER_CPU=25m",
+    "AIPERF_K8S_GPU_TELEMETRY_MANAGER_MEMORY=192Mi",
+    "AIPERF_K8S_SERVER_METRICS_MANAGER_CPU=25m",
+    "AIPERF_K8S_SERVER_METRICS_MANAGER_MEMORY=192Mi",
+    "AIPERF_K8S_RESULTS_SIDECAR_CPU=25m",
+    "AIPERF_K8S_RESULTS_SIDECAR_MEMORY=192Mi",
+)
+"""Right-sized job-pod requests, opt-in via ``kind_sized_job_pods`` (the
+``--k8s-kind-sized-job-pods`` / ``K8S_TEST_KIND_SIZED_JOB_PODS`` setting), for
+suites running against a single-node Kind cluster. CI uses ubuntu-latest
+(4 vCPU): the node must also host kube-system (~950m of measured requests on
+kind v0.31/k8s 1.35), the JobSet controller (500m), the mock server, and the
+operator pod itself (350m: operator 250m + results-server 100m). The previous
+production-sized values (worker pod 3350m + controller pod 2600m = 5950m per
+AIPerfJob) exceeded the whole node, so every operator-managed pod sat Pending
+with FailedScheduling/Insufficient cpu until the test timed out. Requests
+only gate scheduling: resource_mode defaults to burstable (no limits), so
+containers still burst to full node CPU at runtime. Guarded by
+tests/unit/kubernetes/test_kind_budget.py."""
+
+
 async def wait_for_aiperf_crds_established(
     kubectl: KubectlClient, timeout: int = 60
 ) -> None:
@@ -511,6 +550,7 @@ class OperatorDeployer:
         image_pull_secret: str | None = None,
         operator_node_selector: dict[str, str] | None = None,
         disable_pvc: bool = False,
+        kind_sized_job_pods: bool = False,
         operator_namespace: str = DEFAULT_OPERATOR_NAMESPACE,
     ) -> None:
         """Initialize operator deployer.
@@ -569,6 +609,7 @@ class OperatorDeployer:
         self.image_pull_secret = image_pull_secret
         self.operator_node_selector = operator_node_selector
         self.disable_pvc = disable_pvc
+        self.kind_sized_job_pods = kind_sized_job_pods
         self.OPERATOR_NAMESPACE = operator_namespace
         self._deployed_jobs: list[OperatorJobResult] = []
 
@@ -716,27 +757,11 @@ class OperatorDeployer:
         # and fail with 'no matches for kind'. Wait for both CRDs.
         await self._wait_for_crd_established()
 
-        # Use defaults that match production; Kind node has enough memory
-        env_pairs = [
-            "AIPERF_K8S_WORKER_POD_CPU=3350m",
-            "AIPERF_K8S_WORKER_POD_MEMORY=6144Mi",
-            "AIPERF_K8S_SYSTEM_CONTROLLER_CPU=250m",
-            "AIPERF_K8S_SYSTEM_CONTROLLER_MEMORY=256Mi",
-            "AIPERF_K8S_TIMING_MANAGER_CPU=1000m",
-            "AIPERF_K8S_TIMING_MANAGER_MEMORY=512Mi",
-            "AIPERF_K8S_DATASET_MANAGER_CPU=500m",
-            "AIPERF_K8S_DATASET_MANAGER_MEMORY=512Mi",
-            "AIPERF_K8S_RECORDS_MANAGER_CPU=500m",
-            "AIPERF_K8S_RECORDS_MANAGER_MEMORY=512Mi",
-            "AIPERF_K8S_API_CPU=250m",
-            "AIPERF_K8S_API_MEMORY=256Mi",
-            "AIPERF_K8S_GPU_TELEMETRY_MANAGER_CPU=125m",
-            "AIPERF_K8S_GPU_TELEMETRY_MANAGER_MEMORY=128Mi",
-            "AIPERF_K8S_SERVER_METRICS_MANAGER_CPU=125m",
-            "AIPERF_K8S_SERVER_METRICS_MANAGER_MEMORY=256Mi",
-            "AIPERF_K8S_RESULTS_SIDECAR_CPU=100m",
-            "AIPERF_K8S_RESULTS_SIDECAR_MEMORY=128Mi",
-        ]
+        # Right-sized job-pod requests for the single-node Kind cluster are
+        # opt-in (see KIND_JOB_POD_ENV); suites that run against real clusters
+        # or that manage scheduling headroom themselves keep the operator's
+        # production defaults.
+        env_pairs = list(KIND_JOB_POD_ENV) if self.kind_sized_job_pods else []
         if self.share_process_namespace:
             env_pairs.append("AIPERF_K8S_SHARE_PROCESS_NAMESPACE=true")
         if self.controller_http_url_override:
@@ -756,15 +781,16 @@ class OperatorDeployer:
                 "AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE="
                 f"{self.apiserver_tls_server_name_override}"
             )
-        await self.kubectl.run(
-            "set",
-            "env",
-            "deployment/aiperf-operator",
-            *env_pairs,
-            "-n",
-            self.OPERATOR_NAMESPACE,
-            check=True,
-        )
+        if env_pairs:
+            await self.kubectl.run(
+                "set",
+                "env",
+                "deployment/aiperf-operator",
+                *env_pairs,
+                "-n",
+                self.OPERATOR_NAMESPACE,
+                check=True,
+            )
 
         success = await self.kubectl.wait_for_rollout(
             "deployment",

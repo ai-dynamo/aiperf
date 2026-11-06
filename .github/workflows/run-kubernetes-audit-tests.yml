@@ -27,6 +27,13 @@ jobs:
     env:
       K8S_TEST_CLUSTER: aiperf-audit-${{ github.run_id }}-${{ github.run_attempt }}
       KUBECONFIG: /tmp/aiperf-audit-kubeconfig-${{ github.run_id }}-${{ github.run_attempt }}
+      # This suite runs production-shaped workloads on a 4-vCPU single-node
+      # Kind cluster. Opt into the two test-only scheduling mechanisms:
+      # fake the node's advertised CPU floor (kubelet re-asserts real
+      # capacity within seconds, so the fixture re-applies it on an interval)
+      # and use Kind-sized job-pod requests instead of production defaults.
+      K8S_TEST_NODE_CPU_OVERCOMMIT: "32"
+      K8S_TEST_KIND_SIZED_JOB_PODS: "true"
 
     steps:
       - name: Free disk space
