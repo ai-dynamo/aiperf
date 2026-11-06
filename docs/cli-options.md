@@ -907,6 +907,11 @@ Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (sy
 <br/>_Choices: [`none`, `system_prefix`, `system_suffix`, `first_turn_prefix`, `first_turn_suffix`, `warmup_isolation_system`, `warmup_isolation_first_turn`]_
 <br/>_Default: `none`_
 
+#### `--cache-bust-media-uuids`
+
+Append the trajectory's RID digest to every media `uuid`, so a replay cannot hit vLLM's multimodal cache entries from an earlier play. Requires a RID --cache-bust target and --endpoint-type chat. See [cache-bust.md](reference/cache-bust.md).
+<br/>_Flag (no value required)_
+
 ### Prefix Prompt
 
 #### `--system-prompt` `<str>`
@@ -2563,6 +2568,11 @@ Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (sy
 <br/>_Choices: [`none`, `system_prefix`, `system_suffix`, `first_turn_prefix`, `first_turn_suffix`, `warmup_isolation_system`, `warmup_isolation_first_turn`]_
 <br/>_Default: `none`_
 
+#### `--cache-bust-media-uuids`
+
+Append the trajectory's RID digest to every media `uuid`, so a replay cannot hit vLLM's multimodal cache entries from an earlier play. Requires a RID --cache-bust target and --endpoint-type chat. See [cache-bust.md](reference/cache-bust.md).
+<br/>_Flag (no value required)_
+
 ### Prefix Prompt
 
 #### `--system-prompt` `<str>`
@@ -4213,6 +4223,11 @@ Source corpus for synthetic prompt text generation. 'sonnet' uses Shakespeare so
 Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (system_prefix, system_suffix, first_turn_prefix, first_turn_suffix) — inject a per-trajectory unique SHA-256 digest marker that is identical across warmup and profiling, so warmup KV-cache work transfers to profiling while preventing cross-trajectory cache sharing. Prefix variants prepend at token 0; suffix variants append after existing content. (2) Warmup-isolation targets (warmup_isolation_system, warmup_isolation_first_turn) — inject a constant '[warmup]' marker only during the WARMUP phase; profiling sees no marker (fully cold start or system-pre-warmed). Incompatible with agentic_replay timing mode. 'none' disables the feature (default). See [cache-bust.md](reference/cache-bust.md) for detailed semantics, trade-offs, and examples.
 <br/>_Choices: [`none`, `system_prefix`, `system_suffix`, `first_turn_prefix`, `first_turn_suffix`, `warmup_isolation_system`, `warmup_isolation_first_turn`]_
 <br/>_Default: `none`_
+
+#### `--cache-bust-media-uuids`
+
+Append the trajectory's RID digest to every media `uuid`, so a replay cannot hit vLLM's multimodal cache entries from an earlier play. Requires a RID --cache-bust target and --endpoint-type chat. See [cache-bust.md](reference/cache-bust.md).
+<br/>_Flag (no value required)_
 
 ### Prefix Prompt
 
@@ -6372,6 +6387,11 @@ Where (and how) to inject a cache-bust marker. Two families: (1) RID targets (sy
 <br/>_Choices: [`none`, `system_prefix`, `system_suffix`, `first_turn_prefix`, `first_turn_suffix`, `warmup_isolation_system`, `warmup_isolation_first_turn`]_
 <br/>_Default: `none`_
 
+#### `--cache-bust-media-uuids`
+
+Append the trajectory's RID digest to every media `uuid`, so a replay cannot hit vLLM's multimodal cache entries from an earlier play. Requires a RID --cache-bust target and --endpoint-type chat. See [cache-bust.md](reference/cache-bust.md).
+<br/>_Flag (no value required)_
+
 ### Prefix Prompt
 
 #### `--system-prompt` `<str>`
@@ -7453,7 +7473,7 @@ Generate visualizations from AIPerf profiling data.
 
 On first run, automatically creates ~/.aiperf/plot_config.yaml which you can edit to customize plots, including experiment classification (baseline vs treatment runs). Use --config to specify a different config file.
 
-_**Note:** PNG export requires Chrome or Chromium to be installed on your system, as it is used by kaleido to render Plotly figures to static images._
+_**Note:** PNG export requires Chrome or Chromium for kaleido. On Linux ARM64, install system Chromium and set `BROWSER_PATH` if it is not on PATH. Correct or unset a stale `BROWSER_PATH`; remove any incompatible Chrome downloaded by Choreographer, which may take precedence._
 
 _**Note:** The plot command expects default export filenames (e.g., `profile_export.jsonl`). Runs created with `--profile-export-file` or custom `--profile-export-prefix` use different filenames and will not be detected by the plot command._
 
