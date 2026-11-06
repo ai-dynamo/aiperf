@@ -95,7 +95,13 @@ class InferenceClient(AIPerfLifecycleMixin):
         # RecordContext after dispatch (memory optimization for large prompts).
         # Resolved by the worker via record payload-retention auto-detection.
         self.strip_record_payload_bytes = strip_record_payload_bytes
-        self._request_id_field = Environment.ENDPOINT.REQUEST_ID_FIELD
+        # Multipart bodies are form data, not JSON, so they are sent unchanged.
+        self._request_id_field = (
+            None
+            if model_endpoint.endpoint.request_content_type
+            == RequestContentType.MULTIPART_FORM_DATA
+            else Environment.ENDPOINT.REQUEST_ID_FIELD
+        )
 
         # Detect and set transport type if not explicitly set
         if not model_endpoint.transport:

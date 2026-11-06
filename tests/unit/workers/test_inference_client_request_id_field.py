@@ -15,7 +15,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import orjson
 import pytest
 
-from aiperf.common.enums import CreditPhase, ModelSelectionStrategy
+from aiperf.common.enums import (
+    CreditPhase,
+    ModelSelectionStrategy,
+    RequestContentType,
+)
 from aiperf.common.environment import Environment
 from aiperf.common.models.dataset_models import Text, Turn
 from aiperf.common.models.model_endpoint_info import (
@@ -163,6 +167,26 @@ async def test_unset_field_sends_payload_bytes_verbatim(model_endpoint, monkeypa
     await _sent_body(client, _request_info(model_endpoint, payload_bytes=shared))
 
     assert client.transport.send_request.call_args.kwargs["payload"] is shared
+
+
+@pytest.mark.asyncio
+async def test_multipart_payload_is_sent_unchanged(model_endpoint, monkeypatch):
+    model_endpoint.endpoint.request_content_type = (
+        RequestContentType.MULTIPART_FORM_DATA
+    )
+    formatted = {"model": "test-model", "prompt": "a cat"}
+    client = _client(model_endpoint, monkeypatch, field="rid", formatted=formatted)
+    info = _request_info(model_endpoint, turns=[Turn(texts=[Text(contents=["a cat"])])])
+    client.transport.send_request = AsyncMock(
+        return_value=RequestRecord(request_info=info)
+    )
+
+    await client.send_request(info)
+
+    assert client.transport.send_request.call_args.kwargs["payload"] == {
+        "model": "test-model",
+        "prompt": "a cat",
+    }
 
 
 def test_dataset_supplied_field_is_overwritten_so_server_and_export_ids_agree():
