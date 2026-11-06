@@ -121,7 +121,14 @@ def _build_cr_spec_and_config(
     from aiperf.kubernetes.sweep_routing import requires_sweep_controller
 
     spec = copy.deepcopy(dict(raw.get("spec", {})))
-    config = extract_benchmark_config(spec)
+    # The raw CR is only a baseline when CLI overrides still need merging.
+    # apply_cli_overrides validates the complete workload without deferral.
+    config = extract_benchmark_config(
+        spec,
+        validation_context=(
+            {"defer_warmup_dataset_partition": True} if cli_config is not None else None
+        ),
+    )
     if cli_config is not None:
         config = apply_cli_overrides(config, cli_config)
     pin_remote_datasets_for_kubernetes(

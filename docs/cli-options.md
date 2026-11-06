@@ -1371,6 +1371,12 @@ Convert scenario lock errors to warnings; stamps submission_valid=false in the a
 
 ### Warmup
 
+#### `--warmup-dataset-entries` `<int>`
+
+Reserve the first N synthetic dataset conversations for warmup only; profiling samples the remaining entries. Zero keeps the shared pool (default). Requires warmup and N smaller than --num-dataset-entries. Not supported with --accuracy-benchmark. Does not modify prompts or flush server caches.
+<br/>_Constraints: ≥ 0_
+<br/>_Default: `0`_
+
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
 
 The maximum number of warmup requests to send before benchmarking. If not set and no --warmup-duration is set, then no warmup phase will be used.
@@ -3032,6 +3038,12 @@ Convert scenario lock errors to warnings; stamps submission_valid=false in the a
 
 ### Warmup
 
+#### `--warmup-dataset-entries` `<int>`
+
+Reserve the first N synthetic dataset conversations for warmup only; profiling samples the remaining entries. Zero keeps the shared pool (default). Requires warmup and N smaller than --num-dataset-entries. Not supported with --accuracy-benchmark. Does not modify prompts or flush server caches.
+<br/>_Constraints: ≥ 0_
+<br/>_Default: `0`_
+
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
 
 The maximum number of warmup requests to send before benchmarking. If not set and no --warmup-duration is set, then no warmup phase will be used.
@@ -4687,6 +4699,12 @@ Convert scenario lock errors to warnings; stamps submission_valid=false in the a
 <br/>_Flag (no value required)_
 
 ### Warmup
+
+#### `--warmup-dataset-entries` `<int>`
+
+Reserve the first N synthetic dataset conversations for warmup only; profiling samples the remaining entries. Zero keeps the shared pool (default). Requires warmup and N smaller than --num-dataset-entries. Not supported with --accuracy-benchmark. Does not modify prompts or flush server caches.
+<br/>_Constraints: ≥ 0_
+<br/>_Default: `0`_
 
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
 
@@ -6850,6 +6868,12 @@ Convert scenario lock errors to warnings; stamps submission_valid=false in the a
 <br/>_Flag (no value required)_
 
 ### Warmup
+
+#### `--warmup-dataset-entries` `<int>`
+
+Reserve the first N synthetic dataset conversations for warmup only; profiling samples the remaining entries. Zero keeps the shared pool (default). Requires warmup and N smaller than --num-dataset-entries. Not supported with --accuracy-benchmark. Does not modify prompts or flush server caches.
+<br/>_Constraints: ≥ 0_
+<br/>_Default: `0`_
 
 #### `--warmup-request-count`, `--num-warmup-requests` `<int>`
 
