@@ -184,6 +184,7 @@ Endpoint wire-format configuration. Controls how AIPerf serializes message conte
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
 | `AIPERF_ENDPOINT_FORCE_CONTENT_PARTS` | `False` | — | When True, always emit the multi-part content array (e.g. [{"type": "text", "text": "..."}]) for synthetic turns, even when there is only a single text with no media. By default (False) single-text turns emit a plain string to stay compatible with servers that reject list-of-parts content for non-multimodal inputs (e.g. OpenAI Dynamo). Enable when the target server requires the structured content-parts shape unconditionally. |
+| `AIPERF_ENDPOINT_REQUEST_ID_FIELD` | `None` | — | Top-level request-body field that also carries the per-request X-Request-ID value, for servers that take a client request ID only from the body (e.g. 'rid' for SGLang). Server-side per-request logs can then be joined to the profile export on x_request_id. JSON object bodies only; the value overwrites a field of that name already in the payload. |
 
 ## GPU
 
