@@ -6,11 +6,14 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from datasets import Dataset
+from pydantic import ValidationError
 
 from aiperf.common.enums import PromptCorpus
 from aiperf.common.exceptions import DatasetLoaderError
 from aiperf.dataset.loader.semianalysis_cc_traces_weka import (
     SemiAnalysisCCTracesWekaLoader,
+    _strip_hf_null_padding,
 )
 from aiperf.dataset.loader.weka_trace import WekaTraceLoader
 from aiperf.dataset.loader.weka_trace_models import WekaTrace
@@ -330,3 +333,41 @@ class TestPluginRegistry:
             PublicDatasetType.SEMIANALYSIS_CC_TRACES_WEKA
         )
         assert meta.hf_dataset_name == _NO_SUBAGENTS_HF_DATASET_NAME
+
+
+class TestArrowUnionPadding:
+    def trace(self) -> dict[str, Any]:
+        row = _make_trace_dict()
+        row["requests"].append(
+            dict(
+                t=1.0,
+                type="subagent",
+                agent_id="child",
+                subagent_type="Explore",
+                duration_ms=100,
+                total_tokens=10,
+                tool_use_count=0,
+                status="completed",
+                models=["m"],
+                requests=[dict(t=1.0, type="s", model="m", **{"in": 10, "out": 1})],
+            )
+        )
+        return row
+
+    def test_arrow_roundtrip_preserves_valid_trace(self) -> None:
+        raw = self.trace()
+        padded = Dataset.from_list([raw])[0]
+        assert "agent_id" in padded["requests"][0]
+        actual = WekaTrace.model_validate(_strip_hf_null_padding(padded))
+        assert actual.model_dump() == WekaTrace.model_validate(raw).model_dump()
+        assert "agent_id" in padded["requests"][0]  # Input stays unchanged.
+
+    def test_non_null_extras_and_required_null_still_fail(self) -> None:
+        raw = self.trace()
+        raw["requests"][0]["agent_id"] = "unexpected"
+        with pytest.raises(ValidationError):
+            WekaTrace.model_validate(_strip_hf_null_padding(raw))
+        raw = self.trace()
+        raw["requests"][0]["model"] = None
+        with pytest.raises(ValidationError):
+            WekaTrace.model_validate(_strip_hf_null_padding(raw))
