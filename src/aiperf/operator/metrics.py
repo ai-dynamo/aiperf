@@ -23,8 +23,8 @@ Metrics:
         retried rather than counted, so it does not increment this.
 
 Usage:
-    @track_handler("monitor_progress")
-    async def monitor_progress(...): ...
+    @track_handler("on_create")
+    async def on_create(...): ...
 
     # in main.py @kopf.on.startup:
     start_metrics_server(port=OperatorEnvironment.METRICS_PORT)
