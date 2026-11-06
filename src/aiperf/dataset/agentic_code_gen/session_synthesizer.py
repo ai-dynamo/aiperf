@@ -140,14 +140,14 @@ class SessionSynthesizer:
         )
 
     def _sample_delay_ms(self, prev_input: int) -> float:
-        delay_ms = float(
-            sample_mixture_delay(self._config.inter_turn_delay, self._rng, size=1)[0]
-        )
+        config = self._config.inter_turn_delay
         context_ratio = prev_input / self._config.max_prompt_tokens
-        delay_ms *= max(0.2, 1.0 - 0.8 * context_ratio)
-        if self._config.inter_turn_delay.max is not None:
-            delay_ms = min(delay_ms, self._config.inter_turn_delay.max)
-        return delay_ms
+        delay_scale = (
+            max(0.2, 1.0 - 0.8 * context_ratio) if config.context_scaling else 1.0
+        )
+        return float(
+            sample_mixture_delay(config, self._rng, size=1, delay_scale=delay_scale)[0]
+        )
 
     def _sample_new_tokens(self) -> int:
         new_tokens = int(
