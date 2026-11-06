@@ -40,7 +40,7 @@ def test_the_command_is_an_argv_element_not_a_shell_string() -> None:
         "container", """--extra-inputs '{"a": 0}'""", AIPERF_COMMAND_TIMEOUT
     )
 
-    assert argv[-2:] == ["-c", """--extra-inputs '{"a": 0}'"""]
+    assert argv[-2:] == ["-c", """set -e\n--extra-inputs '{"a": 0}'"""]
     assert "-s" not in argv, "a script on stdin is readable by the commands it runs"
 
 
@@ -73,6 +73,31 @@ def test_a_command_that_reads_stdin_does_not_swallow_the_block() -> None:
     assert proc.stdout.strip() == "AFTER_RAN", (
         "the command after the stdin reader must execute, not be printed"
     )
+
+
+@needs_bash
+def test_an_early_failure_fails_the_whole_block() -> None:
+    """Three tagged blocks run more than one ``aiperf profile``.
+
+    Without ``set -e`` bash reports only the last command's status, so an
+    earlier invocation can abort and the shard still passes. That is how a
+    600s stall abort went green on one shard while the identical abort failed
+    another.
+    """
+    from constants import AIPERF_COMMAND_TIMEOUT
+    from test_runner import build_command_exec_argv
+
+    block = "echo FIRST\nexit 3\necho LAST"
+    argv = build_command_exec_argv("unused", block, AIPERF_COMMAND_TIMEOUT)
+    proc = subprocess.run(
+        argv[argv.index("bash") :],
+        stdin=subprocess.DEVNULL,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode == 3, "an early non-zero status must reach the runner"
+    assert "LAST" not in proc.stdout, "the block must stop at the failure"
 
 
 @needs_bash
@@ -129,8 +154,9 @@ def test_the_deadline_is_enforced_inside_the_container() -> None:
     assert any(a.startswith("--kill-after=") for a in argv), (
         "a command that ignores SIGTERM would outlive its own deadline"
     )
-    # The command still arrives as one argv element after `bash -c`.
-    assert argv[-1] == "aiperf profile"
+    # The command still arrives as one argv element after `bash -c`, led by
+    # the ``set -e`` that makes an early failure the block's status.
+    assert argv[-1] == "set -e\naiperf profile"
     assert argv[-2] == "-c"
 
 
