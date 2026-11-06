@@ -1416,6 +1416,11 @@ class TestRedactCliCommandUrlFlags:
                 "aiperf profile --url http://localhost:8000 --model foo@bar",
                 id="stray-safety-net-does-not-touch-non-url-arg",
             ),
+            param(
+                "aiperf profile --server-profiler-url worker1 "
+                "'worker2?contact=alice:team@corp.com'",
+                id="later-profiler-url-query-email",
+            ),
         ],
     )  # fmt: skip
     def test_urls_without_userinfo_unchanged(self, cmd: str):

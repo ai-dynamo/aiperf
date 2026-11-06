@@ -480,7 +480,7 @@ def redact_url(url: str) -> str:
     )
     if result == url and "://" not in url:
         # Bare userinfo: user:pass@host (no scheme prefix, must contain : before @)
-        result = re.sub(r"^([^@:]+:[^@]+)@", REDACTED_VALUE + "@", result)
+        result = re.sub(r"^([^@:/?#]+:[^@/?#]+)@", REDACTED_VALUE + "@", result)
     return _redact_sensitive_query_parameters(result)
 
 
