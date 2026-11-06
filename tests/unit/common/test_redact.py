@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for centralized API key / credential redaction."""
 
+from shlex import quote
 from unittest.mock import MagicMock, patch
 
 import aiohttp
@@ -888,6 +889,73 @@ class TestRedactCliCommandSecrets:
             assert secret not in result, f"Secret {secret!r} leaked in: {result}"
         assert REDACTED_VALUE in result
 
+    @pytest.mark.parametrize("separator", [" ", "="])
+    @pytest.mark.parametrize(
+        "value",
+        [
+            param(
+                quote('{"token": "profiler-secret", "num_steps": 2}'),
+                id="single-quoted",
+            ),
+            param(r'"{\"token\": \"profiler-secret\"}"', id="double-quoted"),
+            param(r"{\"token\":\"profiler-secret\"}", id="unquoted"),
+            param(
+                quote('{"token": "profiler-secret\'s value"}'), id="escaped-apostrophe"
+            ),
+        ],
+    )
+    def test_profiler_start_body_redacted(self, separator: str, value: str) -> None:
+        """Hide the whole JSON shell argument while preserving subsequent flags."""
+        cmd = f"aiperf profile --server-profiler-start-body{separator}{value} --concurrency 2"
+        assert redact_cli_command(cmd) == (
+            f"aiperf profile --server-profiler-start-body{separator}'{REDACTED_VALUE}' --concurrency 2"
+        )
+
+    @pytest.mark.parametrize(
+        "flag,separator",
+        [
+            ("--url", " "),
+            ("-u", " "),
+            ("--server-profiler-url", " "),
+            ("--server-profiler-url", "="),
+        ],
+    )
+    @pytest.mark.parametrize("wrapper", ["", "'", '"'])
+    def test_query_credentials_redacted_in_all_url_values(
+        self, flag: str, separator: str, wrapper: str
+    ) -> None:
+        """Every URL query is redacted without consuming quotes or later flags."""
+        urls = [
+            "https://worker1?token=first-secret",
+            "worker2?token=second-secret&region=us",
+        ]
+        values = " ".join(f"{wrapper}{url}{wrapper}" for url in urls)
+        cmd = f"aiperf profile {flag}{separator}{values} --model token=public"
+
+        assert redact_cli_command(cmd) == (
+            f"aiperf profile {flag}{separator}'https://worker1?token={REDACTED_VALUE}' "
+            f"'worker2?token={REDACTED_VALUE}&region=us' --model token=public"
+        )
+
+    @pytest.mark.parametrize("separator", [" ", "="])
+    @pytest.mark.parametrize("wrapper", ["'", '"'])
+    def test_quoted_url_query_whitespace_redacted(
+        self, separator: str, wrapper: str
+    ) -> None:
+        """Redact complete first and later query values containing spaces."""
+        cmd = (
+            f"aiperf profile --server-profiler-url{separator}"
+            f"{wrapper}http://first?token=first secret{wrapper}  "
+            f"{wrapper}http://second?token=second secret&region=us west{wrapper}"
+            "\t--model 'public model'"
+        )
+        assert redact_cli_command(cmd) == (
+            f"aiperf profile --server-profiler-url{separator}"
+            f"'http://first?token={REDACTED_VALUE}'  "
+            f"'http://second?token={REDACTED_VALUE}&region=us west'"
+            "\t--model 'public model'"
+        )
+
 
 _MUST_KEEP_CASES = [
     # Normal flags and values
@@ -1234,6 +1302,18 @@ class TestRedactCliCommandUrlFlags:
                 ["--url", "@host1", "@host2"],
                 id="multi-url-scheme-less-bare-userinfo-quoted",
             ),
+            param(
+                "aiperf profile --server-profiler-url user1:pass1@worker1:9090 user2:pass2@worker2:9090",
+                ["user1:pass1", "user2:pass2"],
+                ["--server-profiler-url", "@worker1:9090", "@worker2:9090"],
+                id="profiler-multi-url-scheme-less-userinfo",
+            ),
+            param(
+                "aiperf profile --server-profiler-url 'user1:pass1@worker1:9090?token=first-secret' 'user2:pass2@worker2:9090'",
+                ["user1:pass1", "user2:pass2", "first-secret"],
+                ["--server-profiler-url", "@worker1:9090", "@worker2:9090"],
+                id="profiler-multi-url-quoted-userinfo-and-query",
+            ),
         ],
     )  # fmt: skip
     def test_multi_url_consume_multiple_redacts_all(
@@ -1335,6 +1415,11 @@ class TestRedactCliCommandUrlFlags:
             param(
                 "aiperf profile --url http://localhost:8000 --model foo@bar",
                 id="stray-safety-net-does-not-touch-non-url-arg",
+            ),
+            param(
+                "aiperf profile --server-profiler-url worker1 "
+                "'worker2?contact=alice:team@corp.com'",
+                id="later-profiler-url-query-email",
             ),
         ],
     )  # fmt: skip
@@ -1617,6 +1702,42 @@ class TestCliCommandRedaction:
         )
         assert "sk-12345" not in cmd
         assert REDACTED_VALUE in cmd
+
+    @pytest.mark.parametrize("inline", [False, True])
+    def test_profiler_start_body_redacted_in_cli_command(self, inline: bool) -> None:
+        """Redact opaque JSON before command assembly without changing argv."""
+        body = '{"token": "profiler-secret\'s value", "num_steps": 2}'
+        flag = "--server-profiler-start-body"
+        args = [f"{flag}={body}"] if inline else [flag, body]
+        argv = ["aiperf", "profile", *args, "--concurrency", "2"]
+        original = argv.copy()
+
+        cmd = self._build_cli_command(argv)
+
+        assert "profiler-secret" not in cmd
+        assert "num_steps" not in cmd
+        assert REDACTED_VALUE in cmd
+        assert "--concurrency 2" in cmd
+        assert argv == original
+
+    @pytest.mark.parametrize("flag", ["--url", "-u", "--server-profiler-url"])
+    def test_all_url_query_credentials_redacted_in_cli_command(self, flag: str) -> None:
+        """Command assembly must redact later URL values as well as the first."""
+        cmd = self._build_cli_command(
+            [
+                "aiperf",
+                "profile",
+                flag,
+                "https://worker1?token=first-secret",
+                "https://worker2?token=second-secret&region=us",
+                "--model",
+                "public-model",
+            ]
+        )
+        assert "first-secret" not in cmd
+        assert "second-secret" not in cmd
+        assert f"https://worker2?token={REDACTED_VALUE}&region=us'" in cmd
+        assert "public-model" in cmd
 
     @pytest.mark.parametrize(
         "flag, header_value, secret",
@@ -2021,6 +2142,32 @@ class TestRedactUrl:
 
 class TestRedactEndpointSpec:
     """Tests for credential-safe CR and Python benchmark configuration copies."""
+
+    @pytest.mark.parametrize("profiler_key", ["serverProfiler", "server_profiler"])
+    @pytest.mark.parametrize("body_key", ["startBody", "start_body"])
+    @pytest.mark.parametrize("wrapped", [False, True])
+    def test_profiler_urls_redacted_without_mutation(
+        self, profiler_key: str, body_key: str, wrapped: bool
+    ) -> None:
+        """Redact profiler queries in both CR and Python config views."""
+        urls = [
+            "http://worker:9090?token=profiler-secret&region=us",
+            "http://worker2:9090",
+        ]
+        body = {"num_steps": 2, "token": "body-secret"}
+        benchmark = {"endpoint": {profiler_key: {"urls": urls, body_key: body}}}
+        spec = {"benchmark": benchmark} if wrapped else benchmark
+
+        safe = redact_endpoint_spec(spec)
+        safe_benchmark = safe["benchmark"] if wrapped else safe
+
+        assert safe_benchmark["endpoint"][profiler_key] == {
+            "urls": [f"http://worker:9090?token={REDACTED_VALUE}&region=us", urls[1]],
+            body_key: REDACTED_VALUE,
+        }
+        assert benchmark["endpoint"][profiler_key]["urls"] == urls
+        assert urls[0] == "http://worker:9090?token=profiler-secret&region=us"
+        assert benchmark["endpoint"][profiler_key][body_key] == body
 
     def test_redacts_public_and_python_endpoint_shapes_without_mutation(self) -> None:
         spec = {
