@@ -102,6 +102,7 @@ aiperf profile \
 ### Streaming (`/generate_stream`)
 
 When the `--streaming` flag is enabled, AIPerf automatically sends requests to the `/generate_stream` endpoint of the TGI server.
+Tokens marked as special by TGI, such as the end-of-sequence token, are excluded from the generated text.
 
 #### Profile with synthetic inputs
 
