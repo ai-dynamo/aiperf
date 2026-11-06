@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock
 import kopf
 import pytest
 from kubernetes_asyncio.client.exceptions import ApiException
+from pytest import param
 
 from aiperf.kubernetes.constants import Annotations, Containers
 from aiperf.kubernetes.cr_refs import AIPERF_JOB_API_VERSION
@@ -29,12 +30,31 @@ from aiperf.operator.handlers._job_identity import StaleAIPerfJobCallback
 from aiperf.operator.status import StatusBuilder
 
 
-def _timestamp(*, seconds_ago: float = 0) -> str:
+def _timestamp(*, seconds_ago: float = 0, now: datetime | None = None) -> str:
     return (
-        (datetime.now(UTC) - timedelta(seconds=seconds_ago))
+        ((now or datetime.now(UTC)) - timedelta(seconds=seconds_ago))
         .isoformat()
         .replace("+00:00", "Z")
     )
+
+
+@pytest.fixture
+def frozen_monitor_now(monkeypatch: pytest.MonkeyPatch) -> datetime:
+    """Pin the clock ``monitor`` reads so heartbeat ages are exact.
+
+    Without it the age the watchdog computes includes whatever wall time passes
+    between building the body and the check, so a runner stall longer than the
+    test's slack flips a fresh heartbeat to stale.
+    """
+    frozen = datetime.now(UTC)
+
+    class _FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:
+            return frozen if tz is None else frozen.astimezone(tz)
+
+    monkeypatch.setattr(monitor, "datetime", _FrozenDatetime)
+    return frozen
 
 
 def _aiperfjob_body(*, heartbeat: str | None = None) -> dict[str, Any]:
@@ -220,8 +240,17 @@ def _install_live_status_api(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "heartbeat_age_s",
+    [
+        param(16.0, id="inside-expiry"),
+        param(17.0, id="at-expiry-boundary"),
+    ],
+)  # fmt: skip
 async def test_fresh_controller_heartbeat_skips_broad_monitor_and_cluster_io(
     monkeypatch: pytest.MonkeyPatch,
+    frozen_monitor_now: datetime,
+    heartbeat_age_s: float,
 ) -> None:
     """A healthy heartbeat tick must remain a cached-body-only operation."""
     broad_monitor = AsyncMock(side_effect=AssertionError("broad monitor invoked"))
@@ -235,7 +264,9 @@ async def test_fresh_controller_heartbeat_skips_broad_monitor_and_cluster_io(
             CONTROLLER_HEARTBEAT=SimpleNamespace(EXPIRY_SECONDS=17.0),
         ),
     )
-    body = _aiperfjob_body(heartbeat=_timestamp(seconds_ago=16))
+    body = _aiperfjob_body(
+        heartbeat=_timestamp(seconds_ago=heartbeat_age_s, now=frozen_monitor_now)
+    )
     patch = _kopf_patch()
 
     await monitor.heartbeat_watchdog(
@@ -254,8 +285,17 @@ async def test_fresh_controller_heartbeat_skips_broad_monitor_and_cluster_io(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "heartbeat_age_s",
+    [
+        param(17.000001, id="just-past-expiry"),
+        param(18.0, id="past-expiry"),
+    ],
+)  # fmt: skip
 async def test_stale_controller_heartbeat_invokes_existing_recovery_engine(
     monkeypatch: pytest.MonkeyPatch,
+    frozen_monitor_now: datetime,
+    heartbeat_age_s: float,
 ) -> None:
     """An expired heartbeat delegates to the proven broad recovery path."""
     broad_monitor = AsyncMock()
@@ -267,7 +307,9 @@ async def test_stale_controller_heartbeat_invokes_existing_recovery_engine(
             CONTROLLER_HEARTBEAT=SimpleNamespace(EXPIRY_SECONDS=17.0),
         ),
     )
-    body = _aiperfjob_body(heartbeat=_timestamp(seconds_ago=18))
+    body = _aiperfjob_body(
+        heartbeat=_timestamp(seconds_ago=heartbeat_age_s, now=frozen_monitor_now)
+    )
     patch = _kopf_patch()
 
     await monitor.heartbeat_watchdog(
