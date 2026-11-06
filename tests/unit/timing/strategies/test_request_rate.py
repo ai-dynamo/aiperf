@@ -242,6 +242,58 @@ async def test_request_rate_update_wakes_pending_sleep() -> None:
 
 
 @pytest.mark.asyncio
+async def test_last_session_start_does_not_consume_look_ahead_sample() -> None:
+    """Starting the last session of a phase must not advance the shared sampler."""
+
+    class FakeIntervalGenerator:
+        """Zero-interval generator so the loop issues credits immediately."""
+
+        def __init__(self, config) -> None:
+            """Ignore the config; the interval is always zero."""
+
+        def next_interval(self) -> float:
+            """Return a zero interval."""
+            return 0.0
+
+        def set_rate(self, new_rate: float) -> None:
+            """Ignore rate updates."""
+
+    lifecycle = MagicMock()
+    lifecycle.started_at_perf_ns = int(time.perf_counter() * NANOS_PER_SECOND)
+    conversation_source = MagicMock()
+    conversation_source.next.return_value.build_first_turn.return_value = object()
+    credit_issuer = MagicMock()
+    credit_issuer.try_issue_credit = AsyncMock(return_value=True)
+    stop_checker = MagicMock()
+    stop_checker.can_start_new_session.side_effect = [True, False, False]
+    stop_checker.can_send_any_turn.return_value = False
+
+    config = CreditPhaseConfig(
+        phase=CreditPhase.WARMUP,
+        timing_mode=TimingMode.REQUEST_RATE,
+        request_rate=1.0,
+        total_expected_requests=1,
+    )
+    with patch(
+        "aiperf.timing.strategies.request_rate.plugins.get_class",
+        return_value=FakeIntervalGenerator,
+    ):
+        strategy = RequestRateStrategy(
+            config=config,
+            conversation_source=conversation_source,
+            scheduler=MagicMock(),
+            stop_checker=stop_checker,
+            credit_issuer=credit_issuer,
+            lifecycle=lifecycle,
+        )
+
+    await asyncio.wait_for(strategy.execute_phase(), timeout=1.0)
+
+    credit_issuer.try_issue_credit.assert_awaited_once()
+    conversation_source.next.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_high_res_pacer_rate_update_reschedules_before_issuing_credit() -> None:
     class FakeIntervalGenerator:
         def __init__(self, config) -> None:
