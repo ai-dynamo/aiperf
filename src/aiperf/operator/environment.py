@@ -584,6 +584,37 @@ class _OperatorEnvironment(BaseSettings):
         le=120,
         description="Seconds to wait for all pre-flight checks to complete",
     )
+    PREFLIGHT_STRICT_RESOURCES: bool = Field(
+        default=False,
+        description=(
+            "Fail resource-capacity preflight checks (instead of WARN) when "
+            "the cluster provably cannot fit the benchmark: required CPU or "
+            "memory exceeds total schedulable allocatable, so the JobSet pods "
+            "would stay Pending no matter how long the monitor waits. "
+            "Transient free-capacity shortfalls (capacity booked by pods that "
+            "may release it) still WARN. Defaults false so production "
+            "deployments keep the flexible WARN-and-proceed behavior; CI "
+            "chaos/audit paths opt in to fail fast with a diagnosable "
+            "message instead of hanging at Pending until the test timeout."
+        ),
+    )
+    PREFLIGHT_STRICT_CONFIRM_SECONDS: float = Field(
+        default=12.0,
+        ge=0,
+        le=120,
+        description=(
+            "Length of the strict-mode capacity observation window. On an "
+            "allocatable-level shortfall the operator polls node capacity for "
+            "this many seconds and permanently rejects the job only when NO "
+            "sample in the window fits; any fitting sample (a CI test floor "
+            "restored between kubelet re-assertions, a recovering "
+            "NotReady/tainted node, an autoscaler mid-scale-up) downgrades to "
+            "the normal WARN/PASS evaluation. Advertised allocatable is a "
+            "changing snapshot, so a single read — or two window-endpoint "
+            "reads — cannot prove a job can never fit. Keep below "
+            "PREFLIGHT_TIMEOUT to leave budget for the polling."
+        ),
+    )
     CLIENT_CACHE_MAX_ENTRIES: int = Field(
         default=200,
         ge=1,

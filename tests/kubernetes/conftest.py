@@ -40,7 +40,14 @@ from tests.kubernetes.helpers.benchmark import (
     BenchmarkDeployer,
     BenchmarkResult,
 )
-from tests.kubernetes.helpers.cluster import ClusterConfig, ClusterRuntime, LocalCluster
+from tests.kubernetes.helpers.cluster import (
+    ClusterConfig,
+    ClusterRuntime,
+    CpuOvercommitReconciler,
+    LocalCluster,
+    kind_cluster_node_names,
+)
+from tests.kubernetes.helpers.diagnostics import dump_cluster_diagnostics
 from tests.kubernetes.helpers.helm import HelmClient, HelmDeployer, HelmValues
 from tests.kubernetes.helpers.images import ImageConfig, ImageManager
 from tests.kubernetes.helpers.kubectl import KubectlClient
@@ -66,6 +73,52 @@ def _is_tty() -> bool:
 
 # Stash key for K8sTestSettings on pytest.Config
 _SETTINGS_KEY = pytest.StashKey["K8sTestSettings"]()
+# Stash key for the session's failed-test node IDs (fixture teardown reads it)
+_FAILED_TESTS_KEY = pytest.StashKey[list[str]]()
+
+
+class _FailureTracker:
+    """pytest plugin recording failed tests for package-fixture teardown.
+
+    The diagnostics capture and keep-cluster-on-failure decisions in the
+    fixtures need to know whether the session saw failures; hook callers
+    cannot request fixtures, so the node IDs live on the config stash.
+
+    Test failures are recorded via ``pytest_runtest_logreport`` (which fires
+    before package-scope finalizers run). Failures raised INSIDE a
+    package-fixture finalizer never produce a test report, so the destructive
+    finalizers below also record through ``_record_failure`` at the moment
+    they fail — before the next destructive finalizer runs.
+    """
+
+    def __init__(self) -> None:
+        self.failed: list[str] = []
+
+    def _record(self, nodeid: str) -> None:
+        if nodeid not in self.failed:
+            self.failed.append(nodeid)
+
+    def pytest_runtest_logreport(self, report: pytest.TestReport) -> None:
+        if report.failed:
+            self._record(report.nodeid)
+
+
+def _record_failure(config: pytest.Config, label: str) -> None:
+    """Record a failure label in the session stash (idempotent).
+
+    Used by fixture finalizers: a failure inside one finalizer must be
+    visible to the finalizers that run after it (the cluster teardown's
+    dump/keep decisions), which pytest's test-report hooks cannot cover
+    because finalizer failures produce no test report.
+    """
+    failures = config.stash.get(_FAILED_TESTS_KEY, None)
+    if failures is not None and label not in failures:
+        failures.append(label)
+
+
+def _session_failures(config: pytest.Config) -> list[str]:
+    """Node IDs of failed reports so far this session (empty when all green)."""
+    return config.stash.get(_FAILED_TESTS_KEY, None) or []
 
 
 # ============================================================================
@@ -153,6 +206,47 @@ class K8sTestSettings:
     By default these are skipped to protect shared cluster state.
     """
 
+    operator_strict_preflight: bool = False
+    """Deploy the operator with AIPERF_PREFLIGHT_STRICT_RESOURCES=true.
+
+    Strictly opt-in for CI chaos/audit paths: the operator's
+    resource-capacity preflight FAILS the job fast when the cluster provably
+    cannot fit the benchmark, instead of WARNing and letting pods sit Pending
+    until the test timeout. Default off so production-shaped runs keep the
+    flexible WARN-and-proceed behavior.
+    """
+
+    keep_cluster_on_failure: bool = False
+    """Skip only the end-of-session cluster delete, and only when tests failed.
+
+    For CI, where a post-pytest step collects diagnostics from the still-live
+    cluster and a later always() step deletes it. Unlike skip_cleanup this
+    leaves per-test resource cleanup and the operator uninstall intact, and
+    unlike it the cluster is still torn down on success so shared/self-hosted
+    runners are never left with stale clusters after a green run.
+    """
+
+    diagnostics_dir: str | None = None
+    """When set and any test failed, dump cluster diagnostics here from within
+    fixture teardown (resources, events, describes, per-pod logs, and a Kind
+    log export at cluster teardown), BEFORE the fixtures uninstall the
+    operator and delete the cluster — the CI diagnostics step runs after
+    pytest exits and would otherwise capture nothing but connection-refused.
+    """
+
+    node_cpu_overcommit: int = 0
+    """Opt-in fake CPU capacity floor (whole cores) for local Kind nodes.
+
+    0 (default) disables. When > 0, the local_cluster fixture patches every
+    Kind node's advertised capacity/allocatable up to the floor so the
+    scheduler admits production-sized pod requests on small CI runners, and
+    re-applies it on an interval (kubelet re-asserts real capacity within
+    seconds). Applied only to fixture-managed Kind clusters whose nodes carry
+    the kind:// providerID marker — never to existing/remote clusters. The
+    chaos and audit CI workflows set this to 32; see helpers/cluster.py for
+    the full rationale.
+    """
+
     @property
     def cluster_runtime(self) -> ClusterRuntime:
         """Get the cluster runtime enum value."""
@@ -192,6 +286,10 @@ _OPTIONS: list[tuple[str, str, str | None, str, str]] = [
     ("--k8s-job-node-selector", "K8S_TEST_JOB_NODE_SELECTOR", None, "str", "Comma-separated key=value node selector for benchmark pods (e.g. kubernetes.io/arch=amd64)"),
     ("--k8s-tolerate-gpu-nodes", "K8S_TEST_TOLERATE_GPU_NODES", None, "bool", "Add tolerations for GPU node taints (nvidia.com/gpu, kubernetes.io/arch=arm64) so pods can run on GPU nodes"),
     ("--k8s-allow-disruptive", "K8S_TEST_ALLOW_DISRUPTIVE", None, "bool", "Allow tests marked k8s_disruptive that make cluster-wide mutations (e.g. CRD deletion); skipped by default"),
+    ("--k8s-node-cpu-overcommit", "K8S_TEST_NODE_CPU_OVERCOMMIT", "0", "int", "Opt-in fake CPU capacity floor (cores) for local Kind nodes so production-sized pod requests schedule on small CI runners; 0 (default) disables. Only nodes with the kind:// providerID marker are ever patched"),
+    ("--k8s-operator-strict-preflight", "K8S_TEST_OPERATOR_STRICT_PREFLIGHT", None, "bool", "Deploy the operator with AIPERF_PREFLIGHT_STRICT_RESOURCES=true so provable capacity shortfalls fail fast instead of hanging at Pending (CI chaos/audit)"),
+    ("--k8s-keep-cluster-on-failure", "K8S_TEST_KEEP_CLUSTER_ON_FAILURE", None, "bool", "Skip only the final cluster delete, and only when tests failed (CI diagnostics; a later workflow step deletes the cluster)"),
+    ("--k8s-diagnostics-dir", "K8S_TEST_DIAGNOSTICS_DIR", None, "str", "Dump cluster diagnostics here from fixture teardown when any test failed, before fixtures uninstall the operator and delete the cluster"),
 ]  # fmt: skip
 
 
@@ -301,6 +399,8 @@ def _resolve_settings(config: pytest.Config) -> K8sTestSettings:
         "skip_operator_deploy",
         "tolerate_gpu_nodes",
         "allow_disruptive",
+        "operator_strict_preflight",
+        "keep_cluster_on_failure",
     ):
         if resolved.get(key) is None:
             resolved[key] = False
@@ -390,6 +490,10 @@ def pytest_configure(config: pytest.Config) -> None:
     # Resolve and stash settings
     settings = _resolve_settings(config)
     config.stash[_SETTINGS_KEY] = settings
+
+    tracker = _FailureTracker()
+    config.stash[_FAILED_TESTS_KEY] = tracker.failed
+    config.pluginmanager.register(tracker, "aiperf-k8s-failure-tracker")
 
     if _is_chaos_invocation(config) and getattr(config.option, "dist", None):
         config.option.dist = "loadgroup"
@@ -749,6 +853,7 @@ async def local_cluster(
     cluster_config: ClusterConfig,
     k8s_settings: K8sTestSettings,
     tmp_path_factory: pytest.TempPathFactory,
+    request: pytest.FixtureRequest,
 ) -> AsyncGenerator[LocalCluster, None]:
     """Create and manage a local K8s cluster for the test package.
 
@@ -788,10 +893,74 @@ async def local_cluster(
         else:
             await cluster.create(force=not s.reuse_cluster)
 
-    yield cluster
+    # Opt-in (--k8s-node-cpu-overcommit / K8S_TEST_NODE_CPU_OVERCOMMIT, 0
+    # disables): local Kind nodes on small CI runners cannot admit the
+    # operator's production-sized pod requests (one AIPerfJob wants ~6 CPUs
+    # across its controller and worker pods; a 4-vCPU ubuntu-latest runner
+    # cannot fit that beside kube-system, the mock server, and the operator
+    # pod itself). Suites may opt into raising the nodes' advertised CPU
+    # floor so the test workload schedules (the chaos and audit CI workflows
+    # set K8S_TEST_NODE_CPU_OVERCOMMIT=32). Kubelet re-asserts real capacity
+    # on every node-status sync, so a daemon-thread reconciler re-applies the
+    # patch on an interval — it must not be an asyncio task on this fixture's
+    # package-scoped loop, which is suspended for the entire duration of each
+    # function-scoped test loop. Only fixture-managed Kind clusters are
+    # patched, and apply_cpu_overcommit_sync additionally requires each
+    # node's providerID to carry the kind:// locality marker before touching
+    # it.
+    overcommit_reconciler: CpuOvercommitReconciler | None = None
+    if cluster.runtime == ClusterRuntime.KIND and s.node_cpu_overcommit > 0:
+        # Locality anchor: the allowlist comes from `kind get nodes`, which
+        # queries the LOCAL Docker daemon by container label — never the
+        # Kubernetes API of the context under test. A kubectl context
+        # repointed at a remote Kind cluster would list the remote nodes,
+        # which are not in this allowlist, so nothing gets patched. Without
+        # a locally verifiable node set there is no safe patch.
+        expected_nodes = await kind_cluster_node_names(cluster.name)
+        if not expected_nodes:
+            raise RuntimeError(
+                f"--k8s-node-cpu-overcommit={s.node_cpu_overcommit} was "
+                f"requested but 'kind get nodes --name {cluster.name}' found "
+                "no local Kind nodes; cannot verify patch locality, refusing "
+                "to fake capacity"
+            )
+        overcommit_reconciler = CpuOvercommitReconciler(
+            cluster.context, s.node_cpu_overcommit, expected_nodes
+        )
+        # Eager apply must succeed: without it the first benchmark pods race
+        # kubelet's next capacity re-assertion and may never schedule.
+        await asyncio.to_thread(overcommit_reconciler.start)
+
+    try:
+        yield cluster
+    finally:
+        if overcommit_reconciler is not None:
+            await asyncio.to_thread(overcommit_reconciler.stop)
+
+    failures = _session_failures(request.config)
+    keep_for_failure = s.keep_cluster_on_failure and bool(failures)
+
+    # Failure diagnostics must be captured HERE, before the cluster delete
+    # below: the CI workflow's diagnostics step runs after pytest exits, when
+    # the fixtures have already uninstalled the operator and (absent
+    # keep-cluster-on-failure) deleted the cluster, so every artifact it
+    # collected was empty or connection-refused. `kind export logs` in
+    # particular still finds terminated pods' container logs on the node
+    # filesystem, but only while the cluster is alive.
+    if s.diagnostics_dir and failures:
+        try:
+            await dump_cluster_diagnostics(
+                context=cluster.context,
+                out_dir=Path(s.diagnostics_dir) / "cluster-teardown",
+                cluster_name=cluster.name
+                if cluster.runtime == ClusterRuntime.KIND
+                else None,
+            )
+        except Exception as exc:  # noqa: BLE001 — never fail teardown on diagnostics
+            logger.warning(f"[diagnostics] cluster-teardown capture failed: {exc}")
 
     # Cleanup
-    if not s.skip_cleanup and not s.reuse_cluster:
+    if not s.skip_cleanup and not s.reuse_cluster and not keep_for_failure:
         try:
             await cluster.delete()
         except RuntimeError as exc:
@@ -820,6 +989,12 @@ async def local_cluster(
                 logger.warning(
                     f"[cleanup] docker rm -f {node_container} also failed: {docker_exc}"
                 )
+    elif keep_for_failure:
+        logger.info(
+            f"Keeping cluster after {len(failures)} failed test(s): {cluster.name} "
+            "(the CI diagnostics step reads it; the workflow's always() teardown "
+            "deletes it)"
+        )
     else:
         logger.info(f"Keeping cluster: {cluster.name}")
 
@@ -1716,6 +1891,7 @@ async def benchmark_deployer(
     k8s_ready: LocalCluster,
     k8s_settings: K8sTestSettings,
     benchmark_namespace: str,
+    request: pytest.FixtureRequest,
 ) -> AsyncGenerator[BenchmarkDeployer, None]:
     """Create a benchmark deployer.
 
@@ -1738,9 +1914,16 @@ async def benchmark_deployer(
 
     yield deployer
 
-    # Cleanup all deployments
+    # Cleanup all deployments. A finalizer failure produces its teardown
+    # report only after ALL finalizers finish (pytest runs the whole stack
+    # first), so record it now: the cluster teardown's dump/keep decisions
+    # run later and must see the session as failed.
     if not k8s_settings.skip_cleanup:
-        await deployer.cleanup_all()
+        try:
+            await deployer.cleanup_all()
+        except Exception:
+            _record_failure(request.config, "benchmark-deployer-cleanup")
+            raise
 
 
 # ============================================================================
@@ -1971,6 +2154,7 @@ async def operator_deployer(
     jobset_controller: None,
     k8s_settings: K8sTestSettings,
     operator_job_namespace: str,
+    request: pytest.FixtureRequest,
 ) -> AsyncGenerator[OperatorDeployer, None]:
     """Create an operator deployer (package-scoped).
 
@@ -1985,6 +2169,7 @@ async def operator_deployer(
         image_pull_policy=k8s_settings.image_pull_policy,
         image_pull_secret=k8s_settings.image_pull_secret,
         operator_namespace=k8s_settings.operator_namespace,
+        strict_preflight=k8s_settings.operator_strict_preflight,
     )
 
     # Skip CRD install when using an existing remote cluster (CRDs already present)
@@ -2003,8 +2188,15 @@ async def operator_deployer(
 
     yield deployer
 
-    # Cleanup all jobs
-    await deployer.cleanup_all()
+    # Cleanup all jobs. A failure inside this finalizer produces no test
+    # report, so record it before it propagates: later finalizers (the
+    # cluster teardown's dump/keep decisions) must still see the session as
+    # failed.
+    try:
+        await deployer.cleanup_all()
+    except Exception:
+        _record_failure(request.config, "operator-deployer-cleanup")
+        raise
 
 
 @pytest_asyncio.fixture(scope="package", loop_scope="package")
@@ -2014,6 +2206,7 @@ async def operator_ready(
     k8s_settings: K8sTestSettings,
     tmp_path_factory: pytest.TempPathFactory,
     worker_id: str,
+    request: pytest.FixtureRequest,
 ) -> AsyncGenerator[OperatorDeployer, None]:
     """Ensure operator is deployed and ready (package-scoped).
 
@@ -2044,13 +2237,34 @@ async def operator_ready(
 
     yield operator_deployer
 
+    # Capture the operator's evidence BEFORE the uninstall below deletes its
+    # pod: the CI workflow's diagnostics step runs after pytest exits, when
+    # this fixture has already uninstalled the operator, so its per-pod log
+    # collection found nothing. Only on failure and only when a diagnostics
+    # dir is configured.
+    if k8s_settings.diagnostics_dir and _session_failures(request.config):
+        try:
+            await dump_cluster_diagnostics(
+                context=operator_deployer.kubectl.context,
+                out_dir=Path(k8s_settings.diagnostics_dir) / "operator-teardown",
+            )
+        except Exception as exc:  # noqa: BLE001 — never fail teardown on diagnostics
+            logger.warning(f"[diagnostics] operator-teardown capture failed: {exc}")
+
     if (
         not k8s_settings.skip_cleanup
         and not k8s_settings.reuse_cluster
         and not k8s_settings.skip_operator_deploy
     ):
-        async with timed_operation("Uninstalling operator"):
-            await operator_deployer.uninstall_operator()
+        try:
+            async with timed_operation("Uninstalling operator"):
+                await operator_deployer.uninstall_operator()
+        except Exception:
+            # Destructive finalizer failure: no test report will carry it, so
+            # record it before the remaining finalizers (job cleanup, cluster
+            # teardown) make their keep/dump decisions.
+            _record_failure(request.config, "operator-uninstall")
+            raise
 
 
 @pytest.fixture
@@ -2229,6 +2443,7 @@ async def helm_deployer(
     operator_deployer: OperatorDeployer,
     worker_namespace_suffix: str,
     k8s_settings: K8sTestSettings,
+    request: pytest.FixtureRequest,
 ) -> AsyncGenerator[HelmDeployer, None]:
     """Create a Helm deployer (module-scoped).
 
@@ -2267,13 +2482,20 @@ async def helm_deployer(
     # HelmDeployer suspends the package-scoped operator by removing its RBAC so
     # the two controllers cannot reconcile the same cluster-wide CR watches.
     # Tear down the Helm controller before restoring that shared operator.
+    # Every failure in this destructive sequence is recorded immediately:
+    # pytest reports teardown failures only after the whole finalizer stack
+    # finishes, and the cluster teardown's dump/keep decisions must see them.
     try:
-        await deployer.cleanup_all()
-        if await deployer.is_installed():
-            await deployer.uninstall_chart(wait=False)
-    finally:
-        if not await operator_deployer.is_operator_healthy():
-            await operator_deployer.deploy_operator()
+        try:
+            await deployer.cleanup_all()
+            if await deployer.is_installed():
+                await deployer.uninstall_chart(wait=False)
+        finally:
+            if not await operator_deployer.is_operator_healthy():
+                await operator_deployer.deploy_operator()
+    except Exception:
+        _record_failure(request.config, "helm-deployer-teardown")
+        raise
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="package")
@@ -2281,6 +2503,7 @@ async def helm_deployed(
     helm_deployer: HelmDeployer,
     mock_server: None,
     k8s_settings: K8sTestSettings,
+    request: pytest.FixtureRequest,
 ) -> AsyncGenerator[HelmDeployer, None]:
     """Ensure operator is deployed via Helm and ready (module-scoped).
 
@@ -2297,7 +2520,10 @@ async def helm_deployed(
     if not k8s_settings.skip_cleanup:
         try:
             await asyncio.wait_for(helm_deployer.cleanup_all(), timeout=120)
-        except (TimeoutError, Exception) as e:
+        except Exception as e:
+            # Deliberately swallowed (cleanup must not mask test results), but
+            # recorded so the cluster teardown still dumps/keeps evidence.
+            _record_failure(request.config, "helm-job-cleanup")
             logger.warning(f"Job cleanup timed out: {e}")
 
 
