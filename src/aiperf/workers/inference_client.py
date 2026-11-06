@@ -95,13 +95,18 @@ class InferenceClient(AIPerfLifecycleMixin):
         # RecordContext after dispatch (memory optimization for large prompts).
         # Resolved by the worker via record payload-retention auto-detection.
         self.strip_record_payload_bytes = strip_record_payload_bytes
-        # Multipart bodies are form data, not JSON, so they are sent unchanged.
-        self._request_id_field = (
-            None
-            if model_endpoint.endpoint.request_content_type
+        self._is_multipart = (
+            model_endpoint.endpoint.request_content_type
             == RequestContentType.MULTIPART_FORM_DATA
-            else Environment.ENDPOINT.REQUEST_ID_FIELD
         )
+        # Multipart bodies are form data, not JSON, so they are sent unchanged.
+        self._request_id_field = Environment.ENDPOINT.REQUEST_ID_FIELD
+        if self._request_id_field and self._is_multipart:
+            self.warning(
+                f"AIPERF_ENDPOINT_REQUEST_ID_FIELD={self._request_id_field!r} is ignored: "
+                "multipart request bodies are sent unchanged."
+            )
+            self._request_id_field = None
 
         # Detect and set transport type if not explicitly set
         if not model_endpoint.transport:
@@ -168,11 +173,7 @@ class InferenceClient(AIPerfLifecycleMixin):
             request_info.num_choices = count_choices(formatted_payload)
             encoded = orjson.dumps(formatted_payload)
             request_info.payload_bytes = encoded
-            is_multipart = (
-                self.model_endpoint.endpoint.request_content_type
-                == RequestContentType.MULTIPART_FORM_DATA
-            )
-            wire_payload = formatted_payload if is_multipart else encoded
+            wire_payload = formatted_payload if self._is_multipart else encoded
         else:
             request_info.payload_bytes = formatted_payload
         return await self.transport.send_request(

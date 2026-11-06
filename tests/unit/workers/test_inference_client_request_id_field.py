@@ -189,6 +189,24 @@ async def test_multipart_payload_is_sent_unchanged(model_endpoint, monkeypatch):
     }
 
 
+def test_multipart_warns_at_construction_only_when_the_field_is_set(
+    model_endpoint, monkeypatch
+):
+    model_endpoint.endpoint.request_content_type = (
+        RequestContentType.MULTIPART_FORM_DATA
+    )
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        InferenceClient, "warning", lambda self, message: warnings.append(message)
+    )
+
+    _client(model_endpoint, monkeypatch, field=None)
+    _client(model_endpoint, monkeypatch, field="rid")
+
+    assert len(warnings) == 1
+    assert "AIPERF_ENDPOINT_REQUEST_ID_FIELD='rid' is ignored" in warnings[0]
+
+
 def test_dataset_supplied_field_is_overwritten_so_server_and_export_ids_agree():
     assert with_request_id({"rid": "from-dataset"}, "rid", REQUEST_ID) == {
         "rid": REQUEST_ID
