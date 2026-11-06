@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 from typing import Any
 
 import aiohttp
@@ -89,6 +89,14 @@ class _JobCacheState:
     # (``_completion_retry._claim_age_seconds``) a mutation-free source.
     claim_timestamps: dict[str, str] = {}
 
+    # Job keys whose claim this process won and whose ``handle_completion``
+    # then raised ``TransientCompletionFetchError``. kopf retries the
+    # benchmark-complete handler, but the retry loses ``try_claim_completion``
+    # (the claim is already ours), so this mark is what lets exactly that
+    # retry resume completion. In-process only: after a restart the mark is
+    # gone and orphan-claim recovery owns convergence.
+    completion_retry_pending: set[str] = set()
+
 
 # Module-level aliases preserve the historical import surface used by
 # operator.handlers.* modules (same dict/set objects as the class
@@ -100,6 +108,7 @@ _warned_pod_restarts = _JobCacheState.warned_pod_restarts
 _shutdown_sent = _JobCacheState.shutdown_sent
 _cancellation_events = _JobCacheState.cancellation_events
 _claim_timestamps = _JobCacheState.claim_timestamps
+_completion_retry_pending = _JobCacheState.completion_retry_pending
 
 
 def _evict_unset_cancellation_events() -> None:
@@ -285,6 +294,7 @@ async def _close_unlocked(key: str) -> None:
         await client.__aexit__(None, None, None)
     _warned_pod_restarts.pop(key, None)
     _shutdown_sent.discard(key)
+    _completion_retry_pending.discard(key)
     # Prune the cancellation event ONLY when it is unset. A SET flag must
     # survive the close so concurrent observers (the fetch-retry loop, for
     # instance, yields between the close and the next iteration) reliably
@@ -635,13 +645,13 @@ async def _submit_claim_patch(
     return True
 
 
-async def _read_live_completion_claimed(
+async def _read_live_completion_claim_annotations(
     namespace: str,
     name: str,
     *,
     expected_uid: str | None = None,
-) -> bool | None:
-    """Re-read the CR after a claim conflict and report whether it is claimed."""
+) -> Mapping[str, Any] | None:
+    """Re-read the exact live CR's annotations; None when unreadable or stale."""
     try:
         async with k8s_client() as api:
             live_body = await client.CustomObjectsApi(api).get_namespaced_custom_object(
@@ -653,29 +663,22 @@ async def _read_live_completion_claimed(
             )
     except ApiException as e:
         logger.warning(
-            "Failed to re-read completion claim for %s/%s after conflict: %s",
+            "Failed to re-read completion claim for %s/%s: %s",
             namespace,
             name,
             e,
         )
         return None
-    except (TimeoutError, aiohttp.ClientError, OSError) as e:
+    except Exception as e:  # noqa: BLE001 - fail-safe: do not decide a claim on unreadable live state
         logger.warning(
-            "Unexpected error re-reading completion claim for %s/%s after conflict: %s",
+            "Unexpected error re-reading completion claim for %s/%s: %s",
             namespace,
             name,
             e,
         )
         return None
-    except Exception as e:  # noqa: BLE001 - fail-safe: do not cache a race on unreadable live state
-        logger.warning(
-            "Unexpected error re-reading completion claim for %s/%s after conflict: %s",
-            namespace,
-            name,
-            e,
-        )
-        return None
-    live_uid = (live_body.get("metadata") or {}).get("uid")
+    live_metadata = live_body.get("metadata") or {}
+    live_uid = live_metadata.get("uid")
     if expected_uid is not None and live_uid != expected_uid:
         logger.info(
             "Completion claim callback for %s/%s uid=%s is stale; live uid=%s",
@@ -685,7 +688,70 @@ async def _read_live_completion_claimed(
             live_uid,
         )
         return None
-    return is_completion_claimed(live_body)
+    annotations = live_metadata.get("annotations") or {}
+    return annotations if isinstance(annotations, Mapping) else {}
+
+
+async def _read_live_completion_claimed(
+    namespace: str,
+    name: str,
+    *,
+    expected_uid: str | None = None,
+) -> bool | None:
+    """Re-read the CR after a claim conflict and report whether it is claimed."""
+    annotations = await _read_live_completion_claim_annotations(
+        namespace, name, expected_uid=expected_uid
+    )
+    if annotations is None:
+        return None
+    return bool(annotations.get(Annotations.COMPLETION_CLAIMED))
+
+
+def mark_completion_retry_pending(key: str) -> None:
+    """Record that this process's claimed completion is awaiting a kopf retry.
+
+    Only meaningful when this process won the claim for ``key`` (its timestamp
+    is latched); ``resume_owned_completion_claim`` re-verifies that anyway.
+    """
+    _completion_retry_pending.add(key)
+
+
+async def resume_owned_completion_claim(
+    namespace: str,
+    name: str,
+    key: str,
+    *,
+    expected_uid: str | None,
+) -> bool | None:
+    """Let a kopf retry re-enter ``handle_completion`` under a claim we own.
+
+    ``try_claim_completion`` cannot distinguish "we won earlier and our
+    completion attempt asked to be retried" from "someone else won", so it
+    returns False for both. This resolves the first case only, and fails
+    closed on everything else.
+
+    Returns:
+        True when ``key`` has a pending transient-fetch retry, this process
+        latched the claim timestamp, and the live CR's claim annotation still
+        carries exactly that timestamp. The pending mark is consumed, so one
+        retry resumes once. False when there is no pending retry for this
+        process (lost race, already resumed, operator restarted) or the live
+        claim is not ours. None when the live CR could not be read or its UID
+        no longer matches; the mark is kept so the caller can retry.
+    """
+    if key not in _completion_retry_pending:
+        return False
+    our_timestamp = _claim_timestamps.get(key)
+    if key not in _shutdown_sent or not our_timestamp:
+        _completion_retry_pending.discard(key)
+        return False
+    annotations = await _read_live_completion_claim_annotations(
+        namespace, name, expected_uid=expected_uid
+    )
+    if annotations is None:
+        return None
+    _completion_retry_pending.discard(key)
+    return annotations.get(Annotations.COMPLETION_CLAIMED) == our_timestamp
 
 
 async def _read_live_startup_failure_claimed(
@@ -735,3 +801,4 @@ def _reset_for_testing() -> None:
     _shutdown_sent.clear()
     _cancellation_events.clear()
     _claim_timestamps.clear()
+    _completion_retry_pending.clear()
