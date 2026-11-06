@@ -3,6 +3,7 @@
 """Centralized redaction utilities for sensitive data (API keys, auth tokens, etc.)."""
 
 import re
+import shlex
 from collections.abc import Sequence
 from copy import deepcopy
 from typing import Any
@@ -180,14 +181,12 @@ def redact_string(value: str) -> str:
 # Each pattern captures a prefix group (\1) and replaces the secret with REDACTED_VALUE.
 # Build header name alternation from _SENSITIVE_HEADER_NAMES so they stay in sync.
 _SENSITIVE_HEADER_ALT = "|".join(re.escape(h) for h in _SENSITIVE_HEADER_NAMES)
+_SHELL_WORD_PATTERN = r"""(?:[^\s'"\\]|\\.|'[^']*'|"(?:\\.|[^"\\])*")+"""
 _CLI_SECRET_PATTERNS: Sequence[re.Pattern[str]] = (
     # --api-key <value> or --api-key=<value>
     re.compile(r"(--api-key[\s=])'?[^'\s]+'?"),
     # Match a complete shell word, including concatenated quoted/escaped parts.
-    re.compile(
-        r"(--server-profiler-start-body(?:\s+|=))"
-        r"""(?:[^\s'"\\]|\\.|'[^']*'|"(?:\\.|[^"\\])*")+"""
-    ),
+    re.compile(r"(--server-profiler-start-body(?:\s+|=))" + _SHELL_WORD_PATTERN),
     # Single-quoted: --header 'Authorization:Bearer token' / -H 'X-API-Key:val'
     re.compile(rf"((?:--header|-H)\s+)'(?i:{_SENSITIVE_HEADER_ALT})[:\s][^']+'"),
     # Double-quoted: --header "Authorization:Bearer token"
@@ -229,16 +228,6 @@ _URL_FLAG_PATTERN = re.compile(
 # non-URL args with ``@`` (e.g. ``--model foo@bar``) are untouched.
 _STRAY_URL_USERINFO_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://)[^\s'\"@/?#]+@")
 
-# Safety net for stray scheme-less URLs carrying userinfo (``user:pass@host``).
-# ``EndpointConfig.urls`` auto-prefixes scheme-less values, so users can write
-# ``--url user1:pass1@host1 user2:pass2@host2`` and ``consume_multiple=True``
-# means only the first value is caught by ``_URL_FLAG_PATTERN``. Applied only
-# to tokens inside a ``--url``/``-u`` consumption window (see
-# ``_redact_stray_bare_userinfo_after_url_flags``); a global sweep would eat
-# legitimate ``key:value@...`` tokens on non-URL flags like ``--header
-# X-User-Email:alice@example.com`` or ``--mlflow-tag owner:alice@acme.com``.
-_STRAY_BARE_USERINFO_PATTERN = re.compile(r"(^|[\s'\"])([^\s:@'\"/?#]+:[^\s@'\"/?#]+)@")
-
 # Query parameters that conventionally carry credentials. The pattern matches a
 # complete parameter name (it is applied with ``fullmatch``) so ordinary values
 # such as ``token_count`` and ``monkey`` are preserved. ``[-_ ]?`` rather than
@@ -275,36 +264,38 @@ def _redact_url_flag_match(match: re.Match[str]) -> str:
     return f"{prefix}{open_quote}{redact_url(value)}{close_quote}"
 
 
-def _redact_stray_bare_userinfo_after_url_flags(cmd: str) -> str:
-    """Redact scheme-less ``user:pass@host`` tokens inside ``--url``/``-u`` windows.
+def _redact_cli_url_word(word: str) -> str:
+    """Redact a complete URL argument without reformatting unchanged words."""
+    try:
+        value = shlex.split(word)[0]
+    except (ValueError, IndexError):
+        return redact_url(word)
+    redacted = redact_url(value)
+    return word if redacted == value else shlex.quote(redacted)
 
-    A consume-multiple URL flag captures every subsequent positional token up
-    to the next ``--flag``/``-X`` or end of string. Only within that window do
-    we treat ``key:value@rest`` as a credential — outside it, such tokens are
-    legitimate (``--header X-User-Email:alice@example.com``,
-    ``--mlflow-tag owner:alice@acme.com``).
 
-    The first value of ``--url``/``-u`` is already redacted by
-    ``_URL_FLAG_PATTERN``; this pass handles 2nd+ values only.
+def _redact_urls_after_multi_value_flags(cmd: str) -> str:
+    """Redact every URL in a multi-value flag's window, preserving spacing.
+
+    Other flags end the window so non-URL values such as header emails and
+    MLflow tags are preserved.
     """
-    # Split on whitespace runs but keep them so we can rejoin losslessly.
-    tokens = re.split(r"(\s+)", cmd)
+    tokens = re.findall(rf"{_SHELL_WORD_PATTERN}|\s+|.", cmd)
     out: list[str] = []
     in_url_window = False
     for token in tokens:
-        if not token:
-            out.append(token)
-            continue
         if token.isspace():
             out.append(token)
             continue
-        if token in _MULTI_VALUE_URL_FLAGS:
+        flag, separator, value = token.partition("=")
+        if flag in _MULTI_VALUE_URL_FLAGS:
             in_url_window = True
+            if separator:
+                token = f"{flag}={_redact_cli_url_word(value)}"
             out.append(token)
             continue
-        # Any other flag closes the window (including ``--url=value`` which is
-        # a single-value form). Conservative: treat any ``-`` or ``--`` prefix
-        # as a new flag.
+        # Any other flag closes the window. Conservative: treat any ``-`` or
+        # ``--`` prefix as a new flag.
         if (
             token.startswith("-")
             and len(token) >= 2
@@ -314,7 +305,7 @@ def _redact_stray_bare_userinfo_after_url_flags(cmd: str) -> str:
             out.append(token)
             continue
         if in_url_window:
-            token = _STRAY_BARE_USERINFO_PATTERN.sub(rf"\1{REDACTED_VALUE}@", token)
+            token = _redact_cli_url_word(token)
         out.append(token)
     return "".join(out)
 
@@ -339,9 +330,9 @@ def redact_cli_command(cmd: str) -> str:
     """
     for pattern in _CLI_SECRET_PATTERNS:
         cmd = pattern.sub(rf"\1'{REDACTED_VALUE}'", cmd)
+    cmd = _redact_urls_after_multi_value_flags(cmd)
     cmd = _URL_FLAG_PATTERN.sub(_redact_url_flag_match, cmd)
     cmd = _STRAY_URL_USERINFO_PATTERN.sub(rf"\1{REDACTED_VALUE}@", cmd)
-    cmd = _redact_stray_bare_userinfo_after_url_flags(cmd)
     return cmd
 
 
@@ -531,7 +522,17 @@ def _redact_endpoint_fields(endpoint: Any) -> None:
             ]
 
     for key in ("serverProfiler", "server_profiler"):
-        _redact_endpoint_fields(endpoint.get(key))
+        _redact_profiler_fields(endpoint.get(key))
+
+
+def _redact_profiler_fields(profiler: Any) -> None:
+    """Hide profiler URL credentials and opaque start bodies in public specs."""
+    if not isinstance(profiler, dict):
+        return
+    _redact_endpoint_fields(profiler)
+    for body_key in ("startBody", "start_body"):
+        if profiler.get(body_key) is not None:
+            profiler[body_key] = REDACTED_VALUE
 
 
 def _redact_dataset_path(dataset: Any) -> None:

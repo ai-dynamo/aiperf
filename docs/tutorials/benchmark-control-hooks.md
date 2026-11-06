@@ -129,6 +129,11 @@ host/port values and prepends `http://`.
 with `{}`. Omitted start bodies, stop requests and cache resets use empty
 bodies.
 
+Start bodies are non-secret runtime parameters and remain in runtime
+configuration and typed config exports. Supply credentials through endpoint
+authentication headers. Saved commands and public spec views hide the entire
+start body.
+
 ## Defaults and relative paths
 
 | Setting | Default |
