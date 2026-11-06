@@ -314,6 +314,40 @@ class ShutdownError(AIPerfError):
     """Exception raised when a service encounters an error while shutting down."""
 
 
+class ResponseIdleTimeoutError(AIPerfError, TimeoutError):
+    """A request received no response bytes within the configured idle timeout.
+
+    Raised when ``AIPERF_HTTP_RESPONSE_IDLE_TIMEOUT`` is armed and a request
+    goes that long without any response bytes: waiting for the response
+    headers, between streamed chunks, or reading a non-streamed body. The
+    per-request total timeout (``--request-timeout-seconds``) cannot cover
+    this liveness gap: it defaults to six hours, so a response that wedges
+    (server keeps the connection open but stops delivering, or generates
+    without ever finishing) previously hung until the run-level stall watchdog
+    aborted the whole benchmark. This error terminates only the wedged
+    request, which is recorded as an error and lets the run finish. Also a
+    ``TimeoutError`` so generic timeout handlers can catch it.
+    """
+
+    def __init__(
+        self,
+        *,
+        idle_timeout_sec: float,
+        chunks_received: int,
+        bytes_received: int,
+    ) -> None:
+        self.idle_timeout_sec = idle_timeout_sec
+        self.chunks_received = chunks_received
+        self.bytes_received = bytes_received
+        super().__init__(
+            f"Response stalled: no data received for "
+            f"{idle_timeout_sec:.1f}s ({chunks_received} chunk(s), "
+            f"{bytes_received} byte(s) received so far). The request is "
+            f"aborted as unresponsive; AIPERF_HTTP_RESPONSE_IDLE_TIMEOUT "
+            f"controls this check."
+        )
+
+
 class SSEResponseError(AIPerfError):
     """Exception raised when a SSE response contains an error."""
 

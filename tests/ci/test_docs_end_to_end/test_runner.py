@@ -200,7 +200,9 @@ class EndToEndTestRunner:
         repo_root = get_repo_root()
         fixtures_mount = f"-v {repo_root}/tests/fixtures:/fixtures:ro"
 
-        run_command = f"docker run -d --name {container_name} -e HF_TOKEN {fixtures_mount} --network host --entrypoint bash aiperf:test -c 'tail -f /dev/null'"
+        # -e passes the workflow-set value through to every `docker exec`
+        # aiperf run; unset hosts leave the product default (disabled).
+        run_command = f"docker run -d --name {container_name} -e HF_TOKEN -e AIPERF_HTTP_RESPONSE_IDLE_TIMEOUT {fixtures_mount} --network host --entrypoint bash aiperf:test -c 'tail -f /dev/null'"
 
         result = subprocess.run(
             run_command, shell=True, capture_output=True, text=True, timeout=60
