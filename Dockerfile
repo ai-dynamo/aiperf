@@ -304,7 +304,11 @@ COPY --from=python-licenses /opt/licenses/ /
 ############################################
 # Test stage: env-builder installs only runtime deps now, so reinstall aiperf
 # with the [test] extra (pytest, hypothesis, etc.) from the already-built wheel,
-# and add curl for server health checks.
+# and add curl for server health checks. jq rides along because tagged doc
+# commands run verbatim inside this image and several guides pipe curl output
+# to jq (docs/tutorials/custom-dataset.md, docs/reference/api-endpoints.md,
+# docs/kubernetes/validate.md, ...); without it those blocks fail rc=127 the
+# moment they are tagged.
 FROM env-builder AS test
 
 COPY --from=wheel-builder /dist /tmp/dist
@@ -313,7 +317,7 @@ RUN WHEEL=$(ls /tmp/dist/aiperf-*.whl) \
     && rm -rf /tmp/dist
 
 RUN apt-get update -y && \
-    apt-get install -y curl && \
+    apt-get install -y curl jq && \
     rm -rf /var/lib/apt/lists/*
 
 ENV VIRTUAL_ENV=/opt/aiperf/venv \

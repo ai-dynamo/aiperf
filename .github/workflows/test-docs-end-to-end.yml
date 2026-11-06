@@ -203,6 +203,16 @@ jobs:
         with:
           ref: ${{ inputs.source_ref || github.sha }}
 
+      # Health-check commands run directly on the runner via subprocess
+      # (test_runner.py), not inside the aiperf:test image, and tagged guides
+      # pipe curl output to jq. The image installs its own jq for aiperf-run
+      # commands; this covers the host side so a tagged health check cannot
+      # fail rc=127 on a missing tool.
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
       - name: Run test_docs_end_to_end
         env:
           AIPERF_SOURCE_DIR: ${{ github.workspace }}
