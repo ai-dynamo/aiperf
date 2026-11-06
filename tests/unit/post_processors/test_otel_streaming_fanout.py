@@ -140,6 +140,49 @@ def _build_config(
     )
 
 
+def test_run_fanout_keeps_token_types_apart_in_mlflow(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    otel_state: dict[str, Any] = {}
+    mlflow_state: dict[str, Any] = {"log_batch_calls": []}
+    install_fake_otel_modules(monkeypatch, otel_state)
+    _install_fake_mlflow_modules(monkeypatch, mlflow_state)
+
+    queue = _SequenceQueue(
+        [
+            *(
+                {
+                    "type": "histogram_record",
+                    "payload": {
+                        "metric_name": "gen_ai.client.token.usage",
+                        "unit": "{token}",
+                        "description": "token usage",
+                        "value": value,
+                        "attributes": {"gen_ai.token.type": token_type},
+                    },
+                }
+                for token_type, value in (("input", 50.0), ("output", 200.0))
+            ),
+            {"type": "flush", "payload": {}},
+            {"type": "shutdown", "payload": {}},
+        ]
+    )
+    config = _build_config(tmp_path, endpoint_url="http://collector:4318/v1/metrics")
+
+    run_otel_streaming_fanout(queue, config)
+
+    logged = {
+        metric.key: metric.value
+        for call in mlflow_state["log_batch_calls"]
+        for metric in call["metrics"]
+    }
+    assert logged == {
+        "live.gen_ai.client.token.usage.input": 50.0,
+        "live.gen_ai.client.token.usage.output": 200.0,
+    }
+
+
 def test_run_fanout_processes_events_for_otel_and_mlflow(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

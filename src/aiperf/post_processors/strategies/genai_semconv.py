@@ -70,7 +70,7 @@ UNIT_CONVERTERS: dict[str, Callable[[float], float]] = {
     "request_latency": _ns_to_s,
     "time_to_first_token": _ns_to_s,
     "inter_token_latency": _ns_to_s,
-    "input_token_count": _identity,
+    "input_sequence_length": _identity,
     "output_token_count": _identity,
 }
 """Per-aiperf-metric converter. Duration metrics convert ns -> s; token counts are identity."""
@@ -195,7 +195,7 @@ METRIC_NAME_MAP: dict[str, tuple[str, str, tuple[float, ...]]] = {
         "s",
         _TIME_PER_OUTPUT_CHUNK_BUCKET_BOUNDARIES,
     ),
-    "input_token_count": (
+    "input_sequence_length": (
         "gen_ai.client.token.usage",
         "{token}",
         _TOKEN_USAGE_BUCKET_BOUNDARIES,
@@ -214,7 +214,7 @@ discriminated by the gen_ai.token.type attribute (see TOKEN_USAGE_SPECIAL_CASE).
 
 
 TOKEN_USAGE_SPECIAL_CASE: Mapping[str, str] = {
-    "input_token_count": "input",
+    "input_sequence_length": "input",
     "output_token_count": "output",
 }
 """Two aiperf metrics merge into one spec histogram using gen_ai.token.type attribute."""
@@ -336,7 +336,7 @@ ATTRIBUTE_BUILDERS: dict[str, Callable[..., dict[str, Any]]] = {
     "request_latency": _build_duration_attributes,
     "time_to_first_token": _build_duration_attributes,
     "inter_token_latency": _build_duration_attributes,
-    "input_token_count": lambda record, cfg: _build_token_usage_attributes(
+    "input_sequence_length": lambda record, cfg: _build_token_usage_attributes(
         record, cfg, token_type="input"
     ),
     "output_token_count": lambda record, cfg: _build_token_usage_attributes(
