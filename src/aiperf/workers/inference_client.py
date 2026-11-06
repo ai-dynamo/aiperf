@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 import orjson
 
 from aiperf.common.enums import RequestContentType
+from aiperf.common.environment import Environment
 from aiperf.common.mixins import AIPerfLifecycleMixin
 from aiperf.common.models import (
     ErrorDetails,
@@ -55,6 +56,27 @@ def detect_transport_from_url(url: str) -> str:
     raise ValueError(f"No transport found for URL scheme '{scheme}' in: {url}")
 
 
+def with_request_id(
+    payload: dict[str, Any] | bytes, field: str, request_id: str
+) -> dict[str, Any] | bytes:
+    """Return the payload with ``field`` set to ``request_id`` (AIPERF_ENDPOINT_REQUEST_ID_FIELD).
+
+    Copies rather than mutates: a formatted dict may alias ``endpoint.extra`` or a
+    dataset turn, and pre-encoded bytes are shared by every play of the turn.
+    Bytes that do not decode to a JSON object are returned unchanged.
+    """
+    if isinstance(payload, dict):
+        return {**payload, field: request_id}
+    try:
+        decoded = orjson.loads(payload)
+    except orjson.JSONDecodeError:
+        return payload
+    if not isinstance(decoded, dict):
+        return payload
+    decoded[field] = request_id
+    return decoded
+
+
 class InferenceClient(AIPerfLifecycleMixin):
     """Inference client for the worker."""
 
@@ -73,6 +95,7 @@ class InferenceClient(AIPerfLifecycleMixin):
         # RecordContext after dispatch (memory optimization for large prompts).
         # Resolved by the worker via record payload-retention auto-detection.
         self.strip_record_payload_bytes = strip_record_payload_bytes
+        self._request_id_field = Environment.ENDPOINT.REQUEST_ID_FIELD
 
         # Detect and set transport type if not explicitly set
         if not model_endpoint.transport:
@@ -123,6 +146,10 @@ class InferenceClient(AIPerfLifecycleMixin):
                 formatted_payload = current_turn.raw_payload
             else:
                 formatted_payload = self.endpoint.format_payload(request_info)
+        if self._request_id_field and request_info.x_request_id:
+            formatted_payload = with_request_id(
+                formatted_payload, self._request_id_field, request_info.x_request_id
+            )
         # Canonicalise to bytes and stash on request_info. Two wins: (1) the
         # transport skips its own orjson.dumps on the dict path, (2) the
         # record processor can read the exact wire payload for raw-export.
