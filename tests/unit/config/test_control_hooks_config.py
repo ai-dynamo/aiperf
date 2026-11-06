@@ -90,6 +90,7 @@ def test_server_profiler_object_parses_overrides() -> None:
 
 
 def test_server_profiler_accepts_separate_targets_and_start_body() -> None:
+    """Profiler targets and native JSON parameters survive config validation."""
     body = {"num_steps": 20, "activities": ["CPU", "GPU"], "with_stack": False}
     cfg = ServerProfilerConfig(urls=["http://worker:9090"], start_body=body)
     assert [str(url) for url in cfg.urls] == ["http://worker:9090/"]

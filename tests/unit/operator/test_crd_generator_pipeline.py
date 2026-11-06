@@ -30,6 +30,7 @@ def test_crd_schema_source_loads_job_and_sweep_schema_roots() -> None:
 
 
 def test_profiler_start_body_preserves_native_parameters_in_both_crds() -> None:
+    """Both generated CRDs allow arbitrary native profiler start parameters."""
     source = CRDSchemaSource()
     builder = CRDDocumentBuilder()
     for crd in (

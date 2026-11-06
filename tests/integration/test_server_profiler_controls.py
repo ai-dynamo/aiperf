@@ -16,6 +16,7 @@ from aiohttp import web
 from tokenizers import Tokenizer, models, pre_tokenizers
 from transformers import PreTrainedTokenizerFast
 
+from aiperf.common.redact import REDACTED_VALUE
 from tests.harness.utils import AIPerfCLI, AIPerfMockServer
 from tests.integration.conftest import IntegrationTestDefaults as defaults
 
@@ -36,6 +37,7 @@ async def _serve(app: web.Application) -> AsyncIterator[str]:
 async def test_separate_profiler_starts_after_warmup_and_load_finishes(
     cli: AIPerfCLI, aiperf_mock_server: AIPerfMockServer, tmp_path: Path
 ) -> None:
+    """Warm up, send native profiler JSON, and finish load with a redacted export."""
     tokenizer = Tokenizer(
         models.WordLevel({f"token{i}": i for i in range(256)}, unk_token="token0")
     )
@@ -67,6 +69,7 @@ async def test_separate_profiler_starts_after_warmup_and_load_finishes(
     async with aiohttp.ClientSession() as session:
 
         async def forward(request: web.Request) -> web.Response:
+            """Record completed inference requests while forwarding to the mock."""
             if request.path == "/v1/chat/completions":
                 events.append("inference.request")
             async with session.request(
@@ -109,6 +112,10 @@ async def test_separate_profiler_starts_after_warmup_and_load_finishes(
     assert result.exit_code == 0
     assert result.request_count == 15
     assert start_bodies == [expected_body]
+    assert result.json is not None
+    assert result.json.run_info is not None
+    assert REDACTED_VALUE in result.json.run_info.cli_command
+    assert "num_steps" not in result.json.run_info.cli_command
     assert events.count("profiler.start") == events.count("profiler.stop") == 1
     start_index = events.index("profiler.start")
     request_pair = ["inference.request", "inference.complete"]

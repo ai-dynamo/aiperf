@@ -1259,6 +1259,7 @@ def _apply_reset_kv_cache_override(
 def _apply_server_profiler_override(
     endpoint: dict[str, Any], cli: CLIConfig, fields_set: set[str]
 ) -> None:
+    """Apply explicit profiler CLI settings while honoring an explicit disable."""
     profiler_fields = {
         "server_profiler",
         "server_profiler_urls",

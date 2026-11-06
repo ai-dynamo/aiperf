@@ -183,6 +183,11 @@ _SENSITIVE_HEADER_ALT = "|".join(re.escape(h) for h in _SENSITIVE_HEADER_NAMES)
 _CLI_SECRET_PATTERNS: Sequence[re.Pattern[str]] = (
     # --api-key <value> or --api-key=<value>
     re.compile(r"(--api-key[\s=])'?[^'\s]+'?"),
+    # Match a complete shell word, including concatenated quoted/escaped parts.
+    re.compile(
+        r"(--server-profiler-start-body(?:\s+|=))"
+        r"""(?:[^\s'"\\]|\\.|'[^']*'|"(?:\\.|[^"\\])*")+"""
+    ),
     # Single-quoted: --header 'Authorization:Bearer token' / -H 'X-API-Key:val'
     re.compile(rf"((?:--header|-H)\s+)'(?i:{_SENSITIVE_HEADER_ALT})[:\s][^']+'"),
     # Double-quoted: --header "Authorization:Bearer token"
@@ -319,6 +324,7 @@ def redact_cli_command(cmd: str) -> str:
 
     Redacts:
     - ``--api-key`` values.
+    - The opaque JSON value of ``--server-profiler-start-body``.
     - Credentialed header values (``--header Authorization: Bearer …`` etc.).
     - Userinfo embedded in URL-typed flag values (``--url``, ``-u``,
       ``--otel-url``, ``--mlflow-tracking-uri``).
@@ -356,7 +362,7 @@ _CLI_COMMAND_SENSITIVE_TOKENS = (
 
 
 def _redact_cli_args(args: list) -> list:
-    """Token-wise redaction for --api-key-shaped flags. Helper for build_cli_command."""
+    """Redact secret flags and opaque profiler JSON before command assembly."""
     out: list = []
     redact_next = False
     for arg in args:
@@ -367,7 +373,9 @@ def _redact_cli_args(args: list) -> list:
         if isinstance(arg, str) and arg.startswith("-"):
             name = arg.lstrip("-").lower()
             key, _, inline = name.partition("=")
-            if any(tok in key for tok in _CLI_COMMAND_SENSITIVE_TOKENS):
+            if key == "server-profiler-start-body" or any(
+                tok in key for tok in _CLI_COMMAND_SENSITIVE_TOKENS
+            ):
                 if inline:
                     out.append(f"{arg.split('=', 1)[0]}={REDACTED_VALUE}")
                 else:
@@ -502,7 +510,7 @@ def redact_text(text: str) -> str:
 
 
 def _redact_endpoint_fields(endpoint: Any) -> None:
-    """Redact one endpoint mapping in place (both ``apiKey`` and ``api_key`` shapes)."""
+    """Redact endpoint and profiler credentials in both public and Python shapes."""
     if not isinstance(endpoint, dict):
         return
     for key in ("apiKey", "api_key"):
@@ -521,6 +529,9 @@ def _redact_endpoint_fields(endpoint: Any) -> None:
             endpoint[key] = [
                 redact_url(url) if isinstance(url, str) else url for url in urls
             ]
+
+    for key in ("serverProfiler", "server_profiler"):
+        _redact_endpoint_fields(endpoint.get(key))
 
 
 def _redact_dataset_path(dataset: Any) -> None:

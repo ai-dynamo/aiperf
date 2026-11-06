@@ -104,6 +104,7 @@ def _maybe_build_reset_kv_cache(cli: CLIConfig) -> dict[str, Any] | None:
 
 
 def _maybe_build_server_profiler(cli: CLIConfig) -> dict[str, Any] | None:
+    """Build an enabled profiler block from explicit CLI control settings."""
     ep_set = cli.model_fields_set & ENDPOINT_FIELDS
     enabled = cli.server_profiler or any(
         name in ep_set

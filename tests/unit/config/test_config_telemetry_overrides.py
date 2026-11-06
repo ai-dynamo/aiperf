@@ -278,6 +278,7 @@ def test_server_profiler_routes(base_yaml: Path) -> None:
 def test_profiler_control_target_and_body_override_yaml(
     base_yaml: Path, profiler_key: str, body_key: str, body: dict[str, object]
 ) -> None:
+    """CLI JSON replaces YAML payloads in raw and resolved profiler settings."""
     base_yaml.write_text(
         base_yaml.read_text().replace(
             "    url: http://localhost:8000",

@@ -424,6 +424,7 @@ async def test_stop_server_profiler_posts_to_each_stop_url() -> None:
 async def test_start_server_profiler_posts_to_each_start_url(
     body: dict[str, int] | None,
 ) -> None:
+    """Each profiler target receives the configured body, including empty JSON."""
     hooks = _hooks(
         profiler_start_urls=[
             "http://a:8000/start_profile",
