@@ -187,6 +187,7 @@ class ReplayBarrierCoordinator:
         self._root_idle_gap_cap_seconds = root_idle_gap_cap_seconds
         self._root_idle_jumps = 0
         self._root_idle_seconds_skipped = 0.0
+        self._root_idle_summary_logged = False
         if scheduler is not None and root_idle_gap_cap_seconds is not None:
             scheduler.set_group_task_observer(self._on_root_timer_done)
 
@@ -464,6 +465,23 @@ class ReplayBarrierCoordinator:
             for root_id, state in self._roots.items()
             if state.pending
         }
+
+    def log_root_idle_summary(self) -> None:
+        """Log the phase's per-trace idle-cap totals once, at INFO.
+
+        Each jump logs at DEBUG, so without this a capped run leaves no
+        default-level record that the cap changed the replay timeline.
+        """
+        cap = self._root_idle_gap_cap_seconds
+        if cap is None or self._root_idle_summary_logged:
+            return
+        self._root_idle_summary_logged = True
+        _logger.info(
+            "Per-trace idle cap summary: limit=%gs, jumps=%d, skipped=%.3fs",
+            cap,
+            self._root_idle_jumps,
+            self._root_idle_seconds_skipped,
+        )
 
     async def cancel_pending(self, *, notify_refused: bool) -> None:
         """Cancel retained dispatches during phase teardown."""
