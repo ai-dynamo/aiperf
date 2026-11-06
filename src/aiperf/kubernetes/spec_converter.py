@@ -857,7 +857,9 @@ def apply_k8s_runtime_config(
     config_dict["logging"].setdefault("level", AIPerfLogLevel.INFO)
 
 
-def extract_benchmark_config(spec: dict[str, Any]) -> AIPerfConfig:
+def extract_benchmark_config(
+    spec: dict[str, Any], *, validation_context: dict[str, Any] | None = None
+) -> AIPerfConfig:
     """Extract an AIPerfConfig from an AIPerfJob/AIPerfSweep CRD spec dict.
 
     Reads AIPerfConfig body fields from ``spec.benchmark`` and envelope
@@ -874,6 +876,9 @@ def extract_benchmark_config(spec: dict[str, Any]) -> AIPerfConfig:
 
     Args:
         spec: AIPerfJob spec dict (from CR's ``spec`` key).
+        validation_context: Internal context for a CLI baseline whose
+            dataset/warmup overrides have not yet been applied. Defaults to
+            strict validation for callers that consume the config directly.
 
     Returns:
         Validated AIPerfConfig populated from spec.benchmark plus any
@@ -881,4 +886,4 @@ def extract_benchmark_config(spec: dict[str, Any]) -> AIPerfConfig:
         schema_version) discovered on the spec.
     """
     expanded = expand_config_dict(build_config_envelope(spec))
-    return AIPerfConfig.model_validate(expanded)
+    return AIPerfConfig.model_validate(expanded, context=validation_context)

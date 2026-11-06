@@ -607,6 +607,8 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
     @model_validator(mode="after")
     def validate_warmup_dataset_partition(self, info: ValidationInfo) -> Self:
         """Keep partitioning on synthetic, independently sampled phases."""
+        from aiperf.plugin.enums import PhaseType, TimingMode
+
         if info.context and info.context.get("defer_warmup_dataset_partition"):
             return self
         partitioned = [d for d in self.datasets if getattr(d, "warmup_entries", 0)]
@@ -622,7 +624,8 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 "--warmup-dataset-entries 0 to keep shared sampling."
             )
         if self.scenario is not None or any(
-            phase.type == "fixed_schedule" or phase.timing_mode == "agentic_replay"
+            phase.type == PhaseType.FIXED_SCHEDULE
+            or phase.timing_mode == TimingMode.AGENTIC_REPLAY
             for phase in self.phases
         ):
             raise ValueError(
