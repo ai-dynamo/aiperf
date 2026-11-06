@@ -286,6 +286,17 @@ class TurnMetadata(AIPerfBaseModel):
     )
 
 
+class ChatToolMetadata(AIPerfBaseModel):
+    """Tool-call fields carried by an authored chat message."""
+
+    tool_calls: list[dict[str, Any]] | None = Field(
+        default=None, description="OpenAI-compatible assistant tool calls."
+    )
+    tool_call_id: str | None = Field(
+        default=None, description="Tool call ID associated with a tool result."
+    )
+
+
 class Turn(AIPerfBaseModel):
     """A dataset representation of a single turn within a conversation.
 
@@ -295,6 +306,9 @@ class Turn(AIPerfBaseModel):
 
     model: str | None = Field(default=None, description="Model name used for the turn.")
     role: str | None = Field(default=None, description="Role of the turn.")
+    chat_tool_metadata: ChatToolMetadata | None = Field(
+        default=None, description="Authored tool-call fields for OpenAI chat replay."
+    )
     timestamp: int | float | None = Field(
         default=None,
         description="The absolute timestamp of the turn in milliseconds.",

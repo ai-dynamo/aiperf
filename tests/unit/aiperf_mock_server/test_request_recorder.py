@@ -21,6 +21,7 @@ from aiperf_mock_server.request_recorder import (
     _encode_request_prompt_ids,
     _histogram,
     _print_summary,
+    _render_chat_template_fallback,
     _render_histogram,
     _render_vocab_lines,
     _vocab_distribution,
@@ -538,6 +539,42 @@ class TestRecorderTokenIdTracking:
         assert row["tokenization_mode"] == "chat_template"
         r._file.close()
 
+    def test_record_request_chat_tool_call_without_content(
+        self, tmp_path: Path
+    ) -> None:
+        """Record tool-only assistant messages even when null content is omitted."""
+        tok = _ChatTemplateTokenizer()
+        recorder = _make_recorder(tmp_path, tok)
+        calls = [
+            {
+                "id": "call_read",
+                "type": "function",
+                "function": {"name": "read_file", "arguments": "{}"},
+            }
+        ]
+        request = ChatCompletionRequest(
+            model="m",
+            messages=[Message(role="assistant", content=None, tool_calls=calls)],
+        )
+        recorder.record_request(
+            ts=0.0,
+            endpoint="/v1/chat/completions",
+            request_id="tool-call",
+            model="m",
+            request=request,
+            stream=False,
+            osl_fingerprint={},
+        )
+        recorder._file.flush()
+        rows = _read_jsonl(recorder.path)
+        recorder._file.close()
+
+        assert len(rows) == 1
+        assert rows[0]["tokenization_mode"] == "chat_template"
+        assert tok.template_calls[0]["messages"] == [
+            {"role": "assistant", "content": "", "tool_calls": calls}
+        ]
+
     def test_record_request_chat_typerror_retry_uses_conversation_kwarg(
         self, tmp_path
     ) -> None:
@@ -737,6 +774,94 @@ class TestRecorderTokenIdTracking:
         row = _read_jsonl(r.path)[0]
         assert row["tokenization_mode"] == "chat_template_fallback"
         r._file.close()
+
+    @pytest.mark.parametrize("missing_template", [False, True])
+    def test_record_chat_fallback_preserves_tool_metadata(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing_template: bool
+    ) -> None:
+        """Fallback ISL includes calls and result IDs with absent or unusable templates."""
+        tokenizer = _CountingTokenizer()
+        if missing_template:
+
+            def unavailable_template(*args: object, **kwargs: object) -> None:
+                """Emulate a tokenizer without a configured chat template."""
+                raise ValueError("No chat template is defined")
+
+            monkeypatch.setattr(
+                tokenizer, "apply_chat_template", unavailable_template, raising=False
+            )
+        recorder = _make_recorder(tmp_path, tokenizer)
+        calls = [
+            {
+                "id": "call_read",
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "arguments": '{ "path": "한글.py" }',
+                },
+            },
+            {
+                "id": "call_stat",
+                "type": "function",
+                "function": {
+                    "name": "stat_file",
+                    "arguments": '{ "path": "main.py" }',
+                },
+            },
+        ]
+        request = ChatCompletionRequest(
+            model="m",
+            messages=[
+                Message(role="assistant", content=None, tool_calls=calls),
+                Message(role="tool", content="file contents", tool_call_id="call_read"),
+            ],
+        )
+        recorder.record_request(
+            ts=0.0,
+            endpoint="/v1/chat/completions",
+            request_id="fallback-tools",
+            model="m",
+            request=request,
+            stream=False,
+            osl_fingerprint={},
+        )
+        recorder._file.flush()
+        rows = _read_jsonl(recorder.path)
+        recorder._file.close()
+
+        assert len(rows) == 1
+        assert rows[0]["tokenization_mode"] == "chat_template_fallback"
+        rendered = tokenizer.encoded_texts[0]
+        assistant = rendered.split("<|im_start|>assistant\n", 1)[1].split(
+            "<|im_end|>", 1
+        )[0]
+        assert orjson.loads(assistant) == {"tool_calls": calls}
+        tool = rendered.split("<|im_start|>tool\n", 1)[1].split("<|im_end|>", 1)[0]
+        content, metadata = tool.rsplit("\n", 1)
+        assert content == "file contents"
+        assert orjson.loads(metadata) == {"tool_call_id": "call_read"}
+        assert rendered.endswith("<|im_start|>assistant\n")
+        control, _ = _encode_request_prompt_ids(
+            _CountingTokenizer(),
+            ChatCompletionRequest(
+                model="m",
+                messages=[
+                    Message(role="assistant", content=""),
+                    Message(role="tool", content="file contents"),
+                ],
+            ),
+        )
+        assert rows[0]["isl"] > len(control)
+
+    def test_chat_fallback_plain_messages_keep_existing_format(self) -> None:
+        """Tool support leaves the fallback bytes of ordinary messages unchanged."""
+        assert _render_chat_template_fallback(
+            [
+                {"role": "system", "content": "policy"},
+                {"role": "user", "content": "hello"},
+            ],
+            False,
+        ) == ("<|im_start|>system\npolicy<|im_end|>\n<|im_start|>user\nhello<|im_end|>")
 
     def test_open_sets_vocab_size_from_tokenizer(self, tmp_path) -> None:
         # Same path as production: from_pretrained -> len(tokenizer).
