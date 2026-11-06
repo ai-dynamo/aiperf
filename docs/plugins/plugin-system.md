@@ -169,6 +169,7 @@ AIPerf's plugin categories are organized by function; the groups below include `
 |----------|------|-------------|
 | `plot` | `PlotType` | Chart types (scatter, histogram, timeline, etc.) |
 | `gpu_telemetry_collector` | `GPUTelemetryCollectorType` | GPU metric collection (DCGM, pynvml) |
+| `host_telemetry_collector` | `HostTelemetryCollectorType` | Host power/energy collection (RAPL); not yet wired to a CLI flag |
 
 ### Infrastructure Categories (Internal)
 
