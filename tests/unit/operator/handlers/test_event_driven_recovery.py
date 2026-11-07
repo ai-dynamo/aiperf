@@ -51,7 +51,9 @@ def frozen_monitor_now(monkeypatch: pytest.MonkeyPatch) -> datetime:
     class _FrozenDatetime(datetime):
         @classmethod
         def now(cls, tz: Any = None) -> datetime:
-            return frozen if tz is None else frozen.astimezone(tz)
+            if tz is None:
+                return frozen.astimezone().replace(tzinfo=None)
+            return frozen.astimezone(tz)
 
     monkeypatch.setattr(monitor, "datetime", _FrozenDatetime)
     return frozen
