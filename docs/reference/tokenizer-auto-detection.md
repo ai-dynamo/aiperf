@@ -23,9 +23,16 @@ Pass `--tokenizer builtin` to use a zero-network-access tokenizer backed by [tik
 
 Use this when you don't need a model-specific tokenizer and just want token counts for performance metrics. The encoding data is downloaded once on first use and cached locally by tiktoken -- subsequent runs require no network access.
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=40 -->
 ```bash
-aiperf profile --tokenizer builtin ...
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --url localhost:8000 \
+    --endpoint-type chat \
+    --request-count 20 \
+    --tokenizer builtin
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 ## Placeholder Model Name Detection
 
