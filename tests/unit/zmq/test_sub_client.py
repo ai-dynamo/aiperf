@@ -28,6 +28,7 @@ from aiperf.zmq.zmq_defaults import (
     TOPIC_END_ENCODED,
     WILDCARD_TOPIC,
 )
+from tests.harness.utils import EVENT_WAIT_HANG_GUARD_S
 
 
 class TestZMQSubClientInitialization:
@@ -184,7 +185,7 @@ class TestZMQSubClientMessageHandling:
         message_bytes = sample_message.model_dump_json().encode()
 
         await client._handle_message(topic_bytes, message_bytes)
-        await asyncio.wait_for(event.wait(), timeout=1.0)
+        await asyncio.wait_for(event.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
 
         assert len(received_messages) == 1
         assert received_messages[0].message_type == sample_message.message_type
@@ -212,7 +213,7 @@ class TestZMQSubClientMessageHandling:
         message_bytes = message.model_dump_json().encode()
 
         await client._handle_message(topic_bytes, message_bytes)
-        await asyncio.wait_for(callback_called.wait(), timeout=1.0)
+        await asyncio.wait_for(callback_called.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
 
     @pytest.mark.asyncio
     async def test_handle_message_calls_all_callbacks(
@@ -236,8 +237,8 @@ class TestZMQSubClientMessageHandling:
 
         await client._handle_message(topic_bytes, message_bytes)
 
-        await asyncio.wait_for(event1.wait(), timeout=1.0)
-        await asyncio.wait_for(event2.wait(), timeout=1.0)
+        await asyncio.wait_for(event1.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
+        await asyncio.wait_for(event2.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
 
         assert len(msgs1) == 1 and len(msgs2) == 1
 
@@ -320,7 +321,7 @@ class TestZMQSubClientWildcardSubscription:
         message_bytes = message.model_dump_json().encode()
 
         await client._handle_message(topic_bytes, message_bytes)
-        await asyncio.wait_for(event.wait(), timeout=1.0)
+        await asyncio.wait_for(event.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
 
         assert len(received_messages) == 1
         assert received_messages[0].message_type == MessageType.HEARTBEAT
@@ -348,8 +349,8 @@ class TestZMQSubClientWildcardSubscription:
 
         await client._handle_message(topic_bytes, message_bytes)
 
-        await asyncio.wait_for(wild_event.wait(), timeout=1.0)
-        await asyncio.wait_for(topic_event.wait(), timeout=1.0)
+        await asyncio.wait_for(wild_event.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
+        await asyncio.wait_for(topic_event.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
 
         assert len(wild_msgs) == 1
         assert len(topic_msgs) == 1
@@ -451,7 +452,7 @@ class TestZMQSubClientBackgroundTask:
         await client.start()
 
         # Wait for callback to be called
-        await asyncio.wait_for(callback_called.wait(), timeout=1.0)
+        await asyncio.wait_for(callback_called.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
 
         await client.stop()
 

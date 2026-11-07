@@ -319,6 +319,31 @@ class CLIConfig(BaseConfig):
         CLIParameter(name=("--server-profiler",), group=Groups.ENDPOINT),
     ] = False
 
+    server_profiler_urls: Annotated[
+        list[str] | None,
+        Field(
+            min_length=1,
+            description="Profiler control server URL(s), separate from inference URLs. "
+            "Repeat for multiple servers. Defaults to the inference endpoint origins.",
+        ),
+        BeforeValidator(parse_str_or_list),
+        CLIParameter(
+            name=("--server-profiler-url",),
+            consume_multiple=True,
+            group=Groups.ENDPOINT,
+        ),
+    ] = None
+
+    server_profiler_start_body: Annotated[
+        str | None,
+        Field(
+            description="JSON object sent with profiler start requests, such as "
+            '\'{"num_steps":20,"output_dir":"/tmp/profiles"}\'. '
+            "Defaults to an empty request body.",
+        ),
+        CLIParameter(name=("--server-profiler-start-body",), group=Groups.ENDPOINT),
+    ] = None
+
     server_profiler_timeout_seconds: Annotated[
         float | None,
         Field(
@@ -1433,6 +1458,22 @@ class CLIConfig(BaseConfig):
             group=Groups.CACHE_BUST,
         ),
     ] = CacheBustTarget.NONE
+
+    cache_bust_media_uuids: Annotated[
+        bool,
+        Field(
+            description=(
+                "Append the trajectory's RID digest to every media `uuid`, so a replay "
+                "cannot hit vLLM's multimodal cache entries from an earlier play. "
+                "Requires a RID --cache-bust target and --endpoint-type chat. "
+                "See [cache-bust.md](reference/cache-bust.md)."
+            ),
+        ),
+        CLIParameter(
+            name=("--cache-bust-media-uuids",),
+            group=Groups.CACHE_BUST,
+        ),
+    ] = False
 
     ##############################################################################
     # Prefix Prompt

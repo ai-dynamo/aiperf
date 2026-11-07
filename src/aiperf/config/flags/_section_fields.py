@@ -36,6 +36,8 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "reset_kv_cache_path",
         "reset_kv_cache_timeout_seconds",
         "server_profiler",
+        "server_profiler_urls",
+        "server_profiler_start_body",
         "server_profiler_start_path",
         "server_profiler_stop_path",
         "server_profiler_timeout_seconds",
@@ -92,6 +94,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "conversation_turn_delay_ratio",
         # ----- prompt modality -----
         "cache_bust",
+        "cache_bust_media_uuids",
         "prompt_batch_size",
         "prompt_corpus",
         "prompt_input_tokens_mean",
