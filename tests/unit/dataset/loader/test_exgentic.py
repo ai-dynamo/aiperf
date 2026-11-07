@@ -597,18 +597,31 @@ async def test_max_conversations_stops_stream(monkeypatch: pytest.MonkeyPatch) -
 _DELAY_MESSAGES = [{"role": "user", "parts": [{"type": "text", "content": "hi"}]}]
 
 
-def _delay_loader(**flags: Any) -> ExgenticDatasetLoader:
+_EXGENTIC_LOADERS = [
+    param(ExgenticDatasetLoader, id="v1"),
+    param(ExgenticV2DatasetLoader, id="v2"),
+]
+
+
+def _delay_loader(
+    loader_cls: type[ExgenticDatasetLoader] = ExgenticDatasetLoader,
+    **flags: Any,
+) -> ExgenticDatasetLoader:
+    if loader_cls is ExgenticV2DatasetLoader:
+        public_dataset = PublicDatasetType.EXGENTIC_V2
+        dataset_name = "Exgentic/agent-llm-traces-v2"
+    else:
+        public_dataset = PublicDatasetType.EXGENTIC
+        dataset_name = "Exgentic/agent-llm-traces"
     run = make_run_from_cli(
         CLIConfig(
             model_names=["target-model"],
-            public_dataset=PublicDatasetType.EXGENTIC,
+            public_dataset=public_dataset,
             conversation_num=1,
             **flags,
         )
     )
-    return ExgenticDatasetLoader(
-        run=run, hf_dataset_name="Exgentic/agent-llm-traces", streaming=True
-    )
+    return loader_cls(run=run, hf_dataset_name=dataset_name, streaming=True)
 
 
 def _idle_session_row() -> dict[str, Any]:
@@ -623,6 +636,7 @@ def _idle_session_row() -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("loader_cls", _EXGENTIC_LOADERS)
 @pytest.mark.parametrize(
     "flags, expected",
     [
@@ -638,17 +652,30 @@ def _idle_session_row() -> dict[str, Any]:
             id="zero_cap_sends_back_to_back",
         ),
     ],
-)
+)  # fmt: skip
 async def test_inter_turn_delay_cap_clamps_recorded_gaps(
-    flags: dict[str, Any], expected: list[float | None]
+    loader_cls: type[ExgenticDatasetLoader],
+    flags: dict[str, Any],
+    expected: list[float | None],
 ) -> None:
-    conversations = await _delay_loader(**flags).convert_to_conversations(
+    conversations = await _delay_loader(loader_cls, **flags).convert_to_conversations(
         {"dataset": [_idle_session_row()]}
     )
 
     assert [turn.delay for turn in conversations[0].turns] == expected
 
 
-def test_ignore_trace_delays_is_rejected() -> None:
+@pytest.mark.parametrize("loader_cls", _EXGENTIC_LOADERS)
+def test_ignore_trace_delays_is_rejected(
+    loader_cls: type[ExgenticDatasetLoader],
+) -> None:
     with pytest.raises(DatasetLoaderError, match="--ignore-trace-delays"):
-        _delay_loader(ignore_trace_delays=True)
+        _delay_loader(loader_cls, ignore_trace_delays=True)
+
+
+@pytest.mark.parametrize("loader_cls", _EXGENTIC_LOADERS)
+def test_use_think_time_only_is_rejected(
+    loader_cls: type[ExgenticDatasetLoader],
+) -> None:
+    with pytest.raises(DatasetLoaderError, match="--use-think-time-only"):
+        _delay_loader(loader_cls, use_think_time_only=True)
