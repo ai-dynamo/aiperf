@@ -287,6 +287,11 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
             )
         super().__init__(**kwargs)
         reject_ignore_trace_delays(self.tag, self.run)
+        if getattr(self.run.cfg.get_default_dataset(), "use_think_time_only", False):
+            raise DatasetLoaderError(
+                f"{self.tag}: --use-think-time-only applies to the Weka loaders only; "
+                "Exgentic replay keeps the recorded inter-turn waits"
+            )
         self._delay_cap_tracker = DelayCapTracker(
             cap_seconds=getattr(
                 self.run.cfg.get_default_dataset(), "inter_turn_delay_cap_seconds", None
