@@ -12,26 +12,12 @@ docs for this harness is exactly when that happens.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HARNESS = REPO_ROOT / "tests/ci/test_docs_end_to_end"
-
-
-@pytest.fixture(autouse=True)
-def _contain_import_side_effects():
-    saved_path = list(sys.path)
-    saved_modules = set(sys.modules)
-    sys.path.insert(0, str(HARNESS))
-    try:
-        yield
-    finally:
-        sys.path[:] = saved_path
-        for name in set(sys.modules) - saved_modules:
-            del sys.modules[name]
 
 
 def _collected_files() -> set[str]:
