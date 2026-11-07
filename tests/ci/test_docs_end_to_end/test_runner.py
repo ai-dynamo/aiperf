@@ -25,6 +25,7 @@ from constants import (
     CONTAINER_TIMEOUT_KILL_GRACE,
     FIXTURE_WRITE_TIMEOUT,
     HOST_WATCHDOG_BACKSTOP_MARGIN,
+    RECORD_PROGRESS_STALL_TIMEOUT,
     SETUP_MONITOR_TIMEOUT,
     TIMEOUT_EXIT_CODE,
     TIMEOUT_SIGKILL_EXIT_CODE,
@@ -583,7 +584,12 @@ class EndToEndTestRunner:
         repo_root = get_repo_root()
         fixtures_mount = f"-v {repo_root}/tests/fixtures:/fixtures:ro"
 
-        run_command = f"docker run -d --name {container_name} -e HF_TOKEN {fixtures_mount} --network host --entrypoint bash aiperf:test -c 'tail -f /dev/null'"
+        run_command = (
+            f"docker run -d --name {container_name} -e HF_TOKEN "
+            f"-e AIPERF_RECORD_PROGRESS_STALL_TIMEOUT={RECORD_PROGRESS_STALL_TIMEOUT} "
+            f"{fixtures_mount} --network host --entrypoint bash aiperf:test "
+            f"-c 'tail -f /dev/null'"
+        )
 
         result = subprocess.run(
             run_command, shell=True, capture_output=True, text=True, timeout=60

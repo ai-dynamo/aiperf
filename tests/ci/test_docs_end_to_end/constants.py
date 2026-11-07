@@ -43,6 +43,16 @@ CONTAINER_START_TIMEOUT = 60  # seconds for container startup
 CONTAINER_DISCOVERY_TIMEOUT = 30  # seconds for a `docker ps` snapshot
 FIXTURE_WRITE_TIMEOUT = 30  # seconds to pipe one fixture into the container
 AIPERF_COMMAND_TIMEOUT = 1200  # seconds for AIPerf commands
+
+# Seconds AIPerf waits with requests in flight but nothing completing before it
+# declares the phase stalled. The 600s product default assumes a request that
+# stops making progress is stuck; here a reasoning model answering a
+# non-streaming request legitimately generates for longer than that on a CI
+# runner, and the watchdog kills a healthy benchmark. ``docs/environment-
+# variables.md`` names raising this as the remedy for exactly that workload.
+# It stays well inside AIPERF_COMMAND_TIMEOUT so a genuinely hung request is
+# still reported as a stall rather than as an opaque command timeout.
+RECORD_PROGRESS_STALL_TIMEOUT = 900  # seconds
 # Grace between the in-container SIGTERM and the SIGKILL that follows it, for
 # a command that traps or ignores SIGTERM.
 CONTAINER_TIMEOUT_KILL_GRACE = 10  # seconds
