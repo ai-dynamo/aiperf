@@ -233,7 +233,7 @@ wheels = [
 
 [[package]]
 name = "aiperf"
-version = "0.13.0"
+version = "0.14.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },
@@ -373,7 +373,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiofiles", specifier = "~=24.1.0" },
-    { name = "aiohttp", specifier = ">=3.14.3,<4" },
+    { name = "aiohttp", specifier = ">=3.14.4,<4" },
     { name = "aiosqlite", specifier = ">=0.19.0" },
     { name = "aiperf", extras = ["aws"], marker = "extra == 'test'" },
     { name = "aiperf", extras = ["aws", "mlflow", "otel", "test", "wandb"], marker = "extra == 'dev'" },
@@ -390,7 +390,7 @@ requires-dist = [
     { name = "deepeval", marker = "extra == 'accuracy'", specifier = ">=2.9.0,<5.0.0" },
     { name = "fastapi", specifier = ">=0.115,<1" },
     { name = "ffmpeg-python", specifier = "~=0.2.0" },
-    { name = "filelock", specifier = ">=3.13" },
+    { name = "filelock", specifier = ">=4.2.1" },
     { name = "gpytorch", marker = "extra == 'botorch'", specifier = ">=1.11" },
     { name = "httpx", marker = "extra == 'test'", specifier = ">=0.27.0" },
     { name = "huggingface-hub", specifier = ">=0.34.0,<2.0" },
@@ -406,7 +406,7 @@ requires-dist = [
     { name = "lighteval", marker = "extra == 'accuracy'", specifier = ">=0.13.0" },
     { name = "looptime", marker = "extra == 'test'", specifier = ">=0.5" },
     { name = "matplotlib", specifier = ">=3.10.0" },
-    { name = "mlflow", marker = "extra == 'mlflow'", specifier = ">=3.10.0,<4.0.0" },
+    { name = "mlflow", marker = "extra == 'mlflow'", specifier = ">=3.17.2,<4.0.0" },
     { name = "msgspec", specifier = ">=0.19.0,<1.0.0" },
     { name = "numpy", specifier = ">=1.26.4,<3" },
     { name = "nvidia-ml-py" },
