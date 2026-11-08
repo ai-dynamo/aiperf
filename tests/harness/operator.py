@@ -8,6 +8,7 @@ as fixtures; test files can also import them directly.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 # =============================================================================
@@ -259,3 +260,78 @@ def collect_app_paths(app: Any) -> list[str]:
 
     _walk(app.routes)
     return paths
+
+
+# =============================================================================
+# Operator Module Reload Isolation
+# =============================================================================
+
+
+def iter_default_registry_handlers() -> Iterator[Any]:
+    """Yield every handler registered in kopf's global default registry."""
+    # Third Party
+    import kopf
+
+    registry = kopf.get_default_registry()
+    for sub_name in (
+        "_activities",
+        "_changing",
+        "_indexing",
+        "_spawning",
+        "_watching",
+        "_webhooks",
+    ):
+        sub_registry = getattr(registry, sub_name, None)
+        get_all_handlers = getattr(sub_registry, "get_all_handlers", None)
+        if get_all_handlers is None:
+            continue
+        yield from get_all_handlers()
+
+
+def snapshot_operator_main_registry_bindings() -> dict[str, Any]:
+    """Snapshot the ``aiperf.operator.main`` attrs the global registry holds.
+
+    ``importlib.reload(aiperf.operator.main)`` re-executes the module and
+    rebinds every function defined in it to brand-new objects *in place*,
+    while kopf's global default registry keeps holding the originals. A later
+    test in the same process that asserts handler identity against the module
+    (``handler.fn is operator_main.cleanup_old_sweeps``, ``handler.when is
+    operator_main.owns_namespace``) then sees every handler as a stranger and
+    fails purely by execution order.
+
+    Importing ``main`` here — rather than when a test first asks for it —
+    guarantees the snapshot holds the pre-reload bindings even when the
+    reload-based test is the first one to run in the process.
+
+    Returns:
+        A name-to-object mapping of the module's registry-referenced callables.
+    """
+    # First Party
+    from aiperf.operator import main as operator_main
+
+    referenced: set[int] = set()
+    for handler in iter_default_registry_handlers():
+        referenced.add(id(handler.fn))
+        when = getattr(handler, "when", None)
+        if when is not None:
+            referenced.add(id(when))
+    return {
+        name: obj
+        for name, obj in vars(operator_main).items()
+        if callable(obj) and id(obj) in referenced
+    }
+
+
+def restore_operator_main_registry_bindings(snapshot: dict[str, Any]) -> None:
+    """Rebind snapshotted ``aiperf.operator.main`` attrs after a reload.
+
+    Args:
+        snapshot: The mapping returned by
+            :func:`snapshot_operator_main_registry_bindings`.
+    """
+    # First Party
+    from aiperf.operator import main as operator_main
+
+    for name, original in snapshot.items():
+        if getattr(operator_main, name, None) is not original:
+            setattr(operator_main, name, original)

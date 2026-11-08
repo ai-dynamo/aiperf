@@ -12,6 +12,9 @@ These models take a query and one or more passages, returning a similarity or re
 
 Client-side Input Sequence Length includes the query and every passage sent in
 the request, for NIM, Cohere, and Hugging Face TEI ranking endpoints.
+For Cohere v1 document objects, it includes the string values selected by
+`rank_fields` in the supplied order, or the `text` field when `rank_fields` is
+omitted.
 
 ---
 

@@ -216,6 +216,7 @@ def _resolve_config_envelopes(
         if pre_overrides
         else copy.deepcopy(yaml_dict)
     )
+    _replace_profiler_start_body(pre_merged, _wrap_under_envelope(pre_overrides))
     base_config = AIPerfConfig.model_validate(pre_merged)
     base_dataset = base_config.benchmark.datasets[0]
 
@@ -721,6 +722,7 @@ def _merge_overrides_into_envelope(
     envelope = normalize_server_metrics_base_for_override(envelope, overrides)
     merged = deep_merge(envelope, overrides) if overrides else envelope
     _apply_control_hook_enable_overrides(merged, cli_config)
+    _replace_profiler_start_body(merged, overrides)
     _apply_dataset_overrides(
         merged,
         cli_config,
@@ -1257,8 +1259,11 @@ def _apply_reset_kv_cache_override(
 def _apply_server_profiler_override(
     endpoint: dict[str, Any], cli: CLIConfig, fields_set: set[str]
 ) -> None:
+    """Apply explicit profiler CLI settings while honoring an explicit disable."""
     profiler_fields = {
         "server_profiler",
+        "server_profiler_urls",
+        "server_profiler_start_body",
         "server_profiler_start_path",
         "server_profiler_stop_path",
         "server_profiler_timeout_seconds",
@@ -1289,6 +1294,8 @@ _CONTROL_HOOK_ENABLE_FLAGS: tuple[tuple[str, str, frozenset[str]], ...] = (
         "server_profiler",
         frozenset(
             {
+                "server_profiler_urls",
+                "server_profiler_start_body",
                 "server_profiler_start_path",
                 "server_profiler_stop_path",
                 "server_profiler_timeout_seconds",
@@ -1333,6 +1340,23 @@ def _apply_control_hook_enable_overrides(
         if isinstance(current, dict) and current:
             continue
         endpoint[target_key] = True
+
+
+def _replace_profiler_start_body(
+    merged: dict[str, Any], overrides: dict[str, Any] | None
+) -> None:
+    """A CLI-authored native JSON payload replaces the YAML payload verbatim."""
+    if not overrides:
+        return
+    profiler_override = (
+        overrides.get("benchmark", {}).get("endpoint", {}).get("server_profiler")
+    )
+    if not isinstance(profiler_override, dict) or "start_body" not in profiler_override:
+        return
+    endpoint = merged["benchmark"]["endpoint"]
+    profiler = endpoint.get("server_profiler", endpoint.get("serverProfiler"))
+    profiler.pop("startBody", None)
+    profiler["start_body"] = copy.deepcopy(profiler_override["start_body"])
 
 
 def _build_model_override(cli: CLIConfig, fields_set: set[str]) -> dict[str, Any]:

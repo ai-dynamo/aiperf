@@ -455,12 +455,12 @@ class PlotGenerator:
         """
         Compute Pareto frontier using O(n log n) sweep algorithm.
 
-        The algorithm leverages the fact that after sorting by x-coordinate, we can
-        scan once (left-to-right or right-to-left depending on metric directions)
-        and track the best y-value seen so far to determine Pareto optimality.
+        The algorithm sorts the points best x first and, among tied x values, best
+        y first. It can then scan once and track the best y-value seen so far to
+        determine Pareto optimality, whichever way each metric points.
 
         Args:
-            x_values: X-axis metric values (must already be sorted ascending)
+            x_values: X-axis metric values
             y_values: Y-axis metric values (corresponding to x_values)
             x_direction: Whether higher or lower x is better
             y_direction: Whether higher or lower y is better
@@ -468,43 +468,17 @@ class PlotGenerator:
         Returns:
             Boolean array where True indicates point is on Pareto frontier
         """
-        n = len(x_values)
+        is_pareto = np.zeros(len(x_values), dtype=bool)
+        x_sign = -1 if x_direction == PlotMetricDirection.HIGHER else 1
+        y_sign = 1 if y_direction == PlotMetricDirection.HIGHER else -1
 
-        if n == 0:
-            return np.array([], dtype=bool)
-        if n == 1:
-            return np.array([True], dtype=bool)
-
-        is_pareto = np.zeros(n, dtype=bool)
-
-        # Use non-strict comparisons (>= and <=) so identical points are all on the frontier.
+        # Use a non-strict comparison (>=) so identical points are all on the frontier.
         # When points have the same coordinates, none dominates any other.
-        if x_direction == PlotMetricDirection.LOWER:
-            if y_direction == PlotMetricDirection.HIGHER:
-                best_y = float("-inf")
-                for i in range(n):
-                    if y_values[i] >= best_y:
-                        is_pareto[i] = True
-                        best_y = y_values[i]
-            else:
-                best_y = float("inf")
-                for i in range(n):
-                    if y_values[i] <= best_y:
-                        is_pareto[i] = True
-                        best_y = y_values[i]
-        else:
-            if y_direction == PlotMetricDirection.HIGHER:
-                best_y = float("-inf")
-                for i in range(n - 1, -1, -1):
-                    if y_values[i] >= best_y:
-                        is_pareto[i] = True
-                        best_y = y_values[i]
-            else:
-                best_y = float("inf")
-                for i in range(n - 1, -1, -1):
-                    if y_values[i] <= best_y:
-                        is_pareto[i] = True
-                        best_y = y_values[i]
+        best_y = float("-inf")
+        for i in np.lexsort((-y_sign * y_values, x_sign * x_values)):
+            if y_sign * y_values[i] >= best_y:
+                is_pareto[i] = True
+                best_y = y_sign * y_values[i]
 
         return is_pareto
 

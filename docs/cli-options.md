@@ -548,6 +548,15 @@ Relative path for reset_kv_cache (default /reset_prefix_cache).
 Enable server profiler start/stop around profiling phases.
 <br/>_Flag (no value required)_
 
+#### `--server-profiler-url` `<list>`
+
+Profiler control server URL(s), separate from inference URLs. Repeat for multiple servers. Defaults to the inference endpoint origins.
+<br/>_Constraints: min: 1_
+
+#### `--server-profiler-start-body` `<str>`
+
+JSON object sent with profiler start requests, such as '{"num_steps":20,"output_dir":"/tmp/profiles"}'. Defaults to an empty request body.
+
 #### `--server-profiler-timeout-seconds` `<float>`
 
 Timeout seconds for server_profiler control requests.
@@ -2209,6 +2218,15 @@ Relative path for reset_kv_cache (default /reset_prefix_cache).
 Enable server profiler start/stop around profiling phases.
 <br/>_Flag (no value required)_
 
+#### `--server-profiler-url` `<list>`
+
+Profiler control server URL(s), separate from inference URLs. Repeat for multiple servers. Defaults to the inference endpoint origins.
+<br/>_Constraints: min: 1_
+
+#### `--server-profiler-start-body` `<str>`
+
+JSON object sent with profiler start requests, such as '{"num_steps":20,"output_dir":"/tmp/profiles"}'. Defaults to an empty request body.
+
 #### `--server-profiler-timeout-seconds` `<float>`
 
 Timeout seconds for server_profiler control requests.
@@ -3864,6 +3882,15 @@ Relative path for reset_kv_cache (default /reset_prefix_cache).
 
 Enable server profiler start/stop around profiling phases.
 <br/>_Flag (no value required)_
+
+#### `--server-profiler-url` `<list>`
+
+Profiler control server URL(s), separate from inference URLs. Repeat for multiple servers. Defaults to the inference endpoint origins.
+<br/>_Constraints: min: 1_
+
+#### `--server-profiler-start-body` `<str>`
+
+JSON object sent with profiler start requests, such as '{"num_steps":20,"output_dir":"/tmp/profiles"}'. Defaults to an empty request body.
 
 #### `--server-profiler-timeout-seconds` `<float>`
 
@@ -6028,6 +6055,15 @@ Relative path for reset_kv_cache (default /reset_prefix_cache).
 Enable server profiler start/stop around profiling phases.
 <br/>_Flag (no value required)_
 
+#### `--server-profiler-url` `<list>`
+
+Profiler control server URL(s), separate from inference URLs. Repeat for multiple servers. Defaults to the inference endpoint origins.
+<br/>_Constraints: min: 1_
+
+#### `--server-profiler-start-body` `<str>`
+
+JSON object sent with profiler start requests, such as '{"num_steps":20,"output_dir":"/tmp/profiles"}'. Defaults to an empty request body.
+
 #### `--server-profiler-timeout-seconds` `<float>`
 
 Timeout seconds for server_profiler control requests.
@@ -7473,7 +7509,7 @@ Generate visualizations from AIPerf profiling data.
 
 On first run, automatically creates ~/.aiperf/plot_config.yaml which you can edit to customize plots, including experiment classification (baseline vs treatment runs). Use --config to specify a different config file.
 
-_**Note:** PNG export requires Chrome or Chromium to be installed on your system, as it is used by kaleido to render Plotly figures to static images._
+_**Note:** PNG export requires Chrome or Chromium for kaleido. On Linux ARM64, install system Chromium and set `BROWSER_PATH` if it is not on PATH. Correct or unset a stale `BROWSER_PATH`; remove any incompatible Chrome downloaded by Choreographer, which may take precedence._
 
 _**Note:** The plot command expects default export filenames (e.g., `profile_export.jsonl`). Runs created with `--profile-export-file` or custom `--profile-export-prefix` use different filenames and will not be detected by the plot command._
 
