@@ -2031,7 +2031,14 @@ def _transition_phase_type(
         PhaseType.USER_CENTRIC,
     }
     if phase_type not in rate_types:
-        removed = ("rate", "rate_ramp", "rate_series", "smoothness", "users")
+        removed = (
+            "rate",
+            "rate_ramp",
+            "rate_series",
+            "smoothness",
+            "users",
+            "continuation_dispatch",
+        )
     else:
         removed = ("auto_offset", "start_offset", "end_offset", "rate_series")
         if phase_type != PhaseType.GAMMA:

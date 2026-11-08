@@ -268,6 +268,10 @@ runs. Warmup keeps its own policy and can be configured independently in YAML.
 User-centric, fixed-schedule, adaptive, and agentic-replay
 timing do not support direct session-arrival pacing.
 
+When `--fixed-schedule` replaces a YAML rate phase, the inherited continuation
+policy is discarded with the other rate-only fields. Explicitly combining
+`--fixed-schedule` with `--continuation-dispatch` raises a configuration error.
+
 The generated JSON Schema checks these policy constraints for phase lists,
 single-phase objects, and the `warmup`/`profiling` shorthands. It accepts either
 `continuation_dispatch` or `continuationDispatch`; supplying both is an error.
