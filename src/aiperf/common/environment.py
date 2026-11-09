@@ -1897,7 +1897,7 @@ class _ServiceSettings(_ServiceCommunicationFields, _ServiceHealthFields, BaseSe
         default=8.0,
         description="Maximum time in seconds the controller waits, after broadcasting SHUTDOWN, for "
         "service processes to exit on their own before force-killing the survivors. Must cover the "
-        "slowest service cleanup (the records manager can spend up to 6 seconds stopping its telemetry "
+        "slowest service cleanup (the records manager can spend up to 7 seconds stopping its telemetry "
         "child); killing a service mid-cleanup orphans its children.",
     )
     # Event loop health monitoring settings

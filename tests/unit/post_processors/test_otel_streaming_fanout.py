@@ -533,3 +533,59 @@ def test_run_fanout_force_exits_when_cleanup_outlives_dead_parent_deadline(
     )
 
     assert exit_codes == [1]
+
+
+def test_run_fanout_force_exits_when_parent_dies_during_sink_initialization(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The parent-death guard must already be armed while MLflow setup blocks.
+
+    ``set_experiment`` and ``start_run`` are network calls; a parent that dies
+    while one is stuck would otherwise leave the child holding the inherited
+    pipes with no guard running.
+    """
+    install_fake_otel_modules(monkeypatch, {})
+    _install_fake_mlflow_modules(monkeypatch, {"log_batch_calls": []})
+    monkeypatch.setattr(
+        "aiperf.post_processors.otel_streaming_fanout._ORPHAN_CLEANUP_DEADLINE_SECONDS",
+        0.0,
+    )
+
+    class _DeadParent:
+        def is_alive(self) -> bool:
+            return True
+
+        def join(self, timeout: float | None = None) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "aiperf.post_processors.otel_streaming_fanout.multiprocessing.parent_process",
+        lambda: _DeadParent(),
+    )
+
+    exited = threading.Event()
+    exit_codes: list[int] = []
+
+    def _fake_exit(code: int) -> None:
+        exit_codes.append(code)
+        exited.set()
+
+    monkeypatch.setattr(
+        "aiperf.post_processors.otel_streaming_fanout.os._exit", _fake_exit
+    )
+
+    def _blocked_set_experiment(name: str) -> None:
+        if not exited.wait(timeout=5.0):
+            pytest.fail("watchdog was not armed during sink initialization")
+
+    monkeypatch.setattr(
+        sys.modules["mlflow"], "set_experiment", _blocked_set_experiment
+    )
+
+    run_otel_streaming_fanout(
+        _SequenceQueue([{"type": "shutdown", "payload": {}}]),
+        _build_config(tmp_path, endpoint_url=None),
+    )
+
+    assert exit_codes == [1]

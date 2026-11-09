@@ -693,6 +693,41 @@ class TestShutdownAllServicesWaitsForExit:
             "join",
         ]
 
+    @pytest.mark.asyncio
+    async def test_shutdown_all_services_executor_queue_time_consumes_the_deadline(
+        self,
+        service_manager: MultiProcessServiceManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A join that waits for an executor thread must not get a fresh budget.
+
+        With more services than executor threads, later joins start only after
+        earlier ones finish; the remaining time has to be measured when the
+        join actually starts or the shared deadline compounds per wave.
+        """
+        monkeypatch.setattr(Environment.SERVICE, "SHUTDOWN_EXIT_TIMEOUT", 8.0)
+        clock = SimpleNamespace(now=1000.0)
+        monkeypatch.setattr(
+            "aiperf.controller.multiprocess_service_manager.time",
+            SimpleNamespace(monotonic=lambda: clock.now),
+        )
+
+        async def _queued_to_thread(func, *args, **kwargs):
+            clock.now += 5.0
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr(
+            "aiperf.controller.multiprocess_service_manager.asyncio.to_thread",
+            _queued_to_thread,
+        )
+        process = MagicMock(spec=Process)
+        process.is_alive.return_value = True
+        service_manager.multi_process_info = [self._info(process)]
+
+        await service_manager.shutdown_all_services()
+
+        assert process.join.call_args_list[0].args[0] == 3.0
+
 
 class TestGetServiceLiveness:
     """Local runs hold a real Process handle; the watchdog must consult it.

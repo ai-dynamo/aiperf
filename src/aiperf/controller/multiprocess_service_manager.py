@@ -164,8 +164,10 @@ class MultiProcessServiceManager(BaseServiceManager):
         """Block (off-loop) until the process exits or the monotonic deadline passes."""
         if not info.process or not info.process.is_alive():
             return
+        # Measured inside the worker thread: a join queued behind a full
+        # executor must spend its queue time out of the shared deadline.
         await asyncio.to_thread(
-            info.process.join, max(0.0, deadline - time.monotonic())
+            lambda: info.process.join(max(0.0, deadline - time.monotonic()))
         )
 
     async def kill_all_services(self) -> list[BaseException | None]:

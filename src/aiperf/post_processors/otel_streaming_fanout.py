@@ -211,6 +211,17 @@ def run_otel_streaming_fanout(
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     logger = logging.getLogger(__name__)
+
+    # ``multiprocessing.parent_process()`` is the real spawning process under
+    # fork, spawn and forkserver alike (``getppid`` is the forkserver in the
+    # last), and its sentinel closes when the parent dies by any means. ``None``
+    # when run in-process, which disables the check. Armed before sink setup
+    # so a parent dying during a blocked MLflow/OTel init call is covered too.
+    parent = multiprocessing.parent_process()
+    cleanup_finished = threading.Event()
+    if parent is not None:
+        _start_orphan_watchdog(parent, cleanup_finished, logger)
+
     meter_provider: Any | None = None
     meter: Any | None = None
     max_batch_records = max(config.max_batch_records, 1)
@@ -424,15 +435,6 @@ def run_otel_streaming_fanout(
         return last_flush_monotonic
 
     last_flush_monotonic: float = time.monotonic()
-
-    # ``multiprocessing.parent_process()`` is the real spawning process under
-    # fork, spawn and forkserver alike (``getppid`` is the forkserver in the
-    # last), and its sentinel closes when the parent dies by any means. ``None``
-    # when run in-process, which disables the check.
-    parent = multiprocessing.parent_process()
-    cleanup_finished = threading.Event()
-    if parent is not None:
-        _start_orphan_watchdog(parent, cleanup_finished, logger)
 
     try:
         while not shutdown_requested:
