@@ -764,6 +764,14 @@ class _EndpointSettings(BaseSettings):
         "inputs (e.g. OpenAI Dynamo). Enable when the target server requires "
         "the structured content-parts shape unconditionally.",
     )
+    REQUEST_ID_FIELD: str | None = Field(
+        default=None,
+        description="Top-level request-body field that also carries the per-request "
+        "X-Request-ID value, for servers that take a client request ID only from the "
+        "body (e.g. 'rid' for SGLang). Server-side per-request logs can then be joined "
+        "to the profile export on x_request_id. JSON object bodies only; the value "
+        "overwrites a field of that name already in the payload.",
+    )
 
 
 class _DagSettings(BaseSettings):

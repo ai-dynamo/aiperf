@@ -548,6 +548,15 @@ Relative path for reset_kv_cache (default /reset_prefix_cache).
 Enable server profiler start/stop around profiling phases.
 <br/>_Flag (no value required)_
 
+#### `--server-profiler-url` `<list>`
+
+Profiler control server URL(s), separate from inference URLs. Repeat for multiple servers. Defaults to the inference endpoint origins.
+<br/>_Constraints: min: 1_
+
+#### `--server-profiler-start-body` `<str>`
+
+JSON object sent with profiler start requests, such as '{"num_steps":20,"output_dir":"/tmp/profiles"}'. Defaults to an empty request body.
+
 #### `--server-profiler-timeout-seconds` `<float>`
 
 Timeout seconds for server_profiler control requests.
@@ -2209,6 +2218,15 @@ Relative path for reset_kv_cache (default /reset_prefix_cache).
 Enable server profiler start/stop around profiling phases.
 <br/>_Flag (no value required)_
 
+#### `--server-profiler-url` `<list>`
+
+Profiler control server URL(s), separate from inference URLs. Repeat for multiple servers. Defaults to the inference endpoint origins.
+<br/>_Constraints: min: 1_
+
+#### `--server-profiler-start-body` `<str>`
+
+JSON object sent with profiler start requests, such as '{"num_steps":20,"output_dir":"/tmp/profiles"}'. Defaults to an empty request body.
+
 #### `--server-profiler-timeout-seconds` `<float>`
 
 Timeout seconds for server_profiler control requests.
@@ -3864,6 +3882,15 @@ Relative path for reset_kv_cache (default /reset_prefix_cache).
 
 Enable server profiler start/stop around profiling phases.
 <br/>_Flag (no value required)_
+
+#### `--server-profiler-url` `<list>`
+
+Profiler control server URL(s), separate from inference URLs. Repeat for multiple servers. Defaults to the inference endpoint origins.
+<br/>_Constraints: min: 1_
+
+#### `--server-profiler-start-body` `<str>`
+
+JSON object sent with profiler start requests, such as '{"num_steps":20,"output_dir":"/tmp/profiles"}'. Defaults to an empty request body.
 
 #### `--server-profiler-timeout-seconds` `<float>`
 
@@ -6027,6 +6054,15 @@ Relative path for reset_kv_cache (default /reset_prefix_cache).
 
 Enable server profiler start/stop around profiling phases.
 <br/>_Flag (no value required)_
+
+#### `--server-profiler-url` `<list>`
+
+Profiler control server URL(s), separate from inference URLs. Repeat for multiple servers. Defaults to the inference endpoint origins.
+<br/>_Constraints: min: 1_
+
+#### `--server-profiler-start-body` `<str>`
+
+JSON object sent with profiler start requests, such as '{"num_steps":20,"output_dir":"/tmp/profiles"}'. Defaults to an empty request body.
 
 #### `--server-profiler-timeout-seconds` `<float>`
 

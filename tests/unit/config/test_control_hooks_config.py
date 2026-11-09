@@ -89,6 +89,64 @@ def test_server_profiler_object_parses_overrides() -> None:
     assert cfg.server_profiler.stop_path == "/stop_profile"
 
 
+def test_server_profiler_accepts_separate_targets_and_start_body() -> None:
+    """Profiler targets and native JSON parameters survive config validation."""
+    body = {"num_steps": 20, "activities": ["CPU", "GPU"], "with_stack": False}
+    cfg = ServerProfilerConfig(urls=["http://worker:9090"], start_body=body)
+    assert [str(url) for url in cfg.urls] == ["http://worker:9090/"]
+    assert cfg.start_body == body
+
+
+@pytest.mark.parametrize("urls", [[], ["file:///tmp/profile"], ["http://:9090"]])
+def test_server_profiler_rejects_invalid_targets(urls: list[str]) -> None:
+    with pytest.raises(ValidationError):
+        ServerProfilerConfig(urls=urls)
+
+
+@pytest.mark.parametrize(
+    "body", [[1], {"num_steps": float("nan")}, {"nested": [float("inf")]}]
+)
+def test_server_profiler_rejects_invalid_start_body(body: object) -> None:
+    with pytest.raises(ValidationError):
+        ServerProfilerConfig(start_body=body)
+
+
+@pytest.mark.parametrize(
+    "url", ["http://user:secret@worker:9090", "http://user@worker:9090"]
+)
+def test_server_profiler_rejects_url_userinfo(url: str) -> None:
+    with pytest.raises(ValidationError, match="authentication headers"):
+        ServerProfilerConfig(urls=[url])
+
+
+def test_server_profiler_redacts_url_query_credentials_in_serialized_config() -> None:
+    cfg = ServerProfilerConfig(urls=["http://worker:9090?token=secret"])
+    assert "secret" not in str(cfg.model_dump())
+    assert (
+        "token=secret" in cfg.model_dump(context={"include_secrets": True})["urls"][0]
+    )
+
+
+def test_cli_profiler_targets_and_body_enable_and_lower_hook() -> None:
+    cli = CLIConfig(
+        model_names=["test"],
+        urls=["http://frontend:8000"],
+        server_profiler_urls=["worker:9090", "http://other-worker:9090"],
+        server_profiler_start_body='{"num_steps":20,"output_dir":"/tmp/profiles"}',
+    )
+    endpoint = build_endpoint(cli)
+    assert endpoint["server_profiler"] == {
+        "urls": ["http://worker:9090", "http://other-worker:9090"],
+        "start_body": {"num_steps": 20, "output_dir": "/tmp/profiles"},
+    }
+
+
+@pytest.mark.parametrize("body", ["not json", "[]", "null", '"text"'])
+def test_cli_profiler_start_body_requires_json_object(body: str) -> None:
+    with pytest.raises(ValueError, match="--server-profiler-start-body"):
+        build_endpoint(CLIConfig(server_profiler_start_body=body))
+
+
 def test_control_hook_paths_must_be_relative() -> None:
     with pytest.raises(ValidationError, match="relative"):
         EndpointConfig.model_validate(

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import orjson
 import pytest
 from pytest import param
 
@@ -267,6 +268,42 @@ def test_server_profiler_routes(base_yaml: Path) -> None:
         cli(server_profiler=True, server_profiler_start_path="/start"), base_yaml
     )
     assert resolved.benchmark.endpoint.server_profiler.start_path == "/start"
+
+
+@pytest.mark.parametrize(
+    "profiler_key,body_key",
+    [("server_profiler", "start_body"), ("serverProfiler", "startBody")],
+)
+@pytest.mark.parametrize("body", [{"num_steps": 20}, {}, {"nested": {"keep": 1}}])
+def test_profiler_control_target_and_body_override_yaml(
+    base_yaml: Path, profiler_key: str, body_key: str, body: dict[str, object]
+) -> None:
+    """CLI JSON replaces YAML payloads in raw and resolved profiler settings."""
+    base_yaml.write_text(
+        base_yaml.read_text().replace(
+            "    url: http://localhost:8000",
+            "    url: http://localhost:8000\n"
+            f"    {profiler_key}:\n"
+            "      urls: [http://old-worker:9090]\n"
+            "      start_path: /engine/control/start_profile\n"
+            "      stop_path: /engine/control/stop_profile\n"
+            f"      {body_key}: {{num_steps: 5, output_dir: /from-yaml, nested: {{drop: 2}}}}",
+        )
+    )
+    resolved = resolve_config(
+        cli(
+            server_profiler_urls=["http://worker:9090"],
+            server_profiler_start_body=orjson.dumps(body).decode(),
+        ),
+        base_yaml,
+    )
+    profiler = resolved.benchmark.endpoint.server_profiler
+    assert [str(url) for url in profiler.urls] == ["http://worker:9090/"]
+    assert profiler.start_body == body
+    assert profiler.start_path == "/engine/control/start_profile"
+    assert profiler.stop_path == "/engine/control/stop_profile"
+    raw_profiler = resolved._raw_envelope["benchmark"]["endpoint"][profiler_key]
+    assert raw_profiler.get("start_body", raw_profiler.get("startBody")) == body
 
 
 def test_probe_flag_overrides_yaml_block(base_yaml: Path, tmp_path: Path) -> None:
