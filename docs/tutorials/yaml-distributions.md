@@ -213,11 +213,12 @@ That gives you three benchmark variations, each with a different ISL shape, whil
 
 Putting it all together: a synthetic dataset that mixes short and long queries, with a log-normal output shape and clamped bounds.
 
+<!-- setup-file-vllm-default-openai-endpoint-server path=chat-mixed.yaml -->
 ```yaml
 schemaVersion: "2.0"
 
 benchmark:
-  model: meta-llama/Llama-3.1-8B-Instruct
+  model: Qwen/Qwen3-0.6B
   endpoint:
     url: http://localhost:8000/v1/chat/completions
     type: chat
@@ -266,12 +267,15 @@ benchmark:
       duration: 120
       concurrency: 64
 ```
+<!-- /setup-file-vllm-default-openai-endpoint-server -->
 
 Run it with:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=150 -->
 ```bash
 aiperf profile --config chat-mixed.yaml
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 ## Where to go next
 

@@ -310,7 +310,7 @@ FROM env-builder AS test
 
 COPY --from=wheel-builder /dist /tmp/dist
 RUN WHEEL=$(ls /tmp/dist/aiperf-*.whl) \
-    && uv pip install "aiperf[test] @ file://${WHEEL}" \
+    && uv pip install "aiperf[test,otel,mlflow,wandb] @ file://${WHEEL}" \
     && rm -rf /tmp/dist
 
 RUN apt-get update -y && \

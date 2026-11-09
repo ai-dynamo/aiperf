@@ -83,6 +83,7 @@ Auto-detection rejects records that contain a `conversation_id` key or a `data` 
 
 ### Single File
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=40 -->
 ```bash
 cat > payloads.jsonl << 'EOF'
 {"messages": [{"role": "user", "content": "What is machine learning?"}], "model": "Qwen/Qwen3-0.6B", "max_tokens": 100}
@@ -98,6 +99,7 @@ aiperf profile \
     --url localhost:8000 \
     --concurrency 2
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 Since auto-detection recognizes files with `messages` arrays, you can omit `--custom-dataset-type`:
 
