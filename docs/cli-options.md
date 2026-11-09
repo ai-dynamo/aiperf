@@ -833,7 +833,7 @@ Standard deviation for number of turns per conversation. Creates variability in 
 
 #### `--conversation-turn-delay-mean`, `--session-turn-delay-mean` `<float>`
 
-Mean delay in milliseconds between consecutive turns within a multi-turn conversation. Simulates user think time between receiving a response and sending the next message. Delays follow normal distribution around this mean (±`--conversation-turn-delay-stddev`). Only applies to multi-turn conversations (`--conversation-turn-mean` > 1). Set to 0 for back-to-back turns.
+Mean parameter in milliseconds for the normal distribution of delays between consecutive turns. Simulates user think time between receiving a response and sending the next message. Negative draws are resampled. Only applies to multi-turn conversations (`--conversation-turn-mean` > 1). Set both this value and `--conversation-turn-delay-stddev` to 0 for back-to-back turns. With positive stddev, a mean of 0 still produces positive delays.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `0.0`_
 
@@ -2503,7 +2503,7 @@ Standard deviation for number of turns per conversation. Creates variability in 
 
 #### `--conversation-turn-delay-mean`, `--session-turn-delay-mean` `<float>`
 
-Mean delay in milliseconds between consecutive turns within a multi-turn conversation. Simulates user think time between receiving a response and sending the next message. Delays follow normal distribution around this mean (±`--conversation-turn-delay-stddev`). Only applies to multi-turn conversations (`--conversation-turn-mean` > 1). Set to 0 for back-to-back turns.
+Mean parameter in milliseconds for the normal distribution of delays between consecutive turns. Simulates user think time between receiving a response and sending the next message. Negative draws are resampled. Only applies to multi-turn conversations (`--conversation-turn-mean` > 1). Set both this value and `--conversation-turn-delay-stddev` to 0 for back-to-back turns. With positive stddev, a mean of 0 still produces positive delays.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `0.0`_
 
@@ -4168,7 +4168,7 @@ Standard deviation for number of turns per conversation. Creates variability in 
 
 #### `--conversation-turn-delay-mean`, `--session-turn-delay-mean` `<float>`
 
-Mean delay in milliseconds between consecutive turns within a multi-turn conversation. Simulates user think time between receiving a response and sending the next message. Delays follow normal distribution around this mean (±`--conversation-turn-delay-stddev`). Only applies to multi-turn conversations (`--conversation-turn-mean` > 1). Set to 0 for back-to-back turns.
+Mean parameter in milliseconds for the normal distribution of delays between consecutive turns. Simulates user think time between receiving a response and sending the next message. Negative draws are resampled. Only applies to multi-turn conversations (`--conversation-turn-mean` > 1). Set both this value and `--conversation-turn-delay-stddev` to 0 for back-to-back turns. With positive stddev, a mean of 0 still produces positive delays.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `0.0`_
 
@@ -6340,7 +6340,7 @@ Standard deviation for number of turns per conversation. Creates variability in 
 
 #### `--conversation-turn-delay-mean`, `--session-turn-delay-mean` `<float>`
 
-Mean delay in milliseconds between consecutive turns within a multi-turn conversation. Simulates user think time between receiving a response and sending the next message. Delays follow normal distribution around this mean (±`--conversation-turn-delay-stddev`). Only applies to multi-turn conversations (`--conversation-turn-mean` > 1). Set to 0 for back-to-back turns.
+Mean parameter in milliseconds for the normal distribution of delays between consecutive turns. Simulates user think time between receiving a response and sending the next message. Negative draws are resampled. Only applies to multi-turn conversations (`--conversation-turn-mean` > 1). Set both this value and `--conversation-turn-delay-stddev` to 0 for back-to-back turns. With positive stddev, a mean of 0 still produces positive delays.
 <br/>_Constraints: ≥ 0_
 <br/>_Default: `0.0`_
 

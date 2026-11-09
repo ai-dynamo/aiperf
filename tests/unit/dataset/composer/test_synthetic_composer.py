@@ -4,6 +4,7 @@
 from unittest.mock import patch
 
 import pytest
+from pytest import param
 
 from aiperf.common import random_generator as rng
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
@@ -302,6 +303,33 @@ class TestSyntheticDatasetComposer:
             len(conversation.turns) for conversation in composer.create_dataset()
         } == {2}
 
+    @pytest.mark.parametrize(
+        "value, expected",
+        [
+            param(3, 3, id="integer"),
+            param(3.2, 4, id="fraction-low"),
+            param(3.7, 4, id="fraction-high"),
+            param(1.0000001, 2, id="just-above-one"),
+        ],
+    )  # fmt: skip
+    def test_fixed_turn_counts_round_up(
+        self,
+        synthetic_config: CLIConfig,
+        mock_tokenizer: Tokenizer,
+        value: float,
+        expected: int,
+    ) -> None:
+        """Pin fractional-count conversion at the composer boundary."""
+        run = make_run(synthetic_config)
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turns = FixedDistribution(value=value)
+        composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+
+        assert {
+            len(conversation.turns) for conversation in composer.create_dataset()
+        } == {expected}
+
     def test_overflowing_turn_delay_is_rejected(
         self, multiturn_config: CLIConfig, mock_tokenizer: Tokenizer
     ) -> None:
@@ -500,7 +528,7 @@ class TestSyntheticDatasetComposer:
                 assert 500 <= turn.delay <= 2000
 
     def test_turn_delays_with_zero_mean(self, mock_tokenizer):
-        """Test that zero mean delay results in no delays on turns."""
+        """Zero mean and zero stddev produce no inter-turn delays."""
         config = CLIConfig(
             model_names=["test_model"],
             conversation_num_dataset_entries=3,
@@ -519,9 +547,31 @@ class TestSyntheticDatasetComposer:
         conversations = composer.create_dataset()
 
         for conversation in conversations:
-            # All turns should have None delay when mean=0
             for turn in conversation.turns:
                 assert turn.delay is None
+
+    def test_zero_mean_normal_turn_delay_is_sampled(
+        self, mock_tokenizer: Tokenizer
+    ) -> None:
+        """An explicit stddev works with the CLI's default zero mean."""
+        config = CLIConfig(
+            model_names=["test_model"],
+            conversation_num_dataset_entries=64,
+            conversation_turn_mean=2,
+            conversation_turn_delay_stddev=100,
+            prompt_input_tokens_mean=10,
+        )
+        composer = SyntheticDatasetComposer(
+            run=make_run(config), tokenizer=mock_tokenizer
+        )
+        conversations = composer.create_dataset()
+        delays = [conversation.turns[1].delay for conversation in conversations]
+
+        assert all(
+            conversation.turns[0].delay is None for conversation in conversations
+        )
+        assert all(delay is not None and delay > 0 for delay in delays)
+        assert len(set(delays)) > 1
 
     # ============================================================================
     # Generate Payload Methods Tests

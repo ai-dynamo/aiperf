@@ -197,7 +197,9 @@ class SyntheticDataset(SystemPromptMixin, EndOnTruncationMixin):
         Field(
             default=None,
             description="Number of request-response turns per conversation. "
-            "Can be a fixed integer or a supported sampling distribution. "
+            "Can be a fixed value or a supported sampling distribution. "
+            "Fixed values and samples round up to a positive integer within the "
+            "configured bounds, so a fixed value of 3.2 produces 4 turns. "
             "Each turn consists of a user message and model response. "
             "Set to 1 for single-turn interactions. "
             "Multi-turn conversations enable testing of context retention "
@@ -213,7 +215,9 @@ class SyntheticDataset(SystemPromptMixin, EndOnTruncationMixin):
             "multi-turn conversation. Can be a fixed value or a supported sampling distribution. "
             "Simulates user think time between receiving a response and sending "
             "the next message. Only applies when turns > 1. "
-            "Set to 0 for back-to-back turns.",
+            "For back-to-back turns, use fixed 0 or normal mean=0 and stddev=0, "
+            "with no positive min bound. A normal mean of 0 with positive stddev "
+            "still produces positive delays.",
         ),
     ]
 

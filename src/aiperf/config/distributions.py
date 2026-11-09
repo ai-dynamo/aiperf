@@ -200,10 +200,10 @@ class NormalDistribution(Distribution):
         Field(
             ge=0.0,
             description=(
-                "Mean value. Must be >= 0; samples below 0 are truncated, so "
-                "a negative mean would yield a degenerate distribution. "
-                "Zero is allowed (e.g. OSL=0 disables output, turn_delay mean=0 "
-                "disables inter-turn delay)."
+                "Mean of the Gaussian before truncation. Must be >= 0; samples "
+                "below 0 are redrawn. With a zero mean and positive stddev, "
+                "sampling produces a positive half-normal distribution. With "
+                "stddev=0, raw samples equal the mean; min/max bounds apply afterward."
             ),
         ),
     ]
