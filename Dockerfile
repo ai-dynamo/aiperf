@@ -133,6 +133,10 @@ RUN mkdir -p /opt/licenses/dpkg \
 # covers the handshake, so a stall is cut short and retried. --retry-max-time
 # bounds the whole retry window, because a 429/503 Retry-After header overrides
 # --retry-delay and could otherwise stall the build for as long as it asks.
+# --max-time must stay well under --retry-max-time: curl only retries a failure
+# that ends inside the retry window, so a transfer that stalls after connecting
+# is retried only if its timeout fires first. 120 s still allows ~100 KB/s for
+# the ~12 MB tarball.
 ARG FFMPEG_VERSION=8.1.2
 ARG FFMPEG_SHA256=464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c
 ARG ENABLE_FFMPEG=1
@@ -143,7 +147,7 @@ RUN if [ "${ENABLE_FFMPEG}" != "1" ]; then \
     fi; \
     { curl -fSL --no-progress-meter \
         --retry 5 --retry-all-errors --retry-delay 10 --retry-max-time 300 \
-        --connect-timeout 30 --max-time 600 \
+        --connect-timeout 30 --max-time 120 \
         -o ffmpeg-${FFMPEG_VERSION}.tar.xz \
         https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && echo "${FFMPEG_SHA256}  ffmpeg-${FFMPEG_VERSION}.tar.xz" | sha256sum -c - \
