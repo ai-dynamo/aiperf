@@ -5,8 +5,6 @@ from __future__ import annotations
 
 import logging
 import multiprocessing
-import os
-import threading
 import time
 from dataclasses import dataclass
 from multiprocessing.queues import Queue
@@ -20,6 +18,7 @@ from aiperf.common.optional_dependencies import (
     mlflow_dependency_message,
     otel_dependency_message,
 )
+from aiperf.common.parent_death_watchdog import start_parent_death_watchdog
 from aiperf.config.mlflow import MLflowConfig
 
 # Hashable canonical form for attribute dicts used as dict keys in gauge snapshots.
@@ -141,33 +140,6 @@ parent's inherited stdout/stderr pipe open.
 """
 
 
-def _start_orphan_watchdog(
-    parent: multiprocessing.process.BaseProcess,
-    finished: threading.Event,
-    logger: logging.Logger,
-) -> None:
-    """Force-exit the fanout a bounded time after its parent dies.
-
-    The main loop notices a dead parent only between queue polls and then runs
-    a network-bound cleanup, so neither detection nor cleanup is bounded on its
-    own. This thread blocks on the parent's sentinel, gives the graceful path
-    ``_ORPHAN_CLEANUP_DEADLINE_SECONDS`` to finish (signalled by ``finished``),
-    and otherwise ``os._exit``s so the inherited pipes close.
-    """
-
-    def _watch() -> None:
-        parent.join()
-        if finished.wait(_ORPHAN_CLEANUP_DEADLINE_SECONDS):
-            return
-        logger.error(
-            "Fanout cleanup exceeded %.0fs after parent death; exiting now.",
-            _ORPHAN_CLEANUP_DEADLINE_SECONDS,
-        )
-        os._exit(1)
-
-    threading.Thread(target=_watch, name="fanout-orphan-watchdog", daemon=True).start()
-
-
 def run_otel_streaming_fanout(
     event_queue: Queue[FanoutEvent],
     config: OTelStreamingFanoutConfig,
@@ -218,9 +190,9 @@ def run_otel_streaming_fanout(
     # when run in-process, which disables the check. Armed before sink setup
     # so a parent dying during a blocked MLflow/OTel init call is covered too.
     parent = multiprocessing.parent_process()
-    cleanup_finished = threading.Event()
-    if parent is not None:
-        _start_orphan_watchdog(parent, cleanup_finished, logger)
+    cleanup_finished = start_parent_death_watchdog(
+        "Fanout", _ORPHAN_CLEANUP_DEADLINE_SECONDS, logger
+    )
 
     meter_provider: Any | None = None
     meter: Any | None = None
