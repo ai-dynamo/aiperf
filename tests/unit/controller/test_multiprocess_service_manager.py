@@ -5,6 +5,7 @@ import asyncio
 import os
 from collections import Counter
 from multiprocessing import Process
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -629,6 +630,14 @@ class TestShutdownAllServicesWaitsForExit:
             run=benchmark_run,
         )
 
+    @pytest.fixture(autouse=True)
+    def _frozen_clock(self, monkeypatch) -> None:
+        """Freeze the manager's clock so the join timeout is exactly the deadline."""
+        monkeypatch.setattr(
+            "aiperf.controller.multiprocess_service_manager.time",
+            SimpleNamespace(monotonic=lambda: 1000.0),
+        )
+
     @staticmethod
     def _info(process: MagicMock) -> MultiProcessRunInfo:
         process.pid = 4242
@@ -652,7 +661,7 @@ class TestShutdownAllServicesWaitsForExit:
         await service_manager.shutdown_all_services()
 
         process.kill.assert_not_called()
-        assert 0 < process.join.call_args_list[0].args[0] <= 8.0
+        assert process.join.call_args_list[0].args[0] == 8.0
 
     @pytest.mark.asyncio
     async def test_shutdown_all_services_straggler_is_killed_after_deadline(
@@ -666,8 +675,19 @@ class TestShutdownAllServicesWaitsForExit:
         await service_manager.shutdown_all_services()
 
         process.kill.assert_called_once()
+        # The straggler is given the full deadline before it is killed, and
+        # only then reaped with the short post-kill join.
+        join_timeouts = [
+            c.args[0] if c.args else c.kwargs["timeout"]
+            for c in process.join.call_args_list
+        ]
+        assert join_timeouts == [8.0, Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT]
         method_names = [c[0] for c in process.method_calls]
-        assert method_names.index("join") < method_names.index("kill")
+        assert [n for n in method_names if n in ("join", "kill")] == [
+            "join",
+            "kill",
+            "join",
+        ]
 
 
 class TestGetServiceLiveness:

@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import logging
 import multiprocessing
+import os
+import threading
 import time
 from dataclasses import dataclass
 from multiprocessing.queues import Queue
@@ -128,6 +130,42 @@ def _write_live_mlflow_metadata(
     tmp_file = metadata_file.with_suffix(".json.tmp")
     tmp_file.write_bytes(data)
     tmp_file.replace(metadata_file)
+
+
+_ORPHAN_CLEANUP_DEADLINE_SECONDS = 10.0
+"""Hard cap on fanout cleanup once its parent has died.
+
+The graceful path (flush, end the MLflow run) makes network calls that can block
+for much longer than this, and the child is the only thing keeping the dead
+parent's inherited stdout/stderr pipe open.
+"""
+
+
+def _start_orphan_watchdog(
+    parent: multiprocessing.process.BaseProcess,
+    finished: threading.Event,
+    logger: logging.Logger,
+) -> None:
+    """Force-exit the fanout a bounded time after its parent dies.
+
+    The main loop notices a dead parent only between queue polls and then runs
+    a network-bound cleanup, so neither detection nor cleanup is bounded on its
+    own. This thread blocks on the parent's sentinel, gives the graceful path
+    ``_ORPHAN_CLEANUP_DEADLINE_SECONDS`` to finish (signalled by ``finished``),
+    and otherwise ``os._exit``s so the inherited pipes close.
+    """
+
+    def _watch() -> None:
+        parent.join()
+        if finished.wait(_ORPHAN_CLEANUP_DEADLINE_SECONDS):
+            return
+        logger.error(
+            "Fanout cleanup exceeded %.0fs after parent death; exiting now.",
+            _ORPHAN_CLEANUP_DEADLINE_SECONDS,
+        )
+        os._exit(1)
+
+    threading.Thread(target=_watch, name="fanout-orphan-watchdog", daemon=True).start()
 
 
 def run_otel_streaming_fanout(
@@ -392,6 +430,9 @@ def run_otel_streaming_fanout(
     # last), and its sentinel closes when the parent dies by any means. ``None``
     # when run in-process, which disables the check.
     parent = multiprocessing.parent_process()
+    cleanup_finished = threading.Event()
+    if parent is not None:
+        _start_orphan_watchdog(parent, cleanup_finished, logger)
 
     try:
         while not shutdown_requested:
@@ -538,3 +579,4 @@ def run_otel_streaming_fanout(
             # MLflow shutdown failure must not crash fanout exit
             except Exception as exc:
                 logger.warning(f"Failed to close live MLflow run cleanly: {exc!r}")
+        cleanup_finished.set()

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 import types
 from pathlib import Path
 from queue import Empty
@@ -457,6 +458,9 @@ def test_run_fanout_exits_when_parent_process_dies(
         def is_alive(self) -> bool:
             return False
 
+        def join(self, timeout: float | None = None) -> None:
+            return None
+
     monkeypatch.setattr(
         "aiperf.post_processors.otel_streaming_fanout.multiprocessing.parent_process",
         lambda: _DeadParent(),
@@ -475,3 +479,57 @@ def test_run_fanout_exits_when_parent_process_dies(
         _EmptyForeverQueue(),
         _build_config(tmp_path, endpoint_url="http://collector:4318/v1/metrics"),
     )
+
+
+def test_run_fanout_force_exits_when_cleanup_outlives_dead_parent_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A fanout stuck in a sink call must still release its inherited pipes.
+
+    The main loop only notices a dead parent between queue polls, and its
+    cleanup makes network calls with no hard bound, so a watchdog force-exits
+    the process once the post-death deadline passes.
+    """
+    install_fake_otel_modules(monkeypatch, {})
+    _install_fake_mlflow_modules(monkeypatch, {"log_batch_calls": []})
+    monkeypatch.setattr(
+        "aiperf.post_processors.otel_streaming_fanout._ORPHAN_CLEANUP_DEADLINE_SECONDS",
+        0.0,
+    )
+
+    class _DeadParentStillReportedAlive:
+        def is_alive(self) -> bool:
+            return True
+
+        def join(self, timeout: float | None = None) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "aiperf.post_processors.otel_streaming_fanout.multiprocessing.parent_process",
+        lambda: _DeadParentStillReportedAlive(),
+    )
+
+    exit_codes: list[int] = []
+    exited = threading.Event()
+
+    def _fake_exit(code: int) -> None:
+        exit_codes.append(code)
+        exited.set()
+
+    monkeypatch.setattr(
+        "aiperf.post_processors.otel_streaming_fanout.os._exit", _fake_exit
+    )
+
+    class _BlockedThenShutdownQueue:
+        def get(self, timeout: float | None = None) -> dict[str, Any]:
+            if not exited.wait(timeout=5.0):
+                pytest.fail("watchdog never force-exited the fanout")
+            return {"type": "shutdown", "payload": {}}
+
+    run_otel_streaming_fanout(
+        _BlockedThenShutdownQueue(),
+        _build_config(tmp_path, endpoint_url="http://collector:4318/v1/metrics"),
+    )
+
+    assert exit_codes == [1]
