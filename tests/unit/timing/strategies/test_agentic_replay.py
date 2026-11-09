@@ -105,6 +105,7 @@ def _make_strategy(
     cfg.agentic_cache_warmup_duration_sec = cache_warmup_duration
     cfg.warmup_requests_per_lane = cache_warmup_requests_per_lane
     issuer = issuer if issuer is not None else AsyncMock()
+    issuer.cancel_paced_sends = MagicMock(return_value=0)
     issuer.replay_gate = MagicMock()
     issuer.replay_gate.completed_prefixes.return_value = ()
     issuer.replay_gate.pending_turns.return_value = ()
@@ -3763,3 +3764,175 @@ async def test_profiling_setup_logs_rootless_lane_count(caplog):
 
     msgs = [r.getMessage() for r in caplog.records]
     assert any("rootless" in m and "1" in m for m in msgs), msgs
+
+
+def _burst_lane_trajectory() -> Trajectory:
+    """Lane 0: live root + one live child (primed at t*) + two children the trace
+    had not started by t* (next_turn_index=0)."""
+    return Trajectory(
+        conversation_id="trace_0",
+        start_turn_index=0,
+        snapshot=TrajectorySnapshot(
+            t_star_ms=0.0,
+            states=(
+                ConversationState(
+                    conversation_id="trace_0",
+                    x_correlation_id="lane-0-root",
+                    next_turn_index=1,
+                ),
+                ConversationState(
+                    conversation_id="trace_0",
+                    x_correlation_id="lane-0-child-live",
+                    next_turn_index=1,
+                    agent_depth=1,
+                    root_correlation_id="lane-0-root",
+                ),
+                ConversationState(
+                    conversation_id="trace_0",
+                    x_correlation_id="lane-0-child-new-a",
+                    next_turn_index=0,
+                    agent_depth=1,
+                    root_correlation_id="lane-0-root",
+                ),
+                ConversationState(
+                    conversation_id="trace_0",
+                    x_correlation_id="lane-0-child-new-b",
+                    next_turn_index=0,
+                    agent_depth=1,
+                    root_correlation_id="lane-0-root",
+                ),
+            ),
+        ),
+    )
+
+
+async def _burst_strategy(
+    *, requests_per_lane: int | None, duration: float | None = None
+) -> tuple[AgenticReplayStrategy, AsyncMock, list[tuple[str, int]]]:
+    """Strategy in the pressure stage whose mocked issuer runs admission and the
+    send pacer exactly where the real issuer does."""
+    strategy, issuer, _, _ = _make_strategy(
+        phase=CreditPhase.WARMUP,
+        trajectories=[_burst_lane_trajectory()],
+        cache_warmup_duration=duration,
+        cache_warmup_requests_per_lane=requests_per_lane,
+    )
+    issuer.set_turn_admission = MagicMock()
+    issuer.set_send_pacer = MagicMock()
+    await strategy.setup_phase()
+    strategy._baseline_correlations.update({"lane-0-root", "lane-0-child-live"})
+    strategy._baseline_warmup_turns.update(
+        {("lane-0-root", 0), ("lane-0-child-live", 0)}
+    )
+    issued: list[tuple[str, int]] = []
+
+    sends: set[asyncio.Task] = set()
+
+    async def paced_send(turn: TurnToSend) -> None:
+        await strategy._pace_burst_send(turn)
+        issued.append((turn.x_correlation_id, turn.turn_index))
+
+    async def issue(turn: TurnToSend) -> bool:
+        # Mirrors the real issuer: admission inline, the send in a task that
+        # waits for the lane slot so the caller never blocks.
+        if strategy._admit_cache_warmup_turn(turn) is TurnAdmission.ADMIT:
+            task = asyncio.ensure_future(paced_send(turn))
+            sends.add(task)
+            task.add_done_callback(sends.discard)
+        return True
+
+    strategy._test_sends = sends
+
+    issuer.issue_credit = AsyncMock(side_effect=issue)
+    issuer.dispatch_child_turn = AsyncMock(side_effect=issue)
+    strategy._accelerated_warmup_started = True
+    return strategy, issuer, issued
+
+
+def _warmup_return(x_correlation_id: str, turn_index: int, *, depth: int = 0) -> Credit:
+    return _make_credit(
+        conversation_id="trace_0",
+        x_correlation_id=x_correlation_id,
+        turn_index=turn_index,
+        num_turns=4,
+        phase=CreditPhase.WARMUP,
+        agent_depth=depth,
+        root_correlation_id=None if depth == 0 else "lane-0-root",
+    )
+
+
+async def _return_credit(strategy: AgenticReplayStrategy, credit: Credit) -> None:
+    """Deliver a warmup return the way the callback handler does."""
+    strategy.observe_credit_return(credit)
+    await strategy._handle_accelerated_warmup_return(credit)
+
+
+@pytest.mark.asyncio
+async def test_cache_pressure_admits_every_state_at_once_and_paces_sends():
+    strategy, _, issued = await _burst_strategy(requests_per_lane=10)
+    trajectory = strategy.conversation_source.trajectories[0]
+
+    await strategy._dispatch_accelerated_trajectory(trajectory, 0)
+    for _ in range(3):
+        await asyncio.sleep(0)
+    # All four first turns are admitted (quota 4 of 10) but only the two
+    # streams the trace had live at t* are sent; the other two wait for a slot.
+    assert strategy._cache_warmup_requests_by_lane[0] == 4
+    assert strategy._burst_cap_by_lane[0] == 2
+    assert issued == [("lane-0-root", 1), ("lane-0-child-live", 1)]
+    assert len(strategy._test_sends) == 2
+
+    await _return_credit(strategy, _warmup_return("lane-0-root", 1))
+    for _ in range(3):
+        await asyncio.sleep(0)
+    # The freed slot goes to the next waiting first turn; the root's follow-up
+    # was admitted at return time (quota 5) and now waits for a slot itself.
+    assert issued[2:] == [("lane-0-child-new-a", 0)]
+    assert strategy._cache_warmup_requests_by_lane[0] == 5
+    assert strategy._burst_in_flight[0] == 2
+
+    await _return_credit(strategy, _warmup_return("lane-0-child-live", 1, depth=1))
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert issued[3:] == [("lane-0-child-new-b", 0)]
+    await _return_credit(strategy, _warmup_return("lane-0-child-new-a", 0, depth=1))
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert issued[4:] == [("lane-0-root", 2)]
+    for task in list(strategy._test_sends):
+        task.cancel()
+
+
+@pytest.mark.asyncio
+async def test_cache_pressure_quota_is_consumed_in_dispatch_order():
+    strategy, _, issued = await _burst_strategy(requests_per_lane=2)
+    trajectory = strategy.conversation_source.trajectories[0]
+    await strategy._dispatch_accelerated_trajectory(trajectory, 0)
+    for _ in range(3):
+        await asyncio.sleep(0)
+    # The first two states take the quota and are sent; the rest defer into
+    # the profiling handoff exactly as an all-at-once dispatch would.
+    assert issued == [("lane-0-root", 1), ("lane-0-child-live", 1)]
+    assert set(strategy._quota_handoff_turns) == {
+        ("trace_0", "lane-0-child-new-a", 0),
+        ("trace_0", "lane-0-child-new-b", 0),
+    }
+
+
+@pytest.mark.asyncio
+async def test_cache_pressure_slot_is_released_on_every_return():
+    strategy, _, issued = await _burst_strategy(requests_per_lane=10)
+    trajectory = strategy.conversation_source.trajectories[0]
+    await strategy._dispatch_accelerated_trajectory(trajectory, 0)
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert strategy._burst_in_flight[0] == 2
+    # A return the orchestrator intercepts only reaches observe_credit_return.
+    strategy.observe_credit_return(_warmup_return("lane-0-child-live", 1, depth=1))
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert strategy._burst_in_flight[0] == 2  # slot moved to child-new-a
+    assert issued[2:] == [("lane-0-child-new-a", 0)]
+    assert ("lane-0-child-live", 1) not in strategy._burst_slot_lane
+    for task in list(strategy._test_sends):
+        task.cancel()
