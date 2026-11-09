@@ -8,6 +8,7 @@ This test file provides complete coverage of all methods in the PromptGenerator 
 including edge cases, error conditions, and integration scenarios.
 """
 
+from collections.abc import Callable
 from unittest.mock import MagicMock, mock_open, patch
 
 import numpy as np
@@ -29,7 +30,9 @@ from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
 from aiperf.dataset.generator.prompt import PromptGenerator, sample_tokens_from_corpus
 from tests.harness.sentencepiece_tokenizer import (
     SENTENCEPIECE_CORPUS,
+    SENTENCEPIECE_WHITESPACE_CORPUS,
     make_sentencepiece_tokenizer,
+    make_sentencepiece_whitespace_tokenizer,
 )
 
 MOCK_CORPUS_CONTENT = "To be or not to be, that is the question.\nWhether 'tis nobler in the mind to suffer.\n"
@@ -94,6 +97,13 @@ def test_sample_tokens_from_corpus_word_starts_moves_block_start(
 
 
 @pytest.mark.parametrize(
+    "make_tokenizer, corpus",
+    [
+        param(make_sentencepiece_tokenizer, SENTENCEPIECE_CORPUS, id="single-spaces"),
+        param(make_sentencepiece_whitespace_tokenizer, SENTENCEPIECE_WHITESPACE_CORPUS, id="whitespace-runs"),
+    ],
+)  # fmt: skip
+@pytest.mark.parametrize(
     "num_tokens",
     [
         param(54, id="exact-tile"),
@@ -102,11 +112,11 @@ def test_sample_tokens_from_corpus_word_starts_moves_block_start(
     ],
 )  # fmt: skip
 def test_generate_cached_prompt_sentencepiece_reencodes_to_requested_length(
-    num_tokens: int,
+    num_tokens: int, make_tokenizer: Callable[[], Tokenizer], corpus: str
 ) -> None:
     """NVBug 7067483: hash-block prompts must re-encode to the requested length."""
-    tokenizer = make_sentencepiece_tokenizer()
-    with patch("builtins.open", mock_open(read_data=SENTENCEPIECE_CORPUS)):
+    tokenizer = make_tokenizer()
+    with patch("builtins.open", mock_open(read_data=corpus)):
         generator = PromptGenerator(
             prompts=PromptConfig(block_size=18),
             prefix_prompts=None,

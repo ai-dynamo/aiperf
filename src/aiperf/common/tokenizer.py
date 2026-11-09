@@ -27,6 +27,9 @@ BUILTIN_TOKENIZER_NAME = "builtin"
 _BUILTIN_ENCODING = "o200k_base"
 # SentencePiece space marker, byte-level BPE space marker, literal space.
 _WORD_START_MARKERS = ("▁", "Ġ", " ")
+# A bare marker ("") or whitespace after it, as spelled in vocab pieces;
+# byte-level BPE writes newline/tab as Ċ/ĉ.
+_NOT_WORD_START_SECOND_CHARS = frozenset(["", *"▁Ġ Ċĉ\t\n\r"])
 # tiktoken encoding names that should be routed through tiktoken, not HF.
 # "gpt2" is excluded because it's also a valid HF model name.
 TIKTOKEN_ENCODING_NAMES = frozenset(
@@ -876,6 +879,12 @@ class Tokenizer:
         marker, the byte-level BPE ``Ġ`` marker, or a literal space byte for
         tiktoken. Hash blocks that start on one re-encode to the same tokens
         after decoding (NVBug 7067483).
+
+        For vocab-based tokenizers the marker must also be followed by a
+        non-whitespace character. A bare marker or a whitespace run (``▁▁``,
+        ``ĠĊ``) merges with whitespace at the end of the previous block when
+        re-encoded, and SentencePiece decoders strip one of its spaces at the
+        start of a prompt.
         """
         self._require_init()
         if isinstance(self._tokenizer, _TiktokenAdapter):
@@ -885,7 +894,9 @@ class Tokenizer:
             ids = {
                 id_
                 for piece, id_ in self._tokenizer.get_vocab().items()
-                if isinstance(piece, str) and piece[:1] in _WORD_START_MARKERS
+                if isinstance(piece, str)
+                and piece[:1] in _WORD_START_MARKERS
+                and piece[1:2] not in _NOT_WORD_START_SECOND_CHARS
             }
         return frozenset(ids) or None
 

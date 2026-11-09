@@ -122,6 +122,8 @@ class TestBuiltinTokenizer:
             param({"▁the": 5, "the": 6, "<s>": 1}, frozenset({5}), id="sentencepiece-metaspace"),
             param({"Ġthe": 7, "the": 8, "<|eot|>": 2}, frozenset({7}), id="byte-level-bpe"),
             param({"the": 6, "<s>": 1}, None, id="no-space-markers"),
+            param({"▁the": 5, "▁": 0, "▁▁": 9, "▁▁▁▁": 10, "▁\n": 11}, frozenset({5}), id="sentencepiece-whitespace-runs"),
+            param({"Ġthe": 7, "Ġ": 12, "ĠĠ": 13, "ĠĊ": 14, "Ġĉ": 15}, frozenset({7}), id="byte-level-whitespace-runs"),
         ],
     )  # fmt: skip
     def test_word_start_token_ids_hf_reads_space_markers(
