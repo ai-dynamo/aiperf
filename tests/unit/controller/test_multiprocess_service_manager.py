@@ -4,8 +4,10 @@
 import asyncio
 import os
 from collections import Counter
+from collections.abc import Callable
 from multiprocessing import Process
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -712,7 +714,9 @@ class TestShutdownAllServicesWaitsForExit:
             SimpleNamespace(monotonic=lambda: clock.now),
         )
 
-        async def _queued_to_thread(func, *args, **kwargs):
+        async def _queued_to_thread(
+            func: Callable[..., Any], *args: Any, **kwargs: Any
+        ) -> Any:
             clock.now += 5.0
             return func(*args, **kwargs)
 
