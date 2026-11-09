@@ -121,6 +121,33 @@ def test_generate_cached_prompt_sentencepiece_reencodes_to_requested_length(
     assert lengths == [num_tokens] * 50
 
 
+def test_generate_cached_prompt_sentencepiece_shared_hash_ids_reencode_to_same_prefix() -> (
+    None
+):
+    """Prompts sharing leading hash IDs must share their re-encoded prefix tokens."""
+    tokenizer = make_sentencepiece_tokenizer()
+    with patch("builtins.open", mock_open(read_data=SENTENCEPIECE_CORPUS)):
+        generator = PromptGenerator(
+            prompts=PromptConfig(block_size=18),
+            prefix_prompts=None,
+            tokenizer=tokenizer,
+        )
+
+    mismatched = []
+    for i in range(50):
+        shared = [3 * i, 3 * i + 1]
+        first = tokenizer.encode(
+            generator.generate(mean=54, hash_ids=[*shared, 3 * i + 2])
+        )
+        second = tokenizer.encode(
+            generator.generate(mean=54, hash_ids=[*shared, 1000 + i])
+        )
+        if first[:36] != second[:36]:
+            mismatched.append(i)
+
+    assert mismatched == []
+
+
 def test_generate_cached_prompt_gpt2_boundary_preserves_token_budget() -> None:
     """GPT-2 pretokenization splits a double newline before following text."""
     backend = BackendTokenizer(

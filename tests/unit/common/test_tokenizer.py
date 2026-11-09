@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+import subprocess
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -233,18 +235,26 @@ class TestBuiltinTokenizer:
         assert "input_ids" in result
 
     def test_no_hf_imports_required(self) -> None:
-        """Builtin tokenizer must not trigger HuggingFace imports."""
-        import sys
+        """Builtin tokenizer must not trigger HuggingFace imports.
 
-        hf_modules = {
-            k for k in sys.modules if k.startswith(("transformers", "huggingface_hub"))
-        }
-        tokenizer = Tokenizer.from_pretrained(BUILTIN_TOKENIZER_NAME)
-        new_hf_modules = {
-            k for k in sys.modules if k.startswith(("transformers", "huggingface_hub"))
-        }
-        assert new_hf_modules == hf_modules
-        assert tokenizer.encode("test") is not None
+        Runs in a fresh interpreter: this module and other collected test
+        modules import ``transformers`` at the top, so an in-process
+        ``sys.modules`` check would always pass.
+        """
+        script = (
+            "import sys\n"
+            "from aiperf.common.tokenizer import BUILTIN_TOKENIZER_NAME, Tokenizer\n"
+            "tokenizer = Tokenizer.from_pretrained(BUILTIN_TOKENIZER_NAME)\n"
+            "assert tokenizer.encode('test')\n"
+            "print(sorted({k.split('.')[0] for k in sys.modules\n"
+            "              if k.startswith(('transformers', 'huggingface_hub'))}))\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=False
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "[]"
 
 
 class TestTiktokenEncodingNames:
