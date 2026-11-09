@@ -7,6 +7,9 @@ from unittest.mock import patch
 
 import pytest
 from pytest import param
+from tokenizers import Tokenizer as BackendTokenizer
+from tokenizers import decoders, models, pre_tokenizers, trainers
+from transformers import PreTrainedTokenizerFast
 
 from aiperf.common.exceptions import NotInitializedError, TokenizerError
 from aiperf.common.tokenizer import (
@@ -126,6 +129,26 @@ class TestBuiltinTokenizer:
         tokenizer._tokenizer = SimpleNamespace(get_vocab=lambda: vocab)
 
         assert tokenizer.word_start_token_ids == expected
+
+    def test_word_start_token_ids_hf_byte_level_matches_encoded_ids(self) -> None:
+        backend = BackendTokenizer(models.BPE())
+        backend.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+        backend.decoder = decoders.ByteLevel()
+        backend.train_from_iterator(
+            ["the cat sat on the mat"] * 8,
+            trainers.BpeTrainer(
+                initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+                show_progress=False,
+            ),
+        )
+        tokenizer = Tokenizer()
+        tokenizer._tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend)
+
+        [space_the] = backend.encode(" the").ids
+        [bare_the] = backend.encode("the").ids
+
+        assert space_the in tokenizer.word_start_token_ids
+        assert bare_the not in tokenizer.word_start_token_ids
 
     def test_num_prompt_special_tokens_returns_zero_when_no_bos(
         self, tokenizer: Tokenizer
