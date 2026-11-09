@@ -552,7 +552,10 @@ def test_run_fanout_force_exits_when_parent_dies_during_sink_initialization(
         0.0,
     )
 
-    class _DeadParent:
+    class _ParentDeadOnlyViaJoin:
+        """``join`` returns at once (the watchdog's death signal) while ``is_alive``
+        stays True, so only the watchdog, not the main loop, can notice."""
+
         def is_alive(self) -> bool:
             return True
 
@@ -561,7 +564,7 @@ def test_run_fanout_force_exits_when_parent_dies_during_sink_initialization(
 
     monkeypatch.setattr(
         "aiperf.post_processors.otel_streaming_fanout.multiprocessing.parent_process",
-        lambda: _DeadParent(),
+        lambda: _ParentDeadOnlyViaJoin(),
     )
 
     exited = threading.Event()
