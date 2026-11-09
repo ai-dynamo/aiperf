@@ -631,7 +631,7 @@ class TestShutdownAllServicesWaitsForExit:
         )
 
     @pytest.fixture(autouse=True)
-    def _frozen_clock(self, monkeypatch) -> None:
+    def _frozen_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Freeze the manager's clock so the join timeout is exactly the deadline."""
         monkeypatch.setattr(
             "aiperf.controller.multiprocess_service_manager.time",
@@ -649,7 +649,9 @@ class TestShutdownAllServicesWaitsForExit:
 
     @pytest.mark.asyncio
     async def test_shutdown_all_services_service_exiting_within_deadline_is_not_killed(
-        self, service_manager: MultiProcessServiceManager, monkeypatch
+        self,
+        service_manager: MultiProcessServiceManager,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(Environment.SERVICE, "SHUTDOWN_EXIT_TIMEOUT", 8.0)
         process = MagicMock(spec=Process)
@@ -665,7 +667,9 @@ class TestShutdownAllServicesWaitsForExit:
 
     @pytest.mark.asyncio
     async def test_shutdown_all_services_straggler_is_killed_after_deadline(
-        self, service_manager: MultiProcessServiceManager, monkeypatch
+        self,
+        service_manager: MultiProcessServiceManager,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setattr(Environment.SERVICE, "SHUTDOWN_EXIT_TIMEOUT", 8.0)
         process = MagicMock(spec=Process)
