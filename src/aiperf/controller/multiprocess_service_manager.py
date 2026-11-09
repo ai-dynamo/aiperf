@@ -3,6 +3,7 @@
 import asyncio
 import multiprocessing
 import os
+import time
 import uuid
 from collections import Counter
 from multiprocessing import Process
@@ -138,13 +139,33 @@ class MultiProcessServiceManager(BaseServiceManager):
         return await asyncio.gather(*tasks, return_exceptions=True)
 
     async def shutdown_all_services(self) -> list[BaseException | None]:
-        """Stop all required services as multiprocessing processes."""
+        """Wait for service processes to exit, then force-kill any survivors.
+
+        The ``SHUTDOWN`` ack only means the command arrived, not that the
+        service finished stopping. Killing a service mid-``stop()`` skips its
+        child cleanup and orphans those children, so every process gets up to
+        ``SERVICE.SHUTDOWN_EXIT_TIMEOUT`` (shared, not per-process) to exit
+        before ``_wait_for_process`` kills it.
+        """
         self.debug("Stopping all service processes")
 
-        # Wait for all to finish in parallel
+        deadline = time.monotonic() + Environment.SERVICE.SHUTDOWN_EXIT_TIMEOUT
+        await asyncio.gather(
+            *[self._join_until(info, deadline) for info in self.multi_process_info],
+            return_exceptions=True,
+        )
         return await asyncio.gather(
             *[self._wait_for_process(info) for info in self.multi_process_info],
             return_exceptions=True,
+        )
+
+    @staticmethod
+    async def _join_until(info: MultiProcessRunInfo, deadline: float) -> None:
+        """Block (off-loop) until the process exits or the monotonic deadline passes."""
+        if not info.process or not info.process.is_alive():
+            return
+        await asyncio.to_thread(
+            info.process.join, max(0.0, deadline - time.monotonic())
         )
 
     async def kill_all_services(self) -> list[BaseException | None]:

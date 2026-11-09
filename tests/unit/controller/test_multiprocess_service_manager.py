@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError
 from aiperf.controller.multiprocess_service_manager import (
     MultiProcessRunInfo,
@@ -610,6 +611,63 @@ class TestWaitForProcess:
         info.process.join.assert_called_once()
         method_names = [c[0] for c in info.process.method_calls]
         assert method_names.index("kill") < method_names.index("join")
+
+
+class TestShutdownAllServicesWaitsForExit:
+    """``shutdown_all_services`` gives services time to finish their own cleanup.
+
+    A service's ``stop()`` can legitimately outlive the controller's delivery
+    grace (the records manager waits up to 6s for its telemetry child). Killing
+    it early orphans that child (NVBug 7067978), so stragglers are killed only
+    after ``SERVICE.SHUTDOWN_EXIT_TIMEOUT``.
+    """
+
+    @pytest.fixture
+    def service_manager(self, benchmark_run) -> MultiProcessServiceManager:
+        return MultiProcessServiceManager(
+            required_services={ServiceType.DATASET_MANAGER: 1},
+            run=benchmark_run,
+        )
+
+    @staticmethod
+    def _info(process: MagicMock) -> MultiProcessRunInfo:
+        process.pid = 4242
+        return MultiProcessRunInfo.model_construct(
+            process=process,
+            service_type=ServiceType.DATASET_MANAGER,
+            service_id="svc",
+        )
+
+    @pytest.mark.asyncio
+    async def test_shutdown_all_services_service_exiting_within_deadline_is_not_killed(
+        self, service_manager: MultiProcessServiceManager, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(Environment.SERVICE, "SHUTDOWN_EXIT_TIMEOUT", 8.0)
+        process = MagicMock(spec=Process)
+        alive = {"value": True}
+        process.is_alive.side_effect = lambda: alive["value"]
+        process.join.side_effect = lambda timeout=None: alive.update(value=False)
+        service_manager.multi_process_info = [self._info(process)]
+
+        await service_manager.shutdown_all_services()
+
+        process.kill.assert_not_called()
+        assert 0 < process.join.call_args_list[0].args[0] <= 8.0
+
+    @pytest.mark.asyncio
+    async def test_shutdown_all_services_straggler_is_killed_after_deadline(
+        self, service_manager: MultiProcessServiceManager, monkeypatch
+    ) -> None:
+        monkeypatch.setattr(Environment.SERVICE, "SHUTDOWN_EXIT_TIMEOUT", 8.0)
+        process = MagicMock(spec=Process)
+        process.is_alive.return_value = True
+        service_manager.multi_process_info = [self._info(process)]
+
+        await service_manager.shutdown_all_services()
+
+        process.kill.assert_called_once()
+        method_names = [c[0] for c in process.method_calls]
+        assert method_names.index("join") < method_names.index("kill")
 
 
 class TestGetServiceLiveness:

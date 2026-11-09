@@ -438,3 +438,40 @@ def test_run_fanout_redacts_tracking_uri_userinfo_in_metadata(
     assert "s3cret" not in raw
     # The fanout still configures mlflow with the real URI so it can authenticate.
     assert mlflow_state["tracking_uri"] == "postgresql://dbuser:s3cret@db:5432/mlflow"
+
+
+def test_run_fanout_exits_when_parent_process_dies(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A killed owner must not leave the child blocked on its queue forever.
+
+    A SIGKILLed parent runs no cleanup, so the child has to notice by itself
+    (NVBug 7067978); otherwise it inherits the parent's stdout pipe and a
+    caller capturing logs never sees EOF.
+    """
+    install_fake_otel_modules(monkeypatch, {})
+    _install_fake_mlflow_modules(monkeypatch, {"log_batch_calls": []})
+
+    class _DeadParent:
+        def is_alive(self) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        "aiperf.post_processors.otel_streaming_fanout.multiprocessing.parent_process",
+        lambda: _DeadParent(),
+    )
+
+    class _EmptyForeverQueue:
+        gets = 0
+
+        def get(self, timeout: float | None = None) -> dict[str, Any]:
+            _EmptyForeverQueue.gets += 1
+            if _EmptyForeverQueue.gets > 50:
+                pytest.fail("fanout kept polling after its parent died")
+            raise Empty
+
+    run_otel_streaming_fanout(
+        _EmptyForeverQueue(),
+        _build_config(tmp_path, endpoint_url="http://collector:4318/v1/metrics"),
+    )

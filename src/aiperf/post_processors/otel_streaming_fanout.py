@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing
 import time
 from dataclasses import dataclass
 from multiprocessing.queues import Queue
@@ -386,8 +387,17 @@ def run_otel_streaming_fanout(
 
     last_flush_monotonic: float = time.monotonic()
 
+    # ``multiprocessing.parent_process()`` is the real spawning process under
+    # fork, spawn and forkserver alike (``getppid`` is the forkserver in the
+    # last), and its sentinel closes when the parent dies by any means. ``None``
+    # when run in-process, which disables the check.
+    parent = multiprocessing.parent_process()
+
     try:
         while not shutdown_requested:
+            if parent is not None and not parent.is_alive():
+                logger.warning("Fanout parent process died; shutting down fanout.")
+                break
             try:
                 event = event_queue.get(timeout=poll_timeout_sec)
             except Empty:
