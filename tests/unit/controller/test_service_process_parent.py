@@ -105,7 +105,7 @@ async def test_service_startup_and_controller_death(
     )
     try:
         pid_line = await asyncio.wait_for(controller.stdout.readline(), timeout=30)
-        assert pid_line.strip().isdigit(), pid_line
+        assert pid_line.strip().isdigit(), await controller.stderr.read()
         child = psutil.Process(int(pid_line))
         ready = await asyncio.wait_for(controller.stdout.readline(), timeout=30)
         assert ready == b"ready\n", await controller.stderr.read()
