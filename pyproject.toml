@@ -189,7 +189,8 @@ required-environments = [
   "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 # lighteval 0.13.0 (its latest release) pins nltk==3.9.1 exactly; lighteval main
-# already pins nltk==3.10.4. Drop this override once a lighteval release ships it.
+# already pins nltk==3.10.4. Drop this override once a lighteval release ships it;
+# the nightly override-check job (tools/check_uv_overrides.py) fails when it can go.
 override-dependencies = ["nltk==3.10.4"]
 
 [tool.uv.sources]
