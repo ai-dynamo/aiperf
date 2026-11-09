@@ -25,6 +25,8 @@ _logger = logging.getLogger(__name__)
 
 BUILTIN_TOKENIZER_NAME = "builtin"
 _BUILTIN_ENCODING = "o200k_base"
+# SentencePiece space marker, byte-level BPE space marker, literal space.
+_WORD_START_MARKERS = ("▁", "Ġ", " ")
 # tiktoken encoding names that should be routed through tiktoken, not HF.
 # "gpt2" is excluded because it's also a valid HF model name.
 TIKTOKEN_ENCODING_NAMES = frozenset(
@@ -865,6 +867,27 @@ class Tokenizer:
         ):
             return tokens[0]
         return None
+
+    @cached_property
+    def word_start_token_ids(self) -> frozenset[int] | None:
+        """Return IDs of tokens that begin a new word, or None if unknown.
+
+        A word-start token carries a leading space: the SentencePiece ``▁``
+        marker, the byte-level BPE ``Ġ`` marker, or a literal space byte for
+        tiktoken. Hash blocks that start on one re-encode to the same tokens
+        after decoding (NVBug 7067483).
+        """
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            ranks = _tiktoken_internal(self._tokenizer._encoding, "_mergeable_ranks")
+            ids = {id_ for piece, id_ in ranks.items() if piece[:1] == b" "}
+        else:
+            ids = {
+                id_
+                for piece, id_ in self._tokenizer.get_vocab().items()
+                if isinstance(piece, str) and piece[:1] in _WORD_START_MARKERS
+            }
+        return frozenset(ids) or None
 
     @property
     def vocab_size(self) -> int:

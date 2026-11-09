@@ -102,6 +102,31 @@ class TestBuiltinTokenizer:
             assert tokenizer.block_separation_token_id is None
             encode.assert_called_once_with("\n")
 
+    def test_word_start_token_ids_tiktoken_marks_space_prefixed_tokens(
+        self, tokenizer: Tokenizer
+    ) -> None:
+        [space_the] = tokenizer.encode(" the")
+        [bare_the] = tokenizer.encode("the")
+
+        assert space_the in tokenizer.word_start_token_ids
+        assert bare_the not in tokenizer.word_start_token_ids
+
+    @pytest.mark.parametrize(
+        "vocab, expected",
+        [
+            param({"▁the": 5, "the": 6, "<s>": 1}, frozenset({5}), id="sentencepiece-metaspace"),
+            param({"Ġthe": 7, "the": 8, "<|eot|>": 2}, frozenset({7}), id="byte-level-bpe"),
+            param({"the": 6, "<s>": 1}, None, id="no-space-markers"),
+        ],
+    )  # fmt: skip
+    def test_word_start_token_ids_hf_reads_space_markers(
+        self, vocab: dict[str, int], expected: frozenset[int] | None
+    ) -> None:
+        tokenizer = Tokenizer()
+        tokenizer._tokenizer = SimpleNamespace(get_vocab=lambda: vocab)
+
+        assert tokenizer.word_start_token_ids == expected
+
     def test_num_prompt_special_tokens_returns_zero_when_no_bos(
         self, tokenizer: Tokenizer
     ) -> None:

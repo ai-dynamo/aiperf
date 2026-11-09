@@ -22,6 +22,10 @@ from aiperf.config.dataset.content import (
 from aiperf.dataset.generator.coding_content import CodingContentGenerator
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader import parallel_convert as pc
+from tests.harness.sentencepiece_tokenizer import (
+    SENTENCEPIECE_CORPUS,
+    make_sentencepiece_tokenizer,
+)
 
 MOCK_CORPUS_CONTENT = " ".join([f"word{i}" for i in range(1024)]) + "\n"
 
@@ -107,6 +111,47 @@ def test_build_token_sequence_one_token_blocks_rejected_and_partials_supported(
     assert len(tokens) == 17
     assert len(generator._cache[103]) == 1
     assert parallel_prompt == tokenizer.decode(tokens)
+
+
+@pytest.mark.parametrize(
+    "corpus",
+    [param(PromptCorpus.SONNET, id="sonnet"), param(PromptCorpus.CODING, id="coding")],
+)  # fmt: skip
+def test_hash_blocks_sentencepiece_reencode_to_requested_length(
+    corpus: PromptCorpus,
+) -> None:
+    """NVBug 7067483: in-process and worker hash-block prompts keep their token count."""
+    tokenizer = make_sentencepiece_tokenizer()
+    config = PromptConfig(block_size=18)
+    if corpus == PromptCorpus.CODING:
+        generator = CodingContentGenerator(config, tokenizer)
+        pool = tokenizer.encode(SENTENCEPIECE_CORPUS)
+        generator._tool_pool = generator._tokenized_corpus = pool
+        generator._corpus_size = len(pool)
+    else:
+        with patch("builtins.open", mock_open(read_data=SENTENCEPIECE_CORPUS)):
+            generator = PromptGenerator(
+                prompts=config, prefix_prompts=None, tokenizer=tokenizer
+            )
+    trace_id = "sentencepiece-drift"
+    generator._hash_id_corpus_rng.set_trace_id(trace_id)
+    in_process = {
+        n: [
+            len(tokenizer.encode(generator._generate_cached_prompt(n, ids, 18)))
+            for ids in ([3 * i, 3 * i + 1, 3 * i + 2] for i in range(50))
+        ]
+        for n in (54, 80)
+    }
+    generator._cache.clear()
+    traces = [
+        {"hash_ids": [1000 + 3 * i, 1001 + 3 * i, 1002 + 3 * i], "input_length": 45}
+        for i in range(50)
+    ]
+
+    [(_, turns)] = _drive_worker_inproc(generator, [("s1", traces)], trace_id, 18)
+
+    assert in_process == {54: [54] * 50, 80: [80] * 50}
+    assert [len(tokenizer.encode(prompt)) for _, _, prompt, _ in turns] == [45] * 50
 
 
 def test_process_batch_literal_text_with_one_token_blocks_preserved() -> None:

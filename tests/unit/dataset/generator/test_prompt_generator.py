@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, mock_open, patch
 import numpy as np
 import pytest
 import tiktoken
+from pytest import param
 from tokenizers import Tokenizer as BackendTokenizer
 from tokenizers import decoders, models, pre_tokenizers
 from transformers import PreTrainedTokenizerFast
@@ -25,7 +26,11 @@ from aiperf.common.exceptions import (
 )
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
-from aiperf.dataset.generator.prompt import PromptGenerator
+from aiperf.dataset.generator.prompt import PromptGenerator, sample_tokens_from_corpus
+from tests.harness.sentencepiece_tokenizer import (
+    SENTENCEPIECE_CORPUS,
+    make_sentencepiece_tokenizer,
+)
 
 MOCK_CORPUS_CONTENT = "To be or not to be, that is the question.\nWhether 'tis nobler in the mind to suffer.\n"
 
@@ -43,6 +48,77 @@ def test_generate_cached_prompt_does_not_expand_special_separators() -> None:
 
     ordinary_tokens = tiktoken.get_encoding("o200k_base").encode_ordinary(prompt)
     assert len(ordinary_tokens) == 16
+
+
+class _FixedStartRng:
+    """Returns a fixed start index and counts draws."""
+
+    def __init__(self, start: int) -> None:
+        self.start = start
+        self.draws = 0
+
+    def randrange(self, n: int) -> int:
+        self.draws += 1
+        return self.start
+
+
+# Token 10 begins a word; 1-4 continue one.
+_WORD_CORPUS = [10, 1, 2, 10, 3, 4]
+
+
+@pytest.mark.parametrize(
+    "start, word_starts, sep_token, expected",
+    [
+        param(1, {10}, None, [10, 3, 4], id="mid-word-start-moves-to-next-word"),
+        param(3, {10}, None, [10, 3, 4], id="word-start-kept"),
+        param(4, {10}, None, [10, 1, 2], id="search-wraps-past-corpus-end"),
+        param(1, {10}, 0, [0, 10, 3], id="separator-precedes-moved-start"),
+        param(1, None, None, [1, 2, 10], id="no-word-starts-keeps-drawn-start"),
+        param(1, {99}, None, [1, 2, 10], id="no-word-start-in-corpus-keeps-drawn-start"),
+    ],
+)  # fmt: skip
+def test_sample_tokens_from_corpus_word_starts_moves_block_start(
+    start: int,
+    word_starts: set[int] | None,
+    sep_token: int | None,
+    expected: list[int],
+) -> None:
+    rng = _FixedStartRng(start)
+
+    tokens = sample_tokens_from_corpus(
+        _WORD_CORPUS, 3, rng, sep_token, word_starts=word_starts
+    )
+
+    assert tokens == expected
+    assert rng.draws == 1
+
+
+@pytest.mark.parametrize(
+    "num_tokens",
+    [
+        param(54, id="exact-tile"),
+        param(45, id="last-block-partial"),
+        param(80, id="prefix-only-tail"),
+    ],
+)  # fmt: skip
+def test_generate_cached_prompt_sentencepiece_reencodes_to_requested_length(
+    num_tokens: int,
+) -> None:
+    """NVBug 7067483: hash-block prompts must re-encode to the requested length."""
+    tokenizer = make_sentencepiece_tokenizer()
+    with patch("builtins.open", mock_open(read_data=SENTENCEPIECE_CORPUS)):
+        generator = PromptGenerator(
+            prompts=PromptConfig(block_size=18),
+            prefix_prompts=None,
+            tokenizer=tokenizer,
+        )
+
+    lengths = [
+        len(tokenizer.encode(generator.generate(mean=num_tokens, hash_ids=ids)))
+        for ids in ([3 * i, 3 * i + 1, 3 * i + 2] for i in range(50))
+    ]
+
+    assert lengths == [num_tokens] * 50
 
 
 def test_generate_cached_prompt_gpt2_boundary_preserves_token_budget() -> None:

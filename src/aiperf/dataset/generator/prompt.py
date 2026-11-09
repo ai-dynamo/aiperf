@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import os
+from collections.abc import Container, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -19,6 +20,8 @@ from aiperf.config.dataset.defaults import InputTokensDefaults
 from aiperf.dataset.generator.base import BaseGenerator
 
 DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"
+# Longer than any word in the bundled corpora, short enough to stay cheap.
+_MAX_WORD_START_SEARCH = 64
 
 
 def reject_separator_only_blocks(block_size: int, sep_token: int | None) -> None:
@@ -29,11 +32,30 @@ def reject_separator_only_blocks(block_size: int, sep_token: int | None) -> None
         )
 
 
+def _next_word_start(
+    corpus: Sequence[int], start: int, word_starts: Container[int]
+) -> int:
+    """Return the first word-start position at or after ``start``, wrapping.
+
+    Falls back to ``start`` when no word start lies within
+    ``_MAX_WORD_START_SEARCH`` tokens, so corpora without space-marked tokens
+    keep their drawn start.
+    """
+    corpus_len = len(corpus)
+    for offset in range(min(_MAX_WORD_START_SEARCH, corpus_len)):
+        position = (start + offset) % corpus_len
+        if int(corpus[position]) in word_starts:
+            return position
+    return start
+
+
 def sample_tokens_from_corpus(
     corpus,
     num_tokens: int,
     rng_to_use,
     sep_token: int | None = None,
+    *,
+    word_starts: Container[int] | None = None,
 ) -> list[int]:
     """Sample ``num_tokens`` tokens from ``corpus`` using ``rng_to_use``.
 
@@ -42,12 +64,20 @@ def sample_tokens_from_corpus(
     without sharing PromptGenerator state. Wraps the slice if it overflows the
     corpus end so the result is always exactly ``num_tokens`` long.
 
+    With ``word_starts``, the drawn start moves forward to the next word-start
+    token. A window that begins mid-word decodes to text whose re-encoding
+    differs in length, because tokenizers re-split a word that loses its
+    leading space (NVBug 7067483). The RNG is still drawn exactly once, so a
+    shorter block for the same seed remains a prefix of a longer one.
+
     Args:
         corpus: Token corpus as a sequence of token IDs.
         num_tokens: Number of tokens to sample.
         rng_to_use: Random generator with a ``randrange(n)`` method.
         sep_token: Optional block-separation token prepended at index 0
             (consumes one slot of ``num_tokens``).
+        word_starts: Optional token IDs that begin a word
+            (:attr:`Tokenizer.word_start_token_ids`).
 
     Returns:
         List of sampled token IDs of length ``num_tokens``.
@@ -60,6 +90,8 @@ def sample_tokens_from_corpus(
         num_tokens -= 1
 
     start = rng_to_use.randrange(corpus_len)
+    if word_starts:
+        start = _next_word_start(corpus, start, word_starts)
     end = start + num_tokens
 
     if end <= corpus_len:
@@ -562,10 +594,14 @@ class PromptGenerator(BaseGenerator):
         block_size: int,
     ) -> str:
         """
-        Generate a prompt containing exactly `num_tokens` by reusing previously generated prompts
-        stored in `_cache`. Each hash index in `hash_ids` corresponds to a block of
-        `block_size` tokens. If a hash index is found in `_cache`, its stored prompt is reused.
-        Otherwise, a new prompt is generated using `generate_prompt()` and stored in `_cache`.
+        Decode the `num_tokens` token IDs built by :meth:`_build_token_sequence`.
+
+        Each hash index in `hash_ids` maps to a cached block of `block_size`
+        tokens, so prompts that share hash IDs share identical prefixes. Blocks
+        start on word boundaries, so re-encoding the text normally yields
+        `num_tokens` again. The count is not corrected after decoding:
+        trimming or padding the text would change shared block content and
+        break prefix reuse. See ``docs/reference/prompt-corpus.md``.
 
         Args:
             num_tokens: The number of tokens required in the prompt.
@@ -652,6 +688,7 @@ class PromptGenerator(BaseGenerator):
             # Exact-tile or prefix-only path: every hash is a full block.
             final_block_size = block_size
 
+        word_starts = self.tokenizer.word_start_token_ids
         for index, hash_id in enumerate(hash_ids):
             current_block_size = final_block_size if index == m - 1 else block_size
             cached = self._cache.get(hash_id)
@@ -667,6 +704,7 @@ class PromptGenerator(BaseGenerator):
                     current_block_size,
                     self._hash_id_corpus_rng,
                     self.tokenizer.block_separation_token_id,
+                    word_starts=word_starts,
                 )
                 self._cache[hash_id] = cached
             elif len(cached) != current_block_size:
@@ -686,7 +724,14 @@ class PromptGenerator(BaseGenerator):
         # Prefix-only: pad the un-hashed tail with sampled (uncached) tokens.
         tail = num_tokens - len(final_prompt)
         if tail > 0:
-            final_prompt.extend(self._sample_tokens(tail))
+            final_prompt.extend(
+                sample_tokens_from_corpus(
+                    self._tokenized_corpus,
+                    tail,
+                    self._corpus_rng,
+                    word_starts=word_starts,
+                )
+            )
 
         return final_prompt
 
