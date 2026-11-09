@@ -1,0 +1,64 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Preflight for --goodput SLOs.
+
+The record processors validate --goodput when they build their metric set, in a
+service subprocess whose failure is not propagated: an SLO they reject left the
+run sending every request and then waiting forever for records. The preflight
+runs the same check in the main process, before any service spawns.
+"""
+
+from types import SimpleNamespace
+
+import pytest
+from pytest import param
+
+from aiperf.cli_runner._preflight import _preflight_goodput
+from aiperf.config.loader.errors import ConfigurationError
+from aiperf.metrics.types.good_request_count_metric import GoodRequestCountMetric
+from tests.unit.conftest import make_benchmark_run
+
+
+@pytest.fixture(autouse=True)
+def _reset_slos():
+    yield
+    GoodRequestCountMetric.set_slos({})
+
+
+def _plan(*, streaming: bool, slos: dict[str, float] | None) -> SimpleNamespace:
+    run = make_benchmark_run(
+        endpoint_type="chat",
+        streaming=streaming,
+        extra={"slos": slos} if slos else None,
+    )
+    return SimpleNamespace(configs=[run.cfg])
+
+
+class TestPreflightGoodput:
+    @pytest.mark.parametrize(
+        "streaming,slos",
+        [
+            param(False, {"time_to_first_token": 100.0}, id="ttft-without-streaming"),
+            param(True, {"time_to_first_tokn": 100.0}, id="typo"),
+            param(True, {"request_throughput": 1.0}, id="run-level-metric"),
+        ],
+    )  # fmt: skip
+    def test_preflight_goodput_rejected_slo_raises_configuration_error(
+        self, streaming: bool, slos: dict[str, float]
+    ) -> None:
+        with pytest.raises(ConfigurationError, match="Invalid --goodput"):
+            _preflight_goodput(_plan(streaming=streaming, slos=slos))
+
+    @pytest.mark.parametrize(
+        "streaming,slos",
+        [
+            param(True, {"time_to_first_token": 100.0, "inter_token_latency": 5.0}, id="streaming-latency"),
+            param(False, {"request_latency": 250.0}, id="non-streaming-latency"),
+            param(False, None, id="no-slos"),
+        ],
+    )  # fmt: skip
+    def test_preflight_goodput_applicable_slo_passes(
+        self, streaming: bool, slos: dict[str, float] | None
+    ) -> None:
+        _preflight_goodput(_plan(streaming=streaming, slos=slos))

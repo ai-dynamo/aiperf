@@ -161,6 +161,38 @@ def _preflight_accuracy_deps(plan: BenchmarkPlan) -> None:
             raise ConfigurationError(str(exc)) from exc
 
 
+def _preflight_goodput(plan: BenchmarkPlan) -> None:
+    """Fail fast on a --goodput SLO the record processors would reject.
+
+    Why: the record-processor daemon validates --goodput while building its
+    metric set, and that crash isn't propagated. A typo'd tag, or an SLO on a
+    metric the run never computes per request (``time_to_first_token`` without
+    ``--streaming``, ``request_throughput``) otherwise sends every request and
+    then waits forever for records, with nothing in the log. Running the same
+    metric setup here turns it into a clean ``ConfigurationError`` before any
+    service spawns.
+    """
+    from aiperf.common.enums import MetricType
+    from aiperf.config import BenchmarkRun
+    from aiperf.config.loader.errors import ConfigurationError
+    from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
+
+    for config in plan.configs:
+        if not getattr(config, "slos", None):
+            continue
+        run = BenchmarkRun(
+            benchmark_id="goodput-preflight",
+            cfg=config,
+            artifact_dir=config.artifacts.dir,
+        )
+        try:
+            BaseMetricsProcessor(run)._setup_metrics(
+                MetricType.RECORD, MetricType.AGGREGATE, exclude_error_metrics=True
+            )
+        except RuntimeError as exc:
+            raise ConfigurationError(str(exc)) from exc
+
+
 def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:
     """Block until the target endpoint is ready (see ready_checker).
 
