@@ -261,6 +261,8 @@ class KueueManager:
                 pass
 
             logger.debug(
-                lambda elapsed=elapsed: f"Waiting for workload admission ({elapsed:.0f}s)"
+                lambda elapsed=elapsed: (
+                    f"Waiting for workload admission ({elapsed:.0f}s)"
+                )
             )
             await asyncio.sleep(2)

@@ -122,7 +122,9 @@ class TRTLLMSpecDecodeAdapter:
             # rather than trusting.
             error = e
             _logger.warning(
-                lambda: f"Ignoring malformed TensorRT-LLM spec-decode payload "
-                f"{payload!r}: {error!r}"
+                lambda: (
+                    f"Ignoring malformed TensorRT-LLM spec-decode payload "
+                    f"{payload!r}: {error!r}"
+                )
             )
             return None

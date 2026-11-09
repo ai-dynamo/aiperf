@@ -74,7 +74,9 @@ class SGLangSpecDecodeAdapter:
             # Exception variables are cleared before a deferred log call.
             error = e
             _logger.warning(
-                lambda: f"Ignoring malformed SGLang spec-decode payload "
-                f"{payload!r}: {error!r}"
+                lambda: (
+                    f"Ignoring malformed SGLang spec-decode payload "
+                    f"{payload!r}: {error!r}"
+                )
             )
             return None
