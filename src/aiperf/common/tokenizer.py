@@ -878,7 +878,7 @@ class Tokenizer:
         A word-start token carries a leading space: the SentencePiece ``▁``
         marker, the byte-level BPE ``Ġ`` marker, or a literal space byte for
         tiktoken. Hash blocks that start on one re-encode to the same tokens
-        after decoding (NVBug 7067483).
+        after decoding.
 
         For vocab-based tokenizers the marker must also be followed by a
         non-whitespace character. A bare marker or a whitespace run (``▁▁``,

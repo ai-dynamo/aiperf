@@ -50,10 +50,19 @@ Llama-2-style SentencePiece tokenizers (Llama-2, Mistral) encode a newline with 
 separate leading prefix-space token, so they run without a separator. To keep the
 token count stable when the generated text is re-tokenized, each hash block and
 each un-hashed tail starts on a word boundary: the sampled corpus position moves
-forward to the next token that carries a leading space (`▁`, `Ġ`, or a space
-byte). A block that starts mid-word would otherwise gain or lose a token when its
-first word is re-split. Tokenizers without such markers keep the sampled position.
-The `weka_trace` loader builds its blocks separately and does not apply this.
+forward, by at most 256 tokens, to the next token that starts a word. A word start
+carries a leading space (`▁`, `Ġ`, or a space byte) followed by visible text;
+whitespace-only tokens such as `▁▁` do not count, because they merge with
+whitespace at the end of the previous block. A block that starts mid-word would
+otherwise gain or lose a token when its first word is re-split. Tokenizers without
+such markers, or a search that finds none, keep the sampled position. Because
+block starts move, the prompt text differs from AIPerf versions before this
+change. The `weka_trace` loader builds its blocks separately and does not apply
+this.
+With a newline separator (byte-level BPE and tiktoken tokenizers), the separator
+can also merge with whitespace or punctuation at the end of the previous block, so
+re-tokenized prompts can come up a few tokens short. This is most common with the
+`coding` corpus.
 Newline-separated hash blocks require a block size of at least 2; one-token final
 partial blocks are still supported. When present, the newline separator occupies
 the entire partial block and can merge with preceding content when the generated

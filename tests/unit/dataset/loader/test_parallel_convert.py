@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from multiprocessing import shared_memory
 from unittest.mock import mock_open, patch
 
@@ -24,7 +25,9 @@ from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader import parallel_convert as pc
 from tests.harness.sentencepiece_tokenizer import (
     SENTENCEPIECE_CORPUS,
+    SENTENCEPIECE_WHITESPACE_CORPUS,
     make_sentencepiece_tokenizer,
+    make_sentencepiece_whitespace_tokenizer,
 )
 
 MOCK_CORPUS_CONTENT = " ".join([f"word{i}" for i in range(1024)]) + "\n"
@@ -114,22 +117,31 @@ def test_build_token_sequence_one_token_blocks_rejected_and_partials_supported(
 
 
 @pytest.mark.parametrize(
+    "make_tokenizer, toy_corpus",
+    [
+        param(make_sentencepiece_tokenizer, SENTENCEPIECE_CORPUS, id="single-spaces"),
+        param(make_sentencepiece_whitespace_tokenizer, SENTENCEPIECE_WHITESPACE_CORPUS, id="whitespace-runs"),
+    ],
+)  # fmt: skip
+@pytest.mark.parametrize(
     "corpus",
     [param(PromptCorpus.SONNET, id="sonnet"), param(PromptCorpus.CODING, id="coding")],
 )  # fmt: skip
 def test_hash_blocks_sentencepiece_reencode_to_requested_length(
     corpus: PromptCorpus,
+    make_tokenizer: Callable[[], Tokenizer],
+    toy_corpus: str,
 ) -> None:
     """NVBug 7067483: in-process and worker hash-block prompts keep their token count."""
-    tokenizer = make_sentencepiece_tokenizer()
+    tokenizer = make_tokenizer()
     config = PromptConfig(block_size=18)
     if corpus == PromptCorpus.CODING:
         generator = CodingContentGenerator(config, tokenizer)
-        pool = tokenizer.encode(SENTENCEPIECE_CORPUS)
+        pool = tokenizer.encode(toy_corpus)
         generator._tool_pool = generator._tokenized_corpus = pool
         generator._corpus_size = len(pool)
     else:
-        with patch("builtins.open", mock_open(read_data=SENTENCEPIECE_CORPUS)):
+        with patch("builtins.open", mock_open(read_data=toy_corpus)):
             generator = PromptGenerator(
                 prompts=config, prefix_prompts=None, tokenizer=tokenizer
             )

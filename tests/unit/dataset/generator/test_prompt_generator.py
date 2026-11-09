@@ -97,6 +97,24 @@ def test_sample_tokens_from_corpus_word_starts_moves_block_start(
 
 
 @pytest.mark.parametrize(
+    "word_start_position, expected",
+    [
+        param(255, [10, 1], id="last-position-in-window-moves-start"),
+        param(256, [1, 1], id="first-position-past-window-keeps-drawn-start"),
+    ],
+)  # fmt: skip
+def test_sample_tokens_from_corpus_word_start_search_window_is_256_tokens(
+    word_start_position: int, expected: list[int]
+) -> None:
+    corpus = [1] * 512
+    corpus[word_start_position] = 10
+
+    tokens = sample_tokens_from_corpus(corpus, 2, _FixedStartRng(0), word_starts={10})
+
+    assert tokens == expected
+
+
+@pytest.mark.parametrize(
     "make_tokenizer, corpus",
     [
         param(make_sentencepiece_tokenizer, SENTENCEPIECE_CORPUS, id="single-spaces"),

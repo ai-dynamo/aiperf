@@ -20,8 +20,10 @@ from aiperf.config.dataset.defaults import InputTokensDefaults
 from aiperf.dataset.generator.base import BaseGenerator
 
 DEFAULT_CORPUS_FILE = "assets/shakespeare.txt"
-# Longer than any word in the bundled corpora, short enough to stay cheap.
-_MAX_WORD_START_SEARCH = 64
+# The longest run without a word start measured in the bundled corpora is 59
+# tokens (coding pool, Llama-2 tokenizer). The search stops at the first hit,
+# so a wide margin costs nothing in the common case.
+_MAX_WORD_START_SEARCH = 256
 
 
 def reject_separator_only_blocks(block_size: int, sep_token: int | None) -> None:
@@ -67,7 +69,7 @@ def sample_tokens_from_corpus(
     With ``word_starts``, the drawn start moves forward to the next word-start
     token. A window that begins mid-word decodes to text whose re-encoding
     differs in length, because tokenizers re-split a word that loses its
-    leading space (NVBug 7067483). The RNG is still drawn exactly once, so a
+    leading space. The RNG is still drawn exactly once, so a
     shorter block for the same seed remains a prefix of a longer one.
 
     Args:
