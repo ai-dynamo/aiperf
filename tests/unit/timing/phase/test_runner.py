@@ -756,7 +756,9 @@ class TestStrategyFinalizationBarrier:
             strategy.requires_execution_finalization = True
         return strategy
 
-    async def test_waits_for_cancelled_task_finalizer(self, runner: PhaseRunner) -> None:
+    async def test_waits_for_cancelled_task_finalizer(
+        self, runner: PhaseRunner
+    ) -> None:
         finalized = asyncio.Event()
         release = asyncio.Event()
 

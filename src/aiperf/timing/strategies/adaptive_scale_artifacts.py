@@ -88,9 +88,7 @@ class AdaptiveScaleArtifactWriter:
                 except asyncio.CancelledError as exc:
                     cancelled = cancelled or exc
                     if deadline is None:
-                        deadline = (
-                            loop.time() + Environment.TIMING.CANCEL_DRAIN_TIMEOUT
-                        )
+                        deadline = loop.time() + Environment.TIMING.CANCEL_DRAIN_TIMEOUT
         finally:
             joined.cancel()
             drain_task.cancel()
