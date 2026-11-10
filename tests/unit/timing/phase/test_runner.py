@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
+import contextlib
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -751,6 +752,7 @@ class TestStrategyFinalizationBarrier:
 
     @staticmethod
     def _finalizing_strategy(*, opt_in: bool = True) -> MockStrategy:
+        """Build a MockStrategy, optionally opted in to the barrier."""
         strategy = MockStrategy()
         if opt_in:
             strategy.requires_execution_finalization = True
@@ -759,6 +761,8 @@ class TestStrategyFinalizationBarrier:
     async def test_waits_for_cancelled_task_finalizer(
         self, runner: PhaseRunner
     ) -> None:
+        """A task already cancelled by the deadline is not cancelled again;
+        the barrier waits for its finalizer to finish."""
         finalized = asyncio.Event()
         release = asyncio.Event()
 
@@ -783,14 +787,49 @@ class TestStrategyFinalizationBarrier:
         assert finalized.is_set()
 
     async def test_reraises_strategy_failure(self, runner: PhaseRunner) -> None:
+        """A strategy task that already failed surfaces as a phase failure."""
+
         async def boom() -> None:
             raise OSError("summary write failed")
 
         runner._execution_task = runner.execute_async(boom())
+        await asyncio.sleep(0)
         with pytest.raises(OSError, match="summary write failed"):
             await runner._await_strategy_finalization(self._finalizing_strategy())
 
+    async def test_reraises_finalizer_failure_after_barrier_cancel(
+        self, runner: PhaseRunner
+    ) -> None:
+        """A finalizer error raised while handling the barrier's own cancel
+        (e.g. a failed summary write) is propagated, not discarded."""
+
+        async def execute() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                raise OSError("finalizer write failed")
+
+        runner._execution_task = runner.execute_async(execute())
+        await asyncio.sleep(0)
+        with pytest.raises(OSError, match="finalizer write failed"):
+            await runner._await_strategy_finalization(self._finalizing_strategy())
+
+    async def test_running_issuing_loop_is_cancelled_without_idling(
+        self, runner: PhaseRunner
+    ) -> None:
+        """Sending is complete, so a still-running issuing loop (e.g. a
+        user-centric loop sleeping until its next spawn) is cancelled right
+        away instead of idling for CANCEL_DRAIN_TIMEOUT."""
+        runner._execution_task = runner.execute_async(asyncio.Event().wait())
+        await asyncio.sleep(0)
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        await runner._await_strategy_finalization(self._finalizing_strategy())
+        assert runner._execution_task.cancelled()
+        assert loop.time() - started < Environment.TIMING.CANCEL_DRAIN_TIMEOUT / 2
+
     async def test_not_opted_in_does_not_wait(self, runner: PhaseRunner) -> None:
+        """Strategies that do not opt in keep the fire-and-forget behavior."""
         runner._execution_task = runner.execute_async(asyncio.Event().wait())
         await runner._await_strategy_finalization(
             self._finalizing_strategy(opt_in=False)
@@ -798,13 +837,32 @@ class TestStrategyFinalizationBarrier:
         assert not runner._execution_task.done()
         runner._execution_task.cancel()
 
-    async def test_wedged_finalizer_is_cancelled_after_timeout(
+    async def test_truthy_non_bool_opt_in_is_ignored(self, runner: PhaseRunner) -> None:
+        """Only an explicit ``True`` opts in; a MagicMock attribute does not."""
+        runner._execution_task = runner.execute_async(asyncio.Event().wait())
+        await runner._await_strategy_finalization(MagicMock())
+        assert not runner._execution_task.done()
+        runner._execution_task.cancel()
+
+    async def test_wedged_finalizer_is_abandoned_after_timeout(
         self, runner: PhaseRunner, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(Environment.TIMING, "CANCEL_DRAIN_TIMEOUT", 1.0)
-        runner._execution_task = runner.execute_async(asyncio.Event().wait())
+        """A finalizer that ignores cancellation cannot hold the phase open
+        past CANCEL_DRAIN_TIMEOUT."""
+        monkeypatch.setattr(Environment.TIMING, "CANCEL_DRAIN_TIMEOUT", 0.05)
+        stop = asyncio.Event()
+
+        async def stubborn() -> None:
+            while not stop.is_set():
+                with contextlib.suppress(asyncio.CancelledError):
+                    await stop.wait()
+
+        runner._execution_task = runner.execute_async(stubborn())
+        await asyncio.sleep(0)
         await runner._await_strategy_finalization(self._finalizing_strategy())
-        assert runner._execution_task.cancelled()
+        assert not runner._execution_task.done()
+        stop.set()
+        await runner._execution_task
 
 
 class TestTimeoutHandling:

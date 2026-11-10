@@ -2129,6 +2129,7 @@ def test_error_rate_sla_fraction_style_threshold_warns(caplog) -> None:
 
 
 async def _wait_until(predicate, *, attempts: int = 10_000) -> None:
+    """Yield to the event loop until ``predicate()`` holds (bounded)."""
     for _ in range(attempts):
         if predicate():
             return
@@ -2189,7 +2190,35 @@ async def test_writer_close_cancelled_gives_up_after_drain_timeout(
 
 
 @pytest.mark.asyncio
+async def test_writer_close_cancelled_reports_write_error_over_cancel(
+    tmp_path,
+) -> None:
+    """A write that fails while a cancelled close() is still draining is
+    raised instead of the CancelledError, so the lost artifact is surfaced."""
+    writer = AdaptiveScaleArtifactWriter()
+    await writer.start()
+    gate = threading.Event()
+
+    def fail() -> None:
+        raise OSError("summary disk full")
+
+    writer._schedule_write(lambda: gate.wait(timeout=5.0))
+    writer._schedule_write(fail)
+
+    close_task = asyncio.create_task(writer.close())
+    await _wait_until(lambda: writer._queue is not None and writer._queue.qsize() == 1)
+    for _ in range(5):
+        await asyncio.sleep(0)
+    close_task.cancel()
+    gate.set()
+
+    with pytest.raises(OSError, match="summary disk full"):
+        await close_task
+
+
+@pytest.mark.asyncio
 async def test_writer_close_propagates_write_error(tmp_path) -> None:
+    """A failed write is raised from an uncancelled close()."""
     writer = AdaptiveScaleArtifactWriter()
     await writer.start()
 
@@ -2205,9 +2234,9 @@ async def test_writer_close_propagates_write_error(tmp_path) -> None:
 async def test_deadline_cancel_during_finalizer_keeps_phase_stopped_summary(
     tmp_path,
 ) -> None:
-    """Regression: the phase deadline cancelled execute_phase while its finally
-    block was flushing the queued terminal event + summary; the event landed
-    but the summary was dropped and the CLI still exited 0."""
+    """Cancelling execute_phase (as the phase deadline does) while its finally
+    block is flushing the queued terminal event and summary still writes both,
+    and the summary matches the ``phase_stopped`` terminal event."""
     strategy = _strategy(tmp_path)
     del strategy._artifacts._schedule_write  # use the real async queue
     await strategy._artifacts.start()
@@ -2242,4 +2271,5 @@ async def test_deadline_cancel_during_finalizer_keeps_phase_stopped_summary(
 
 
 def test_adaptive_strategy_requires_execution_finalization() -> None:
+    """Adaptive scale opts in to the PhaseRunner finalization barrier."""
     assert AdaptiveScaleStrategy.requires_execution_finalization is True
