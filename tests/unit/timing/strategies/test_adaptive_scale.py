@@ -2328,7 +2328,9 @@ def test_terminal_artifacts_are_required_writes(tmp_path) -> None:
 @pytest.mark.parametrize(
     ("run_cancelled", "event", "reason", "status"),
     [
-        param(False, "adaptive_complete", "phase_stopped", "completed", id="normal-end"),
+        param(
+            False, "adaptive_complete", "phase_stopped", "completed", id="normal-end"
+        ),
         param(True, "adaptive_failed", "phase_cancelled", "failed", id="run-cancelled"),
     ],
 )
