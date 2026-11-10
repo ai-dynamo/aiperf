@@ -76,6 +76,13 @@ if __name__ == "__main__":
 """
 
 
+async def _stop_and_read_stderr(controller: asyncio.subprocess.Process) -> bytes:
+    """Kill the probe process group, then read stderr with a bound."""
+    with suppress(ProcessLookupError):
+        os.killpg(controller.pid, signal.SIGKILL)
+    return await asyncio.wait_for(controller.stderr.read(), timeout=10)
+
+
 @pytest.mark.skipif(
     not IS_LINUX,
     reason="PR_SET_PDEATHSIG is Linux-only",
@@ -105,10 +112,10 @@ async def test_service_startup_and_controller_death(
     )
     try:
         pid_line = await asyncio.wait_for(controller.stdout.readline(), timeout=30)
-        assert pid_line.strip().isdigit(), await controller.stderr.read()
+        assert pid_line.strip().isdigit(), await _stop_and_read_stderr(controller)
         child = psutil.Process(int(pid_line))
         ready = await asyncio.wait_for(controller.stdout.readline(), timeout=30)
-        assert ready == b"ready\n", await controller.stderr.read()
+        assert ready == b"ready\n", await _stop_and_read_stderr(controller)
         controller.kill()
         await asyncio.wait_for(controller.wait(), timeout=10)
         for _ in range(100):
