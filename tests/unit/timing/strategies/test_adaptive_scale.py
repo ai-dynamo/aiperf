@@ -78,7 +78,7 @@ def _strategy(
         concurrency_manager=MagicMock(),
         progress=progress,
     )
-    strategy._artifacts._schedule_write = lambda write: write()
+    strategy._artifacts._schedule_write = lambda write, **_: write()
     return strategy
 
 
@@ -152,7 +152,7 @@ def test_manifest_entries_are_sorted_and_replaced_by_phase_identity(
     tmp_path: Path,
 ) -> None:
     writer = AdaptiveScaleArtifactWriter()
-    writer._schedule_write = lambda write: write()
+    writer._schedule_write = lambda write, **_: write()
 
     writer.write_manifest_entry(
         tmp_path,
@@ -1088,6 +1088,7 @@ async def test_execute_phase_cancellation_writes_failed_terminal_artifacts(
     tmp_path,
 ) -> None:
     strategy = _strategy(tmp_path)
+    strategy._lifecycle.was_cancelled = True
     strategy._user_strategy = MagicMock()
     strategy._user_strategy.execute_phase = AsyncMock(
         side_effect=asyncio.CancelledError()
@@ -1664,7 +1665,7 @@ async def test_artifact_writer_continues_after_failed_write() -> None:
     def succeed() -> None:
         completed.append("ok")
 
-    writer._schedule_write(fail)
+    writer._schedule_write(fail, required=True)
     writer._schedule_write(succeed)
 
     with pytest.raises(OSError, match="disk write failed"):
@@ -2203,7 +2204,7 @@ async def test_writer_close_cancelled_reports_write_error_over_cancel(
         raise OSError("summary disk full")
 
     writer._schedule_write(lambda: gate.wait(timeout=5.0))
-    writer._schedule_write(fail)
+    writer._schedule_write(fail, required=True)
 
     close_task = asyncio.create_task(writer.close())
     await _wait_until(lambda: writer._queue is not None and writer._queue.qsize() == 1)
@@ -2218,14 +2219,14 @@ async def test_writer_close_cancelled_reports_write_error_over_cancel(
 
 @pytest.mark.asyncio
 async def test_writer_close_propagates_write_error(tmp_path) -> None:
-    """A failed write is raised from an uncancelled close()."""
+    """A failed required write is raised from an uncancelled close()."""
     writer = AdaptiveScaleArtifactWriter()
     await writer.start()
 
     def fail() -> None:
         raise OSError("disk full")
 
-    writer._schedule_write(fail)
+    writer._schedule_write(fail, required=True)
     with pytest.raises(OSError, match="disk full"):
         await writer.close()
 
@@ -2273,3 +2274,85 @@ async def test_deadline_cancel_during_finalizer_keeps_phase_stopped_summary(
 def test_adaptive_strategy_requires_execution_finalization() -> None:
     """Adaptive scale opts in to the PhaseRunner finalization barrier."""
     assert AdaptiveScaleStrategy.requires_execution_finalization is True
+
+
+@pytest.mark.asyncio
+async def test_writer_diagnostic_write_failure_does_not_fail_close(
+    tmp_path, caplog
+) -> None:
+    """A failed diagnostic (non-required) event line is logged, but close()
+    succeeds and later required writes still land."""
+    writer = AdaptiveScaleArtifactWriter()
+    await writer.start()
+    summary_path = tmp_path / "adaptive_scale_summary.json"
+
+    def fail() -> None:
+        raise OSError(28, "No space left on device")
+
+    writer._schedule_write(fail)
+    writer.write_summary(summary_path, {"status": "completed"})
+
+    with caplog.at_level(logging.ERROR):
+        await writer.close()
+
+    assert orjson.loads(summary_path.read_bytes()) == {"status": "completed"}
+    assert "diagnostic artifact write failed" in caplog.text
+
+
+def test_terminal_artifacts_are_required_writes(tmp_path) -> None:
+    """The terminal event, summary, and manifest entry are scheduled as
+    required writes; ordinary decision events are not."""
+    strategy = _strategy(tmp_path)
+    calls: list[bool] = []
+    strategy._artifacts._schedule_write = lambda write, *, required=False: (
+        calls.append(required),
+        write(),
+    )
+    strategy._emit_event(
+        event="assessment",
+        reason="window",
+        sla_value=None,
+        throughput=0.0,
+        sample_count=0,
+        error_count=0,
+    )
+    assert calls == [False]
+    calls.clear()
+    strategy._complete_controller(reason="phase_stopped")
+    assert calls == [True, True]
+    calls.clear()
+    strategy._write_adaptive_manifest_entry()
+    assert calls == [True]
+
+
+@pytest.mark.parametrize(
+    ("run_cancelled", "event", "reason", "status"),
+    [
+        param(False, "adaptive_complete", "phase_stopped", "completed", id="normal-end"),
+        param(True, "adaptive_failed", "phase_cancelled", "failed", id="run-cancelled"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_execute_phase_cancel_label_depends_on_run_cancellation(
+    tmp_path, run_cancelled: bool, event: str, reason: str, status: str
+) -> None:
+    """The runner cancels execute_phase both when a phase ends normally (the
+    duration deadline, or the finalization barrier after a request/session cap
+    hit while the issuing loop sleeps) and when the run is cancelled. Only an
+    actual run cancellation is recorded as ``phase_cancelled``."""
+    strategy = _strategy(tmp_path)
+    strategy._lifecycle.was_cancelled = run_cancelled
+    strategy._user_strategy = MagicMock()
+    strategy._user_strategy.execute_phase = AsyncMock(
+        side_effect=asyncio.CancelledError()
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await strategy.execute_phase()
+
+    events = [
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
+    ]
+    assert (events[-1]["event"], events[-1]["reason"]) == (event, reason)
+    summary = orjson.loads(_summary_path(tmp_path).read_bytes())
+    assert (summary["status"], summary["completed_reason"]) == (status, reason)

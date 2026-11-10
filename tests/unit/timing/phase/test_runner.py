@@ -746,6 +746,15 @@ class TestSendingCompleteExecutionTaskFailure:
         assert r._lifecycle.timeout_triggered
 
 
+async def _wait_until(predicate, *, attempts: int = 10_000) -> None:
+    """Yield to the event loop until ``predicate()`` holds (bounded)."""
+    for _ in range(attempts):
+        if predicate():
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("condition never became true")
+
+
 class TestStrategyFinalizationBarrier:
     """The runner must not report a phase complete while an opted-in strategy's
     execute_phase teardown is still publishing artifacts (adaptive summary)."""
@@ -785,6 +794,49 @@ class TestStrategyFinalizationBarrier:
         release.set()
         await barrier
         assert finalized.is_set()
+
+    async def test_run_strategy_publishes_phase_complete_only_after_finalizer(
+        self,
+        conv_src: MagicMock,
+        pub: MagicMock,
+        router: MagicMock,
+        conc: MagicMock,
+        cancel: MagicMock,
+        cb: MagicMock,
+    ) -> None:
+        """Through ``_run_strategy``: the return/grace handling completes while
+        the strategy's finalizer is still draining, but phase-complete is not
+        published (and the phase does not return) until the finalizer ends."""
+        r = make_runner(cfg(), conv_src, pub, router, conc, cancel, cb)
+        release = asyncio.Event()
+        finalized = asyncio.Event()
+
+        @dataclass
+        class FinalizingStrategy(MockStrategy):
+            requires_execution_finalization: bool = True
+
+            async def execute_phase(self) -> None:
+                try:
+                    r._progress.all_credits_sent_event.set()
+                    r._progress.all_credits_returned_event.set()
+                    await asyncio.Event().wait()
+                finally:
+                    await release.wait()
+                    finalized.set()
+
+        run_task = asyncio.create_task(
+            r._run_strategy(FinalizingStrategy(), is_final_phase=True)
+        )
+        await _wait_until(lambda: r._lifecycle.is_complete)
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert not run_task.done()
+        pub.publish_phase_complete.assert_not_awaited()
+
+        release.set()
+        await asyncio.wait_for(run_task, timeout=5.0)
+        assert finalized.is_set()
+        pub.publish_phase_complete.assert_awaited_once()
 
     async def test_reraises_strategy_failure(self, runner: PhaseRunner) -> None:
         """A strategy task that already failed surfaces as a phase failure."""
