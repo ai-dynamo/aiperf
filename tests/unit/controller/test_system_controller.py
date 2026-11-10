@@ -968,13 +968,15 @@ class TestShutdownDeliveryGrace:
         report_error: BaseException | None = None,
         announce_error: BaseException | None = None,
         cancel_on_sleep: float | None = None,
+        cancel_at: str | None = None,
     ) -> list[tuple]:
         """Run _stop_system_controller and return the ordered shutdown events.
 
         Events also land on ``self.events`` so a test whose stop raises can
         still inspect them. ``cancel_on_sleep`` raises CancelledError from the
         first sleep of that duration, standing in for the failure-shutdown
-        deadline expiring mid-hold.
+        deadline expiring mid-hold. ``cancel_at`` does the same from the first
+        call of a named step (``shutdown_all``, ``ui_stop`` or ``ui_wait``).
         """
         import aiperf.controller.system_controller as sc_module
         from aiperf.common.service_registry import ServiceRegistry
@@ -987,6 +989,13 @@ class TestShutdownDeliveryGrace:
         )
         self.events: list[tuple] = []
         events = self.events
+        cancelled: set[str] = set()
+
+        def maybe_cancel(step: str) -> None:
+            """Raise CancelledError the first time ``step`` is reached."""
+            if step == cancel_at and step not in cancelled:
+                cancelled.add(step)
+                raise asyncio.CancelledError
 
         async def fake_sleep(seconds: float) -> None:
             """Record the sleep; optionally stand in for a cancel at that point."""
@@ -999,7 +1008,16 @@ class TestShutdownDeliveryGrace:
 
         async def fake_shutdown(**kwargs) -> list:
             events.append(("shutdown_all", tuple(kwargs.get("exclude", ()))))
+            maybe_cancel("shutdown_all")
             return []
+
+        async def fake_ui_stop() -> None:
+            events.append(("ui_stop",))
+            maybe_cancel("ui_stop")
+
+        async def fake_ui_wait() -> None:
+            events.append(("ui_wait",))
+            maybe_cancel("ui_wait")
 
         async def fake_report() -> None:
             """Record the export; optionally fail it."""
@@ -1019,6 +1037,8 @@ class TestShutdownDeliveryGrace:
 
         controller.publish = AsyncMock()
         controller.ui = AsyncMock()
+        controller.ui.stop.side_effect = fake_ui_stop
+        controller.ui.wait_for_tasks.side_effect = fake_ui_wait
         controller.comms = AsyncMock()
         controller.proxy_manager = AsyncMock()
         controller._broadcast_control_command = fake_broadcast
@@ -1197,6 +1217,40 @@ class TestShutdownDeliveryGrace:
         hold = self._index(self.events, ("sleep", 7.0))
         assert self.events[hold - 1] == self._api_shutdown()
         assert self.events[hold + 1 :] == [self._api_shutdown(), ("shutdown_all", ())]
+        system_controller.comms.stop.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("cancel_at", "last_step"),
+        [
+            param("shutdown_all", ("shutdown_all", (ServiceType.API,)), id="first-shutdown"),
+            param("ui_stop", ("ui_stop",), id="ui-stop"),
+            param("ui_wait", ("ui_wait",), id="ui-wait"),
+        ],
+    )  # fmt: skip
+    async def test_cancel_before_reporting_still_retires_the_api_without_holding(
+        self,
+        system_controller: SystemController,
+        monkeypatch: pytest.MonkeyPatch,
+        cancel_at: str,
+        last_step: tuple,
+    ) -> None:
+        """The API is kept alive past the first shutdown, so every later cancel
+        point (a wedged ui.stop() included) must retire it."""
+        system_controller._api_enabled = True
+        self._register_api_service(system_controller)
+        monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
+
+        with pytest.raises(asyncio.CancelledError):
+            await self._drive_stop(system_controller, monkeypatch, cancel_at=cancel_at)
+
+        assert self.events[-3:] == [
+            last_step,
+            self._api_shutdown(),
+            ("shutdown_all", ()),
+        ]
+        assert ("export",) not in self.events
+        assert ("sleep", 7.0) not in self.events
         system_controller.comms.stop.assert_not_awaited()
 
     @pytest.mark.asyncio

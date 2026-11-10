@@ -2582,43 +2582,45 @@ class SystemController(
         api_ids = {
             info.service_id for info in ServiceRegistry.get_services(ServiceType.API)
         }
-        await self._broadcast_control_command(
-            CommandType.SHUTDOWN, ServiceRegistry.get_all_registered_ids() - api_ids
-        )
-        await asyncio.sleep(0.5)
-        await self.service_manager.shutdown_all_services(exclude=(ServiceType.API,))
-
-        # Stop the local UI before console rendering. The message bus remains
-        # live through export so publishing the durable completion state does
-        # not race transport shutdown.
-        await self.ui.stop()
-        await asyncio.sleep(0.1)
-        await self.ui.wait_for_tasks()
-
-        # Reporting must never prevent the service shutdown below. At this
-        # point all result domains and the RAW artifact barrier are complete,
-        # but the API and event bus remain live for the export notification.
+        # From here until the API is retired, a cancel (the failure-shutdown
+        # deadline, which can land in a wedged ui.stop()) must still retire the
+        # API it kept alive, or on hosts without a parent-death guard its
+        # listener outlives the run.
         try:
-            await self._report_post_shutdown_results_and_errors()
-
-            if Environment.DEV.MODE:
-                print_developer_mode_warning()
-        except asyncio.CancelledError:
-            await self._retire_api_service(api_ids, hold_listener=False)
-            raise
-        except (UnicodeEncodeError, OSError) as e:
-            self.error(f"Pre-shutdown reporting failed (continuing to exit): {e!r}")
-        except Exception:
-            self.exception(
-                "Unexpected pre-shutdown reporting failure (continuing to exit)"
+            await self._broadcast_control_command(
+                CommandType.SHUTDOWN,
+                ServiceRegistry.get_all_registered_ids() - api_ids,
             )
+            await asyncio.sleep(0.5)
+            await self.service_manager.shutdown_all_services(exclude=(ServiceType.API,))
 
-        # The API's confirmed terminal state makes the API shutdown endpoint
-        # eligible only after export/ready publication has finished (or
-        # failed closed), and must land before the API is retired. A cancel
-        # here (the failure-shutdown deadline) must still retire the API, or
-        # on hosts without a parent-death guard its listener outlives the run.
-        try:
+            # Stop the local UI before console rendering. The message bus
+            # remains live through export so publishing the durable completion
+            # state does not race transport shutdown.
+            await self.ui.stop()
+            await asyncio.sleep(0.1)
+            await self.ui.wait_for_tasks()
+
+            # Reporting must never prevent the service shutdown below. At this
+            # point all result domains and the RAW artifact barrier are
+            # complete, but the API and event bus remain live for the export
+            # notification.
+            try:
+                await self._report_post_shutdown_results_and_errors()
+
+                if Environment.DEV.MODE:
+                    print_developer_mode_warning()
+            except (UnicodeEncodeError, OSError) as e:
+                self.error(f"Pre-shutdown reporting failed (continuing to exit): {e!r}")
+            except Exception:
+                self.exception(
+                    "Unexpected pre-shutdown reporting failure (continuing to exit)"
+                )
+
+            # The API's confirmed terminal state makes the API shutdown
+            # endpoint eligible only after export/ready publication has
+            # finished (or failed closed), and must land before the API is
+            # retired.
             await self._announce_benchmark_complete(api_ids)
             await self._retire_api_service(api_ids, hold_listener=True)
         except asyncio.CancelledError:
