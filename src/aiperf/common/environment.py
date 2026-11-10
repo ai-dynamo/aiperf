@@ -1205,7 +1205,8 @@ class _MLflowSettings(BaseSettings):
         default=30.0,
         description="Timeout in seconds for the post-run MLflow export operation. "
         "If the MLflow tracking server is unreachable, the export will be abandoned "
-        "after this duration rather than blocking indefinitely.",
+        "after this duration rather than blocking indefinitely. If the CLI dies "
+        "mid-export, the export subprocess also exits this long afterwards.",
     )
 
 
@@ -2095,7 +2096,8 @@ class _WandbSettings(BaseSettings):
         default=30.0,
         description="Timeout in seconds for the post-run Weights & Biases export operation. "
         "If the W&B backend is unreachable, the export will be abandoned "
-        "after this duration rather than blocking indefinitely.",
+        "after this duration rather than blocking indefinitely. If the CLI dies "
+        "mid-export, the export subprocess also exits this long afterwards.",
     )
 
 

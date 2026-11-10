@@ -732,6 +732,44 @@ class TestShutdownAllServicesWaitsForExit:
 
         assert process.join.call_args_list[0].args[0] == 3.0
 
+    @pytest.mark.asyncio
+    async def test_shutdown_all_services_cancelled_during_join_kills_survivors(
+        self,
+        service_manager: MultiProcessServiceManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A cancel inside the join window must not skip the force-kill phase.
+
+        ``_fail`` cancels the controller's ``stop()`` when its failure-shutdown
+        bound expires; that can land while survivors are still being waited on.
+        """
+        joining = asyncio.Event()
+
+        async def _blocked_to_thread(
+            func: Callable[..., Any], *args: Any, **kwargs: Any
+        ) -> Any:
+            joining.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(
+            "aiperf.controller.multiprocess_service_manager.asyncio.to_thread",
+            _blocked_to_thread,
+        )
+        survivor = MagicMock(spec=Process)
+        survivor.is_alive.return_value = True
+        exited = MagicMock(spec=Process)
+        exited.is_alive.return_value = False
+        service_manager.multi_process_info = [self._info(survivor), self._info(exited)]
+
+        task = asyncio.create_task(service_manager.shutdown_all_services())
+        await joining.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+        survivor.kill.assert_called_once()
+        exited.kill.assert_not_called()
+
 
 class TestGetServiceLiveness:
     """Local runs hold a real Process handle; the watchdog must consult it.
