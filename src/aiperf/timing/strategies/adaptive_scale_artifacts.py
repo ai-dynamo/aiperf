@@ -30,10 +30,16 @@ def _iso_utc_from_ns(timestamp_ns: int) -> str:
 
 
 class AdaptiveScaleArtifactWriter:
-    """Write adaptive scale JSONL events and JSON summary artifacts."""
+    """Write adaptive scale JSONL events and JSON summary artifacts.
+
+    Writes are queued and executed off the event loop. Only *required* writes
+    (the terminal event, the summary, and the manifest entry) are fatal: their
+    first failure is re-raised from ``flush()``/``close()``. Other event lines
+    are diagnostic, so their failures are logged and do not fail the run.
+    """
 
     def __init__(self) -> None:
-        self._queue: asyncio.Queue[Callable[[], None]] | None = None
+        self._queue: asyncio.Queue[tuple[Callable[[], None], bool]] | None = None
         self._task: asyncio.Task[None] | None = None
         self._write_error: Exception | None = None
 
@@ -107,20 +113,25 @@ class AdaptiveScaleArtifactWriter:
         if self._queue is None:
             return
         while True:
-            write = await self._queue.get()
+            write, required = await self._queue.get()
             try:
                 await asyncio.to_thread(write)
             except Exception as exc:
-                if self._write_error is None:
+                if required and self._write_error is None:
                     self._write_error = exc
-                _LOGGER.exception("adaptive scale artifact write failed")
+                _LOGGER.exception(
+                    "adaptive scale %s artifact write failed",
+                    "required" if required else "diagnostic",
+                )
             finally:
                 self._queue.task_done()
 
-    def _schedule_write(self, write: Callable[[], None]) -> None:
+    def _schedule_write(
+        self, write: Callable[[], None], *, required: bool = False
+    ) -> None:
         if self._queue is None:
             raise RuntimeError("adaptive scale artifact writer was not started")
-        self._queue.put_nowait(write)
+        self._queue.put_nowait((write, required))
 
     @staticmethod
     def resolve_path(artifact_dir: Path | None, filename: str) -> Path | None:
@@ -368,7 +379,9 @@ class AdaptiveScaleArtifactWriter:
             "step_percent": step_percent,
         }
 
-    def emit_event(self, path: Path | None, payload: dict[str, Any]) -> None:
+    def emit_event(
+        self, path: Path | None, payload: dict[str, Any], *, required: bool = False
+    ) -> None:
         if path is None:
             return
 
@@ -377,7 +390,7 @@ class AdaptiveScaleArtifactWriter:
             with path.open("ab") as f:
                 f.write(orjson.dumps(payload, option=orjson.OPT_SORT_KEYS) + b"\n")
 
-        self._schedule_write(write)
+        self._schedule_write(write, required=required)
 
     def write_summary(self, path: Path | None, summary: dict[str, Any]) -> None:
         if path is None:
@@ -390,7 +403,7 @@ class AdaptiveScaleArtifactWriter:
             )
             path.write_bytes(encoded + b"\n")
 
-        self._schedule_write(write)
+        self._schedule_write(write, required=True)
 
     def write_manifest_entry(
         self, artifact_dir: Path | None, entry: dict[str, Any]
@@ -424,4 +437,4 @@ class AdaptiveScaleArtifactWriter:
             )
             manifest_path.write_bytes(encoded + b"\n")
 
-        self._schedule_write(write)
+        self._schedule_write(write, required=True)

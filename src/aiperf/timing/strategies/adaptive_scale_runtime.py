@@ -31,6 +31,7 @@ class AdaptiveScaleRuntimeMixin:
         passed: bool | None = None,
         step_size: float | None = None,
         sla_values: dict[str, float] | None = None,
+        required: bool = False,
     ) -> None:
         phase_name = getattr(self._config, "phase_name", None)
         phase_id = phase_name or CreditPhase.PROFILING
@@ -74,7 +75,7 @@ class AdaptiveScaleRuntimeMixin:
                 accepted_value=self._control.current,
             )
         )
-        self._artifacts.emit_event(self._event_path, payload)
+        self._artifacts.emit_event(self._event_path, payload, required=required)
 
     def _record_candidate(
         self,
@@ -121,6 +122,7 @@ class AdaptiveScaleRuntimeMixin:
             sample_count=sample_count,
             error_count=error_count,
             cancelled_count=cancelled_count,
+            required=True,
         )
         self._write_summary(
             status=status,

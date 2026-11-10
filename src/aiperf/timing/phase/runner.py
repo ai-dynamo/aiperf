@@ -240,6 +240,7 @@ class PhaseRunner(TaskManagerMixin):
         self._wire_replay_gate()
 
         self._execution_task: asyncio.Task | None = None
+        self._finalization_task: asyncio.Task | None = None
         self._progress_task: asyncio.Task | None = None
         self._return_wait_task: asyncio.Task | None = None
         self._router_phase_started = False
@@ -796,7 +797,12 @@ class PhaseRunner(TaskManagerMixin):
         self._execution_task = self.execute_async(strategy.execute_phase())
 
         await self._wait_for_sending_complete(strategy)
-        await self._await_strategy_finalization(strategy)
+        # Finalization (e.g. flushing adaptive artifacts) runs alongside the
+        # return/grace-period handling so slow storage cannot postpone the
+        # request deadline; only phase-complete publication waits for it.
+        self._finalization_task = self.execute_async(
+            self._await_strategy_finalization(strategy)
+        )
 
         if self._was_cancelled:
             if not self._lifecycle.is_complete:
@@ -808,6 +814,7 @@ class PhaseRunner(TaskManagerMixin):
                     phase_id, BaselineKind.END
                 )
             )
+            await self._join_strategy_finalization()
             return self._create_final_stats()
 
         # Seamless mode: phase flows into next without waiting for returns.
@@ -888,6 +895,14 @@ class PhaseRunner(TaskManagerMixin):
             return
         if not task.cancelled() and (exc := task.exception()) is not None:
             raise exc
+
+    async def _join_strategy_finalization(self) -> None:
+        """Await the background ``_await_strategy_finalization`` task started
+        after sending completed, re-raising its failure. Called right before
+        the phase is reported complete; a no-op when none is pending."""
+        task, self._finalization_task = self._finalization_task, None
+        if task is not None:
+            await task
 
     def _create_final_stats(self) -> CreditPhaseStats:
         return self._progress.create_stats_with_baseline_window(
@@ -1393,6 +1408,7 @@ class PhaseRunner(TaskManagerMixin):
                         phase_id, BaselineKind.END
                     )
                 )
+            await self._join_strategy_finalization()
             stats = self._create_final_stats()
             self.notice(self._format_phase_complete(stats))
             await self._phase_publisher.publish_progress(stats)

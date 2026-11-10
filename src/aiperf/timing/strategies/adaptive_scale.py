@@ -261,7 +261,15 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
                 else:
                     await super().execute_phase()
             except asyncio.CancelledError:
-                if self._completed_reason is None:
+                # The runner also cancels this task when the phase ends
+                # normally (duration deadline, or the finalization barrier
+                # after a request/session cap); those fall through to
+                # ``phase_stopped`` in the finally. Only an actual run
+                # cancellation is recorded as ``phase_cancelled``.
+                if (
+                    self._completed_reason is None
+                    and self._lifecycle.was_cancelled is True
+                ):
                     self._complete_controller(
                         reason="phase_cancelled",
                         terminal_event="adaptive_failed",
