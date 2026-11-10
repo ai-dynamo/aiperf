@@ -8,6 +8,7 @@ until its MLflow / W&B HTTP calls give up.
 """
 
 import logging
+import sys
 import threading
 from types import ModuleType
 from typing import Any
@@ -102,3 +103,29 @@ def test_run_export_in_subprocess_arms_watchdog_with_export_timeout(
     assert watchdog.finished.is_set()
     assert len(queue.items) == 1
     assert (queue.items[0] is not None) == fail
+
+
+@pytest.mark.parametrize(
+    "module, exporter_module",
+    [
+        param(mlflow_export_subprocess, "aiperf.exporters.mlflow_data_exporter", id="mlflow"),
+        param(wandb_export_subprocess, "aiperf.exporters.wandb_data_exporter", id="wandb"),
+    ],
+)  # fmt: skip
+def test_run_export_in_subprocess_import_failure_reported_on_queue(
+    monkeypatch: pytest.MonkeyPatch,
+    module: ModuleType,
+    exporter_module: str,
+) -> None:
+    watchdog = _RecordingWatchdog()
+    monkeypatch.setattr(module, "start_parent_death_watchdog", watchdog)
+    # A None entry in sys.modules makes the lazy import raise ImportError.
+    monkeypatch.setitem(sys.modules, exporter_module, None)
+    queue = _FakeQueue()
+
+    module.run_export_in_subprocess(exporter_config=object(), result_queue=queue)
+
+    assert len(queue.items) == 1
+    assert queue.items[0] is not None
+    assert "Error(" in queue.items[0] and exporter_module in queue.items[0]
+    assert watchdog.finished.is_set()
