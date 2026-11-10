@@ -44,9 +44,25 @@ single-newline separators counted within each block's token budget. The separato
 is omitted if the tokenizer cannot represent it as a lossless, non-special single
 token. Synthesized text can change between versions; use the same AIPerf version
 and tokenizer when comparing runs.
-Llama-2-style SentencePiece tokenizers encode a newline with a separate leading
-prefix-space token, so they currently run without a separator. Concatenated
-blocks can therefore change token count when the generated text is re-tokenized.
+Llama-2-style SentencePiece tokenizers (Llama-2, Mistral) encode a newline with a
+separate leading prefix-space token, so they run without a separator. To keep the
+token count stable when the generated text is re-tokenized, each hash block and
+each un-hashed tail starts on a word boundary: the sampled corpus position moves
+forward, by at most 256 tokens, to the next token that starts a word. A word start
+carries a leading space (`▁`, `Ġ`, or a space byte). For vocabulary-backed
+tokenizers, visible text must also follow the marker; whitespace-only tokens such
+as `▁▁` do not count, because they merge with whitespace at the end of the previous
+block. tiktoken encodings accept any space-prefixed token. A block that starts
+mid-word would otherwise gain or lose a token when its first word is re-split.
+Tokenizers without such markers, tokenizers that cannot list their vocabulary, and
+searches that find none keep the sampled position. Because
+block starts move, the prompt text differs from AIPerf versions before this
+change. The `weka_trace` loader builds its blocks separately and does not apply
+this.
+With a newline separator (byte-level BPE and tiktoken tokenizers), the separator
+can also merge with whitespace or punctuation at the end of the previous block, so
+re-tokenized prompts can come up a few tokens short. This is most common with the
+`coding` corpus.
 Newline-separated hash blocks require a block size of at least 2; one-token final
 partial blocks are still supported. When present, the newline separator occupies
 the entire partial block and can merge with preceding content when the generated
