@@ -1891,6 +1891,15 @@ class _ServiceSettings(_ServiceCommunicationFields, _ServiceHealthFields, BaseSe
         default=2.0,
         description="Maximum time in seconds to wait for simple tasks to complete when cancelling",
     )
+    SHUTDOWN_EXIT_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=8.0,
+        description="Maximum time in seconds the controller waits, after broadcasting SHUTDOWN, for "
+        "service processes to exit on their own before force-killing the survivors. Must cover the "
+        "slowest service cleanup (the records manager can spend up to 7 seconds stopping its telemetry "
+        "child); killing a service mid-cleanup orphans its children.",
+    )
     # Event loop health monitoring settings
     EVENT_LOOP_HEALTH_ENABLED: bool = Field(
         default=True,
