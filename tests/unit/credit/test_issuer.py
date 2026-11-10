@@ -138,6 +138,42 @@ def make_turn(
 class TestBasicCreditIssuance:
     """Tests for basic credit issuance flow."""
 
+    @pytest.mark.parametrize(
+        "error",
+        [
+            param(RuntimeError("send failed"), id="send_error"),
+            param(asyncio.CancelledError(), id="cancelled"),
+        ],
+    )  # fmt: skip
+    async def test_issue_credit_send_failure_unregisters_credit(
+        self, credit_issuer, mock_router, error: BaseException
+    ) -> None:
+        gate = credit_issuer.replay_gate
+        gate.register_credit = MagicMock()
+        gate.unregister_credit = MagicMock()
+        gate.observe_issued = AsyncMock()
+        mock_router.send_credit.side_effect = error
+
+        with pytest.raises(type(error)):
+            await credit_issuer.issue_credit(make_turn())
+
+        credit = mock_router.send_credit.call_args.kwargs["credit"]
+        gate.register_credit.assert_called_once_with(credit)
+        gate.unregister_credit.assert_called_once_with(credit)
+        gate.observe_issued.assert_not_awaited()
+
+    async def test_finite_issue_rejects_capped_final_credit(
+        self, credit_issuer, mock_progress
+    ) -> None:
+        credit_issuer._finite_replay = True
+        mock_progress.increment_sent.return_value = (1, True)
+
+        with pytest.raises(RuntimeError, match="cannot issue a capped final credit"):
+            await credit_issuer.issue_credit(make_turn())
+
+        mock_progress.freeze_sent_counts.assert_not_called()
+        assert not mock_progress.all_credits_sent_event.is_set()
+
     async def test_issue_credit_first_turn_acquires_both_slots(
         self, credit_issuer, mock_concurrency, mock_router
     ):

@@ -12,7 +12,7 @@ from pytest import param
 from aiperf.common.enums import AgenticReplayLifecycle
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.common.scenario.base import EmptyTracePoolError
-from aiperf.config.phases import ConcurrencyPhase
+from aiperf.config.phases import ConcurrencyPhase, ConstantPhase
 from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import (
     DatasetSamplingStrategy,
@@ -31,6 +31,29 @@ def test_finite_lifecycle_rejects_non_profiling_phase() -> None:
             kind="warmup",
             type=PhaseType.CONCURRENCY,
             concurrency=2,
+            agentic_replay_lifecycle=AgenticReplayLifecycle.FINITE,
+        )
+
+
+def test_finite_lifecycle_selects_agentic_timing_without_stop_condition() -> None:
+    phase = ConcurrencyPhase(
+        name="profiling",
+        type=PhaseType.CONCURRENCY,
+        concurrency=2,
+        agentic_replay_lifecycle=AgenticReplayLifecycle.FINITE,
+    )
+    assert phase.timing_mode == TimingMode.AGENTIC_REPLAY
+    assert phase.requests is None
+    assert phase.sessions is None
+    assert phase.duration is None
+
+
+def test_finite_lifecycle_rejects_rate_phase() -> None:
+    with pytest.raises(ValidationError, match="requires a profiling concurrency phase"):
+        ConstantPhase(
+            name="profiling",
+            type=PhaseType.CONSTANT,
+            rate=2,
             agentic_replay_lifecycle=AgenticReplayLifecycle.FINITE,
         )
 

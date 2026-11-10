@@ -113,6 +113,52 @@ def test_finite_replay_uses_sampler_order_once_per_eligible_root(
     assert sampler.next_conversation_id.call_count == len(sampled_ids)
 
 
+@pytest.mark.parametrize("sampled_ids", [["a"], ["a", "a"]])
+def test_finite_replay_rejects_sampler_missing_eligible_root(
+    sampled_ids: list[str],
+) -> None:
+    metadata = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id=cid, turns=[TurnMetadata(timestamp_ms=0.0)]
+            )
+            for cid in ("a", "b")
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    sampler = MagicMock()
+    sampler.next_conversation_id.side_effect = iter(sampled_ids)
+
+    with pytest.raises(ValueError, match="did not yield every eligible root.*b"):
+        TrajectorySource(
+            dataset_metadata=metadata,
+            dataset_sampler=sampler,
+            concurrency=2,
+            random_seed=42,
+            finite_replay=True,
+        )
+
+
+def test_finite_replay_rejects_duplicate_root_ids() -> None:
+    metadata = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="a", turns=[TurnMetadata(timestamp_ms=0.0)]
+            )
+            for _ in range(2)
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    with pytest.raises(ValueError, match="root conversation IDs must be unique"):
+        TrajectorySource(
+            dataset_metadata=metadata,
+            dataset_sampler=MagicMock(),
+            concurrency=2,
+            random_seed=42,
+            finite_replay=True,
+        )
+
+
 def test_finite_replay_random_order_is_seeded_and_without_replacement() -> None:
     metadata = DatasetMetadata(
         conversations=[

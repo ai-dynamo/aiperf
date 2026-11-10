@@ -5,7 +5,7 @@
 from collections.abc import Coroutine
 from dataclasses import dataclass, field
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -18,7 +18,10 @@ from aiperf.common.models.dataset_models import (
 )
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import DatasetSamplingStrategy
-from aiperf.timing.replay_dependencies import ReplayBarrierCoordinator
+from aiperf.timing.replay_dependencies import (
+    ReplayBarrierCoordinator,
+    ReplayIssueGate,
+)
 
 
 @dataclass
@@ -355,3 +358,160 @@ def test_invalid_terminal_boundary_is_rejected(
         coordinator.record_completion(
             root, eof_ns, clock_spread_ns=spread, failed=False
         )
+
+
+def test_finite_coordinator_requires_absolute_scheduler() -> None:
+    with pytest.raises(ValueError, match="requires an absolute scheduler"):
+        ReplayBarrierCoordinator(_metadata(), strict_finite=True)
+
+
+def test_credit_registration_cannot_reassign_live_credit_id() -> None:
+    coordinator = ReplayBarrierCoordinator(
+        _metadata(), strict_finite=True, scheduler=ManualScheduler()
+    )
+    gate = ReplayIssueGate(coordinator)
+    root = _credit("a0", "a0", 1)
+    other = _credit("b0", "b0", 1)
+    gate.register_credit(root)
+    gate.register_credit(root)
+    with pytest.raises(RuntimeError, match="credit ID 1 was reused"):
+        gate.register_credit(other)
+    gate.unregister_credit(other)
+    assert gate.credit_for_id(1) == root
+    gate.unregister_credit(root)
+    assert gate.credit_for_id(1) is None
+
+
+@pytest.mark.parametrize("eof_ns", [None, 999_999_999])
+def test_completion_rejects_missing_or_reversed_transport_boundary(
+    eof_ns: int | None,
+) -> None:
+    coordinator = ReplayBarrierCoordinator(
+        _metadata(), strict_finite=True, scheduler=ManualScheduler()
+    )
+    root = _credit("a0", "a0", 1)
+    if eof_ns is None:
+        expected = "transport start missing"
+    else:
+        coordinator.record_dispatch(root, 1_000_000_000, 0)
+        expected = "EOF precedes transport start"
+    with pytest.raises(RuntimeError, match=expected):
+        coordinator.record_completion(root, eof_ns, clock_spread_ns=0, failed=False)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("issue_result", ["refused", "failed"])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+async def test_scheduled_dispatch_failure_runs_refusal_cleanup(
+    issue_result: str,
+    cleanup_fails: bool,
+) -> None:
+    scheduler = ManualScheduler()
+    fatal = Mock()
+    coordinator = ReplayBarrierCoordinator(
+        _metadata(), strict_finite=True, scheduler=scheduler, fail_finite=fatal
+    )
+    coordinator.activate()
+    issue_error = RuntimeError("worker send failed")
+    cleanup_error = RuntimeError("child cleanup failed")
+    issue = AsyncMock(return_value=False)
+    if issue_result == "failed":
+        issue.side_effect = issue_error
+    cleanup = AsyncMock(side_effect=cleanup_error if cleanup_fails else None)
+    turn = TurnToSend(
+        conversation_id="c0",
+        x_correlation_id="c0",
+        root_correlation_id="a0",
+        turn_index=0,
+        num_turns=1,
+        agent_depth=1,
+    )
+    try:
+        await coordinator.submit(turn, issue, on_refused=cleanup)
+        coordinator.record_dispatch(_credit("a0", "a0", 1), 1_000_000_000, 0)
+        with patch(
+            "aiperf.timing.replay_dependencies.time.perf_counter_ns",
+            return_value=1_050_000_000,
+        ):
+            await scheduler.fire(1_050_000_000)
+        issue.assert_awaited_once()
+        cleanup.assert_awaited_once()
+        expected = ([issue_error] if issue_result == "failed" else []) + (
+            [cleanup_error] if cleanup_fails else []
+        )
+        assert [call.args[0] for call in fatal.call_args_list] == expected
+        assert not coordinator.has_pending_finite_work()
+        assert coordinator.finite_diagnostics() == (1, 0, 0, 0)
+    finally:
+        scheduler.close()
+
+
+@pytest.mark.asyncio
+async def test_closed_root_timer_cannot_dispatch_stale_work() -> None:
+    scheduler = ManualScheduler()
+    coordinator = ReplayBarrierCoordinator(
+        _metadata(), strict_finite=True, scheduler=scheduler
+    )
+    coordinator.activate()
+    issue = AsyncMock(return_value=True)
+    turn = TurnToSend(
+        conversation_id="c0",
+        x_correlation_id="c0",
+        root_correlation_id="a0",
+        turn_index=0,
+        num_turns=1,
+        agent_depth=1,
+    )
+    try:
+        await coordinator.submit(turn, issue)
+        with pytest.raises(RuntimeError, match="Duplicate finite replay dispatch"):
+            await coordinator.submit(turn, issue)
+        coordinator.record_dispatch(_credit("a0", "a0", 1), 1_000_000_000, 0)
+        coordinator.close_root("a0")
+        await scheduler.fire(1_050_000_000)
+        issue.assert_not_awaited()
+        assert not coordinator.has_pending_finite_work()
+    finally:
+        scheduler.close()
+
+
+@pytest.mark.asyncio
+async def test_paused_dispatch_retains_work_without_issuing() -> None:
+    scheduler = ManualScheduler()
+    coordinator = ReplayBarrierCoordinator(
+        _metadata(), strict_finite=True, scheduler=scheduler
+    )
+    gate = ReplayIssueGate(coordinator)
+    gate.activate()
+    gate.pause_releases()
+    issue = AsyncMock(return_value=True)
+    turn = TurnToSend(
+        conversation_id="c0",
+        x_correlation_id="c0",
+        root_correlation_id="a0",
+        turn_index=0,
+        num_turns=1,
+        agent_depth=1,
+    )
+    try:
+        await gate.submit(turn, issue)
+        gate.record_dispatch(_credit("a0", "a0", 1), 1_000_000_000, 12)
+        assert scheduler.scheduled == []
+        assert gate.has_pending_finite_work()
+        issue.assert_not_awaited()
+        assert gate.finite_diagnostics() == (0, 0, 0, 12)
+    finally:
+        scheduler.close()
+
+
+def test_issue_gate_reports_explicit_finite_failure() -> None:
+    error = RuntimeError("transport disconnected")
+    coordinator = ReplayBarrierCoordinator(
+        _metadata(), strict_finite=True, scheduler=ManualScheduler()
+    )
+    with pytest.raises(RuntimeError, match="transport disconnected"):
+        ReplayIssueGate(coordinator).fail_finite(error)
+    disabled = ReplayIssueGate(None)
+    assert disabled.credit_for_id(1) is None
+    assert disabled.finite_diagnostics() == (0, 0, 0, 0)
+    disabled.fail_finite(error)

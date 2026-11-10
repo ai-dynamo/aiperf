@@ -10,10 +10,11 @@ import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.callback_handler import CreditCallbackHandler
-from aiperf.credit.messages import CreditReturn, FirstToken
+from aiperf.credit.messages import CreditReturn, FirstToken, TransportDispatched
 from aiperf.credit.structs import Credit
 
 # =============================================================================
@@ -203,6 +204,138 @@ async def test_local_finite_eof_uses_perf_timestamp_directly(
         mock_strategy.observe_credit_return.call_args.kwargs["transport_eof_perf_ns"]
         == eof_perf_ns
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "offset,spread,reason",
+    [
+        param(None, 0, "no clock correction", id="missing_correction"),
+        param(0, None, "no clock spread", id="missing_spread"),
+    ],
+)  # fmt: skip
+async def test_finite_eof_missing_clock_metadata_marks_phase_fatal(
+    registered_handler,
+    mock_progress,
+    mock_strategy,
+    offset: int | None,
+    spread: int | None,
+    reason: str,
+) -> None:
+    mock_progress.all_credits_sent_event = asyncio.Event()
+    credit = Credit(
+        id=1,
+        phase=CreditPhase.PROFILING,
+        conversation_id="root",
+        x_correlation_id="root-correlation",
+        turn_index=0,
+        num_turns=1,
+        issued_at_ns=1,
+        finite_replay=True,
+    )
+    await registered_handler.on_credit_return(
+        "worker-1",
+        CreditReturn(
+            credit=credit,
+            transport_eof_wall_ns=1_000,
+            clock_offset_ns=offset,
+            clock_offset_spread_ns=spread,
+        ),
+    )
+
+    error = mock_progress.record_fatal_error.call_args.args[0]
+    assert reason in str(error)
+    assert mock_progress.all_credits_sent_event.is_set()
+    mock_strategy.observe_credit_return.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_perf_clock", [True, False])
+async def test_transport_dispatch_converts_worker_clock(
+    registered_handler, mock_lifecycle, mock_strategy, use_perf_clock: bool
+) -> None:
+    mock_lifecycle.started_at_ns = 10_000
+    mock_lifecycle.started_at_perf_ns = 1_000
+    event = TransportDispatched(
+        credit_id=7,
+        phase=CreditPhase.PROFILING,
+        phase_index=None,
+        worker_id="worker-1",
+        transport_start_wall_ns=10_550,
+        clock_offset_ns=50,
+        clock_offset_spread_ns=20,
+        transport_start_perf_ns=1_500 if use_perf_clock else None,
+    )
+
+    await registered_handler.on_transport_dispatched(event)
+
+    mock_strategy.observe_transport_dispatched.assert_called_once_with(7, 1_500, 20)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase_registered", [True, False])
+async def test_transport_dispatch_ignores_inactive_phase(
+    registered_handler, mock_lifecycle, mock_strategy, phase_registered: bool
+) -> None:
+    mock_lifecycle.is_complete = phase_registered
+    event = TransportDispatched(
+        credit_id=7,
+        phase=CreditPhase.PROFILING if phase_registered else CreditPhase.WARMUP,
+        phase_index=None,
+        worker_id="worker-1",
+        transport_start_wall_ns=10_550,
+        clock_offset_ns=50,
+        clock_offset_spread_ns=20,
+    )
+
+    await registered_handler.on_transport_dispatched(event)
+
+    mock_strategy.observe_transport_dispatched.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_anchor", ["started_at_ns", "started_at_perf_ns"])
+async def test_transport_dispatch_missing_clock_anchor_marks_phase_fatal(
+    registered_handler,
+    mock_lifecycle,
+    mock_progress,
+    mock_strategy,
+    missing_anchor: str,
+) -> None:
+    mock_lifecycle.started_at_ns = 10_000
+    mock_lifecycle.started_at_perf_ns = 1_000
+    setattr(mock_lifecycle, missing_anchor, None)
+    mock_progress.all_credits_sent_event = asyncio.Event()
+    event = TransportDispatched(
+        credit_id=7,
+        phase=CreditPhase.PROFILING,
+        phase_index=None,
+        worker_id="worker-1",
+        transport_start_wall_ns=10_550,
+        clock_offset_ns=50,
+        clock_offset_spread_ns=20,
+    )
+
+    await registered_handler.on_transport_dispatched(event)
+
+    error = mock_progress.record_fatal_error.call_args.args[0]
+    assert "no paired clock anchor" in str(error)
+    assert mock_progress.all_credits_sent_event.is_set()
+    mock_strategy.observe_transport_dispatched.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_steady_state_observer_error_propagates(
+    registered_handler, mock_strategy, mock_progress
+) -> None:
+    mock_strategy.observe_credit_return.side_effect = RuntimeError("observer failed")
+
+    with pytest.raises(RuntimeError, match="observer failed"):
+        await registered_handler.on_credit_return(
+            "worker-1", make_credit_return(make_credit())
+        )
+
+    mock_progress.record_fatal_error.assert_not_called()
 
 
 @pytest.mark.asyncio

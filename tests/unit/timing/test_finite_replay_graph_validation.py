@@ -25,6 +25,100 @@ def _coordinator(conversations: list[ConversationMetadata]) -> ReplayBarrierCoor
     return ReplayBarrierCoordinator(md, strict_finite=True, scheduler=LoopScheduler())
 
 
+@pytest.mark.parametrize("timestamp", [None, float("inf"), 10**400])
+@pytest.mark.asyncio
+async def test_nonfinite_later_turn_rejected_before_scheduling(
+    timestamp: float | int | None,
+) -> None:
+    parent = ConversationMetadata(
+        conversation_id="parent",
+        turns=[
+            TurnMetadata(timestamp_ms=0.0),
+            TurnMetadata.model_construct(timestamp_ms=timestamp),
+        ],
+    )
+    with pytest.raises(RuntimeError, match="has no finite timestamp_ms"):
+        _coordinator([parent])
+
+
+@pytest.mark.asyncio
+async def test_missing_declared_branch_rejected_before_scheduling() -> None:
+    parent = ConversationMetadata(
+        conversation_id="parent",
+        turns=[TurnMetadata(timestamp_ms=0.0, branch_ids=["missing"])],
+    )
+    with pytest.raises(RuntimeError, match="references missing branch"):
+        _coordinator([parent])
+
+
+@pytest.mark.parametrize("child_state", ["missing", "empty", "no_timestamp"])
+@pytest.mark.asyncio
+async def test_spawn_requires_child_with_finite_first_turn(child_state: str) -> None:
+    parent = ConversationMetadata(
+        conversation_id="parent",
+        turns=[TurnMetadata(timestamp_ms=0.0, branch_ids=["spawn"])],
+        branches=[
+            ConversationBranchInfo(
+                branch_id="spawn",
+                child_conversation_ids=["child"],
+                mode=ConversationBranchMode.SPAWN,
+            )
+        ],
+    )
+    conversations = [parent]
+    if child_state != "missing":
+        conversations.append(
+            ConversationMetadata(
+                conversation_id="child",
+                parent_conversation_id="parent",
+                is_root=False,
+                turns=[]
+                if child_state == "empty"
+                else [TurnMetadata(timestamp_ms=None)],
+            )
+        )
+    expected = (
+        "no finite timestamp_ms" if child_state == "no_timestamp" else "missing child"
+    )
+    with pytest.raises(RuntimeError, match=expected):
+        _coordinator(conversations)
+
+
+@pytest.mark.asyncio
+async def test_root_relative_floor_cannot_overflow_nanosecond_range() -> None:
+    parent = ConversationMetadata(
+        conversation_id="parent",
+        turns=[TurnMetadata(timestamp_ms=0.0), TurnMetadata(timestamp_ms=1e20)],
+    )
+    with pytest.raises(RuntimeError, match="invalid root floor"):
+        _coordinator([parent])
+
+
+@pytest.mark.asyncio
+async def test_explicit_dependency_cannot_cross_root_traces() -> None:
+    parent = ConversationMetadata(
+        conversation_id="parent",
+        turns=[
+            TurnMetadata(timestamp_ms=0.0),
+            TurnMetadata(
+                timestamp_ms=10.0,
+                replay_predecessors=[
+                    ReplayTurnReference(
+                        conversation_id="other",
+                        turn_index=0,
+                        event=ReplayDependencyEvent.COMPLETION,
+                    )
+                ],
+            ),
+        ],
+    )
+    other = ConversationMetadata(
+        conversation_id="other", turns=[TurnMetadata(timestamp_ms=0.0)]
+    )
+    with pytest.raises(RuntimeError, match="crosses root traces"):
+        _coordinator([parent, other])
+
+
 @pytest.mark.asyncio
 async def test_duplicate_conversation_ids_raise_error() -> None:
     c1 = ConversationMetadata(

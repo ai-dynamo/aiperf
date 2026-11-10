@@ -159,6 +159,26 @@ class TestInferenceClient:
             )
 
     @pytest.mark.asyncio
+    async def test_send_request_forwards_transport_boundaries(
+        self, inference_client, sample_request_info
+    ) -> None:
+        started = MagicMock()
+        completed = MagicMock()
+        inference_client.transport.send_request = AsyncMock(
+            return_value=RequestRecord(request_info=sample_request_info)
+        )
+
+        await inference_client.send_request(
+            sample_request_info,
+            transport_start_callback=started,
+            transport_eof_callback=completed,
+        )
+
+        kwargs = inference_client.transport.send_request.call_args.kwargs
+        assert kwargs["transport_start_callback"] is started
+        assert kwargs["transport_eof_callback"] is completed
+
+    @pytest.mark.asyncio
     async def test_send_request_sets_endpoint_headers(
         self, inference_client, model_endpoint, sample_request_info
     ):

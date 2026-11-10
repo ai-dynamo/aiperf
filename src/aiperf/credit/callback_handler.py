@@ -467,8 +467,6 @@ class CreditCallbackHandler:
                         eof_perf_ns = credit_return.transport_eof_perf_ns
                     else:
                         worker_wall_ns = credit_return.transport_eof_wall_ns
-                        if worker_wall_ns is None:
-                            raise RuntimeError("Finite replay EOF has no timestamp")
                         if credit_return.clock_offset_ns is None:
                             raise RuntimeError(
                                 "Finite replay EOF has no clock correction"
