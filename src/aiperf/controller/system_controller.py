@@ -2596,9 +2596,15 @@ class SystemController(
 
         # The API's confirmed terminal state makes the API shutdown endpoint
         # eligible only after export/ready publication has finished (or
-        # failed closed), and must land before the API is retired.
-        await self._announce_benchmark_complete(api_ids)
-        await self._retire_api_service(api_ids, hold_listener=True)
+        # failed closed), and must land before the API is retired. A cancel
+        # here (the failure-shutdown deadline) must still retire the API, or
+        # on hosts without a parent-death guard its listener outlives the run.
+        try:
+            await self._announce_benchmark_complete(api_ids)
+            await self._retire_api_service(api_ids, hold_listener=True)
+        except asyncio.CancelledError:
+            await self._retire_api_service(api_ids, hold_listener=False)
+            raise
         await self.comms.stop()
         # Stopped last of the child-facing transports: shutdown_all_services may
         # still be talking to children over it, and comms does not own it.

@@ -971,11 +971,15 @@ class TestShutdownDeliveryGrace:
         monkeypatch: pytest.MonkeyPatch,
         *,
         report_error: BaseException | None = None,
+        announce_error: BaseException | None = None,
+        cancel_on_sleep: float | None = None,
     ) -> list[tuple]:
         """Run _stop_system_controller and return the ordered shutdown events.
 
         Events also land on ``self.events`` so a test whose stop raises can
-        still inspect them.
+        still inspect them. ``cancel_on_sleep`` raises CancelledError from the
+        first sleep of that duration, standing in for the failure-shutdown
+        deadline expiring mid-hold.
         """
         import aiperf.controller.system_controller as sc_module
         from aiperf.common.service_registry import ServiceRegistry
@@ -991,6 +995,8 @@ class TestShutdownDeliveryGrace:
 
         async def fake_sleep(seconds: float) -> None:
             events.append(("sleep", seconds))
+            if seconds == cancel_on_sleep:
+                raise asyncio.CancelledError
 
         async def fake_broadcast(cmd: str, service_ids, payload: bytes = b"") -> None:
             events.append(("broadcast", cmd, frozenset(service_ids)))
@@ -1006,6 +1012,8 @@ class TestShutdownDeliveryGrace:
 
         async def fake_announce(api_ids: set[str]) -> None:
             events.append(("benchmark_complete", frozenset(api_ids)))
+            if announce_error is not None:
+                raise announce_error
 
         monkeypatch.setattr(sc_module.asyncio, "sleep", fake_sleep)
         # _stop_system_controller ends in os._exit(); mute it so the test process survives.
@@ -1146,6 +1154,51 @@ class TestShutdownDeliveryGrace:
             ("shutdown_all", ()),
         ]
         assert not any(e[0] == "benchmark_complete" for e in self.events)
+        system_controller.comms.stop.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_handshake_still_retires_the_api_without_holding(
+        self,
+        system_controller: SystemController,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The failure-shutdown deadline can land while the controller awaits the API's ack."""
+        system_controller._api_enabled = True
+        self._register_api_service(system_controller)
+        monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
+
+        with pytest.raises(asyncio.CancelledError):
+            await self._drive_stop(
+                system_controller,
+                monkeypatch,
+                announce_error=asyncio.CancelledError(),
+            )
+
+        assert self.events[-3:] == [
+            self._api_announced(),
+            self._api_shutdown(),
+            ("shutdown_all", ()),
+        ]
+        assert ("sleep", 7.0) not in self.events
+        system_controller.comms.stop.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_grace_hold_still_reaps_the_api(
+        self,
+        system_controller: SystemController,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A cancel mid-hold must not skip the final shutdown_all_services."""
+        system_controller._api_enabled = True
+        self._register_api_service(system_controller)
+        monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
+
+        with pytest.raises(asyncio.CancelledError):
+            await self._drive_stop(system_controller, monkeypatch, cancel_on_sleep=7.0)
+
+        hold = self._index(self.events, ("sleep", 7.0))
+        assert self.events[hold - 1] == self._api_shutdown()
+        assert self.events[hold + 1 :] == [self._api_shutdown(), ("shutdown_all", ())]
         system_controller.comms.stop.assert_not_awaited()
 
     @pytest.mark.asyncio
