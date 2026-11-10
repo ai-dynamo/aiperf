@@ -43,11 +43,11 @@ def run_export_in_subprocess(
         logging.getLogger(__name__),
     )
     try:
-        # Import lazily so the module-level cost stays minimal for callers
-        # that only read ``run_export_in_subprocess`` as a spawn target.
-        from aiperf.exporters.wandb_data_exporter import WandbDataExporter
-
         try:
+            # Import lazily so the module-level cost stays minimal for callers
+            # that only read ``run_export_in_subprocess`` as a spawn target.
+            from aiperf.exporters.wandb_data_exporter import WandbDataExporter
+
             exporter = WandbDataExporter(exporter_config=exporter_config)
             exporter._export_sync()
             result_queue.put(None)
