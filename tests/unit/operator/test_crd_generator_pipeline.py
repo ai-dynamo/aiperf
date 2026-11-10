@@ -8,6 +8,7 @@ from tools.generate_crd import (
     HELM_CHART_FILE,
     HELM_CRD_FILE,
     HELM_SWEEP_CRD_FILE,
+    CRDDocumentBuilder,
     CRDGenerator,
     CRDSchemaSource,
     KubernetesSchemaConverter,
@@ -26,6 +27,23 @@ def test_crd_schema_source_loads_job_and_sweep_schema_roots() -> None:
     assert "benchmark" in sweep_schema["properties"]
     assert "image" in job_schema["properties"]
     assert "childMetadata" in sweep_schema["properties"]
+
+
+def test_profiler_start_body_preserves_native_parameters_in_both_crds() -> None:
+    """Both generated CRDs allow arbitrary native profiler start parameters."""
+    source = CRDSchemaSource()
+    builder = CRDDocumentBuilder()
+    for crd in (
+        builder.aiperfjob_crd(source.job_schema()),
+        builder.aiperfsweep_crd(source.sweep_schema()),
+    ):
+        spec = crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"][
+            "spec"
+        ]
+        endpoint = spec["properties"]["benchmark"]["properties"]["endpoint"]
+        body = endpoint["properties"]["serverProfiler"]["properties"]["startBody"]
+        assert body["type"] == "object"
+        assert body["x-kubernetes-preserve-unknown-fields"] is True
 
 
 def test_kubernetes_schema_converter_preserves_existing_top_level_fields() -> None:

@@ -31,7 +31,7 @@ A run with 20 requests against a streaming chat endpoint produces entries shaped
 
 ```json
 {
-  "schema_version": "1.6",
+  "schema_version": "1.7",
   "request_latency": {
     "unit": "ms",
     "avg": 2620.71,
@@ -72,6 +72,8 @@ In addition to the per-metric stats blocks, `profile_export_aiperf.json` include
 | `telemetry_data` | object | GPU telemetry summaries when telemetry collection was active. |
 | `error_summary` | array | Per-error counts collected during the run. |
 | `server_metrics_error_summary` | array | Optional server-metrics collection or producer-failure counts. Independent of inference request errors; inspect it even when all inference requests completed. |
+| `conversations_ended_on_truncation` | int | Multi-turn conversation sessions ended early because a non-final turn was truncated by the output-token cap (`--end-conversation-on-truncation`). A conversation replayed to fill `--request-count` counts once per replay. Present only when that option is enabled; `0` means it was on and nothing ended early. Schema 1.7+. |
+| `turns_skipped_on_truncation` | int | Turns never sent because their conversation ended early on a truncated turn. Turns the run's stop condition would not have sent anyway are not counted: nothing is counted once `--request-count` is reached, and before that the skipped turns are capped at the remaining request budget. Present only when `--end-conversation-on-truncation` is enabled. Schema 1.7+. |
 | `runtime_submission_invalid_reasons` | array | Runtime-only reason tags that invalidate this run's scenario submission. `insufficient_profile_metric_coverage` means measured TTFT and inter-token-latency coverage did not reach the scenario threshold; `profile_metric_coverage_validation_failed` means AIPerf could not validate that coverage because required accumulator data or phase timestamps were unavailable. An empty array is not an overall submission-validity verdict because static or merged invalidity may still apply; consumers must read `metadata.submission_valid` and `metadata.submission_invalid_reasons` for the overall verdict. Schema 1.5+. |
 
 ### `telemetry_data`
@@ -148,6 +150,7 @@ The current schema version is exported as the top-level `schema_version` field o
 | `1.4` | Added optional top-level `warmup_metrics`, keyed by metric tag, containing metrics computed only from warmup-phase requests. Existing top-level metric fields remain profiling-only. |
 | `1.5` | Added per-GPU telemetry `platform` and renamed built-in NVIDIA GPU telemetry metrics to `nvidia_*`. AMD telemetry remains under `amd_*`. This is a telemetry metric-name breaking change for consumers of `telemetry_data`. Also added the full-response metric blocks `full_decode_duration`, `full_response_inter_token_latency`, and `full_response_output_token_throughput_per_user` (emitted only when the corresponding metrics were computed), and the top-level `runtime_submission_invalid_reasons` array. Additive and backward-compatible apart from the telemetry rename. |
 | `1.6` | Added `server_metrics_error_summary` for optional collection and producer failures, independently of inference request errors. Additive and backward-compatible. |
+| `1.7` | Added top-level `conversations_ended_on_truncation` and `turns_skipped_on_truncation`, present only when `--end-conversation-on-truncation` is enabled. Additive and backward-compatible. |
 
 ### Other JSON exports use independent schema versions
 

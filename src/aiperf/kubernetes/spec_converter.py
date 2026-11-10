@@ -24,12 +24,17 @@ if TYPE_CHECKING:
     from aiperf.config.user_files import RunMeta
     from aiperf.kubernetes.crd_models import AIPerfJobSpec, AIPerfSweepSpec
 
+from aiperf.common.endpoint_credentials import AIPERF_INJECTED_DATASET_URLS
 from aiperf.common.enums import AIPerfLogLevel, CommunicationType
 from aiperf.common.environment import Environment
+from aiperf.common.redact import REDACTED_VALUE, redact_url
 from aiperf.config import AIPerfConfig
 from aiperf.config.config import BenchmarkConfig
+from aiperf.config.dataset import FileDataset
+from aiperf.config.dataset.remote_ref import RemoteRef
 from aiperf.config.deployment import DeploymentConfig
 from aiperf.config.loader import (
+    ConfigurationError,
     assert_config_depth_and_cycles,
     expand_config_dict,
     load_config_from_mapping,
@@ -217,6 +222,42 @@ def restore_sweep_parameter_dataset_names(
                 break
 
 
+def validate_remote_datasets_for_kubernetes(config: AIPerfConfig) -> None:
+    """Reject remote dataset settings a workload CR cannot carry.
+
+    Remote references themselves are accepted: the dataset-manager pod pins and
+    downloads them.
+
+    Raises:
+        ConfigurationError: A dataset carries the CLI-internal
+            ``remote_fixed_schedule_check`` marker, or a credential (a presigned
+            query or URL userinfo) in the resource itself.
+    """
+    for dataset in config.benchmark.datasets:
+        if not isinstance(dataset, FileDataset) or not isinstance(
+            dataset.path, RemoteRef
+        ):
+            continue
+        if dataset.remote_fixed_schedule_check is not None:
+            raise ConfigurationError(
+                f"Dataset {dataset.path.display} sets remoteFixedScheduleCheck, "
+                "which only the AIPerf CLI may set; AIPerfJob and AIPerfSweep "
+                "resources cannot carry it. Remove it and choose the profiling "
+                "phase type explicitly."
+            )
+        if redact_url(dataset.path.ref) != dataset.path.ref:
+            raise ConfigurationError(
+                f"Dataset {dataset.path.display} carries a credential (a presigned "
+                "query or URL userinfo) in the resource itself. If this resource "
+                "was applied to the cluster, the API server has stored it; rotate "
+                "it. Put the full URL in a "
+                "Secret, expose it to the pods as the Secret-backed "
+                f"{AIPERF_INJECTED_DATASET_URLS} env var (a JSON list of URLs), and "
+                f"write the dataset path with the credential values replaced by "
+                f"{REDACTED_VALUE}, as `aiperf kube generate --operator` does."
+            )
+
+
 def prepare_workload_spec(
     spec: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -235,6 +276,7 @@ def prepare_workload_spec(
         A rendered workload spec and its post-environment, pre-Jinja envelope.
     """
     config = load_config_from_mapping(build_config_envelope(spec))
+    validate_remote_datasets_for_kubernetes(config)
     envelope_keys = set(AIPerfConfig.model_fields)
     envelope_keys.update(
         model_field.alias

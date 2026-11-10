@@ -18,6 +18,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from msgspec.structs import replace as _struct_replace
+
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.enums import CreditPhase
 from aiperf.common.scenario.context_overflow import is_context_overflow_response
@@ -396,6 +398,15 @@ class CreditCallbackHandler:
             )
             return
 
+        if (
+            credit_return.ended_on_truncation
+            and credit.agent_depth == 0
+            and not credit.is_final_turn
+            and not credit_return.cancelled
+        ):
+            credit_return = self._end_conversation_early(credit_return, handler)
+            credit = credit_return.credit
+
         # 1. ATOMIC COUNTING (no await before this!)
         # DAG children are off the phase's planning books — they inherit
         # the root's session slot and are tracked by the
@@ -578,6 +589,37 @@ class CreditCallbackHandler:
         # ``has_pending_branch_work``, at which point this check on the
         # child's own return path fires the event.
         self._finish_return_processing(key, handler, phase)
+
+    @staticmethod
+    def _end_conversation_early(
+        credit_return: CreditReturn, handler: PhaseCallbackContext
+    ) -> CreditReturn:
+        """Rewrite a truncation-ended return so the session ends on this turn.
+
+        The worker ended the conversation because this turn hit the
+        output-token cap (end_conversation_on_truncation). Shrinking the
+        credit's ``num_turns`` makes ``is_final_turn`` True for every consumer
+        below -- session counting, slot release, tree registry, strategy
+        dispatch -- so each one ends the session exactly as it would on an
+        authored final turn, with no per-consumer special case.
+
+        The skipped turns are taken off the phase's planned turn total. When
+        that leaves nothing to send, sending is marked complete here: the
+        issuer only detects the final credit at send time, and no further send
+        may happen. Synchronous, so it keeps the no-await-before-counting rule.
+        """
+        credit = credit_return.credit
+        skipped_turns = credit.num_turns - credit.turn_index - 1
+        if (
+            handler.progress.end_session_early(skipped_turns)
+            and not handler.progress.all_credits_sent_event.is_set()
+        ):
+            handler.progress.freeze_sent_counts()
+            handler.progress.all_credits_sent_event.set()
+        return _struct_replace(
+            credit_return,
+            credit=_struct_replace(credit, num_turns=credit.turn_index + 1),
+        )
 
     def _finish_return_processing(
         self,

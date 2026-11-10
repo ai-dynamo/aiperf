@@ -2,11 +2,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 
+import subprocess
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from pytest import param
+from tokenizers import Tokenizer as BackendTokenizer
+from tokenizers import decoders, models, pre_tokenizers, trainers
+from transformers import PreTrainedTokenizerFast
 
 from aiperf.common.exceptions import NotInitializedError, TokenizerError
 from aiperf.common.tokenizer import (
@@ -102,6 +107,64 @@ class TestBuiltinTokenizer:
             assert tokenizer.block_separation_token_id is None
             encode.assert_called_once_with("\n")
 
+    def test_word_start_token_ids_tiktoken_marks_space_prefixed_tokens(
+        self, tokenizer: Tokenizer
+    ) -> None:
+        [space_the] = tokenizer.encode(" the")
+        [bare_the] = tokenizer.encode("the")
+
+        assert space_the in tokenizer.word_start_token_ids
+        assert bare_the not in tokenizer.word_start_token_ids
+
+    @pytest.mark.parametrize(
+        "vocab, expected",
+        [
+            param({"▁the": 5, "the": 6, "<s>": 1}, frozenset({5}), id="sentencepiece-metaspace"),
+            param({"Ġthe": 7, "the": 8, "<|eot|>": 2}, frozenset({7}), id="byte-level-bpe"),
+            param({"the": 6, "<s>": 1}, None, id="no-space-markers"),
+            param({"▁the": 5, "▁": 0, "▁▁": 9, "▁▁▁▁": 10, "▁\n": 11}, frozenset({5}), id="sentencepiece-whitespace-runs"),
+            param({"Ġthe": 7, "Ġ": 12, "ĠĠ": 13, "ĠĊ": 14, "Ġĉ": 15}, frozenset({7}), id="byte-level-whitespace-runs"),
+        ],
+    )  # fmt: skip
+    def test_word_start_token_ids_hf_reads_space_markers(
+        self, vocab: dict[str, int], expected: frozenset[int] | None
+    ) -> None:
+        tokenizer = Tokenizer()
+        tokenizer._tokenizer = SimpleNamespace(get_vocab=lambda: vocab)
+
+        assert tokenizer.word_start_token_ids == expected
+
+    def test_word_start_token_ids_hf_without_get_vocab_returns_none(self) -> None:
+        """PreTrainedTokenizerBase.get_vocab raises; remote-code tokenizers may not override it."""
+
+        def get_vocab() -> dict[str, int]:
+            raise NotImplementedError
+
+        tokenizer = Tokenizer()
+        tokenizer._tokenizer = SimpleNamespace(get_vocab=get_vocab)
+
+        assert tokenizer.word_start_token_ids is None
+
+    def test_word_start_token_ids_hf_byte_level_matches_encoded_ids(self) -> None:
+        backend = BackendTokenizer(models.BPE())
+        backend.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
+        backend.decoder = decoders.ByteLevel()
+        backend.train_from_iterator(
+            ["the cat sat on the mat"] * 8,
+            trainers.BpeTrainer(
+                initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+                show_progress=False,
+            ),
+        )
+        tokenizer = Tokenizer()
+        tokenizer._tokenizer = PreTrainedTokenizerFast(tokenizer_object=backend)
+
+        [space_the] = backend.encode(" the").ids
+        [bare_the] = backend.encode("the").ids
+
+        assert space_the in tokenizer.word_start_token_ids
+        assert bare_the not in tokenizer.word_start_token_ids
+
     def test_num_prompt_special_tokens_returns_zero_when_no_bos(
         self, tokenizer: Tokenizer
     ) -> None:
@@ -185,18 +248,26 @@ class TestBuiltinTokenizer:
         assert "input_ids" in result
 
     def test_no_hf_imports_required(self) -> None:
-        """Builtin tokenizer must not trigger HuggingFace imports."""
-        import sys
+        """Builtin tokenizer must not trigger HuggingFace imports.
 
-        hf_modules = {
-            k for k in sys.modules if k.startswith(("transformers", "huggingface_hub"))
-        }
-        tokenizer = Tokenizer.from_pretrained(BUILTIN_TOKENIZER_NAME)
-        new_hf_modules = {
-            k for k in sys.modules if k.startswith(("transformers", "huggingface_hub"))
-        }
-        assert new_hf_modules == hf_modules
-        assert tokenizer.encode("test") is not None
+        Runs in a fresh interpreter: this module and other collected test
+        modules import ``transformers`` at the top, so an in-process
+        ``sys.modules`` check would always pass.
+        """
+        script = (
+            "import sys\n"
+            "from aiperf.common.tokenizer import BUILTIN_TOKENIZER_NAME, Tokenizer\n"
+            "tokenizer = Tokenizer.from_pretrained(BUILTIN_TOKENIZER_NAME)\n"
+            "assert tokenizer.encode('test')\n"
+            "print(sorted({k.split('.')[0] for k in sys.modules\n"
+            "              if k.startswith(('transformers', 'huggingface_hub'))}))\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, check=False
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "[]"
 
 
 class TestTiktokenEncodingNames:

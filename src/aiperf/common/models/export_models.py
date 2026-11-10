@@ -293,7 +293,7 @@ class JsonExportData(AIPerfBaseModel):
     model_config = ConfigDict(extra="allow")
 
     # Increment when the export structure changes.
-    SCHEMA_VERSION: ClassVar[str] = "1.6"
+    SCHEMA_VERSION: ClassVar[str] = "1.7"
 
     schema_version: str | None = Field(
         default=None,
@@ -386,6 +386,21 @@ class JsonExportData(AIPerfBaseModel):
             "errored/truncated, parents suspended/resumed). Present only on "
             "DAG-shaped runs; absent for non-DAG benchmarks."
         ),
+    )
+    conversations_ended_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Conversation sessions ended early because a turn was truncated "
+        "by the output-token cap; a conversation replayed to fill --request-count "
+        "counts once per replay (end_conversation_on_truncation). Absent when "
+        "the option is off.",
+    )
+    turns_skipped_on_truncation: int | None = Field(
+        default=None,
+        ge=0,
+        description="Turns never sent because their conversation ended early on "
+        "a truncated turn, excluding turns the run's stop condition would not "
+        "have sent anyway. Absent when end_conversation_on_truncation is off.",
     )
     warmup_metrics: dict[str, JsonMetricResult] | None = Field(
         default=None,
