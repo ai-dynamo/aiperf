@@ -31,7 +31,7 @@ The router classes that back these routes live under [`src/aiperf/api/routers/`]
 
 ## Results lifetime
 
-The listener outlives the benchmark itself. At the end of a run the controller stops every other service, exports the results, commits `.aiperf_results_ready.json`, and announces completion. Only after that does it retire the API. From then on the listener stays open for `AIPERF_API_SERVER_POST_COMPLETE_GRACE` seconds (default `5.0`), so a client polling `/api/results` sees `complete` (or `cancelled`) and can list and download the artifacts before the connection is refused.
+The listener outlives the benchmark itself. At the end of a run the controller stops every other service, exports the results, and commits `.aiperf_results_ready.json`. It then hands the API the run's terminal state and waits for the API to confirm it. Only after that does it retire the API. From then on the listener stays open for `AIPERF_API_SERVER_POST_COMPLETE_GRACE` seconds (default `5.0`), so a client polling `/api/results` sees `complete` (or `cancelled`) and can list and download the artifacts before the connection is refused.
 
 ```mermaid
 sequenceDiagram
@@ -42,7 +42,8 @@ sequenceDiagram
     C->>S: SHUTDOWN (API excluded)
     S-->>C: exit
     C->>C: export results, write .aiperf_results_ready.json
-    C->>A: BenchmarkComplete
+    C->>A: BENCHMARK_COMPLETE (control channel)
+    A-->>C: ack, after the terminal state is set
     P->>A: GET /api/results -> complete
     P->>A: GET /api/results/list, /api/results/files/...
     C->>A: SHUTDOWN
@@ -50,9 +51,10 @@ sequenceDiagram
     A-->>C: exit
 ```
 
-- `/api/results` reports `running` until the completion announcement, even if the final metrics arrived earlier, so `complete` always means the files are on disk.
+- `/api/results` reports `running` until the controller's completion command arrives, even if the final metrics arrived earlier, so `complete` always means the files are on disk.
 - `/api/results/list` and `/api/results/files/{filename}` withhold top-level artifacts until the ready marker commits. Checkpoint artifacts under `checkpoints/` are exempt.
-- `AIPERF_API_SERVER_POST_COMPLETE_GRACE=0` closes the listener as soon as the results are published, so a polling client may never observe the terminal status.
+- The controller waits up to `AIPERF_API_SERVER_COMPLETE_ACK_TIMEOUT` seconds (default `5.0`) for the API's confirmation. On a timeout or error it logs a warning and retires the API anyway. It also warns when the API has the terminal state but not the final metrics, in which case `/api/results` reports `incomplete` (or `cancelled`).
+- `AIPERF_API_SERVER_POST_COMPLETE_GRACE=0` closes the listener right after the API confirms the terminal state. The state is always set before the listener starts closing, but a polling client may never get a request in.
 - Under Kubernetes the API ignores the controller's shutdown and keeps serving until `POST /api/shutdown`.
 
 ## Breaking change: `/api/progress` `phases` keys

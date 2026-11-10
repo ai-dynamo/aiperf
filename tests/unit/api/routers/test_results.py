@@ -15,7 +15,7 @@ from starlette.testclient import TestClient
 
 import aiperf.api.routers.results as results_module
 from aiperf.api.routers.results import ResultsRouter
-from aiperf.common.messages import BenchmarkCompleteMessage, ProcessAllResultsMessage
+from aiperf.common.messages import ProcessAllResultsMessage
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
 from aiperf.common.results_markers import (
@@ -702,19 +702,19 @@ class TestFinalResultsHandler:
         ],
     )  # fmt: skip
     @pytest.mark.asyncio
-    async def test_on_benchmark_complete_records_cancellation_and_timestamp(
+    async def test_mark_benchmark_complete_records_cancellation_and_timestamp(
         self, results_router: ResultsRouter, was_cancelled: bool
     ) -> None:
         assert results_router._benchmark_complete is False
         assert results_router._benchmark_complete_at is None
 
         before = time.monotonic()
-        message = BenchmarkCompleteMessage(
-            service_id="system_controller", was_cancelled=was_cancelled
+        has_final_results = results_router.mark_benchmark_complete(
+            was_cancelled=was_cancelled
         )
-        await results_router._on_benchmark_complete(message)
         after = time.monotonic()
 
+        assert has_final_results is False
         assert results_router._benchmark_complete is True
         assert results_router._benchmark_complete_was_cancelled == was_cancelled
         assert results_router._benchmark_complete_at is not None

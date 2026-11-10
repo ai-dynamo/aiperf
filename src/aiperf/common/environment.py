@@ -230,6 +230,15 @@ class _APIServerSettings(BaseSettings):
         "FastAPIService._defers_broadcast_shutdown. A fixed window there is shorter than the "
         "operator's monitor interval and strands the AIPerfJob in a pre-terminal phase.",
     )
+    COMPLETE_ACK_TIMEOUT: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=5.0,
+        description="Seconds the SystemController waits for the API service to confirm it "
+        "holds the run's terminal state before retiring it. A healthy API answers in "
+        "milliseconds; on timeout the controller logs a warning and retires the API anyway, "
+        "so this bounds how long a wedged API can delay exit.",
+    )
     WEBSOCKET_MAX_CONNECTIONS: int = Field(
         ge=1,
         le=100000,

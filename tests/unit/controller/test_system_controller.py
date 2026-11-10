@@ -801,7 +801,7 @@ class TestStopHookHardening:
             side_effect=lambda: order.append("export")
         )
         system_controller._announce_benchmark_complete = AsyncMock(
-            side_effect=lambda: order.append("benchmark_complete")
+            side_effect=lambda *_a: order.append("benchmark_complete")
         )
         system_controller._broadcast_control_command = AsyncMock(
             side_effect=lambda *_a, **_kw: order.append("shutdown_broadcast")
@@ -1004,8 +1004,8 @@ class TestShutdownDeliveryGrace:
             if report_error is not None:
                 raise report_error
 
-        async def fake_announce() -> None:
-            events.append(("benchmark_complete",))
+        async def fake_announce(api_ids: set[str]) -> None:
+            events.append(("benchmark_complete", frozenset(api_ids)))
 
         monkeypatch.setattr(sc_module.asyncio, "sleep", fake_sleep)
         # _stop_system_controller ends in os._exit(); mute it so the test process survives.
@@ -1029,6 +1029,9 @@ class TestShutdownDeliveryGrace:
 
     def _api_shutdown(self) -> tuple:
         return ("broadcast", CommandType.SHUTDOWN, frozenset({self.API_ID}))
+
+    def _api_announced(self) -> tuple:
+        return ("benchmark_complete", frozenset({self.API_ID}))
 
     @pytest.mark.asyncio
     async def test_api_disabled_waits_only_for_delivery(
@@ -1081,7 +1084,7 @@ class TestShutdownDeliveryGrace:
         ]
         assert (
             self._index(events, ("export",))
-            < self._index(events, ("benchmark_complete",))
+            < self._index(events, self._api_announced())
             < self._index(events, self._api_shutdown())
         )
 
@@ -1112,7 +1115,7 @@ class TestShutdownDeliveryGrace:
         )
 
         assert events[-4:] == [
-            ("benchmark_complete",),
+            self._api_announced(),
             self._api_shutdown(),
             ("sleep", 7.0),
             ("shutdown_all", ()),
@@ -1142,7 +1145,7 @@ class TestShutdownDeliveryGrace:
             self._api_shutdown(),
             ("shutdown_all", ()),
         ]
-        assert ("benchmark_complete",) not in self.events
+        assert not any(e[0] == "benchmark_complete" for e in self.events)
         system_controller.comms.stop.assert_not_awaited()
 
     @pytest.mark.asyncio

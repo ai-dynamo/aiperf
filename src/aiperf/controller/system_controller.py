@@ -44,7 +44,6 @@ from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_st
 from aiperf.common.logging import cleanup_global_log_queue, get_global_log_queue
 from aiperf.common.messages import (
     BaseServiceErrorMessage,
-    BenchmarkCompleteMessage,
     ProcessAccuracyResultMessage,
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
@@ -2483,20 +2482,50 @@ class SystemController(
             )
         return has_exit_failure
 
-    async def _announce_benchmark_complete(self) -> None:
-        """Tell the API service the benchmark is over.
+    async def _announce_benchmark_complete(self, api_ids: set[str]) -> None:
+        """Hand the API the run's terminal state and wait for it to confirm.
 
-        The results endpoint reports "running" until this arrives, so without
-        the announcement a client polling ``/api/results`` never observes a
-        terminal status and keeps polling until the listener goes away.
+        The results endpoint reports "running" until this lands, and the API is
+        retired right after, so the controller waits for the reply instead of
+        publishing and hoping. A timeout or failed reply is logged and shutdown
+        proceeds anyway; ``COMPLETE_ACK_TIMEOUT`` bounds the wait.
         """
-        if not self._api_enabled:
+        if not self._api_enabled or not api_ids:
             return
-        await self.publish(
-            BenchmarkCompleteMessage(
-                service_id=self.service_id,
-                was_cancelled=self._was_cancelled,
-            )
+        service_ids = sorted(api_ids)
+        responses = await self._send_control_command_to_all(
+            CommandType.BENCHMARK_COMPLETE,
+            service_ids,
+            payload=orjson.dumps({"was_cancelled": self._was_cancelled}),
+            timeout=Environment.API_SERVER.COMPLETE_ACK_TIMEOUT,
+        )
+        for service_id, response in zip(service_ids, responses, strict=True):
+            self._log_benchmark_complete_reply(service_id, response)
+
+    def _log_benchmark_complete_reply(
+        self, service_id: str, response: CommandResponse | ErrorDetails
+    ) -> None:
+        """Warn when the API cannot serve a clean terminal status."""
+        if isinstance(response, CommandOk):
+            reply = orjson.loads(response.payload) if response.payload else {}
+            if not reply.get("has_final_results", False):
+                status = "cancelled" if self._was_cancelled else "incomplete"
+                self.warning(
+                    f"API '{service_id}' holds the terminal state but not the final "
+                    f"results; /api/results will report '{status}'"
+                )
+                return
+            self.info(f"API '{service_id}' confirmed the run's terminal state")
+            return
+        if isinstance(response, ErrorDetails):
+            detail = response.message
+        elif isinstance(response, CommandErr):
+            detail = response.error
+        else:
+            detail = type(response).__name__
+        self.warning(
+            f"API '{service_id}' did not confirm the terminal state ({detail}); "
+            "/api/results may still report 'running' when its listener closes"
         )
 
     async def _retire_api_service(
@@ -2565,9 +2594,10 @@ class SystemController(
                 "Unexpected pre-shutdown reporting failure (continuing to exit)"
             )
 
-        # BenchmarkComplete makes the API shutdown endpoint eligible only
-        # after export/ready publication has finished (or failed closed).
-        await self._announce_benchmark_complete()
+        # The API's confirmed terminal state makes the API shutdown endpoint
+        # eligible only after export/ready publication has finished (or
+        # failed closed), and must land before the API is retired.
+        await self._announce_benchmark_complete(api_ids)
         await self._retire_api_service(api_ids, hold_listener=True)
         await self.comms.stop()
         # Stopped last of the child-facing transports: shutdown_all_services may

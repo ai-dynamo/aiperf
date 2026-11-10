@@ -10,6 +10,7 @@ import errno
 import socket
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import orjson
 import pytest
 from fastapi.responses import ORJSONResponse
 from pytest import param
@@ -24,7 +25,8 @@ from aiperf.common.compression import (
     select_encoding,
 )
 from aiperf.common.constants import IS_WINDOWS
-from aiperf.common.enums import LifecycleState
+from aiperf.common.control_structs import Command, CommandOk
+from aiperf.common.enums import CommandType, LifecycleState
 from aiperf.common.environment import Environment
 from aiperf.common.mixins.progress_tracker_mixin import CombinedPhaseStats
 from aiperf.config import BenchmarkRun
@@ -719,9 +721,10 @@ class TestResultsRouterFinalResults:
             mock_fastapi_service._routers["results"]._final_results.results.completed
             == 200
         )
-        # _benchmark_complete stays False until BenchmarkCompleteMessage arrives
-        # (after export is done). This ensures external consumers don't fetch
-        # results before files are written to disk.
+        # _benchmark_complete stays False until the controller's
+        # BENCHMARK_COMPLETE command arrives (after export is done). This
+        # ensures external consumers don't fetch results before files are
+        # written to disk.
         assert mock_fastapi_service._routers["results"]._benchmark_complete is False
 
     @pytest.mark.asyncio
@@ -793,24 +796,15 @@ class TestResultsRouterFinalResults:
 
 
 class TestBenchmarkCompleteHandler:
-    """Test BenchmarkCompleteMessage handling in FastAPIService."""
+    """The BENCHMARK_COMPLETE command hands the results router its terminal state."""
 
-    @pytest.mark.asyncio
-    async def test_on_benchmark_complete_sets_flag(
-        self, mock_fastapi_service: FastAPIService
-    ) -> None:
-        """Test that BenchmarkCompleteMessage sets benchmark_complete flag."""
-        from aiperf.common.messages import BenchmarkCompleteMessage
-
-        assert mock_fastapi_service._routers["results"]._benchmark_complete is False
-
-        message = BenchmarkCompleteMessage(
-            service_id="system_controller", was_cancelled=False
+    @staticmethod
+    def _command(payload: dict | None) -> Command:
+        return Command(
+            cid="cid-1",
+            cmd=CommandType.BENCHMARK_COMPLETE,
+            payload=orjson.dumps(payload) if payload is not None else b"",
         )
-
-        await mock_fastapi_service._routers["results"]._on_benchmark_complete(message)
-
-        assert mock_fastapi_service._routers["results"]._benchmark_complete is True
 
     @pytest.mark.parametrize(
         "was_cancelled",
@@ -820,41 +814,90 @@ class TestBenchmarkCompleteHandler:
         ],
     )  # fmt: skip
     @pytest.mark.asyncio
-    async def test_on_benchmark_complete_with_cancellation_states(
-        self,
-        mock_fastapi_service: FastAPIService,
-        was_cancelled: bool,
+    async def test_command_sets_terminal_state(
+        self, mock_fastapi_service: FastAPIService, was_cancelled: bool
     ) -> None:
-        """Test handler works with both cancelled and non-cancelled states."""
-        from aiperf.common.messages import BenchmarkCompleteMessage
+        results = mock_fastapi_service._routers["results"]
+        assert results._benchmark_complete is False
 
-        message = BenchmarkCompleteMessage(
-            service_id="system_controller", was_cancelled=was_cancelled
+        await mock_fastapi_service._on_benchmark_complete(
+            self._command({"was_cancelled": was_cancelled})
         )
 
-        await mock_fastapi_service._routers["results"]._on_benchmark_complete(message)
-
-        # Flag should be set regardless of cancellation state
-        assert mock_fastapi_service._routers["results"]._benchmark_complete is True
+        assert results._benchmark_complete is True
+        assert results._benchmark_complete_was_cancelled is was_cancelled
 
     @pytest.mark.asyncio
-    async def test_on_benchmark_complete_idempotent(
+    async def test_reply_reports_whether_final_results_are_held(
         self, mock_fastapi_service: FastAPIService
     ) -> None:
-        """Test that multiple calls are idempotent."""
-        from aiperf.common.messages import BenchmarkCompleteMessage
+        from aiperf.common.messages import ProcessAllResultsMessage
 
-        message = BenchmarkCompleteMessage(
-            service_id="system_controller", was_cancelled=False
+        reply = await mock_fastapi_service._on_benchmark_complete(
+            self._command({"was_cancelled": False})
+        )
+        assert reply == {"has_final_results": False}
+
+        await mock_fastapi_service._routers["results"]._on_process_all_results(
+            ProcessAllResultsMessage(
+                service_id="records_manager",
+                results=make_process_records_result(completed=10),
+            )
+        )
+        reply = await mock_fastapi_service._on_benchmark_complete(
+            self._command({"was_cancelled": False})
+        )
+        assert reply == {"has_final_results": True}
+
+    @pytest.mark.asyncio
+    async def test_empty_payload_means_not_cancelled(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
+        await mock_fastapi_service._on_benchmark_complete(self._command(None))
+
+        results = mock_fastapi_service._routers["results"]
+        assert results._benchmark_complete is True
+        assert results._benchmark_complete_was_cancelled is False
+
+    @pytest.mark.asyncio
+    async def test_without_results_router_reports_no_final_results(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
+        mock_fastapi_service._routers.pop("results")
+
+        reply = await mock_fastapi_service._on_benchmark_complete(
+            self._command({"was_cancelled": False})
         )
 
-        # Call multiple times
-        await mock_fastapi_service._routers["results"]._on_benchmark_complete(message)
-        await mock_fastapi_service._routers["results"]._on_benchmark_complete(message)
-        await mock_fastapi_service._routers["results"]._on_benchmark_complete(message)
+        assert reply == {"has_final_results": False}
 
-        # Should still be True
-        assert mock_fastapi_service._routers["results"]._benchmark_complete is True
+    @pytest.mark.asyncio
+    async def test_control_channel_dispatch_replies_after_state_is_set(
+        self, mock_fastapi_service: FastAPIService
+    ) -> None:
+        """The reply the controller waits on is a CommandOk sent after the flag is set."""
+        results = mock_fastapi_service._routers["results"]
+        flag_when_replied: list[bool] = []
+
+        async def _send(response: object) -> None:
+            flag_when_replied.append(results._benchmark_complete)
+            sent.append(response)
+
+        sent: list[object] = []
+        mock_fastapi_service.control_client = AsyncMock()
+        mock_fastapi_service.control_client.send.side_effect = _send
+
+        await mock_fastapi_service._handle_control_command(
+            self._command({"was_cancelled": True})
+        )
+
+        assert len(sent) == 1
+        response = sent[0]
+        assert isinstance(response, CommandOk)
+        assert response.cid == "cid-1"
+        assert response.cmd == CommandType.BENCHMARK_COMPLETE
+        assert orjson.loads(response.payload) == {"has_final_results": False}
+        assert flag_when_replied == [True]
 
 
 # =============================================================================

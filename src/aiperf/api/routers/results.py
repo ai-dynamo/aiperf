@@ -33,7 +33,7 @@ from aiperf.common.constants import IS_WINDOWS
 from aiperf.common.enums import MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import on_message
-from aiperf.common.messages import BenchmarkCompleteMessage, ProcessAllResultsMessage
+from aiperf.common.messages import ProcessAllResultsMessage
 from aiperf.common.mixins.message_bus_mixin import MessageBusClientMixin
 from aiperf.common.models.record_models import ProcessRecordsResult
 from aiperf.config.artifacts import OutputDefaults
@@ -94,15 +94,18 @@ class ResultsRouter(MessageBusClientMixin, BaseRouter):
     async def _on_process_all_results(self, message: ProcessAllResultsMessage) -> None:
         self._final_results = message.results
 
-    @on_message(MessageType.BENCHMARK_COMPLETE)
-    async def _on_benchmark_complete(self, message: BenchmarkCompleteMessage) -> None:
-        # Results files have been exported to disk by the time this message
-        # arrives (the controller exports BEFORE publishing this message).
-        # Only now do we report "complete" to external consumers so they
-        # can safely fetch all result files.
+    def mark_benchmark_complete(self, *, was_cancelled: bool) -> bool:
+        """Record the run's terminal state; return whether final results are held.
+
+        Called by the API service's ``BENCHMARK_COMPLETE`` command handler, which
+        the controller sends only after every result file is exported and the
+        ready marker committed. Only now is "complete" reported to external
+        consumers, so they can safely fetch all result files.
+        """
         self._benchmark_complete = True
-        self._benchmark_complete_was_cancelled = message.was_cancelled
+        self._benchmark_complete_was_cancelled = was_cancelled
         self._benchmark_complete_at = time.monotonic()
+        return self._final_results is not None
 
 
 @results_router.get("/api/results", response_model=BenchmarkResultsResponse)
@@ -111,12 +114,12 @@ async def get_results(component: ResultsDep) -> BenchmarkResultsResponse:
     if component._final_results is not None:
         if not component._benchmark_complete:
             # PROCESS_ALL_RESULTS can land first: it is published by
-            # RecordsManager, BENCHMARK_COMPLETE by the controller, and there
-            # is no ordering guarantee between them (the grace window below
-            # exists for the opposite arrival order). Reporting COMPLETE here
-            # would defeat the export-safety gate in `_on_benchmark_complete`
-            # and tell a client to fetch artifact files the controller has not
-            # finished writing.
+            # RecordsManager on the bus, BENCHMARK_COMPLETE is a command from
+            # the controller, and there is no ordering guarantee between them
+            # (the grace window below exists for the opposite arrival order).
+            # Reporting COMPLETE here would defeat the export-safety gate in
+            # `mark_benchmark_complete` and tell a client to fetch artifact
+            # files the controller has not finished writing.
             return BenchmarkResultsResponse(status=BenchmarkStatus.RUNNING)
         status = (
             BenchmarkStatus.CANCELLED
@@ -130,9 +133,9 @@ async def get_results(component: ResultsDep) -> BenchmarkResultsResponse:
 
     elapsed = time.monotonic() - (component._benchmark_complete_at or 0.0)
     if elapsed < _FINAL_RESULTS_GRACE_SEC:
-        # BENCHMARK_COMPLETE and PROCESS_ALL_RESULTS are published by
-        # different services with no ordering guarantee between them; give
-        # the unified results message a bounded window to still show up.
+        # BENCHMARK_COMPLETE and PROCESS_ALL_RESULTS come from different
+        # services with no ordering guarantee between them; give the unified
+        # results message a bounded window to still show up.
         return BenchmarkResultsResponse(status=BenchmarkStatus.RUNNING)
 
     # The benchmark was announced complete, but RecordsManager never

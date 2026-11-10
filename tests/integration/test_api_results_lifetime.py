@@ -191,6 +191,13 @@ def _assert_served_final_artifacts(
     assert poller.traversal_status == 400
 
 
+def _assert_api_confirmed_terminal_state(log: str | None) -> None:
+    assert log, "aiperf.log was not written"
+    assert "confirmed the run's terminal state" in log
+    assert "did not confirm the terminal state" not in log
+    assert "not the final results" not in log
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 class TestResultsApiLifetime:
@@ -228,6 +235,31 @@ class TestResultsApiLifetime:
         assert result.request_count == 10
         assert poller.statuses[0] == "running"
         _assert_served_final_artifacts(poller, result.artifacts_dir, "complete")
+        _assert_api_confirmed_terminal_state(result.log)
+
+    async def test_zero_grace_still_confirms_terminal_state_before_retiring_the_api(
+        self,
+        cli: AIPerfCLI,
+        mock_server_factory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """With no grace window a poller may miss `complete`; the handshake may not.
+
+        The controller must still get the API's confirmation over the control
+        channel before it sends SHUTDOWN, so the state is set before the
+        listener starts closing.
+        """
+        monkeypatch.setenv("AIPERF_API_SERVER_POST_COMPLETE_GRACE", "0")
+        api_port = _free_port()
+
+        async with mock_server_factory(ttft=5, itl=1) as server:
+            result = await cli.run(
+                _profile_command(server.url, api_port, "--request-count 10")
+            )
+
+        assert result.exit_code == 0
+        assert result.request_count == 10
+        _assert_api_confirmed_terminal_state(result.log)
 
     @pytest.mark.skipif(
         IS_WINDOWS,
@@ -258,3 +290,4 @@ class TestResultsApiLifetime:
         assert result.json is not None
         assert result.json.was_cancelled is True
         _assert_served_final_artifacts(poller, result.artifacts_dir, "cancelled")
+        _assert_api_confirmed_terminal_state(result.log)

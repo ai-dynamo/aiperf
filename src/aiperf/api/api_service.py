@@ -12,8 +12,9 @@ from __future__ import annotations
 import asyncio
 import socket
 from contextlib import asynccontextmanager, suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
+import orjson
 import uvicorn
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
@@ -26,14 +27,17 @@ from aiperf.api.routers.tokenizer import build_tokenizer_router
 from aiperf.common.base_component_service import BaseComponentService
 from aiperf.common.bootstrap import bootstrap_and_run_service
 from aiperf.common.constants import IS_WINDOWS
+from aiperf.common.control_structs import Command
+from aiperf.common.enums import CommandType
 from aiperf.common.environment import Environment
-from aiperf.common.hooks import on_start, on_stop
+from aiperf.common.hooks import on_command, on_start, on_stop
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType, ServiceRunType, ServiceType
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from aiperf.api.routers.results import ResultsRouter
     from aiperf.config import BenchmarkRun
 
 
@@ -346,6 +350,25 @@ class FastAPIService(BaseComponentService):
                 )
 
         await asyncio.gather(*(_warm_one(n) for n in names))
+
+    @on_command(CommandType.BENCHMARK_COMPLETE)
+    async def _on_benchmark_complete(self, message: Command) -> dict[str, bool]:
+        """Take the run's terminal state from the controller.
+
+        A command rather than a bus message so the controller holds proof the
+        API serves the terminal status before it retires the API: the reply is
+        sent only after the state is set. ``has_final_results`` tells the
+        controller whether ``/api/results`` reports complete or, lacking the
+        RecordsManager's unified results, falls back to incomplete.
+        """
+        payload = orjson.loads(message.payload) if message.payload else {}
+        results = cast("ResultsRouter | None", self._routers.get("results"))
+        if results is None:
+            return {"has_final_results": False}
+        has_final_results = results.mark_benchmark_complete(
+            was_cancelled=bool(payload.get("was_cancelled", False))
+        )
+        return {"has_final_results": has_final_results}
 
     def _defers_broadcast_shutdown(self) -> bool:
         """Ignore the controller's broadcast shutdown under Kubernetes.
