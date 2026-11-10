@@ -2499,21 +2499,46 @@ class SystemController(
             )
         )
 
+    async def _retire_api_service(
+        self, api_ids: set[str], *, hold_listener: bool
+    ) -> None:
+        """Stop the API service once the run's terminal state is published.
+
+        SHUTDOWN starts the API's own ``POST_COMPLETE_GRACE`` listener hold;
+        the controller waits the same window so the shared exit deadline in
+        ``shutdown_all_services`` cannot SIGKILL the API mid-hold. Under
+        Kubernetes the API defers this command and is retired through
+        ``POST /api/shutdown`` instead.
+        """
+        if not self._api_enabled:
+            return
+        await self._broadcast_control_command(CommandType.SHUTDOWN, api_ids)
+        if hold_listener:
+            delivery_grace = 0.5
+            if self._is_api_service_alive():
+                delivery_grace = max(
+                    delivery_grace, Environment.API_SERVER.POST_COMPLETE_GRACE
+                )
+            await asyncio.sleep(delivery_grace)
+        await self.service_manager.shutdown_all_services()
+
     @on_stop
     async def _stop_system_controller(self) -> None:
         """Stop the system controller and all running services."""
         await self._set_system_state(SystemState.SHUTDOWN)
 
+        # The API is the only way a client can observe the export below, so it
+        # is retired last, by _retire_api_service, once the run's terminal state
+        # is published. Stopping it here would spend its grace window before
+        # there is anything to see (NVBugs 7073234).
+        api_ids = {
+            info.service_id for info in ServiceRegistry.get_services(ServiceType.API)
+        }
         await self._broadcast_control_command(
-            CommandType.SHUTDOWN, ServiceRegistry.get_all_registered_ids()
+            CommandType.SHUTDOWN, ServiceRegistry.get_all_registered_ids() - api_ids
         )
-        delivery_grace = 0.5
-        if self._api_enabled and self._is_api_service_alive():
-            delivery_grace = max(
-                delivery_grace, Environment.API_SERVER.POST_COMPLETE_GRACE
-            )
-        await asyncio.sleep(delivery_grace)
-        await self.service_manager.shutdown_all_services()
+        await asyncio.sleep(0.5)
+        await self.service_manager.shutdown_all_services(exclude=(ServiceType.API,))
 
         # Stop the local UI before console rendering. The message bus remains
         # live through export so publishing the durable completion state does
@@ -2531,6 +2556,7 @@ class SystemController(
             if Environment.DEV.MODE:
                 print_developer_mode_warning()
         except asyncio.CancelledError:
+            await self._retire_api_service(api_ids, hold_listener=False)
             raise
         except (UnicodeEncodeError, OSError) as e:
             self.error(f"Pre-shutdown reporting failed (continuing to exit): {e!r}")
@@ -2542,6 +2568,7 @@ class SystemController(
         # BenchmarkComplete makes the API shutdown endpoint eligible only
         # after export/ready publication has finished (or failed closed).
         await self._announce_benchmark_complete()
+        await self._retire_api_service(api_ids, hold_listener=True)
         await self.comms.stop()
         # Stopped last of the child-facing transports: shutdown_all_services may
         # still be talking to children over it, and comms does not own it.

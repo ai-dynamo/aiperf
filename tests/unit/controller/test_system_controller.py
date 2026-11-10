@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import orjson
 import pytest
 from msgspec.structs import replace
+from pytest import param
 
 from aiperf.common.control_structs import Command, CommandErr, CommandUnhandled
 from aiperf.common.enums import (
@@ -806,8 +807,8 @@ class TestStopHookHardening:
             side_effect=lambda *_a, **_kw: order.append("shutdown_broadcast")
         )
         system_controller.publish = AsyncMock()
-        mock_service_manager.shutdown_all_services.side_effect = lambda: order.append(
-            "services_stopped"
+        mock_service_manager.shutdown_all_services.side_effect = (
+            lambda **_kw: order.append("services_stopped")
         )
         system_controller.comms.stop.side_effect = lambda: order.append("comms_stopped")
 
@@ -931,36 +932,80 @@ class TestSSLVerificationWarning:
 
 
 class TestShutdownDeliveryGrace:
-    """Test that _stop_system_controller respects POST_COMPLETE_GRACE when API enabled."""
+    """The API is retired after results are published, then held for POST_COMPLETE_GRACE.
 
-    @staticmethod
+    Regression for NVBugs 7073234. The earlier version of these tests only
+    checked the *first* sleep's duration, with the sleeps and the service
+    shutdown mocked out, so they could not see that the grace window was spent
+    before the export it was meant to expose. These assert the order of
+    events instead: the API is excluded from the first SHUTDOWN and the first
+    ``shutdown_all_services``, and the hold happens after BenchmarkComplete.
+    """
+
+    API_ID = "api-1"
+    WORKER_ID = "worker-1"
+
     def _register_api_service(
+        self,
         controller: SystemController,
         state: LifecycleState = LifecycleState.RUNNING,
     ) -> None:
-        """Populate service_map with an API ServiceRunInfo in the given lifecycle state."""
+        """Register the API in both the registry and the manager's service_map."""
         from aiperf.common.models import ServiceRunInfo
+        from aiperf.common.service_registry import ServiceRegistry
 
+        ServiceRegistry.register(
+            self.API_ID, ServiceType.API, first_seen_ns=1, state=state
+        )
         info = ServiceRunInfo(
             service_type=ServiceType.API,
             registration_status=ServiceRegistrationStatus.REGISTERED,
-            service_id="api-1",
+            service_id=self.API_ID,
             state=state,
         )
         controller.service_manager.service_map = {ServiceType.API: [info]}
 
-    @staticmethod
     async def _drive_stop(
-        controller: SystemController, monkeypatch: pytest.MonkeyPatch
-    ) -> list[float]:
-        """Invoke _stop_system_controller and return all asyncio.sleep call durations."""
-        import aiperf.controller.system_controller as sc_module
+        self,
+        controller: SystemController,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        report_error: BaseException | None = None,
+    ) -> list[tuple]:
+        """Run _stop_system_controller and return the ordered shutdown events.
 
-        sleeps: list[float] = []
+        Events also land on ``self.events`` so a test whose stop raises can
+        still inspect them.
+        """
+        import aiperf.controller.system_controller as sc_module
+        from aiperf.common.service_registry import ServiceRegistry
+
+        ServiceRegistry.register(
+            self.WORKER_ID,
+            ServiceType.WORKER,
+            first_seen_ns=1,
+            state=LifecycleState.RUNNING,
+        )
+        self.events: list[tuple] = []
+        events = self.events
 
         async def fake_sleep(seconds: float) -> None:
-            """Record each asyncio.sleep duration without actually sleeping."""
-            sleeps.append(seconds)
+            events.append(("sleep", seconds))
+
+        async def fake_broadcast(cmd: str, service_ids, payload: bytes = b"") -> None:
+            events.append(("broadcast", cmd, frozenset(service_ids)))
+
+        async def fake_shutdown(**kwargs) -> list:
+            events.append(("shutdown_all", tuple(kwargs.get("exclude", ()))))
+            return []
+
+        async def fake_report() -> None:
+            events.append(("export",))
+            if report_error is not None:
+                raise report_error
+
+        async def fake_announce() -> None:
+            events.append(("benchmark_complete",))
 
         monkeypatch.setattr(sc_module.asyncio, "sleep", fake_sleep)
         # _stop_system_controller ends in os._exit(); mute it so the test process survives.
@@ -970,87 +1015,176 @@ class TestShutdownDeliveryGrace:
         controller.ui = AsyncMock()
         controller.comms = AsyncMock()
         controller.proxy_manager = AsyncMock()
-        controller._print_post_benchmark_info_and_metrics = AsyncMock()
-        controller._print_exit_errors_and_log_file = MagicMock()
+        controller._broadcast_control_command = fake_broadcast
+        controller.service_manager.shutdown_all_services.side_effect = fake_shutdown
+        controller._report_post_shutdown_results_and_errors = fake_report
+        controller._announce_benchmark_complete = fake_announce
 
         await controller._stop_system_controller()
-        return sleeps
+        return events
+
+    @staticmethod
+    def _index(events: list[tuple], event: tuple) -> int:
+        return events.index(event)
+
+    def _api_shutdown(self) -> tuple:
+        return ("broadcast", CommandType.SHUTDOWN, frozenset({self.API_ID}))
 
     @pytest.mark.asyncio
-    async def test_uses_default_05s_when_api_disabled(
+    async def test_api_disabled_waits_only_for_delivery(
         self,
         system_controller: SystemController,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """When API is disabled, the original 0.5s ZMQ-delivery wait is preserved."""
         system_controller._api_enabled = False
-        sleeps = await self._drive_stop(system_controller, monkeypatch)
-        assert sleeps[0] == 0.5
-
-    @pytest.mark.asyncio
-    async def test_extends_to_grace_when_api_enabled_and_alive(
-        self,
-        system_controller: SystemController,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """API enabled + registered RUNNING service: wait stretches to POST_COMPLETE_GRACE."""
-        system_controller._api_enabled = True
-        self._register_api_service(system_controller, LifecycleState.RUNNING)
         monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
-        sleeps = await self._drive_stop(system_controller, monkeypatch)
-        assert sleeps[0] == 7.0
+
+        events = await self._drive_stop(system_controller, monkeypatch)
+
+        assert [e[1] for e in events if e[0] == "sleep"] == [0.5, 0.1]
+        assert [e for e in events if e[0] == "shutdown_all"] == [
+            ("shutdown_all", (ServiceType.API,))
+        ]
 
     @pytest.mark.asyncio
-    async def test_floors_at_05s_when_api_alive_with_small_grace(
+    @pytest.mark.parametrize(
+        ("grace", "expected_hold"),
+        [
+            param(7.0, 7.0, id="grace-above-zero"),
+            param(0.1, 0.5, id="grace-below-delivery-floor"),
+            param(0.0, 0.5, id="grace-zero"),
+        ],
+    )  # fmt: skip
+    async def test_api_is_retired_and_held_only_after_results_are_published(
         self,
         system_controller: SystemController,
         monkeypatch: pytest.MonkeyPatch,
+        grace: float,
+        expected_hold: float,
     ) -> None:
-        """Even with grace < 0.5s, ZMQ-delivery floor of 0.5s is preserved."""
         system_controller._api_enabled = True
-        self._register_api_service(system_controller, LifecycleState.RUNNING)
-        monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 0.1)
-        sleeps = await self._drive_stop(system_controller, monkeypatch)
-        assert sleeps[0] == 0.5
+        self._register_api_service(system_controller)
+        monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", grace)
+
+        events = await self._drive_stop(system_controller, monkeypatch)
+
+        assert events[0] == (
+            "broadcast",
+            CommandType.SHUTDOWN,
+            frozenset({self.WORKER_ID}),
+        )
+        assert events[1:3] == [("sleep", 0.5), ("shutdown_all", (ServiceType.API,))]
+        assert events[-3:] == [
+            self._api_shutdown(),
+            ("sleep", expected_hold),
+            ("shutdown_all", ()),
+        ]
+        assert (
+            self._index(events, ("export",))
+            < self._index(events, ("benchmark_complete",))
+            < self._index(events, self._api_shutdown())
+        )
 
     @pytest.mark.asyncio
-    async def test_skips_grace_when_api_enabled_but_never_registered(
+    @pytest.mark.parametrize(
+        "report_error",
+        [
+            param(RuntimeError("exporter blew up"), id="unexpected-error"),
+            param(OSError("disk full"), id="os-error"),
+            param(
+                UnicodeEncodeError("charmap", "->", 1, 2, "undefined"),
+                id="console-encoding-error",
+            ),
+        ],
+    )  # fmt: skip
+    async def test_failed_export_still_announces_then_holds_the_listener(
+        self,
+        system_controller: SystemController,
+        monkeypatch: pytest.MonkeyPatch,
+        report_error: BaseException,
+    ) -> None:
+        system_controller._api_enabled = True
+        self._register_api_service(system_controller)
+        monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
+
+        events = await self._drive_stop(
+            system_controller, monkeypatch, report_error=report_error
+        )
+
+        assert events[-4:] == [
+            ("benchmark_complete",),
+            self._api_shutdown(),
+            ("sleep", 7.0),
+            ("shutdown_all", ()),
+        ]
+        system_controller.comms.stop.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cancelled_reporting_still_retires_the_api_without_holding(
         self,
         system_controller: SystemController,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """API startup failure: _api_enabled is True but no service ever registered."""
+        """Cancellation must not strand the API process it kept alive for export."""
+        system_controller._api_enabled = True
+        self._register_api_service(system_controller)
+        monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
+
+        with pytest.raises(asyncio.CancelledError):
+            await self._drive_stop(
+                system_controller,
+                monkeypatch,
+                report_error=asyncio.CancelledError(),
+            )
+
+        assert self.events[-3:] == [
+            ("export",),
+            self._api_shutdown(),
+            ("shutdown_all", ()),
+        ]
+        assert ("benchmark_complete",) not in self.events
+        system_controller.comms.stop.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "state",
+        [
+            param(LifecycleState.FAILED, id="api-failed"),
+            param(LifecycleState.STOPPED, id="api-stopped"),
+        ],
+    )  # fmt: skip
+    async def test_dead_api_is_retired_without_the_grace_hold(
+        self,
+        system_controller: SystemController,
+        monkeypatch: pytest.MonkeyPatch,
+        state: LifecycleState,
+    ) -> None:
+        system_controller._api_enabled = True
+        self._register_api_service(system_controller, state)
+        monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
+
+        events = await self._drive_stop(system_controller, monkeypatch)
+
+        assert events[-2:] == [("sleep", 0.5), ("shutdown_all", ())]
+
+    @pytest.mark.asyncio
+    async def test_api_that_never_registered_is_still_reaped(
+        self,
+        system_controller: SystemController,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """API startup failure: no SHUTDOWN target, but its process is still joined."""
         system_controller._api_enabled = True
         system_controller.service_manager.service_map = {}
         monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
-        sleeps = await self._drive_stop(system_controller, monkeypatch)
-        assert sleeps[0] == 0.5
 
-    @pytest.mark.asyncio
-    async def test_skips_grace_when_api_failed(
-        self,
-        system_controller: SystemController,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """API registered but transitioned to FAILED: grace serves no one, skip it."""
-        system_controller._api_enabled = True
-        self._register_api_service(system_controller, LifecycleState.FAILED)
-        monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
-        sleeps = await self._drive_stop(system_controller, monkeypatch)
-        assert sleeps[0] == 0.5
+        events = await self._drive_stop(system_controller, monkeypatch)
 
-    @pytest.mark.asyncio
-    async def test_skips_grace_when_api_stopped(
-        self,
-        system_controller: SystemController,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """API registered but transitioned to STOPPED before shutdown: skip grace."""
-        system_controller._api_enabled = True
-        self._register_api_service(system_controller, LifecycleState.STOPPED)
-        monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
-        sleeps = await self._drive_stop(system_controller, monkeypatch)
-        assert sleeps[0] == 0.5
+        assert events[-3:] == [
+            ("broadcast", CommandType.SHUTDOWN, frozenset()),
+            ("sleep", 0.5),
+            ("shutdown_all", ()),
+        ]
 
     @staticmethod
     def _set_api_process_liveness(controller: SystemController, alive: bool) -> None:
@@ -1064,39 +1198,34 @@ class TestShutdownDeliveryGrace:
         controller.service_manager.multi_process_info = [rec]
 
     @pytest.mark.asyncio
-    async def test_skips_grace_when_api_process_dead_despite_running_state(
+    @pytest.mark.parametrize(
+        ("alive", "expected_hold"),
+        [
+            param(True, 7.0, id="process-alive"),
+            param(False, 0.5, id="process-dead-despite-running-state"),
+        ],
+    )  # fmt: skip
+    async def test_hold_follows_api_process_liveness(
         self,
         system_controller: SystemController,
         monkeypatch: pytest.MonkeyPatch,
+        alive: bool,
+        expected_hold: float,
     ) -> None:
-        """API process exited but service_map state stayed at RUNNING.
+        """service_map stays frozen at RUNNING after the API exits.
 
         BaseComponentService._on_state_change suppresses StatusUpdate sends
-        once stop_requested is set, so the controller's view of the API service
-        state is frozen at RUNNING even after the API process self-stopped,
-        crashed, or transitioned to FAILED. Cross-check process.is_alive() so
-        we do not extend the grace on a dead listener.
+        once stop_requested is set, so process.is_alive() is the authoritative
+        signal on the multiprocess backend.
         """
         system_controller._api_enabled = True
         self._register_api_service(system_controller, LifecycleState.RUNNING)
-        self._set_api_process_liveness(system_controller, alive=False)
+        self._set_api_process_liveness(system_controller, alive=alive)
         monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
-        sleeps = await self._drive_stop(system_controller, monkeypatch)
-        assert sleeps[0] == 0.5
 
-    @pytest.mark.asyncio
-    async def test_extends_grace_when_api_process_alive_and_running(
-        self,
-        system_controller: SystemController,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """API service RUNNING and process is alive: extend grace as before."""
-        system_controller._api_enabled = True
-        self._register_api_service(system_controller, LifecycleState.RUNNING)
-        self._set_api_process_liveness(system_controller, alive=True)
-        monkeypatch.setattr(Environment.API_SERVER, "POST_COMPLETE_GRACE", 7.0)
-        sleeps = await self._drive_stop(system_controller, monkeypatch)
-        assert sleeps[0] == 7.0
+        events = await self._drive_stop(system_controller, monkeypatch)
+
+        assert events[-2:] == [("sleep", expected_hold), ("shutdown_all", ())]
 
 
 class TestFailureShutdownTimeoutStaysFinite:

@@ -357,9 +357,10 @@ class FastAPIService(BaseComponentService):
         design: the listener goes away a few seconds after the run ends, which
         is shorter than the operator's monitor interval, so the operator loses
         the endpoint between two polls and the AIPerfJob never leaves its
-        pre-terminal phase. Every other run type still stops on the broadcast,
-        keeping ``Environment.API_SERVER.POST_COMPLETE_GRACE`` (607977c1a7,
-        DYN-701) exactly as it behaves today -- the two mechanisms solve the
+        pre-terminal phase. Every other run type still stops on the SHUTDOWN
+        the controller sends once results are published, keeping
+        ``Environment.API_SERVER.POST_COMPLETE_GRACE`` (607977c1a7, DYN-701) as
+        the window clients have to observe them -- the two mechanisms solve the
         same problem and must not both run.
 
         This is an override of the base predicate rather than a second

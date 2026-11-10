@@ -29,6 +29,32 @@ The router classes that back these routes live under [`src/aiperf/api/routers/`]
 | `GET` | `/readyz` | `text/plain` (`ok` / `not ready`) | Kubernetes readiness probe. 200 only when the service is `RUNNING`. |
 | `GET` | `/docs`, `/redoc`, `/openapi.json` | (FastAPI defaults) | Auto-generated OpenAPI documentation. |
 
+## Results lifetime
+
+The listener outlives the benchmark itself. At the end of a run the controller stops every other service, exports the results, commits `.aiperf_results_ready.json`, and announces completion. Only after that does it retire the API. From then on the listener stays open for `AIPERF_API_SERVER_POST_COMPLETE_GRACE` seconds (default `5.0`), so a client polling `/api/results` sees `complete` (or `cancelled`) and can list and download the artifacts before the connection is refused.
+
+```mermaid
+sequenceDiagram
+    participant C as SystemController
+    participant S as Other services
+    participant A as API service
+    participant P as Polling client
+    C->>S: SHUTDOWN (API excluded)
+    S-->>C: exit
+    C->>C: export results, write .aiperf_results_ready.json
+    C->>A: BenchmarkComplete
+    P->>A: GET /api/results -> complete
+    P->>A: GET /api/results/list, /api/results/files/...
+    C->>A: SHUTDOWN
+    Note over A: listener held for POST_COMPLETE_GRACE
+    A-->>C: exit
+```
+
+- `/api/results` reports `running` until the completion announcement, even if the final metrics arrived earlier, so `complete` always means the files are on disk.
+- `/api/results/list` and `/api/results/files/{filename}` withhold top-level artifacts until the ready marker commits. Checkpoint artifacts under `checkpoints/` are exempt.
+- `AIPERF_API_SERVER_POST_COMPLETE_GRACE=0` closes the listener as soon as the results are published, so a polling client may never observe the terminal status.
+- Under Kubernetes the API ignores the controller's shutdown and keeps serving until `POST /api/shutdown`.
+
 ## Breaking change: `/api/progress` `phases` keys
 
 `ProgressResponse.phases` is keyed by each phase's concrete name (`CombinedPhaseStats.phase_name`), falling back to the plain `CreditPhase` value (e.g. `"profiling"`) only when the phase has no explicit name. Prior releases keyed this dict by the closed `CreditPhase` enum, so `progress["phases"]["profiling"]` was always a valid lookup. DAG/multi-instance phases now carry user-assigned names, so that fixed lookup can silently miss. Consumers should iterate `phases.values()` and match on each entry's `phase` field instead of indexing by a hardcoded `CreditPhase` string.

@@ -221,12 +221,13 @@ class _APIServerSettings(BaseSettings):
         ge=0.0,
         le=300.0,
         default=5.0,
-        description="Seconds the API listener stays open after a benchmark terminates "
-        "so polling clients can observe the final status before the server shuts down. "
-        "Set to 0 to skip the grace window and shut down immediately. Not used under "
-        "ServiceRunType.KUBERNETES, where the controller pod outlives its benchmark and "
-        "is retired explicitly via POST /api/shutdown instead -- see "
-        "FastAPIService._on_shutdown_command. A fixed window there is shorter than the "
+        description="Seconds the API listener stays open after the benchmark's final results "
+        "are published (exported, marked ready, and reported as complete/cancelled on "
+        "/api/results) so polling clients can observe and download them before the server "
+        "shuts down. Set to 0 to close the listener as soon as the results are published. "
+        "Not used under ServiceRunType.KUBERNETES, where the controller pod outlives its "
+        "benchmark and is retired explicitly via POST /api/shutdown instead -- see "
+        "FastAPIService._defers_broadcast_shutdown. A fixed window there is shorter than the "
         "operator's monitor interval and strands the AIPerfJob in a pre-terminal phase.",
     )
     WEBSOCKET_MAX_CONNECTIONS: int = Field(
