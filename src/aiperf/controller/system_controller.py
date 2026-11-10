@@ -2493,14 +2493,28 @@ class SystemController(
         if not self._api_enabled or not api_ids:
             return
         service_ids = sorted(api_ids)
+        payload = {
+            "was_cancelled": self._was_cancelled,
+            "results_settled": self._results_settled(),
+        }
         responses = await self._send_control_command_to_all(
             CommandType.BENCHMARK_COMPLETE,
             service_ids,
-            payload=orjson.dumps({"was_cancelled": self._was_cancelled}),
+            payload=orjson.dumps(payload),
             timeout=Environment.API_SERVER.COMPLETE_ACK_TIMEOUT,
         )
         for service_id, response in zip(service_ids, responses, strict=True):
             self._log_benchmark_complete_reply(service_id, response)
+
+    def _results_settled(self) -> bool:
+        """Whether no further final-results message can reach the API.
+
+        Locally ``shutdown_all_services`` has joined RecordsManager before the
+        handshake, so whatever it published has already arrived. Under
+        Kubernetes it runs in a sibling container the controller does not wait
+        on, and its final results may still be in flight.
+        """
+        return not self._is_kubernetes()
 
     def _log_benchmark_complete_reply(
         self, service_id: str, response: CommandResponse | ErrorDetails
@@ -2510,9 +2524,14 @@ class SystemController(
             reply = orjson.loads(response.payload) if response.payload else {}
             if not reply.get("has_final_results", False):
                 status = "cancelled" if self._was_cancelled else "incomplete"
+                when = (
+                    "now"
+                    if self._results_settled()
+                    else "once its wait for late final results lapses"
+                )
                 self.warning(
                     f"API '{service_id}' holds the terminal state but not the final "
-                    f"results; /api/results will report '{status}'"
+                    f"results; /api/results will report '{status}' {when}"
                 )
                 return
             self.info(f"API '{service_id}' confirmed the run's terminal state")

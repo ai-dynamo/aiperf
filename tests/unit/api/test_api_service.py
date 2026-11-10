@@ -827,6 +827,22 @@ class TestBenchmarkCompleteHandler:
         assert results._benchmark_complete is True
         assert results._benchmark_complete_was_cancelled is was_cancelled
 
+    @pytest.mark.parametrize(
+        ("payload", "expected"),
+        [
+            param({"was_cancelled": False, "results_settled": True}, True, id="settled"),
+            param({"was_cancelled": False, "results_settled": False}, False, id="not-settled"),
+            param({"was_cancelled": False}, False, id="absent-means-not-settled"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.asyncio
+    async def test_command_passes_results_settled_to_the_router(
+        self, mock_fastapi_service: FastAPIService, payload: dict, expected: bool
+    ) -> None:
+        await mock_fastapi_service._on_benchmark_complete(self._command(payload))
+
+        assert mock_fastapi_service._routers["results"]._results_settled is expected
+
     @pytest.mark.asyncio
     async def test_reply_reports_whether_final_results_are_held(
         self, mock_fastapi_service: FastAPIService

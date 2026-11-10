@@ -53,7 +53,7 @@ sequenceDiagram
 
 - `/api/results` reports `running` until the controller's completion command arrives, even if the final metrics arrived earlier, so `complete` always means the files are on disk.
 - `/api/results/list` and `/api/results/files/{filename}` withhold top-level artifacts until the ready marker commits. Checkpoint artifacts under `checkpoints/` are exempt.
-- The controller waits up to `AIPERF_API_SERVER_COMPLETE_ACK_TIMEOUT` seconds (default `5.0`) for the API's confirmation. On a timeout or error it logs a warning and retires the API anyway. It also warns when the API has the terminal state but not the final metrics, in which case `/api/results` reports `incomplete` (or `cancelled`).
+- The controller waits up to `AIPERF_API_SERVER_COMPLETE_ACK_TIMEOUT` seconds (default `5.0`) for the API's confirmation. On a timeout or error it logs a warning and retires the API anyway. It also warns when the API has the terminal state but not the final metrics (for example, RecordsManager died), in which case `/api/results` reports `incomplete` (or `cancelled`). On a local run that status is reported at once, because the controller has already stopped RecordsManager and no late results can arrive. Under Kubernetes the API first waits up to 10 seconds for RecordsManager's final results, which may still be in flight from its own container.
 - `AIPERF_API_SERVER_POST_COMPLETE_GRACE=0` closes the listener right after the API confirms the terminal state. The state is always set before the listener starts closing, but a polling client may never get a request in.
 - Under Kubernetes the API ignores the controller's shutdown and keeps serving until `POST /api/shutdown`.
 

@@ -30,7 +30,7 @@ from aiperf.common.enums import CommandType, LifecycleState, ServiceRegistration
 from aiperf.common.environment import Environment
 from aiperf.common.models import ErrorDetails
 from aiperf.controller.system_controller import SystemController
-from aiperf.plugin.enums import ServiceType
+from aiperf.plugin.enums import ServiceRunType, ServiceType
 
 API_ID = "api"
 
@@ -59,12 +59,22 @@ def _ok(*, has_final_results: bool) -> CommandOk:
     )
 
 
-def _announcer(*, api_enabled: bool = True, was_cancelled: bool = False, reply=None):
+def _announcer(
+    *,
+    api_enabled: bool = True,
+    was_cancelled: bool = False,
+    reply=None,
+    kubernetes: bool = False,
+):
     """A controller whose control channel answers BENCHMARK_COMPLETE with ``reply``."""
     ctrl = SystemController.__new__(SystemController)
     ctrl._api_enabled = api_enabled
     ctrl._was_cancelled = was_cancelled
     ctrl.service_id = "system_controller"
+    ctrl.run = MagicMock()
+    ctrl.run.cfg.runtime.service_run_type = (
+        ServiceRunType.KUBERNETES if kubernetes else ServiceRunType.MULTIPROCESSING
+    )
     ctrl.warning = MagicMock()
     ctrl.info = MagicMock()
     ctrl._send_control_command_to_all = AsyncMock(
@@ -102,25 +112,37 @@ class TestApiLivenessUnderKubernetes:
 class TestBenchmarkCompleteHandshake:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        "was_cancelled",
+        ("was_cancelled", "kubernetes", "settled"),
         [
-            param(False, id="completed"),
-            param(True, id="cancelled"),
+            param(False, False, True, id="completed-local"),
+            param(True, False, True, id="cancelled-local"),
+            param(False, True, False, id="completed-kubernetes"),
         ],
     )  # fmt: skip
     async def test_terminal_state_is_sent_to_the_api_and_awaited(
-        self, was_cancelled: bool, monkeypatch: pytest.MonkeyPatch
+        self,
+        was_cancelled: bool,
+        kubernetes: bool,
+        settled: bool,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """Without this the results endpoint never completes and shutdown 409s."""
+        """Without this the results endpoint never completes and shutdown 409s.
+
+        ``results_settled`` is true only where the controller has joined
+        RecordsManager before the handshake (local); under Kubernetes its final
+        results may still be in flight.
+        """
         monkeypatch.setattr(Environment.API_SERVER, "COMPLETE_ACK_TIMEOUT", 3.0)
-        ctrl = _announcer(was_cancelled=was_cancelled)
+        ctrl = _announcer(was_cancelled=was_cancelled, kubernetes=kubernetes)
 
         await ctrl._announce_benchmark_complete({API_ID})
 
         ctrl._send_control_command_to_all.assert_awaited_once_with(
             CommandType.BENCHMARK_COMPLETE,
             [API_ID],
-            payload=orjson.dumps({"was_cancelled": was_cancelled}),
+            payload=orjson.dumps(
+                {"was_cancelled": was_cancelled, "results_settled": settled}
+            ),
             timeout=3.0,
         )
         ctrl.warning.assert_not_called()
@@ -147,17 +169,21 @@ class TestBenchmarkCompleteHandshake:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("was_cancelled", "reported"),
+        ("was_cancelled", "kubernetes", "expected"),
         [
-            param(False, "'incomplete'", id="completed-run"),
-            param(True, "'cancelled'", id="cancelled-run"),
+            param(False, False, "will report 'incomplete' now", id="completed-local"),
+            param(True, False, "will report 'cancelled' now", id="cancelled-local"),
+            param(True, True, "will report 'cancelled' once its wait for late final results lapses", id="cancelled-kubernetes"),
         ],
     )  # fmt: skip
     async def test_missing_final_results_warns_with_the_status_clients_will_see(
-        self, was_cancelled: bool, reported: str
+        self, was_cancelled: bool, kubernetes: bool, expected: str
     ) -> None:
+        """The warning must describe what a client polling within the hold sees."""
         ctrl = _announcer(
-            was_cancelled=was_cancelled, reply=_ok(has_final_results=False)
+            was_cancelled=was_cancelled,
+            reply=_ok(has_final_results=False),
+            kubernetes=kubernetes,
         )
 
         await ctrl._announce_benchmark_complete({API_ID})
@@ -165,7 +191,7 @@ class TestBenchmarkCompleteHandshake:
         ctrl.warning.assert_called_once()
         message = ctrl.warning.call_args.args[0]
         assert "not the final results" in message
-        assert reported in message
+        assert message.endswith(expected)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

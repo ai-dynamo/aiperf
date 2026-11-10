@@ -266,6 +266,46 @@ class TestResultsCompleteWithoutFinalResults:
         assert data["status"] != "running"
         assert data["results"] is None
 
+    @pytest.mark.parametrize(
+        "was_cancelled,expected_status",
+        [
+            param(False, "incomplete", id="not-cancelled"),
+            param(True, "cancelled", id="was-cancelled"),
+        ],
+    )  # fmt: skip
+    def test_settled_results_report_terminal_status_without_waiting(
+        self,
+        results_client: TestClient,
+        results_router: ResultsRouter,
+        was_cancelled: bool,
+        expected_status: str,
+    ) -> None:
+        """The controller already joined RecordsManager, so nothing can still arrive.
+
+        Waiting here would outlast the listener's POST_COMPLETE_GRACE hold and
+        the client would never see a terminal status.
+        """
+        results_router._final_results = None
+        results_router.mark_benchmark_complete(
+            was_cancelled=was_cancelled, results_settled=True
+        )
+
+        data = results_client.get("/api/results").json()
+
+        assert data["status"] == expected_status
+        assert data["results"] is None
+
+    def test_unsettled_results_still_wait_for_late_final_results(
+        self, results_client: TestClient, results_router: ResultsRouter
+    ) -> None:
+        """Kubernetes: RecordsManager's final results may still be in flight."""
+        results_router._final_results = None
+        results_router.mark_benchmark_complete(
+            was_cancelled=True, results_settled=False
+        )
+
+        assert results_client.get("/api/results").json()["status"] == "running"
+
 
 class TestResultsUploadEndpoint:
     def test_commit_uploaded_file_skips_fsync_on_windows(
@@ -719,6 +759,7 @@ class TestFinalResultsHandler:
         assert results_router._benchmark_complete_was_cancelled == was_cancelled
         assert results_router._benchmark_complete_at is not None
         assert before <= results_router._benchmark_complete_at <= after
+        assert results_router._results_settled is False
 
     @pytest.mark.asyncio
     async def test_on_process_all_results_accepts_optional_summary_payloads(

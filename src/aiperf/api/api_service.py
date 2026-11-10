@@ -357,16 +357,20 @@ class FastAPIService(BaseComponentService):
 
         A command rather than a bus message so the controller holds proof the
         API serves the terminal status before it retires the API: the reply is
-        sent only after the state is set. ``has_final_results`` tells the
-        controller whether ``/api/results`` reports complete or, lacking the
-        RecordsManager's unified results, falls back to incomplete.
+        sent only after the state is set. ``results_settled`` in the payload
+        means the controller has joined the result producers, so missing final
+        results are reported at once instead of after a wait for stragglers.
+        ``has_final_results`` tells the controller whether ``/api/results``
+        reports complete or, lacking the RecordsManager's unified results,
+        falls back to incomplete.
         """
         payload = orjson.loads(message.payload) if message.payload else {}
         results = cast("ResultsRouter | None", self._routers.get("results"))
         if results is None:
             return {"has_final_results": False}
         has_final_results = results.mark_benchmark_complete(
-            was_cancelled=bool(payload.get("was_cancelled", False))
+            was_cancelled=bool(payload.get("was_cancelled", False)),
+            results_settled=bool(payload.get("results_settled", False)),
         )
         return {"has_final_results": has_final_results}
 

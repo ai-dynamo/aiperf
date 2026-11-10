@@ -49,7 +49,9 @@ results_router = APIRouter(tags=["Results"])
 # RecordsManager dies/is reaped between those two steps, that message never
 # arrives even though SystemController still announces BENCHMARK_COMPLETE
 # unconditionally during teardown. Without this bound, /api/results would
-# report RUNNING forever.
+# report RUNNING forever. Skipped when the controller reports the results
+# settled: it has already joined RecordsManager, so nothing can still arrive,
+# and waiting would outlast the listener's POST_COMPLETE_GRACE hold.
 _FINAL_RESULTS_GRACE_SEC: float = 10.0
 
 
@@ -86,6 +88,7 @@ class ResultsRouter(MessageBusClientMixin, BaseRouter):
         self._benchmark_complete: bool = False
         self._benchmark_complete_was_cancelled: bool = False
         self._benchmark_complete_at: float | None = None
+        self._results_settled: bool = False
 
     def get_router(self) -> APIRouter:
         return results_router
@@ -94,17 +97,24 @@ class ResultsRouter(MessageBusClientMixin, BaseRouter):
     async def _on_process_all_results(self, message: ProcessAllResultsMessage) -> None:
         self._final_results = message.results
 
-    def mark_benchmark_complete(self, *, was_cancelled: bool) -> bool:
+    def mark_benchmark_complete(
+        self, *, was_cancelled: bool, results_settled: bool = False
+    ) -> bool:
         """Record the run's terminal state; return whether final results are held.
 
         Called by the API service's ``BENCHMARK_COMPLETE`` command handler, which
         the controller sends only after every result file is exported and the
         ready marker committed. Only now is "complete" reported to external
         consumers, so they can safely fetch all result files.
+
+        ``results_settled`` means the controller has already joined the result
+        producers, so missing final results will never arrive and the terminal
+        status is reported without the ``_FINAL_RESULTS_GRACE_SEC`` wait.
         """
         self._benchmark_complete = True
         self._benchmark_complete_was_cancelled = was_cancelled
         self._benchmark_complete_at = time.monotonic()
+        self._results_settled = results_settled
         return self._final_results is not None
 
 
@@ -132,7 +142,7 @@ async def get_results(component: ResultsDep) -> BenchmarkResultsResponse:
         return BenchmarkResultsResponse(status=BenchmarkStatus.RUNNING)
 
     elapsed = time.monotonic() - (component._benchmark_complete_at or 0.0)
-    if elapsed < _FINAL_RESULTS_GRACE_SEC:
+    if not component._results_settled and elapsed < _FINAL_RESULTS_GRACE_SEC:
         # BENCHMARK_COMPLETE and PROCESS_ALL_RESULTS come from different
         # services with no ordering guarantee between them; give the unified
         # results message a bounded window to still show up.
