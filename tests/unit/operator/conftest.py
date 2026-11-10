@@ -84,6 +84,35 @@ def _restore_reloaded_operator_modules():
             module.OperatorEnvironment = original_singleton
 
 
+@pytest.fixture(autouse=True)
+def _restore_reloaded_operator_main_registry_bindings():
+    """Undo ``importlib.reload`` side effects that strand kopf handler refs.
+
+    The timer-override test reloads ``aiperf.operator.main`` to re-materialize
+    its kopf registrations against a patched environment. Reload re-executes
+    the module, rebinding every function defined in it — ``owns_namespace``
+    and the handler callables included — to brand-new objects *in place*. The
+    global default registry is left untouched (registration is redirected to
+    throwaway registries), but it keeps holding the *original* function
+    objects, so a later test in the same process that asserts handler identity
+    against the module — ``handler.fn is operator_main.cleanup_old_sweeps`` or
+    ``handler.when is operator_main.owns_namespace`` — sees every handler as a
+    stranger and fails purely by execution order.
+
+    Snapshots the registry-referenced bindings before each test and restores
+    them after; see ``tests.harness.operator`` for the snapshot/restore
+    helpers and their order-independence regression test.
+    """
+    from tests.harness.operator import (
+        restore_operator_main_registry_bindings,
+        snapshot_operator_main_registry_bindings,
+    )
+
+    snapshot = snapshot_operator_main_registry_bindings()
+    yield
+    restore_operator_main_registry_bindings(snapshot)
+
+
 # =============================================================================
 # Kubernetes Resource Body Fixtures
 # =============================================================================

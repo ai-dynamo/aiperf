@@ -11,7 +11,7 @@ allow-direct-references = true
 
 [project]
 name = "aiperf"
-version = "0.13.0"
+version = "0.14.0"
 description = "AIPerf is a package for performance testing of AI models"
 readme = "README.md"
 license = {text = "Apache-2.0"}
@@ -22,11 +22,11 @@ authors = [
 requires-python = ">=3.11,<3.14"
 dependencies = [
   "aiofiles~=24.1.0",
-  "aiohttp>=3.14.3,<4",
+  "aiohttp>=3.14.4,<4",
   "cyclopts>=4,<5",
   "fastapi>=0.115,<1",
   "ffmpeg-python~=0.2.0",
-  "filelock>=3.13", # Cross-process populate lock for the mmap dataset cache
+  "filelock>=4.2.1", # Cross-process populate lock for the mmap dataset cache
   # datasets pulls pyarrow (its Arrow core), which has no Windows-on-ARM wheel
   # (apache/arrow#47195). Excluded on win_arm64 so the base install works there;
   # HF-backed --public-dataset is gated on that platform, but synthetic /
@@ -43,7 +43,7 @@ dependencies = [
   "optuna>=3.6",
   "orjson~=3.11.7",
   "pandas~=2.3.3",
-  "pillow~=12.2.0",
+  "pillow~=13.0.0",
   "plotly~=6.4.0",
   "dash~=3.1.0",
   "dash-bootstrap-components~=2.0.0",
@@ -65,7 +65,7 @@ dependencies = [
   "setproctitle~=1.3.6",
   "soundfile~=0.13.1",
   "starlette-compress>=1.0.1",
-  "textual~=5.3.0",
+  "textual~=6.2.0",
   "tiktoken>=0.7.0,<1",
   "tqdm>=4.67.1",
   "transformers>=4.56.0", # Lowest compatible version for dynamo backends
@@ -76,6 +76,7 @@ dependencies = [
   "kopf>=1.42.0",
   "aiosqlite>=0.19.0",
   "python-multipart>=0.0.22",
+  "packaging>=23.0",
 ]
 
 # CLI Entrypoints
@@ -95,7 +96,7 @@ tdigest = [
   "crick~=0.0.8",
 ]
 mlflow = [
-  "mlflow>=3.10.0,<4.0.0",
+  "mlflow>=3.17.2,<4.0.0",
 ]
 wandb = [
   "wandb>=0.19.0,<1.0.0",
@@ -125,7 +126,7 @@ test = [
   "jsonschema>=4.0.0",
   "looptime>=0.5",
   "pytest>=7.0.0",
-  "pytest-asyncio",
+  "pytest-asyncio>=1.4.0",
   "pytest-cov",
   "pytest-rerunfailures>=15.0",
   "pytest-timeout>=2.0.0",
@@ -187,6 +188,9 @@ required-environments = [
   "sys_platform == 'linux' and platform_machine == 'aarch64'",
   "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
+# lighteval 0.13.0 (its latest release) pins nltk==3.9.1 exactly; lighteval main
+# already pins nltk==3.10.4. Drop this override once a lighteval release ships it.
+override-dependencies = ["nltk==3.10.4"]
 
 [tool.uv.sources]
 torch = { index = "pytorch-cpu" }

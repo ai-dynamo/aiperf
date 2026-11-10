@@ -11,6 +11,7 @@ import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,11 @@ _logger = logging.getLogger(__name__)
 
 BUILTIN_TOKENIZER_NAME = "builtin"
 _BUILTIN_ENCODING = "o200k_base"
+# SentencePiece space marker, byte-level BPE space marker, literal space.
+_WORD_START_MARKERS = ("▁", "Ġ", " ")
+# A bare marker ("") or whitespace after it, as spelled in vocab pieces;
+# byte-level BPE writes newline/tab as Ċ/ĉ.
+_NOT_WORD_START_SECOND_CHARS = frozenset(["", *"▁Ġ Ċĉ\t\n\r"])
 # tiktoken encoding names that should be routed through tiktoken, not HF.
 # "gpt2" is excluded because it's also a valid HF model name.
 TIKTOKEN_ENCODING_NAMES = frozenset(
@@ -291,6 +297,25 @@ def _is_tiktoken_cached(name: str) -> bool:
     return Path(cache_dir, cache_key).is_file()
 
 
+def _is_local_path(name: str) -> bool:
+    """Whether *name* names a local tokenizer path rather than an HF repo id.
+
+    Shared by alias resolution (parent process) and offline snapshot
+    resolution (worker processes) so both treat the same names as local.
+    ``path.is_dir()`` mirrors transformers, which loads any existing directory
+    before consulting the hub, so a bare ``tok`` or ``models/tok`` in the CWD
+    resolves the same way in both places.
+
+    ``path.anchor`` is used instead of ``path.is_absolute()`` because the
+    latter requires a drive letter on Windows
+    (``WindowsPath("/home/user/foo").is_absolute() == False``; pinned by
+    ``test_resolve_alias_treats_posix_absolute_path_as_local``). Anchor is
+    truthy for any path with a drive and/or root.
+    """
+    path = Path(name)
+    return bool(path.anchor) or name.startswith(("./", "../")) or path.is_dir()
+
+
 def resolve_alias(name: str) -> AliasResolutionResult:
     """Resolve a tokenizer name alias to its canonical repository ID.
 
@@ -304,21 +329,7 @@ def resolve_alias(name: str) -> AliasResolutionResult:
     Returns:
         AliasResolutionResult with resolved name and any suggestions.
     """
-    # Check if this looks like a local path. Use ``path.anchor`` instead of
-    # ``path.is_absolute()`` because the latter requires a drive letter on
-    # Windows (``WindowsPath("/home/user/foo").is_absolute() == False``;
-    # pinned by ``test_resolve_alias_treats_posix_absolute_path_as_local``).
-    # Anchor is truthy for any path with a drive AND/OR root, so a POSIX-style
-    # absolute path passed on Windows is correctly recognized as local.
-    path = Path(name)
-    is_local_path = (
-        bool(path.anchor)
-        or name.startswith("./")
-        or name.startswith("../")
-        or path.is_dir()
-    )
-
-    if is_local_path or _is_offline_mode() or _is_hf_cached(name):
+    if _is_local_path(name) or _is_offline_mode() or _is_hf_cached(name):
         return AliasResolutionResult(resolved_name=name)
 
     # Lazy import HuggingFace Hub
@@ -459,9 +470,6 @@ class Tokenizer:
         self._resolved_name: str | None = None
         self._call_args = {"add_special_tokens": False}
         self._encode_args = {"add_special_tokens": False}
-        # Prompt generation inserts BOS/EOS tokens as block separators
-        # (see PromptGenerator._build_token_sequence). Skipping special tokens
-        # during decode would silently strip those separators.
         self._decode_args = {"skip_special_tokens": False}
 
     def _require_init(self) -> None:
@@ -670,9 +678,20 @@ class Tokenizer:
         Tries the canonical repo ID first, then alias matches (e.g. ``gpt2``
         cached as ``openai-community/gpt2``). Raises ``OSError`` with a clear
         message if no local snapshot exists.
+
+        A local path is returned as-is: ``snapshot_download`` validates its
+        argument as a repo id, so an absolute path raises ``HFValidationError``
+        and a relative one misses the cache. ``_is_local_path`` is the same
+        predicate alias resolution uses, so offline workers load the directory
+        the online parent loaded.
         """
         from huggingface_hub import snapshot_download
         from huggingface_hub.errors import LocalEntryNotFoundError
+
+        if _is_local_path(name):
+            if Path(name).is_dir():
+                return name
+            raise OSError(f"Local tokenizer path '{name}' is not a directory.")
 
         candidates = [name]
         if "/" not in name:
@@ -833,18 +852,61 @@ class Tokenizer:
         self._require_init()
         return self._tokenizer.eos_token_id
 
-    @property
+    @cached_property
     def block_separation_token_id(self) -> int | None:
-        """
-        Returns BOS, EOS, or None if none are available.
+        """Return a single ordinary newline token, or None if unavailable.
+
+        BOS/EOS spellings can expand into multiple tokens when a server encodes
+        them as ordinary chat content rather than recognizing special tokens.
+        Double-newline tokens can split when followed by text.
         """
         self._require_init()
 
-        if self.bos_token_id is not None:
-            return self.bos_token_id
-        if self.eos_token_id is not None:
-            return self.eos_token_id
+        tokens = self.encode("\n")
+        if (
+            len(tokens) == 1
+            and tokens[0] not in self.all_special_ids
+            and self.decode(tokens) == "\n"
+        ):
+            return tokens[0]
         return None
+
+    @cached_property
+    def word_start_token_ids(self) -> frozenset[int] | None:
+        """Return IDs of tokens that begin a new word, or None if unknown.
+
+        A word-start token carries a leading space: the SentencePiece ``▁``
+        marker, the byte-level BPE ``Ġ`` marker, or a literal space byte for
+        tiktoken. Hash blocks that start on one re-encode to the same tokens
+        after decoding.
+
+        For vocab-based tokenizers the marker must also be followed by a
+        non-whitespace character. A bare marker or a whitespace run (``▁▁``,
+        ``ĠĊ``) merges with whitespace at the end of the previous block when
+        re-encoded, and SentencePiece decoders strip one of its spaces at the
+        start of a prompt.
+
+        Returns None when the tokenizer cannot list its vocabulary
+        (``PreTrainedTokenizerBase.get_vocab`` raises ``NotImplementedError``
+        unless a subclass overrides it), so hash blocks keep their drawn start.
+        """
+        self._require_init()
+        if isinstance(self._tokenizer, _TiktokenAdapter):
+            ranks = _tiktoken_internal(self._tokenizer._encoding, "_mergeable_ranks")
+            ids = {id_ for piece, id_ in ranks.items() if piece[:1] == b" "}
+        else:
+            try:
+                vocab = self._tokenizer.get_vocab()
+            except NotImplementedError:
+                return None
+            ids = {
+                id_
+                for piece, id_ in vocab.items()
+                if isinstance(piece, str)
+                and piece[:1] in _WORD_START_MARKERS
+                and piece[1:2] not in _NOT_WORD_START_SECOND_CHARS
+            }
+        return frozenset(ids) or None
 
     @property
     def vocab_size(self) -> int:

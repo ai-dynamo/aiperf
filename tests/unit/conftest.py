@@ -474,6 +474,27 @@ def reset_service_registry():
     ServiceRegistry.reset()
 
 
+@pytest.fixture(autouse=True)
+def isolate_fake_communication_bus(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give every test its own ``FakeCommunication`` bus.
+
+    ``FakeCommunication.shared_bus`` is class-level, and every instance
+    registers on it. A service built by one test (e.g. a ``Worker`` subscribed
+    to ``DatasetConfigured``) stays subscribed for the rest of the xdist
+    process, so a later test that publishes on the bus delivers to it. That
+    surfaced as an order-dependent failure: a dataset-manager test's
+    placeholder mmap index was opened by a ``Worker`` left over from
+    ``test_worker.py``. ``monkeypatch`` restores the attribute, so tests that
+    install their own bus via ``set_shared_bus`` still unwind cleanly.
+    """
+    from tests.harness.fake_communication import (
+        FakeCommunication,
+        FakeCommunicationBus,
+    )
+
+    monkeypatch.setattr(FakeCommunication, "shared_bus", FakeCommunicationBus())
+
+
 @pytest.fixture
 def temporary_registry() -> Generator[PluginRegistry, None, None]:
     """Fixture for isolated plugin registry testing.

@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from aiperf.common.constants import SYSTEM_PROMPT_JOIN_SEP
 from aiperf.common.models import (
     BaseResponseData,
     Image,
@@ -14,26 +13,12 @@ from aiperf.common.models import (
     ReasoningResponseData,
     RequestInfo,
     RequestRecord,
+    TextResponseData,
     ToolCallResponseData,
     Turn,
 )
 from aiperf.common.types import JsonObject
 from aiperf.endpoints.base_endpoint import BaseEndpoint
-
-
-def _prepend_system_text(prefix: str, content: Any) -> Any:
-    """Return ``content`` with ``prefix`` prepended, preserving its shape.
-
-    System-message content is normally a plain string, but the OpenAI schema
-    also permits a list of content parts; a raw-payload dataset may author
-    either. Returns a new object in both cases -- callers pass content that
-    aliases reusable turn state.
-    """
-    if isinstance(content, list):
-        return [{"type": "text", "text": prefix}, *content]
-    if isinstance(content, str) and content:
-        return f"{prefix}{SYSTEM_PROMPT_JOIN_SEP}{content}"
-    return prefix
 
 
 class ChatEndpoint(BaseEndpoint):
@@ -106,9 +91,8 @@ class ChatEndpoint(BaseEndpoint):
         self.trace(lambda: f"Formatted payload: {payload}")
         return payload
 
-    @staticmethod
     def _format_messages(
-        request_info: RequestInfo, rendered: list[dict[str, Any]]
+        self, request_info: RequestInfo, rendered: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
         """Build chat messages with RequestInfo-level prompts applied.
 
@@ -130,7 +114,7 @@ class ChatEndpoint(BaseEndpoint):
                 # raw_messages, which are reused across credits in a session, so
                 # an in-place edit would restack the prefix on every replay.
                 merged = dict(rendered[0])
-                merged["content"] = _prepend_system_text(
+                merged["content"] = self._prepend_system_text(
                     request_info.system_message, merged.get("content")
                 )
                 messages.append(merged)
@@ -229,6 +213,10 @@ class ChatEndpoint(BaseEndpoint):
 
         return None
 
+    def is_truncated(self, record: RequestRecord) -> bool:
+        """True when the final ``choices[0].finish_reason`` is ``"length"``."""
+        return self._choices_finish_reason_is_length(record)
+
     def process_responses(
         self,
         record: RequestRecord,
@@ -278,6 +266,30 @@ class ChatEndpoint(BaseEndpoint):
         }
         return parsed_responses, Turn(role="assistant", raw_messages=[assistant_msg])
 
+    def _allowed_empty_channels(self, json_obj: JsonObject) -> tuple[bool, bool]:
+        """Return opted-in explicit empty channels for one chat stream chunk."""
+        if (
+            not self.model_endpoint.endpoint.allow_empty_content
+            or json_obj.get("object") != "chat.completion.chunk"
+        ):
+            return False, False
+
+        choices = json_obj.get("choices")
+        if not isinstance(choices, list) or not choices:
+            return False, False
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            return False, False
+        delta = choice.get("delta")
+        if not isinstance(delta, dict):
+            return False, False
+
+        empty_output = delta.get("content") == ""
+        empty_reasoning = (
+            delta.get("reasoning_content") == "" or delta.get("reasoning") == ""
+        )
+        return empty_output, empty_reasoning
+
     def extract_chat_response_data(
         self, json_obj: JsonObject
     ) -> BaseResponseData | None:
@@ -290,6 +302,9 @@ class ChatEndpoint(BaseEndpoint):
         chunks/messages so client-side TTFT and OSL include the tokens
         the model generated for the dispatch (function name + arguments).
         Precedence is ``reasoning > content+tool_calls > tool_calls > content``.
+        With ``allow_empty_content`` enabled, explicit empty streaming strings
+        are parsed as responses. Empty text bypasses ``make_text_response_data``
+        because that generic helper intentionally excludes empty strings.
         A chunk that carries both prose ``content`` and a ``tool_calls``
         delta returns a ``ToolCallResponseData`` with both fields set
         (~18% of agentic turns) so client-side OSL counts both portions
@@ -301,6 +316,8 @@ class ChatEndpoint(BaseEndpoint):
         Returns:
             Extracted response data or None if no content
         """
+        empty_output, empty_reasoning = self._allowed_empty_channels(json_obj)
+
         match json_obj.get("object"):
             case "chat.completion":
                 data_key = "message"
@@ -314,12 +331,17 @@ class ChatEndpoint(BaseEndpoint):
                 return None
 
         choices = json_obj.get("choices")
-        if not choices:
+        if not isinstance(choices, list) or not choices:
             self.debug(lambda: f"No choices found in response: {json_obj}")
             return None
 
-        data = choices[0].get(data_key)
-        if not data:
+        choice = choices[0]
+        if not isinstance(choice, dict):
+            self.debug(lambda: f"Malformed choice found in response: {json_obj}")
+            return None
+
+        data = choice.get(data_key)
+        if not isinstance(data, dict) or not data:
             self.debug(lambda: f"No data found in response: {json_obj}")
             return None
 
@@ -358,6 +380,15 @@ class ChatEndpoint(BaseEndpoint):
 
         if content:
             return self.make_text_response_data(content)
+
+        if empty_reasoning:
+            return ReasoningResponseData(
+                content="" if empty_output else None,
+                reasoning="",
+            )
+
+        if empty_output:
+            return TextResponseData(text="")
 
         return None
 

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import orjson
+
 from aiperf.common.path_safety import safe_read_template_path
 from aiperf.config.flags._section_fields import ENDPOINT_FIELDS
 
@@ -59,6 +61,7 @@ _ENDPOINT_FIELD_MAP: dict[str, str] = {
     "url_selection_strategy": "url_strategy",
     "endpoint_type": "type",
     "streaming": "streaming",
+    "allow_empty_content": "allow_empty_content",
     "custom_endpoint": "path",
     "api_key": "api_key",
     "timeout_seconds": "timeout",
@@ -101,10 +104,13 @@ def _maybe_build_reset_kv_cache(cli: CLIConfig) -> dict[str, Any] | None:
 
 
 def _maybe_build_server_profiler(cli: CLIConfig) -> dict[str, Any] | None:
+    """Build an enabled profiler block from explicit CLI control settings."""
     ep_set = cli.model_fields_set & ENDPOINT_FIELDS
     enabled = cli.server_profiler or any(
         name in ep_set
         for name in (
+            "server_profiler_urls",
+            "server_profiler_start_body",
             "server_profiler_timeout_seconds",
             "server_profiler_start_path",
             "server_profiler_stop_path",
@@ -113,6 +119,17 @@ def _maybe_build_server_profiler(cli: CLIConfig) -> dict[str, Any] | None:
     if not enabled:
         return None
     out: dict[str, Any] = {}
+    if cli.server_profiler_urls is not None:
+        out["urls"] = [_url(url) for url in cli.server_profiler_urls]
+    if cli.server_profiler_start_body is not None:
+        try:
+            out["start_body"] = orjson.loads(cli.server_profiler_start_body)
+        except orjson.JSONDecodeError as exc:
+            raise ValueError(
+                "--server-profiler-start-body must be a JSON object"
+            ) from exc
+        if not isinstance(out["start_body"], dict):
+            raise ValueError("--server-profiler-start-body must be a JSON object")
     if cli.server_profiler_timeout_seconds is not None:
         out["timeout_seconds"] = cli.server_profiler_timeout_seconds
     if cli.server_profiler_start_path is not None:

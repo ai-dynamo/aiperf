@@ -55,8 +55,9 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.artifacts import OutputDefaults
 from aiperf.config.dataset import FileDataset, PublicDataset
 from aiperf.dataset import mmap_cache
+from aiperf.dataset.json_stream import iter_json_bytes
 from aiperf.dataset.memory_map_utils import turn_from_payload_turn
-from aiperf.dataset.utils import encode_image
+from aiperf.dataset.utils import encode_image, normalize_image_format
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
     ComposerType,
@@ -428,6 +429,7 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
 
                 def _decode_and_encode() -> str:
                     img = PILImage.open(BytesIO(data))
+                    normalize_image_format(img)
                     if img.format is None:
                         raise RuntimeError(
                             f"Failed to determine image format for URL '{url}'"
@@ -530,15 +532,19 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             await asyncio.to_thread(file_path.parent.mkdir, parents=True, exist_ok=True)
 
             model_endpoint = ModelEndpointInfo.from_run(self.run)
-            inputs = self._generate_input_payloads(model_endpoint)
 
-            async with aiofiles.open(temp_file_path, "wb") as f:
-                await f.write(
-                    orjson.dumps(
-                        inputs.model_dump(exclude_none=True, mode="json"),
-                        option=orjson.OPT_INDENT_2,
-                    )
+            inputs = await asyncio.to_thread(
+                self._generate_input_payloads, model_endpoint
+            )
+            data = {
+                "data": (
+                    session.model_dump(exclude_none=True, mode="json")
+                    for session in inputs.data
                 )
+            }
+            async with aiofiles.open(temp_file_path, "wb") as f:
+                async for chunk in iter_json_bytes(data, pretty=True):
+                    await f.write(chunk)
             temp_file_path.replace(file_path)
 
             duration = time.perf_counter() - start_time
@@ -732,6 +738,53 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
                 "dataset cache directory."
             )
 
+    def _reject_system_prompt_for_raw_payload(self, has_raw_payload: bool) -> None:
+        """Refuse a verbatim system prompt when the dataset authors its own payloads.
+
+        ``inference_client`` ships ``Turn.raw_payload`` verbatim and never calls
+        ``format_payload``, which is the only place a conversation-level
+        ``system_message`` becomes wire bytes. The prompt would therefore be
+        composed, stored, and silently never sent -- measuring prefix-cache hit
+        rate and TTFT against a system prompt the server never saw.
+
+        Two call sites compute ``has_raw_payload`` from what they have:
+
+        - The cache-miss path passes ``any(turn.raw_payload)`` over the loaded
+          conversations. ``any`` rather than ``all``: a dataset where only some
+          conversations carry ``raw_payload`` falls back to the CONVERSATION
+          mmap format and never reaches ``_select_mmap_format``'s
+          PAYLOAD_BYTES guard, but its raw turns are still dispatched verbatim.
+          Must run BEFORE ``_preformat_payloads`` -- payloads synthesized there
+          go through ``format_payload`` with ``system_message`` attached, so
+          checking afterwards cannot tell an authored ``raw_payload`` from a
+          pre-formatted one and would reject a run that works.
+        - The cache-hit path passes ``manifest.all_turns_source_loaded_payloads``.
+          Conversations are never loaded on a HIT, so this is the only signal
+          available; it is ``all`` rather than ``any``, but a mixed dataset
+          cannot be populated with a system prompt in the first place because
+          the miss path rejects it before ``mmap_cache.populate``.
+
+        ``get_system_prompt()`` (--system-prompt / --system-prompt-file) is the
+        only carrier checked because it is the only one that can coexist with
+        authored payloads. The other source of ``conversation.system_message``,
+        ``prefix_prompts.shared_system_length`` (--shared-system-prompt-length),
+        is a ``SyntheticDataset``-only field: every loader that emits
+        ``raw_payload`` is file-backed, and the CLI converter rejects the flag
+        on file/public datasets (``_FILE_DATASET_INCOMPATIBLE_TRIGGERS``).
+        """
+        if self.run.cfg.get_system_prompt() is None or not has_raw_payload:
+            return
+        raise ValueError(
+            "--system-prompt/--system-prompt-file is incompatible with a dataset "
+            "whose turns carry their own raw_payload (raw_payload, inputs_json, "
+            "and mooncake_trace in payload mode). Those payloads are sent to the "
+            "server byte-for-byte, bypassing the payload formatting that puts the "
+            "system message on the wire, so the prompt would be silently dropped. "
+            "Either author the system message directly into the trace payloads, or "
+            "use a dataset type that produces structured turns (e.g. single_turn / "
+            "multi_turn / dag_jsonl)."
+        )
+
     def _select_mmap_format(self, conversations: list[Conversation]) -> MemoryMapFormat:
         """Pick the dataset mmap format and refuse PAYLOAD_BYTES for body-mutators.
 
@@ -831,6 +884,12 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         manifest, falls back to a MISS (``_cache_hit_used`` stays False).
         """
         self._reject_body_mutators_for_payload_bytes(hit.manifest.mmap_format)
+        # Conversations are never loaded on a HIT, so the composition-path
+        # guard in _configure_dataset never runs; re-check from the manifest
+        # before adopting the cached bytes.
+        self._reject_system_prompt_for_raw_payload(
+            hit.manifest.all_turns_source_loaded_payloads
+        )
 
         run_data_path, run_index_path = self._run_mmap_paths()
         await asyncio.to_thread(
@@ -973,6 +1032,17 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             for turn in conv.turns
         )
 
+        # Same pre-preformat window as the capture above, for the same reason:
+        # once _preformat_payloads runs, a synthesized raw_payload (which does
+        # carry the system message) is indistinguishable from an authored one.
+        self._reject_system_prompt_for_raw_payload(
+            any(
+                turn.raw_payload is not None
+                for conv in conversations
+                for turn in conv.turns
+            )
+        )
+
         endpoint_meta: EndpointMetadata = plugins.get_endpoint_metadata(
             self.run.cfg.endpoint.type
         )
@@ -1071,8 +1141,6 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         Re-announcing is safe because every consumer is idempotent on the
         repeat: the WorkerGroupManager short-circuits once the dataset is
         downloaded, and a Kubernetes Worker defers to the pod-local download.
-        Restricted to Kubernetes precisely because the local-mode Worker path
-        re-opens its dataset client on each notification.
         """
         if not self._is_kubernetes_run():
             return

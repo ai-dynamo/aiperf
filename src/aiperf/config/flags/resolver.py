@@ -216,6 +216,7 @@ def _resolve_config_envelopes(
         if pre_overrides
         else copy.deepcopy(yaml_dict)
     )
+    _replace_profiler_start_body(pre_merged, _wrap_under_envelope(pre_overrides))
     base_config = AIPerfConfig.model_validate(pre_merged)
     base_dataset = base_config.benchmark.datasets[0]
 
@@ -721,6 +722,7 @@ def _merge_overrides_into_envelope(
     envelope = normalize_server_metrics_base_for_override(envelope, overrides)
     merged = deep_merge(envelope, overrides) if overrides else envelope
     _apply_control_hook_enable_overrides(merged, cli_config)
+    _replace_profiler_start_body(merged, overrides)
     _apply_dataset_overrides(
         merged,
         cli_config,
@@ -884,12 +886,13 @@ def build_cli_overrides(
     _apply_optional_section(
         out, "wandb", build_wandb(cli, base_enabled=wandb_base_enabled)
     )
-    # These three builders already existed and are used by the CLI-only
-    # converter; this path simply never called them, so --mlflow-*,
-    # --otel-url, and the network-latency flags were dropped whenever a
-    # config file was supplied. They gate on model_fields_set, so an unset
-    # flag leaves the YAML block alone.
-    _apply_optional_section(out, "network_latency", build_network_latency(cli))
+    # The CLI-only builder emits disabled defaults even when no flags were set.
+    if cli.model_fields_set & {
+        "network_latency_automatic",
+        "network_latency_mean",
+        "network_latency_ping_interval",
+    }:
+        _apply_optional_section(out, "network_latency", build_network_latency(cli))
     otel_base_url = benchmark_config is not None and bool(
         benchmark_config.otel.metrics_url
     )
@@ -1256,8 +1259,11 @@ def _apply_reset_kv_cache_override(
 def _apply_server_profiler_override(
     endpoint: dict[str, Any], cli: CLIConfig, fields_set: set[str]
 ) -> None:
+    """Apply explicit profiler CLI settings while honoring an explicit disable."""
     profiler_fields = {
         "server_profiler",
+        "server_profiler_urls",
+        "server_profiler_start_body",
         "server_profiler_start_path",
         "server_profiler_stop_path",
         "server_profiler_timeout_seconds",
@@ -1288,6 +1294,8 @@ _CONTROL_HOOK_ENABLE_FLAGS: tuple[tuple[str, str, frozenset[str]], ...] = (
         "server_profiler",
         frozenset(
             {
+                "server_profiler_urls",
+                "server_profiler_start_body",
                 "server_profiler_start_path",
                 "server_profiler_stop_path",
                 "server_profiler_timeout_seconds",
@@ -1332,6 +1340,23 @@ def _apply_control_hook_enable_overrides(
         if isinstance(current, dict) and current:
             continue
         endpoint[target_key] = True
+
+
+def _replace_profiler_start_body(
+    merged: dict[str, Any], overrides: dict[str, Any] | None
+) -> None:
+    """A CLI-authored native JSON payload replaces the YAML payload verbatim."""
+    if not overrides:
+        return
+    profiler_override = (
+        overrides.get("benchmark", {}).get("endpoint", {}).get("server_profiler")
+    )
+    if not isinstance(profiler_override, dict) or "start_body" not in profiler_override:
+        return
+    endpoint = merged["benchmark"]["endpoint"]
+    profiler = endpoint.get("server_profiler", endpoint.get("serverProfiler"))
+    profiler.pop("startBody", None)
+    profiler["start_body"] = copy.deepcopy(profiler_override["start_body"])
 
 
 def _build_model_override(cli: CLIConfig, fields_set: set[str]) -> dict[str, Any]:

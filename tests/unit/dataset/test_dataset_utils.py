@@ -42,6 +42,24 @@ class TestOpenImage:
         finally:
             Path(tmp_path).unlink()  # Clean up
 
+    def test_open_multi_picture_jpeg(self, tmp_path):
+        """Test that a JPEG carrying an MPF secondary image opens as JPEG."""
+        path = tmp_path / "photo.jpg"
+        primary = Image.new("RGB", (64, 48), color="red")
+        secondary = Image.new("RGB", (32, 24), color="blue")
+        primary.save(path, format="MPO", save_all=True, append_images=[secondary])
+        with Image.open(path) as raw:
+            assert raw.format == "MPO"
+
+        opened_img = utils.open_image(str(path))
+        assert opened_img.format == "JPEG"
+
+        encoded = utils.encode_image(opened_img, opened_img.format)
+        decoded_img = Image.open(BytesIO(base64.b64decode(encoded)))
+        assert decoded_img.format == "JPEG"
+        assert decoded_img.size == (64, 48)
+        opened_img.close()
+
     def test_open_non_existing_image(self):
         """Test that FileNotFoundError is raised for non-existing image."""
         with pytest.raises(FileNotFoundError):
@@ -74,6 +92,28 @@ class TestEncodeImage:
         assert decoded_img.size == (2, 2)
         assert decoded_img.mode == "RGB"
         assert decoded_img.format == format
+
+    def test_encode_32bit_integer_image_to_png_clips_to_16bit(self):
+        """Pillow 13 refuses to write mode ``I`` as PNG; Pillow 12 wrote it as
+        16-bit grayscale, clipping to 0..65535. Guards that a 32-bit integer
+        source still encodes, with the same clipped pixel values.
+        """
+        img = Image.new("I", (5, 1))
+        img.putdata([-5, 0, 40000, 65535, 70000])
+
+        decoded_img = Image.open(
+            BytesIO(base64.b64decode(utils.encode_image(img, "PNG")))
+        )
+
+        assert decoded_img.format == "PNG"
+        assert decoded_img.mode == "I;16"
+        assert [decoded_img.getpixel((x, 0)) for x in range(5)] == [
+            0,
+            0,
+            40000,
+            65535,
+            65535,
+        ]
 
     def test_encode_rgba_to_jpeg(self):
         """Test that RGBA image is converted to RGB for JPEG format."""

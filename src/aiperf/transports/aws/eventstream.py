@@ -33,6 +33,11 @@ if TYPE_CHECKING:
     from botocore.eventstream import EventStreamBuffer
 
 EVENTSTREAM_CONTENT_TYPE = "application/vnd.amazon.eventstream"
+# Same ASCII-only policy as SSEMessage.parse: str.strip() would also eat
+# U+0085/U+2028/U+2029 and \x0b-\x0c/\x1c-\x1f, which are content. CR is
+# included because lines split on LF alone, so CRLF leaves a trailing CR.
+_LINE_PADDING = " \t\r"
+_LINE_PADDING_BYTES = _LINE_PADDING.encode()
 
 
 class AwsEventStreamError(RuntimeError):
@@ -77,7 +82,8 @@ def _split_complete_lines(buffer: bytearray) -> tuple[list[bytes], bytearray]:
     # Emptiness is judged on the stripped form, but the line keeps its bytes:
     # ``AwsEventStreamMessage.raw_line`` is the undecoded wire content, and
     # raw-record exports must reproduce what was sent.
-    return [line for line in complete if line.strip()], bytearray(fragment)
+    lines = [line for line in complete if line.strip(_LINE_PADDING_BYTES)]
+    return lines, bytearray(fragment)
 
 
 def _strip_data_prefix(text: str) -> str:
@@ -92,7 +98,7 @@ def _strip_data_prefix(text: str) -> str:
     prompt checking the other for consistency.
     """
     if text.startswith("data:"):
-        return text[len("data:") :].strip()
+        return text[len("data:") :].strip(_LINE_PADDING)
     return text
 
 
@@ -112,7 +118,7 @@ def _stream_message_for_line(line: bytes, perf_ns: int) -> AwsEventStreamMessage
             f"AWS eventstream PayloadPart line is not valid UTF-8 "
             f"(byte {e.start}): {line[:64]!r}"
         ) from e
-    text = _strip_data_prefix(decoded.strip())
+    text = _strip_data_prefix(decoded.strip(_LINE_PADDING))
     return AwsEventStreamMessage(perf_ns=perf_ns, line=text, raw_line=bytes(line))
 
 
@@ -226,7 +232,7 @@ class AwsEventStreamReader:
                     yield _stream_message_for_line(line, chunk_perf_ns)
         # Same rule as the main loop: emptiness on the stripped form, bytes
         # as received on the message.
-        if line_buffer.strip():
+        if line_buffer.strip(_LINE_PADDING_BYTES):
             yield _stream_message_for_line(bytes(line_buffer), time.perf_counter_ns())
         if bytes_received > bytes_decoded:
             raise AwsEventStreamError(

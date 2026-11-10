@@ -31,6 +31,8 @@ and content timing for both `tool_calls` and legacy `function_call` responses,
 including streaming deltas. A function-only response does not need text in
 `content` to be counted. Any accompanying prose in `content` is counted as well.
 
+If your server or gateway requires query parameters, include them in a quoted `--url`, for example `--url 'http://localhost:8000?tag=first&tag=second'`. AIPerf preserves repeated parameter values and their order when constructing the request URL; endpoint parameters replace all existing values of the same key. An empty list value removes that key from the resulting query. Readiness probes also preserve URL queries and semicolon path parameters when adding the endpoint path, so a base path such as `/proxy;tenant=blue` becomes `/proxy;tenant=blue/v1/models` for model discovery.
+
 ### Profile with synthetic inputs
 
 Run AIPerf against the Chat Completions endpoint using synthetic inputs:
@@ -49,6 +51,30 @@ aiperf profile \
     --request-count 20
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+
+### Include explicit empty streaming responses
+
+Some OpenAI-compatible servers, including Kimi K3 deployments, can emit explicit
+empty content or reasoning strings as part of a Chat Completions stream. Enable
+their inclusion in the response timeline with:
+
+```bash
+aiperf profile \
+    --model Kimi-K3 \
+    --endpoint-type chat \
+    --endpoint /v1/chat/completions \
+    --streaming \
+    --allow-empty-content \
+    --url localhost:8000 \
+    --request-count 20
+```
+
+The flag is off by default because OpenAI-compatible servers can emit
+handshake or role metadata before generation. It admits only explicit empty
+strings in Chat Completions content or reasoning fields, not missing fields,
+`null`, or metadata. All shared response-timeline metrics change together when
+these strings are included. TTFO still waits for non-empty output, and an empty
+decoded string does not increment output-token totals.
 
 **Sample Output (Successful Run):**
 ```

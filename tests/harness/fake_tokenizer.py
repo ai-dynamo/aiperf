@@ -68,5 +68,9 @@ class FakeTokenizer:
         return None
 
     @property
-    def block_separation_token_id(self) -> int:
-        return 1
+    def block_separation_token_id(self) -> int | None:
+        return None
+
+    @property
+    def word_start_token_ids(self) -> frozenset[int] | None:
+        return None

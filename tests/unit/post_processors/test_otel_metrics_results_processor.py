@@ -671,6 +671,72 @@ class TestOTelMetricsResultsProcessor:
         assert fake_queue.closed is True
 
     @pytest.mark.asyncio
+    async def test_stop_fanout_process_child_ignoring_terminate_is_killed_and_reaped(
+        self,
+        cfg_otel_mlflow: BenchmarkConfig,
+    ) -> None:
+        class StubbornProcess:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+                self.alive = True
+
+            def join(self, timeout: float) -> None:
+                self.calls.append("join")
+
+            def is_alive(self) -> bool:
+                return self.alive
+
+            def terminate(self) -> None:
+                self.calls.append("terminate")
+
+            def kill(self) -> None:
+                self.calls.append("kill")
+                self.alive = False
+
+        processor = OTelMetricsResultsProcessor(
+            service_id="records-manager",
+            run=cfg_otel_mlflow,
+        )
+        _setup_fanout_processor(processor)
+        stubborn = StubbornProcess()
+        processor._fanout_process = stubborn
+
+        await processor._stop_fanout_process()
+
+        assert stubborn.calls == ["join", "terminate", "join", "kill", "join"]
+        assert processor._fanout_process is None
+
+    @pytest.mark.asyncio
+    async def test_stop_fanout_process_unkillable_child_keeps_its_handle(
+        self,
+        cfg_otel_mlflow: BenchmarkConfig,
+    ) -> None:
+        class ImmortalProcess:
+            def join(self, timeout: float) -> None:
+                pass
+
+            def is_alive(self) -> bool:
+                return True
+
+            def terminate(self) -> None:
+                pass
+
+            def kill(self) -> None:
+                pass
+
+        processor = OTelMetricsResultsProcessor(
+            service_id="records-manager",
+            run=cfg_otel_mlflow,
+        )
+        _setup_fanout_processor(processor)
+        immortal = ImmortalProcess()
+        processor._fanout_process = immortal
+
+        await processor._stop_fanout_process()
+
+        assert processor._fanout_process is immortal
+
+    @pytest.mark.asyncio
     async def test_on_stop_flushes_and_stops_fanout(
         self,
         cfg_otel: BenchmarkConfig,
