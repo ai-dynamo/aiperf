@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import threading
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -15,6 +16,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.environment import Environment
 from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.credit.messages import CreditReturn, FirstToken
 from aiperf.credit.structs import Credit
@@ -2124,3 +2126,120 @@ def test_error_rate_sla_fraction_style_threshold_warns(caplog) -> None:
             SLAFilter(metric_tag="error_rate", stat="avg", op="le", threshold=5.0)
         )
     assert caplog.text == ""
+
+
+async def _wait_until(predicate, *, attempts: int = 10_000) -> None:
+    for _ in range(attempts):
+        if predicate():
+            return
+        await asyncio.sleep(0)
+    raise AssertionError("condition never became true")
+
+
+@pytest.mark.asyncio
+async def test_writer_close_cancelled_mid_flush_still_writes_queued_summary(
+    tmp_path,
+) -> None:
+    """Cancellation during close() must not discard queued writes: the drain
+    keeps going and the CancelledError is re-raised only once it is empty."""
+    writer = AdaptiveScaleArtifactWriter()
+    await writer.start()
+    gate = threading.Event()
+    summary_path = tmp_path / "phases" / "profiling" / "adaptive_scale_summary.json"
+    writer._schedule_write(lambda: gate.wait(timeout=5.0))
+    writer.write_summary(summary_path, {"status": "completed"})
+
+    close_task = asyncio.create_task(writer.close())
+    await _wait_until(lambda: writer._queue is not None and writer._queue.qsize() == 1)
+    for _ in range(5):
+        await asyncio.sleep(0)
+    close_task.cancel()
+    gate.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await close_task
+
+    assert orjson.loads(summary_path.read_bytes()) == {"status": "completed"}
+    assert writer._queue is None
+    assert writer._task is None
+
+
+@pytest.mark.asyncio
+async def test_writer_close_cancelled_gives_up_after_drain_timeout(
+    tmp_path, monkeypatch
+) -> None:
+    """A wedged write cannot hold a cancelled close() open forever."""
+    monkeypatch.setattr(Environment.TIMING, "CANCEL_DRAIN_TIMEOUT", 0.05)
+    writer = AdaptiveScaleArtifactWriter()
+    await writer.start()
+    gate = threading.Event()
+    writer._schedule_write(lambda: gate.wait(timeout=5.0))
+
+    close_task = asyncio.create_task(writer.close())
+    await _wait_until(lambda: writer._queue is not None and writer._queue.empty())
+    for _ in range(5):
+        await asyncio.sleep(0)
+    close_task.cancel()
+    try:
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(close_task, timeout=2.0)
+    finally:
+        gate.set()
+    assert writer._task is None
+
+
+@pytest.mark.asyncio
+async def test_writer_close_propagates_write_error(tmp_path) -> None:
+    writer = AdaptiveScaleArtifactWriter()
+    await writer.start()
+
+    def fail() -> None:
+        raise OSError("disk full")
+
+    writer._schedule_write(fail)
+    with pytest.raises(OSError, match="disk full"):
+        await writer.close()
+
+
+@pytest.mark.asyncio
+async def test_deadline_cancel_during_finalizer_keeps_phase_stopped_summary(
+    tmp_path,
+) -> None:
+    """Regression: the phase deadline cancelled execute_phase while its finally
+    block was flushing the queued terminal event + summary; the event landed
+    but the summary was dropped and the CLI still exited 0."""
+    strategy = _strategy(tmp_path)
+    del strategy._artifacts._schedule_write  # use the real async queue
+    await strategy._artifacts.start()
+    gate = threading.Event()
+    strategy._artifacts._schedule_write(lambda: gate.wait(timeout=5.0))
+    strategy._user_strategy = MagicMock()
+    strategy._user_strategy.execute_phase = AsyncMock(return_value=None)
+
+    task = asyncio.create_task(strategy.execute_phase())
+    await _wait_until(
+        lambda: strategy._completed_reason == "phase_stopped"
+        and strategy._artifacts._queue is not None
+        and strategy._artifacts._queue.qsize() >= 2
+    )
+    for _ in range(5):
+        await asyncio.sleep(0)
+    assert not task.done()
+    task.cancel()  # what PhaseRunner's duration timeout does
+    gate.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    events = [
+        orjson.loads(line) for line in _event_path(tmp_path).read_text().splitlines()
+    ]
+    assert events[-1]["event"] == "adaptive_complete"
+    assert events[-1]["reason"] == "phase_stopped"
+    summary = orjson.loads(_summary_path(tmp_path).read_bytes())
+    assert summary["status"] == "completed"
+    assert summary["completed_reason"] == "phase_stopped"
+
+
+def test_adaptive_strategy_requires_execution_finalization() -> None:
+    assert AdaptiveScaleStrategy.requires_execution_finalization is True

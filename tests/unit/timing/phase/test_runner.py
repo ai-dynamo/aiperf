@@ -745,6 +745,66 @@ class TestSendingCompleteExecutionTaskFailure:
         assert r._lifecycle.timeout_triggered
 
 
+class TestStrategyFinalizationBarrier:
+    """The runner must not report a phase complete while an opted-in strategy's
+    execute_phase teardown is still publishing artifacts (adaptive summary)."""
+
+    @staticmethod
+    def _finalizing_strategy(*, opt_in: bool = True) -> MockStrategy:
+        strategy = MockStrategy()
+        if opt_in:
+            strategy.requires_execution_finalization = True
+        return strategy
+
+    async def test_waits_for_cancelled_task_finalizer(self, runner: PhaseRunner) -> None:
+        finalized = asyncio.Event()
+        release = asyncio.Event()
+
+        async def execute() -> None:
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await release.wait()
+                finalized.set()
+
+        runner._execution_task = runner.execute_async(execute())
+        await asyncio.sleep(0)
+        runner._execution_task.cancel()  # duration deadline
+
+        barrier = asyncio.create_task(
+            runner._await_strategy_finalization(self._finalizing_strategy())
+        )
+        await asyncio.sleep(0)
+        assert not barrier.done()
+        release.set()
+        await barrier
+        assert finalized.is_set()
+
+    async def test_reraises_strategy_failure(self, runner: PhaseRunner) -> None:
+        async def boom() -> None:
+            raise OSError("summary write failed")
+
+        runner._execution_task = runner.execute_async(boom())
+        with pytest.raises(OSError, match="summary write failed"):
+            await runner._await_strategy_finalization(self._finalizing_strategy())
+
+    async def test_not_opted_in_does_not_wait(self, runner: PhaseRunner) -> None:
+        runner._execution_task = runner.execute_async(asyncio.Event().wait())
+        await runner._await_strategy_finalization(
+            self._finalizing_strategy(opt_in=False)
+        )
+        assert not runner._execution_task.done()
+        runner._execution_task.cancel()
+
+    async def test_wedged_finalizer_is_cancelled_after_timeout(
+        self, runner: PhaseRunner, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Environment.TIMING, "CANCEL_DRAIN_TIMEOUT", 1.0)
+        runner._execution_task = runner.execute_async(asyncio.Event().wait())
+        await runner._await_strategy_finalization(self._finalizing_strategy())
+        assert runner._execution_task.cancelled()
+
+
 class TestTimeoutHandling:
     async def test_returns_false_when_event_set(
         self, runner: PhaseRunner, time_traveler: MagicMock
