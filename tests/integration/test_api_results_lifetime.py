@@ -207,7 +207,7 @@ class TestResultsApiLifetime:
         "grace",
         [
             param("1.0", id="grace-1s"),
-            param("5.0", id="grace-default-5s"),
+            param(None, id="grace-shipped-default"),
         ],
     )  # fmt: skip
     async def test_completed_run_is_observable_and_downloadable_before_listener_closes(
@@ -215,9 +215,13 @@ class TestResultsApiLifetime:
         cli: AIPerfCLI,
         mock_server_factory,
         monkeypatch: pytest.MonkeyPatch,
-        grace: str,
+        grace: str | None,
     ) -> None:
-        monkeypatch.setenv("AIPERF_API_SERVER_POST_COMPLETE_GRACE", grace)
+        """``None`` leaves the variable unset: QA hit the bug on the shipped default."""
+        if grace is None:
+            monkeypatch.delenv("AIPERF_API_SERVER_POST_COMPLETE_GRACE", raising=False)
+        else:
+            monkeypatch.setenv("AIPERF_API_SERVER_POST_COMPLETE_GRACE", grace)
         api_port = _free_port()
         poller = ResultsApiPoller(f"http://127.0.0.1:{api_port}")
 

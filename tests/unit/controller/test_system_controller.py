@@ -932,14 +932,9 @@ class TestSSLVerificationWarning:
 
 
 class TestShutdownDeliveryGrace:
-    """The API is retired after results are published, then held for POST_COMPLETE_GRACE.
-
-    Regression for NVBugs 7073234. The earlier version of these tests only
-    checked the *first* sleep's duration, with the sleeps and the service
-    shutdown mocked out, so they could not see that the grace window was spent
-    before the export it was meant to expose. These assert the order of
-    events instead: the API is excluded from the first SHUTDOWN and the first
-    ``shutdown_all_services``, and the hold happens after BenchmarkComplete.
+    """Regression for NVBugs 7073234: the API stays up through results
+    publication and the completion handshake, and its POST_COMPLETE_GRACE
+    window starts only after them.
     """
 
     API_ID = "api-1"
@@ -994,6 +989,7 @@ class TestShutdownDeliveryGrace:
         events = self.events
 
         async def fake_sleep(seconds: float) -> None:
+            """Record the sleep; optionally stand in for a cancel at that point."""
             events.append(("sleep", seconds))
             if seconds == cancel_on_sleep:
                 raise asyncio.CancelledError
@@ -1006,11 +1002,13 @@ class TestShutdownDeliveryGrace:
             return []
 
         async def fake_report() -> None:
+            """Record the export; optionally fail it."""
             events.append(("export",))
             if report_error is not None:
                 raise report_error
 
         async def fake_announce(api_ids: set[str]) -> None:
+            """Record the handshake target; optionally fail it."""
             events.append(("benchmark_complete", frozenset(api_ids)))
             if announce_error is not None:
                 raise announce_error
