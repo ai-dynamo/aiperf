@@ -108,8 +108,9 @@ class MultiProcessServiceManager(BaseServiceManager):
             process.start()
 
             self.debug(
-                lambda pid=process.pid,
-                type=service_type: f"Service {type} started as process (pid: {pid})"
+                lambda pid=process.pid, type=service_type: (
+                    f"Service {type} started as process (pid: {pid})"
+                )
             )
 
             self.multi_process_info.append(
@@ -150,10 +151,18 @@ class MultiProcessServiceManager(BaseServiceManager):
         self.debug("Stopping all service processes")
 
         deadline = time.monotonic() + Environment.SERVICE.SHUTDOWN_EXIT_TIMEOUT
-        await asyncio.gather(
-            *[self._join_until(info, deadline) for info in self.multi_process_info],
-            return_exceptions=True,
-        )
+        try:
+            await asyncio.gather(
+                *[self._join_until(info, deadline) for info in self.multi_process_info],
+                return_exceptions=True,
+            )
+        except asyncio.CancelledError:
+            # _fail cancels a stop() that outlives the controller's failure
+            # bound; that must not skip the force-kill and leave survivors.
+            for info in self.multi_process_info:
+                if info.process and info.process.is_alive():
+                    info.process.kill()
+            raise
         return await asyncio.gather(
             *[self._wait_for_process(info) for info in self.multi_process_info],
             return_exceptions=True,
