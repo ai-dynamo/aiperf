@@ -4,11 +4,15 @@
 import asyncio
 import os
 from collections import Counter
+from collections.abc import Callable
 from multiprocessing import Process
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError
 from aiperf.controller.multiprocess_service_manager import (
     MultiProcessRunInfo,
@@ -610,6 +614,123 @@ class TestWaitForProcess:
         info.process.join.assert_called_once()
         method_names = [c[0] for c in info.process.method_calls]
         assert method_names.index("kill") < method_names.index("join")
+
+
+class TestShutdownAllServicesWaitsForExit:
+    """``shutdown_all_services`` gives services time to finish their own cleanup.
+
+    A service's ``stop()`` can legitimately outlive the controller's delivery
+    grace (the records manager waits up to 6s for its telemetry child). Killing
+    it early orphans that child (NVBug 7067978), so stragglers are killed only
+    after ``SERVICE.SHUTDOWN_EXIT_TIMEOUT``.
+    """
+
+    @pytest.fixture
+    def service_manager(self, benchmark_run) -> MultiProcessServiceManager:
+        return MultiProcessServiceManager(
+            required_services={ServiceType.DATASET_MANAGER: 1},
+            run=benchmark_run,
+        )
+
+    @pytest.fixture(autouse=True)
+    def _frozen_clock(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Freeze the manager's clock so the join timeout is exactly the deadline."""
+        monkeypatch.setattr(
+            "aiperf.controller.multiprocess_service_manager.time",
+            SimpleNamespace(monotonic=lambda: 1000.0),
+        )
+
+    @staticmethod
+    def _info(process: MagicMock) -> MultiProcessRunInfo:
+        process.pid = 4242
+        return MultiProcessRunInfo.model_construct(
+            process=process,
+            service_type=ServiceType.DATASET_MANAGER,
+            service_id="svc",
+        )
+
+    @pytest.mark.asyncio
+    async def test_shutdown_all_services_service_exiting_within_deadline_is_not_killed(
+        self,
+        service_manager: MultiProcessServiceManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(Environment.SERVICE, "SHUTDOWN_EXIT_TIMEOUT", 8.0)
+        process = MagicMock(spec=Process)
+        alive = {"value": True}
+        process.is_alive.side_effect = lambda: alive["value"]
+        process.join.side_effect = lambda timeout=None: alive.update(value=False)
+        service_manager.multi_process_info = [self._info(process)]
+
+        await service_manager.shutdown_all_services()
+
+        process.kill.assert_not_called()
+        assert process.join.call_args_list[0].args[0] == 8.0
+
+    @pytest.mark.asyncio
+    async def test_shutdown_all_services_straggler_is_killed_after_deadline(
+        self,
+        service_manager: MultiProcessServiceManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(Environment.SERVICE, "SHUTDOWN_EXIT_TIMEOUT", 8.0)
+        process = MagicMock(spec=Process)
+        process.is_alive.return_value = True
+        service_manager.multi_process_info = [self._info(process)]
+
+        await service_manager.shutdown_all_services()
+
+        process.kill.assert_called_once()
+        # The straggler is given the full deadline before it is killed, and
+        # only then reaped with the short post-kill join.
+        join_timeouts = [
+            c.args[0] if c.args else c.kwargs["timeout"]
+            for c in process.join.call_args_list
+        ]
+        assert join_timeouts == [8.0, Environment.SERVICE.TASK_CANCEL_TIMEOUT_SHORT]
+        method_names = [c[0] for c in process.method_calls]
+        assert [n for n in method_names if n in ("join", "kill")] == [
+            "join",
+            "kill",
+            "join",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_shutdown_all_services_executor_queue_time_consumes_the_deadline(
+        self,
+        service_manager: MultiProcessServiceManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A join that waits for an executor thread must not get a fresh budget.
+
+        With more services than executor threads, later joins start only after
+        earlier ones finish; the remaining time has to be measured when the
+        join actually starts or the shared deadline compounds per wave.
+        """
+        monkeypatch.setattr(Environment.SERVICE, "SHUTDOWN_EXIT_TIMEOUT", 8.0)
+        clock = SimpleNamespace(now=1000.0)
+        monkeypatch.setattr(
+            "aiperf.controller.multiprocess_service_manager.time",
+            SimpleNamespace(monotonic=lambda: clock.now),
+        )
+
+        async def _queued_to_thread(
+            func: Callable[..., Any], *args: Any, **kwargs: Any
+        ) -> Any:
+            clock.now += 5.0
+            return func(*args, **kwargs)
+
+        monkeypatch.setattr(
+            "aiperf.controller.multiprocess_service_manager.asyncio.to_thread",
+            _queued_to_thread,
+        )
+        process = MagicMock(spec=Process)
+        process.is_alive.return_value = True
+        service_manager.multi_process_info = [self._info(process)]
+
+        await service_manager.shutdown_all_services()
+
+        assert process.join.call_args_list[0].args[0] == 3.0
 
 
 class TestGetServiceLiveness:
