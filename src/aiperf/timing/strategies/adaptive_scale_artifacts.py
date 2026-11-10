@@ -57,7 +57,9 @@ class AdaptiveScaleArtifactWriter:
         being torn down -- exactly when the phase runner's deadline may cancel
         the strategy task. Cancellation arriving here must not discard them:
         the drain keeps running (bounded by ``CANCEL_DRAIN_TIMEOUT``) and the
-        ``CancelledError`` is re-raised only after the queue is empty.
+        ``CancelledError`` is re-raised only after the queue is empty. A
+        recorded write error takes precedence over the cancellation so a lost
+        artifact is never reported as a plain cancel.
         """
         if self._queue is None or self._task is None:
             return
@@ -96,10 +98,10 @@ class AdaptiveScaleArtifactWriter:
                 await drain_task
             self._queue = None
             self._task = None
-        if cancelled is not None:
-            raise cancelled
         if self._write_error is not None:
             raise self._write_error
+        if cancelled is not None:
+            raise cancelled
 
     async def _drain(self) -> None:
         if self._queue is None:

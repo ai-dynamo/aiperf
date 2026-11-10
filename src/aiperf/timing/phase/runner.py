@@ -859,26 +859,32 @@ class PhaseRunner(TaskManagerMixin):
         ``execute_phase`` runs fire-and-forget and the duration deadline only
         cancels it, so without this barrier the phase (and the whole run) can
         finish while the strategy's ``finally`` block is still publishing
-        required artifacts -- adaptive scale's terminal summary was lost this
-        way. Opt-in via ``requires_execution_finalization`` (duck-typed) so
-        strategies whose ``execute_phase`` may outlive sending-complete are
-        unaffected. Bounded by ``CANCEL_DRAIN_TIMEOUT``; a non-cancellation
-        failure of the strategy task is re-raised as a phase failure.
+        required artifacts. Opt-in via ``requires_execution_finalization``
+        (duck-typed) so other strategies are unaffected.
+
+        Sending is complete, so an issuing loop that is still running (e.g.
+        user-centric pacing that is sleeping or deferring spawns) has nothing
+        left to do: it is cancelled immediately rather than waited on. Opted-in
+        strategies must keep their finalizer cancellation-safe. A task that is
+        already being cancelled (deadline) is not cancelled again, so its
+        finalizer is not interrupted. The wait is bounded by
+        ``CANCEL_DRAIN_TIMEOUT``; a non-cancellation failure of the strategy
+        task is re-raised as a phase failure.
         """
         task = self._execution_task
-        if task is None or not getattr(
-            strategy, "requires_execution_finalization", False
+        if task is None or (
+            getattr(strategy, "requires_execution_finalization", False) is not True
         ):
             return
+        if not task.done() and task.cancelling() == 0:
+            task.cancel()
         timeout = Environment.TIMING.CANCEL_DRAIN_TIMEOUT
         done, _ = await asyncio.wait({task}, timeout=timeout)
         if not done:
             self.warning(
                 f"Strategy for phase {self._config.phase} did not finish "
-                f"finalizing within {timeout}s; cancelling it"
+                f"finalizing within {timeout}s; continuing without it"
             )
-            task.cancel()
-            await asyncio.wait({task}, timeout=timeout)
             return
         if not task.cancelled() and (exc := task.exception()) is not None:
             raise exc

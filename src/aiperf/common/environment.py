@@ -1623,7 +1623,7 @@ class _TimingSettings(BaseSettings):
         ge=1.0,
         le=300.0,
         default=10.0,
-        description="Timeout in seconds for waiting for cancelled credits to drain after phase timeout",
+        description="Timeout in seconds for waiting for cancelled credits to drain after phase timeout, and for a strategy's phase finalization (e.g. flushing adaptive scale artifacts) before the phase completes",
     )
     RATE_RAMP_UPDATE_INTERVAL: float = Field(
         ge=0.01,

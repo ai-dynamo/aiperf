@@ -275,13 +275,17 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
                     )
                 raise
         finally:
-            if self._completed_reason is None:
-                self._complete_controller(reason="phase_stopped")
-            if self._assessment_task is not None:
-                self._assessment_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await self._assessment_task
-            await self._artifacts.close()
+            # The runner may cancel this task at any await below; close() must
+            # still run so the queued terminal event and summary are written.
+            try:
+                if self._completed_reason is None:
+                    self._complete_controller(reason="phase_stopped")
+                if self._assessment_task is not None:
+                    self._assessment_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await self._assessment_task
+            finally:
+                await self._artifacts.close()
 
     async def handle_credit_return(
         self, credit: Credit, *, error: str | None = None
