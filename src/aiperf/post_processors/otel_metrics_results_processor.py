@@ -363,7 +363,14 @@ class OTelMetricsResultsProcessor(BaseMetricsProcessor):
                 self.warning("OTel fanout process did not stop in time; terminating.")
                 self._fanout_process.terminate()
                 await asyncio.to_thread(self._fanout_process.join, 1.0)
-            self._fanout_process = None
+            if self._fanout_process.is_alive():
+                self.error("OTel fanout process ignored terminate; killing.")
+                self._fanout_process.kill()
+                await asyncio.to_thread(self._fanout_process.join, 1.0)
+            # An unkillable child keeps its handle so it is not silently
+            # forgotten while still holding the inherited stdout/stderr pipes.
+            if not self._fanout_process.is_alive():
+                self._fanout_process = None
 
         if self._fanout_queue is not None:
             with suppress(Exception):

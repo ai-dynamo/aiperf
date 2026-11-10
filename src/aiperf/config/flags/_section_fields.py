@@ -36,6 +36,8 @@ ENDPOINT_FIELDS: frozenset[str] = frozenset(
         "reset_kv_cache_path",
         "reset_kv_cache_timeout_seconds",
         "server_profiler",
+        "server_profiler_urls",
+        "server_profiler_start_body",
         "server_profiler_start_path",
         "server_profiler_stop_path",
         "server_profiler_timeout_seconds",

@@ -13,6 +13,7 @@ import zmq.asyncio
 from aiperf.common.enums import MessageType
 from aiperf.common.messages import ErrorMessage, Message
 from aiperf.zmq.router_reply_client import ZMQRouterReplyClient
+from tests.harness.utils import EVENT_WAIT_HANG_GUARD_S
 
 
 class TestZMQRouterReplyClientInitialization:
@@ -306,7 +307,9 @@ class TestZMQRouterReplyClientBackgroundTask:
             )
 
             # Wait for handler to be called
-            await asyncio.wait_for(handler_called.wait(), timeout=1.0)
+            await asyncio.wait_for(
+                handler_called.wait(), timeout=EVENT_WAIT_HANG_GUARD_S
+            )
 
             # Give a moment for send to complete
             await asyncio.sleep(0)
