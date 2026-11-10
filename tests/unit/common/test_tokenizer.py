@@ -134,6 +134,17 @@ class TestBuiltinTokenizer:
 
         assert tokenizer.word_start_token_ids == expected
 
+    def test_word_start_token_ids_hf_without_get_vocab_returns_none(self) -> None:
+        """PreTrainedTokenizerBase.get_vocab raises; remote-code tokenizers may not override it."""
+
+        def get_vocab() -> dict[str, int]:
+            raise NotImplementedError
+
+        tokenizer = Tokenizer()
+        tokenizer._tokenizer = SimpleNamespace(get_vocab=get_vocab)
+
+        assert tokenizer.word_start_token_ids is None
+
     def test_word_start_token_ids_hf_byte_level_matches_encoded_ids(self) -> None:
         backend = BackendTokenizer(models.BPE())
         backend.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)

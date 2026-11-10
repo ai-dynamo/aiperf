@@ -885,15 +885,23 @@ class Tokenizer:
         ``ĠĊ``) merges with whitespace at the end of the previous block when
         re-encoded, and SentencePiece decoders strip one of its spaces at the
         start of a prompt.
+
+        Returns None when the tokenizer cannot list its vocabulary
+        (``PreTrainedTokenizerBase.get_vocab`` raises ``NotImplementedError``
+        unless a subclass overrides it), so hash blocks keep their drawn start.
         """
         self._require_init()
         if isinstance(self._tokenizer, _TiktokenAdapter):
             ranks = _tiktoken_internal(self._tokenizer._encoding, "_mergeable_ranks")
             ids = {id_ for piece, id_ in ranks.items() if piece[:1] == b" "}
         else:
+            try:
+                vocab = self._tokenizer.get_vocab()
+            except NotImplementedError:
+                return None
             ids = {
                 id_
-                for piece, id_ in self._tokenizer.get_vocab().items()
+                for piece, id_ in vocab.items()
                 if isinstance(piece, str)
                 and piece[:1] in _WORD_START_MARKERS
                 and piece[1:2] not in _NOT_WORD_START_SECOND_CHARS

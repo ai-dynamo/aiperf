@@ -51,11 +51,13 @@ separate leading prefix-space token, so they run without a separator. To keep th
 token count stable when the generated text is re-tokenized, each hash block and
 each un-hashed tail starts on a word boundary: the sampled corpus position moves
 forward, by at most 256 tokens, to the next token that starts a word. A word start
-carries a leading space (`▁`, `Ġ`, or a space byte) followed by visible text;
-whitespace-only tokens such as `▁▁` do not count, because they merge with
-whitespace at the end of the previous block. A block that starts mid-word would
-otherwise gain or lose a token when its first word is re-split. Tokenizers without
-such markers, or a search that finds none, keep the sampled position. Because
+carries a leading space (`▁`, `Ġ`, or a space byte). For vocabulary-backed
+tokenizers, visible text must also follow the marker; whitespace-only tokens such
+as `▁▁` do not count, because they merge with whitespace at the end of the previous
+block. tiktoken encodings accept any space-prefixed token. A block that starts
+mid-word would otherwise gain or lose a token when its first word is re-split.
+Tokenizers without such markers, tokenizers that cannot list their vocabulary, and
+searches that find none keep the sampled position. Because
 block starts move, the prompt text differs from AIPerf versions before this
 change. The `weka_trace` loader builds its blocks separately and does not apply
 this.
