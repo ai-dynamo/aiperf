@@ -96,13 +96,13 @@ RUN mkdir -p /opt/licenses/dpkg \
     && apt-get update -y \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
         build-essential \
+        curl \
         libogg-dev \
         libopus-dev \
         libvorbis-dev \
         libvpx-dev \
         nasm \
         pkg-config \
-        wget \
         yasm \
         zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -125,14 +125,32 @@ RUN mkdir -p /opt/licenses/dpkg \
 # --disable-autodetect stops configure linking stray dev packages. The artifact
 # still exceeds the lists: muxers add aac_adtstoasc (not an AAC codec), and
 # --enable-ffmpeg adds 18 filters. Verify with `ffmpeg -encoders`, not `-codecs`.
+#
+# The tarball comes from ffmpeg.org only and is checked against FFMPEG_SHA256,
+# so bumping FFMPEG_VERSION requires updating the hash too. curl rather than
+# wget: wget treats a failed TLS handshake as fatal and never retries it, and
+# ffmpeg.org intermittently stalls handshakes for minutes. --connect-timeout
+# covers the handshake, so a stall is cut short and retried. --retry-max-time
+# bounds the whole retry window, because a 429/503 Retry-After header overrides
+# --retry-delay and could otherwise stall the build for as long as it asks.
+# --max-time must stay well under --retry-max-time: curl only retries a failure
+# that ends inside the retry window, so a transfer that stalls after connecting
+# is retried only if its timeout fires first. 120 s still allows ~100 KB/s for
+# the ~12 MB tarball.
 ARG FFMPEG_VERSION=8.1.2
+ARG FFMPEG_SHA256=464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c
 ARG ENABLE_FFMPEG=1
 RUN if [ "${ENABLE_FFMPEG}" != "1" ]; then \
         echo "ENABLE_FFMPEG=${ENABLE_FFMPEG}: skipping ffmpeg build"; \
         mkdir -p /opt/ffmpeg/bin /opt/ffmpeg/lib /opt/licenses/ffmpeg; \
         exit 0; \
     fi; \
-    wget https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
+    { curl -fSL --no-progress-meter \
+        --retry 5 --retry-all-errors --retry-delay 10 --retry-max-time 300 \
+        --connect-timeout 30 --max-time 120 \
+        -o ffmpeg-${FFMPEG_VERSION}.tar.xz \
+        https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz \
+    && echo "${FFMPEG_SHA256}  ffmpeg-${FFMPEG_VERSION}.tar.xz" | sha256sum -c - \
     && tar -xf ffmpeg-${FFMPEG_VERSION}.tar.xz \
     && cd ffmpeg-${FFMPEG_VERSION} \
     && ./configure \
@@ -172,8 +190,9 @@ RUN if [ "${ENABLE_FFMPEG}" != "1" ]; then \
     && mkdir -p /opt/licenses/ffmpeg \
     && cp ffmpeg-${FFMPEG_VERSION}/COPYING.LGPLv2.1 /opt/licenses/ffmpeg/ \
     && cp ffmpeg-${FFMPEG_VERSION}/LICENSE.md /opt/licenses/ffmpeg/ \
-    && rm -rf ffmpeg-${FFMPEG_VERSION} ffmpeg-${FFMPEG_VERSION}.tar.xz \
-    && cp -P /usr/lib/*/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || \
+    && rm -rf ffmpeg-${FFMPEG_VERSION} ffmpeg-${FFMPEG_VERSION}.tar.xz; \
+    } || { echo "Error: ffmpeg ${FFMPEG_VERSION} download, checksum or build failed"; exit 1; }; \
+    cp -P /usr/lib/*/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || \
        cp -P /usr/lib/libvpx.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvpx.so not found"; exit 1; } \
     && cp -P /usr/lib/*/libvorbis.so* /usr/lib/*/libvorbisenc.so* /opt/ffmpeg/lib/ 2>/dev/null || \
        cp -P /usr/lib/libvorbis.so* /usr/lib/libvorbisenc.so* /opt/ffmpeg/lib/ 2>/dev/null || { echo "Error: libvorbis.so not found"; exit 1; } \
