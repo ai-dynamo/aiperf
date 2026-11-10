@@ -50,11 +50,11 @@ def _stop_fields(prof: dict[str, Any]) -> dict[str, Any]:
         param({"search_space": ["phases.profiling.concurrency:8,20.5"]}, {"requests": 42}, id="search_real_upper_bound_rounds_up"),
         param({"search_space": ["rate:1,50"]}, {"requests": 10}, id="search_rate_flat"),
         param({"search_space": ["phases.warmup.concurrency:1,2", "prefill_concurrency:1,4:int", "concurrency:8,32:int"]}, {"requests": 64}, id="search_skips_other_dimensions"),
-        param({"search_space": ["concurrency:64:int"]}, {"requests": 10}, id="search_malformed_bounds_left_to_real_parser"),
         param({"request_rate": 5.0}, {"requests": 10}, id="request_rate_flat"),
         param({"request_rate": 5.0, "concurrency": 80}, {"requests": 10}, id="request_rate_with_concurrency_cap"),
         param({"public_dataset": "sharegpt", "concurrency": 80}, {"requests": 160}, id="non_suite_public_dataset"),
         param({"public_dataset": "speed_bench_coding", "concurrency": 80}, {"sessions": "all"}, id="speed_bench_category"),
+        param({"public_dataset": "speed_bench_throughput_100k"}, {"sessions": "all"}, id="speed_bench_100k"),
         param({"public_dataset": "spec_al_mtbench", "request_rate": 5.0}, {"sessions": "all"}, id="spec_al_request_rate"),
     ],
 )  # fmt: skip
@@ -64,11 +64,22 @@ def test_build_profiling_no_stop_condition_applies_default(
     assert _stop_fields(build_profiling(_make_cli(**overrides))) == expected
 
 
-def test_build_profiling_custom_suite_dataset_runs_full_pass(tmp_path: Path) -> None:
-    input_file = tmp_path / "qualitative.jsonl"
+def test_build_profiling_malformed_search_space_raises_parser_error() -> None:
+    with pytest.raises(TypeError, match="expected 'path:lo,hi"):
+        build_profiling(_make_cli(search_space=["concurrency:64:int"]))
+
+
+@pytest.mark.parametrize(
+    "split",
+    [param("qualitative", id="qualitative"), param("throughput_100k", id="100k")],
+)  # fmt: skip
+def test_build_profiling_custom_suite_dataset_runs_full_pass(
+    tmp_path: Path, split: str
+) -> None:
+    input_file = tmp_path / f"{split}.jsonl"
     input_file.write_text('{"question_id": "q", "messages": []}\n')
     cli = _make_cli(
-        custom_dataset_type="speed_bench_qualitative",
+        custom_dataset_type=f"speed_bench_{split}",
         input_file=str(input_file),
         concurrency=80,
     )

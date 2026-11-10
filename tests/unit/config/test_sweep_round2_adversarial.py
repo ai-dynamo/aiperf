@@ -282,7 +282,7 @@ class TestH12SearchSpaceDimensionFiniteBounds:
             SearchSpaceDimension(path="phases.profiling.rate", lo=1, hi=bad)
 
     def test_finite_bounds_allowed(self) -> None:
-        dim = SearchSpaceDimension(path="phases.profiling.rate", lo=0.0, hi=math.pi)
+        dim = SearchSpaceDimension(path="x", lo=0.0, hi=math.pi)
         assert dim.lo == 0.0
         assert dim.hi == math.pi
 

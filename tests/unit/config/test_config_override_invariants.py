@@ -484,6 +484,8 @@ SWEEP_FLAG_COMPANIONS: dict[str, dict[str, Any]] = {
         "ttft_sla_ms": 100.0,
         **_STREAMING,
     },
+    # Suffixes media uuids with the RID digest, so it needs a RID target.
+    "cache_bust_media_uuids": {"cache_bust": "system_suffix"},
 }
 
 _COMPANION_REQUIRED_FIELDS: frozenset[str] = (

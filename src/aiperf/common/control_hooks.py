@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -60,6 +60,8 @@ class PreparedEndpointControlHooks:
     """Timeout seconds for profiler start/stop POSTs."""
     reset_max_retry_seconds: float
     """Total time budget for retrying a retryable reset_kv_cache POST failure."""
+    profiler_start_body: dict[str, Any] | None = None
+    """Optional JSON object sent only with profiler start requests."""
 
 
 def unique_endpoint_origins(urls: list[str]) -> list[str]:
@@ -80,6 +82,11 @@ def prepare_endpoint_control_hooks(
 ) -> PreparedEndpointControlHooks:
     """Resolve relative control-hook paths against each unique endpoint origin."""
     origins = unique_endpoint_origins(endpoint.urls)
+    profiler_origins = (
+        unique_endpoint_origins([str(url) for url in endpoint.server_profiler.urls])
+        if endpoint.server_profiler and endpoint.server_profiler.urls is not None
+        else origins
+    )
     reset_path = (
         endpoint.reset_kv_cache.path
         if endpoint.reset_kv_cache and endpoint.reset_kv_cache.path
@@ -119,17 +126,20 @@ def prepare_endpoint_control_hooks(
             else []
         ),
         profiler_start_urls=(
-            [join_origin_path(o, start_path) for o in origins]
+            [join_origin_path(o, start_path) for o in profiler_origins]
             if endpoint.server_profiler is not None
             else []
         ),
         profiler_stop_urls=(
-            [join_origin_path(o, stop_path) for o in origins]
+            [join_origin_path(o, stop_path) for o in profiler_origins]
             if endpoint.server_profiler is not None
             else []
         ),
         profiler_timeout_s=float(profiler_timeout),
         reset_max_retry_seconds=float(reset_max_retry_seconds),
+        profiler_start_body=(
+            endpoint.server_profiler.start_body if endpoint.server_profiler else None
+        ),
     )
 
 
@@ -198,6 +208,11 @@ async def start_server_profiler(
 ) -> None:
     """POST profiler start to every origin; reverse-stop on partial failure."""
     started: list[str] = []
+    body_kwargs = (
+        {"json_body": hooks.profiler_start_body}
+        if hooks.profiler_start_body is not None
+        else {}
+    )
     try:
         for url in hooks.profiler_start_urls:
             await control_plane_post(
@@ -205,6 +220,7 @@ async def start_server_profiler(
                 headers=headers,
                 timeout_s=hooks.profiler_timeout_s,
                 signer=signer,
+                **body_kwargs,
             )
             started.append(url)
     except BaseException:

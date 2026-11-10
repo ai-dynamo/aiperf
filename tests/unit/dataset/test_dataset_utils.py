@@ -93,6 +93,28 @@ class TestEncodeImage:
         assert decoded_img.mode == "RGB"
         assert decoded_img.format == format
 
+    def test_encode_32bit_integer_image_to_png_clips_to_16bit(self):
+        """Pillow 13 refuses to write mode ``I`` as PNG; Pillow 12 wrote it as
+        16-bit grayscale, clipping to 0..65535. Guards that a 32-bit integer
+        source still encodes, with the same clipped pixel values.
+        """
+        img = Image.new("I", (5, 1))
+        img.putdata([-5, 0, 40000, 65535, 70000])
+
+        decoded_img = Image.open(
+            BytesIO(base64.b64decode(utils.encode_image(img, "PNG")))
+        )
+
+        assert decoded_img.format == "PNG"
+        assert decoded_img.mode == "I;16"
+        assert [decoded_img.getpixel((x, 0)) for x in range(5)] == [
+            0,
+            0,
+            40000,
+            65535,
+            65535,
+        ]
+
     def test_encode_rgba_to_jpeg(self):
         """Test that RGBA image is converted to RGB for JPEG format."""
         img = Image.new("RGBA", (2, 2), color=(255, 0, 0, 128))

@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections import Counter
 
 from rich.console import Console
+from rich.markup import escape
 from rich.panel import Panel
 from rich.table import Table
 
@@ -53,7 +54,7 @@ def show_packages_detailed() -> None:
             pkg,
             meta.version or "[dim]-[/dim]",
             str(counts.get(pkg, 0)),
-            meta.description or "[dim]-[/dim]",
+            escape(meta.description) if meta.description else "[dim]-[/dim]",
         )
 
     console.print(table)
@@ -87,13 +88,13 @@ def show_category_types(category: str) -> None:
         return
 
     if (meta := plugins.get_category_metadata(category)) and meta.get("description"):
-        console.print(f"[dim]{meta['description'].strip()}[/dim]\n")
+        console.print(f"[dim]{escape(meta['description'].strip())}[/dim]\n")
 
     table = Table(title=f"{_title(category)} Types", show_lines=True, expand=True)
     table.add_column("Type", style="cyan", no_wrap=True)
     table.add_column("Description", overflow="ellipsis", no_wrap=True, ratio=1)
     for entry in entries:
-        desc = (entry.description or "").strip() or "[dim]-[/dim]"
+        desc = escape((entry.description or "").strip()) or "[dim]-[/dim]"
         table.add_row(entry.name, desc)
     console.print(table)
     _hint(f"Usage: aiperf plugins {category} <type> for details")
@@ -115,7 +116,7 @@ def show_type_details(category: str, name: str) -> None:
             f"[bold]Category:[/bold] {entry.category}\n"
             f"[bold]Package:[/bold] {entry.package}\n"
             f"[bold]Class:[/bold] {entry.class_path}\n\n"
-            f"{entry.description or '[dim]No description[/dim]'}",
+            f"{escape(entry.description) if entry.description else '[dim]No description[/dim]'}",
             title=f"{category}:{name}",
             border_style="cyan",
         )
