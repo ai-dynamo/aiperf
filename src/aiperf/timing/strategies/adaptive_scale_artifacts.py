@@ -14,6 +14,7 @@ from typing import Any
 
 import orjson
 
+from aiperf.common.environment import Environment
 from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.timing.strategies.adaptive_scale_sla import percentile_value
 from aiperf.timing.strategies.adaptive_scale_types import WindowStats
@@ -50,16 +51,57 @@ class AdaptiveScaleArtifactWriter:
             raise self._write_error
 
     async def close(self) -> None:
+        """Drain every queued write, then stop the drain task.
+
+        The terminal event and summary are queued last, while the phase is
+        being torn down -- exactly when the phase runner's deadline may cancel
+        the strategy task. Cancellation arriving here must not discard them:
+        the drain keeps running (bounded by ``CANCEL_DRAIN_TIMEOUT``) and the
+        ``CancelledError`` is re-raised only after the queue is empty.
+        """
         if self._queue is None or self._task is None:
             return
+        queue, drain_task = self._queue, self._task
+        joined = asyncio.ensure_future(queue.join())
+        loop = asyncio.get_running_loop()
+        cancelled: asyncio.CancelledError | None = None
+        deadline: float | None = None
         try:
-            await self.flush()
+            while not joined.done() and not drain_task.done():
+                timeout = None if deadline is None else deadline - loop.time()
+                if timeout is not None and timeout <= 0:
+                    _LOGGER.error(
+                        "adaptive scale artifact writer cancelled with %d queued "
+                        "write(s) still pending after %.1fs; abandoning them",
+                        queue.qsize(),
+                        Environment.TIMING.CANCEL_DRAIN_TIMEOUT,
+                    )
+                    break
+                try:
+                    # asyncio.wait never cancels the futures it waits on, so a
+                    # cancellation here leaves the drain task running.
+                    await asyncio.wait(
+                        {joined, drain_task},
+                        timeout=timeout,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                except asyncio.CancelledError as exc:
+                    cancelled = cancelled or exc
+                    if deadline is None:
+                        deadline = (
+                            loop.time() + Environment.TIMING.CANCEL_DRAIN_TIMEOUT
+                        )
         finally:
-            self._task.cancel()
+            joined.cancel()
+            drain_task.cancel()
             with suppress(asyncio.CancelledError):
-                await self._task
+                await drain_task
             self._queue = None
             self._task = None
+        if cancelled is not None:
+            raise cancelled
+        if self._write_error is not None:
+            raise self._write_error
 
     async def _drain(self) -> None:
         if self._queue is None:

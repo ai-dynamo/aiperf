@@ -796,6 +796,7 @@ class PhaseRunner(TaskManagerMixin):
         self._execution_task = self.execute_async(strategy.execute_phase())
 
         await self._wait_for_sending_complete(strategy)
+        await self._await_strategy_finalization(strategy)
 
         if self._was_cancelled:
             if not self._lifecycle.is_complete:
@@ -848,6 +849,39 @@ class PhaseRunner(TaskManagerMixin):
             self._report_warmup_failures(strategy)
 
         return self._create_final_stats()
+
+    async def _await_strategy_finalization(
+        self, strategy: TimingStrategyProtocol
+    ) -> None:
+        """Wait for a strategy's ``execute_phase`` teardown before the phase
+        can be reported complete.
+
+        ``execute_phase`` runs fire-and-forget and the duration deadline only
+        cancels it, so without this barrier the phase (and the whole run) can
+        finish while the strategy's ``finally`` block is still publishing
+        required artifacts -- adaptive scale's terminal summary was lost this
+        way. Opt-in via ``requires_execution_finalization`` (duck-typed) so
+        strategies whose ``execute_phase`` may outlive sending-complete are
+        unaffected. Bounded by ``CANCEL_DRAIN_TIMEOUT``; a non-cancellation
+        failure of the strategy task is re-raised as a phase failure.
+        """
+        task = self._execution_task
+        if task is None or not getattr(
+            strategy, "requires_execution_finalization", False
+        ):
+            return
+        timeout = Environment.TIMING.CANCEL_DRAIN_TIMEOUT
+        done, _ = await asyncio.wait({task}, timeout=timeout)
+        if not done:
+            self.warning(
+                f"Strategy for phase {self._config.phase} did not finish "
+                f"finalizing within {timeout}s; cancelling it"
+            )
+            task.cancel()
+            await asyncio.wait({task}, timeout=timeout)
+            return
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            raise exc
 
     def _create_final_stats(self) -> CreditPhaseStats:
         return self._progress.create_stats_with_baseline_window(

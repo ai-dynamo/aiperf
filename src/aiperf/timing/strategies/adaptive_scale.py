@@ -55,6 +55,9 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
 
     EVENT_FILE = "adaptive_scale_events.jsonl"
     SUMMARY_FILE = "adaptive_scale_summary.json"
+    # execute_phase's finally publishes the terminal event + summary; the
+    # PhaseRunner must await it before reporting the phase complete.
+    requires_execution_finalization = True
 
     def __init__(
         self,
