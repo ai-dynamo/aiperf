@@ -11,6 +11,7 @@ from aiperf.common.protocols import AIPerfLifecycleProtocol
 
 if TYPE_CHECKING:
     import multiprocessing
+    from collections.abc import Collection
 
     from aiperf.common.models import ServiceRunInfo
     from aiperf.common.types import ServiceTypeT
@@ -42,7 +43,9 @@ class ServiceManagerProtocol(AIPerfLifecycleProtocol, Protocol):
 
     async def run_services(self, service_types: dict[ServiceTypeT, int]) -> None: ...
     async def run_required_services(self) -> None: ...
-    async def shutdown_all_services(self) -> list[BaseException | None]: ...
+    async def shutdown_all_services(
+        self, *, exclude: Collection[ServiceTypeT] = ()
+    ) -> list[BaseException | None]: ...
     async def kill_all_services(self) -> list[BaseException | None]: ...
     async def stop_service(
         self, service_type: ServiceTypeT, service_id: str | None = None
