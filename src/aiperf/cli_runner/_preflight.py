@@ -171,8 +171,15 @@ def _preflight_goodput(plan: BenchmarkPlan) -> None:
     then waits forever for records, with nothing in the log. Running the same
     metric setup here turns it into a clean ``ConfigurationError`` before any
     service spawns.
+
+    A ``--scenario`` that requires streaming turns it on later, in the
+    resolver chain, when it was left unset; the same default is applied to a
+    copy here so a valid TTFT/ITL SLO is not rejected.
     """
     from aiperf.common.enums import MetricType
+    from aiperf.common.exceptions import MetricTypeError
+    from aiperf.common.scenario import get_scenario
+    from aiperf.common.scenario.validator import _apply_require_streaming
     from aiperf.config import BenchmarkRun
     from aiperf.config.loader.errors import ConfigurationError
     from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
@@ -180,17 +187,24 @@ def _preflight_goodput(plan: BenchmarkPlan) -> None:
     for config in plan.configs:
         if not getattr(config, "slos", None):
             continue
+        scenario = getattr(config, "scenario", None)
+        if scenario is not None:
+            config = config.model_copy(deep=True)
         run = BenchmarkRun(
             benchmark_id="goodput-preflight",
             cfg=config,
             artifact_dir=config.artifacts.dir,
         )
+        if scenario is not None:
+            _apply_require_streaming(run, get_scenario(scenario), [], [])
         try:
             BaseMetricsProcessor(run)._setup_metrics(
                 MetricType.RECORD, MetricType.AGGREGATE, exclude_error_metrics=True
             )
         except RuntimeError as exc:
             raise ConfigurationError(str(exc)) from exc
+        except MetricTypeError as exc:  # e.g. an SLO on good_request_count itself
+            raise ConfigurationError(f"Invalid --goodput: {exc}") from exc
 
 
 def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:
