@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 from pydantic import (
     AfterValidator,
+    BeforeValidator,
     ConfigDict,
     Field,
     PrivateAttr,
@@ -37,7 +38,7 @@ from aiperf.config.control_hooks import (
     parse_enabled_or_config,
     require_relative_path,
 )
-from aiperf.config.loader.parsing import normalize_http_urls
+from aiperf.config.loader.parsing import normalize_http_urls, parse_url_headers
 from aiperf.config.sagemaker import SageMakerConfig
 from aiperf.plugin.enums import (
     EndpointType,
@@ -546,6 +547,21 @@ class EndpointConfig(BaseConfig):
 
         return redact_headers(value) or {}
 
+    url_headers: Annotated[
+        list[dict[str, str]],
+        Field(
+            default_factory=list,
+            description="Extra HTTP headers for individual targets: entry ``i`` "
+            "applies to requests sent to ``urls[i]`` and may be ``{}``. Merged "
+            "over ``headers``; on a name clash (case-insensitive) the per-URL "
+            "value wins. Use for routing hints such as ``X-data-parallel-rank``. "
+            "Credential-bearing header names are rejected; put credentials in "
+            "``headers`` or ``api_key``. "
+            "Example: [{X-data-parallel-rank: '0'}, {X-data-parallel-rank: '1'}]",
+        ),
+        BeforeValidator(parse_url_headers),
+    ]
+
     extra: Annotated[
         dict[str, Any],
         Field(
@@ -829,6 +845,33 @@ class EndpointConfig(BaseConfig):
                 )
         if self.path is not None and not self.path.startswith("/"):
             raise ValueError("endpoint.path must start with a leading slash")
+        return self
+
+    @model_validator(mode="after")
+    def _validate_url_headers(self) -> Self:
+        """Bind per-URL headers to existing URLs and keep credentials out of them.
+
+        Credential-bearing headers are redacted from serialized configs and
+        rehydrated out of band only for ``headers`` (``AIPERF_INJECTED_HEADERS``),
+        so a secret here would reach worker processes as ``<redacted>``.
+        """
+        from aiperf.common.redact import is_sensitive_header_name
+
+        if len(self.url_headers) > len(self.urls):
+            raise ValueError(
+                f"url_headers: URL index {len(self.url_headers) - 1} is out of "
+                f"range; {len(self.urls)} URL(s) are configured, so valid "
+                f"indices are 0..{len(self.urls) - 1}."
+            )
+        for index, headers in enumerate(self.url_headers):
+            sensitive = sorted(n for n in headers if is_sensitive_header_name(n))
+            if sensitive:
+                raise ValueError(
+                    f"url_headers: {', '.join(sensitive)} for URL {index} looks "
+                    "credential-bearing. Per-URL headers are not redacted or "
+                    "transported as secrets; pass credentials with --header or "
+                    "--api-key instead."
+                )
         return self
 
     @model_validator(mode="after")

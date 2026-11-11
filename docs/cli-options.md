@@ -506,6 +506,10 @@ Strategy for selecting URLs when multiple `--url` values are provided. 'round_ro
 <br/>_Choices: [`round_robin`]_
 <br/>_Default: `round_robin`_
 
+#### `--url-header` `<list>`
+
+HTTP header to send only to one `--url` target, as `INDEX:Header:Value`, where `INDEX` is the 0-based position of the URL in the `--url` list. Can be specified multiple times. Global `--header` values still apply to every target; on a name clash (case-insensitive) the per-URL value wins. Repeated identical URLs stay distinct targets, so `--url http://localhost:8000 --url http://localhost:8000 --url-header 0:X-data-parallel-rank:0 --url-header 1:X-data-parallel-rank:1` pins each round-robin target to a vLLM data-parallel rank. Values are sent as given (never coerced). Credential-bearing header names are rejected here; pass credentials with `--header` or `--api-key`.
+
 #### `--request-timeout-seconds` `<float>`
 
 Maximum time in seconds to wait for each HTTP request to complete, including connection establishment, request transmission, and response receipt. Applies to both streaming and non-streaming requests. Requests exceeding this timeout are cancelled and recorded as failures.
@@ -2176,6 +2180,10 @@ Strategy for selecting URLs when multiple `--url` values are provided. 'round_ro
 <br/>_Choices: [`round_robin`]_
 <br/>_Default: `round_robin`_
 
+#### `--url-header` `<list>`
+
+HTTP header to send only to one `--url` target, as `INDEX:Header:Value`, where `INDEX` is the 0-based position of the URL in the `--url` list. Can be specified multiple times. Global `--header` values still apply to every target; on a name clash (case-insensitive) the per-URL value wins. Repeated identical URLs stay distinct targets, so `--url http://localhost:8000 --url http://localhost:8000 --url-header 0:X-data-parallel-rank:0 --url-header 1:X-data-parallel-rank:1` pins each round-robin target to a vLLM data-parallel rank. Values are sent as given (never coerced). Credential-bearing header names are rejected here; pass credentials with `--header` or `--api-key`.
+
 #### `--request-timeout-seconds` `<float>`
 
 Maximum time in seconds to wait for each HTTP request to complete, including connection establishment, request transmission, and response receipt. Applies to both streaming and non-streaming requests. Requests exceeding this timeout are cancelled and recorded as failures.
@@ -3840,6 +3848,10 @@ Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified fo
 Strategy for selecting URLs when multiple `--url` values are provided. 'round_robin' (default): distribute requests evenly across URLs in sequential order.
 <br/>_Choices: [`round_robin`]_
 <br/>_Default: `round_robin`_
+
+#### `--url-header` `<list>`
+
+HTTP header to send only to one `--url` target, as `INDEX:Header:Value`, where `INDEX` is the 0-based position of the URL in the `--url` list. Can be specified multiple times. Global `--header` values still apply to every target; on a name clash (case-insensitive) the per-URL value wins. Repeated identical URLs stay distinct targets, so `--url http://localhost:8000 --url http://localhost:8000 --url-header 0:X-data-parallel-rank:0 --url-header 1:X-data-parallel-rank:1` pins each round-robin target to a vLLM data-parallel rank. Values are sent as given (never coerced). Credential-bearing header names are rejected here; pass credentials with `--header` or `--api-key`.
 
 #### `--request-timeout-seconds` `<float>`
 
@@ -6012,6 +6024,10 @@ Base URL(s) of the API server(s) to benchmark. Multiple URLs can be specified fo
 Strategy for selecting URLs when multiple `--url` values are provided. 'round_robin' (default): distribute requests evenly across URLs in sequential order.
 <br/>_Choices: [`round_robin`]_
 <br/>_Default: `round_robin`_
+
+#### `--url-header` `<list>`
+
+HTTP header to send only to one `--url` target, as `INDEX:Header:Value`, where `INDEX` is the 0-based position of the URL in the `--url` list. Can be specified multiple times. Global `--header` values still apply to every target; on a name clash (case-insensitive) the per-URL value wins. Repeated identical URLs stay distinct targets, so `--url http://localhost:8000 --url http://localhost:8000 --url-header 0:X-data-parallel-rank:0 --url-header 1:X-data-parallel-rank:1` pins each round-robin target to a vLLM data-parallel rank. Values are sent as given (never coerced). Credential-bearing header names are rejected here; pass credentials with `--header` or `--api-key`.
 
 #### `--request-timeout-seconds` `<float>`
 
