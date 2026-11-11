@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import orjson
+from pydantic import ValidationInfo
 
 from aiperf.common.utils import load_json_str
 from aiperf.plugin.enums import ServiceType
@@ -242,6 +243,10 @@ def parse_str_or_dict_as_tuple_list(input: Any | None) -> list[tuple[str, Any]] 
     raise ValueError(f"User Config: {input} - must be a valid string, list, or dict")
 
 
+MAX_URL_HEADER_INDEX = 1023
+"""Upper bound for a per-URL header index when the URL count is not known."""
+
+
 def _parse_url_index(raw: Any, source: Any) -> int:
     """Parse a per-URL header index (the 0-based position in the URL list)."""
     if isinstance(raw, int) and not isinstance(raw, bool) and raw >= 0:
@@ -253,16 +258,35 @@ def _parse_url_index(raw: Any, source: Any) -> int:
     )
 
 
+def url_index_out_of_range_message(index: int, url_count: int) -> str:
+    """Error text for a per-URL header index past the configured URLs."""
+    return (
+        f"url_headers: URL index {index} is out of range; {url_count} URL(s) "
+        f"are configured, so valid indices are 0..{url_count - 1}."
+    )
+
+
 def _set_url_headers(
-    output: list[dict[str, str]], index: int, headers: Any, source: Any
+    output: dict[int, dict[str, str]],
+    index: int,
+    headers: Any,
+    source: Any,
+    *,
+    url_count: int | None,
 ) -> None:
+    if url_count is not None and index >= url_count:
+        raise ValueError(url_index_out_of_range_message(index, url_count=url_count))
+    if index > MAX_URL_HEADER_INDEX:
+        raise ValueError(
+            f"User Config: {source!r} - URL index {index} is above the "
+            f"maximum of {MAX_URL_HEADER_INDEX}"
+        )
     if not isinstance(headers, dict):
         raise ValueError(
             f"User Config: {source!r} - headers for URL {index} must be a "
             "mapping of header name to value"
         )
-    while len(output) <= index:
-        output.append({})
+    target = output.setdefault(index, {})
     for name, value in headers.items():
         name = str(name).strip()
         if not name:
@@ -270,10 +294,16 @@ def _set_url_headers(
                 f"User Config: {source!r} - header name for URL {index} "
                 "must not be empty"
             )
-        output[index][name] = str(value)
+        # Header names are case-insensitive: a later assignment replaces an
+        # earlier one regardless of case instead of sending both.
+        for existing in [k for k in target if k.lower() == name.lower()]:
+            del target[existing]
+        target[name] = str(value)
 
 
-def _merge_url_headers_item(output: list[dict[str, str]], item: Any) -> None:
+def _merge_url_headers_item(
+    output: dict[int, dict[str, str]], item: Any, url_count: int | None
+) -> None:
     if isinstance(item, str) and item.lstrip().startswith(("{", "[")):
         try:
             item = load_json_str(item)
@@ -283,11 +313,17 @@ def _merge_url_headers_item(output: list[dict[str, str]], item: Any) -> None:
             ) from e
         if isinstance(item, list):
             for index, headers in enumerate(item):
-                _set_url_headers(output, index, headers, item)
+                _set_url_headers(output, index, headers, item, url_count=url_count)
             return
     if isinstance(item, dict):
         for raw_index, headers in item.items():
-            _set_url_headers(output, _parse_url_index(raw_index, item), headers, item)
+            _set_url_headers(
+                output,
+                _parse_url_index(raw_index, item),
+                headers,
+                item,
+                url_count=url_count,
+            )
     elif isinstance(item, str):
         parts = item.split(":", 2)
         if len(parts) != 3:
@@ -296,7 +332,9 @@ def _merge_url_headers_item(output: list[dict[str, str]], item: Any) -> None:
                 "format, e.g. '0:X-data-parallel-rank:0'"
             )
         index = _parse_url_index(parts[0], item)
-        _set_url_headers(output, index, {parts[1]: parts[2].strip()}, item)
+        _set_url_headers(
+            output, index, {parts[1]: parts[2].strip()}, item, url_count=url_count
+        )
     else:
         raise ValueError(
             f"User Config: {item!r} - must be an 'INDEX:Header:Value' string, "
@@ -304,7 +342,9 @@ def _merge_url_headers_item(output: list[dict[str, str]], item: Any) -> None:
         )
 
 
-def parse_url_headers(input: Any) -> list[dict[str, str]] | None:
+def parse_url_headers(
+    input: Any, url_count: int | None = None
+) -> list[dict[str, str]] | None:
     """Parse per-URL headers into a list aligned with the URL list.
 
     Entry ``i`` holds the headers for the ``i``-th URL; URLs without headers
@@ -313,18 +353,30 @@ def parse_url_headers(input: Any) -> list[dict[str, str]] | None:
     of URL index to headers, a JSON string of either, or a list of CLI
     strings. Later entries for the same header win. Values are kept as
     strings: unlike ``--header`` they are never coerced, so
-    ``0:X-data-parallel-rank:0`` sends ``"0"``.
+    ``0:X-data-parallel-rank:0`` sends ``"0"``. Header names are matched
+    case-insensitively, so a later ``x-route`` replaces an earlier ``X-Route``.
+
+    Indices are checked against ``url_count`` (when known) before any padding
+    is allocated; without it they are capped at ``MAX_URL_HEADER_INDEX``.
     """
     if input is None:
         return None
-    output: list[dict[str, str]] = []
+    output: dict[int, dict[str, str]] = {}
     if isinstance(input, (list, tuple)) and all(isinstance(i, dict) for i in input):
         for index, headers in enumerate(input):
-            _set_url_headers(output, index, headers, input)
-        return output
-    for item in input if isinstance(input, (list, tuple)) else [input]:
-        _merge_url_headers_item(output, item)
-    return output
+            _set_url_headers(output, index, headers, input, url_count=url_count)
+    else:
+        for item in input if isinstance(input, (list, tuple)) else [input]:
+            _merge_url_headers_item(output, item, url_count)
+    size = max(output) + 1 if output else 0
+    return [output.get(index, {}) for index in range(size)]
+
+
+def parse_url_headers_for_urls(input: Any, info: ValidationInfo) -> Any:
+    """``parse_url_headers`` bound to the already-validated ``urls`` field."""
+    urls = info.data.get("urls")
+    url_count = len(urls) if isinstance(urls, (list, tuple)) else None
+    return parse_url_headers(input, url_count)
 
 
 def print_str_or_list(input: Any) -> str:

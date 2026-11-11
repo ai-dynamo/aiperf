@@ -38,7 +38,11 @@ from aiperf.config.control_hooks import (
     parse_enabled_or_config,
     require_relative_path,
 )
-from aiperf.config.loader.parsing import normalize_http_urls, parse_url_headers
+from aiperf.config.loader.parsing import (
+    normalize_http_urls,
+    parse_url_headers_for_urls,
+    url_index_out_of_range_message,
+)
 from aiperf.config.sagemaker import SageMakerConfig
 from aiperf.plugin.enums import (
     EndpointType,
@@ -559,7 +563,7 @@ class EndpointConfig(BaseConfig):
             "``headers`` or ``api_key``. "
             "Example: [{X-data-parallel-rank: '0'}, {X-data-parallel-rank: '1'}]",
         ),
-        BeforeValidator(parse_url_headers),
+        BeforeValidator(parse_url_headers_for_urls),
     ]
 
     extra: Annotated[
@@ -859,9 +863,9 @@ class EndpointConfig(BaseConfig):
 
         if len(self.url_headers) > len(self.urls):
             raise ValueError(
-                f"url_headers: URL index {len(self.url_headers) - 1} is out of "
-                f"range; {len(self.urls)} URL(s) are configured, so valid "
-                f"indices are 0..{len(self.urls) - 1}."
+                url_index_out_of_range_message(
+                    len(self.url_headers) - 1, len(self.urls)
+                )
             )
         for index, headers in enumerate(self.url_headers):
             sensitive = sorted(n for n in headers if is_sensitive_header_name(n))

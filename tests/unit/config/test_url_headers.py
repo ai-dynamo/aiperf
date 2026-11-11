@@ -62,6 +62,16 @@ def _cli(**kwargs: object) -> CLIConfig:
             [{"X-Route": "c", "X-Pool": "p"}, {"X-Route": "b"}],
             id="repeated-flags-merge-last-wins",
         ),
+        param(
+            ["0:X-Route:a", "0:x-route:b", "0:X-ROUTE:c"],
+            [{"X-ROUTE": "c"}],
+            id="repeated-names-replace-case-insensitively",
+        ),
+        param(
+            {"0": {"X-Route": "a", "x-route": "b"}},
+            [{"x-route": "b"}],
+            id="mapping-names-replace-case-insensitively",
+        ),
     ],
 )  # fmt: skip
 def test_parse_url_headers_accepted_forms(raw: object, expected: object) -> None:
@@ -82,6 +92,7 @@ def test_parse_url_headers_accepted_forms(raw: object, expected: object) -> None
         param("{not json", id="bad-json"),
         param('"0:X:a"', id="quoted-index"),
         param(3, id="unsupported-type"),
+        param("1000000000:X-Route:a", id="index-above-cap"),
     ],
 )  # fmt: skip
 def test_parse_url_headers_invalid_raises_value_error(raw: object) -> None:
@@ -119,6 +130,24 @@ def test_url_headers_unset_is_not_emitted_by_converter() -> None:
 def test_url_headers_index_out_of_range_raises() -> None:
     with pytest.raises(ValidationError, match="URL index 2 is out of range"):
         EndpointConfig(urls=[DP_URL, DP_URL], url_headers=["2:X-Route:a"])
+
+
+@pytest.mark.parametrize(
+    "url_headers",
+    [
+        param(["1000000000:X-Route:a"], id="cli-form"),
+        param({"1000000000": {"X-Route": "a"}}, id="index-mapping"),
+    ],
+)  # fmt: skip
+def test_url_headers_huge_index_is_rejected_before_padding(url_headers: object) -> None:
+    with pytest.raises(ValidationError, match="URL index 1000000000 is out of range"):
+        EndpointConfig(urls=[DP_URL, DP_URL], url_headers=url_headers)
+
+
+def test_parse_url_headers_checks_url_count_before_padding() -> None:
+    with pytest.raises(ValueError, match="URL index 5 is out of range"):
+        parse_url_headers("5:X-Route:a", url_count=2)
+    assert parse_url_headers("1:X-Route:a", url_count=2) == [{}, {"X-Route": "a"}]
 
 
 @pytest.mark.parametrize(
