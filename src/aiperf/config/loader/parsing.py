@@ -276,7 +276,7 @@ def _set_url_headers(
 ) -> None:
     if url_count is not None and index >= url_count:
         raise ValueError(url_index_out_of_range_message(index, url_count=url_count))
-    if index > MAX_URL_HEADER_INDEX:
+    if url_count is None and index > MAX_URL_HEADER_INDEX:
         raise ValueError(
             f"User Config: {source!r} - URL index {index} is above the "
             f"maximum of {MAX_URL_HEADER_INDEX}"

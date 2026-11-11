@@ -20,7 +20,7 @@ from aiperf.config.flags._converter_endpoint import build_endpoint
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
 from aiperf.config.loader import build_benchmark_plan, load_config_from_string
-from aiperf.config.loader.parsing import parse_url_headers
+from aiperf.config.loader.parsing import MAX_URL_HEADER_INDEX, parse_url_headers
 
 DP_URL = "http://localhost:8000"
 
@@ -148,6 +148,23 @@ def test_parse_url_headers_checks_url_count_before_padding() -> None:
     with pytest.raises(ValueError, match="URL index 5 is out of range"):
         parse_url_headers("5:X-Route:a", url_count=2)
     assert parse_url_headers("1:X-Route:a", url_count=2) == [{}, {"X-Route": "a"}]
+
+
+def test_parse_url_headers_known_url_count_is_the_only_bound() -> None:
+    # with the url count known, the fixed cap does not apply on top of it
+    url_count = MAX_URL_HEADER_INDEX + 2
+    aligned = [{} for _ in range(url_count - 1)] + [{"X-Route": "last"}]
+    parsed = parse_url_headers(aligned, url_count=url_count)
+    assert parsed is not None
+    assert len(parsed) == url_count
+    assert parsed[-1] == {"X-Route": "last"}
+    last = url_count - 1
+    assert parse_url_headers(f"{last}:X-Route:a", url_count=url_count)[-1] == {
+        "X-Route": "a"
+    }
+    # without a url count the fixed cap still guards padding
+    with pytest.raises(ValueError, match="maximum"):
+        parse_url_headers(f"{MAX_URL_HEADER_INDEX + 1}:X-Route:a")
 
 
 @pytest.mark.parametrize(
