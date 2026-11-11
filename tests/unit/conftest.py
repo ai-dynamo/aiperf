@@ -589,6 +589,11 @@ def cli_config() -> CLIConfig:
     return CLIConfig(model_names=["test-model"])
 
 
+def make_cli_with_fields_set(**kwargs: object) -> CLIConfig:
+    """Build a CLIConfig whose model_fields_set is exactly ``kwargs``."""
+    return CLIConfig(**CLIConfig(**kwargs).model_dump(exclude_unset=True))  # type: ignore[arg-type]
+
+
 def make_run_from_cli(
     cli_config: CLIConfig,
 ):

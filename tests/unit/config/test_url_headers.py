@@ -21,6 +21,7 @@ from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
 from aiperf.config.loader import build_benchmark_plan, load_config_from_string
 from aiperf.config.loader.parsing import MAX_URL_HEADER_INDEX, parse_url_headers
+from tests.unit.conftest import make_cli_with_fields_set
 
 DP_URL = "http://localhost:8000"
 
@@ -39,11 +40,6 @@ def _parse_cli_args(argv: list[str]) -> CLIConfig:
         if exc.code not in (0, None):
             raise
     return captured["config"]
-
-
-def _cli(**kwargs: object) -> CLIConfig:
-    """Build a CLIConfig whose model_fields_set is exactly ``kwargs``."""
-    return CLIConfig(**CLIConfig(**kwargs).model_dump(exclude_unset=True))  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
@@ -256,7 +252,9 @@ def test_url_headers_cli_overrides_config_file(tmp_path: Path) -> None:
     )
 
     resolved = resolve_config(
-        _cli(url_headers=["0:X-data-parallel-rank:0", "1:X-data-parallel-rank:1"]),
+        make_cli_with_fields_set(
+            url_headers=["0:X-data-parallel-rank:0", "1:X-data-parallel-rank:1"]
+        ),
         config_file,
     )
 
