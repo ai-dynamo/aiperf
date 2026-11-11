@@ -732,6 +732,34 @@ class TestShutdownAllServicesWaitsForExit:
 
         assert process.join.call_args_list[0].args[0] == 3.0
 
+    @pytest.mark.asyncio
+    async def test_shutdown_all_services_excluded_type_is_neither_joined_nor_killed(
+        self,
+        service_manager: MultiProcessServiceManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The controller keeps the API alive through export by excluding it."""
+        monkeypatch.setattr(Environment.SERVICE, "SHUTDOWN_EXIT_TIMEOUT", 8.0)
+        straggler = MagicMock(spec=Process)
+        straggler.is_alive.return_value = True
+        api = MagicMock(spec=Process)
+        api.is_alive.return_value = True
+        api_info = MultiProcessRunInfo.model_construct(
+            process=api, service_type=ServiceType.API, service_id="api"
+        )
+        service_manager.multi_process_info = [self._info(straggler), api_info]
+
+        await service_manager.shutdown_all_services(exclude=(ServiceType.API,))
+
+        straggler.kill.assert_called_once()
+        api.join.assert_not_called()
+        api.kill.assert_not_called()
+        assert api_info in service_manager.multi_process_info
+
+        await service_manager.shutdown_all_services()
+
+        api.kill.assert_called_once()
+
 
 class TestGetServiceLiveness:
     """Local runs hold a real Process handle; the watchdog must consult it.
