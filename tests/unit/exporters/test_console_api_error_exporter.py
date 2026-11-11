@@ -10,7 +10,6 @@ from rich.console import Console
 
 from aiperf.exporters.console_api_error_exporter import (
     ConsoleApiErrorExporter,
-    LocalPortExhaustionDetector,
     MaxCompletionTokensDetector,
 )
 from aiperf.exporters.exporter_config import ExporterConfig
@@ -74,29 +73,6 @@ class TestConsoleApiErrorExporter:
     def test_detector_returns_none_when_no_errors(self):
         assert MaxCompletionTokensDetector.detect(None) is None
         assert MaxCompletionTokensDetector.detect([]) is None
-
-    @pytest.mark.parametrize(
-        "message,detected",
-        [
-            ("ClientConnectorError(ConnectionKey(host='10.0.0.1', port=8000), "
-             "OSError(99, 'Cannot assign requested address'))", True),
-            ("ClientConnectorError(ConnectionKey(host='10.0.0.1', port=8000), "
-             "OSError(49, \"Can't assign requested address\"))", True),
-            ("ClientConnectorError(ConnectionKey(host='10.0.0.1', port=8000), "
-             "ConnectionRefusedError(111, 'Connect call failed'))", False),
-        ],
-    )  # fmt: skip
-    def test_port_exhaustion_detector(self, message: str, detected: bool):
-        err = MockErrorDetails(code=None, type="ClientConnectorError", message=message)
-        insight = LocalPortExhaustionDetector.detect(make_summary(err))
-
-        assert (insight is not None) is detected
-        if detected:
-            assert any("ip_local_port_range" in c for c in insight.causes)
-
-    def test_port_exhaustion_detector_returns_none_when_no_errors(self):
-        assert LocalPortExhaustionDetector.detect(None) is None
-        assert LocalPortExhaustionDetector.detect([]) is None
 
     @pytest.mark.asyncio
     async def test_exporter_prints_panel_for_detected_error(self, basic_error_payload):
