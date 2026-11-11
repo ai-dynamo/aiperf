@@ -366,12 +366,9 @@ class AioHttpClient(AIPerfLoggerMixin):
             ):
                 AioHttpClient._port_exhaustion_logged = True
                 self.warning(
-                    f"No free local port for a new connection to {e.host}:{e.port} "
-                    "(EADDRNOTAVAIL). Each in-flight request holds its own "
-                    "connection, and Linux allows one connection per local port "
-                    "to a given server address (net.ipv4.ip_local_port_range, "
-                    "28,232 ports by default). Lower the concurrency, add more "
-                    "--url addresses for the same server, or widen the port range."
+                    f"Connect to {e.host}:{e.port} failed with EADDRNOTAVAIL: likely "
+                    "out of local ports (net.ipv4.ip_local_port_range). Lower the "
+                    "concurrency, add --url addresses, or widen the port range."
                 )
 
         return record
