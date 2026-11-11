@@ -91,7 +91,15 @@ class MultiProcessServiceManager(BaseServiceManager):
                 if service_metadata.replicable
                 else str(service_type)
             )
-            process = Process(
+            # forkserver makes its server the OS parent, so the controller's
+            # PR_SET_PDEATHSIG guard would immediately exit. Keep services direct
+            # children without changing the context used by other process pools.
+            process_factory = (
+                multiprocessing.get_context("spawn").Process
+                if multiprocessing.get_start_method() == "forkserver"
+                else Process
+            )
+            process = process_factory(
                 target=bootstrap_and_run_service,
                 name=f"{service_type}_process",
                 kwargs={
