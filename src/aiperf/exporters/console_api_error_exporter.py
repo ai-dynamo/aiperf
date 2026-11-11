@@ -77,11 +77,51 @@ class MaxCompletionTokensDetector:
         return None
 
 
+class LocalPortExhaustionDetector:
+    @staticmethod
+    def detect(error_summary: list[ErrorDetailsCount]) -> ErrorInsight | None:
+        if not error_summary or not isinstance(error_summary, list):
+            return None
+
+        for item in error_summary:
+            err = getattr(item, "error_details", None)
+            # Linux: "Cannot assign requested address"; macOS: "Can't assign ..."
+            if err is not None and "assign requested address" in (err.message or ""):
+                return ErrorInsight(
+                    title="Out of Local Ports (EADDRNOTAVAIL)",
+                    problem=(
+                        "New connections failed because this host had no free "
+                        "local port for the server address."
+                    ),
+                    causes=[
+                        "Each in-flight request holds its own connection, and each "
+                        "connection to one server address needs its own local port.",
+                        "Linux allows net.ipv4.ip_local_port_range ports per server "
+                        "address (28,232 by default), and in-flight requests reached it.",
+                    ],
+                    investigation=[
+                        "Check the range: sysctl net.ipv4.ip_local_port_range",
+                        "Count connections to the server during the run: "
+                        "ss -Htn state established dst <host>:<port> | wc -l",
+                    ],
+                    fixes=[
+                        "Lower --concurrency.",
+                        "Pass more --url addresses for the same server.",
+                        "Widen the range, e.g. sysctl -w "
+                        "net.ipv4.ip_local_port_range='1024 65535', and reserve "
+                        "listening ports with net.ipv4.ip_local_reserved_ports.",
+                    ],
+                )
+
+        return None
+
+
 class ConsoleApiErrorExporter(AIPerfLoggerMixin):
     """Displays helpful diagnostic panels for known API error patterns."""
 
     DETECTORS: ClassVar[list] = [
         MaxCompletionTokensDetector,
+        LocalPortExhaustionDetector,
     ]
 
     def __init__(self, exporter_config: ExporterConfig, **kwargs):
