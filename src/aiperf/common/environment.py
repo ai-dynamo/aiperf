@@ -40,9 +40,13 @@ Examples:
     print(f"Workers: {Environment.WORKER.CPU_UTILIZATION_FACTOR}")
 """
 
+import os
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, Self
 
+import orjson
 from pydantic import BeforeValidator, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -217,13 +221,23 @@ class _APIServerSettings(BaseSettings):
         ge=0.0,
         le=300.0,
         default=5.0,
-        description="Seconds the API listener stays open after a benchmark terminates "
-        "so polling clients can observe the final status before the server shuts down. "
-        "Set to 0 to skip the grace window and shut down immediately. Not used under "
-        "ServiceRunType.KUBERNETES, where the controller pod outlives its benchmark and "
-        "is retired explicitly via POST /api/shutdown instead -- see "
-        "FastAPIService._on_shutdown_command. A fixed window there is shorter than the "
+        description="Seconds the API listener stays open after the benchmark's final results "
+        "are published (exported, marked ready, and reported as complete/cancelled on "
+        "/api/results) so polling clients can observe and download them before the server "
+        "shuts down. Set to 0 to close the listener as soon as the results are published. "
+        "Not used under ServiceRunType.KUBERNETES, where the controller pod outlives its "
+        "benchmark and is retired explicitly via POST /api/shutdown instead -- see "
+        "FastAPIService._defers_broadcast_shutdown. A fixed window there is shorter than the "
         "operator's monitor interval and strands the AIPerfJob in a pre-terminal phase.",
+    )
+    COMPLETE_ACK_TIMEOUT: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=5.0,
+        description="Seconds the SystemController waits for the API service to confirm it "
+        "holds the run's terminal state before retiring it. A healthy API answers in "
+        "milliseconds; on timeout the controller logs a warning and retires the API anyway, "
+        "so this bounds how long a wedged API can delay exit.",
     )
     WEBSOCKET_MAX_CONNECTIONS: int = Field(
         ge=1,
@@ -376,11 +390,11 @@ class _DatasetSettings(BaseSettings):
         ge=0.1,
         le=100000.0,
         default=10.0,
-        description="Timeout in seconds for the one-shot DatasetConfigStatusRequest "
-        "a RecordProcessor/RecordsManager sends to DatasetManager when it hasn't yet "
-        "received DatasetConfiguredNotification. Recovers a subscriber that finished "
-        "subscribing after DatasetManager already published the one-shot notification, "
-        "instead of blocking for the full CONFIGURATION_TIMEOUT.",
+        description="Timeout in seconds for each DatasetConfigStatusRequest a "
+        "RecordProcessor, RecordsManager, or local Worker sends to DatasetManager when "
+        "it hasn't yet received DatasetConfiguredNotification. Recovers a subscriber "
+        "that finished subscribing after DatasetManager already published the one-shot "
+        "notification, instead of blocking for the full CONFIGURATION_TIMEOUT.",
     )
     BASETEN_SESSION_COLUMN: Literal["provided_session_id", "poor_man_session_id"] = (
         Field(
@@ -394,10 +408,11 @@ class _DatasetSettings(BaseSettings):
         gt=0.0,
         le=60.0,
         default=1.0,
-        description="Seconds between polls of pod-local dataset state while a worker "
-        "waits to become dispatchable. The dataset arrives via one-shot broadcasts; "
-        "a worker container that subscribes after they fire recovers by polling its "
-        "WorkerGroupManager at this interval instead of waiting forever.",
+        description="Seconds between dataset state polls while a worker waits to "
+        "become dispatchable. The dataset arrives via one-shot broadcasts; a worker "
+        "that subscribes after they fire recovers by polling at this interval instead "
+        "of waiting forever: its WorkerGroupManager in Kubernetes, or DatasetManager "
+        "in local mode.",
     )
     MMAP_BASE_PATH: Path | None = Field(
         default=None,
@@ -411,7 +426,11 @@ class _DatasetSettings(BaseSettings):
         description="If True, AIPerf reuses memory-mapped dataset files across runs whose "
         "input bytes, tokenizer identity, and prompt/input settings are byte-identical. "
         "Set to False to force every run to re-tokenize and re-write its mmap files. "
-        "Cache misses still produce byte-identical mmap files to a non-cached run.",
+        "Cache misses still produce byte-identical mmap files to a non-cached run. "
+        "Kubernetes pods default to False, since the default cache directory is on their "
+        "read-only root filesystem; to turn it back on, podTemplate.env must also set "
+        "AIPERF_DATASET_MMAP_CACHE_DIR to a writable directory (a mounted volume, to "
+        "reuse the cache across runs).",
     )
     MMAP_CACHE_DIR: Path | None = Field(
         default=None,
@@ -424,6 +443,19 @@ class _DatasetSettings(BaseSettings):
         "version), not from the environment. To force a re-tokenize, set "
         "AIPERF_DATASET_MMAP_CACHE_ENABLED=false, point this variable at a fresh directory, "
         "or delete the cache directory.",
+    )
+    REMOTE_CACHE_DIR: Path | None = Field(
+        default=None,
+        description="Directory for `s3://` and `https://` dataset downloads and the "
+        "remote-dataset index. If None, defaults to ~/.cache/aiperf/remote. `hf://` "
+        "files live in the standard Hugging Face cache (HF_HOME). No automatic "
+        "eviction is implemented -- delete the directory to reclaim disk.",
+    )
+    REMOTE_OFFLINE: bool = Field(
+        default=False,
+        description="If True, remote `--input-file` references (hf://, s3://, https://) "
+        "are served only from the local cache, with no network calls. "
+        "HF_HUB_OFFLINE=1 has the same effect.",
     )
     MMAP_PREFAULT: bool = Field(
         default=True,
@@ -741,6 +773,14 @@ class _EndpointSettings(BaseSettings):
         "with servers that reject list-of-parts content for non-multimodal "
         "inputs (e.g. OpenAI Dynamo). Enable when the target server requires "
         "the structured content-parts shape unconditionally.",
+    )
+    REQUEST_ID_FIELD: str | None = Field(
+        default=None,
+        description="Top-level request-body field that also carries the per-request "
+        "X-Request-ID value, for servers that take a client request ID only from the "
+        "body (e.g. 'rid' for SGLang). Server-side per-request logs can then be joined "
+        "to the profile export on x_request_id. JSON object bodies only; the value "
+        "overwrites a field of that name already in the payload.",
     )
 
 
@@ -1861,6 +1901,15 @@ class _ServiceSettings(_ServiceCommunicationFields, _ServiceHealthFields, BaseSe
         default=2.0,
         description="Maximum time in seconds to wait for simple tasks to complete when cancelling",
     )
+    SHUTDOWN_EXIT_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=8.0,
+        description="Maximum time in seconds the controller waits, after broadcasting SHUTDOWN, for "
+        "service processes to exit on their own before force-killing the survivors. Must cover the "
+        "slowest service cleanup (the records manager can spend up to 7 seconds stopping its telemetry "
+        "child); killing a service mid-cleanup orphans its children.",
+    )
     # Event loop health monitoring settings
     EVENT_LOOP_HEALTH_ENABLED: bool = Field(
         default=True,
@@ -2708,6 +2757,58 @@ class _Environment(BaseSettings):
         default_factory=_ZMQSettings,
         description="ZMQ communication settings",
     )
+
+    @contextmanager
+    def defaults(
+        self, values: dict[str, dict[str, str | int | float | bool]]
+    ) -> Iterator[None]:
+        """Scope missing settings to this process and children spawned within the context."""
+        previous: dict[str, BaseSettings] = {}
+        inserted: dict[str, tuple[str, str]] = {}
+        try:
+            for group, fields in values.items():
+                settings = getattr(self, group)
+                updates = {}
+                for key, value in fields.items():
+                    if key not in type(settings).model_fields:
+                        raise ValueError(f"Unknown environment setting: {group}.{key}")
+                    env_key = f"{settings.model_config['env_prefix']}{key}"
+                    if (
+                        env_key not in os.environ
+                        and key not in settings.model_fields_set
+                    ):
+                        os.environ[env_key] = str(value)
+                        inserted[env_key] = (group, key)
+                        updates[key] = value
+                previous[group] = settings
+                updated = type(settings)(**{**settings.model_dump(), **updates})
+                updated.__pydantic_fields_set__ = (
+                    settings.model_fields_set | updates.keys()
+                )
+                setattr(self, group, updated)
+            if values:
+                validated = type(self).model_validate(self.model_dump())
+                for group in type(self).model_fields:
+                    settings = getattr(self, group)
+                    normalized = getattr(validated, group)
+                    previous.setdefault(group, settings)
+                    normalized.__pydantic_fields_set__ = (
+                        settings.model_fields_set.copy()
+                    )
+                    setattr(self, group, normalized)
+                for env_key, (group, key) in inserted.items():
+                    value = getattr(getattr(self, group), key)
+                    os.environ[env_key] = (
+                        orjson.dumps(value, default=list).decode()
+                        if isinstance(value, list | set | dict)
+                        else str(value)
+                    )
+            yield
+        finally:
+            for group, settings in previous.items():
+                setattr(self, group, settings)
+            for key in inserted:
+                os.environ.pop(key, None)
 
     @model_validator(mode="after")
     def validate_dev_mode(self) -> Self:

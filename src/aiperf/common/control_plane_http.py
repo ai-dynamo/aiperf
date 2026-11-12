@@ -9,9 +9,10 @@ ambient HTTP(S)_PROXY settings used by benchmark requests.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import aiohttp
+import orjson
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.endpoint_auth import no_redirect_kwargs, sign_request
@@ -53,8 +54,9 @@ async def control_plane_post(
     headers: dict[str, str],
     timeout_s: float,
     signer: RequestSignerProtocol | None = None,
+    json_body: dict[str, Any] | None = None,
 ) -> None:
-    """POST an empty body to a control URL. Success = any 2xx. No retries.
+    """POST an optional JSON body to a control URL. Success = any 2xx. No retries.
 
     Transport failures (timeouts, connection errors, ``ClientError``) are
     raised as ``ControlPlaneHttpError`` so callers share one error type.
@@ -70,7 +72,14 @@ async def control_plane_post(
     carries a fresh signature: a SigV4 signature expires within a five-minute
     skew window that control-hook backoff can outlive.
     """
-    body = b""
+    body = b"" if json_body is None else orjson.dumps(json_body)
+    if json_body is not None:
+        headers = {
+            key: value
+            for key, value in headers.items()
+            if key.lower() != "content-type"
+        }
+        headers["Content-Type"] = "application/json"
     safe_url = redact_url(url)
     timeout = aiohttp.ClientTimeout(total=timeout_s)
     # trust_env=False keeps loopback / cluster traffic off ambient HTTP(S)_PROXY.

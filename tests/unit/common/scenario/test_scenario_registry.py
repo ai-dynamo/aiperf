@@ -41,6 +41,35 @@ def test_inferencex_agentx_mvp_registered():
     assert spec.forbid_inter_turn_delay_cap is True
 
 
+_AGENTX_PRESET_FIELDS = {
+    "name",
+    "cli_defaults",
+    "environment_defaults",
+    "default_benchmark_duration_seconds",
+    "default_trajectory_start_min_ratio",
+    "default_trajectory_start_max_ratio",
+}
+
+
+def test_agentx_inherits_every_mvp_locked_invariant():
+    """A lock edited on AGENTX alone would let a run pass agentx but fail the MVP."""
+    agentx = SCENARIOS["agentx"]
+    mvp = SCENARIOS["inferencex-agentx-mvp"]
+    assert agentx.model_dump(exclude=_AGENTX_PRESET_FIELDS) == mvp.model_dump(
+        exclude=_AGENTX_PRESET_FIELDS
+    )
+
+
+def test_agentx_environment_defaults_are_pinned():
+    """Runtime timeouts are part of the comparable preset; changing one must be deliberate."""
+    assert SCENARIOS["agentx"].environment_defaults == {
+        "DATASET": {"CONFIGURATION_TIMEOUT": 1800},
+        "SERVICE": {"PROFILE_CONFIGURE_TIMEOUT": 1800},
+        "UI": {"REALTIME_METRICS_ENABLED": True},
+        "HTTP": {"TCP_USER_TIMEOUT": 900000},
+    }
+
+
 def test_get_scenario_returns_spec():
     spec = get_scenario("inferencex-agentx-mvp")
     assert spec.name == "inferencex-agentx-mvp"

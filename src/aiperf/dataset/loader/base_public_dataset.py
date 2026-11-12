@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
 
 AIPERF_DATASET_CACHE_DIR = Path(".cache/aiperf/datasets")
+_MAX_ERROR_MESSAGE_CHARS = 500
 
 
 class BasePublicDatasetLoader(BaseLoader):
@@ -122,19 +123,43 @@ class BasePublicDatasetLoader(BaseLoader):
         Returns:
             str: The raw dataset content as a string. Subclasses are responsible
                  for parsing this content (e.g., JSON parsing).
+
+        Raises:
+            DatasetLoaderError: If the download fails or returns no body.
         """
         if not self.cache_filepath.exists():
             self.info(f"No local dataset cache found, downloading from {self.url}")
-            record: RequestRecord = await self.http_client.get_request(
-                self.url, headers=headers
-            )
-            await self.http_client.close()
+            try:
+                record: RequestRecord = await self.http_client.get_request(
+                    self.url, headers=headers
+                )
+            finally:
+                await self.http_client.close()
 
+            self._raise_for_failed_download(record)
             dataset = record.responses[0].text
             self._save_to_local(dataset)
             return dataset
 
         return self._load_from_local()
+
+    def _raise_for_failed_download(self, record: RequestRecord) -> None:
+        """Raise a ``DatasetLoaderError`` that keeps the transport's failure cause.
+
+        ``AioHttpClient`` reports non-2xx statuses and connection errors on
+        ``record.error`` and returns no responses, so the cause must be read
+        from the record rather than surfacing later as an unrelated error.
+        """
+        prefix = f"Failed to download {self.tag} dataset from {self.url}"
+        error = record.error
+        if error is not None:
+            status = f"HTTP {error.code} " if error.code is not None else ""
+            message = error.message.strip()
+            if len(message) > _MAX_ERROR_MESSAGE_CHARS:
+                message = message[:_MAX_ERROR_MESSAGE_CHARS] + "..."
+            raise DatasetLoaderError(f"{prefix}: {status}{error.type}: {message}")
+        if not record.responses:
+            raise DatasetLoaderError(f"{prefix}: the server returned no response")
 
     def _save_to_local(self, dataset: str):
         """

@@ -61,6 +61,7 @@ class _WorkerState:
     hash_rng: HashIdRandomGenerator
     block_size: int
     sep_token: int | None
+    word_starts: frozenset[int] | None
     sample_tokens: Callable[..., list[int]]
     block_cache: dict[int, list[int]] = field(default_factory=dict)
 
@@ -116,6 +117,7 @@ def _init_worker(args: _WorkerInitArgs) -> None:
         hash_rng=hash_rng,
         block_size=args.block_size,
         sep_token=args.sep_token,
+        word_starts=tokenizer.word_start_token_ids,
         sample_tokens=sample_tokens_from_corpus,
     )
 
@@ -135,6 +137,7 @@ def _process_batch(
     corpus = _worker_state.corpus
     block_size = _worker_state.block_size
     sep_token = _worker_state.sep_token
+    word_starts = _worker_state.word_starts
     decode = _worker_state.tokenizer.decode
     sample_tokens = _worker_state.sample_tokens
     block_cache = _worker_state.block_cache
@@ -143,7 +146,9 @@ def _process_batch(
         cached = block_cache.get(hash_id)
         if cached is None:
             hash_rng.reseed_for_hash_id(hash_id)
-            cached = sample_tokens(corpus, size, hash_rng, sep_token)
+            cached = sample_tokens(
+                corpus, size, hash_rng, sep_token, word_starts=word_starts
+            )
             block_cache[hash_id] = cached
         elif len(cached) != size:
             # A hash_id identifies a fixed block of content, so it can only ever

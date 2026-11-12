@@ -575,6 +575,7 @@ const LARGER_IS_BETTER_SLO_TAGS = new Set([
   'total_token_throughput',
   'e2e_output_token_throughput',
   'prefill_throughput_per_user',
+  'image_throughput',
 ]);
 
 const SLO_PRETTY_LABEL = {
