@@ -1154,9 +1154,17 @@ def _generate_observations_with_sum_constraint(
         # Values in a bucket are <= upper_bound, so a mean equal to upper_bound
         # means every one of them was exactly upper_bound (e.g. a fixed output
         # length that lands on a bucket edge). Spreading them below the edge
-        # would invent values that were never observed.
-        point_mass = learned_mean
-        if point_mass is None and bucket_count == total_observations:
+        # would invent values that were never observed. A learned mean only
+        # proves this when its single-bucket intervals cover every observation
+        # in the bucket; later mixed intervals can add values below the edge.
+        point_mass = None
+        if (
+            learned_mean is not None
+            and stats is not None
+            and stats.observation_count >= bucket_count
+        ):
+            point_mass = learned_mean
+        elif bucket_count == total_observations:
             point_mass = avg
         if point_mass is not None and point_mass == upper_bound:
             observations[write_idx : write_idx + bucket_count] = upper_bound

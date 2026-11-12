@@ -426,6 +426,23 @@ class TestComputeEstimatedPercentiles:
         assert result.p99_estimate == pytest.approx(100.0)
         assert result.p25_estimate < 50.0
 
+    def test_partial_edge_stats_do_not_freeze_bucket(self) -> None:
+        """A learned edge mean from only some of a bucket's observations must not
+        pin the whole bucket to the edge: 20 values at 100 were learned, then a
+        mixed interval added 20 at 30 and 20 at 60."""
+        bucket_stats = {"100": BucketStatistics(bucket_le="100")}
+        bucket_stats["100"].record(mean=100.0, count=20)
+
+        result = compute_estimated_percentiles(
+            {"50": 20.0, "100": 60.0, "+Inf": 60.0},
+            bucket_stats,
+            total_sum=3800.0,
+            total_count=60,
+        )
+
+        assert result is not None
+        assert result.p50_estimate < 100.0
+
     def test_large_counts_downsampled(self) -> None:
         """Test that very large counts complete without memory error."""
         result = compute_estimated_percentiles(
