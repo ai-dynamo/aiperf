@@ -304,6 +304,29 @@ spec:
                     description: Endpoint configuration for connecting to inference server(s). Includes URLs, API type, authentication,
                       timeout, and connection settings.
                     properties:
+                      pcmOutput:
+                        type: object
+                        description: Declared format of headerless speech responses; never sent to the server.
+                        properties:
+                          sampleRate:
+                            type: integer
+                            description: PCM sample rate in Hz.
+                            exclusiveMinimum: true
+                            minimum: 0
+                          channels:
+                            type: integer
+                            description: Number of interleaved PCM channels.
+                            exclusiveMinimum: true
+                            minimum: 0
+                          sampleFormat:
+                            type: string
+                            description: Signed 16-bit little-endian PCM sample format.
+                            enum:
+                            - s16le
+                            default: s16le
+                        required:
+                        - sampleRate
+                        - channels
                       urls:
                         x-kubernetes-preserve-unknown-fields: true
                         description: 'List of server URLs to benchmark. Requests distributed according to url_strategy. URLs
@@ -318,6 +341,7 @@ spec:
                       type:
                         type: string
                         enum:
+                        - speech
                         - audio_transcription
                         - chat
                         - cohere_rankings

@@ -43,6 +43,7 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
             ("supports_images", MetricFlags.SUPPORTS_IMAGE_ONLY),
             ("supports_videos", MetricFlags.SUPPORTS_VIDEO_ONLY),
             ("produces_videos", MetricFlags.PRODUCES_VIDEO_ONLY),
+            ("produces_audio", MetricFlags.PRODUCES_AUDIO_ONLY),
         )
         for capability, flag in capability_flags:
             if not getattr(endpoint_metadata, capability):

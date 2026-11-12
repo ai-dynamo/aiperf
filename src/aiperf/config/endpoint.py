@@ -290,6 +290,18 @@ def _is_cleartext_remote(url: str) -> bool:
     return not (getattr(address, "ipv4_mapped", None) or address).is_loopback
 
 
+class PCMOutputConfig(BaseConfig):
+    """Declared format of headerless speech responses; never sent to the server."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sample_rate: int = Field(gt=0, description="PCM sample rate in Hz.")
+    channels: int = Field(gt=0, description="Number of interleaved PCM channels.")
+    sample_format: Literal["s16le"] = Field(
+        default="s16le", description="Signed 16-bit little-endian PCM sample format."
+    )
+
+
 class EndpointConfig(BaseConfig):
     """
     Endpoint configuration for connecting to inference servers.
@@ -300,6 +312,12 @@ class EndpointConfig(BaseConfig):
     """
 
     model_config = ConfigDict(extra="forbid", validate_default=True)
+
+    pcm_output: PCMOutputConfig | None = Field(
+        default=None,
+        description="Declared format for headerless speech output. Required for PCM; "
+        "WAV responses carry their own format. This metadata is not sent to the server.",
+    )
 
     urls: Annotated[
         list[str],

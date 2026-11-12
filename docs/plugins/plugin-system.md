@@ -382,6 +382,7 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 
 | Name | Class | Description |
 |------|-------|-------------|
+| `speech` | `SpeechEndpoint` | OpenAI-compatible `/v1/audio/speech`; validates complete PCM/WAV output and computes output-audio metrics. See [Speech Generation](../tutorials/speech.md). |
 | `audio_transcription` | `AudioTranscriptionEndpoint` | OpenAI Audio Transcription (Whisper-style) API; multipart upload of audio to `/v1/audio/transcriptions`, returns a plain-text transcript. Pairs with ASR datasets (e.g. `librispeech`). |
 | `chat` | `ChatEndpoint` | OpenAI Chat Completions API |
 | `chat_embeddings` | `ChatEmbeddingsEndpoint` | vLLM multimodal embeddings via chat API |

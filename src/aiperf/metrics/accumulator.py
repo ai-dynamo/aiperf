@@ -841,7 +841,15 @@ class MetricsAccumulator(BaseMetricsProcessor):
             if window_end_ns is not None
             else float(sweeps.concurrency_ts[-1])
         )
-        results.update(sweeps.compute_metrics(window_start, window_end))
+        results.update(
+            sweeps.compute_metrics(
+                window_start,
+                window_end,
+                produces_tokens=not bool(
+                    self.get_filters()[1] & MetricFlags.PRODUCES_TOKENS_ONLY
+                ),
+            )
+        )
 
     def _compute_timeslices(
         self,
@@ -936,7 +944,12 @@ class MetricsAccumulator(BaseMetricsProcessor):
             )
             if len(results) == 0:
                 continue
-            results.update(sweeps.compute_metrics(window_start, window_end))
+            self._inject_sweep_metrics(
+                results,
+                sweeps,
+                window_start_ns=int(window_start),
+                window_end_ns=int(window_end),
+            )
             results = self._convert_display_units(results)
             # Network-RTT-adjusted latency metrics per window, aggregated from the
             # arrays precomputed once in _summarize_for_export_context() — this
