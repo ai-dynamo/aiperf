@@ -126,6 +126,14 @@ class TestEstimateBucketSums:
         sums = _estimate_bucket_sums({"0.5": 100.0}, stats)
         assert sums == {"0.5": 30.0}
 
+    def test_learned_mean_on_upper_edge_is_used(self) -> None:
+        """A mean equal to le is valid: buckets are (lower, upper]."""
+        stats = {"100": BucketStatistics(bucket_le="100")}
+        stats["100"].record(mean=100.0, count=40)
+
+        sums = _estimate_bucket_sums({"50": 0.0, "100": 40.0}, stats)
+        assert sums == {"100": 4000.0}
+
     def test_falls_back_to_midpoint(self) -> None:
         """Test fallback to midpoint when no learned mean."""
         sums = _estimate_bucket_sums({"0.5": 100.0}, {})
@@ -379,6 +387,44 @@ class TestComputeEstimatedPercentiles:
         assert without_stats is not None
         assert with_stats.p50_estimate >= 0
         assert without_stats.p50_estimate >= 0
+
+    @pytest.mark.parametrize("learned", [True, False])
+    def test_values_on_bucket_edge_stay_on_edge(self, learned: bool) -> None:
+        """Every value exactly on a bucket edge (e.g. a fixed output length of 100
+        with vLLM's 1-2-5 buckets) must not be spread below the edge."""
+        bucket_deltas = {"20": 0.0, "50": 0.0, "100": 40.0, "200": 40.0, "+Inf": 40.0}
+        bucket_stats = {}
+        if learned:
+            bucket_stats["100"] = BucketStatistics(bucket_le="100")
+            for _ in range(10):
+                bucket_stats["100"].record(mean=100.0, count=4)
+
+        result = compute_estimated_percentiles(bucket_deltas, bucket_stats, 4000.0, 40)
+
+        assert result is not None
+        for name in EstimatedPercentiles.__dataclass_fields__:
+            assert getattr(result, name) == pytest.approx(100.0)
+
+    def test_edge_bucket_is_not_shifted_by_sum_fit(self) -> None:
+        """The sum fit should move the estimated buckets, not the exact edge one."""
+        bucket_stats = {
+            "50": BucketStatistics(bucket_le="50"),
+            "100": BucketStatistics(bucket_le="100"),
+        }
+        bucket_stats["50"].record(mean=30.0, count=20)
+        bucket_stats["100"].record(mean=100.0, count=20)
+
+        result = compute_estimated_percentiles(
+            {"20": 0.0, "50": 20.0, "100": 40.0, "+Inf": 40.0},
+            bucket_stats,
+            total_sum=2600.0,
+            total_count=40,
+        )
+
+        assert result is not None
+        assert result.p75_estimate == pytest.approx(100.0)
+        assert result.p99_estimate == pytest.approx(100.0)
+        assert result.p25_estimate < 50.0
 
     def test_large_counts_downsampled(self) -> None:
         """Test that very large counts complete without memory error."""

@@ -710,8 +710,12 @@ def _estimate_bucket_sums(
         # (learned means can be invalid after counter resets or data corruption)
         if le in bucket_stats and bucket_stats[le].estimated_mean is not None:
             learned_mean = bucket_stats[le].estimated_mean
-            # Use learned mean if valid, otherwise fall back to midpoint
-            mean = learned_mean if lower < learned_mean < upper else (lower + upper) / 2
+            # Use learned mean if valid, otherwise fall back to midpoint. Buckets
+            # are (lower, upper], so a mean equal to upper is valid: every
+            # observation sat exactly on the boundary.
+            mean = (
+                learned_mean if lower < learned_mean <= upper else (lower + upper) / 2
+            )
         else:
             # Fall back to midpoint interpolation
             mean = (lower + upper) / 2
@@ -1138,14 +1142,27 @@ def _generate_observations_with_sum_constraint(
         if stats is not None:
             if stats.estimated_mean is not None:
                 mean_val = stats.estimated_mean
-                # Validate: must be within bucket bounds
-                if lower_bound < mean_val < upper_bound:
+                # Validate: must be within the (lower, upper] bucket range
+                if lower_bound < mean_val <= upper_bound:
                     learned_mean = mean_val
             learned_variance = stats.estimated_variance
 
         # Choose observation generation strategy based on learned variance
         # Three paths: F3 (tiny variance), blended (tight + centered), variance-aware
         generated = False
+
+        # Values in a bucket are <= upper_bound, so a mean equal to upper_bound
+        # means every one of them was exactly upper_bound (e.g. a fixed output
+        # length that lands on a bucket edge). Spreading them below the edge
+        # would invent values that were never observed.
+        point_mass = learned_mean
+        if point_mass is None and bucket_count == total_observations:
+            point_mass = avg
+        if point_mass is not None and point_mass == upper_bound:
+            observations[write_idx : write_idx + bucket_count] = upper_bound
+            # Exact values: leave this bucket out of the pass 2 sum fit.
+            write_idx += bucket_count
+            continue
 
         if (
             learned_mean is not None
@@ -1192,7 +1209,7 @@ def _generate_observations_with_sum_constraint(
 
             # For dominant bucket (95%+ of observations), use avg as center.
             # This is more accurate than midpoint for narrow distributions.
-            if bucket_le == dominant_bucket and lower_bound < avg < upper_bound:
+            if bucket_le == dominant_bucket and lower_bound < avg <= upper_bound:
                 center = avg
 
             # Vectorized: generate uniform distribution centered on 'center'
@@ -1220,7 +1237,12 @@ def _generate_observations_with_sum_constraint(
         return observations  # Close enough
 
     # Distribute residual across buckets proportionally to their sum contribution
-    # This ensures large buckets absorb more of the adjustment
+    # This ensures large buckets absorb more of the adjustment. Point-mass
+    # buckets are exact and not in bucket_ranges, so weight over the rest.
+    adjustable_sum = sum(
+        observations[start : start + count].sum()
+        for start, count, _, _ in bucket_ranges
+    )
     for slice_start, bucket_count, lower_bound, upper_bound in bucket_ranges:
         if bucket_count == 0:
             continue
@@ -1229,8 +1251,8 @@ def _generate_observations_with_sum_constraint(
         bucket_slice = observations[slice_start : slice_start + bucket_count]
         bucket_sum = bucket_slice.sum()
         bucket_weight = (
-            bucket_sum / generated_sum
-            if generated_sum > 0
+            bucket_sum / adjustable_sum
+            if adjustable_sum > 0
             else 1.0 / len(bucket_ranges)
         )
 
