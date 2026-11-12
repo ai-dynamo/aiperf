@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import asyncio
 import heapq
+import itertools
 import time
 from dataclasses import dataclass
 from math import gcd
@@ -163,7 +164,9 @@ class UserCentricStrategy(AIPerfLoggerMixin):
         self._adaptive_target_enabled = False
         self._session_to_user: dict[str, User] = {}
         self._initial_users: list[User] = []
-        self._spawn_queue: list[float] | None = None
+        self._spawn_queue: list[tuple[float, int, User | None]] | None = None
+        self._spawn_seq = itertools.count()
+        self._arrivals_stopped = False
         self._next_user_id: int = 1
         self._retired_user_cancellations = 0
 
@@ -278,7 +281,7 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             return
         now = time.perf_counter()
         for slot in range(value - old_target):
-            heapq.heappush(self._spawn_queue, now + (slot * self._stagger))
+            self._push_arrival(self._spawn_queue, now + (slot * self._stagger), None)
 
     def user_control_snapshot(self) -> dict[str, int]:
         active = len(self._session_to_user)
@@ -299,16 +302,32 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             return True
         return self._active_user_count() < self._target_num_users
 
-    def _defer_next_spawn(self, spawn_queue: list[float]) -> None:
-        heapq.heappush(spawn_queue, time.perf_counter() + self._stagger)
+    def _push_arrival(
+        self,
+        spawn_queue: list[tuple[float, int, User | None]],
+        send_sec: float,
+        user: User | None,
+    ) -> None:
+        """Push one arrival slot. ``user=None`` means generate the
+        replacement user when the slot pops. ``seq`` breaks ties so heap
+        entries never compare User objects."""
+        heapq.heappush(spawn_queue, (send_sec, next(self._spawn_seq), user))
+
+    def _defer_next_spawn(
+        self, spawn_queue: list[tuple[float, int, User | None]]
+    ) -> None:
+        self._push_arrival(spawn_queue, time.perf_counter() + self._stagger, None)
 
     def _schedule_replacement_user(
-        self, spawn_queue: list[float], spawn_sec: float, user: User
+        self,
+        spawn_queue: list[tuple[float, int, User | None]],
+        spawn_sec: float,
+        user: User,
     ) -> None:
         if not self._should_spawn_replacement():
             return
         next_spawn_sec = spawn_sec + (user.max_turns * self._turn_gap)
-        heapq.heappush(spawn_queue, next_spawn_sec)
+        self._push_arrival(spawn_queue, next_spawn_sec, None)
 
     def _should_spawn_replacement(self) -> bool:
         if not self._adaptive_target_enabled:
@@ -318,8 +337,10 @@ class UserCentricStrategy(AIPerfLoggerMixin):
     async def execute_phase(self) -> None:
         """Execute the user-centric rate phase.
 
-        Pre-generated users are scheduled asynchronously (fire-and-forget).
-        Subsequent spawn times are derived from stagger math: spawn + max_turns * turn_gap.
+        All first-turn arrivals (the pre-generated initial population and
+        replacement users alike) flow through one clamped arrival queue; see
+        the queue comment below. Subsequent spawn times are derived from
+        stagger math: spawn + max_turns * turn_gap.
         This ensures all stagger slots remain active and maintains turn_gap spacing.
 
         Uses virtual history to simulate steady-state from t=0 with precise stagger spacing.
@@ -336,55 +357,93 @@ class UserCentricStrategy(AIPerfLoggerMixin):
             f"turn_gap={self._turn_gap:.3f}s"
         )
 
-        # Priority queue (heapq) of future spawn times in seconds (derived from stagger math)
-        # This will be initially populated by 1 spawn user per initial user.
-        # Then, over the benchmark duration, as a new user popped off the queue and spawned,
-        # a new user will be added to the queue based on target completion time of spawned user.
+        # Priority queue (heapq) of future arrival slots in seconds. It is
+        # populated up front with one slot per initial user, and over the
+        # benchmark duration each spawned user derives its replacement slot
+        # from stagger math (spawn + max_turns * turn_gap). This maintains a
+        # steady spawn rate and QPS. Note that this is still an "open-loop"
+        # strategy: the replacement slot comes from the planned time
+        # regardless of whether the previous user completed on time. The only
+        # exception is if `--concurrency` is set (slot acquisition blocks).
         #
-        # This maintains a steady spawn rate and QPS.
-        # Note that this is still an "open-loop" strategy because the replacement
-        # spawn user will spawn at the specified time regardless of whether the previous
-        # spawn user completed on time. The only exception is if `--concurrency` is set.
-        spawn_queue: list[float] = []
+        # Every slot fires at max(planned, previous_arrival_fire + stagger):
+        # stagger is the documented SMALLEST gap between any two users' first
+        # turns, so the clamp applies to on-plan and overdue slots alike -- a
+        # late fire must not let the next on-plan slot close to a sub-stagger
+        # gap. Without the clamp, an event-loop stall longer than one planned
+        # gap makes a backlog of overdue slots pop back-to-back and burst
+        # new-user arrivals -- exactly what the stagger exists to prevent, and
+        # the mechanism behind the collapsed-stagger CI flake (initial
+        # pre-armed timers bursting, and replacements popping overdue while
+        # the initial grid was still incomplete). The absolute grid is kept
+        # exactly when the loop keeps up; under persistent lateness the grid
+        # slides (spacing is preserved, punctuality is not recoverable).
+        spawn_queue: list[tuple[float, int, User | None]] = []
         self._spawn_queue = spawn_queue
+        self._arrivals_stopped = False
 
-        # Schedule initial users and derive the initial spawn times.
-        # This is what creates the initial "steady-state" of the benchmark.
-        for user in self._initial_users:
+        base_perf_sec = self._lifecycle.started_at_perf_sec
+        for user in sorted(self._initial_users, key=lambda u: u.order):
             # Send time is based on starting order (0 = first, N-1 = last)
-            user.next_send_time = self._lifecycle.started_at_perf_sec + (
-                user.order * self._stagger
-            )
-            self._scheduler.schedule_at_perf_sec(
-                user.next_send_time,
-                self._credit_issuer.issue_credit(user.build_first_turn()),
-            )
-            # Derive next spawn time based on estimated time to completion
-            next_spawn_sec = user.next_send_time + (user.max_turns * self._turn_gap)
-            heapq.heappush(spawn_queue, next_spawn_sec)
+            user.next_send_time = base_perf_sec + (user.order * self._stagger)
+            self._push_arrival(spawn_queue, user.next_send_time, user)
 
-        # Continuously spawn new users at discrete intervals to maintain the target QPS.
+        # Anchored at slot fire time, before issuance: slot backpressure and
+        # issuance latency never shift subsequent slot targets. Issuance
+        # itself is fire-and-track (one task per arrival via the scheduler,
+        # which captures per-issue exceptions and cancels them at teardown),
+        # so one blocked or excepting issuance neither stalls nor aborts the
+        # remaining grid; measured capture times still reflect issuance
+        # backpressure when slots block, which is the intended concurrency
+        # behavior.
+        last_slot_perf = base_perf_sec - self._stagger
         while True:
+            if self._arrivals_stopped:
+                return
             if not spawn_queue:
                 await asyncio.sleep(0.1)
                 continue
 
-            spawn_sec = heapq.heappop(spawn_queue)
-            await asyncio.sleep(max(0.0, spawn_sec - time.perf_counter()))
-
-            if not self._should_spawn_user():
-                self._defer_next_spawn(spawn_queue)
-                continue
-
-            user = self._generate_next_user(spawn_sec)
-            turn = user.build_first_turn()
-            should_continue = await self._credit_issuer.issue_credit(turn)
-            if not should_continue:
+            spawn_sec, _, queued_user = heapq.heappop(spawn_queue)
+            target_sec = max(spawn_sec, last_slot_perf + self._stagger)
+            await asyncio.sleep(max(0.0, target_sec - time.perf_counter()))
+            # Issuance is fire-and-track, so a refusal lands one loop
+            # iteration late; re-check after the sleep so a stopped phase
+            # fires at most the slots already in flight.
+            if self._arrivals_stopped:
                 return
+            last_slot_perf = time.perf_counter()
 
-            # Derive next spawn time based on estimated time to completion.
-            # Adaptive scale-down drains excess users by suppressing replacements.
+            if queued_user is None:
+                if not self._should_spawn_user():
+                    self._defer_next_spawn(spawn_queue)
+                    continue
+                user = self._generate_next_user(spawn_sec)
+            else:
+                user = queued_user
+
+            # Derive the replacement slot at fire time, from the planned
+            # schedule: an excepting or blocked issuance must not kill or
+            # delay this user's replacement stream. Adaptive scale-down can
+            # still suppress the derivation.
             self._schedule_replacement_user(spawn_queue, spawn_sec, user)
+            self._scheduler.execute_async(self._issue_arrival(user))
+
+    async def _issue_arrival(self, user: User) -> None:
+        """Issue one arrival's first turn.
+
+        Runs as a scheduler-tracked task (fire-and-track from execute_phase).
+        A refusal (stop condition reached / sending stopped) flips
+        ``_arrivals_stopped`` so the pop loop exits instead of spinning
+        forever; exceptions propagate to the scheduler's exception handler
+        without disturbing the other arrivals or their replacement slots
+        (already derived at fire time).
+        """
+        should_continue = await self._credit_issuer.issue_credit(
+            user.build_first_turn()
+        )
+        if not should_continue:
+            self._arrivals_stopped = True
 
     async def handle_credit_return(
         self,
