@@ -149,6 +149,38 @@ For a reproducible audit, retain the resolved configuration, `inputs.json`, and
 enabled. Within-phase repetitions remain visible rather than being deduplicated
 from the results.
 
+### Measuring prefix-cache hit rate with disjoint pools
+
+Disjoint pools also make the profiling phase a cache measurement you can trust.
+Profiling conversations are text the server has not seen during warmup, so
+profiling-phase cache reads come only from prefixes shared inside the profiling
+pool itself (a common system message or a configured prefix prompt), and cache
+writes measure the profiling pool's own insertion volume. Warmup no longer
+contributes reads to the numbers.
+
+AIPerf excludes warmup records from profiling summaries, so the run-aggregate
+`Overall Usage Prompt Cache Read %` — token-volume-weighted total cache-read
+tokens over total prompt tokens — is the profiling pool's hit rate. The
+per-request `Usage Prompt Cache Read Tokens` metric shows the distribution,
+and servers that make hits first-class (DeepSeek's hit/miss split) also report
+`Usage Prompt Cache Miss Tokens`.
+
+| Metric | Answers |
+| --- | --- |
+| `Overall Usage Prompt Cache Read %` | What share of profiling input tokens came from cache |
+| `Usage Prompt Cache Read Tokens` | Which requests were served from cache, and by how much |
+| `Usage Prompt Cache Write Tokens` | How many tokens the profiling pool inserted (server-reported writes) |
+
+Reads and writes require a server that reports them: vLLM chat needs
+`--enable-prompt-tokens-details`, SGLang needs `--enable-cache-report`, and
+several vendors expose them by default — see the
+[Vendor Usage Field Reference](../reference/vendor-usage-fields.md) for the
+per-vendor fields and opt-in flags.
+
+For the opposite measurement — how much a warmed cache is reused — keep the
+pools shared by omitting `--warmup-dataset-entries`, so profiling can replay
+warmup conversations.
+
 ## Warmup Trigger Options
 
 You can trigger warmup with **count-based** or **duration-based** stopping:
