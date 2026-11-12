@@ -937,7 +937,7 @@ class CLIConfig(BaseConfig):
             "`sequential`: Iterate through dataset in order, wrapping to start after end. "
             "`random`: Randomly sample with replacement (entries may repeat before all are used). "
             "`shuffle`: Shuffle dataset and iterate without replacement, re-shuffling after exhaustion. "
-            "Default behavior depends on dataset type (e.g., `sequential` for traces, `shuffle` for synthetic).",
+            "When unset, uses the dataset's configured sampling strategy; synthetic datasets default to `sequential`.",
         ),
         CLIParameter(
             name=("--dataset-sampling-strategy",),
@@ -2677,6 +2677,22 @@ class CLIConfig(BaseConfig):
     ##############################################################################
     # Warmup
     ##############################################################################
+    warmup_dataset_entries: Annotated[
+        int,
+        Field(
+            ge=0,
+            description="Reserve the first N synthetic dataset conversations for "
+            "warmup only; profiling samples the remaining entries. Zero keeps "
+            "the shared pool (default). Requires warmup and N smaller than "
+            "--num-dataset-entries. Not supported with --accuracy-benchmark. "
+            "Does not modify prompts or flush server caches.",
+        ),
+        CLIParameter(
+            name=("--warmup-dataset-entries",),
+            group=Groups.WARMUP,
+        ),
+    ] = 0
+
     warmup_request_count: Annotated[
         int | None,
         Field(

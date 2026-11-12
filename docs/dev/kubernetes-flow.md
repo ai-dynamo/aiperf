@@ -1036,6 +1036,47 @@ restarts. Adaptive sweeps instantiate their planner through the shared
 `K8sChildJobExecutor` supplies the cluster execution backend behind the same
 `RunExecutor` protocol used by local sweeps.
 
+### Warmup partition validation boundaries
+
+`dataset.warmup_entries` reserves synthetic conversations for warmup; profiling
+continues excluding them even when subsequent trials skip warmup. Two different
+validation contexts preserve that contract:
+
+- **CLI baseline, before overrides:** `kube sweep` and the CR-input loader shared
+  by `kube profile` and `kube generate` use `defer_warmup_dataset_partition` only
+  while loading a typed baseline. CLI flags may still add warmup or set the
+  reservation to zero. `apply_cli_overrides` validates the final merged envelope
+  without deferral, including warmup presence, pool size and supported modes.
+  Direct configuration extraction remains strict by default.
+- **Derived sweep child:** the authored parent plan has already been validated.
+  The existing fixed/adaptive trial strategy can remove warmup phases after
+  trial zero, while keeping `warmup_entries` unchanged. `K8sChildJobExecutor`
+  persists that trial's existing owner reference and sweep/trial labels on the
+  child `AIPerfJob`; it does not add a benchmark field that disables validation.
+
+For the derived child, `_derived_trial_validation_context` in
+`operator/handlers/create.py` requires a positive zero-based trial index and
+`is_my_child`'s matching sweep name/UID labels and controller owner reference.
+It supplies `derived_warmup_partition` to `_validate_spec`'s
+`validate_job_spec` → `prepare_workload_spec` → `load_config_from_mapping` path
+and to the final `AIPerfJobSpec.model_validate`. `_build_deployment` must carry
+the same provenance through `AIPerfJobSpecConverter.to_aiperf_config` and
+`KubernetesDeployment.model_validate`: nested Pydantic after-validators run
+again even when the input is already a model instance.
+
+This derived-trial context exempts only the warmup-presence requirement.
+Standalone jobs, trial zero and children with unmatched ownership still require
+declared warmup. Pool-size, accuracy and replay restrictions remain enforced for
+all trials. Replacing this context with the broader CLI-baseline deferral would
+skip partition compatibility checks. Clearing the reservation to make validation
+pass would let profiling resample warmup conversations. The generated ConfigMap
+carries the canonical `BenchmarkRun`
+with the reservation intact, which every pod reads instead of resolving CLI
+configuration independently. The component regression for this handoff is
+`tests/unit/sweep_controller/test_warmup_partition_handoff.py`; public CLI
+override coverage is in
+`tests/unit/cli_commands/kube/test_warmup_partition_overrides.py`.
+
 ## CRD Generator
 
 Both CRDs (`aiperfjobs.aiperf.nvidia.com`, `aiperfsweeps.aiperf.nvidia.com`)

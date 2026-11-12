@@ -56,6 +56,12 @@ from aiperf.operator.status import (
     ConditionType,
     StatusBuilder,
 )
+from aiperf.sweep_controller.k8s_executor import (
+    SWEEP_LABEL,
+    SWEEP_UID_LABEL,
+    TRIAL_INDEX_LABEL,
+    is_my_child,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +83,36 @@ def _to_plain(obj: Any) -> Any:
     return obj
 
 
+def _derived_trial_validation_context(
+    body: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Recognize a later trial from existing sweep ownership and trial metadata.
+
+    A benchmark payload cannot grant itself the missing-warmup exemption.
+    The sweep controller already validated the authored plan before emitting
+    this child; only its later trial may omit the completed warmup phase.
+    """
+    if body is None:
+        return None
+    metadata = body.get("metadata") or {}
+    labels = metadata.get("labels") or {}
+    trial = labels.get(TRIAL_INDEX_LABEL, "")
+    sweep_name = labels.get(SWEEP_LABEL)
+    sweep_uid = labels.get(SWEEP_UID_LABEL)
+    if not (
+        isinstance(trial, str)
+        and trial.isdecimal()
+        and int(trial) > 0
+        and sweep_name
+        and sweep_uid
+        and is_my_child(
+            body, sweep_uid=sweep_uid, sweep_name=sweep_name, sweep_run_epoch=None
+        )
+    ):
+        return None
+    return {"derived_warmup_partition": True}
+
+
 def _validate_spec(
     spec: dict[str, Any],
     body: dict[str, Any],
@@ -84,7 +120,9 @@ def _validate_spec(
 ) -> AIPerfJobSpec:
     """Validate the raw CRD spec and update status conditions."""
     try:
-        validated_spec = validate_job_spec(spec)
+        validated_spec = validate_job_spec(
+            spec, validation_context=_derived_trial_validation_context(body)
+        )
     except (ConfigurationError, ValueError) as e:
         status.conditions.set_false(ConditionType.CONFIG_VALID, "SpecInvalid", str(e))
         _finalize_failed_status(status, f"Invalid spec: {e}")
@@ -180,9 +218,17 @@ def _build_deployment(
     *,
     job_uid: str | None = None,
     run_meta: RunMeta | None = None,
+    body: dict[str, Any] | None = None,
 ) -> tuple[KubernetesDeployment, int]:
     """Convert raw spec into a KubernetesDeployment. Returns (deployment, total_workers)."""
-    converter = AIPerfJobSpecConverter(spec, name, namespace, job_id=job_id)
+    validation_context = _derived_trial_validation_context(body)
+    converter = AIPerfJobSpecConverter(
+        spec,
+        name,
+        namespace,
+        job_id=job_id,
+        validation_context=validation_context,
+    )
     config = converter.to_aiperf_config()
     deploy_config = converter.to_deployment_config()
     total_workers = converter.calculate_workers(deploy_config)
@@ -207,14 +253,17 @@ def _build_deployment(
         datasets=run.cfg.datasets,
     )
 
-    deployment = KubernetesDeployment(
-        job_id=job_id,
-        namespace=namespace,
-        worker_replicas=num_pods,
-        config=config,
-        run=run,
-        deployment=deploy_config,
-        job_uid=job_uid,
+    deployment = KubernetesDeployment.model_validate(
+        {
+            "job_id": job_id,
+            "namespace": namespace,
+            "worker_replicas": num_pods,
+            "config": config,
+            "run": run,
+            "deployment": deploy_config,
+            "job_uid": job_uid,
+        },
+        context=validation_context,
     )
     return deployment, total_workers
 
@@ -509,6 +558,7 @@ async def _create_resources(
         job_id,
         job_uid=uid,
         run_meta=_run_meta_for(body, name, namespace),
+        body=body,
     )
     deploy_config = deployment.deployment
     config = deployment.config

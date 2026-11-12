@@ -34,7 +34,14 @@ from __future__ import annotations
 import difflib
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import ConfigDict, Field, PrivateAttr, field_validator, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.config.accuracy import (
@@ -598,6 +605,51 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
+    def validate_warmup_dataset_partition(self, info: ValidationInfo) -> Self:
+        """Keep partitioning on synthetic, independently sampled phases."""
+        from aiperf.plugin.enums import PhaseType, TimingMode
+
+        if info.context and info.context.get("defer_warmup_dataset_partition"):
+            return self
+        partitioned = [d for d in self.datasets if getattr(d, "warmup_entries", 0)]
+        if not partitioned:
+            return self
+        if any(d is not self.get_default_dataset() for d in partitioned):
+            raise ValueError("warmup_entries is only supported on the default dataset")
+        if self.accuracy is not None and self.accuracy.enabled:
+            raise ValueError(
+                "warmup_entries (--warmup-dataset-entries) cannot be used with "
+                "--accuracy-benchmark: accuracy mode loads benchmark problems "
+                "and grades against their unpartitioned order. Set "
+                "--warmup-dataset-entries 0 to keep shared sampling."
+            )
+        if self.scenario is not None or any(
+            phase.type == PhaseType.FIXED_SCHEDULE
+            or phase.timing_mode == TimingMode.AGENTIC_REPLAY
+            for phase in self.phases
+        ):
+            raise ValueError(
+                "warmup_entries (--warmup-dataset-entries) is not supported with "
+                "scenarios, fixed_schedule, or agentic_replay; these modes own "
+                "their replay selection and phase continuity"
+            )
+        return self
+
+    def require_partition_warmup(self) -> None:
+        """Require warmup in authored workloads, not derived trial copies.
+
+        Trial strategies may omit warmup after the first trial while retaining
+        the reservation so profiling continues to exclude the same pool.
+        """
+        if (
+            getattr(self.get_default_dataset(), "warmup_entries", 0)
+            and not self.get_warmup_phases()
+        ):
+            raise ValueError(
+                "warmup_entries (--warmup-dataset-entries) requires a warmup phase"
+            )
+
+    @model_validator(mode="after")
     def validate_cache_bust_compatibility(self) -> Self:
         """Refuse cache-bust when endpoint metadata does not support it.
 
@@ -964,6 +1016,19 @@ class AIPerfConfig(BaseConfig):
     # it None and fall back to `model_dump()` (no body templating, but every
     # other path still works).
     _raw_envelope: dict[str, Any] | None = PrivateAttr(default=None)
+
+    @model_validator(mode="after")
+    def validate_partition_warmup(self, info: ValidationInfo) -> Self:
+        """Validate the declared workload before strategies derive per-trial configs."""
+        if not (
+            info.context
+            and (
+                info.context.get("defer_warmup_dataset_partition")
+                or info.context.get("derived_warmup_partition")
+            )
+        ):
+            self.benchmark.require_partition_warmup()
+        return self
 
     @model_validator(mode="before")
     @classmethod

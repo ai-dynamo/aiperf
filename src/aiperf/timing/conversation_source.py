@@ -25,6 +25,31 @@ from aiperf.dataset.protocols import DatasetSamplingStrategyProtocol
 from aiperf.timing.strategies.cache_bust import build_cache_bust_marker
 
 
+def partition_warmup_dataset(
+    metadata: DatasetMetadata, warmup_entries: int
+) -> tuple[DatasetMetadata, DatasetMetadata]:
+    """Reserve leading synthetic conversations without copying stale cached counts.
+
+    Partition before sampling so random-with-replacement and sampler wraparound
+    cannot reintroduce warmup conversations into profiling. Keep the original
+    metadata untouched for workers and artifact export.
+    """
+    if not 0 < warmup_entries < len(metadata.conversations):
+        raise ValueError(
+            "--warmup-dataset-entries must leave at least one loaded profiling "
+            f"conversation (got {warmup_entries} of {len(metadata.conversations)})"
+        )
+    fields = metadata.model_dump(exclude={"conversations"})
+    return (
+        DatasetMetadata(
+            conversations=metadata.conversations[:warmup_entries], **fields
+        ),
+        DatasetMetadata(
+            conversations=metadata.conversations[warmup_entries:], **fields
+        ),
+    )
+
+
 @dataclass(slots=True)
 class SampledSession:
     """A runtime session instance of a conversation.

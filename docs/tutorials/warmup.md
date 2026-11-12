@@ -72,6 +72,115 @@ JSON Export: artifacts/your-model-chat-rate10/profile_export_aiperf.json
 
 This sends 50 warmup requests before the 500 profiling requests begin. Warmup metrics are discarded.
 
+## Separate Warmup and Profiling Conversation Pools
+
+By default, warmup and profiling share the same dataset sampler. A conversation
+used during warmup can be selected again during profiling, including when the
+sampler wraps. This can be desirable when measuring a warmed prefix cache.
+
+For synthetic datasets, `--warmup-dataset-entries N` reserves the first N generated
+conversations for warmup and leaves the rest for profiling. Each pool uses the
+configured sampling strategy independently, so even random sampling or repeated
+passes cannot select a warmup conversation during profiling. Warmup draws do not
+advance the profiling sampler's random state.
+
+```bash
+aiperf profile --model meta-llama/Llama-3.1-8B-Instruct \
+    --url http://localhost:8000 --endpoint-type chat \
+    --concurrency 160 --warmup-request-count 160 --request-count 320 \
+    --num-dataset-entries 480 --warmup-dataset-entries 160 \
+    --dataset-sampling-strategy shuffle --random-seed 42 \
+    --export-outputs-json
+```
+
+The total pool has 480 conversations: 160 reserved for warmup and 320 for profiling.
+`--num-dataset-entries` still specifies the total generated count; AIPerf does not
+silently increase it. Each pool may repeat internally when its phase sends more
+sessions than the pool contains. Request counts count turns, whereas pool sizes
+count whole conversations, including all turns in a multi-turn conversation.
+With `sessions: all`, a phase visits only its own pool.
+
+The equivalent YAML dataset block is:
+
+```yaml
+dataset:
+  type: synthetic
+  entries: 480
+  warmup_entries: 160
+  sampling: shuffle
+```
+
+A warmup phase is required, and N must be smaller than the loaded conversation
+count so profiling has at least one conversation. Zero restores shared sampling,
+including as a CLI override of `warmup_entries` in a YAML config. File/public
+datasets, scenarios, fixed schedules, agentic replay, and accuracy benchmarking
+(`--accuracy-benchmark`) are not supported by this option. Accuracy mode loads
+benchmark problems rather than synthetic conversations; its answer ordering cannot
+be partitioned by this option. Set `--warmup-dataset-entries 0` to use shared
+sampling with accuracy mode. Multiple warmup phases share the warmup pool; multiple
+profiling phases share the profiling pool. Seamless phase transitions keep separate
+samplers.
+
+Multi-run trials keep the reservation even when the default
+`disable_warmup_after_first` policy skips warmup on trials 2..N. Every trial
+continues excluding its reserved entries; skipping warmup does not put them back
+in the profiling pool. Normal per-trial seed settings still control regenerated
+content. Convergence-based trials use the same policy. The authored workload and initial plan must still declare warmup;
+subsequent per-trial `run_config.json` files can omit the warmup phase while
+retaining `warmup_entries`.
+
+Kubernetes sweep children retain the same boundary. The operator recognizes a
+later trial through its existing sweep owner reference and trial labels, and
+carries that provenance through child validation and deployment conversion.
+There is no workload flag to bypass warmup validation: standalone jobs, the first
+trial, and authored configurations still require warmup. Pool-size and supported-
+mode checks remain in force for every child.
+
+This isolates **conversation identities**, not arbitrary shared prefixes. Common
+system messages, configured prefix prompts, or identical generated content can
+still hit the server's cache. No cache is flushed and no request text is changed.
+Use [cache busting](../reference/cache-bust.md) when payload-level isolation is required.
+The existing `warmup_isolation_*` cache-bust targets change payloads instead of
+partitioning the dataset.
+
+For a reproducible audit, retain the resolved configuration, `inputs.json`, and
+`outputs.json`. The output artifact's `warmup` and `data` arrays contain actual
+`conversation_id` selections; their ID sets must be disjoint when this option is
+enabled. Within-phase repetitions remain visible rather than being deduplicated
+from the results.
+
+### Measuring prefix-cache hit rate with disjoint pools
+
+Disjoint pools also make the profiling phase a cache measurement you can trust.
+Profiling conversations are text the server has not seen during warmup, so
+profiling-phase cache reads come only from prefixes shared inside the profiling
+pool itself (a common system message or a configured prefix prompt), and cache
+writes measure the profiling pool's own insertion volume. Warmup no longer
+contributes reads to the numbers.
+
+AIPerf excludes warmup records from profiling summaries, so the run-aggregate
+`Overall Usage Prompt Cache Read %` — token-volume-weighted total cache-read
+tokens over total prompt tokens — is the profiling pool's hit rate. The
+per-request `Usage Prompt Cache Read Tokens` metric shows the distribution,
+and servers that make hits first-class (DeepSeek's hit/miss split) also report
+`Usage Prompt Cache Miss Tokens`.
+
+| Metric | Answers |
+| --- | --- |
+| `Overall Usage Prompt Cache Read %` | What share of profiling input tokens came from cache |
+| `Usage Prompt Cache Read Tokens` | Which requests were served from cache, and by how much |
+| `Usage Prompt Cache Write Tokens` | How many tokens the profiling pool inserted (server-reported writes) |
+
+Reads and writes require a server that reports them: vLLM chat needs
+`--enable-prompt-tokens-details`, SGLang needs `--enable-cache-report`, and
+several vendors expose them by default — see the
+[Vendor Usage Field Reference](../reference/vendor-usage-fields.md) for the
+per-vendor fields and opt-in flags.
+
+For the opposite measurement — how much a warmed cache is reused — keep the
+pools shared by omitting `--warmup-dataset-entries`, so profiling can replay
+warmup conversations.
+
 ## Warmup Trigger Options
 
 You can trigger warmup with **count-based** or **duration-based** stopping:

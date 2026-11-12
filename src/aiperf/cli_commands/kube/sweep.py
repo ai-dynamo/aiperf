@@ -234,9 +234,9 @@ def _normalized_config_parts(
 ) -> tuple[dict[str, Any], dict[str, Any], Any, Any]:
     """Normalize origin/main's envelope while preserving Jinja leaves.
 
-    The rendered baseline proves the input is valid and supplies canonical
-    camelCase keys. It also resolves source-relative envelope values such as a
-    bare ``plot:`` path. Post-environment, pre-Jinja leaf values are overlaid
+    The rendered baseline supplies canonical camelCase keys; the CLI merge
+    validates the final partition constraints. It also resolves source-relative
+    envelope values such as a bare ``plot:`` path. Post-environment, pre-Jinja leaf values are overlaid
     so a ``variables.*`` sweep can render each variation independently
     in-cluster.
     """
@@ -260,7 +260,15 @@ def _normalized_config_parts(
         "benchmark": copy.deepcopy(bench_dict),
         **copy.deepcopy(envelope_extras),
     }
-    config = load_config_from_mapping(envelope, file_path=file_path)
+    # This typed baseline precedes CLI dataset/warmup overrides. Their
+    # cross-field partition constraints belong to the final resolver merge.
+    config = load_config_from_mapping(
+        envelope,
+        file_path=file_path,
+        validation_context=(
+            {"defer_warmup_dataset_partition": True} if cli_config is not None else None
+        ),
+    )
     deferred: frozenset[str] = frozenset()
     if cli_config is not None:
         reject_cli_flags_against_hoisted_blocks(cli_config, sweep_cfg=sweep_cfg)

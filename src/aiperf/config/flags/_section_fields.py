@@ -64,6 +64,7 @@ INPUT_FIELDS: frozenset[str] = frozenset(
         "custom_dataset_type",
         "dataset_filters",
         "dataset_sampling_strategy",
+        "warmup_dataset_entries",
         "allow_dataset_wrap",
         "extra_inputs",
         "input_file",
