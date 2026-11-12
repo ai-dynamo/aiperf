@@ -71,6 +71,7 @@ from aiperf.config.loader.parsing import (
     parse_str_or_dict_as_tuple_list,
     parse_str_or_list,
     parse_str_or_list_of_positive_values,
+    parse_url_headers,
     raise_rejected_input_file,
     reject_moved_custom_dataset_type,
     require_turn_mean_at_least_one,
@@ -233,6 +234,26 @@ class CLIConfig(BaseConfig):
             group=Groups.ENDPOINT,
         ),
     ] = EndpointDefaults.URL_STRATEGY
+
+    url_headers: Annotated[
+        Any,
+        Field(
+            description="HTTP header to send only to one `--url` target, as `INDEX:Header:Value`, where `INDEX` "
+            "is the 0-based position of the URL in the `--url` list. Can be specified multiple times. "
+            "Global `--header` values still apply to every target; on a name clash (case-insensitive) the "
+            "per-URL value wins. Repeated identical URLs stay distinct targets, so "
+            "`--url http://localhost:8000 --url http://localhost:8000 --url-header 0:X-data-parallel-rank:0 "
+            "--url-header 1:X-data-parallel-rank:1` pins each round-robin target to a vLLM data-parallel rank. "
+            "Values are sent as given (never coerced). Credential-bearing header names are rejected here; "
+            "pass credentials with `--header` or `--api-key`.",
+        ),
+        BeforeValidator(parse_url_headers),
+        CLIParameter(
+            name=("--url-header",),
+            consume_multiple=True,
+            group=Groups.ENDPOINT,
+        ),
+    ] = []
 
     timeout_seconds: Annotated[
         float,

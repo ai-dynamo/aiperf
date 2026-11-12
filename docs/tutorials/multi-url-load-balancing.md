@@ -100,12 +100,49 @@ aiperf profile --model llama \
     --request-count 100
 ```
 
+## Per-URL Headers
+
+`--header` sends the same headers to every URL. To send a header to only one target, use `--url-header INDEX:Header:Value`, where `INDEX` is the 0-based position of the URL in the `--url` list. Repeated identical URLs stay distinct round-robin targets, so this pins each target to a vLLM data-parallel rank through vLLM's `X-data-parallel-rank` header, without the DP load balancer in the measurement:
+
+```bash
+# Server started with: vllm serve llama --data-parallel-size 2
+aiperf profile --model llama \
+    --url http://localhost:8000 \
+    --url http://localhost:8000 \
+    --url-header 0:X-data-parallel-rank:0 \
+    --url-header 1:X-data-parallel-rank:1 \
+    --concurrency 16 \
+    --request-count 200
+```
+
+In a config file, `endpoint.url_headers` is a list aligned with `endpoint.urls`; use `{}` for a URL without extra headers:
+
+```yaml
+benchmark:
+  endpoint:
+    urls: [http://localhost:8000, http://localhost:8000, http://localhost:8000]
+    headers:
+      X-Team: perf
+    url_headers:
+      - {X-data-parallel-rank: "0"}
+      - {}
+      - {X-data-parallel-rank: "2"}
+```
+
+- Global headers still apply to every URL. A per-URL header replaces a global header with the same name (compared case-insensitively).
+- A session keeps its URL for every turn, so all turns of a multi-turn conversation carry the same per-URL headers.
+- Values are sent as given; unlike `--header`, they are never coerced to numbers or booleans.
+- An index past the last `--url` is a configuration error.
+- Credential-bearing header names (for example `Authorization` or names containing `token` or `api-key`) are rejected: per-URL headers are not redacted from artifacts or transported as secrets. Pass credentials with `--header` or `--api-key`.
+- Per-URL headers apply to inference requests. Readiness probes and control hooks (`--reset-kv-cache`, `--server-profiler`) keep using the global headers.
+
 ## CLI Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `--url` | list | localhost:8000 | One or more endpoint URLs; multiple URLs enable load balancing |
 | `--url-strategy` | enum | round_robin | Strategy for distributing requests across multiple URLs |
+| `--url-header` | list | none | `INDEX:Header:Value` header sent only to the URL at that 0-based position; repeatable |
 
 ## Behavior Notes
 

@@ -44,7 +44,7 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
     def get_endpoint_headers(self, request_info: RequestInfo) -> dict[str, str]:
         """Get endpoint headers (auth + user custom). Override to customize."""
         cfg = self.model_endpoint.endpoint
-        headers = dict(cfg.headers) if cfg.headers else {}
+        headers = cfg.get_headers(request_info.url_index)
         if cfg.api_key and not cfg.auth_type:
             headers["Authorization"] = f"Bearer {cfg.api_key}"
         return headers
