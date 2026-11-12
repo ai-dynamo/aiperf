@@ -437,6 +437,7 @@ def compute_estimated_percentiles(
     # Downsample ALL buckets (including +Inf) with a single consistent ratio
     # to prevent memory issues while preserving distribution proportions.
     # Both counts AND sum are scaled by the same ratio to preserve averages.
+    original_bucket_counts = dict(per_bucket_counts)
     total_obs_count = sum(per_bucket_counts.values())
     sample_ratio = 1.0
     if total_obs_count > _MAX_OBSERVATIONS:
@@ -472,7 +473,10 @@ def compute_estimated_percentiles(
     # Uses per-bucket learned means + sum constraint for improved accuracy
     # Note: per_bucket_counts is already downsampled, and actual_finite_sum is scaled
     finite_obs_generated = _generate_observations_with_sum_constraint(
-        per_bucket_counts, actual_finite_sum, bucket_stats
+        per_bucket_counts,
+        actual_finite_sum,
+        bucket_stats,
+        original_bucket_counts=original_bucket_counts,
     )
 
     # Combine finite and +Inf observations (both are now ndarrays)
@@ -1029,6 +1033,7 @@ def _generate_observations_with_sum_constraint(
     per_bucket_counts: dict[str, float],
     target_sum: float,
     bucket_stats: dict[str, BucketStatistics] | None = None,
+    original_bucket_counts: dict[str, float] | None = None,
 ) -> np.ndarray:
     """Generate observations constrained to match the exact histogram sum.
 
@@ -1069,6 +1074,9 @@ def _generate_observations_with_sum_constraint(
         target_sum: The exact sum of observations (from histogram sum_delta)
         bucket_stats: Optional learned per-bucket statistics from
                       accumulate_bucket_statistics()
+        original_bucket_counts: Optional per-bucket counts before any caller
+                      downsampling; learned observation counts are compared
+                      against these. Defaults to per_bucket_counts.
 
     Returns:
         Array of generated observation values for finite buckets (excludes +Inf)
@@ -1082,6 +1090,10 @@ def _generate_observations_with_sum_constraint(
     # Downsample if total count exceeds max to prevent memory issues.
     # Proportional sampling maintains the distribution shape for percentile accuracy.
     # Both counts AND target_sum are scaled to preserve mean values within buckets.
+    # Learned stats count original observations, so edge coverage is checked
+    # against the counts before any downsampling.
+    if original_bucket_counts is None:
+        original_bucket_counts = dict(per_bucket_counts)
     total_count = sum(per_bucket_counts.get(le, 0) for le in finite_buckets)
     if total_count > _MAX_OBSERVATIONS:
         sample_ratio = _MAX_OBSERVATIONS / total_count
@@ -1161,7 +1173,7 @@ def _generate_observations_with_sum_constraint(
         if (
             learned_mean is not None
             and stats is not None
-            and stats.observation_count >= bucket_count
+            and stats.observation_count >= original_bucket_counts.get(bucket_le, 0)
         ):
             point_mass = learned_mean
         elif bucket_count == total_observations:

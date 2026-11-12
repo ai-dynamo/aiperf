@@ -443,6 +443,24 @@ class TestComputeEstimatedPercentiles:
         assert result is not None
         assert result.p50_estimate < 100.0
 
+    def test_partial_edge_stats_do_not_freeze_downsampled_bucket(self) -> None:
+        """Coverage must be checked against the original bucket count, not the
+        downsampled one: the same case as above at 200,000 observations per
+        value, where the upper bucket (400,000) samples down to 66,666 while
+        only 200,000 of its observations were learned at the edge."""
+        bucket_stats = {"100": BucketStatistics(bucket_le="100")}
+        bucket_stats["100"].record(mean=100.0, count=200_000)
+
+        result = compute_estimated_percentiles(
+            {"50": 200_000.0, "100": 600_000.0, "+Inf": 600_000.0},
+            bucket_stats,
+            total_sum=38_000_000.0,
+            total_count=600_000,
+        )
+
+        assert result is not None
+        assert result.p50_estimate < 100.0
+
     def test_large_counts_downsampled(self) -> None:
         """Test that very large counts complete without memory error."""
         result = compute_estimated_percentiles(
