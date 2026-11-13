@@ -64,8 +64,16 @@ def _assert_policy_parity(
 
 
 @pytest.mark.parametrize("phase_type", ["constant", "poisson", "gamma", "user_centric"])
-@pytest.mark.parametrize("policy", [None, "rate_slot", "direct"])
-@pytest.mark.parametrize("key", ["continuationDispatch", "continuation_dispatch"])
+@pytest.mark.parametrize(
+    ("key", "policy"),
+    [
+        param("continuationDispatch", None, id="omitted"),
+        param("continuationDispatch", "rate_slot", id="camel-rate-slot"),
+        param("continuation_dispatch", "rate_slot", id="snake-rate-slot"),
+        param("continuationDispatch", "direct", id="camel-direct"),
+        param("continuation_dispatch", "direct", id="snake-direct"),
+    ],
+)  # fmt: skip
 def test_schema_and_python_agree_on_continuation_policy(
     schema_validator: Draft202012Validator,
     phase_type: str,
