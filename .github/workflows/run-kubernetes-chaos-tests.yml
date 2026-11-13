@@ -49,7 +49,14 @@ jobs:
     env:
       AIPERF_K8S_SHARE_PROCESS_NAMESPACE: "true"
       K8S_TEST_CLUSTER: aiperf-chaos-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
-      KUBECONFIG: /tmp/aiperf-chaos-kubeconfig-${{ matrix.id }}-${{ github.run_id }}-${{ github.run_attempt }}
+      KUBECONFIG: /tmp/aiperf-chaos-kubeconfig-${{ github.run_id }}-${{ github.run_attempt }}
+      # On failure, keep the Kind cluster alive so the diagnostics step below
+      # captures real state, and dump evidence from WITHIN pytest fixture
+      # teardown (before the operator is uninstalled and the cluster is
+      # deleted). The always() teardown step deletes the cluster afterwards;
+      # on success the fixtures tear everything down themselves.
+      K8S_TEST_KEEP_CLUSTER_ON_FAILURE: "true"
+      K8S_TEST_DIAGNOSTICS_DIR: k8s-chaos-logs/pytest-dump
 
     steps:
       - name: Free disk space

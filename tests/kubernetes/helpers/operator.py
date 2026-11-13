@@ -512,6 +512,7 @@ class OperatorDeployer:
         operator_node_selector: dict[str, str] | None = None,
         disable_pvc: bool = False,
         operator_namespace: str = DEFAULT_OPERATOR_NAMESPACE,
+        strict_preflight: bool = False,
     ) -> None:
         """Initialize operator deployer.
 
@@ -555,6 +556,12 @@ class OperatorDeployer:
                 PersistentVolumeClaim. Useful on external clusters where the
                 default storage class cannot attach to the node the operator
                 lands on, or on ephemeral test clusters without a StorageClass.
+            strict_preflight: When True, configures the operator with
+                ``AIPERF_PREFLIGHT_STRICT_RESOURCES=true`` so its
+                resource-capacity preflight FAILS the job fast when the
+                cluster provably cannot fit the benchmark, instead of WARNing
+                and letting the pods sit Pending until the test timeout. For
+                CI chaos/audit paths; keep off for production-shaped runs.
         """
         self.kubectl = kubectl
         self.project_root = project_root
@@ -570,6 +577,7 @@ class OperatorDeployer:
         self.operator_node_selector = operator_node_selector
         self.disable_pvc = disable_pvc
         self.OPERATOR_NAMESPACE = operator_namespace
+        self.strict_preflight = strict_preflight
         self._deployed_jobs: list[OperatorJobResult] = []
 
     async def install_crd(self) -> None:
@@ -756,6 +764,8 @@ class OperatorDeployer:
                 "AIPERF_K8S_APISERVER_TLS_SERVER_NAME_OVERRIDE="
                 f"{self.apiserver_tls_server_name_override}"
             )
+        if self.strict_preflight:
+            env_pairs.append("AIPERF_PREFLIGHT_STRICT_RESOURCES=true")
         await self.kubectl.run(
             "set",
             "env",
