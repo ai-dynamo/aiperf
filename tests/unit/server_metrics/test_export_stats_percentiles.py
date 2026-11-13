@@ -239,6 +239,43 @@ class TestEstimatedPercentilesIntegration:
         assert result.stats.p50_estimate is not None
         assert result.stats.p50_estimate < 100.0
 
+    def test_in_window_counter_reset_does_not_pin_edge_bucket(self):
+        """Edge stats learned before an in-window reset must not pin the 100
+        bucket: the 100 values at 100 predate the reset, and the window ends
+        with 20 values in the 50 bucket and 20 below 100, summing to 1800.
+        Pinning 20 at 100 alone would be 2000.
+        """
+        ts = ServerMetricsTimeSeries()
+        add_histogram_snapshots(
+            ts,
+            "latency",
+            [
+                (0, hist({"50": 0.0, "100": 0.0, "+Inf": 0.0}, 0.0, 0.0)),
+                (
+                    NANOS_PER_SECOND,
+                    hist({"50": 0.0, "100": 100.0, "+Inf": 100.0}, 10000.0, 100.0),
+                ),
+                (
+                    2 * NANOS_PER_SECOND,
+                    hist({"50": 0.0, "100": 0.0, "+Inf": 0.0}, 0.0, 0.0),
+                ),
+                (
+                    3 * NANOS_PER_SECOND,
+                    hist({"50": 20.0, "100": 40.0, "+Inf": 40.0}, 1800.0, 40.0),
+                ),
+            ],
+        )
+
+        result = _compute_histogram_stats(
+            get_histogram(ts, "latency"),
+            make_time_filter(start_ns=0, end_ns=3 * NANOS_PER_SECOND),
+        )
+
+        assert result.stats is not None
+        assert result.stats.count == 40
+        assert result.stats.p99_estimate is not None
+        assert result.stats.p99_estimate < 100.0
+
 
 # =============================================================================
 # Edge Case Tests

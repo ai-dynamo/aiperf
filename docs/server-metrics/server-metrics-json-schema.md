@@ -816,7 +816,7 @@ The +Inf bucket sum is calculated as `total_sum - estimated_finite_sum`. Observa
 
 **Phase 4 - Generate finite observations with sum constraint:**
 For each bucket, observations are placed using one of several strategies based on learned statistics:
-- **Exact edge**: When every observation in the bucket is known to sit on its upper edge (`le`), all of them are placed on `le`. This applies when the learned mean equals `le` and the single-bucket intervals it was learned from cover the bucket's full count before downsampling, or when the bucket holds every finite observation and their average equals `le`
+- **Exact edge**: When every observation in the bucket is known to sit on its upper edge (`le`), all of them are placed on `le`. This applies when the learned mean equals `le` and the single-bucket intervals it was learned from cover the bucket's full count before downsampling with no counter reset in the window, or when the bucket holds every finite observation, the `+Inf` bucket is empty (so the finite sum is known), and their average equals `le`
 - **F3 two-point mass**: When variance is extremely tight (&lt; 1% of bucket width)
 - **Blended distribution**: When variance is tight (&lt; 20%) and mean is near center (&lt; 30% offset)
 - **Variance-aware distribution**: When variance is moderate

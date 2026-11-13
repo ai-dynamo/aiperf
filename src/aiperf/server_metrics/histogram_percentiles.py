@@ -251,6 +251,8 @@ class BucketStatistics:
         weighted_mean_sum: Sum of (mean * count) for weighted average calculation
         sample_count: Number of single-bucket intervals observed
         observed_means: List of individual mean values from each single-bucket interval
+        spans_counter_reset: True when the learning window contains a counter
+            reset, so learned observations may not belong to the endpoint deltas
     """
 
     bucket_le: str
@@ -258,6 +260,7 @@ class BucketStatistics:
     weighted_mean_sum: float = 0.0
     sample_count: int = 0
     observed_means: list[float] = field(default_factory=list)
+    spans_counter_reset: bool = False
 
     # Minimum observations required to trust variance estimate
     MIN_VARIANCE_OBSERVATIONS: int = 3
@@ -477,6 +480,8 @@ def compute_estimated_percentiles(
         actual_finite_sum,
         bucket_stats,
         original_bucket_counts=original_bucket_counts,
+        # With +Inf observations the finite sum depends on the +Inf estimate.
+        target_sum_is_exact=inf_count == 0,
     )
 
     # Combine finite and +Inf observations (both are now ndarrays)
@@ -551,6 +556,9 @@ def accumulate_bucket_statistics(
     count_deltas = np.diff(counts[start_idx:]).astype(np.int64)
     sum_deltas = np.diff(sums[start_idx:])
     bucket_deltas_2d = np.diff(bucket_counts[start_idx:], axis=0)
+    # A reset inside the window means learned intervals may include
+    # observations that the endpoint deltas no longer contain.
+    has_reset = bool(np.any(count_deltas < 0) or np.any(bucket_deltas_2d < 0))
     bucket_deltas_2d = np.maximum(bucket_deltas_2d, 0)  # Handle counter resets
 
     # Convert cumulative deltas to per-bucket deltas (vectorized)
@@ -580,6 +588,10 @@ def accumulate_bucket_statistics(
             if le not in bucket_stats:
                 bucket_stats[le] = BucketStatistics(bucket_le=le)
             bucket_stats[le].record(bucket_mean, int(count_delta))
+
+    if has_reset:
+        for stats in bucket_stats.values():
+            stats.spans_counter_reset = True
 
     return bucket_stats
 
@@ -1034,6 +1046,7 @@ def _generate_observations_with_sum_constraint(
     target_sum: float,
     bucket_stats: dict[str, BucketStatistics] | None = None,
     original_bucket_counts: dict[str, float] | None = None,
+    target_sum_is_exact: bool = True,
 ) -> np.ndarray:
     """Generate observations constrained to match the exact histogram sum.
 
@@ -1048,8 +1061,9 @@ def _generate_observations_with_sum_constraint(
         2. For each bucket, choose observation placement strategy:
            0. Exact edge: if every observation in the bucket is known to sit on
               its upper edge (a learned mean equal to le whose single-bucket
-              intervals cover the bucket's full, pre-downsampling count, or a
-              lone bucket whose average equals le), place them all on le
+              intervals cover the bucket's full, pre-downsampling count with no
+              counter reset in the learning window, or a lone bucket whose
+              average equals le when target_sum is exact), place them all on le
            a. F3: If variance is extremely tight (< 1% of bucket width),
               use F3 two-point mass distribution for optimal moment matching
            b. Blended: If variance is tight (< 20%) AND mean is near center (< 30%),
@@ -1082,6 +1096,9 @@ def _generate_observations_with_sum_constraint(
         original_bucket_counts: Optional per-bucket counts before any caller
                       downsampling; learned observation counts are compared
                       against these. Defaults to per_bucket_counts.
+        target_sum_is_exact: Whether target_sum is known rather than derived
+                      from an estimate (e.g. of the +Inf bucket sum). Only an
+                      exact target_sum can prove a lone bucket sits on its edge.
 
     Returns:
         Array of generated observation values for finite buckets (excludes +Inf)
@@ -1174,14 +1191,17 @@ def _generate_observations_with_sum_constraint(
         # would invent values that were never observed. A learned mean only
         # proves this when its single-bucket intervals cover every observation
         # in the bucket; later mixed intervals can add values below the edge.
+        # A counter reset in the learning window breaks that link, since the
+        # learned observations may predate the reset.
         point_mass = None
         if (
             learned_mean is not None
             and stats is not None
+            and not stats.spans_counter_reset
             and stats.observation_count >= original_bucket_counts.get(bucket_le, 0)
         ):
             point_mass = learned_mean
-        elif bucket_count == total_observations:
+        elif bucket_count == total_observations and target_sum_is_exact:
             point_mass = avg
         if point_mass is not None and point_mass == upper_bound:
             observations[write_idx : write_idx + bucket_count] = upper_bound
