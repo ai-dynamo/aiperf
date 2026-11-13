@@ -26,6 +26,11 @@ timeout 900 bash -c 'while [ "$(curl -s -o /dev/null -w "%{http_code}" localhost
 ## Profile Chat Completions API
 The Chat Completions API uses the `/v1/chat/completions` endpoint.
 
+Function-call names and arguments contribute to client-side output token counts
+and content timing for both `tool_calls` and legacy `function_call` responses,
+including streaming deltas. A function-only response does not need text in
+`content` to be counted. Any accompanying prose in `content` is counted as well.
+
 If your server or gateway requires query parameters, include them in a quoted `--url`, for example `--url 'http://localhost:8000?tag=first&tag=second'`. AIPerf preserves repeated parameter values and their order when constructing the request URL; endpoint parameters replace all existing values of the same key. An empty list value removes that key from the resulting query. Readiness probes also preserve URL queries and semicolon path parameters when adding the endpoint path, so a base path such as `/proxy;tenant=blue` becomes `/proxy;tenant=blue/v1/models` for model discovery.
 
 ### Profile with synthetic inputs
