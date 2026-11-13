@@ -8,7 +8,7 @@ Input arrays are expected to be session_num-indexed (from ColumnStore).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import NamedTuple, TypeAlias
 
 import numpy as np
@@ -105,6 +105,40 @@ SWEEP_LINE_METRIC_SPECS: tuple[SweepLineMetricSpec, ...] = (
 )
 
 
+ACTIVE_SWEEP_LINE_METRIC_SPECS: tuple[SweepLineMetricSpec, ...] = (
+    SweepLineMetricSpec(
+        "active_decode_throughput",
+        "Active Decode Throughput",
+        "tokens/sec",
+        NANOS_PER_SECOND,
+    ),
+    SweepLineMetricSpec(
+        "active_prefill_throughput",
+        "Active Prefill Throughput",
+        "tokens/sec",
+        NANOS_PER_SECOND,
+    ),
+    SweepLineMetricSpec(
+        "active_decode_throughput_per_user",
+        "Active Decode Throughput Per User",
+        "tokens/sec/user",
+        NANOS_PER_SECOND,
+    ),
+    SweepLineMetricSpec(
+        "active_prefill_throughput_per_user",
+        "Active Prefill Throughput Per User",
+        "tokens/sec/user",
+        NANOS_PER_SECOND,
+    ),
+    SweepLineMetricSpec(
+        "active_total_throughput",
+        "Active Total Throughput",
+        "tokens/sec",
+        NANOS_PER_SECOND,
+    ),
+)
+
+
 @dataclass(frozen=True, slots=True)
 class SweepLineCurves:
     """Pre-computed sweep-line curves for concurrency, throughput, and prefill throughput."""
@@ -127,6 +161,13 @@ class SweepLineCurves:
     prefill_throughput_per_user: FloatArray
     tokens_in_flight_ts: FloatArray
     tokens_in_flight: FloatArray
+    active_curves: tuple[ActiveCurve, ...] = field(
+        init=False, repr=False, compare=False
+    )
+    """Per-``ACTIVE_SWEEP_LINE_METRIC_SPECS`` rate curves joined onto their phase masks."""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "active_curves", self._build_active_curves())
 
     def curves(
         self,
@@ -173,69 +214,40 @@ class SweepLineCurves:
         gaps by divide_step_functions, so the active mask is needed there
         too to avoid biased percentiles.
         """
-        for tag, header, unit, scale, rate, rate_ts, mask, mask_ts in (
-            (
-                "active_decode_throughput",
-                "Active Decode Throughput",
-                "tokens/sec",
-                NANOS_PER_SECOND,
-                self.throughput,
-                self.throughput_ts,
-                self.generation_concurrency,
-                self.generation_concurrency_ts,
-            ),
-            (
-                "active_prefill_throughput",
-                "Active Prefill Throughput",
-                "tokens/sec",
-                NANOS_PER_SECOND,
-                self.prefill_throughput,
-                self.prefill_throughput_ts,
-                self.prefill_concurrency,
-                self.prefill_concurrency_ts,
-            ),
-            (
-                "active_decode_throughput_per_user",
-                "Active Decode Throughput Per User",
-                "tokens/sec/user",
-                NANOS_PER_SECOND,
-                self.throughput_per_user,
-                self.throughput_per_user_ts,
-                self.generation_concurrency,
-                self.generation_concurrency_ts,
-            ),
-            (
-                "active_prefill_throughput_per_user",
-                "Active Prefill Throughput Per User",
-                "tokens/sec/user",
-                NANOS_PER_SECOND,
-                self.prefill_throughput_per_user,
-                self.prefill_throughput_per_user_ts,
-                self.prefill_concurrency,
-                self.prefill_concurrency_ts,
-            ),
-            (
-                "active_total_throughput",
-                "Active Total Throughput",
-                "tokens/sec",
-                NANOS_PER_SECOND,
-                self.total_throughput,
-                self.total_throughput_ts,
-                self.concurrency,
-                self.concurrency_ts,
-            ),
+        for spec, curve in zip(
+            ACTIVE_SWEEP_LINE_METRIC_SPECS, self.active_curves, strict=True
         ):
-            stats = compute_active_weighted_stats(
-                rate_ts, rate, mask_ts, mask, window_start, window_end
-            )
-            results[tag] = metric_result_from_sweep_line_stats(
-                tag,
-                header,
-                unit,
-                stats,
-                scale=scale,
+            results[spec.tag] = metric_result_from_sweep_line_stats(
+                spec.tag,
+                spec.header,
+                spec.unit,
+                curve.window_stats(window_start, window_end),
+                scale=spec.scale,
                 console_group=MetricConsoleGroup.ACTIVE,
             )
+
+    def _build_active_curves(self) -> tuple[ActiveCurve, ...]:
+        """Join each active variant's rate curve onto its phase-concurrency mask,
+        in ``ACTIVE_SWEEP_LINE_METRIC_SPECS`` order."""
+        decode = (self.generation_concurrency_ts, self.generation_concurrency)
+        prefill = (self.prefill_concurrency_ts, self.prefill_concurrency)
+        total = (self.concurrency_ts, self.concurrency)
+        return tuple(
+            ActiveCurve.from_step_functions(rate_ts, rate, mask_ts, mask)
+            for (rate_ts, rate), (mask_ts, mask) in (
+                ((self.throughput_ts, self.throughput), decode),
+                ((self.prefill_throughput_ts, self.prefill_throughput), prefill),
+                ((self.throughput_per_user_ts, self.throughput_per_user), decode),
+                (
+                    (
+                        self.prefill_throughput_per_user_ts,
+                        self.prefill_throughput_per_user,
+                    ),
+                    prefill,
+                ),
+                ((self.total_throughput_ts, self.total_throughput), total),
+            )
+        )
 
 
 def _sweep_line_cumsum(
@@ -255,9 +267,10 @@ def _sweep_line_cumsum(
     # ordering bug would produce a magnitude orders larger than this threshold
     # and remain visible.
     if len(vals) > 0:
-        max_abs = float(np.max(np.abs(vals)))
+        magnitude = np.abs(vals)
+        max_abs = float(np.max(magnitude))
         if max_abs > 0.0:
-            vals = np.where(np.abs(vals) < 1e-9 * max_abs, 0.0, vals)
+            vals[magnitude < 1e-9 * max_abs] = 0.0
     return timestamps[order], vals
 
 
@@ -269,6 +282,20 @@ def _step_lookup(
     """Look up step-function values at query timestamps (0 before first event)."""
     idx = np.searchsorted(event_ts, query_ts, side="right").astype(np.intp) - 1
     return np.where(idx >= 0, event_vals[np.clip(idx, 0, len(event_vals) - 1)], 0.0)
+
+
+def _merge_sorted_unique(a: FloatArray, b: FloatArray) -> FloatArray:
+    """``np.unique(np.concatenate([a, b]))`` for already-sorted inputs.
+
+    A stable sort of two sorted runs is a linear merge, so this avoids the
+    full comparison sort ``np.unique`` would do.
+    """
+    merged = np.concatenate([a, b])
+    merged.sort(kind="stable")
+    keep = np.empty(len(merged), dtype=np.bool_)
+    keep[:1] = True
+    np.not_equal(merged[1:], merged[:-1], out=keep[1:])
+    return merged[keep]
 
 
 def add_step_functions(
@@ -293,7 +320,7 @@ def add_step_functions(
     if len(b_ts) == 0:
         return a_ts.copy(), a_vals.copy()
 
-    merged_ts = np.unique(np.concatenate([a_ts, b_ts]))
+    merged_ts = _merge_sorted_unique(a_ts, b_ts)
     return merged_ts, _step_lookup(a_ts, a_vals, merged_ts) + _step_lookup(
         b_ts, b_vals, merged_ts
     )
@@ -321,7 +348,7 @@ def divide_step_functions(
     if len(num_ts) == 0 or len(den_ts) == 0:
         return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
 
-    merged_ts = np.unique(np.concatenate([num_ts, den_ts]))
+    merged_ts = _merge_sorted_unique(num_ts, den_ts)
     num_at = _step_lookup(num_ts, num_vals, merged_ts)
     den_at = _step_lookup(den_ts, den_vals, merged_ts)
 
@@ -584,6 +611,9 @@ from aiperf.analysis.sweepline_kv_cache import (  # noqa: E402
 )
 from aiperf.analysis.sweepline_kv_cache import (  # noqa: E402
     tokens_in_flight_sweep_line_icl as tokens_in_flight_sweep_line_icl,
+)
+from aiperf.analysis.sweepline_stats import (  # noqa: E402
+    ActiveCurve as ActiveCurve,
 )
 from aiperf.analysis.sweepline_stats import (  # noqa: E402
     _build_clipped_segments as _build_clipped_segments,

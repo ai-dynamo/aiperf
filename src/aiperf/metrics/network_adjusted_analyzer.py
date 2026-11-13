@@ -129,13 +129,13 @@ def inject_network_adjusted_from_arrays(
     adjusted_arrays: dict[str, NDArray[np.float64]],
     results: dict[str, MetricResult],
     rtt_ns: float,
-    mask: NDArray[np.bool_] | None = None,
+    mask: NDArray[np.bool_] | NDArray[np.integer] | None = None,
 ) -> None:
     """Aggregate precomputed adjusted arrays into ``results`` for one window.
 
     ``adjusted_arrays`` comes from :func:`compute_network_adjusted_arrays` (built
     once per summarize). ``mask`` restricts to the window's records (a timeslice
-    bin or a phase-scoped export); None means all records. Also injects the
+    bin's record indices or a phase-scoped boolean mask); None means all records. Also injects the
     run-level ``network_rtt`` scalar.
     """
     results[NetworkRttMetric.tag] = _network_rtt_result(rtt_ns)
