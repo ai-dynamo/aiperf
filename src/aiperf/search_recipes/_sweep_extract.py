@@ -31,14 +31,18 @@ def _extract_points(
       block carries ``{mean, std, min, max, cv, ci_low, ci_high, unit}`` --
       we read ``mean`` (the multi-trial average of the stat).
     - Single-trial path: keys are the metric tag alone and the block carries
-      a collapsed ``{mean, std=0, min, max, ...}``; here we use ``mean``
-      (which equals the JsonMetricResult.avg) regardless of the requested
-      ``stat``. Single-trial sweeps don't carry per-stat percentiles.
+      the run's own stats (``avg``, ``p50`` .. ``p99``, ...) alongside a
+      collapsed ``{mean, std=0, ...}``; we read the requested ``stat``, since
+      ``mean`` there is the average whatever was asked for.
 
     Skips rows missing the swept-parameter key or the requested metric;
     raises ``ValueError`` when nothing is left after filtering so handlers
     fail loudly rather than emit an empty artifact silently.
     """
+    # Deferred for the same config-package import cycle ``_sla_breach_knee``
+    # documents in ``_sla_filter_module``.
+    from aiperf.orchestrator.aggregation.sweep_sla_filter import read_metric_value
+
     rows = sweep_aggregate.get("per_combination_metrics") or []
     flat_key = f"{metric_tag}_{stat}"
     # Recipes pass ``swept_param`` as a full dotted path
@@ -57,12 +61,10 @@ def _extract_points(
             param_value = params[short_key]
         else:
             continue
-        block = metrics.get(flat_key)
-        if block is None or "mean" not in block:
-            block = metrics.get(metric_tag)
-        if block is None or "mean" not in block:
+        value = read_metric_value(metrics, metric_tag, stat)
+        if value is None:
             continue
-        points.append((float(param_value), float(block["mean"])))
+        points.append((float(param_value), value))
     if not points:
         raise ValueError(
             f"post-process: sweep aggregate has no rows with parameter "

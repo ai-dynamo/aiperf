@@ -45,6 +45,17 @@ def test_pareto_sweep_cli_to_scenarios_envelope() -> None:
     assert "shape_256_256_c4" in names
 
 
+def test_pareto_sweep_cli_keeps_the_pareto_export() -> None:
+    """Without the recipe's post-process spec on the sweep, the run finishes
+    with the standard sweep aggregate and no ``pareto_sweep.json``."""
+    user = _build_user(pairs="128/128,256/256", concurrency=[1, 2])
+    config = convert_cli_to_aiperf(user)
+    post_process = config.sweep.post_process
+    assert post_process is not None
+    assert post_process.handler == "pareto_sweep_export"
+    assert post_process.output_filename == "pareto_sweep.json"
+
+
 def test_pareto_sweep_cli_default_concurrency_when_omitted() -> None:
     user = _build_user(pairs="128/128,256/256", concurrency=None)
     config = convert_cli_to_aiperf(user)
