@@ -276,6 +276,39 @@ class TestEstimatedPercentilesIntegration:
         assert result.stats.p99_estimate is not None
         assert result.stats.p99_estimate < 100.0
 
+    def test_in_window_reset_does_not_pin_lone_bucket_average(self):
+        """Endpoint deltas of 100 values summing to 10000 put the lone bucket's
+        average on le=100, but the window resets between the last two samples;
+        the 200 values after the reset average 75.5, so they must not all be
+        pinned at 100.
+        """
+        ts = ServerMetricsTimeSeries()
+        add_histogram_snapshots(
+            ts,
+            "latency",
+            [
+                (0, hist({"50": 0.0, "100": 100.0, "+Inf": 100.0}, 5100.0, 100.0)),
+                (
+                    NANOS_PER_SECOND,
+                    hist({"50": 0.0, "100": 1100.0, "+Inf": 1100.0}, 105100.0, 1100.0),
+                ),
+                (
+                    2 * NANOS_PER_SECOND,
+                    hist({"50": 0.0, "100": 200.0, "+Inf": 200.0}, 15100.0, 200.0),
+                ),
+            ],
+        )
+
+        result = _compute_histogram_stats(
+            get_histogram(ts, "latency"),
+            make_time_filter(start_ns=0, end_ns=2 * NANOS_PER_SECOND),
+        )
+
+        assert result.stats is not None
+        assert result.stats.count == 100
+        assert result.stats.p1_estimate is not None
+        assert result.stats.p1_estimate < 100.0
+
 
 # =============================================================================
 # Edge Case Tests

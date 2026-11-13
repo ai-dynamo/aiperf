@@ -19,6 +19,7 @@ from aiperf.server_metrics.histogram_percentiles import (
     _get_bucket_bounds,
     accumulate_bucket_statistics,
     compute_estimated_percentiles,
+    window_has_counter_reset,
 )
 
 # =============================================================================
@@ -528,6 +529,32 @@ class TestComputeEstimatedPercentiles:
         assert result is not None
         assert result.p10_estimate < 10.0
 
+    def test_lone_bucket_average_pins_edge_without_reset(self) -> None:
+        """Every value in the only bucket averaging to le must sit on le."""
+        result = compute_estimated_percentiles(
+            {"50": 0.0, "100": 100.0, "+Inf": 100.0},
+            {},
+            total_sum=10000.0,
+            total_count=100,
+        )
+
+        assert result is not None
+        assert result.p1_estimate == 100.0
+
+    def test_lone_bucket_average_does_not_pin_edge_across_reset(self) -> None:
+        """After an in-window reset the endpoint average can equal le while the
+        observations in the window sit below it, so the bucket is not pinned."""
+        result = compute_estimated_percentiles(
+            {"50": 0.0, "100": 100.0, "+Inf": 100.0},
+            {},
+            total_sum=10000.0,
+            total_count=100,
+            window_spans_counter_reset=True,
+        )
+
+        assert result is not None
+        assert result.p1_estimate < 100.0
+
     def test_large_counts_downsampled(self) -> None:
         """Test that very large counts complete without memory error."""
         result = compute_estimated_percentiles(
@@ -617,3 +644,27 @@ class TestEstimateBucketSumsValidation:
 
         # Should use learned mean (0.7)
         assert sums["1.0"] == pytest.approx(70.0)  # 100 * 0.7
+
+
+class TestWindowHasCounterReset:
+    """Test window_has_counter_reset."""
+
+    def test_monotonic_window_has_no_reset(self) -> None:
+        counts = np.array([0.0, 10.0, 20.0])
+        buckets = np.array([[0.0, 0.0], [5.0, 10.0], [8.0, 20.0]])
+        assert not window_has_counter_reset(counts, buckets)
+
+    def test_count_decrease_is_reset(self) -> None:
+        counts = np.array([100.0, 1100.0, 200.0])
+        buckets = np.array([[100.0, 100.0], [1100.0, 1100.0], [200.0, 200.0]])
+        assert window_has_counter_reset(counts, buckets)
+
+    def test_bucket_decrease_is_reset(self) -> None:
+        counts = np.array([0.0, 10.0, 20.0])
+        buckets = np.array([[0.0, 0.0], [5.0, 10.0], [4.0, 20.0]])
+        assert window_has_counter_reset(counts, buckets)
+
+    def test_reset_before_start_idx_is_ignored(self) -> None:
+        counts = np.array([50.0, 0.0, 10.0])
+        buckets = np.array([[50.0], [0.0], [10.0]])
+        assert not window_has_counter_reset(counts, buckets, start_idx=1)

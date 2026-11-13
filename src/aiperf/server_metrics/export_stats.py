@@ -29,6 +29,7 @@ from aiperf.common.models.server_metrics_models import (
 from aiperf.server_metrics.histogram_percentiles import (
     accumulate_bucket_statistics,
     compute_estimated_percentiles,
+    window_has_counter_reset,
 )
 from aiperf.server_metrics.storage import HistogramTimeSeries, ScalarTimeSeries
 
@@ -831,6 +832,11 @@ def _compute_histogram_stats(
             bucket_stats=bucket_stats,
             total_sum=sum_delta,
             total_count=count_delta,
+            window_spans_counter_reset=window_has_counter_reset(
+                time_series.counts[:end],
+                time_series.bucket_counts[:end],
+                start_idx=start_idx,
+            ),
         )
 
     # Compute timeslices if slice_duration is specified

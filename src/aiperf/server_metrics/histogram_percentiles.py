@@ -351,6 +351,8 @@ def compute_estimated_percentiles(
     bucket_stats: dict[str, BucketStatistics],
     total_sum: float,
     total_count: int,
+    *,
+    window_spans_counter_reset: bool = False,
 ) -> EstimatedPercentiles | None:
     """Compute percentiles including estimated +Inf bucket observations.
 
@@ -386,6 +388,9 @@ def compute_estimated_percentiles(
                      (from accumulate_bucket_statistics)
         total_sum: Exact total sum from histogram (sum_delta from Prometheus)
         total_count: Total observation count (count_delta from Prometheus)
+        window_spans_counter_reset: True when a count or bucket counter
+                     decreases inside the window; disables exact-edge pinning
+                     that relies only on the window average
 
     Returns:
         EstimatedPercentiles with p1 through p99 estimates, or None if insufficient data
@@ -482,6 +487,7 @@ def compute_estimated_percentiles(
         original_bucket_counts=original_bucket_counts,
         # With +Inf observations the finite sum depends on the +Inf estimate.
         target_sum_is_exact=inf_count == 0,
+        window_spans_counter_reset=window_spans_counter_reset,
     )
 
     # Combine finite and +Inf observations (both are now ndarrays)
@@ -506,6 +512,27 @@ def compute_estimated_percentiles(
         p90_estimate=float(p90),
         p95_estimate=float(p95),
         p99_estimate=float(p99),
+    )
+
+
+def window_has_counter_reset(
+    counts: np.ndarray,
+    bucket_counts: np.ndarray,
+    *,
+    start_idx: int = 0,
+) -> bool:
+    """Return True when any count or bucket counter decreases inside the window.
+
+    Endpoint deltas can still be positive after an in-window reset, so callers
+    can't detect it from the window's first and last samples alone.
+    """
+    if len(counts) <= start_idx + 1:
+        return False
+    if np.any(np.diff(counts[start_idx:]) < 0):
+        return True
+    return bool(
+        len(bucket_counts) > start_idx + 1
+        and np.any(np.diff(bucket_counts[start_idx:], axis=0) < 0)
     )
 
 
@@ -558,7 +585,7 @@ def accumulate_bucket_statistics(
     bucket_deltas_2d = np.diff(bucket_counts[start_idx:], axis=0)
     # A reset inside the window means learned intervals may include
     # observations that the endpoint deltas no longer contain.
-    has_reset = bool(np.any(count_deltas < 0) or np.any(bucket_deltas_2d < 0))
+    has_reset = window_has_counter_reset(counts, bucket_counts, start_idx=start_idx)
     bucket_deltas_2d = np.maximum(bucket_deltas_2d, 0)  # Handle counter resets
 
     # Convert cumulative deltas to per-bucket deltas (vectorized)
@@ -1045,8 +1072,10 @@ def _generate_observations_with_sum_constraint(
     per_bucket_counts: dict[str, float],
     target_sum: float,
     bucket_stats: dict[str, BucketStatistics] | None = None,
+    *,
     original_bucket_counts: dict[str, float] | None = None,
     target_sum_is_exact: bool = True,
+    window_spans_counter_reset: bool = False,
 ) -> np.ndarray:
     """Generate observations constrained to match the exact histogram sum.
 
@@ -1201,7 +1230,14 @@ def _generate_observations_with_sum_constraint(
             and stats.observation_count >= original_bucket_counts.get(bucket_le, 0)
         ):
             point_mass = learned_mean
-        elif bucket_count == total_observations and target_sum_is_exact:
+        elif (
+            bucket_count == total_observations
+            and target_sum_is_exact
+            and not window_spans_counter_reset
+        ):
+            # A reset inside the window can leave positive endpoint deltas
+            # that no longer describe the observations, so the average alone
+            # can't prove they all sit on the edge.
             point_mass = avg
         if point_mass is not None and point_mass == upper_bound:
             observations[write_idx : write_idx + bucket_count] = upper_bound
