@@ -83,6 +83,7 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
         self._skipped_traces = 0
         self._skipped_max_isl = 0
         self._capped_max_osl = 0
+        self._floored_zero_osl = 0
         # BurstGPT overrides the base load_dataset (CSV, not JSONL records), so it
         # must set up the per-file hash_id scope itself (clears the prompt cache
         # and reseeds the corpus RNG with this file's trace_id) the same way
@@ -108,7 +109,18 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
                 if not self._filter_and_cap_trace(trace):
                     continue
 
+                # The upstream files with failures record failed requests as
+                # Response tokens = 0, but Turn.max_tokens requires >= 1. Keep
+                # the arrival and replay it with one output token. Counted after
+                # filtering so skipped rows do not inflate the summary.
+                if trace.output_length < 1:
+                    trace.output_length = 1
+                    self._floored_zero_osl += 1
+
                 items.append(trace)
+
+        if not items and self._skipped_traces:
+            raise ValueError(self._everything_filtered_message())
 
         data = self._group_traces(items)
         self.debug(
@@ -129,6 +141,11 @@ class BurstGPTTraceDatasetLoader(BaseTraceDatasetLoader[BurstGPTTrace]):
         # is reflected in the summary (matches the base order).
         data = self._cap_grouped_traces_max_osl(data)
         self._log_filtering_summary()
+        if self._floored_zero_osl > 0:
+            self.info(
+                f"Floored {self._floored_zero_osl:,} traces with Response tokens=0 "
+                f"(failed requests) to an output_length of 1"
+            )
 
         return data
 
