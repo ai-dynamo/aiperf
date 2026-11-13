@@ -142,7 +142,7 @@ class InferenceClient(AIPerfLifecycleMixin):
 
         Args:
             request_info: The request information (includes cancel_after_ns).
-            first_token_callback: Optional callback fired on first SSE message with ttft_ns
+            first_token_callback: Optional per-message callback; see FirstTokenCallback
 
         Returns:
             RequestRecord containing the response data and metadata.
@@ -229,7 +229,7 @@ class InferenceClient(AIPerfLifecycleMixin):
 
         Args:
             request_info: The request information.
-            first_token_callback: Optional callback fired on first SSE message with ttft_ns
+            first_token_callback: Optional per-message callback; see FirstTokenCallback
 
         Returns:
             RequestRecord containing the response data and metadata.

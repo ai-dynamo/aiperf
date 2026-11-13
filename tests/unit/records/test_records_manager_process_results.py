@@ -23,7 +23,9 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
+import msgspec
 import pytest
+from pytest import param
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CreditPhase
@@ -40,10 +42,19 @@ from aiperf.common.models import (
     ProfileMetricDurationCoverage,
     TimesliceResult,
 )
+from aiperf.config.resolution.plan import BenchmarkRun
+from aiperf.credit.callback_handler import CreditCallbackHandler
+from aiperf.credit.messages import CreditReturn, StreamingContent, WorkerToRouterMessage
+from aiperf.credit.sticky_router import StickyCreditRouter
+from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.metrics.accumulator import MetricsAccumulator
 from aiperf.metrics.accumulator_models import AccumulatorMetricsSummary
-from aiperf.plugin.enums import AccumulatorType, StreamExporterType
+from aiperf.plugin.enums import AccumulatorType, StreamExporterType, TimingMode
 from aiperf.records.records_manager import RecordsManager
+from aiperf.records.records_tracker import RecordsTracker
+from aiperf.timing.config import CreditPhaseConfig
+from aiperf.timing.phase.lifecycle import PhaseLifecycle
+from aiperf.timing.phase.progress_tracker import PhaseProgressTracker
 from tests.unit.conftest import make_benchmark_run
 from tests.unit.post_processors.conftest import create_metric_records_data
 
@@ -345,6 +356,7 @@ class TestProcessResultsAccumulatorPath:
             )
         )
         mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr._has_multiple_phase_instances.return_value = False
         mgr.run.cfg.scenario = "inferencex-agentx-mvp"
         phase_config = MagicMock()
         phase_config.name = "profiling"
@@ -373,6 +385,7 @@ class TestProcessResultsAccumulatorPath:
         acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
         acc.profile_metric_duration_coverage = None
         mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr._has_multiple_phase_instances.return_value = False
         mgr.run.cfg.scenario = "inferencex-agentx-mvp"
         phase_config = MagicMock()
         phase_config.name = "profiling"
@@ -445,6 +458,7 @@ class TestProcessResultsAccumulatorPath:
             )
         )
         mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr._has_multiple_phase_instances.return_value = False
         mgr.run.cfg.scenario = "inferencex-agentx-mvp"
         phase_config = MagicMock()
         phase_config.name = "profiling"
@@ -471,6 +485,7 @@ class TestProcessResultsAccumulatorPath:
             )
         )
         mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr._has_multiple_phase_instances.return_value = False
         mgr.run.cfg.scenario = "inferencex-agentx-mvp"
         phase_config = MagicMock()
         phase_config.name = "profiling"
@@ -488,6 +503,7 @@ class TestProcessResultsAccumulatorPath:
     async def test_agentx_short_unsafe_smoke_skips_metric_coverage(self) -> None:
         acc = _make_summary_accumulator([_STUB_METRIC_RESULT])
         mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr._has_multiple_phase_instances.return_value = False
         mgr.run.cfg.scenario = "inferencex-agentx-mvp"
         phase_config = MagicMock()
         phase_config.name = "profiling"
@@ -500,6 +516,195 @@ class TestProcessResultsAccumulatorPath:
 
         acc.profile_metric_duration_coverage.assert_not_called()
         assert result.fatal_errors == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "last_content_seconds,expected_ratio,passes",
+        [
+            param(1790, 1790 / 1800, True, id="cancelled-stream-near-end"),
+            param(1710, 0.95, True, id="exact-threshold"),
+            param(1709, 1709 / 1800, False, id="stalled-before-threshold"),
+            param(1830, 1.0, True, id="grace-period-clamped"),
+            param(-10, 0.0, False, id="before-phase-clamped"),
+            param(None, 0.0, False, id="cancelled-without-content"),
+        ],
+    )  # fmt: skip
+    async def test_process_results_cancelled_stream_coverage(
+        self, last_content_seconds: int | None, expected_ratio: float, passes: bool
+    ) -> None:
+        """Cancellation alone cannot rescue a tail with no recent content."""
+        acc = _make_summary_accumulator()
+        acc.profile_metric_duration_coverage.return_value = (
+            ProfileMetricDurationCoverage(
+                phase_name="profiling",
+                expected_duration_seconds=1800,
+                required_ratio=0.95,
+                ttft_ratio=0.8,
+                inter_token_latency_ratio=0.9,
+            )
+        )
+        mgr = _make_manager_mock(accumulators={AccumulatorType.METRIC_RESULTS: acc})
+        mgr._has_multiple_phase_instances.return_value = False
+        mgr.run.cfg.scenario = "inferencex-agentx-mvp"
+        phase_config = MagicMock()
+        phase_config.name = "profiling"
+        phase_config.duration = 1800
+        mgr.run.cfg.get_profiling_phases.return_value = [phase_config]
+        mgr._records_tracker.create_stats_for_phase.return_value = PhaseRecordsStats(
+            phase=CreditPhase.PROFILING,
+            start_ns=100_000_000_000,
+            requests_end_ns=1940_000_000_000,
+            final_requests_completed=10,
+            final_requests_cancelled=1,
+            grace_period_timeout_triggered=True,
+            last_streaming_content_ns=(
+                (100 + last_content_seconds) * 1_000_000_000
+                if last_content_seconds is not None
+                else None
+            ),
+        )
+
+        result = await mgr._process_results(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+        coverage = result.results.metric_duration_coverage[0]
+        assert coverage.streaming_content_ratio == pytest.approx(expected_ratio)
+        assert coverage.ttft_ratio == 0.8
+        assert coverage.inter_token_latency_ratio == 0.9
+        assert coverage.passed is passes
+        assert bool(result.fatal_errors) is not passes
+        assert result.results.runtime_submission_invalid_reasons == (
+            [] if passes else ["insufficient_profile_metric_coverage"]
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("credit_returns", [True, False])
+    async def test_cancelled_credit_content_survives_wire_and_phase_stats(
+        self,
+        benchmark_run: BenchmarkRun,
+        credit_returns: bool,
+    ) -> None:
+        """Credit cancellation preserves liveness without creating a metric record."""
+        config = CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            profiling_index=0,
+            phase_name="first",
+            timing_mode=TimingMode.REQUEST_RATE,
+            expected_duration_sec=1800,
+        )
+        progress = PhaseProgressTracker(config)
+        lifecycle = PhaseLifecycle(config)
+        lifecycle.start()
+        phase_start_ns = lifecycle.started_at_ns
+        assert phase_start_ns is not None
+        progress.increment_sent(
+            TurnToSend(
+                conversation_id="long",
+                x_correlation_id="long",
+                turn_index=0,
+                num_turns=1,
+            )
+        )
+        lifecycle.mark_sending_complete(timeout_triggered=True)
+        progress.freeze_sent_counts()
+        handler = CreditCallbackHandler(MagicMock())
+        handler.register_phase(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            progress=progress,
+            lifecycle=lifecycle,
+            stop_checker=MagicMock(),
+            strategy=MagicMock(handle_credit_return=AsyncMock()),
+        )
+        message = CreditReturn(
+            credit=Credit(
+                id=0,
+                phase=CreditPhase.PROFILING,
+                phase_index=1,
+                conversation_id="long",
+                x_correlation_id="long",
+                turn_index=0,
+                num_turns=1,
+                issued_at_ns=phase_start_ns,
+            ),
+            cancelled=True,
+            last_streaming_content_ns=phase_start_ns + 1790_000_000_000,
+        )
+        router = StickyCreditRouter(run=benchmark_run, service_id="coverage-router")
+        router.set_streaming_content_callback(handler.on_streaming_content)
+        content = StreamingContent(
+            phase=CreditPhase.PROFILING,
+            phase_index=1,
+            timestamp_ns=phase_start_ns
+            + (1709 if credit_returns else 1790) * 1_000_000_000,
+        )
+        decoded_content = msgspec.msgpack.decode(
+            msgspec.msgpack.encode(content), type=WorkerToRouterMessage
+        )
+        await router._handle_router_message("worker", decoded_content)
+        assert (
+            progress.create_stats(lifecycle).last_streaming_content_ns
+            == content.timestamp_ns
+        )
+        assert progress.in_flight == 1
+        assert not progress.all_credits_returned_event.is_set()
+        if credit_returns:
+            decoded = msgspec.msgpack.decode(
+                msgspec.msgpack.encode(message), type=WorkerToRouterMessage
+            )
+            await handler.on_credit_return("worker", decoded)
+            assert progress.all_credits_returned_event.is_set()
+        progress.observe_streaming_content(phase_start_ns + 1000_000_000_000)
+        progress.observe_streaming_content(None)
+        lifecycle.mark_complete(grace_period_triggered=True)
+        progress.freeze_completed_counts()
+        stats = progress.create_stats(lifecycle)
+        tracker = RecordsTracker()
+        tracker.update_phase_info(
+            type(stats).model_validate_json(stats.model_dump_json())
+        )
+        second_config = config.model_copy(
+            update={"phase_index": 2, "profiling_index": 1, "phase_name": "second"}
+        )
+        second_lifecycle = PhaseLifecycle(second_config)
+        second_lifecycle.start()
+        tracker.update_phase_info(
+            PhaseProgressTracker(second_config).create_stats(second_lifecycle)
+        )
+
+        accumulator = MetricsAccumulator(run=benchmark_run)
+        mgr = _make_manager_mock(
+            accumulators={AccumulatorType.METRIC_RESULTS: accumulator}
+        )
+        mgr._records_tracker = tracker
+        mgr._has_multiple_phase_instances.return_value = True
+        mgr.run.cfg.scenario = "inferencex-agentx-mvp"
+        phases = []
+        for name in ("first", "second"):
+            phase = MagicMock()
+            phase.name = name
+            phase.duration = 1800
+            phases.append(phase)
+        mgr.run.cfg.get_profiling_phases.return_value = phases
+
+        coverage, errors = mgr._validate_profile_metric_duration_coverage(
+            CreditPhase.PROFILING, False
+        )
+
+        assert coverage[0].passed is True
+        assert coverage[0].streaming_content_ratio == pytest.approx(1790 / 1800)
+        assert coverage[0].ttft_ratio == coverage[0].inter_token_latency_ratio == 0.0
+        assert coverage[1].passed is False
+        assert len(errors) == 1
+        assert errors[0].details["phase_name"] == "second"
+        assert accumulator.record_count == 0
+        assert stats.final_requests_completed == 0
+        assert stats.final_requests_cancelled == int(credit_returns)
+        assert (
+            tracker.create_stats_for_phase(CreditPhase.PROFILING, 1).total_records == 0
+        )
 
     @pytest.mark.asyncio
     async def test_empty_accumulators_produces_empty_records(self) -> None:

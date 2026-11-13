@@ -26,7 +26,7 @@ from aiperf.common.scenario.context_overflow import is_context_overflow_response
 from aiperf.timing.concurrency import PhaseRuntimeKey
 
 if TYPE_CHECKING:
-    from aiperf.credit.messages import CreditReturn, FirstToken
+    from aiperf.credit.messages import CreditReturn, FirstToken, StreamingContent
     from aiperf.credit.structs import Credit
     from aiperf.timing.branch_orchestrator import BranchOrchestrator
     from aiperf.timing.concurrency import ConcurrencyManager
@@ -398,6 +398,9 @@ class CreditCallbackHandler:
             )
             return
 
+        handler.progress.observe_streaming_content(
+            credit_return.last_streaming_content_ns
+        )
         if (
             credit_return.ended_on_truncation
             and credit.agent_depth == 0
@@ -736,6 +739,14 @@ class CreditCallbackHandler:
         # cancelled before first token, we release here to prevent slot leaks.
         if not credit_return.first_token_sent:
             concurrency.release_prefill_slot(phase)
+
+    async def on_streaming_content(self, message: StreamingContent) -> None:
+        """Retain in-flight liveness before a missing return can force completion."""
+        handler = self._phase_handlers.get(
+            self._phase_key(message.phase, message.phase_index)
+        )
+        if handler is not None and not handler.lifecycle.is_complete:
+            handler.progress.observe_streaming_content(message.timestamp_ns)
 
     async def on_first_token(self, first_token: FirstToken) -> None:
         """Handle first token event (TTFT) from worker.
