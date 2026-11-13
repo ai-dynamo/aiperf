@@ -305,7 +305,7 @@ class BranchOrchestrator:
         # an active join dispatches the gated turn.
         self._future_joins: dict[str, dict[int, PendingBranchJoin]] = {}
         self._active_joins: dict[str, PendingBranchJoin] = {}
-        self._child_to_join: dict[str, list[ChildJoinEntry]] = {}
+        self._child_to_join: dict[str, list[ChildJoinEntry]] = ChildJoinIndex()
         self._parent_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._descendant_counts: dict[str, int] = {}
         # Phase 2b: records (conv_id, branch_id) for branches that were
@@ -2305,6 +2305,50 @@ class BranchOrchestrator:
         self._overlap_dispatched_branches.clear()
 
 
+class ChildJoinIndex(dict[str, list[ChildJoinEntry]]):
+    """``child_corr -> join entries`` that also counts tracked children per parent.
+
+    ``any_child_tracked_for_parent`` runs after every immediate child gather,
+    and scanning every tracked child there grew with the number of in-flight
+    subagents. The count is maintained on every write, so the answer is one
+    lookup. A child counts for each parent named by its entries, exactly the
+    set the full scan would find.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.tracked_per_parent: dict[str, int] = {}
+
+    def _parents(self, entries: list[ChildJoinEntry]) -> set[str]:
+        return {e.parent_correlation_id for e in entries}
+
+    def _untrack(self, child_corr: str) -> None:
+        for parent in self._parents(super().get(child_corr, [])):
+            remaining = self.tracked_per_parent[parent] - 1
+            if remaining:
+                self.tracked_per_parent[parent] = remaining
+            else:
+                del self.tracked_per_parent[parent]
+
+    def __setitem__(self, child_corr: str, entries: list[ChildJoinEntry]) -> None:
+        self._untrack(child_corr)
+        super().__setitem__(child_corr, entries)
+        for parent in self._parents(entries):
+            self.tracked_per_parent[parent] = self.tracked_per_parent.get(parent, 0) + 1
+
+    def __delitem__(self, child_corr: str) -> None:
+        self._untrack(child_corr)
+        super().__delitem__(child_corr)
+
+    def pop(self, child_corr: str, *default: Any) -> Any:
+        self._untrack(child_corr)
+        return super().pop(child_corr, *default)
+
+    def clear(self) -> None:
+        super().clear()
+        self.tracked_per_parent.clear()
+
+
 def any_child_tracked_for_parent(
     child_to_join: dict[str, list[ChildJoinEntry]], parent_corr: str
 ) -> bool:
@@ -2314,6 +2358,8 @@ def any_child_tracked_for_parent(
     _spawn_children_and_register_gates to decide whether all children rolled
     back and no per-parent state should remain reserved.
     """
+    if isinstance(child_to_join, ChildJoinIndex):
+        return parent_corr in child_to_join.tracked_per_parent
     return any(
         any(e.parent_correlation_id == parent_corr for e in ents)
         for ents in child_to_join.values()
