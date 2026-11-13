@@ -650,8 +650,6 @@ class TestEstimateBucketSumsValidation:
 
 
 class TestWindowHasCounterReset:
-    """Test window_has_counter_reset."""
-
     def test_monotonic_window_has_no_reset(self) -> None:
         counts = np.array([0.0, 10.0, 20.0])
         buckets = np.array([[0.0, 0.0], [5.0, 10.0], [8.0, 20.0]])
