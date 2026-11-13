@@ -603,6 +603,9 @@ class BasetenTraceDatasetLoader(BaseTraceDatasetLoader[BasetenTrace]):
                 self._parquet_file.close()
                 self._parquet_file = None
 
+        if not items and self._skipped_traces:
+            raise ValueError(self._everything_filtered_message())
+
         # Closed-loop replay defers the gap cap to convert_to_conversations so
         # think-time delays derive from the recorded timestamps, not reflowed ones.
         if self._open_loop and self._max_idle_gap_cap_ms is not None:
