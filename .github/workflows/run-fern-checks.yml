@@ -25,6 +25,23 @@ jobs:
         node-version: "22"
     - name: Install Fern CLI
       run: npm install -g fern-api@$(jq -r '.version' fern/fern.config.json)
+    # fern docs dev downloads a ~365 MB preview bundle into ~/.fern on first
+    # run and reuses it while the upstream ETag is unchanged. Caching it
+    # keeps that network-bound, high-variance download out of the test path
+    # (a cold download exceeded the test's 120s budget on 2026-10-15). The
+    # key is bucketed by week so a refreshed upstream bundle is re-cached
+    # within a week instead of never being saved under a stale key.
+    - name: Compute weekly cache bucket
+      id: week
+      run: echo "week=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
+    - name: Cache Fern docs preview bundle
+      uses: actions/cache@v4
+      with:
+        path: ~/.fern
+        key: fern-preview-bundle-${{ runner.os }}-${{ hashFiles('fern/fern.config.json') }}-${{ steps.week.outputs.week }}
+        restore-keys: |
+          fern-preview-bundle-${{ runner.os }}-${{ hashFiles('fern/fern.config.json') }}-
+          fern-preview-bundle-${{ runner.os }}-
     - name: Set up Python 3.12
       uses: actions/setup-python@v6
       with:
