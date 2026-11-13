@@ -1046,6 +1046,10 @@ def _generate_observations_with_sum_constraint(
         1. Detect single-bucket dominance: if ≥95% of observations are in one bucket,
            use the overall average as the center point (handles narrow distributions)
         2. For each bucket, choose observation placement strategy:
+           0. Exact edge: if every observation in the bucket is known to sit on
+              its upper edge (a learned mean equal to le whose single-bucket
+              intervals cover the bucket's full, pre-downsampling count, or a
+              lone bucket whose average equals le), place them all on le
            a. F3: If variance is extremely tight (< 1% of bucket width),
               use F3 two-point mass distribution for optimal moment matching
            b. Blended: If variance is tight (< 20%) AND mean is near center (< 30%),
@@ -1056,8 +1060,9 @@ def _generate_observations_with_sum_constraint(
               shift uniform distribution to center on learned mean
            e. Pure uniform: Fall back to bucket midpoint (uniform assumption)
         3. After initial placement, adjust positions proportionally across all
-           buckets to match the exact target sum. Each bucket absorbs adjustment
-           proportional to its sum contribution (capped at ±40% of bucket width).
+           buckets except exact-edge ones to match the exact target sum. Each
+           bucket absorbs adjustment proportional to its sum contribution
+           (capped at ±40% of bucket width).
 
     The variance-aware enhancement provides accuracy improvements on adversarial
     distributions while maintaining similar performance on normal distributions.

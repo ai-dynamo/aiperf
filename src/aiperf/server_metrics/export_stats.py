@@ -816,11 +816,14 @@ def _compute_histogram_stats(
     estimated = None
     if bucket_deltas:
         start_idx = reference_idx if reference_idx is not None else 0
+        # Learn only from intervals inside the same window as the deltas, so
+        # samples after final_idx can't add learned observations to a bucket.
+        end = final_idx + 1
         bucket_stats = accumulate_bucket_statistics(
-            time_series.sums,
-            time_series.counts,
+            time_series.sums[:end],
+            time_series.counts[:end],
             time_series.bucket_les,
-            time_series.bucket_counts,
+            time_series.bucket_counts[:end],
             start_idx=start_idx,
         )
         estimated = compute_estimated_percentiles(
