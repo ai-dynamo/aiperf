@@ -19,12 +19,17 @@ from aiperf.common.models import (
     RequestInfo,
     RequestRecord,
     SpecDecodeAcceptanceRecord,
+    Text,
     TextResponse,
     TextResponseData,
     Turn,
     Usage,
 )
 from aiperf.endpoints.anthropic_messages import MessagesEndpoint
+from aiperf.endpoints.base_rankings_endpoint import BaseRankingsEndpoint
+from aiperf.endpoints.cohere_rankings import CohereRankingsEndpoint
+from aiperf.endpoints.hf_tei_rankings import HFTeiRankingsEndpoint
+from aiperf.endpoints.nim_rankings import NIMRankingsEndpoint
 from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.plugin.enums import EndpointType, PluginType
 from aiperf.records.inference_result_parser import InferenceResultParser
@@ -673,6 +678,105 @@ class TestContextPromptISL:
 
         assert parsed_record.token_counts.input == 19
         assert parsed_record.responses == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "endpoint_class,endpoint_type,passages,expected_tokens",
+    [
+        param(NIMRankingsEndpoint, EndpointType.NIM_RANKINGS, ["first passage", "second passage"], 6, id="nim-multiple-passages"),
+        param(CohereRankingsEndpoint, EndpointType.COHERE_RANKINGS, ["first passage", "second passage"], 6, id="cohere-multiple-passages"),
+        param(HFTeiRankingsEndpoint, EndpointType.HF_TEI_RANKINGS, ["first passage", "second passage"], 6, id="hf-tei-multiple-passages"),
+        param(NIMRankingsEndpoint, EndpointType.NIM_RANKINGS, [], 2, id="query-only"),
+    ],
+)  # fmt: skip
+async def test_rankings_wire_payload_counts_query_and_passage_tokens(
+    *,
+    setup_inference_parser: InferenceResultParser,
+    spy_tokenizer: MagicMock,
+    request_record: RequestRecord,
+    endpoint_class: type[BaseRankingsEndpoint],
+    endpoint_type: EndpointType,
+    passages: list[str],
+    expected_tokens: int,
+) -> None:
+    endpoint = endpoint_class(model_endpoint=create_model_endpoint(endpoint_type))
+    request_record.request_info.model_endpoint = endpoint.model_endpoint
+    request_record.request_info.turns = [
+        Turn(
+            texts=[
+                Text(name="query", contents=["my question"]),
+                Text(name="passages", contents=passages),
+            ]
+        )
+    ]
+    request_record.request_info.payload_bytes = orjson.dumps(
+        endpoint.format_payload(request_record.request_info)
+    )
+    setup_inference_parser.endpoint = endpoint
+    setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+    count = await setup_inference_parser.compute_input_token_count(request_record)
+
+    assert count == expected_tokens
+    spy_tokenizer.encode.assert_called_once_with(" ".join(["my question", *passages]))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "extra_body,expected_text",
+    [
+        param(
+            {
+                "documents": [
+                    {"title": "first title", "content": "first content", "text": "unused text"},
+                    {"title": "second title", "content": "second content"},
+                ],
+                "rank_fields": ["content", "title"],
+            },
+            "my question first content first title second content second title",
+            id="rank-fields-order",
+        ),
+        param(
+            {"documents": [{"title": "unused title", "text": "first passage"}, {"text": "second passage"}]},
+            "my question first passage second passage",
+            id="default-text",
+        ),
+        param(
+            {"documents": ["first passage", "second passage"], "rank_fields": ["title"]},
+            "my question first passage second passage",
+            id="string-documents",
+        ),
+    ],
+)  # fmt: skip
+async def test_cohere_extra_body_wire_payload_counts_ranked_fields(
+    *,
+    setup_inference_parser: InferenceResultParser,
+    spy_tokenizer: MagicMock,
+    request_record: RequestRecord,
+    extra_body: dict,
+    expected_text: str,
+) -> None:
+    endpoint = CohereRankingsEndpoint(
+        model_endpoint=create_model_endpoint(EndpointType.COHERE_RANKINGS)
+    )
+    request_record.request_info.model_endpoint = endpoint.model_endpoint
+    request_record.request_info.turns = [
+        Turn(
+            texts=[Text(name="query", contents=["my question"])],
+            extra_body=extra_body,
+        )
+    ]
+    request_record.request_info.payload_bytes = orjson.dumps(
+        endpoint.format_payload(request_record.request_info)
+    )
+    setup_inference_parser.endpoint = endpoint
+    setup_inference_parser.get_tokenizer = AsyncMock(return_value=spy_tokenizer)
+
+    count = await setup_inference_parser.compute_input_token_count(request_record)
+
+    assert count == len(expected_text.split())
+    spy_tokenizer.encode.assert_called_once_with(expected_text)
 
 
 @pytest.mark.asyncio
