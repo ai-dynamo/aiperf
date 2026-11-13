@@ -22,7 +22,10 @@ from aiperf.common.models import (
     TextResponse,
 )
 from aiperf.common.monotonic_clock import process_clock
-from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
+from aiperf.transports.aiohttp_trace import (
+    create_aiohttp_trace_config,
+    start_request_trace,
+)
 from aiperf.transports.aws.eventstream import (
     EVENTSTREAM_CONTENT_TYPE,
     AwsEventStreamError,
@@ -89,6 +92,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         self.collect_trace_chunks = collect_trace_chunks
         # Read by the worker's health report; see WorkerTaskStats.stream_chunks_received.
         self.stream_chunks_received = 0
+        self._trace_config = create_aiohttp_trace_config()
 
     async def close(self) -> None:
         """Close the client."""
@@ -155,7 +159,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         # the send-timeout safety net and surface as RequestSendTimeout.
         expected_request_body_size = _expected_request_body_size(data)
         collect_chunks = self.collect_trace_chunks
-        trace_config = create_aiohttp_trace_config(
+        request_trace = start_request_trace(
             record.trace_data,
             on_request_sent_event=on_request_sent,
             expected_request_body_size=expected_request_body_size,
@@ -178,7 +182,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                     "Accept-Encoding",
                 ],
                 connector_owner=connector_owner,
-                trace_configs=[trace_config],
+                trace_configs=[self._trace_config],
                 trust_env=AioHttpDefaults.TRUST_ENV if trust_env is None else trust_env,
             ) as session:
                 # Session setup moved start_perf_ns past record construction; re-derive
@@ -186,7 +190,12 @@ class AioHttpClient(AIPerfLoggerMixin):
                 record.start_perf_ns = time.perf_counter_ns()
                 record.timestamp_ns = process_clock().wall_ns_at(record.start_perf_ns)
                 async with session.request(
-                    method, url, data=data, headers=headers, **kwargs
+                    method,
+                    url,
+                    data=data,
+                    headers=headers,
+                    trace_request_ctx=request_trace,
+                    **kwargs,
                 ) as response:
                     record.status = response.status
 

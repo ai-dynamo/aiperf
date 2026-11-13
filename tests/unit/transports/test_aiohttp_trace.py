@@ -2,13 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 """Comprehensive tests for aiohttp trace functionality."""
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import aiohttp
 import pytest
 
 from aiperf.common.models import AioHttpTraceData
-from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
+from aiperf.transports.aiohttp_trace import (
+    create_aiohttp_trace_config,
+    start_request_trace,
+)
 
 
 def create_mock_response(
@@ -51,7 +55,8 @@ class TestCreateAioHttpTraceConfig:
     def test_creates_trace_config(self):
         """Function creates aiohttp TraceConfig."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         assert isinstance(trace_config, aiohttp.TraceConfig)
         assert trace_data.reference_time_ns is not None
@@ -60,7 +65,7 @@ class TestCreateAioHttpTraceConfig:
     def test_initializes_reference_timestamps(self):
         """Trace config initialization sets reference timestamps."""
         trace_data = AioHttpTraceData()
-        create_aiohttp_trace_config(trace_data)
+        start_request_trace(trace_data)
 
         assert trace_data.reference_time_ns is not None
         assert trace_data.reference_perf_ns is not None
@@ -71,11 +76,12 @@ class TestCreateAioHttpTraceConfig:
     async def test_connection_pool_events(self):
         """Connection pool events are tracked."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        state = start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         # Create mock parameters
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
         mock_params = Mock()
 
         # Simulate connection pool events
@@ -97,10 +103,11 @@ class TestCreateAioHttpTraceConfig:
     async def test_dns_resolution_events(self):
         """DNS resolution events are tracked."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        state = start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
         mock_params = Mock()
 
         # DNS resolution
@@ -119,10 +126,11 @@ class TestCreateAioHttpTraceConfig:
     async def test_dns_cache_events(self):
         """DNS cache hit/miss events are tracked."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        state = start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
         mock_params = Mock()
 
         # Cache hit
@@ -133,20 +141,19 @@ class TestCreateAioHttpTraceConfig:
 
         # Cache miss (separate trace data to avoid conflict)
         trace_data2 = AioHttpTraceData()
-        trace_config2 = create_aiohttp_trace_config(trace_data2)
-        await trace_config2.on_dns_cache_miss[0](
-            mock_session, mock_trace_ctx, mock_params
-        )
+        ctx2 = SimpleNamespace(trace_request_ctx=start_request_trace(trace_data2))
+        await trace_config.on_dns_cache_miss[0](mock_session, ctx2, mock_params)
         assert trace_data2.dns_cache_miss_perf_ns is not None
 
     @pytest.mark.asyncio
     async def test_tcp_connection_events(self):
         """TCP connection creation events are tracked."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        state = start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
         mock_trace_ctx.url = "http://example.com"  # HTTP URL
         mock_params = Mock()
 
@@ -168,10 +175,11 @@ class TestCreateAioHttpTraceConfig:
     async def test_connection_reuse_event(self):
         """Connection reuse event is tracked."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        state = start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
         mock_params = Mock()
 
         await trace_config.on_connection_reuseconn[0](
@@ -183,10 +191,11 @@ class TestCreateAioHttpTraceConfig:
     async def test_request_events(self):
         """Request phase events are tracked."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        state = start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
         mock_params = Mock()
 
         # Request start
@@ -227,10 +236,11 @@ class TestCreateAioHttpTraceConfig:
     async def test_request_chunk_sent(self):
         """Request chunk sent events track aggregates; chunk list empty by default."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        state = start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
 
         # Send multiple chunks
         for chunk_data in [b"chunk1", b"chunk2", b"chunk3"]:
@@ -252,10 +262,11 @@ class TestCreateAioHttpTraceConfig:
     async def test_request_chunk_sent_with_collect_chunks(self):
         """Request chunk sent events populate chunk list when collect_chunks=True."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data, collect_chunks=True)
+        state = start_request_trace(trace_data, collect_chunks=True)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
 
         for chunk_data in [b"chunk1", b"chunk2", b"chunk3"]:
             mock_params = Mock()
@@ -278,10 +289,11 @@ class TestCreateAioHttpTraceConfig:
     async def test_response_chunk_received(self):
         """Response chunk received events track aggregates; chunk list empty by default."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        state = start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
 
         # First chunk
         mock_params = Mock()
@@ -316,10 +328,11 @@ class TestCreateAioHttpTraceConfig:
     async def test_response_chunk_received_with_collect_chunks(self):
         """Response chunk received events populate chunk list when collect_chunks=True."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data, collect_chunks=True)
+        state = start_request_trace(trace_data, collect_chunks=True)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
 
         mock_params = Mock()
         mock_params.chunk = b"first chunk"
@@ -340,10 +353,11 @@ class TestCreateAioHttpTraceConfig:
     async def test_request_exception_event(self):
         """Request exception event is tracked."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        state = start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
         mock_params = Mock()
         mock_params.exception = Exception("Test error")
 
@@ -356,8 +370,7 @@ class TestCreateAioHttpTraceConfig:
     @pytest.mark.asyncio
     async def test_all_callbacks_registered(self):
         """All trace callbacks are registered on TraceConfig."""
-        trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         # Connection pool
         assert len(trace_config.on_connection_queued_start) == 1
@@ -392,10 +405,11 @@ class TestCreateAioHttpTraceConfig:
     async def test_socket_info_capture(self):
         """Socket info (local/remote IP and port) is captured in on_request_end."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        state = start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
         mock_params = Mock()
 
         # Set up mock response with custom socket addresses
@@ -417,10 +431,11 @@ class TestCreateAioHttpTraceConfig:
     async def test_socket_info_with_none_connection(self):
         """Handles None connection gracefully."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        state = start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
         mock_params = Mock()
 
         # Set up mock response with None connection
@@ -446,10 +461,11 @@ class TestAioHttpTraceIntegration:
     async def test_complete_request_lifecycle(self):
         """Complete request lifecycle with all connection and request events."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        state = start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
         mock_params = Mock()
 
         # Simulate complete lifecycle
@@ -517,10 +533,11 @@ class TestAioHttpTraceIntegration:
     async def test_connection_reuse_scenario(self):
         """Request using reused connection skips DNS/TCP."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        state = start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
         mock_params = Mock()
 
         # Connection reuse scenario
@@ -542,10 +559,11 @@ class TestAioHttpTraceIntegration:
     async def test_error_during_request(self):
         """Error during request captures error timestamp."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        state = start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
         mock_params = Mock()
 
         # Start request
@@ -569,10 +587,11 @@ class TestAioHttpTraceIntegration:
     async def test_empty_response_body(self):
         """Response with no body still captures metadata."""
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        state = start_request_trace(trace_data)
+        trace_config = create_aiohttp_trace_config()
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
+        mock_trace_ctx = SimpleNamespace(trace_request_ctx=state)
         mock_params = Mock()
 
         # Request with response metadata but no body chunks
@@ -597,26 +616,22 @@ class TestAioHttpTraceIntegration:
         trace_data1 = AioHttpTraceData()
         trace_data2 = AioHttpTraceData()
 
-        trace_config1 = create_aiohttp_trace_config(trace_data1)
-        trace_config2 = create_aiohttp_trace_config(trace_data2)
+        trace_config = create_aiohttp_trace_config()
+        ctx1 = SimpleNamespace(trace_request_ctx=start_request_trace(trace_data1))
+        ctx2 = SimpleNamespace(trace_request_ctx=start_request_trace(trace_data2))
 
         mock_session = Mock(spec=aiohttp.ClientSession)
-        mock_trace_ctx = Mock()
         mock_params = Mock()
 
-        # Trigger events on first config
-        await trace_config1.on_request_start[0](
-            mock_session, mock_trace_ctx, mock_params
-        )
+        # Trigger events for the first request
+        await trace_config.on_request_start[0](mock_session, ctx1, mock_params)
 
         # Verify only first trace data is affected
         assert trace_data1.request_send_start_perf_ns is not None
         assert trace_data2.request_send_start_perf_ns is None
 
-        # Trigger events on second config
-        await trace_config2.on_request_start[0](
-            mock_session, mock_trace_ctx, mock_params
-        )
+        # Trigger events for the second request
+        await trace_config.on_request_start[0](mock_session, ctx2, mock_params)
 
         # Both should now have data
         assert trace_data1.request_send_start_perf_ns is not None

@@ -3,6 +3,7 @@
 """Tests for centralized API key / credential redaction."""
 
 from shlex import quote
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import aiohttp
@@ -25,7 +26,10 @@ from aiperf.common.redact import (
 )
 from aiperf.config.endpoint import EndpointConfig
 from aiperf.config.flags.cli_config import CLIConfig
-from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
+from aiperf.transports.aiohttp_trace import (
+    create_aiohttp_trace_config,
+    start_request_trace,
+)
 
 # =============================================================================
 # redact_headers
@@ -1920,7 +1924,8 @@ class TestAioHttpTraceRedaction:
     @pytest.mark.asyncio
     async def test_request_headers_redacted_in_trace(self):
         trace_data = AioHttpTraceData()
-        trace_config = create_aiohttp_trace_config(trace_data)
+        trace_ctx = SimpleNamespace(trace_request_ctx=start_request_trace(trace_data))
+        trace_config = create_aiohttp_trace_config()
 
         callbacks = trace_config.on_request_headers_sent
         assert len(callbacks) == 1
@@ -1933,7 +1938,7 @@ class TestAioHttpTraceRedaction:
             "X-API-Key": "nvapi-my-key",
         }
 
-        await callbacks[0](session, MagicMock(), params)
+        await callbacks[0](session, trace_ctx, params)
 
         assert trace_data.request_headers is not None
         assert trace_data.request_headers["Authorization"] == REDACTED_VALUE
