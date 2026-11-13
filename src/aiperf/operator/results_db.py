@@ -22,11 +22,17 @@ import orjson
 import zstandard
 
 from aiperf.common.finite import is_finite_value
+from aiperf.common.results_markers import EPOCH_RE
+from aiperf.kubernetes.constants import (
+    DNS_LABEL_MAX,
+    DNS_LABEL_RE,
+    DNS_SUBDOMAIN_MAX,
+    DNS_SUBDOMAIN_RE,
+)
 from aiperf.operator import runs_index
 from aiperf.operator.artifact_names import summary_candidates
 from aiperf.operator.results_layout import (
     is_run_ready,
-    list_run_epochs,
     resolve_latest,
     resolve_run_dir,
 )
@@ -39,6 +45,21 @@ _INDEX_STATS = frozenset({"avg", "p50", "p99"})
 
 _TERMINAL_PHASES: frozenset[str] = frozenset({"Failed", "Cancelled"})
 """Phases a disk-derived row must not overwrite with "Succeeded"."""
+
+
+def _is_results_ref(namespace: str, job_id: str) -> bool:
+    """Mirror the routers' allowlist so request-supplied names cannot traverse.
+
+    Compare job ids come straight from the query string and are joined under
+    the results root, so they get the same Kubernetes-name gate as the path
+    parameters in ``routers/_path_params.py``.
+    """
+    return bool(
+        len(namespace) <= DNS_LABEL_MAX
+        and DNS_LABEL_RE.match(namespace)
+        and len(job_id) <= DNS_SUBDOMAIN_MAX
+        and DNS_SUBDOMAIN_RE.match(job_id)
+    )
 
 
 class ResultsDB:
@@ -138,6 +159,7 @@ class ResultsDB:
     async def compare(self, *args, **kwargs) -> list[dict[str, Any]]:
         index_rows: list[dict[str, Any]] = []
         query_supported = self._compare_query_supported(args, kwargs)
+        job_ids = kwargs.get("job_ids", args[0] if args else [])
         if await self._ensure_readonly_index():
             try:
                 index_rows = await runs_index.compare(*args, **kwargs)
@@ -147,9 +169,13 @@ class ResultsDB:
                 current_rows = await self._filter_current_index_dicts(
                     index_rows, kwargs.get("epoch")
                 )
+                # A complete catalog proves coverage when it was marked, not
+                # that every requested run has a row now; a missing identity
+                # falls through to the disk merge instead of pivoting to zero.
                 if (
                     query_supported
                     and len(current_rows) == len(index_rows)
+                    and self._rows_cover_job_ids(current_rows, job_ids)
                     and runs_index.catalog_is_complete(self._results_dir)
                 ):
                     return current_rows
@@ -263,6 +289,20 @@ class ResultsDB:
         return metrics is None or all(
             metric in DEFAULT_COMPARE_METRICS for metric in metrics
         )
+
+    @staticmethod
+    def _rows_cover_job_ids(rows: list[dict[str, Any]], job_ids: list[str]) -> bool:
+        """Return whether the index alone can answer for every requested job.
+
+        A bare job id may match runs in several namespaces and the index cannot
+        prove it holds all of them, while the router's 409 ambiguity check needs
+        to see every match. Bare ids therefore always take the disk merge.
+        """
+        bare_job_ids, qualified_refs = runs_index._split_compare_job_ids(job_ids)
+        if bare_job_ids:
+            return False
+        indexed_refs = {(row["namespace"], row["job_id"]) for row in rows}
+        return indexed_refs.issuperset(qualified_refs)
 
     async def _filter_current_index_dicts(
         self,
@@ -489,11 +529,11 @@ class ResultsDB:
             return []
 
         bare_job_ids, qualified_refs = runs_index._split_compare_job_ids(job_ids)
-        qualified = set(qualified_refs)
+        requested = self._iter_requested_disk_summaries(
+            epoch, set(bare_job_ids), set(qualified_refs)
+        )
         rows: list[dict[str, Any]] = []
-        for namespace, job_id, run_epoch, summary in self._iter_disk_summaries(epoch):
-            if job_id not in bare_job_ids and (namespace, job_id) not in qualified:
-                continue
+        for namespace, job_id, run_epoch, summary in requested:
             row_model, row_endpoint = runs_index._extract_model_endpoint(
                 {"benchmark": summary.get("input_config", {}) or {}}
             )
@@ -529,25 +569,40 @@ class ResultsDB:
             for job_dir in namespace_dir.iterdir():
                 if not job_dir.is_dir() or job_dir.name == "sweeps":
                     continue
-                epochs = (
-                    [epoch]
-                    if epoch is not None
-                    else [
-                        resolve_latest(
-                            self._results_dir, namespace_dir.name, job_dir.name
-                        )
-                    ]
+                yield from self._disk_summary_for(
+                    namespace_dir.name, job_dir.name, epoch
                 )
-                for run_epoch in epochs:
-                    if run_epoch is None:
-                        continue
-                    if run_epoch not in list_run_epochs(
-                        self._results_dir, namespace_dir.name, job_dir.name
-                    ):
-                        continue
-                    summary = self._read_summary_file(job_dir / run_epoch)
-                    if summary is not None:
-                        yield namespace_dir.name, job_dir.name, run_epoch, summary
+
+    def _iter_requested_disk_summaries(
+        self,
+        epoch: str | None,
+        bare_job_ids: set[str],
+        qualified_refs: set[tuple[str, str]],
+    ) -> Iterator[tuple[str, str, str, dict[str, Any]]]:
+        refs = set(qualified_refs)
+        if bare_job_ids and self._results_dir.is_dir():
+            for namespace_dir in self._results_dir.iterdir():
+                if namespace_dir.is_dir():
+                    refs.update((namespace_dir.name, job) for job in bare_job_ids)
+        for namespace, job_id in sorted(refs):
+            if _is_results_ref(namespace, job_id):
+                yield from self._disk_summary_for(namespace, job_id, epoch)
+
+    def _disk_summary_for(
+        self, namespace: str, job_id: str, epoch: str | None
+    ) -> Iterator[tuple[str, str, str, dict[str, Any]]]:
+        # resolve_run_dir also honors the "latest" alias, but the index filters
+        # on the literal epoch, so the alias must not select a run here either.
+        if epoch is not None and not EPOCH_RE.match(epoch):
+            return
+        run_path = resolve_run_dir(self._results_dir, namespace, job_id, epoch)
+        if run_path is None or not run_path.resolve().is_relative_to(
+            self._results_dir.resolve()
+        ):
+            return
+        summary = self._read_summary_file(run_path)
+        if summary is not None:
+            yield namespace, job_id, run_path.name, summary
 
     def _read_summary_file(self, run_dir: Path) -> dict[str, Any] | None:
         if not is_run_ready(run_dir):
