@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.loader.parsing import (
     coerce_value,
     normalize_http_url,
@@ -323,6 +324,55 @@ class TestParseStrOrDictAsTupleList:
         # Make sure that the result is the same when parsed again.
         result2 = parse_str_or_dict_as_tuple_list(result)
         assert result2 == expected
+
+    @pytest.mark.parametrize(
+        "input_value",
+        [
+            '{"reasoning_effort":"none","literal_null":"null","flag":"true","count":"42"}',
+            {
+                "reasoning_effort": "none",
+                "literal_null": "null",
+                "flag": "true",
+                "count": "42",
+            },
+            [
+                ("reasoning_effort", "none"),
+                ("literal_null", "null"),
+                ("flag", "true"),
+                ("count", "42"),
+            ],
+        ],
+    )
+    def test_parsed_values_keep_literal_strings(self, input_value: Any) -> None:
+        expected = [
+            ("reasoning_effort", "none"),
+            ("literal_null", "null"),
+            ("flag", "true"),
+            ("count", "42"),
+        ]
+        assert parse_str_or_dict_as_tuple_list(input_value) == expected
+
+    def test_raw_key_value_strings_still_coerce(self) -> None:
+        assert parse_str_or_dict_as_tuple_list("flag:true,count:42,unset:none") == [
+            ("flag", True),
+            ("count", 42),
+            ("unset", None),
+        ]
+
+    def test_cli_config_round_trip_preserves_json_strings(self) -> None:
+        config = CLIConfig(
+            model_names=["m"],
+            urls=["http://localhost:8000"],
+            extra_inputs=['{"reasoning_effort":"none"}'],
+            headers=['{"X-Test":"none"}'],
+        )
+
+        assert config.extra_inputs == [("reasoning_effort", "none")]
+        assert config.headers == [("X-Test", "none")]
+
+        restored = CLIConfig.model_validate(config.model_dump())
+        assert restored.extra_inputs == config.extra_inputs
+        assert restored.headers == config.headers
 
 
 class TestParseStrOrListOfPositiveValues:
