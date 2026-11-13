@@ -72,6 +72,14 @@ only configuration metadata), add an entry to `ORJSON_SCRUB_WHITELIST`
 in the test module with a one-line reason. Anonymous whitelisting is
 rejected at review.
 
+The existing shared JSONL writer (`BufferedJSONLWriterMixin`) and raw-record
+writer (`RawRecordWriterProcessor`) are a narrow exception to normalization
+before serialization. They pass JSON-mode model dumps directly to `orjson`,
+which writes remaining non-finite floats as JSON `null`. Their serialization
+implementations are outside this test's scanned directories. This does not
+exempt new exporters that use JSON-mode dumps or change the test's allowlist.
+Input validation and checks before numerical calculations still apply.
+
 ### `test_every_metric_field_is_finite_or_optional`
 
 Imports every Pydantic model under `src/aiperf/`, inspects each
