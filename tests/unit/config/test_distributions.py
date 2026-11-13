@@ -305,6 +305,11 @@ class TestNormalDistribution:
         samples = _sample_int_n(d)
         assert all(s >= 1 for s in samples)
 
+    def test_sample_int_mean_includes_ceiling_offset(self) -> None:
+        """Ceiling adds about half a turn away from the lower bound."""
+        samples = _sample_int_n(NormalDistribution(mean=10, stddev=2), n=10_000)
+        assert sum(samples) / len(samples) == pytest.approx(10.5, abs=0.1)
+
     def test_negative_stddev_rejected(self) -> None:
         with pytest.raises(ValidationError):
             NormalDistribution(mean=512, stddev=-1)
