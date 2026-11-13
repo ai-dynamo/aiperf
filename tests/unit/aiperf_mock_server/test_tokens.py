@@ -165,6 +165,10 @@ def _empty_tokenize_cache() -> Iterator[None]:
 def test_tokenize_caches_only_texts_up_to_the_size_limit(
     length: int, cached: bool
 ) -> None:
+    """Texts at the limit are memoized; one character over bypasses the cache.
+
+    Both paths must return the same tokens as the uncached splitter.
+    """
     text = ("word " * length)[:length]
 
     first = tokens._tokenize(text)
