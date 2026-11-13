@@ -1,0 +1,99 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800"
+     role="img" aria-labelledby="title desc">
+  <title id="title">Operator pod containers and the results volume</title>
+  <desc id="desc">The operator pod holds three containers. The reconciler container receives watch events from the Kubernetes API server, patches custom resources and deletes JobSets, writes result artifacts and the runs index to the results volume, and asks the dashboard to refresh after a completion claim. The results API container reads files and the index from the volume and proxies dashboard requests to the optional dashboard container, which reads run data from the volume. Only the reconciler writes the volume.</desc>
+  <defs>
+    <marker id="arrow-slate" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2E7D32"/>
+    </marker>
+    <style>
+      .title { font: 700 30px system-ui, sans-serif; fill: #1f2937; }
+      .subtitle { font: 500 17px system-ui, sans-serif; fill: #4b5563; }
+      .column { font: 700 21px system-ui, sans-serif; }
+      .node-title { font: 700 17px system-ui, sans-serif; fill: #111827; }
+      .node-text { font: 500 15px system-ui, sans-serif; fill: #374151; }
+      .step { font: 700 16px system-ui, sans-serif; fill: white; }
+      .edge-label { font: 600 15px system-ui, sans-serif; fill: #374151; }
+      .note { font: 600 15px system-ui, sans-serif; fill: #475569; }
+      .edge { fill: none; stroke-width: 3; }
+      .read { stroke-dasharray: 9 6; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="800" rx="24" fill="#f8fafc"/>
+  <text x="640" y="52" text-anchor="middle" class="title">Operator pod</text>
+  <text x="640" y="82" text-anchor="middle" class="subtitle">Three containers share one results volume, and only the reconciler writes it</text>
+
+  <!-- Lanes -->
+  <rect x="40" y="115" width="240" height="590" rx="20" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2"/>
+  <rect x="305" y="115" width="610" height="590" rx="20" fill="#ecfdf5" stroke="#81C784" stroke-width="2"/>
+  <rect x="940" y="115" width="300" height="590" rx="20" fill="#fff7ed" stroke="#FDBA74" stroke-width="2"/>
+
+  <text x="160" y="155" text-anchor="middle" class="column" fill="#475569">Control plane</text>
+  <text x="610" y="155" text-anchor="middle" class="column" fill="#2E7D32">Operator pod</text>
+  <text x="1090" y="155" text-anchor="middle" class="column" fill="#B45309">Storage</text>
+
+  <!-- API server -->
+  <rect x="60" y="190" width="200" height="110" rx="13" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+  <text x="160" y="226" text-anchor="middle" class="node-title">Kubernetes API</text>
+  <text x="160" y="251" text-anchor="middle" class="node-text">Custom resources,</text>
+  <text x="160" y="273" text-anchor="middle" class="node-text">JobSets and pods</text>
+
+  <!-- Reconciler -->
+  <rect x="520" y="190" width="240" height="110" rx="13" fill="#dcfce7" stroke="#2E7D32" stroke-width="2"/>
+  <text x="640" y="226" text-anchor="middle" class="node-title">Reconciler (kopf)</text>
+  <text x="640" y="251" text-anchor="middle" class="node-text">Every handler and timer</text>
+  <text x="640" y="273" text-anchor="middle" class="node-text">The only volume writer</text>
+
+  <!-- Results API -->
+  <rect x="520" y="380" width="240" height="100" rx="13" fill="#dcfce7" stroke="#2E7D32" stroke-width="2"/>
+  <text x="640" y="414" text-anchor="middle" class="node-title">Results API</text>
+  <text x="640" y="439" text-anchor="middle" class="node-text">HTTP routes and web UI</text>
+  <text x="640" y="461" text-anchor="middle" class="node-text">Opens index read-only</text>
+
+  <!-- Dashboard (optional) -->
+  <rect x="520" y="560" width="240" height="100" rx="13" fill="#dcfce7" stroke="#2E7D32" stroke-width="2" stroke-dasharray="8 6"/>
+  <text x="640" y="594" text-anchor="middle" class="node-title">Dashboard (optional)</text>
+  <text x="640" y="619" text-anchor="middle" class="node-text">Builds plots from runs</text>
+  <text x="640" y="641" text-anchor="middle" class="node-text">Own container, own memory</text>
+
+  <!-- Results volume -->
+  <rect x="1010" y="190" width="200" height="470" rx="13" fill="#ffedd5" stroke="#B45309" stroke-width="2"/>
+  <text x="1110" y="392" text-anchor="middle" class="node-title">Results volume</text>
+  <text x="1110" y="418" text-anchor="middle" class="node-text">Result artifacts</text>
+  <text x="1110" y="441" text-anchor="middle" class="node-text">SQLite runs index</text>
+  <text x="1110" y="464" text-anchor="middle" class="node-text">PVC or emptyDir</text>
+
+  <!-- API server <-> reconciler -->
+  <path d="M260 225 H516" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="390" y="212" text-anchor="middle" class="edge-label">delivers watch events</text>
+  <path d="M520 272 H264" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="390" y="259" text-anchor="middle" class="edge-label">patches CRs, deletes JobSets</text>
+
+  <!-- Reconciler asks dashboard to refresh -->
+  <path d="M560 300 V335 H345 V610 H516" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="360" y="455" class="edge-label">requests refresh</text>
+  <text x="360" y="476" class="edge-label">after a claim</text>
+
+  <!-- Results API proxies to dashboard -->
+  <path d="M640 480 V556" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="654" y="523" class="edge-label">proxies dashboard requests</text>
+
+  <!-- Volume access: one writer, two readers -->
+  <path d="M760 245 H1006" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="885" y="231" text-anchor="middle" class="edge-label">writes artifacts and index</text>
+  <path d="M760 430 H1006" class="edge read" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="885" y="416" text-anchor="middle" class="edge-label">reads files and index</text>
+  <path d="M760 610 H1006" class="edge read" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="885" y="596" text-anchor="middle" class="edge-label">reads run data</text>
+
+  <rect x="90" y="730" width="1100" height="42" rx="12" fill="#ffffff" stroke="#9E9E9E" stroke-width="2"/>
+  <text x="640" y="757" text-anchor="middle" class="node-text">Solid arrow writes, dashed arrows read: the API enforces read-only at the database layer, the dashboard by its mount</text>
+</svg>

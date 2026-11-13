@@ -214,7 +214,8 @@ dashboard:
 # rbac controls RBAC resource creation.
 # A ClusterRole is required because the operator:
 # - Watches AIPerfJob CRDs across all namespaces (or a configured subset)
-# - Creates/manages leader election Leases in kube-system
+# - Creates/manages the per-namespace claim Lease (aiperf-operator) that scoped operators write
+#   in each watched namespace
 # - Creates JobSets, ConfigMaps, Roles, and RoleBindings in benchmark namespaces
 # To restrict scope, deploy with --namespace flag to limit the watch to a single namespace.
 rbac:

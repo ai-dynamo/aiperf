@@ -1,0 +1,125 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="980" viewBox="0 0 1280 980"
+     role="img" aria-labelledby="title desc">
+  <title id="title">AIPerfJob phase lifecycle</title>
+  <desc id="desc">A new AIPerfJob moves forward through Pending, the optional Queued and Initializing phases, and Running to Completed. Pending can skip to Initializing or Running, and Queued can skip to Running. Any active phase can end Failed, through a timeout, JobSet failure, startup blocker or fetch failure, or Cancelled when the user sets spec.cancel. At creation the operator can reject the job straight to Failed, or a job created with spec.cancel goes straight to Cancelled. The only edge out of Completed is to Failed, when the controller reports a fatal failure.</desc>
+  <defs>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1565C0"/>
+    </marker>
+    <marker id="arrow-slate" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5E35B1"/>
+    </marker>
+    <style>
+      .title { font: 700 30px system-ui, sans-serif; fill: #1f2937; }
+      .subtitle { font: 500 17px system-ui, sans-serif; fill: #4b5563; }
+      .column { font: 700 21px system-ui, sans-serif; }
+      .node-title { font: 700 17px system-ui, sans-serif; fill: #111827; }
+      .node-text { font: 500 15px system-ui, sans-serif; fill: #374151; }
+      .edge-label { font: 600 15px system-ui, sans-serif; fill: #374151; }
+      .frame-label { font: 700 15px system-ui, sans-serif; fill: #1565C0; }
+      .edge { fill: none; stroke-width: 3; }
+      .skip { stroke-dasharray: 9 6; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="980" rx="24" fill="#f8fafc"/>
+  <text x="640" y="52" text-anchor="middle" class="title">AIPerfJob phases</text>
+  <text x="640" y="82" text-anchor="middle" class="subtitle">Phases only move forward; any active phase can end Failed or Cancelled, and only a controller fatal report overrides Completed</text>
+
+  <!-- Lanes -->
+  <rect x="40" y="115" width="1200" height="345" rx="20" fill="#eff6ff" stroke="#64B5F6" stroke-width="2"/>
+  <rect x="40" y="480" width="1200" height="400" rx="20" fill="#f5f3ff" stroke="#B39DDB" stroke-width="2"/>
+  <text x="64" y="150" class="column" fill="#1565C0">Forward path</text>
+  <text x="200" y="516" class="column" fill="#5E35B1">Failure and cancellation</text>
+
+  <!-- Active-phase frame -->
+  <rect x="240" y="165" width="780" height="280" rx="16" fill="none" stroke="#1565C0" stroke-width="2" stroke-dasharray="8 6"/>
+  <text x="256" y="434" class="frame-label">Active phases</text>
+
+  <!-- Forward nodes -->
+  <rect x="60" y="250" width="155" height="130" rx="13" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+  <text x="137" y="300" text-anchor="middle" class="node-title">New AIPerfJob</text>
+  <text x="137" y="325" text-anchor="middle" class="node-text">User applies it</text>
+
+  <rect x="257" y="250" width="155" height="130" rx="13" fill="#dbeafe" stroke="#1565C0" stroke-width="2"/>
+  <text x="334" y="290" text-anchor="middle" class="node-title">Pending</text>
+  <text x="334" y="315" text-anchor="middle" class="node-text">Operator created</text>
+  <text x="334" y="337" text-anchor="middle" class="node-text">the resources</text>
+
+  <rect x="454" y="250" width="155" height="130" rx="13" fill="#dbeafe" stroke="#1565C0" stroke-width="2"/>
+  <text x="531" y="290" text-anchor="middle" class="node-title">Queued</text>
+  <text x="531" y="315" text-anchor="middle" class="node-text">Kueue suspends</text>
+  <text x="531" y="337" text-anchor="middle" class="node-text">the JobSet</text>
+
+  <rect x="651" y="250" width="155" height="130" rx="13" fill="#dbeafe" stroke="#1565C0" stroke-width="2"/>
+  <text x="728" y="283" text-anchor="middle" class="node-title">Initializing</text>
+  <text x="728" y="307" text-anchor="middle" class="node-text">Worker pod ready,</text>
+  <text x="728" y="329" text-anchor="middle" class="node-text">or controller</text>
+  <text x="728" y="351" text-anchor="middle" class="node-text">reports state</text>
+
+  <rect x="848" y="250" width="155" height="130" rx="13" fill="#dbeafe" stroke="#1565C0" stroke-width="2"/>
+  <text x="925" y="290" text-anchor="middle" class="node-title">Running</text>
+  <text x="925" y="315" text-anchor="middle" class="node-text">Controller</text>
+  <text x="925" y="337" text-anchor="middle" class="node-text">reports profiling</text>
+
+  <rect x="1045" y="250" width="155" height="130" rx="13" fill="#ede9fe" stroke="#5E35B1" stroke-width="2"/>
+  <text x="1122" y="283" text-anchor="middle" class="node-title">Completed</text>
+  <text x="1122" y="307" text-anchor="middle" class="node-text">Operator</text>
+  <text x="1122" y="329" text-anchor="middle" class="node-text">harvests and</text>
+  <text x="1122" y="351" text-anchor="middle" class="node-text">validates results</text>
+
+  <!-- Forward edges -->
+  <path d="M215 315 H253" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <path d="M412 315 H450" class="edge" stroke="#1565C0" marker-end="url(#arrow-blue)"/>
+  <path d="M609 315 H647" class="edge" stroke="#1565C0" marker-end="url(#arrow-blue)"/>
+  <path d="M806 315 H844" class="edge" stroke="#1565C0" marker-end="url(#arrow-blue)"/>
+  <path d="M1003 315 H1041" class="edge" stroke="#1565C0" marker-end="url(#arrow-blue)"/>
+
+  <!-- Skips -->
+  <path d="M300 250 V185 H960 V246" class="edge skip" stroke="#1565C0" marker-end="url(#arrow-blue)"/>
+  <text x="630" y="204" text-anchor="middle" class="edge-label">skips Queued and Initializing</text>
+  <path d="M380 250 V215 H700 V246" class="edge skip" stroke="#1565C0" marker-end="url(#arrow-blue)"/>
+  <text x="540" y="235" text-anchor="middle" class="edge-label">skips Queued</text>
+  <path d="M560 380 V410 H900 V384" class="edge skip" stroke="#1565C0" marker-end="url(#arrow-blue)"/>
+  <text x="730" y="430" text-anchor="middle" class="edge-label">skips Initializing</text>
+
+  <!-- Outcome nodes -->
+  <rect x="400" y="600" width="220" height="90" rx="13" fill="#ede9fe" stroke="#5E35B1" stroke-width="2"/>
+  <text x="510" y="636" text-anchor="middle" class="node-title">Cancelled</text>
+  <text x="510" y="661" text-anchor="middle" class="node-text">Stopped at user request</text>
+
+  <rect x="840" y="600" width="340" height="90" rx="13" fill="#ede9fe" stroke="#5E35B1" stroke-width="2"/>
+  <text x="1010" y="636" text-anchor="middle" class="node-title">Failed</text>
+  <text x="1010" y="661" text-anchor="middle" class="node-text">Reason kept in the status error</text>
+
+  <!-- Create-time outcomes -->
+  <path d="M170 380 V645 H396" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="186" y="612" class="edge-label">user created it</text>
+  <text x="186" y="633" class="edge-label">with spec.cancel</text>
+  <path d="M90 380 V760 H960 V694" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="560" y="784" text-anchor="middle" class="edge-label">operator rejects spec, DNS, or preflight</text>
+
+  <!-- Active-phase outcomes -->
+  <path d="M510 445 V596" class="edge" stroke="#1565C0" marker-end="url(#arrow-blue)"/>
+  <text x="522" y="502" class="edge-label">user sets spec.cancel</text>
+  <path d="M900 445 V596" class="edge" stroke="#1565C0" marker-end="url(#arrow-blue)"/>
+  <text x="888" y="540" text-anchor="end" class="edge-label">timeout, JobSet failure,</text>
+  <text x="888" y="561" text-anchor="end" class="edge-label">startup blocker, or fetch failure</text>
+
+  <!-- The single exit from a terminal phase -->
+  <path d="M1150 380 V596" class="edge" stroke="#5E35B1" marker-end="url(#arrow-purple)"/>
+  <text x="1138" y="520" text-anchor="end" class="edge-label">controller reports</text>
+  <text x="1138" y="541" text-anchor="end" class="edge-label">fatal failure</text>
+
+  <text x="640" y="845" text-anchor="middle" class="node-text">Completed, Failed and Cancelled are terminal. Entering one clears the current phase and sub-phase.</text>
+
+  <rect x="90" y="905" width="1100" height="42" rx="12" fill="#ffffff" stroke="#9E9E9E" stroke-width="2"/>
+  <text x="640" y="932" text-anchor="middle" class="node-text">Completed to Failed is the only move out of a terminal phase; no edge ever goes back toward Pending</text>
+</svg>
