@@ -55,7 +55,7 @@ When a HuggingFace tokenizer has been previously downloaded, AIPerf detects it i
 
 1. **Local paths**: Absolute, `./`, `../`, or existing directories are used as-is.
 2. **Cached locally**: If the model directory exists in the HF cache, the name is used as-is (no network).
-3. **Offline mode**: If `HF_HUB_OFFLINE` or `TRANSFORMERS_OFFLINE` is set, names are used as-is.
+3. **Offline mode**: If `HF_HUB_OFFLINE` or `TRANSFORMERS_OFFLINE` is set to `1`, `true`, `yes`, or `on` (case-insensitive, surrounding whitespace ignored), names are used as-is. Other values, such as `0`, do not enable offline mode.
 4. **Direct lookup**: `model_info()` API call. Returns canonical `model.id` if found.
 5. **Search fallback**: If direct lookup fails (`RepositoryNotFoundError` or `HfHubHTTPError`), searches with `list_models(search=name, limit=50)`:
    - **Exact match**: Result ID matches input (case-insensitive).
