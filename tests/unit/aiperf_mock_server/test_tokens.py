@@ -3,12 +3,15 @@
 
 """Corpus-loading tests for the AIPerf mock server."""
 
+from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 from aiperf_mock_server import config, tokens
 from aiperf_mock_server.config import MockServerConfig
+from aiperf_mock_server.models import ChatCompletionRequest
+from pytest import param
 
 from aiperf.common import random_generator as rng
 from aiperf.common.tokenizer import Tokenizer
@@ -142,3 +145,50 @@ def test_load_corpus_initializes_prompt_generator_rng_for_standalone_server(
 
     assert corpus
     assert "Tokenizer failed" not in caplog.text
+
+
+@pytest.fixture
+def _empty_tokenize_cache() -> Iterator[None]:
+    tokens._tokenize_cached.cache_clear()
+    yield
+    tokens._tokenize_cached.cache_clear()
+
+
+@pytest.mark.usefixtures("_empty_tokenize_cache")
+@pytest.mark.parametrize(
+    "length, cached",
+    [
+        param(tokens._TOKENIZE_CACHE_MAX_CHARS, True, id="at-limit-cached"),
+        param(tokens._TOKENIZE_CACHE_MAX_CHARS + 1, False, id="over-limit-uncached"),
+    ],
+)  # fmt: skip
+def test_tokenize_caches_only_texts_up_to_the_size_limit(
+    length: int, cached: bool
+) -> None:
+    """Texts at the limit are memoized; one character over bypasses the cache.
+
+    Both paths must return the same tokens as the uncached splitter.
+    """
+    text = ("word " * length)[:length]
+
+    first = tokens._tokenize(text)
+    second = tokens._tokenize(text)
+
+    assert first == second == tokens._tokenize_uncached(text)
+    info = tokens._tokenize_cached.cache_info()
+    assert info.currsize == (1 if cached else 0)
+    assert info.hits == (1 if cached else 0)
+
+
+@pytest.mark.usefixtures("_empty_tokenize_cache")
+def test_tokenize_request_does_not_cache_long_prompts() -> None:
+    request = ChatCompletionRequest(
+        model="m",
+        messages=[{"role": "user", "content": "word " * 200_000}],
+        max_tokens=4,
+    )
+
+    tokens.tokenize_request(request)
+    tokens.tokenize_request(request)
+
+    assert tokens._tokenize_cached.cache_info().currsize == 0
