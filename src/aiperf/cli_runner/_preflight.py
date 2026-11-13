@@ -161,6 +161,65 @@ def _preflight_accuracy_deps(plan: BenchmarkPlan) -> None:
             raise ConfigurationError(str(exc)) from exc
 
 
+def _preflight_goodput(plan: BenchmarkPlan) -> None:
+    """Fail fast on a --goodput SLO the record processors would reject.
+
+    Why: the record-processor daemon validates --goodput while building its
+    metric set, and that crash isn't propagated. A typo'd tag, or an SLO on a
+    metric the run never computes per request (``time_to_first_token`` without
+    ``--streaming``, ``request_throughput``) otherwise sends every request and
+    then waits forever for records, with nothing in the log. Running the same
+    metric setup here turns it into a clean ``ConfigurationError`` before any
+    service spawns.
+
+    A ``--scenario`` that requires streaming turns it on later, in the
+    resolver chain, when it was left unset; the same default is applied to a
+    copy here so a valid TTFT/ITL SLO is not rejected. Runs after
+    ``_preflight_dataset_access``, which settles a remote trace's
+    fixed-schedule phase type, because the metric setup reads that phase.
+
+    The metric setup installs the SLOs on ``GoodRequestCountMetric``, a
+    class shared by the whole process; its previous state is restored
+    afterwards, so a rejected SLO leaves nothing behind for later
+    ``MetricRegistry`` calls.
+    """
+    from aiperf.common.enums import MetricType
+    from aiperf.common.exceptions import MetricTypeError
+    from aiperf.common.scenario import get_scenario
+    from aiperf.common.scenario.validator import _apply_require_streaming
+    from aiperf.config import BenchmarkRun
+    from aiperf.config.loader.errors import ConfigurationError
+    from aiperf.metrics.types.good_request_count_metric import GoodRequestCountMetric
+    from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
+
+    thresholds = GoodRequestCountMetric._thresholds
+    required_metrics = GoodRequestCountMetric.required_metrics
+    for config in plan.configs:
+        if not getattr(config, "slos", None):
+            continue
+        scenario = getattr(config, "scenario", None)
+        if scenario is not None:
+            config = config.model_copy(deep=True)
+        run = BenchmarkRun(
+            benchmark_id="goodput-preflight",
+            cfg=config,
+            artifact_dir=config.artifacts.dir,
+        )
+        if scenario is not None:
+            _apply_require_streaming(run, get_scenario(scenario), [], [])
+        try:
+            BaseMetricsProcessor(run)._setup_metrics(
+                MetricType.RECORD, MetricType.AGGREGATE, exclude_error_metrics=True
+            )
+        except RuntimeError as exc:
+            raise ConfigurationError(str(exc)) from exc
+        except MetricTypeError as exc:  # e.g. an SLO on good_request_count itself
+            raise ConfigurationError(f"Invalid --goodput: {exc}") from exc
+        finally:
+            GoodRequestCountMetric._thresholds = thresholds
+            GoodRequestCountMetric.required_metrics = required_metrics
+
+
 def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:
     """Block until the target endpoint is ready (see ready_checker).
 
