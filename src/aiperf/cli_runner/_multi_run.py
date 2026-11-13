@@ -26,7 +26,7 @@ from aiperf.cli_runner._strategy import (
 )
 from aiperf.orchestrator.models import _variation_key
 from aiperf.orchestrator.search_planner import build_search_planner
-from aiperf.plugin.enums import UIType
+from aiperf.plugin.enums import PhaseType, UIType
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -164,7 +164,11 @@ def _estimate_and_log_duration(
 ) -> Path:
     """Resolve artifact/timing for a probe run, log duration, return base_dir."""
     from aiperf.config import BenchmarkRun
-    from aiperf.config.resolution.resolvers import ArtifactDirResolver, TimingResolver
+    from aiperf.config.resolution.resolvers import (
+        ArtifactDirResolver,
+        DatasetResolver,
+        TimingResolver,
+    )
 
     probe_run = BenchmarkRun(
         benchmark_id="probe",
@@ -173,6 +177,11 @@ def _estimate_and_log_duration(
         variables=dict(plan.variables),
     )
     ArtifactDirResolver().resolve(probe_run, for_probe=True)
+    if any(
+        str(phase.type) == str(PhaseType.FIXED_SCHEDULE)
+        for phase in first_config.phases
+    ):
+        DatasetResolver().resolve(probe_run, for_probe=True)
     TimingResolver().resolve(probe_run)
 
     per_run_duration = probe_run.resolved.total_expected_duration
