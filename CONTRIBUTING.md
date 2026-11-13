@@ -178,6 +178,8 @@ Run it after changing an `aiperf kube` flag, a `AIPERF_K8S_*` default, or
 
 Always use `uv` (never pip): `uv add package`, `uv run pytest`.
 
+When an upstream package pins a dependency to a version we cannot accept and no release relaxes the pin yet, add an entry to `[tool.uv] override-dependencies` in `pyproject.toml`, with a comment naming the pinning package, and run `uv lock`. An override replaces every package's requirement on the overridden one, so it must not outlive the reason for it. The nightly `override-check` job (`tools/check_uv_overrides.py`) fails once every locked package depending on an overridden one has a release that admits the locked version; then raise those packages' minimums, delete the override, and re-lock. Overrides apply to `uv.lock` only; `pip install aiperf` still resolves the upstream pins.
+
 ## Contribution Guidelines
 
 Contributions that fix documentation errors or that make small changes to existing code can be contributed directly by following the rules below and submitting a PR.
