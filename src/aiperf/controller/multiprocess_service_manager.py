@@ -162,6 +162,9 @@ class MultiProcessServiceManager(BaseServiceManager):
         controller keeps the API serving until results are published.
         """
         self.debug("Stopping all service processes")
+        # The controller stops services before exporting results, so they stay
+        # silent for the rest of the run; the watchdog must not reap them.
+        self._shutdown_complete = True
 
         targets = [
             info for info in self.multi_process_info if info.service_type not in exclude
