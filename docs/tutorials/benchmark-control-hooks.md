@@ -17,7 +17,7 @@ benchmark requests and does **not** appear in metrics or profile exports.
 
 ```bash
 aiperf profile \
-  --model your-model \
+  --model Qwen/Qwen3-0.6B \
   --url http://localhost:8000 \
   --endpoint-type chat \
   --streaming \

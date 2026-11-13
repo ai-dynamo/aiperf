@@ -13,29 +13,12 @@ carrying the file between jobs.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 HARNESS = REPO_ROOT / "tests/ci/test_docs_end_to_end"
-
-
-@pytest.fixture(autouse=True)
-def _contain_import_side_effects():
-    """The harness imports its modules flatly (``from parser import ...``),
-    so its directory has to go on ``sys.path``; those names are generic enough
-    to shadow unrelated modules for the rest of the xdist worker."""
-    saved_path = list(sys.path)
-    saved_modules = set(sys.modules)
-    sys.path.insert(0, str(HARNESS))
-    try:
-        yield
-    finally:
-        sys.path[:] = saved_path
-        for name in set(sys.modules) - saved_modules:
-            del sys.modules[name]
 
 
 def _real_commands(server: str = "vllm-default-openai") -> list:
@@ -113,7 +96,10 @@ def test_the_trace_replay_fixture_ships_with_its_consumer(shard_total: int) -> N
             creator = next(
                 i for i, b in enumerate(bodies) if "custom_trace.jsonl << " in b
             )
-            assert creator < consumer, "the fixture must run before its consumer"
+            # ``<=``, not ``<``: the guide may carry the heredoc and the
+            # profile in one tagged block, in which case both indices name
+            # that single command and the ordering holds inside its body.
+            assert creator <= consumer, "the fixture must run before its consumer"
 
 
 def test_shards_stay_balanced() -> None:

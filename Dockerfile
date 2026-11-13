@@ -323,16 +323,17 @@ COPY --from=python-licenses /opt/licenses/ /
 ############################################
 # Test stage: env-builder installs only runtime deps now, so reinstall aiperf
 # with the [test] extra (pytest, hypothesis, etc.) from the already-built wheel,
-# and add curl for server health checks.
+# and add the command-line tools the documented commands themselves invoke:
+# curl for server health checks, jq for the guides that inspect JSON responses.
 FROM env-builder AS test
 
 COPY --from=wheel-builder /dist /tmp/dist
 RUN WHEEL=$(ls /tmp/dist/aiperf-*.whl) \
-    && uv pip install "aiperf[test] @ file://${WHEEL}" \
+    && uv pip install "aiperf[test,otel,mlflow,wandb] @ file://${WHEEL}" \
     && rm -rf /tmp/dist
 
 RUN apt-get update -y && \
-    apt-get install -y curl && \
+    apt-get install -y curl jq && \
     rm -rf /var/lib/apt/lists/*
 
 ENV VIRTUAL_ENV=/opt/aiperf/venv \

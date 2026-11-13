@@ -46,14 +46,21 @@ Ensure your tokenizer files match the HuggingFace/tokenizers format. The files s
 
 Use the `--tokenizer` parameter to specify the path to your local tokenizer directory or file:
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=60 -->
 ```bash
+# Any directory holding tokenizer.json / tokenizer_config.json works. To get
+# one to point at, download a published tokenizer once:
+python -c "from transformers import AutoTokenizer; \
+AutoTokenizer.from_pretrained('Qwen/Qwen3-0.6B').save_pretrained('./local-tokenizer')"
+
 aiperf profile \
-    --tokenizer /path/to/your/local/tokenizer \
-    --model your-model-name \
+    --tokenizer ./local-tokenizer \
+    --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
     --url localhost:8000 \
     --request-count 10
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 ### Example: Using a Local Llama Tokenizer
 
