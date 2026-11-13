@@ -19,6 +19,7 @@ from aiperf.server_metrics.histogram_percentiles import (
     _get_bucket_bounds,
     accumulate_bucket_statistics,
     compute_estimated_percentiles,
+    window_has_counter_reset,
 )
 
 # =============================================================================
@@ -125,6 +126,14 @@ class TestEstimateBucketSums:
 
         sums = _estimate_bucket_sums({"0.5": 100.0}, stats)
         assert sums == {"0.5": 30.0}
+
+    def test_learned_mean_on_upper_edge_is_used(self) -> None:
+        """A mean equal to le is valid: buckets are (lower, upper]."""
+        stats = {"100": BucketStatistics(bucket_le="100")}
+        stats["100"].record(mean=100.0, count=40)
+
+        sums = _estimate_bucket_sums({"50": 0.0, "100": 40.0}, stats)
+        assert sums == {"100": 4000.0}
 
     def test_falls_back_to_midpoint(self) -> None:
         """Test fallback to midpoint when no learned mean."""
@@ -306,6 +315,36 @@ class TestAccumulateBucketStatistics:
         assert result["0.5"].observation_count == 100
         assert result["0.5"].estimated_mean == pytest.approx(0.5)
 
+    def test_in_window_counter_reset_is_flagged(self) -> None:
+        """Stats learned across an in-window reset are flagged, since the 100
+        pre-reset observations are no longer part of the endpoint deltas."""
+        result = accumulate_bucket_statistics(
+            sums=np.array([0.0, 10000.0, 0.0, 1800.0]),
+            counts=np.array([0.0, 100.0, 0.0, 40.0]),
+            bucket_les=("50", "100", "+Inf"),
+            bucket_counts=np.array(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.0, 100.0, 100.0],
+                    [0.0, 0.0, 0.0],
+                    [20.0, 40.0, 40.0],
+                ]
+            ),
+        )
+
+        assert result["100"].observation_count == 100
+        assert result["100"].spans_counter_reset
+
+    def test_no_reset_is_not_flagged(self) -> None:
+        result = accumulate_bucket_statistics(
+            sums=np.array([0.0, 50.0]),
+            counts=np.array([0.0, 100.0]),
+            bucket_les=("0.5", "1.0", "+Inf"),
+            bucket_counts=np.array([[0.0, 0.0, 0.0], [100.0, 100.0, 100.0]]),
+        )
+
+        assert not result["0.5"].spans_counter_reset
+
 
 # =============================================================================
 # Compute Estimated Percentiles Tests
@@ -379,6 +418,145 @@ class TestComputeEstimatedPercentiles:
         assert without_stats is not None
         assert with_stats.p50_estimate >= 0
         assert without_stats.p50_estimate >= 0
+
+    @pytest.mark.parametrize("learned", [True, False])
+    def test_values_on_bucket_edge_stay_on_edge(self, learned: bool) -> None:
+        """Every value exactly on a bucket edge (e.g. a fixed output length of 100
+        with vLLM's 1-2-5 buckets) must not be spread below the edge."""
+        bucket_deltas = {"20": 0.0, "50": 0.0, "100": 40.0, "200": 40.0, "+Inf": 40.0}
+        bucket_stats = {}
+        if learned:
+            bucket_stats["100"] = BucketStatistics(bucket_le="100")
+            for _ in range(10):
+                bucket_stats["100"].record(mean=100.0, count=4)
+
+        result = compute_estimated_percentiles(bucket_deltas, bucket_stats, 4000.0, 40)
+
+        assert result is not None
+        for name in EstimatedPercentiles.__dataclass_fields__:
+            assert getattr(result, name) == 100.0
+
+    def test_edge_bucket_is_not_shifted_by_sum_fit(self) -> None:
+        """The sum fit should move the estimated buckets, not the exact edge one."""
+        bucket_stats = {
+            "50": BucketStatistics(bucket_le="50"),
+            "100": BucketStatistics(bucket_le="100"),
+        }
+        bucket_stats["50"].record(mean=30.0, count=20)
+        bucket_stats["100"].record(mean=100.0, count=20)
+
+        result = compute_estimated_percentiles(
+            {"20": 0.0, "50": 20.0, "100": 40.0, "+Inf": 40.0},
+            bucket_stats,
+            total_sum=2600.0,
+            total_count=40,
+        )
+
+        assert result is not None
+        assert result.p75_estimate == pytest.approx(100.0)
+        assert result.p99_estimate == pytest.approx(100.0)
+        assert result.p25_estimate < 50.0
+
+    def test_partial_edge_stats_do_not_freeze_bucket(self) -> None:
+        """A learned edge mean from only some of a bucket's observations must not
+        pin the whole bucket to the edge: 20 values at 100 were learned, then a
+        mixed interval added 20 at 30 and 20 at 60."""
+        bucket_stats = {"100": BucketStatistics(bucket_le="100")}
+        bucket_stats["100"].record(mean=100.0, count=20)
+
+        result = compute_estimated_percentiles(
+            {"50": 20.0, "100": 60.0, "+Inf": 60.0},
+            bucket_stats,
+            total_sum=3800.0,
+            total_count=60,
+        )
+
+        assert result is not None
+        assert result.p50_estimate < 100.0
+
+    def test_partial_edge_stats_do_not_freeze_downsampled_bucket(self) -> None:
+        """Coverage must be checked against the original bucket count, not the
+        downsampled one: the same case as above at 200,000 observations per
+        value, where the upper bucket (400,000) samples down to 66,666 while
+        only 200,000 of its observations were learned at the edge."""
+        bucket_stats = {"100": BucketStatistics(bucket_le="100")}
+        bucket_stats["100"].record(mean=100.0, count=200_000)
+
+        result = compute_estimated_percentiles(
+            {"50": 200_000.0, "100": 600_000.0, "+Inf": 600_000.0},
+            bucket_stats,
+            total_sum=38_000_000.0,
+            total_count=600_000,
+        )
+
+        assert result is not None
+        assert result.p50_estimate < 100.0
+
+    def test_edge_stats_across_counter_reset_do_not_freeze_bucket(self) -> None:
+        """Learned edge stats that span an in-window reset must not pin the
+        bucket: 100 pre-reset values at 100 were learned, but after the reset
+        the window holds 20 values in the 50 bucket and 20 below 100 in the
+        100 bucket, summing to 1800. Pinning 20 at 100 alone would be 2000."""
+        bucket_stats = {"100": BucketStatistics(bucket_le="100")}
+        bucket_stats["100"].record(mean=100.0, count=100)
+        bucket_stats["100"].spans_counter_reset = True
+
+        result = compute_estimated_percentiles(
+            {"50": 20.0, "100": 40.0, "+Inf": 40.0},
+            bucket_stats,
+            total_sum=1800.0,
+            total_count=40,
+        )
+
+        assert result is not None
+        assert result.p99_estimate < 100.0
+
+    def test_inferred_finite_average_does_not_freeze_bucket(self) -> None:
+        """With +Inf observations the finite sum is only estimated, so an
+        inferred finite average equal to le must not pin the bucket. Five
+        values at 10 were learned, five at 5 were not, and one +Inf value
+        is 100; the learned mean makes the finite average look like 10."""
+        bucket_stats = {"10": BucketStatistics(bucket_le="10")}
+        bucket_stats["10"].record(mean=10.0, count=5)
+
+        result = compute_estimated_percentiles(
+            {"1": 0.0, "10": 10.0, "+Inf": 11.0},
+            bucket_stats,
+            total_sum=175.0,
+            total_count=11,
+        )
+
+        assert result is not None
+        assert result.p10_estimate < 10.0
+
+    def test_bucket_emptied_by_downsampling_does_not_pin_edge(self) -> None:
+        """Downsampling truncates a bucket holding 1 of 200000 values to zero,
+        leaving "100" as the only bucket with generated values. Its average is
+        100, but the original counts show a second occupied bucket, so the
+        values can sit below 100 (e.g. 199999 at 60 and one at 8000060)."""
+        result = compute_estimated_percentiles(
+            {"50": 0.0, "100": 199999.0, "10000000": 200000.0, "+Inf": 200000.0},
+            {},
+            total_sum=20000000.0,
+            total_count=200000,
+        )
+
+        assert result is not None
+        assert result.p1_estimate < 100.0
+
+    def test_lone_bucket_average_does_not_pin_edge_across_reset(self) -> None:
+        """After an in-window reset the endpoint average can equal le while the
+        observations in the window sit below it, so the bucket is not pinned."""
+        result = compute_estimated_percentiles(
+            {"50": 0.0, "100": 100.0, "+Inf": 100.0},
+            {},
+            total_sum=10000.0,
+            total_count=100,
+            window_spans_counter_reset=True,
+        )
+
+        assert result is not None
+        assert result.p1_estimate < 100.0
 
     def test_large_counts_downsampled(self) -> None:
         """Test that very large counts complete without memory error."""
@@ -469,3 +647,25 @@ class TestEstimateBucketSumsValidation:
 
         # Should use learned mean (0.7)
         assert sums["1.0"] == pytest.approx(70.0)  # 100 * 0.7
+
+
+class TestWindowHasCounterReset:
+    def test_monotonic_window_has_no_reset(self) -> None:
+        counts = np.array([0.0, 10.0, 20.0])
+        buckets = np.array([[0.0, 0.0], [5.0, 10.0], [8.0, 20.0]])
+        assert not window_has_counter_reset(counts, buckets)
+
+    def test_count_decrease_is_reset(self) -> None:
+        counts = np.array([100.0, 1100.0, 200.0])
+        buckets = np.array([[100.0, 100.0], [1100.0, 1100.0], [200.0, 200.0]])
+        assert window_has_counter_reset(counts, buckets)
+
+    def test_bucket_decrease_is_reset(self) -> None:
+        counts = np.array([0.0, 10.0, 20.0])
+        buckets = np.array([[0.0, 0.0], [5.0, 10.0], [4.0, 20.0]])
+        assert window_has_counter_reset(counts, buckets)
+
+    def test_reset_before_start_idx_is_ignored(self) -> None:
+        counts = np.array([50.0, 0.0, 10.0])
+        buckets = np.array([[50.0], [0.0], [10.0]])
+        assert not window_has_counter_reset(counts, buckets, start_idx=1)

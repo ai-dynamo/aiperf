@@ -199,6 +199,116 @@ class TestEstimatedPercentilesIntegration:
         assert result.stats.count_rate is None or result.stats.count_rate >= 0
         assert result.stats.sum_rate is None or result.stats.sum_rate >= 0
 
+    def test_learned_stats_stop_at_the_window_end(self):
+        """Samples after the window end must not feed learned bucket stats.
+
+        Inside the window, 20 values of 100 land alone in the 100 bucket, then
+        a mixed interval adds 20 at 60 (100 bucket) and 20 at 30 (50 bucket).
+        A later single-bucket interval of 20 at 100 falls outside the window;
+        if it were learned, the 100 bucket would look fully covered at the
+        edge and be pinned there, giving 4000 of mass for a 3800 window sum.
+        """
+        ts = ServerMetricsTimeSeries()
+        add_histogram_snapshots(
+            ts,
+            "latency",
+            [
+                (0, hist({"50": 0.0, "100": 0.0, "+Inf": 0.0}, 0.0, 0.0)),
+                (
+                    NANOS_PER_SECOND,
+                    hist({"50": 0.0, "100": 20.0, "+Inf": 20.0}, 2000.0, 20.0),
+                ),
+                (
+                    2 * NANOS_PER_SECOND,
+                    hist({"50": 20.0, "100": 60.0, "+Inf": 60.0}, 3800.0, 60.0),
+                ),
+                (
+                    3 * NANOS_PER_SECOND,
+                    hist({"50": 20.0, "100": 80.0, "+Inf": 80.0}, 5800.0, 80.0),
+                ),
+            ],
+        )
+
+        result = _compute_histogram_stats(
+            get_histogram(ts, "latency"),
+            make_time_filter(start_ns=0, end_ns=2 * NANOS_PER_SECOND),
+        )
+
+        assert result.stats is not None
+        assert result.stats.count == 60
+        assert result.stats.p50_estimate is not None
+        assert result.stats.p50_estimate < 100.0
+
+    def test_in_window_counter_reset_does_not_pin_edge_bucket(self):
+        """Edge stats learned before an in-window reset must not pin the 100
+        bucket: the 100 values at 100 predate the reset, and the window ends
+        with 20 values in the 50 bucket and 20 below 100, summing to 1800.
+        Pinning 20 at 100 alone would be 2000.
+        """
+        ts = ServerMetricsTimeSeries()
+        add_histogram_snapshots(
+            ts,
+            "latency",
+            [
+                (0, hist({"50": 0.0, "100": 0.0, "+Inf": 0.0}, 0.0, 0.0)),
+                (
+                    NANOS_PER_SECOND,
+                    hist({"50": 0.0, "100": 100.0, "+Inf": 100.0}, 10000.0, 100.0),
+                ),
+                (
+                    2 * NANOS_PER_SECOND,
+                    hist({"50": 0.0, "100": 0.0, "+Inf": 0.0}, 0.0, 0.0),
+                ),
+                (
+                    3 * NANOS_PER_SECOND,
+                    hist({"50": 20.0, "100": 40.0, "+Inf": 40.0}, 1800.0, 40.0),
+                ),
+            ],
+        )
+
+        result = _compute_histogram_stats(
+            get_histogram(ts, "latency"),
+            make_time_filter(start_ns=0, end_ns=3 * NANOS_PER_SECOND),
+        )
+
+        assert result.stats is not None
+        assert result.stats.count == 40
+        assert result.stats.p99_estimate is not None
+        assert result.stats.p99_estimate < 100.0
+
+    def test_in_window_reset_does_not_pin_lone_bucket_average(self):
+        """Endpoint deltas of 100 values summing to 10000 put the lone bucket's
+        average on le=100, but the window resets between the last two samples;
+        the 200 values after the reset average 75.5, so they must not all be
+        pinned at 100.
+        """
+        ts = ServerMetricsTimeSeries()
+        add_histogram_snapshots(
+            ts,
+            "latency",
+            [
+                (0, hist({"50": 0.0, "100": 100.0, "+Inf": 100.0}, 5100.0, 100.0)),
+                (
+                    NANOS_PER_SECOND,
+                    hist({"50": 0.0, "100": 1100.0, "+Inf": 1100.0}, 105100.0, 1100.0),
+                ),
+                (
+                    2 * NANOS_PER_SECOND,
+                    hist({"50": 0.0, "100": 200.0, "+Inf": 200.0}, 15100.0, 200.0),
+                ),
+            ],
+        )
+
+        result = _compute_histogram_stats(
+            get_histogram(ts, "latency"),
+            make_time_filter(start_ns=0, end_ns=2 * NANOS_PER_SECOND),
+        )
+
+        assert result.stats is not None
+        assert result.stats.count == 100
+        assert result.stats.p1_estimate is not None
+        assert result.stats.p1_estimate < 100.0
+
 
 # =============================================================================
 # Edge Case Tests
