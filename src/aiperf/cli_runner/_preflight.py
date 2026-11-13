@@ -174,7 +174,14 @@ def _preflight_goodput(plan: BenchmarkPlan) -> None:
 
     A ``--scenario`` that requires streaming turns it on later, in the
     resolver chain, when it was left unset; the same default is applied to a
-    copy here so a valid TTFT/ITL SLO is not rejected.
+    copy here so a valid TTFT/ITL SLO is not rejected. Runs after
+    ``_preflight_dataset_access``, which settles a remote trace's
+    fixed-schedule phase type, because the metric setup reads that phase.
+
+    The metric setup installs the SLOs on ``GoodRequestCountMetric``, a
+    class shared by the whole process; its previous state is restored
+    afterwards, so a rejected SLO leaves nothing behind for later
+    ``MetricRegistry`` calls.
     """
     from aiperf.common.enums import MetricType
     from aiperf.common.exceptions import MetricTypeError
@@ -182,8 +189,11 @@ def _preflight_goodput(plan: BenchmarkPlan) -> None:
     from aiperf.common.scenario.validator import _apply_require_streaming
     from aiperf.config import BenchmarkRun
     from aiperf.config.loader.errors import ConfigurationError
+    from aiperf.metrics.types.good_request_count_metric import GoodRequestCountMetric
     from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
+    thresholds = GoodRequestCountMetric._thresholds
+    required_metrics = GoodRequestCountMetric.required_metrics
     for config in plan.configs:
         if not getattr(config, "slos", None):
             continue
@@ -205,6 +215,9 @@ def _preflight_goodput(plan: BenchmarkPlan) -> None:
             raise ConfigurationError(str(exc)) from exc
         except MetricTypeError as exc:  # e.g. an SLO on good_request_count itself
             raise ConfigurationError(f"Invalid --goodput: {exc}") from exc
+        finally:
+            GoodRequestCountMetric._thresholds = thresholds
+            GoodRequestCountMetric.required_metrics = required_metrics
 
 
 def _preflight_endpoint_ready(plan: BenchmarkPlan) -> None:

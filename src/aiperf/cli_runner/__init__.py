@@ -67,9 +67,9 @@ def run_benchmark(plan: BenchmarkPlan) -> None:
 
     _preflight_artifact_dir(plan)
     _preflight_accuracy_deps(plan)
-    _preflight_goodput(plan)
     _preflight_fd_limit()
     _preflight_dataset_access(plan)
+    _preflight_goodput(plan)
     _preflight_endpoint_ready(plan)
     _preflight_dataset_materialize(plan)
 

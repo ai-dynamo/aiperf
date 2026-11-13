@@ -9,6 +9,7 @@ run sending every request and then waiting forever for records. The preflight
 runs the same check in the main process, before any service spawns.
 """
 
+from collections.abc import Generator
 from types import SimpleNamespace
 
 import pytest
@@ -17,12 +18,13 @@ from pytest import param
 from aiperf.cli_runner._preflight import _preflight_goodput
 from aiperf.config import BenchmarkConfig
 from aiperf.config.loader.errors import ConfigurationError
+from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.types.good_request_count_metric import GoodRequestCountMetric
 from tests.unit.conftest import make_benchmark_run
 
 
 @pytest.fixture(autouse=True)
-def _reset_slos():
+def _reset_slos() -> Generator[None, None, None]:
     yield
     GoodRequestCountMetric.set_slos({})
 
@@ -64,6 +66,18 @@ class TestPreflightGoodput:
         self, streaming: bool, slos: dict[str, float] | None
     ) -> None:
         _preflight_goodput(_plan(streaming=streaming, slos=slos))
+
+    def test_preflight_goodput_rejected_slo_leaves_no_slo_state(self) -> None:
+        """A rejected SLO is not left installed on the shared metric class.
+
+        An SLO on good_request_count makes it depend on itself, which would
+        break later dependency ordering in the same process.
+        """
+        with pytest.raises(ConfigurationError, match="Invalid --goodput"):
+            _preflight_goodput(_plan(streaming=True, slos={"good_request_count": 1.0}))
+        assert GoodRequestCountMetric.required_metrics is None
+        assert GoodRequestCountMetric._thresholds == {}
+        MetricRegistry.create_dependency_order()
 
     def test_preflight_goodput_scenario_streaming_default_passes(self) -> None:
         """A scenario that turns streaming on when unset accepts a TTFT SLO."""
