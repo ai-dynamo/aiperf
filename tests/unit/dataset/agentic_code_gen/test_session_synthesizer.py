@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from pytest import param
 
 from aiperf.dataset.agentic_code_gen.distributions import lognormal_from_mean_median
 from aiperf.dataset.agentic_code_gen.models import (
@@ -158,6 +159,68 @@ class TestSessionSynthesizerSmallConfig:
         sessions = synth.synthesize_sessions(50)
         for session in sessions:
             assert len(session.turns) >= 1
+
+
+class TestInterTurnDelay:
+    @pytest.mark.parametrize(
+        "agentic_fraction, expected",
+        [param(1.0, 900, id="agentic"), param(0.0, 4500, id="human")],
+    )  # fmt: skip
+    @pytest.mark.parametrize(
+        "context_ratio",
+        [param(0.75, id="partly-full"), param(1.0, id="full")],
+    )  # fmt: skip
+    def test_context_scaling_preserves_selected_component_minimum(
+        self, agentic_fraction: float, expected: float, context_ratio: float
+    ) -> None:
+        config = SessionDistributionConfig(
+            inter_turn_delay=MixtureDelayConfig(
+                agentic_fraction=agentic_fraction,
+                agentic_delay=LognormalParams(mean=1000, median=1000, min=900),
+                human_delay=LognormalParams(mean=5000, median=5000, min=4500),
+            )
+        )
+        synth = SessionSynthesizer(config, seed=42)
+
+        delay = synth._sample_delay_ms(int(config.max_prompt_tokens * context_ratio))
+
+        assert delay == pytest.approx(expected)
+
+    @pytest.mark.parametrize(
+        "context_ratio",
+        [
+            param(0.0, id="empty"),
+            param(0.75, id="partly-full"),
+            param(1.0, id="full"),
+        ],
+    )  # fmt: skip
+    def test_disabled_context_scaling_preserves_sampled_delay(
+        self, context_ratio: float
+    ) -> None:
+        config = SessionDistributionConfig(
+            inter_turn_delay=MixtureDelayConfig(
+                context_scaling=False,
+                agentic_fraction=1.0,
+                agentic_delay=LognormalParams(mean=1000, median=1000),
+            )
+        )
+        synth = SessionSynthesizer(config, seed=42)
+
+        delay = synth._sample_delay_ms(int(config.max_prompt_tokens * context_ratio))
+
+        assert delay == pytest.approx(1000)
+
+    def test_global_cap_takes_precedence_over_component_minimum(self) -> None:
+        config = SessionDistributionConfig(
+            inter_turn_delay=MixtureDelayConfig(
+                agentic_fraction=0.0,
+                human_delay=LognormalParams(mean=5000, median=5000, min=4500),
+                max=600,
+            )
+        )
+        synth = SessionSynthesizer(config, seed=42)
+
+        assert synth._sample_delay_ms(config.max_prompt_tokens) == 600
 
 
 class TestExplicitTurnMode:

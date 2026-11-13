@@ -88,17 +88,35 @@ def sample_lognormal(
 
 
 def sample_mixture_delay(
-    config: MixtureDelayConfig, rng: Generator, size: int = 1
+    config: MixtureDelayConfig,
+    rng: Generator,
+    size: int = 1,
+    *,
+    delay_scale: float = 1.0,
 ) -> np.ndarray:
     """Sample from the two-component mixture delay model.
 
     For each sample, a Bernoulli draw selects agentic (fast) vs human (slow),
-    then the corresponding lognormal is sampled.
+    then the corresponding lognormal is sampled. The global cap is applied
+    before scaling to preserve historical workloads. Component minima are
+    reapplied by clamping after scaling, without additional random draws.
+    This can concentrate probability at a component's minimum. The global cap
+    overrides a conflicting minimum.
     """
+    if not 0 < delay_scale <= 1:
+        raise ValueError("delay_scale must be in (0, 1]")
     is_agentic = rng.random(size=size) < config.agentic_fraction
     agentic_samples = sample_lognormal(config.agentic_delay, rng, size=size)
     human_samples = sample_lognormal(config.human_delay, rng, size=size)
     samples = np.where(is_agentic, agentic_samples, human_samples)
+    if config.max is not None:
+        samples = np.minimum(samples, config.max)
+    samples *= delay_scale
+    if config.agentic_delay.min is not None or config.human_delay.min is not None:
+        minimums = np.where(
+            is_agentic, config.agentic_delay.min or 0.0, config.human_delay.min or 0.0
+        )
+        samples = np.maximum(samples, minimums)
     if config.max is not None:
         samples = np.minimum(samples, config.max)
     return samples

@@ -96,6 +96,39 @@ If the sampled session would hit `max_prompt_tokens` before reaching the target:
 - With `allow_truncation: true`, the generator returns the partial session and
   marks it as `forced_retire`.
 
+## Inter-Turn Delays
+
+`inter_turn_delay.context_scaling` defaults to `true` for compatibility with
+existing workloads. After sampling the agentic/human mixture and applying
+`inter_turn_delay.max`, the generator multiplies the delay by:
+
+`max(0.2, 1 - 0.8 * previous_input / max_prompt_tokens)`
+
+`previous_input` is the previous turn's cumulative input length. This is a
+workload heuristic: fuller contexts produce shorter gaps. It is not an
+inference-latency measurement. Set `"context_scaling": false` inside the
+`inter_turn_delay` object to disable it. The setting is saved in the manifest
+and generated config schema, and appears as 0/1 in the quality config summary.
+
+Component `min`/`max` bounds apply during rejection sampling. After context
+scaling, delays below the selected component's `min` are clamped to exactly
+that minimum, without redrawing. This can concentrate probability at the
+minimum; the final distribution differs from rejection sampling after scaling.
+The global `inter_turn_delay.max` is the final upper cap and takes precedence
+if it is lower than that component's minimum; a global maximum of zero permits
+zero delay. Turn 0 always has zero delay.
+
+The random draws and cap-before-scaling order are unchanged. With scaling
+enabled and no component minima, an existing config and seed produce the same
+trace. Configs with minima may now produce longer gaps where scaling previously
+violated the bound. Disabling scaling intentionally changes delays and timestamps.
+
+Component means/medians describe the underlying lognormal distributions, not
+targets for the final mixture. Rejection sampling, caps, and context scaling
+change the output distribution. `quality.json` reports observed delay statistics
+with null aggregate mean/median targets; the component values shown in reports
+should not be interpreted as those aggregate targets.
+
 ## Generate a Dataset
 
 Create a dataset with the built-in default configuration:
