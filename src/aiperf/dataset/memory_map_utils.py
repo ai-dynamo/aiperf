@@ -272,8 +272,10 @@ class MemoryMapDatasetBackingStore(AIPerfLifecycleMixin):
             self._session_ids.append(conversation_id)
 
         self.debug(
-            lambda: f"Streamed {len(self._session_ids)} conversations "
-            f"({self._current_offset} bytes)"
+            lambda: (
+                f"Streamed {len(self._session_ids)} conversations "
+                f"({self._current_offset} bytes)"
+            )
         )
 
     async def finalize(self) -> None:
@@ -453,14 +455,18 @@ class MemoryMapDatasetClientStore(AIPerfLifecycleMixin):
     async def _setup(self) -> None:
         """Open memory-mapped files (read-only)."""
         self.debug(
-            lambda: f"Opening memory-mapped files: data={self._data_path}, index={self._index_path}"
+            lambda: (
+                f"Opening memory-mapped files: data={self._data_path}, index={self._index_path}"
+            )
         )
         self._client = await asyncio.to_thread(
             MemoryMapDatasetClient, self._data_path, self._index_path
         )
         self.debug(
-            lambda: f"Memory-mapped client store initialized with "
-            f"{len(self._client.index.conversation_ids)} conversations"
+            lambda: (
+                f"Memory-mapped client store initialized with "
+                f"{len(self._client.index.conversation_ids)} conversations"
+            )
         )
 
     async def get_conversation(self, conversation_id: str) -> Conversation:
@@ -784,7 +790,9 @@ class MemoryMapDatasetClient:
         )
 
         _logger.debug(
-            lambda: f"MemoryMapDatasetClient initialized successfully: data_file={self.data_file_path}, index_file={self.index_file_path}, conversations={len(self.index.conversation_ids)}, size={self.index.total_size} bytes"
+            lambda: (
+                f"MemoryMapDatasetClient initialized successfully: data_file={self.data_file_path}, index_file={self.index_file_path}, conversations={len(self.index.conversation_ids)}, size={self.index.total_size} bytes"
+            )
         )
 
     def __enter__(self) -> MemoryMapDatasetClient:
@@ -887,7 +895,9 @@ class MemoryMapDatasetClient:
             conv_bytes = self.data_mmap[offset : offset + size]
 
             _logger.debug(
-                lambda: f"Loading conversation '{conversation_id}': offset={offset}, size={size} bytes"
+                lambda: (
+                    f"Loading conversation '{conversation_id}': offset={offset}, size={size} bytes"
+                )
             )
 
             return self._deserialize_conversation(conv_bytes)

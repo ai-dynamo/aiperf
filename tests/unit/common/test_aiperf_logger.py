@@ -302,7 +302,9 @@ class TestAIPerfLoggerPerformance:
 
         def aiperf_plain_string_lazy():
             aiperf_logger.debug(
-                lambda: "Hello, world! This is a test of an example message that will NOT be printed."
+                lambda: (
+                    "Hello, world! This is a test of an example message that will NOT be printed."
+                )
             )
 
         def standard_plain_string():
@@ -337,7 +339,9 @@ class TestAIPerfLoggerPerformance:
 
         def aiperf_plain_string_lazy():
             aiperf_logger.info(
-                lambda: "Hello, world! This is a test of an example message that will be printed."
+                lambda: (
+                    "Hello, world! This is a test of an example message that will be printed."
+                )
             )
 
         def standard_plain_string():
@@ -390,9 +394,11 @@ class TestAIPerfLoggerPerformance:
 
         def aiperf_formatting_and_lazy_evaluation():
             aiperf_logger.debug(
-                lambda: "Hello, world! This will NOT be printed %s "
-                * 100
-                % tuple([*["test"] * 100])
+                lambda: (
+                    "Hello, world! This will NOT be printed %s "
+                    * 100
+                    % tuple([*["test"] * 100])
+                )
             )
 
         def standard_formatting_no_print():
@@ -417,7 +423,9 @@ class TestAIPerfLoggerPerformance:
 
         def aiperf_multiple_args():
             aiperf_logger.debug(
-                lambda: f"Hello Mr {time.time_ns() ** 2} {time.time_ns() ** 2} This will NOT be printed"
+                lambda: (
+                    f"Hello Mr {time.time_ns() ** 2} {time.time_ns() ** 2} This will NOT be printed"
+                )
             )
 
         def standard_multiple_args():
@@ -496,7 +504,9 @@ class TestAIPerfLoggerPerformance:
 
         def aiperf_f_string_math():
             aiperf_logger.debug(
-                lambda: f"Request time: {(large_message.end_perf_ns - large_message.start_perf_ns) / NANOS_PER_SECOND:.2f}"
+                lambda: (
+                    f"Request time: {(large_message.end_perf_ns - large_message.start_perf_ns) / NANOS_PER_SECOND:.2f}"
+                )
             )
 
         def standard_f_string_math():

@@ -372,9 +372,11 @@ class AdaptiveScaleArtifactWriter:
             ]
             phases.append(entry)
             phases.sort(
-                key=lambda item: item.get("phase_index")
-                if item.get("phase_index") is not None
-                else 10**9
+                key=lambda item: (
+                    item.get("phase_index")
+                    if item.get("phase_index") is not None
+                    else 10**9
+                )
             )
             payload["adaptive_phases"] = phases
             encoded = orjson.dumps(

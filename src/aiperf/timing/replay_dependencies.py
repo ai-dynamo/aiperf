@@ -210,8 +210,10 @@ class ReplayBarrierCoordinator:
         ):
             return
         _logger.debug(
-            lambda: f"Idle watchdog root={root_id}: re-enforcing after a timer "
-            "ran without issuing a request"
+            lambda: (
+                f"Idle watchdog root={root_id}: re-enforcing after a timer "
+                "ran without issuing a request"
+            )
         )
         self._enforce_root_idle_cap(root_id)
 
@@ -232,9 +234,11 @@ class ReplayBarrierCoordinator:
             state.idle_watchdog.cancel()
             state.idle_watchdog = None
             _logger.debug(
-                lambda: f"Idle watchdog root={root_id}: cancelled by "
-                f"{credit.conversation_id}#{credit.turn_index} issue, "
-                f"in_flight={state.in_flight}"
+                lambda: (
+                    f"Idle watchdog root={root_id}: cancelled by "
+                    f"{credit.conversation_id}#{credit.turn_index} issue, "
+                    f"in_flight={state.in_flight}"
+                )
             )
 
     def observe_idle_root(self, root_id: str) -> None:
@@ -328,9 +332,11 @@ class ReplayBarrierCoordinator:
             self._arm_root_idle_watchdog(root_id, state)
         else:
             _logger.debug(
-                lambda: f"Idle watchdog root={root_id}: not armed after "
-                f"{credit.conversation_id}#{credit.turn_index} completed, "
-                f"in_flight={state.in_flight}"
+                lambda: (
+                    f"Idle watchdog root={root_id}: not armed after "
+                    f"{credit.conversation_id}#{credit.turn_index} completed, "
+                    f"in_flight={state.in_flight}"
+                )
             )
 
     def _arm_root_idle_watchdog(self, root_id: str, state: _RootBarrierState) -> None:
@@ -349,8 +355,10 @@ class ReplayBarrierCoordinator:
             delay, self._enforce_root_idle_cap, root_id
         )
         _logger.debug(
-            lambda: f"Idle watchdog root={root_id}: armed for {delay:.3f}s, "
-            f"in_flight={state.in_flight}"
+            lambda: (
+                f"Idle watchdog root={root_id}: armed for {delay:.3f}s, "
+                f"in_flight={state.in_flight}"
+            )
         )
 
     def _enforce_root_idle_cap(self, root_id: str) -> None:
@@ -360,8 +368,10 @@ class ReplayBarrierCoordinator:
         state.idle_watchdog = None
         if state.in_flight != 0 or self._scheduler is None:
             _logger.debug(
-                lambda: f"Idle watchdog root={root_id}: fired with "
-                f"in_flight={state.in_flight}, nothing advanced"
+                lambda: (
+                    f"Idle watchdog root={root_id}: fired with "
+                    f"in_flight={state.in_flight}, nothing advanced"
+                )
             )
             return
         state.idle_cap_expired = True
@@ -374,16 +384,20 @@ class ReplayBarrierCoordinator:
             # ``observe_issued`` clears it; if it returns without issuing,
             # ``_on_root_timer_done`` re-enforces once it is no longer counted.
             _logger.debug(
-                lambda: f"Idle watchdog root={root_id}: deferred, "
-                f"running_group_tasks={running}"
+                lambda: (
+                    f"Idle watchdog root={root_id}: deferred, "
+                    f"running_group_tasks={running}"
+                )
             )
             return
         shifted = self._scheduler.cap_pending_delay_for_group(root_id, 0.0)
         if shifted <= 0:
             scheduler = self._scheduler
             _logger.debug(
-                lambda: f"Idle watchdog root={root_id}: fired but advanced nothing, "
-                f"pending_timers={scheduler.pending_count_for_group(root_id)}"
+                lambda: (
+                    f"Idle watchdog root={root_id}: fired but advanced nothing, "
+                    f"pending_timers={scheduler.pending_count_for_group(root_id)}"
+                )
             )
             return
         self._root_idle_jumps += 1
@@ -515,8 +529,10 @@ class ReplayBarrierCoordinator:
             # already taken ownership of the turn for the profiling handoff, so
             # it is neither refused nor lost.
             _logger.debug(
-                lambda: f"Barrier-released replay dispatch deferred for "
-                f"{pending.turn!r}; admission retained it for phase handoff"
+                lambda: (
+                    f"Barrier-released replay dispatch deferred for "
+                    f"{pending.turn!r}; admission retained it for phase handoff"
+                )
             )
 
 
