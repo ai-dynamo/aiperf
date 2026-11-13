@@ -11,9 +11,9 @@ nested request lists.
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal, TypeAlias
+from typing import Annotated, Any, Literal, Self, TypeAlias
 
-from pydantic import ConfigDict, Field, PrivateAttr
+from pydantic import ConfigDict, Field, PrivateAttr, model_validator
 
 from aiperf.common.models import AIPerfBaseModel
 
@@ -175,7 +175,7 @@ class WekaTimestampResolution(AIPerfBaseModel):
 
 
 class WekaTrace(AIPerfBaseModel):
-    """A single Weka trace file."""
+    """A single Weka trace, sharing immutable hash ID storage within the trace."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -210,3 +210,17 @@ class WekaTrace(AIPerfBaseModel):
     totals: dict[str, Any] | None = Field(
         default=None, description="Optional trace-level summary; opaque."
     )
+
+    @model_validator(mode="after")
+    def _share_hash_id_values(self) -> Self:
+        """Reuse immutable IDs within their trace-local namespace."""
+        values: dict[int, int] = {}
+        for entry in self.requests:
+            requests = (
+                entry.requests if isinstance(entry, WekaSubagentEntry) else (entry,)
+            )
+            for request in requests:
+                request.hash_ids[:] = [
+                    values.setdefault(h, h) for h in request.hash_ids
+                ]
+        return self
