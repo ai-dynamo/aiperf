@@ -95,6 +95,27 @@ def _adaptive_cfg(
     )
 
 
+def _user_centric_config(*, users: int = 4) -> BenchmarkConfig:
+    """Real ``BenchmarkConfig`` with one ``profiling`` user-centric phase."""
+    return BenchmarkConfig.model_validate(
+        {
+            "models": ["m"],
+            "endpoint": {"urls": ["http://x"], "type": "chat"},
+            "datasets": [{"name": "default", "type": "synthetic"}],
+            "phases": [
+                {
+                    "name": "profiling",
+                    "type": "user_centric",
+                    "kind": "profiling",
+                    "users": users,
+                    "rate": 1.0,
+                    "duration": 60.0,
+                }
+            ],
+        }
+    )
+
+
 def _make_planner(
     *,
     profiling_requests: int | None = None,
@@ -236,6 +257,27 @@ def test_sla_warmup_seconds_custom_value() -> None:
     assert warmup is not None
     # 120s > 60s first-probe floor, so the explicit value wins.
     assert warmup.duration == 120.0  # type: ignore[attr-defined]
+
+
+def test_sla_warmup_preserves_users_for_user_centric_phase() -> None:
+    """REGRESSION: the warmup allowlist dropped required ``users``."""
+    cfg = _adaptive_cfg(sla_warmup_seconds=10.0).model_copy(
+        update={
+            "search_space": [
+                SearchSpaceDimension(
+                    path="phases.profiling.rate",
+                    lo=0.1,
+                    hi=100.0,
+                    kind="real",
+                )
+            ]
+        }
+    )
+    planner = SmoothIsotonicSLAPlanner(_user_centric_config(), cfg)
+    mutated = planner._mutate_base(8.5)
+    warmup = _warmup_phase(mutated)
+    assert warmup is not None
+    assert warmup.users == 4  # type: ignore[attr-defined]
 
 
 # ---------------------------------------------------------------------------
