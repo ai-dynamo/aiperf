@@ -30,6 +30,7 @@ from aiperf.common.enums import (
 )
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import MemoryMapSerializationError
+from aiperf.common.glibc_malloc import trim_heap
 from aiperf.common.hooks import on_command, on_request, on_stop
 from aiperf.common.messages import (
     ConversationRequestMessage,
@@ -355,6 +356,9 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         self._conversation_ids_cache = []
         gc.collect()
         gc.collect()
+        # The freed conversations leave gigabytes of empty arena behind
+        # (11.5 GB anon after a 9,843-conversation cache build); hand it back.
+        trim_heap()
 
         if self._compress_only:
             self.info(
