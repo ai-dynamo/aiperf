@@ -296,6 +296,7 @@ class TestRemoteDatasetPreflightWiring:
             "_preflight_artifact_dir",
             "_preflight_accuracy_deps",
             "_preflight_fd_limit",
+            "_preflight_synthetic_prompt_reuse",
             "_preflight_dataset_access",
             "_preflight_endpoint_ready",
             "_preflight_dataset_materialize",
