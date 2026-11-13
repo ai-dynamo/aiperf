@@ -62,6 +62,15 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-audio-openai-endpoint-server -->
 
+> [!IMPORTANT]
+> Synthetic audio is Gaussian white noise, not speech. For ASR benchmarks, it can
+> produce very different transcription lengths and therefore misleading latency,
+> throughput, and RTFx compared with real speech of the same duration. Use a
+> [public speech dataset](asr.md) or
+> [your own audio files](custom-dataset.md#per-request-audio-duration-rtfx)
+> when measuring representative ASR performance. Synthetic audio remains useful
+> for checking that the request path works.
+
 **Output:**
 
 ```
