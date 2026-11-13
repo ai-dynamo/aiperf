@@ -180,8 +180,9 @@ class _ResultsSettings(BaseSettings):
         description=(
             "Wall-clock budget (seconds, measured from the completion-claim "
             "annotation timestamp) within which a transient HTTP fetch failure "
-            "is converted to a kopf.TemporaryError so the next monitor tick "
-            "retries via the orphan-claim recovery path. Past this budget the "
+            "is converted to a kopf.TemporaryError so kopf retries the "
+            "completion handler under the same claim (after an operator "
+            "restart, orphan-claim recovery retries instead). Past this budget the "
             "operator gives up and marks the AIPerfJob Failed with the "
             "ResultsFetchFailed condition. WHY: sub-second benchmarks can "
             "race the controller's post-export shutdown — the marker has been "
@@ -196,8 +197,8 @@ class _ResultsSettings(BaseSettings):
         le=60.0,
         description=(
             "Delay (seconds) passed to ``kopf.TemporaryError`` when retrying "
-            "a transient results-fetch failure. Each retry runs through the "
-            "orphan-claim recovery path on the next monitor tick."
+            "a transient results-fetch failure: kopf re-runs the completion "
+            "handler after this delay."
         ),
     )
     PHASE_SETTLE_ATTEMPTS: int = Field(

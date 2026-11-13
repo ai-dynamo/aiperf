@@ -11,11 +11,14 @@ controller container terminates.
 
 Strategy: when the fetch result has the race signature (``has_error`` set,
 no key result files), and the completion claim is still fresh, raise
-``kopf.TemporaryError`` BEFORE the caller writes terminal status. The
-orphan-claim recovery path
-(``monitor.py::_recover_orphaned_completion_claim``) re-runs
-``handle_completion`` on the next monitor tick because the CR remains
-non-terminal but the claim annotation is durable. The retry is bounded by
+``TransientCompletionFetchError`` (a ``kopf.TemporaryError``) BEFORE the
+caller writes terminal status. kopf then retries the raising handler; for
+``on_benchmark_complete`` the claim owner re-enters ``handle_completion`` via
+``client_cache.resume_owned_completion_claim``. After an operator restart the
+in-process ownership mark is gone, and orphan-claim recovery
+(``monitor.py::_recover_orphaned_completion_claim``) converges instead because
+the CR remains non-terminal while the claim annotation is durable. The retry
+is bounded by
 the ``RESULTS.TRANSIENT_FETCH_RETRY_BUDGET_SEC`` setting (wall-clock from
 the claim timestamp) so a permanently-broken controller still progresses
 to ``Phase.FAILED``.
@@ -38,6 +41,15 @@ if TYPE_CHECKING:
     from aiperf.operator.handlers.completion import _ResultFlags
 
 logger = logging.getLogger(__name__)
+
+
+class TransientCompletionFetchError(kopf.TemporaryError):
+    """Results fetch looked transient; retry ``handle_completion`` after ``delay``.
+
+    Raised only before any terminal status is written, so re-running
+    ``handle_completion`` under the same claim is safe.
+    """
+
 
 __all__ = ["maybe_raise_for_transient_fetch_failure"]
 
@@ -101,7 +113,7 @@ def maybe_raise_for_transient_fetch_failure(
     result: ControllerFetchResult,
     flags: _ResultFlags,
 ) -> None:
-    """Raise ``kopf.TemporaryError`` if the fetch failure looks transient.
+    """Raise ``TransientCompletionFetchError`` if the fetch failure looks transient.
 
     Callers MUST invoke this BEFORE writing terminal status (failed phase
     or completion event); otherwise the retry observes an already-Failed
@@ -139,7 +151,7 @@ def maybe_raise_for_transient_fetch_failure(
         f"transient results fetch failure for {namespace}/{job_id} "
         f"(claim age {age:.1f}s of {budget:.0f}s budget): "
         f"{result.error or 'no detail'}; "
-        "retrying via orphan-claim recovery on next monitor tick"
+        f"kopf will retry the completion handler in {delay:.0f}s"
     )
     logger.warning(msg)
-    raise kopf.TemporaryError(msg, delay=delay)
+    raise TransientCompletionFetchError(msg, delay=delay)
