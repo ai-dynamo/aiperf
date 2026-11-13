@@ -1091,8 +1091,9 @@ def _generate_observations_with_sum_constraint(
            0. Exact edge: if every observation in the bucket is known to sit on
               its upper edge (a learned mean equal to le whose single-bucket
               intervals cover the bucket's full, pre-downsampling count with no
-              counter reset in the learning window, or a lone bucket whose
-              average equals le when target_sum is exact), place them all on le
+              counter reset in the learning window, or the only bucket occupied
+              before downsampling whose average equals le when target_sum is
+              exact), place them all on le
            a. F3: If variance is extremely tight (< 1% of bucket width),
               use F3 two-point mass distribution for optimal moment matching
            b. Blended: If variance is tight (< 20%) AND mean is near center (< 30%),
@@ -1145,6 +1146,14 @@ def _generate_observations_with_sum_constraint(
     # against the counts before any downsampling.
     if original_bucket_counts is None:
         original_bucket_counts = dict(per_bucket_counts)
+    # Occupancy is checked before downsampling: rounding can drop a small
+    # bucket to zero and make another bucket look like the only one.
+    occupied_buckets = [
+        le
+        for le in finite_buckets
+        if per_bucket_counts.get(le, 0) > 0 or original_bucket_counts.get(le, 0) > 0
+    ]
+    lone_bucket = occupied_buckets[0] if len(occupied_buckets) == 1 else None
     total_count = sum(per_bucket_counts.get(le, 0) for le in finite_buckets)
     if total_count > _MAX_OBSERVATIONS:
         sample_ratio = _MAX_OBSERVATIONS / total_count
@@ -1205,7 +1214,6 @@ def _generate_observations_with_sum_constraint(
         if stats is not None:
             if stats.estimated_mean is not None:
                 mean_val = stats.estimated_mean
-                # Validate: must be within the (lower, upper] bucket range
                 if lower_bound < mean_val <= upper_bound:
                     learned_mean = mean_val
             learned_variance = stats.estimated_variance
@@ -1231,7 +1239,8 @@ def _generate_observations_with_sum_constraint(
         ):
             point_mass = learned_mean
         elif (
-            bucket_count == total_observations
+            bucket_le == lone_bucket
+            and bucket_count == total_observations
             and target_sum_is_exact
             and not window_spans_counter_reset
         ):

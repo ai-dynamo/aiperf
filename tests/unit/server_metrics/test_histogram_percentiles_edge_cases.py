@@ -434,7 +434,7 @@ class TestComputeEstimatedPercentiles:
 
         assert result is not None
         for name in EstimatedPercentiles.__dataclass_fields__:
-            assert getattr(result, name) == pytest.approx(100.0)
+            assert getattr(result, name) == 100.0
 
     def test_edge_bucket_is_not_shifted_by_sum_fit(self) -> None:
         """The sum fit should move the estimated buckets, not the exact edge one."""
@@ -529,17 +529,20 @@ class TestComputeEstimatedPercentiles:
         assert result is not None
         assert result.p10_estimate < 10.0
 
-    def test_lone_bucket_average_pins_edge_without_reset(self) -> None:
-        """Every value in the only bucket averaging to le must sit on le."""
+    def test_bucket_emptied_by_downsampling_does_not_pin_edge(self) -> None:
+        """Downsampling truncates a bucket holding 1 of 200000 values to zero,
+        leaving "100" as the only bucket with generated values. Its average is
+        100, but the original counts show a second occupied bucket, so the
+        values can sit below 100 (e.g. 199999 at 60 and one at 8000060)."""
         result = compute_estimated_percentiles(
-            {"50": 0.0, "100": 100.0, "+Inf": 100.0},
+            {"50": 0.0, "100": 199999.0, "10000000": 200000.0, "+Inf": 200000.0},
             {},
-            total_sum=10000.0,
-            total_count=100,
+            total_sum=20000000.0,
+            total_count=200000,
         )
 
         assert result is not None
-        assert result.p1_estimate == 100.0
+        assert result.p1_estimate < 100.0
 
     def test_lone_bucket_average_does_not_pin_edge_across_reset(self) -> None:
         """After an in-window reset the endpoint average can equal le while the
