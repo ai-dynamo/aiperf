@@ -32,7 +32,6 @@ from aiperf.common.messages.network_latency_messages import (
 )
 from aiperf.common.messages.progress_messages import (
     AllRecordsReceivedMessage,
-    BenchmarkCompleteMessage,
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProfileResultsMessage,
@@ -70,7 +69,6 @@ from aiperf.common.messages.worker_messages import (
 
 __all__ = [
     "AllRecordsReceivedMessage",
-    "BenchmarkCompleteMessage",
     "BaseServiceErrorMessage",
     "BaseServiceMessage",
     "BaseStatusMessage",

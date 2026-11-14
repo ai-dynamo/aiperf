@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
+from collections.abc import Collection
 
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import ServiceProcessDiedError
@@ -159,7 +160,9 @@ class KubernetesServiceManager(PodMonitoringMixin, MultiProcessServiceManager):
 
         return await super().stop_service(service_type, service_id)
 
-    async def shutdown_all_services(self) -> list[BaseException | None]:
+    async def shutdown_all_services(
+        self, *, exclude: Collection[ServiceTypeT] = ()
+    ) -> list[BaseException | None]:
         """Stop any locally managed subprocesses.
 
         Normal Kubernetes-mode deployments launch sibling controller containers
@@ -167,7 +170,7 @@ class KubernetesServiceManager(PodMonitoringMixin, MultiProcessServiceManager):
         to do; it remains for defensive compatibility.
         """
         self._shutdown_complete = True
-        return await super().shutdown_all_services()
+        return await super().shutdown_all_services(exclude=exclude)
 
     async def check_pods_healthy(self) -> None:
         """Verify tracked pods are healthy enough before profiling starts.
