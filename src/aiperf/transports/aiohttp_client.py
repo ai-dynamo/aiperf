@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import contextlib
+import errno
 import socket
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import aiohttp
 from yarl import URL
@@ -75,12 +76,22 @@ def _record_response_body_eof(
 VIDEO_DOWNLOAD_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
 
+def _is_local_port_exhaustion(e: BaseException) -> bool:
+    """Return True if a connect failed because no local port was free."""
+    return (
+        isinstance(e, aiohttp.ClientConnectorError)
+        and e.os_error.errno == errno.EADDRNOTAVAIL
+    )
+
+
 class AioHttpClient(AIPerfLoggerMixin):
     """A high-performance HTTP client for communicating with HTTP based REST APIs using aiohttp.
 
     This class is optimized for maximum performance and accurate timing measurements,
     making it ideal for benchmarking scenarios.
     """
+
+    _port_exhaustion_logged: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -389,6 +400,16 @@ class AioHttpClient(AIPerfLoggerMixin):
             record.end_perf_ns = time.perf_counter_ns()
             self.error(f"Error in aiohttp request: {e!r}")
             record.error = ErrorDetails.from_exception(e)
+            if (
+                _is_local_port_exhaustion(e)
+                and not AioHttpClient._port_exhaustion_logged
+            ):
+                AioHttpClient._port_exhaustion_logged = True
+                self.warning(
+                    f"Connect to {e.host}:{e.port} failed with EADDRNOTAVAIL: likely "
+                    "out of local ports (net.ipv4.ip_local_port_range). Lower the "
+                    "concurrency, add --url addresses, or widen the port range."
+                )
 
         return record
 
