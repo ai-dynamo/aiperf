@@ -14,6 +14,7 @@ from typing import Any
 
 import orjson
 
+from aiperf.common.environment import Environment
 from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.timing.strategies.adaptive_scale_sla import percentile_value
 from aiperf.timing.strategies.adaptive_scale_types import WindowStats
@@ -29,10 +30,16 @@ def _iso_utc_from_ns(timestamp_ns: int) -> str:
 
 
 class AdaptiveScaleArtifactWriter:
-    """Write adaptive scale JSONL events and JSON summary artifacts."""
+    """Write adaptive scale JSONL events and JSON summary artifacts.
+
+    Writes are queued and executed off the event loop. Only *required* writes
+    (the terminal event, the summary, and the manifest entry) are fatal: their
+    first failure is re-raised from ``flush()``/``close()``. Other event lines
+    are diagnostic, so their failures are logged and do not fail the run.
+    """
 
     def __init__(self) -> None:
-        self._queue: asyncio.Queue[Callable[[], None]] | None = None
+        self._queue: asyncio.Queue[tuple[Callable[[], None], bool]] | None = None
         self._task: asyncio.Task[None] | None = None
         self._write_error: Exception | None = None
 
@@ -50,35 +57,81 @@ class AdaptiveScaleArtifactWriter:
             raise self._write_error
 
     async def close(self) -> None:
+        """Drain every queued write, then stop the drain task.
+
+        The terminal event and summary are queued last, while the phase is
+        being torn down -- exactly when the phase runner's deadline may cancel
+        the strategy task. Cancellation arriving here must not discard them:
+        the drain keeps running (bounded by ``CANCEL_DRAIN_TIMEOUT``) and the
+        ``CancelledError`` is re-raised only after the queue is empty. A
+        recorded write error takes precedence over the cancellation so a lost
+        artifact is never reported as a plain cancel.
+        """
         if self._queue is None or self._task is None:
             return
+        queue, drain_task = self._queue, self._task
+        joined = asyncio.ensure_future(queue.join())
+        loop = asyncio.get_running_loop()
+        cancelled: asyncio.CancelledError | None = None
+        deadline: float | None = None
         try:
-            await self.flush()
+            while not joined.done() and not drain_task.done():
+                timeout = None if deadline is None else deadline - loop.time()
+                if timeout is not None and timeout <= 0:
+                    _LOGGER.error(
+                        "adaptive scale artifact writer cancelled with %d queued "
+                        "write(s) still pending after %.1fs; abandoning them",
+                        queue.qsize(),
+                        Environment.TIMING.CANCEL_DRAIN_TIMEOUT,
+                    )
+                    break
+                try:
+                    # asyncio.wait never cancels the futures it waits on, so a
+                    # cancellation here leaves the drain task running.
+                    await asyncio.wait(
+                        {joined, drain_task},
+                        timeout=timeout,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                except asyncio.CancelledError as exc:
+                    cancelled = cancelled or exc
+                    if deadline is None:
+                        deadline = loop.time() + Environment.TIMING.CANCEL_DRAIN_TIMEOUT
         finally:
-            self._task.cancel()
+            joined.cancel()
+            drain_task.cancel()
             with suppress(asyncio.CancelledError):
-                await self._task
+                await drain_task
             self._queue = None
             self._task = None
+        if self._write_error is not None:
+            raise self._write_error
+        if cancelled is not None:
+            raise cancelled
 
     async def _drain(self) -> None:
         if self._queue is None:
             return
         while True:
-            write = await self._queue.get()
+            write, required = await self._queue.get()
             try:
                 await asyncio.to_thread(write)
             except Exception as exc:
-                if self._write_error is None:
+                if required and self._write_error is None:
                     self._write_error = exc
-                _LOGGER.exception("adaptive scale artifact write failed")
+                _LOGGER.exception(
+                    "adaptive scale %s artifact write failed",
+                    "required" if required else "diagnostic",
+                )
             finally:
                 self._queue.task_done()
 
-    def _schedule_write(self, write: Callable[[], None]) -> None:
+    def _schedule_write(
+        self, write: Callable[[], None], *, required: bool = False
+    ) -> None:
         if self._queue is None:
             raise RuntimeError("adaptive scale artifact writer was not started")
-        self._queue.put_nowait(write)
+        self._queue.put_nowait((write, required))
 
     @staticmethod
     def resolve_path(artifact_dir: Path | None, filename: str) -> Path | None:
@@ -326,7 +379,9 @@ class AdaptiveScaleArtifactWriter:
             "step_percent": step_percent,
         }
 
-    def emit_event(self, path: Path | None, payload: dict[str, Any]) -> None:
+    def emit_event(
+        self, path: Path | None, payload: dict[str, Any], *, required: bool = False
+    ) -> None:
         if path is None:
             return
 
@@ -335,7 +390,7 @@ class AdaptiveScaleArtifactWriter:
             with path.open("ab") as f:
                 f.write(orjson.dumps(payload, option=orjson.OPT_SORT_KEYS) + b"\n")
 
-        self._schedule_write(write)
+        self._schedule_write(write, required=required)
 
     def write_summary(self, path: Path | None, summary: dict[str, Any]) -> None:
         if path is None:
@@ -348,7 +403,7 @@ class AdaptiveScaleArtifactWriter:
             )
             path.write_bytes(encoded + b"\n")
 
-        self._schedule_write(write)
+        self._schedule_write(write, required=True)
 
     def write_manifest_entry(
         self, artifact_dir: Path | None, entry: dict[str, Any]
@@ -382,4 +437,4 @@ class AdaptiveScaleArtifactWriter:
             )
             manifest_path.write_bytes(encoded + b"\n")
 
-        self._schedule_write(write)
+        self._schedule_write(write, required=True)

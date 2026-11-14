@@ -55,6 +55,9 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
 
     EVENT_FILE = "adaptive_scale_events.jsonl"
     SUMMARY_FILE = "adaptive_scale_summary.json"
+    # execute_phase's finally publishes the terminal event + summary; the
+    # PhaseRunner must await it before reporting the phase complete.
+    requires_execution_finalization = True
 
     def __init__(
         self,
@@ -258,7 +261,15 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
                 else:
                     await super().execute_phase()
             except asyncio.CancelledError:
-                if self._completed_reason is None:
+                # The runner also cancels this task when the phase ends
+                # normally (duration deadline, or the finalization barrier
+                # after a request/session cap); those fall through to
+                # ``phase_stopped`` in the finally. Only an actual run
+                # cancellation is recorded as ``phase_cancelled``.
+                if (
+                    self._completed_reason is None
+                    and self._lifecycle.was_cancelled is True
+                ):
                     self._complete_controller(
                         reason="phase_cancelled",
                         terminal_event="adaptive_failed",
@@ -272,13 +283,17 @@ class AdaptiveScaleStrategy(AdaptiveScaleRuntimeMixin, RequestRateStrategy):
                     )
                 raise
         finally:
-            if self._completed_reason is None:
-                self._complete_controller(reason="phase_stopped")
-            if self._assessment_task is not None:
-                self._assessment_task.cancel()
-                with suppress(asyncio.CancelledError):
-                    await self._assessment_task
-            await self._artifacts.close()
+            # The runner may cancel this task at any await below; close() must
+            # still run so the queued terminal event and summary are written.
+            try:
+                if self._completed_reason is None:
+                    self._complete_controller(reason="phase_stopped")
+                if self._assessment_task is not None:
+                    self._assessment_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await self._assessment_task
+            finally:
+                await self._artifacts.close()
 
     async def handle_credit_return(
         self, credit: Credit, *, error: str | None = None

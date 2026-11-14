@@ -240,6 +240,7 @@ class PhaseRunner(TaskManagerMixin):
         self._wire_replay_gate()
 
         self._execution_task: asyncio.Task | None = None
+        self._finalization_task: asyncio.Task | None = None
         self._progress_task: asyncio.Task | None = None
         self._return_wait_task: asyncio.Task | None = None
         self._router_phase_started = False
@@ -796,6 +797,12 @@ class PhaseRunner(TaskManagerMixin):
         self._execution_task = self.execute_async(strategy.execute_phase())
 
         await self._wait_for_sending_complete(strategy)
+        # Finalization (e.g. flushing adaptive artifacts) runs alongside the
+        # return/grace-period handling so slow storage cannot postpone the
+        # request deadline; only phase-complete publication waits for it.
+        self._finalization_task = self.execute_async(
+            self._await_strategy_finalization(strategy)
+        )
 
         if self._was_cancelled:
             if not self._lifecycle.is_complete:
@@ -807,6 +814,7 @@ class PhaseRunner(TaskManagerMixin):
                     phase_id, BaselineKind.END
                 )
             )
+            await self._join_strategy_finalization()
             return self._create_final_stats()
 
         # Seamless mode: phase flows into next without waiting for returns.
@@ -848,6 +856,53 @@ class PhaseRunner(TaskManagerMixin):
             self._report_warmup_failures(strategy)
 
         return self._create_final_stats()
+
+    async def _await_strategy_finalization(
+        self, strategy: TimingStrategyProtocol
+    ) -> None:
+        """Wait for a strategy's ``execute_phase`` teardown before the phase
+        can be reported complete.
+
+        ``execute_phase`` runs fire-and-forget and the duration deadline only
+        cancels it, so without this barrier the phase (and the whole run) can
+        finish while the strategy's ``finally`` block is still publishing
+        required artifacts. Opt-in via ``requires_execution_finalization``
+        (duck-typed) so other strategies are unaffected.
+
+        Sending is complete, so an issuing loop that is still running (e.g.
+        user-centric pacing that is sleeping or deferring spawns) has nothing
+        left to do: it is cancelled immediately rather than waited on. Opted-in
+        strategies must keep their finalizer cancellation-safe. A task that is
+        already being cancelled (deadline) is not cancelled again, so its
+        finalizer is not interrupted. The wait is bounded by
+        ``CANCEL_DRAIN_TIMEOUT``; a non-cancellation failure of the strategy
+        task is re-raised as a phase failure.
+        """
+        task = self._execution_task
+        if task is None or (
+            getattr(strategy, "requires_execution_finalization", False) is not True
+        ):
+            return
+        if not task.done() and task.cancelling() == 0:
+            task.cancel()
+        timeout = Environment.TIMING.CANCEL_DRAIN_TIMEOUT
+        done, _ = await asyncio.wait({task}, timeout=timeout)
+        if not done:
+            self.warning(
+                f"Strategy for phase {self._config.phase} did not finish "
+                f"finalizing within {timeout}s; continuing without it"
+            )
+            return
+        if not task.cancelled() and (exc := task.exception()) is not None:
+            raise exc
+
+    async def _join_strategy_finalization(self) -> None:
+        """Await the background ``_await_strategy_finalization`` task started
+        after sending completed, re-raising its failure. Called right before
+        the phase is reported complete; a no-op when none is pending."""
+        task, self._finalization_task = self._finalization_task, None
+        if task is not None:
+            await task
 
     def _create_final_stats(self) -> CreditPhaseStats:
         return self._progress.create_stats_with_baseline_window(
@@ -1353,6 +1408,7 @@ class PhaseRunner(TaskManagerMixin):
                         phase_id, BaselineKind.END
                     )
                 )
+            await self._join_strategy_finalization()
             stats = self._create_final_stats()
             self.notice(self._format_phase_complete(stats))
             await self._phase_publisher.publish_progress(stats)
