@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self
 
@@ -17,6 +18,7 @@ from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin.enums import (
     ArrivalPattern,
     PhaseType,
+    PluginType,
     TimingMode,
     TransportType,
     URLSelectionStrategy,
@@ -267,6 +269,24 @@ def _validate_finite_replay_endpoint(cfg: Any) -> None:
 
     if plugins.get_endpoint_metadata(cfg.endpoint.type).requires_polling:
         raise ValueError("Finite replay does not support polling endpoint workflows")
+
+    transport_name = cfg.endpoint.transport or TransportType.HTTP
+    transport_class = plugins.get_class(PluginType.TRANSPORT, transport_name)
+    try:
+        inspect.signature(transport_class.send_request).bind(
+            None,
+            None,
+            None,
+            first_token_callback=None,
+            transport_start_callback=None,
+            transport_eof_callback=None,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"--agentic-replay-lifecycle finite requires transport {transport_name!r} "
+            "to accept transport_start_callback and transport_eof_callback; "
+            "update the transport plugin for finite replay"
+        ) from exc
 
 
 def _validate_finite_replay_phases(phases: list[PhaseConfig]) -> None:

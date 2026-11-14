@@ -17,7 +17,7 @@ but it is still ``clock_skew + min_transit``, not the skew: min-filtering makes 
 transit term SMALL, never zero.
 
 That residual transit is removed separately. A pre-flight RTT measurement (ping/pong
-probes echoed verbatim by the credit ROUTER) yields ``estimated_one_way_ns =
+probes matched by sequence and send timestamp by the credit ROUTER) yields ``estimated_one_way_ns =
 min_rtt // 2``, and ``correction_ns`` -- the value actually applied to timestamps --
 is ``offset_ns - estimated_one_way_ns``. Without that second term the correction
 shifts every worker timestamp EARLIER than true controller time by one one-way hop,

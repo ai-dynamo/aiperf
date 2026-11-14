@@ -410,16 +410,16 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
     _burst_phase_starts_explicitly_set: bool = PrivateAttr(default=False)
     _system_idle_gap_cap_seconds_explicitly_set: bool = PrivateAttr(default=False)
 
-    # Subclasses set False to opt out (e.g. FixedSchedulePhase, where the
-    # stop condition is inferred from the dataset). Otherwise CLI users
-    # get autodefaults applied in the CLI->YAML converter (see
-    # ``aiperf.config.flags._converter_profiling``); YAML users must be
-    # explicit.
     agentic_replay_lifecycle: AgenticReplayLifecycle = Field(
         default=AgenticReplayLifecycle.STEADY_STATE,
         description="Agentic replay admission policy for the profiling phase.",
     )
 
+    # Subclasses set False to opt out (e.g. FixedSchedulePhase, where the
+    # stop condition is inferred from the dataset). Otherwise CLI users
+    # get autodefaults applied in the CLI->YAML converter (see
+    # ``aiperf.config.flags._converter_profiling``); YAML users must be
+    # explicit.
     _stop_condition_required: ClassVar[bool] = True
     _windows_reserved_phase_names: ClassVar[frozenset[str]] = frozenset(
         {"CON", "PRN", "AUX", "NUL"}

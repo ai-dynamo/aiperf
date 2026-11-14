@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for fail-fast configuration and compatibility validation of finite replay."""
 
+import sys
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -10,8 +11,15 @@ from pydantic import ValidationError
 from pytest import param
 
 from aiperf.common.enums import AgenticReplayLifecycle
-from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
+from aiperf.common.models import (
+    ConversationMetadata,
+    DatasetMetadata,
+    RequestInfo,
+    RequestRecord,
+    TurnMetadata,
+)
 from aiperf.common.scenario.base import EmptyTracePoolError
+from aiperf.common.types import RequestInputT
 from aiperf.config.phases import ConcurrencyPhase, ConstantPhase
 from aiperf.dataset.dataset_samplers import SequentialSampler
 from aiperf.plugin.enums import (
@@ -22,6 +30,71 @@ from aiperf.plugin.enums import (
 )
 from aiperf.timing.config import _validate_finite_replay_compatibility
 from aiperf.timing.trajectory_source import TrajectorySource
+from aiperf.transports.aiohttp_transport import AioHttpTransport
+from aiperf.transports.base_transports import FirstTokenCallback
+from tests.harness import mock_plugin
+
+
+class _LegacyHttpTransport(AioHttpTransport):
+    """HTTP plugin implementing the signature used before finite replay."""
+
+    async def send_request(
+        self,
+        request_info: RequestInfo,
+        payload: RequestInputT,
+        *,
+        first_token_callback: FirstTokenCallback | None = None,
+    ) -> RequestRecord:
+        raise AssertionError("Validation must finish before any request is sent")
+
+
+@pytest.mark.parametrize(
+    "transport_name",
+    [
+        param(None, id="auto-http"),
+        param(TransportType.HTTP, id="explicit-http"),
+    ],
+)  # fmt: skip
+def test_finite_replay_rejects_legacy_http_plugin_before_dispatch(
+    transport_name: str | None,
+) -> None:
+    phase = ConcurrencyPhase(
+        name="profiling",
+        type=PhaseType.CONCURRENCY,
+        concurrency=1,
+        agentic_replay_lifecycle=AgenticReplayLifecycle.FINITE,
+    )
+    cfg = SimpleNamespace(
+        get_warmup_phases=lambda: [],
+        endpoint=SimpleNamespace(transport=transport_name, type="chat"),
+        get_default_dataset=lambda: SimpleNamespace(),
+    )
+    with (
+        mock_plugin(
+            "transport", "http", _LegacyHttpTransport, priority=sys.maxsize + 1
+        ),
+        pytest.raises(
+            ValueError,
+            match="finite requires transport .*transport_start_callback and transport_eof_callback",
+        ),
+    ):
+        _validate_finite_replay_compatibility(cfg, [phase])
+
+
+def test_finite_replay_accepts_http_plugin_with_boundary_callbacks() -> None:
+    phase = ConcurrencyPhase(
+        name="profiling",
+        type=PhaseType.CONCURRENCY,
+        concurrency=1,
+        agentic_replay_lifecycle=AgenticReplayLifecycle.FINITE,
+    )
+    cfg = SimpleNamespace(
+        get_warmup_phases=lambda: [],
+        endpoint=SimpleNamespace(transport=TransportType.HTTP, type="chat"),
+        get_default_dataset=lambda: SimpleNamespace(),
+    )
+    with mock_plugin("transport", "http", AioHttpTransport, priority=sys.maxsize + 1):
+        _validate_finite_replay_compatibility(cfg, [phase])
 
 
 def test_finite_lifecycle_rejects_non_profiling_phase() -> None:

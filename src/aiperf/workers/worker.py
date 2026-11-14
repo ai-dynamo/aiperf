@@ -1254,6 +1254,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         max_attempts = max(1, int(budget / probe_timeout))
         if self._finite_replay_enabled:
             max_attempts = max(
+                max_attempts,
                 required_probes,
                 2 * Environment.WORKER.CLOCK_OFFSET_MIN_SAMPLES,
             )
@@ -1882,13 +1883,15 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             credit.finite_replay
             and not credit.no_request
             and not context.transport_start_sent
+            and context.error is None
         ):
             context.error = "Finite transport-start notification was not queued"
         if start_task is not None:
             try:
                 await start_task
             except Exception as exc:
-                context.error = f"Finite transport-start notification failed: {exc}"
+                if context.error is None:
+                    context.error = f"Finite transport-start notification failed: {exc}"
         successful_eof = context.error is None and not context.cancelled
         credit_return = CreditReturn(
             credit=credit,
