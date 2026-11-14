@@ -3,6 +3,7 @@
 """Comprehensive unit tests for aiohttp client components."""
 
 import asyncio
+import errno
 import json
 import time
 from contextlib import contextmanager
@@ -313,6 +314,39 @@ class TestAioHttpClient:
             record = await aiohttp_client.post_request("http://test.com", "{}", {})
 
             assert_error_request_record(record, expected_error_type=expected_type)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "os_errno,expected_warnings",
+        [(errno.EADDRNOTAVAIL, 1), (errno.ECONNREFUSED, 0)],
+    )  # fmt: skip
+    async def test_port_exhaustion_hint_logged_once(
+        self,
+        aiohttp_client: AioHttpClient,
+        monkeypatch: pytest.MonkeyPatch,
+        os_errno: int,
+        expected_warnings: int,
+    ) -> None:
+        """EADDRNOTAVAIL connect failures log one port-exhaustion hint per process."""
+        monkeypatch.setattr(AioHttpClient, "_port_exhaustion_logged", False)
+        exception = aiohttp.ClientConnectorError(
+            connection_key=Mock(host="10.0.0.1", port=8000),
+            os_error=OSError(os_errno, "connect failed"),
+        )
+        with (
+            patch("aiohttp.ClientSession", side_effect=exception),
+            patch.object(aiohttp_client, "warning") as mock_warning,
+        ):
+            for _ in range(2):
+                record = await aiohttp_client.post_request("http://test.com", "{}", {})
+                assert_error_request_record(
+                    record, expected_error_type="ClientConnectorError"
+                )
+
+        assert mock_warning.call_count == expected_warnings
+        if expected_warnings:
+            assert "10.0.0.1:8000" in mock_warning.call_args[0][0]
+            assert "ip_local_port_range" in mock_warning.call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_kwargs_passed_to_session_post(

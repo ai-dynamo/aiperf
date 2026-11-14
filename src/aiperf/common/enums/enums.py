@@ -89,6 +89,10 @@ class CommAddress(CaseInsensitiveStrEnum):
 
 
 class CommandType(CaseInsensitiveStrEnum):
+    BENCHMARK_COMPLETE = "benchmark_complete"
+    """Hand the API the run's terminal state once results are exported and marked
+    ready. The ack is the controller's proof that the API serves the terminal
+    status before it is retired."""
     FINALIZE_ARTIFACTS = "finalize_artifacts"
     """Flush and durably publish artifacts before service communication stops."""
     GET_POD_STATES = "get_pod_states"
@@ -440,7 +444,6 @@ class MessageType(CaseInsensitiveStrEnum):
     CONNECTION_PROBE = "connection_probe"
     CONVERSATION_REQUEST = "conversation_request"
     CONVERSATION_RESPONSE = "conversation_response"
-    BENCHMARK_COMPLETE = "benchmark_complete"
     CONVERSATION_TURN_REQUEST = "conversation_turn_request"
     CONVERSATION_TURN_RESPONSE = "conversation_turn_response"
     CREDIT_PHASE_COMPLETE = "credit_phase_complete"

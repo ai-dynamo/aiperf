@@ -72,6 +72,16 @@ the results sidecar. Kubernetes sweep aggregation uses
 the same durable ready-marker commit after plotting and scratch-artifact pruning
 finish, so the operator never harvests a partially published aggregate tree.
 
+When the API service is running, it is the last service the controller stops.
+The controller sends `SHUTDOWN` to every other service and waits for them to
+exit, exports and commits the ready marker, then sends the API a
+`BENCHMARK_COMPLETE` command on the control channel and waits (bounded by
+`AIPERF_API_SERVER_COMPLETE_ACK_TIMEOUT`) for its reply. Only then does it send
+the API `SHUTDOWN`, which starts the `AIPERF_API_SERVER_POST_COMPLETE_GRACE`
+listener hold. That reply is the controller's proof that `/api/results` reports
+the terminal status before the listener starts closing. See
+[HTTP API Endpoints](reference/api-endpoints.md#results-lifetime).
+
 ### Dataset Manager
 
 The Dataset Manager handles all aspects of input data management during benchmarking runs.

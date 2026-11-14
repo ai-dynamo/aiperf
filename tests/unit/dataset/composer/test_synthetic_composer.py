@@ -4,9 +4,17 @@
 from unittest.mock import patch
 
 import pytest
+from pytest import param
 
 from aiperf.common import random_generator as rng
 from aiperf.common.models import Audio, Conversation, Image, Text, Turn
+from aiperf.common.tokenizer import Tokenizer
+from aiperf.config.dataset import SyntheticDataset
+from aiperf.config.distributions import (
+    EmpiricalDistribution,
+    FixedDistribution,
+    LogNormalDistribution,
+)
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.composer.synthetic import SyntheticDatasetComposer
 from tests.harness.optional_deps import HAS_SOUNDFILE
@@ -216,6 +224,170 @@ class TestSyntheticDatasetComposer:
             assert conversation.turns[0].delay is None  # first turn has no delay
             assert conversation.turns[1].delay == 1500  # subsequent turns have delays
 
+    def test_empirical_turn_counts_are_sampled(self, mock_tokenizer: Tokenizer) -> None:
+        run = make_run(
+            CLIConfig(
+                model_names=["test-model"],
+                conversation_num_dataset_entries=40,
+                prompt_input_tokens_mean=10,
+            )
+        )
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turns = EmpiricalDistribution(points=[{"value": 1}, {"value": 5}])
+        composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+
+        assert {
+            len(conversation.turns) for conversation in composer.create_dataset()
+        } == {
+            1,
+            5,
+        }
+
+    def test_empirical_turn_delays_are_sampled(self, mock_tokenizer: Tokenizer) -> None:
+        run = make_run(
+            CLIConfig(
+                model_names=["test-model"],
+                conversation_num_dataset_entries=40,
+                conversation_turn_mean=2,
+                prompt_input_tokens_mean=10,
+            )
+        )
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turn_delay = EmpiricalDistribution(
+            points=[{"value": 0}, {"value": 500}]
+        )
+        dataset.turn_delay_ratio = 0.5
+        composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        assert all(
+            conversation.turns[0].delay is None for conversation in conversations
+        )
+        assert {conversation.turns[1].delay or 0 for conversation in conversations} == {
+            0,
+            250,
+        }
+
+    def test_turn_distribution_bounds_are_applied(
+        self, mock_tokenizer: Tokenizer
+    ) -> None:
+        run = make_run(
+            CLIConfig(
+                model_names=["test-model"],
+                conversation_num_dataset_entries=3,
+                prompt_input_tokens_mean=10,
+            )
+        )
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turns = FixedDistribution(value=6, max=2)
+        dataset.turn_delay = FixedDistribution(value=0, min=20)
+        composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+        conversations = composer.create_dataset()
+
+        assert {len(conversation.turns) for conversation in conversations} == {2}
+        assert {conversation.turns[1].delay for conversation in conversations} == {20}
+
+    def test_fractional_turn_max_is_a_hard_limit(
+        self, synthetic_config: CLIConfig, mock_tokenizer: Tokenizer
+    ) -> None:
+        run = make_run(synthetic_config)
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turns = FixedDistribution(value=2.9, max=2.5)
+        composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+
+        assert {
+            len(conversation.turns) for conversation in composer.create_dataset()
+        } == {2}
+
+    @pytest.mark.parametrize(
+        "value, expected",
+        [
+            param(3, 3, id="integer"),
+            param(3.2, 4, id="fraction-low"),
+            param(3.7, 4, id="fraction-high"),
+            param(1.0000001, 2, id="just-above-one"),
+        ],
+    )  # fmt: skip
+    def test_fixed_turn_counts_round_up(
+        self,
+        synthetic_config: CLIConfig,
+        mock_tokenizer: Tokenizer,
+        value: float,
+        expected: int,
+    ) -> None:
+        """Pin fractional-count conversion at the composer boundary."""
+        run = make_run(synthetic_config)
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turns = FixedDistribution(value=value)
+        composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+
+        assert {
+            len(conversation.turns) for conversation in composer.create_dataset()
+        } == {expected}
+
+    def test_overflowing_turn_delay_is_rejected(
+        self, multiturn_config: CLIConfig, mock_tokenizer: Tokenizer
+    ) -> None:
+        run = make_run(multiturn_config)
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turn_delay = FixedDistribution(value=1e308)
+        dataset.turn_delay_ratio = 10.0
+        composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+
+        with pytest.raises(ValueError, match="turn_delay.*finite"):
+            composer.create_dataset()
+
+    def test_non_finite_turn_delay_sample_is_rejected(
+        self, multiturn_config: CLIConfig, mock_tokenizer: Tokenizer
+    ) -> None:
+        run = make_run(multiturn_config)
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turn_delay = LogNormalDistribution(
+            mean=float("inf"), median=float("inf")
+        )
+        composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+
+        with pytest.raises(ValueError, match="turn_delay sample.*finite"):
+            composer.create_dataset()
+
+    def test_lognormal_delays_are_bounded_and_reproducible(
+        self, mock_tokenizer: Tokenizer
+    ) -> None:
+        run = make_run(
+            CLIConfig(
+                model_names=["test-model"],
+                conversation_num_dataset_entries=40,
+                conversation_turn_mean=2,
+                prompt_input_tokens_mean=10,
+            )
+        )
+        dataset = run.cfg.get_default_dataset()
+        assert isinstance(dataset, SyntheticDataset)
+        dataset.turn_delay = LogNormalDistribution(
+            mean=600, median=500, min=100, max=1200
+        )
+
+        def sample_delays() -> list[float | None]:
+            rng.reset()
+            rng.init(42)
+            composer = SyntheticDatasetComposer(run=run, tokenizer=mock_tokenizer)
+            return [
+                conversation.turns[1].delay
+                for conversation in composer.create_dataset()
+            ]
+
+        first = sample_delays()
+        assert first == sample_delays()
+        assert all(delay is not None and 100 <= delay <= 1200 for delay in first)
+        assert len(set(first)) > 1
+
     # ============================================================================
     # Create Turn Method Tests
     # ============================================================================
@@ -356,7 +528,7 @@ class TestSyntheticDatasetComposer:
                 assert 500 <= turn.delay <= 2000
 
     def test_turn_delays_with_zero_mean(self, mock_tokenizer):
-        """Test that zero mean delay results in no delays on turns."""
+        """Zero mean and zero stddev produce no inter-turn delays."""
         config = CLIConfig(
             model_names=["test_model"],
             conversation_num_dataset_entries=3,
@@ -375,9 +547,31 @@ class TestSyntheticDatasetComposer:
         conversations = composer.create_dataset()
 
         for conversation in conversations:
-            # All turns should have None delay when mean=0
             for turn in conversation.turns:
                 assert turn.delay is None
+
+    def test_zero_mean_normal_turn_delay_is_sampled(
+        self, mock_tokenizer: Tokenizer
+    ) -> None:
+        """An explicit stddev works with the CLI's default zero mean."""
+        config = CLIConfig(
+            model_names=["test_model"],
+            conversation_num_dataset_entries=64,
+            conversation_turn_mean=2,
+            conversation_turn_delay_stddev=100,
+            prompt_input_tokens_mean=10,
+        )
+        composer = SyntheticDatasetComposer(
+            run=make_run(config), tokenizer=mock_tokenizer
+        )
+        conversations = composer.create_dataset()
+        delays = [conversation.turns[1].delay for conversation in conversations]
+
+        assert all(
+            conversation.turns[0].delay is None for conversation in conversations
+        )
+        assert all(delay is not None and delay > 0 for delay in delays)
+        assert len(set(delays)) > 1
 
     # ============================================================================
     # Generate Payload Methods Tests
