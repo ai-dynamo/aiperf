@@ -144,6 +144,9 @@ class CreditReturn(
             channel (CommAddress.CREDIT_RETURN), where there is no ZMQ envelope
             identity; None on the ROUTER/DEALER path (identity comes from the
             envelope). Lets the router attribute the return to the right worker.
+        last_streaming_content_ns: Controller-clock timestamp of the latest parsed
+            content chunk, including requests cancelled before emitting a record.
+            Only set for scenarios that require profile metric coverage.
     """
 
     credit: Credit
@@ -155,6 +158,7 @@ class CreditReturn(
     output_sequence_length: int | None = None
     ended_on_truncation: bool = False
     worker_id: str | None = None
+    last_streaming_content_ns: int | None = None
 
 
 class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):
@@ -175,6 +179,24 @@ class FirstToken(Struct, frozen=True, kw_only=True, tag_field="t", tag="ft"):
     phase: CreditPhase
     ttft_ns: int
     phase_index: int | None = None
+
+
+class StreamingContent(Struct, frozen=True, kw_only=True, tag_field="t", tag="sc"):
+    """Rate-limited evidence of content from an in-flight profiling request.
+
+    Does not return a credit, release a slot, or count as a completed request;
+    it only advances the phase's profile-coverage evidence.
+
+    Attributes:
+        phase: Credit phase owning the request.
+        phase_index: Concrete phase index; prevents cross-phase liveness leakage.
+        timestamp_ns: Last parsed content timestamp in controller-clock
+            wall nanoseconds.
+    """
+
+    phase: CreditPhase
+    phase_index: int | None
+    timestamp_ns: int
 
 
 # =============================================================================
@@ -222,6 +244,7 @@ WorkerToRouterMessage: TypeAlias = (
     | WorkerShutdown
     | CreditReturn
     | FirstToken
+    | StreamingContent
     | TimePing
 )
 

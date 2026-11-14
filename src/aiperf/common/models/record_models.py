@@ -449,13 +449,21 @@ class ProfileMetricDurationCoverage(AIPerfBaseModel):
         le=1.0,
         description="Fraction of the phase covered by inter-token-latency observations.",
     )
+    streaming_content_ratio: FiniteFloat = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Fraction of the phase reached by parsed streaming content, "
+        "including requests cancelled before producing a metric record.",
+    )
 
     @property
     def passed(self) -> bool:
-        """Return whether any latency signal proves late profiling activity."""
+        """Return whether latency or streaming content proves late phase activity."""
         return (
             self.ttft_ratio >= self.required_ratio
             or self.inter_token_latency_ratio >= self.required_ratio
+            or self.streaming_content_ratio >= self.required_ratio
         )
 
 

@@ -57,6 +57,39 @@ from aiperf.timing.config import CreditPhaseConfig
 # Helper functions
 
 
+@pytest.mark.parametrize(
+    "timestamps,expected",
+    [
+        param((100, 300), 300, id="latest-second"),
+        param((300, 100), 300, id="latest-first"),
+        param((None, 300), 300, id="missing-first"),
+        param((None, None), None, id="no-content"),
+    ],
+)  # fmt: skip
+def test_aggregate_stats_keep_latest_streaming_content(
+    timestamps: tuple[int | None, int | None],
+    expected: int | None,
+) -> None:
+    tracker = RecordsTracker()
+    for phase_index, timestamp in enumerate(timestamps):
+        tracker.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=phase_index,
+                last_streaming_content_ns=timestamp,
+            )
+        )
+    tracker.update_phase_info(
+        CreditPhaseStats(
+            phase=CreditPhase.WARMUP, phase_index=2, last_streaming_content_ns=900
+        )
+    )
+
+    aggregate = tracker.create_aggregate_stats_for_phase(CreditPhase.PROFILING)
+
+    assert aggregate.last_streaming_content_ns == expected
+
+
 def test_orphan_phase_tracker_does_not_block_aggregate_completion() -> None:
     tracker = RecordsTracker()
     tracker.update_phase_info(

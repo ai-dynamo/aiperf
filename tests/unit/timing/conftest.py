@@ -18,7 +18,7 @@ from aiperf.common.models import (
 )
 from aiperf.common.utils import yield_to_event_loop
 from aiperf.config.flags.cli_config import CLIConfig
-from aiperf.credit.messages import CreditReturn, FirstToken
+from aiperf.credit.messages import CreditReturn, FirstToken, StreamingContent
 from aiperf.credit.structs import Credit, CreditContext, TurnToSend
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import (
@@ -53,6 +53,7 @@ class MockCreditRouter:
     auto_return: bool = False
     _return_cb: Callable[[str, CreditReturn], Awaitable[None]] | None = None
     _first_token_cb: Callable[[FirstToken], Awaitable[None]] | None = None
+    _streaming_content_cb: Callable[[StreamingContent], Awaitable[None]] | None = None
     _pending: list[asyncio.Task] = field(default_factory=list)
 
     async def send_credit(self, credit: Credit) -> None:
@@ -96,6 +97,11 @@ class MockCreditRouter:
 
     def set_fatal_error_callback(self, cb: Callable[[BaseException], None]) -> None:
         self._fatal_error_cb = cb
+
+    def set_streaming_content_callback(
+        self, cb: Callable[[StreamingContent], Awaitable[None]]
+    ) -> None:
+        self._streaming_content_cb = cb
 
     async def return_credit(
         self, credit: Credit, cancelled: bool = False, first_token_sent: bool = True

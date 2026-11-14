@@ -13,7 +13,7 @@ import pytest
 
 from aiperf.common.enums import CreditPhase
 from aiperf.credit.callback_handler import CreditCallbackHandler
-from aiperf.credit.messages import CreditReturn, FirstToken
+from aiperf.credit.messages import CreditReturn, FirstToken, StreamingContent
 from aiperf.credit.structs import Credit
 
 # =============================================================================
@@ -279,6 +279,43 @@ class TestPhaseRegistration:
 
 class TestCreditReturnBasicFlow:
     """Tests for basic credit return handling."""
+
+    @pytest.mark.parametrize("complete", [False, True])
+    async def test_streaming_content_only_updates_active_matching_phase(
+        self,
+        registered_handler: CreditCallbackHandler,
+        mock_progress: MagicMock,
+        mock_lifecycle: MagicMock,
+        mock_concurrency: MagicMock,
+        complete: bool,
+    ) -> None:
+        mock_lifecycle.is_complete = complete
+        for phase, index in ((CreditPhase.WARMUP, None), (CreditPhase.PROFILING, 99)):
+            await registered_handler.on_streaming_content(
+                StreamingContent(
+                    phase=phase,
+                    phase_index=index,
+                    timestamp_ns=123,
+                )
+            )
+        mock_progress.observe_streaming_content.assert_not_called()
+
+        await registered_handler.on_streaming_content(
+            StreamingContent(
+                phase=CreditPhase.PROFILING,
+                phase_index=None,
+                timestamp_ns=123,
+            )
+        )
+
+        if complete:
+            mock_progress.observe_streaming_content.assert_not_called()
+        else:
+            mock_progress.observe_streaming_content.assert_called_once_with(123)
+        mock_progress.increment_returned.assert_not_called()
+        mock_progress.increment_prefill_released.assert_not_called()
+        mock_concurrency.release_session_slot.assert_not_called()
+        mock_concurrency.release_prefill_slot.assert_not_called()
 
     async def test_on_credit_return_increments_returned_count(
         self, registered_handler, mock_progress
