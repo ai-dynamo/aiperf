@@ -15,7 +15,7 @@ from starlette.testclient import TestClient
 
 import aiperf.api.routers.results as results_module
 from aiperf.api.routers.results import ResultsRouter
-from aiperf.common.messages import BenchmarkCompleteMessage, ProcessAllResultsMessage
+from aiperf.common.messages import ProcessAllResultsMessage
 from aiperf.common.models import MetricResult
 from aiperf.common.models.record_models import ProcessRecordsResult, ProfileResults
 from aiperf.common.results_markers import (
@@ -265,6 +265,46 @@ class TestResultsCompleteWithoutFinalResults:
         assert data["status"] == expected_status
         assert data["status"] != "running"
         assert data["results"] is None
+
+    @pytest.mark.parametrize(
+        "was_cancelled,expected_status",
+        [
+            param(False, "incomplete", id="not-cancelled"),
+            param(True, "cancelled", id="was-cancelled"),
+        ],
+    )  # fmt: skip
+    def test_settled_results_report_terminal_status_without_waiting(
+        self,
+        results_client: TestClient,
+        results_router: ResultsRouter,
+        was_cancelled: bool,
+        expected_status: str,
+    ) -> None:
+        """The controller already joined RecordsManager, so nothing can still arrive.
+
+        Waiting here would outlast the listener's POST_COMPLETE_GRACE hold and
+        the client would never see a terminal status.
+        """
+        results_router._final_results = None
+        results_router.mark_benchmark_complete(
+            was_cancelled=was_cancelled, results_settled=True
+        )
+
+        data = results_client.get("/api/results").json()
+
+        assert data["status"] == expected_status
+        assert data["results"] is None
+
+    def test_unsettled_results_still_wait_for_late_final_results(
+        self, results_client: TestClient, results_router: ResultsRouter
+    ) -> None:
+        """Kubernetes: RecordsManager's final results may still be in flight."""
+        results_router._final_results = None
+        results_router.mark_benchmark_complete(
+            was_cancelled=True, results_settled=False
+        )
+
+        assert results_client.get("/api/results").json()["status"] == "running"
 
 
 class TestResultsUploadEndpoint:
@@ -702,23 +742,24 @@ class TestFinalResultsHandler:
         ],
     )  # fmt: skip
     @pytest.mark.asyncio
-    async def test_on_benchmark_complete_records_cancellation_and_timestamp(
+    async def test_mark_benchmark_complete_records_cancellation_and_timestamp(
         self, results_router: ResultsRouter, was_cancelled: bool
     ) -> None:
         assert results_router._benchmark_complete is False
         assert results_router._benchmark_complete_at is None
 
         before = time.monotonic()
-        message = BenchmarkCompleteMessage(
-            service_id="system_controller", was_cancelled=was_cancelled
+        has_final_results = results_router.mark_benchmark_complete(
+            was_cancelled=was_cancelled
         )
-        await results_router._on_benchmark_complete(message)
         after = time.monotonic()
 
+        assert has_final_results is False
         assert results_router._benchmark_complete is True
         assert results_router._benchmark_complete_was_cancelled == was_cancelled
         assert results_router._benchmark_complete_at is not None
         assert before <= results_router._benchmark_complete_at <= after
+        assert results_router._results_settled is False
 
     @pytest.mark.asyncio
     async def test_on_process_all_results_accepts_optional_summary_payloads(

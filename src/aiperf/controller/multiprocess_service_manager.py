@@ -6,6 +6,7 @@ import os
 import time
 import uuid
 from collections import Counter
+from collections.abc import Collection
 from multiprocessing import Process
 from multiprocessing.context import SpawnProcess
 
@@ -90,7 +91,15 @@ class MultiProcessServiceManager(BaseServiceManager):
                 if service_metadata.replicable
                 else str(service_type)
             )
-            process = Process(
+            # forkserver makes its server the OS parent, so the controller's
+            # PR_SET_PDEATHSIG guard would immediately exit. Keep services direct
+            # children without changing the context used by other process pools.
+            process_factory = (
+                multiprocessing.get_context("spawn").Process
+                if multiprocessing.get_start_method() == "forkserver"
+                else Process
+            )
+            process = process_factory(
                 target=bootstrap_and_run_service,
                 name=f"{service_type}_process",
                 kwargs={
@@ -138,7 +147,9 @@ class MultiProcessServiceManager(BaseServiceManager):
                 tasks.append(task)
         return await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def shutdown_all_services(self) -> list[BaseException | None]:
+    async def shutdown_all_services(
+        self, *, exclude: Collection[ServiceTypeT] = ()
+    ) -> list[BaseException | None]:
         """Wait for service processes to exit, then force-kill any survivors.
 
         The ``SHUTDOWN`` ack only means the command arrived, not that the
@@ -146,16 +157,22 @@ class MultiProcessServiceManager(BaseServiceManager):
         child cleanup and orphans those children, so every process gets up to
         ``SERVICE.SHUTDOWN_EXIT_TIMEOUT`` (shared, not per-process) to exit
         before ``_wait_for_process`` kills it.
+
+        Processes whose type is in ``exclude`` are left running; the
+        controller keeps the API serving until results are published.
         """
         self.debug("Stopping all service processes")
 
+        targets = [
+            info for info in self.multi_process_info if info.service_type not in exclude
+        ]
         deadline = time.monotonic() + Environment.SERVICE.SHUTDOWN_EXIT_TIMEOUT
         await asyncio.gather(
-            *[self._join_until(info, deadline) for info in self.multi_process_info],
+            *[self._join_until(info, deadline) for info in targets],
             return_exceptions=True,
         )
         return await asyncio.gather(
-            *[self._wait_for_process(info) for info in self.multi_process_info],
+            *[self._wait_for_process(info) for info in targets],
             return_exceptions=True,
         )
 
