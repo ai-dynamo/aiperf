@@ -395,6 +395,8 @@ def _apply_phase_specific_routes(prof: dict[str, Any], cli: CLIConfig) -> None:
     phase_type = prof["type"]
     fields_set = cli.model_fields_set
 
+    _apply_continuation_dispatch(prof, cli)
+
     for output_key, attr_name in _GAMMA_ONLY_ROUTES:
         if attr_name not in fields_set:
             continue
@@ -416,6 +418,26 @@ def _apply_phase_specific_routes(prof: dict[str, Any], cli: CLIConfig) -> None:
                 "these flags."
             )
         prof[output_key] = getattr(cli, attr_name)
+
+
+def _apply_continuation_dispatch(
+    prof: dict[str, Any], cli: CLIConfig, *, validate: bool = True
+) -> None:
+    """Route the continuation policy, validating the rendered phase type.
+
+    The resolver disables validation only when replaying an already-validated
+    override onto the retained pre-Jinja envelope.
+    """
+    from aiperf.config.phases import CONTINUATION_DISPATCH_PHASE_TYPES
+
+    if "continuation_dispatch" not in cli.model_fields_set:
+        return
+    if validate and prof.get("type") not in CONTINUATION_DISPATCH_PHASE_TYPES:
+        raise ValueError(
+            "--continuation-dispatch requires constant, poisson, or gamma "
+            "request-rate scheduling"
+        )
+    prof["continuation_dispatch"] = cli.continuation_dispatch
 
 
 def _detect_cli_magic_sweep(cli: CLIConfig) -> tuple[str, list] | None:

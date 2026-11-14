@@ -83,7 +83,7 @@ class ArtifactsConfig(BaseConfig):
     dir: Annotated[
         Path,
         Field(
-            default=Path("./artifacts"),
+            default="artifacts",
             description="Output directory for all benchmark artifacts. "
             "Created if it doesn't exist.",
         ),

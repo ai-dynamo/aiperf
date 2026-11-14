@@ -225,17 +225,17 @@ class TestPhaseRunnerLifecycle:
         fatal-error callback also sets all_credits_returned_event, which drives
         the wait's "all returned" early-return fast path -- so the surfacing
         check must run AFTER the wait (never bypassed by that early return)."""
-        runner._raise_if_control_node_failed()  # no fatal error -> no-op
+        runner._raise_if_phase_failed()  # no fatal error -> no-op
         err = RuntimeError("virtual return callback blew up")
         runner._progress.record_fatal_error(err)
         with pytest.raises(RuntimeError, match="blew up"):
-            runner._raise_if_control_node_failed()
+            runner._raise_if_phase_failed()
 
     async def test_seamless_return_wait_fatal_error_forwards_not_completes(
         self, runner: PhaseRunner
     ) -> None:
         """Seamless mode: ``run()`` never awaits the detached return-wait task,
-        so its done-callback must FORWARD a recorded fatal control-node failure
+        so its done-callback must FORWARD a recorded fatal phase error
         (via the error callback) instead of only logging and reporting a clean
         completion -- otherwise the run reports success on a fatal failure."""
         errors: list[BaseException] = []

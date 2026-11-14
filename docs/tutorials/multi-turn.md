@@ -1,5 +1,5 @@
 ---
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 sidebar-title: Multi-Turn Conversations
 ---
@@ -226,7 +226,7 @@ Combine request rate control with multi-turn conversations for controlled, susta
 
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
-# Start new conversations at 5 conversations/second
+# Pace all turns at 5 requests/second (the default)
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
@@ -243,8 +243,41 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
-This approach is ideal for:
-- Modeling steady conversation arrival patterns
+By default, `--request-rate` counts **all root-session turns**, including continuations.
+After a turn completes and its think time elapses, the continuation waits for
+the next arrival slot and takes priority over new sessions. For fixed four-turn
+conversations, a rate of 5 requests/second therefore does not mean 5 session
+starts/second.
+
+Add `--continuation-dispatch direct` to pace **session starts** instead.
+Continuations become eligible after the previous completion plus the configured
+think time, without consuming another rate slot. Session and prefill concurrency
+limits still apply, so backpressure can delay dispatch. `--request-count` still
+limits all requests, and duration/cancellation still stop continuation issuance.
+Reported request throughput continues to count requests, not session starts.
+
+`continuation_dispatch` controls only **root continuation turns** (`agent_depth == 0`).
+DAG children (`agent_depth > 0`) follow their existing direct-dispatch and branch
+lifecycle rules under either policy.
+
+In YAML, set `continuation_dispatch: direct` on a `constant`, `poisson`, or
+`gamma` phase. The default is `rate_slot`. The CLI flag overrides the profiling
+phase, including with `--config` when its `type` uses a Jinja variable. Compatibility
+is checked against the rendered phase type, and the override also applies to sweep
+runs. Warmup keeps its own policy and can be configured independently in YAML.
+User-centric, fixed-schedule, adaptive, and agentic-replay
+timing do not support direct session-arrival pacing.
+
+When `--fixed-schedule` replaces a YAML rate phase, the inherited continuation
+policy is discarded with the other rate-only fields. Explicitly combining
+`--fixed-schedule` with `--continuation-dispatch` raises a configuration error.
+
+The generated JSON Schema checks these policy constraints for phase lists,
+single-phase objects, and the `warmup`/`profiling` shorthands. It accepts either
+`continuation_dispatch` or `continuationDispatch`; supplying both is an error.
+
+This approach is useful for:
+- Modeling either request arrivals or session arrivals explicitly
 - Avoiding thundering herd problems during testing
 - Measuring performance under controlled, sustained multi-turn load
 
@@ -466,7 +499,7 @@ aiperf profile \
 - Start with lower concurrency when testing multi-turn (2-5) to understand baseline behavior
 - Use turn delays to model realistic user interaction patterns
 - Monitor context window growth in long conversations (turns × output tokens)
-- Consider using `--request-rate` to control conversation start rate for more predictable load
+- Use `--request-rate` with `--continuation-dispatch direct` to control conversation start rate; the default rate counts all turns
 - Use `--random-seed` for reproducible conversation patterns
 
 **See also:**
