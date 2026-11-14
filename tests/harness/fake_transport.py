@@ -66,7 +66,11 @@ from aiperf.common.utils import yield_to_event_loop
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import EndpointType, PluginType, TransportType
 from aiperf.plugin.schema.schemas import TransportMetadata
-from aiperf.transports.base_transports import BaseTransport, FirstTokenCallback
+from aiperf.transports.base_transports import (
+    BaseTransport,
+    FirstTokenCallback,
+    TransportBoundaryCallback,
+)
 
 if TYPE_CHECKING:
     from aiperf.common.models.model_endpoint_info import ModelEndpointInfo
@@ -246,9 +250,13 @@ class FakeTransport(BaseTransport):
         payload: RequestInputT,
         *,
         first_token_callback: FirstTokenCallback | None = None,
+        transport_start_callback: TransportBoundaryCallback | None = None,
+        transport_eof_callback: TransportBoundaryCallback | None = None,
     ) -> RequestRecord:
         """Route request to appropriate handler based on endpoint type."""
         endpoint_type = self.model_endpoint.endpoint.type
+        if transport_start_callback is not None:
+            transport_start_callback(time.perf_counter_ns())
 
         # Handle cancellation by running request in a task and cancelling it
         if request_info.cancel_after_ns is not None:
@@ -262,7 +270,7 @@ class FakeTransport(BaseTransport):
 
             # Wait for cancellation timeout or completion
             try:
-                return await asyncio.wait_for(request_task, timeout=cancel_delay_sec)
+                record = await asyncio.wait_for(request_task, timeout=cancel_delay_sec)
             except TimeoutError:
                 # Cancel the request
                 request_task.cancel()
@@ -283,10 +291,13 @@ class FakeTransport(BaseTransport):
                     cancellation_perf_ns=time.perf_counter_ns(),
                 )
 
-        # No cancellation - run request normally
-        return await self._send_request_impl(
-            endpoint_type, payload, first_token_callback
-        )
+        else:
+            record = await self._send_request_impl(
+                endpoint_type, payload, first_token_callback
+            )
+        if record.error is None and transport_eof_callback is not None:
+            transport_eof_callback(time.perf_counter_ns())
+        return record
 
     async def _send_request_impl(
         self,

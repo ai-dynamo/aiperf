@@ -314,6 +314,12 @@ class ShutdownError(AIPerfError):
     """Exception raised when a service encounters an error while shutting down."""
 
 
+class ResponseBodyIncompleteError(AIPerfError):
+    """Raised when an HTTP response body has not reached EOF after consumption."""
+
+    error_code: int = 500
+
+
 class SSEResponseError(AIPerfError):
     """Exception raised when a SSE response contains an error."""
 

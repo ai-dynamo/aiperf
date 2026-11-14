@@ -5,6 +5,7 @@ import time
 import pytest
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.plugin.enums import TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.phase.lifecycle import PhaseLifecycle, PhaseState
@@ -22,7 +23,7 @@ def cfg(dur: float | None = None, grace: float | None = None) -> CreditPhaseConf
 
 class TestPhaseLifecycle:
     def test_full_lifecycle(self) -> None:
-        lc = PhaseLifecycle(cfg())
+        lc = PhaseLifecycle(cfg(), clock=MonotonicClock())
         lc.start()
         assert lc.is_started and not lc.is_sending_complete and not lc.is_complete
         lc.mark_sending_complete()
@@ -31,31 +32,31 @@ class TestPhaseLifecycle:
         assert lc.is_started and lc.is_sending_complete and lc.is_complete
 
     def test_cannot_start_twice(self) -> None:
-        lc = PhaseLifecycle(cfg())
+        lc = PhaseLifecycle(cfg(), clock=MonotonicClock())
         lc.start()
         with pytest.raises(ValueError, match="Credit phase already started"):
             lc.start()
 
     def test_cannot_mark_sending_complete_before_start(self) -> None:
-        lc = PhaseLifecycle(cfg())
+        lc = PhaseLifecycle(cfg(), clock=MonotonicClock())
         with pytest.raises(ValueError, match="Credit phase not started"):
             lc.mark_sending_complete()
 
     def test_timeout_triggered_flag(self) -> None:
-        lc = PhaseLifecycle(cfg())
+        lc = PhaseLifecycle(cfg(), clock=MonotonicClock())
         lc.start()
         lc.mark_sending_complete(timeout_triggered=True)
         assert lc.timeout_triggered is True
 
     def test_grace_period_triggered_flag(self) -> None:
-        lc = PhaseLifecycle(cfg())
+        lc = PhaseLifecycle(cfg(), clock=MonotonicClock())
         lc.start()
         lc.mark_sending_complete()
         lc.mark_complete(grace_period_triggered=True)
         assert lc.grace_period_triggered is True
 
     def test_cancelled_phase_can_still_complete(self) -> None:
-        lc = PhaseLifecycle(cfg())
+        lc = PhaseLifecycle(cfg(), clock=MonotonicClock())
         lc.start()
         lc.cancel()
         lc.mark_sending_complete()
@@ -63,19 +64,19 @@ class TestPhaseLifecycle:
         assert lc.was_cancelled is True and lc.state == PhaseState.COMPLETE
 
     def test_time_left_returns_none_without_duration(self) -> None:
-        lc = PhaseLifecycle(cfg())
+        lc = PhaseLifecycle(cfg(), clock=MonotonicClock())
         lc.start()
         assert lc.time_left_in_seconds() is None
 
     def test_time_left_returns_full_duration_at_start(self) -> None:
-        lc = PhaseLifecycle(cfg(dur=60.0, grace=10.0))
+        lc = PhaseLifecycle(cfg(dur=60.0, grace=10.0), clock=MonotonicClock())
         lc.start()
         t = lc.time_left_in_seconds()
         # Use wider tolerance for CI variance (allow up to 100ms elapsed)
         assert t is not None and 59.9 <= t <= 60.1
 
     def test_time_left_with_grace_period(self) -> None:
-        lc = PhaseLifecycle(cfg(dur=60.0, grace=10.0))
+        lc = PhaseLifecycle(cfg(dur=60.0, grace=10.0), clock=MonotonicClock())
         lc.start()
         without = lc.time_left_in_seconds(include_grace_period=False)
         with_grace = lc.time_left_in_seconds(include_grace_period=True)
@@ -92,13 +93,11 @@ class TestPhaseClockFrame:
     diverges from the frame by the slew accumulated since the phase started.
     """
 
-    def test_now_ns_advances_from_the_phase_anchor(
+    def test_now_ns_advances_from_the_shared_anchor(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        lc = PhaseLifecycle(cfg())
-        lc.start()
-        lc.started_at_ns = 1_000_000_000
-        lc.started_at_perf_ns = 500
+        clock = MonotonicClock(perf_anchor_ns=500, wall_anchor_ns=1_000_000_000)
+        lc = PhaseLifecycle(cfg(), clock=clock)
         monkeypatch.setattr(time, "perf_counter_ns", lambda: 500 + 42_000)
 
         assert lc.now_ns() == 1_000_000_000 + 42_000
@@ -107,19 +106,20 @@ class TestPhaseClockFrame:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """An NTP step mid-phase must not move the frame credits are stamped in."""
-        lc = PhaseLifecycle(cfg())
+        clock = MonotonicClock(perf_anchor_ns=0, wall_anchor_ns=1_000_000_000)
+        lc = PhaseLifecycle(cfg(), clock=clock)
         lc.start()
-        lc.started_at_ns = 1_000_000_000
-        lc.started_at_perf_ns = 0
         monkeypatch.setattr(time, "perf_counter_ns", lambda: 1_000)
         monkeypatch.setattr(time, "time_ns", lambda: 9_999_999_999_999)
 
         assert lc.now_ns() == 1_000_001_000
 
-    def test_now_ns_falls_back_to_the_wall_clock_before_start(
+    def test_now_ns_uses_the_shared_clock_before_start(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        lc = PhaseLifecycle(cfg())
-        monkeypatch.setattr(time, "time_ns", lambda: 4_242)
+        clock = MonotonicClock(perf_anchor_ns=500, wall_anchor_ns=4_000)
+        lc = PhaseLifecycle(cfg(), clock=clock)
+        monkeypatch.setattr(time, "perf_counter_ns", lambda: 742)
+        monkeypatch.setattr(time, "time_ns", lambda: 9_999_999)
 
         assert lc.now_ns() == 4_242

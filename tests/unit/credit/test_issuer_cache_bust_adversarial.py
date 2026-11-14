@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from unittest.mock import AsyncMock, MagicMock
 
 import msgspec
 import pytest
 
 from aiperf.common.enums import CacheBustTarget, CreditPhase
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
@@ -63,8 +63,9 @@ def mock_lifecycle():
     mock = MagicMock()
     mock.time_left_in_seconds = MagicMock(return_value=None)
     mock.phase_start_ns = 0
-    mock.started_at_ns = time.time_ns()
-    mock.started_at_perf_ns = time.perf_counter_ns()
+    mock._clock = MonotonicClock()
+    mock.started_at_ns = mock._clock.wall_anchor_ns
+    mock.started_at_perf_ns = mock._clock.perf_anchor_ns
     mock.now_ns = MagicMock(side_effect=lambda: PhaseLifecycle.now_ns(mock))
     return mock
 

@@ -13,6 +13,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.credit.dispatch import ChildDispatchResult, TurnAdmission
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
@@ -78,8 +79,9 @@ def mock_lifecycle():
     mock.time_left_in_seconds = MagicMock(return_value=None)
     mock.phase_start_ns = 0
     # CreditIssuer uses these to calculate issued_at_ns timestamps
-    mock.started_at_ns = time.time_ns()
-    mock.started_at_perf_ns = time.perf_counter_ns()
+    mock._clock = MonotonicClock()
+    mock.started_at_ns = mock._clock.wall_anchor_ns
+    mock.started_at_perf_ns = mock._clock.perf_anchor_ns
     # Real clock-frame math, so issued_at_ns stays a comparable int.
     mock.now_ns = MagicMock(side_effect=lambda: PhaseLifecycle.now_ns(mock))
     return mock
@@ -135,6 +137,42 @@ def make_turn(
 
 class TestBasicCreditIssuance:
     """Tests for basic credit issuance flow."""
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            param(RuntimeError("send failed"), id="send_error"),
+            param(asyncio.CancelledError(), id="cancelled"),
+        ],
+    )  # fmt: skip
+    async def test_issue_credit_send_failure_unregisters_credit(
+        self, credit_issuer, mock_router, error: BaseException
+    ) -> None:
+        gate = credit_issuer.replay_gate
+        gate.register_credit = MagicMock()
+        gate.unregister_credit = MagicMock()
+        gate.observe_issued = AsyncMock()
+        mock_router.send_credit.side_effect = error
+
+        with pytest.raises(type(error)):
+            await credit_issuer.issue_credit(make_turn())
+
+        credit = mock_router.send_credit.call_args.kwargs["credit"]
+        gate.register_credit.assert_called_once_with(credit)
+        gate.unregister_credit.assert_called_once_with(credit)
+        gate.observe_issued.assert_not_awaited()
+
+    async def test_finite_issue_rejects_capped_final_credit(
+        self, credit_issuer, mock_progress
+    ) -> None:
+        credit_issuer._finite_replay = True
+        mock_progress.increment_sent.return_value = (1, True)
+
+        with pytest.raises(RuntimeError, match="cannot issue a capped final credit"):
+            await credit_issuer.issue_credit(make_turn())
+
+        mock_progress.freeze_sent_counts.assert_not_called()
+        assert not mock_progress.all_credits_sent_event.is_set()
 
     async def test_issue_credit_first_turn_acquires_both_slots(
         self, credit_issuer, mock_concurrency, mock_router
@@ -845,9 +883,8 @@ class TestIssuedAtTimestamp:
     async def test_issued_at_ns_is_recent(self, credit_issuer, mock_router):
         """Issued timestamp should be very recent (within 1 second).
 
-        Production code derives ``issued_at_ns`` from ``started_at_ns +
-        (perf_counter_ns - started_at_perf_ns)`` — mixing wall clock with a
-        monotonic delta. On Windows the two clocks can drift by a few
+        Production code derives ``issued_at_ns`` from the router's wall-clock
+        anchor plus a monotonic delta. On Windows the two clocks can drift by a few
         microseconds, so allow a small slack window on either side instead
         of strict ``before <= ts <= after``.
         """

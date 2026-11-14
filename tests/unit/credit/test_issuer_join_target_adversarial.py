@@ -5,12 +5,12 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
 from aiperf.timing.branch_orchestrator import PendingBranchJoin
@@ -48,8 +48,9 @@ def issuer(captured_router: MagicMock) -> CreditIssuer:
     cancellation.next_cancellation_delay_ns = MagicMock(return_value=None)
 
     lifecycle = MagicMock()
-    lifecycle.started_at_ns = time.time_ns()
-    lifecycle.started_at_perf_ns = time.perf_counter_ns()
+    lifecycle._clock = MonotonicClock()
+    lifecycle.started_at_ns = lifecycle._clock.wall_anchor_ns
+    lifecycle.started_at_perf_ns = lifecycle._clock.perf_anchor_ns
     lifecycle.now_ns = MagicMock(side_effect=lambda: PhaseLifecycle.now_ns(lifecycle))
 
     return CreditIssuer(

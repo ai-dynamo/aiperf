@@ -474,6 +474,9 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
         request_ack_ns = compute_time_ns(
             start_time_ns, start_perf_ns, record.recv_start_perf_ns
         )
+        response_body_eof_ns = compute_time_ns(
+            start_time_ns, start_perf_ns, record.response_body_eof_perf_ns
+        )
         cancellation_time_ns = compute_time_ns(
             start_time_ns, start_perf_ns, record.cancellation_perf_ns
         )
@@ -483,6 +486,7 @@ class RecordProcessor(PullClientMixin, BaseComponentService):
             request_start_ns=start_time_ns,
             request_ack_ns=request_ack_ns,
             request_end_ns=request_end_ns,
+            response_body_eof_ns=response_body_eof_ns,
             conversation_id=record.request_info.conversation_id,
             turn_index=record.request_info.turn_index,
             source_trace_id=record.request_info.source_trace_id,

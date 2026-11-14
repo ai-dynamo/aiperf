@@ -1,0 +1,107 @@
+{
+  "id": "finite_root_03",
+  "models": [
+    "fixture-model"
+  ],
+  "block_size": 64,
+  "hash_id_scope": "local",
+  "requests": [
+    {
+      "t": 0.0,
+      "type": "n",
+      "model": "fixture-model",
+      "in": 110,
+      "out": 14,
+      "hash_ids": [
+        3000,
+        3001
+      ],
+      "input_types": [
+        "text"
+      ],
+      "output_types": [
+        "text"
+      ],
+      "stop": "tool_use",
+      "api_time": 0.4,
+      "think_time": 0.2
+    },
+    {
+      "t": 1.0,
+      "type": "subagent",
+      "agent_id": "agent_001",
+      "subagent_type": "Explore",
+      "duration_ms": 1300,
+      "total_tokens": 192,
+      "tool_use_count": 2,
+      "status": "completed",
+      "requests": [
+        {
+          "t": 1.1,
+          "type": "n",
+          "model": "fixture-model",
+          "in": 70,
+          "out": 10,
+          "hash_ids": [
+            3100,
+            3101
+          ],
+          "input_types": [
+            "text"
+          ],
+          "output_types": [
+            "text"
+          ],
+          "stop": "end_turn",
+          "api_time": 0.4,
+          "think_time": 0.0
+        },
+        {
+          "t": 1.8,
+          "type": "n",
+          "model": "fixture-model",
+          "in": 100,
+          "out": 12,
+          "hash_ids": [
+            3102,
+            3103
+          ],
+          "input_types": [
+            "text"
+          ],
+          "output_types": [
+            "text"
+          ],
+          "stop": "end_turn",
+          "api_time": 0.4,
+          "think_time": 0.2
+        }
+      ],
+      "models": [
+        "fixture-model"
+      ],
+      "tool_tokens": 16,
+      "system_tokens": 8
+    },
+    {
+      "t": 3.0,
+      "type": "n",
+      "model": "fixture-model",
+      "in": 200,
+      "out": 22,
+      "hash_ids": [
+        3002,
+        3003
+      ],
+      "input_types": [
+        "text"
+      ],
+      "output_types": [
+        "text"
+      ],
+      "stop": "end_turn",
+      "api_time": 0.4,
+      "think_time": 0.2
+    }
+  ]
+}
