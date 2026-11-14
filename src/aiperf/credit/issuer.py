@@ -14,7 +14,8 @@ Key responsibilities:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import asyncio
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -133,6 +134,8 @@ class CreditIssuer:
         self._issuing_stopped = False
         self._max_tokens_override: int | None = None
         self._turn_admission: Callable[[TurnToSend], TurnAdmission | bool] | None = None
+        self._send_pacer: Callable[[TurnToSend], Awaitable[None]] | None = None
+        self._paced_sends: set[asyncio.Task[bool]] = set()
         self.replay_gate = ReplayIssueGate(replay_barrier)
 
     def set_turn_admission(
@@ -140,6 +143,14 @@ class CreditIssuer:
     ) -> None:
         """Install a synchronous final admission check for every turn."""
         self._turn_admission = callback
+
+    def set_send_pacer(
+        self, callback: Callable[[TurnToSend], Awaitable[None]] | None
+    ) -> None:
+        """Install a hook awaited after admission and before a credit is
+        numbered and sent (the agentic cache-pressure stage paces sends per
+        lane with it). None removes the hook."""
+        self._send_pacer = callback
 
     def _turn_admission_result(self, turn: TurnToSend) -> TurnAdmission:
         """Run the optional final admission check."""
@@ -487,9 +498,34 @@ class CreditIssuer:
     async def _issue_credit_internal(self, turn: TurnToSend) -> bool:
         """Issue credit after slots are acquired. Mark as final if this was the final credit.
 
+        With a send pacer installed the admitted turn is handed to a task that
+        waits for the pacer and then sends; the caller (a credit-return
+        handler or the branch orchestrator under its parent lock) never blocks
+        on a lane slot. Without a pacer the send is inline as before.
+
         Returns:
             True if more credits can be sent, False if this was the final credit.
         """
+        if self._send_pacer is None:
+            return await self._send_admitted_turn(turn)
+        task = asyncio.create_task(self._paced_send(turn))
+        self._paced_sends.add(task)
+        task.add_done_callback(self._paced_sends.discard)
+        return True
+
+    async def _paced_send(self, turn: TurnToSend) -> bool:
+        assert self._send_pacer is not None
+        await self._send_pacer(turn)
+        return await self._send_admitted_turn(turn)
+
+    def cancel_paced_sends(self) -> int:
+        """Cancel sends still waiting for a lane slot (phase teardown)."""
+        pending = [task for task in self._paced_sends if not task.done()]
+        for task in pending:
+            task.cancel()
+        return len(pending)
+
+    async def _send_admitted_turn(self, turn: TurnToSend) -> bool:
         if self._max_tokens_override is not None:
             turn = _struct_replace(turn, max_tokens_override=self._max_tokens_override)
         credit_index, is_final_credit = self._progress.increment_sent(turn)

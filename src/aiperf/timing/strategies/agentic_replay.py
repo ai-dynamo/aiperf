@@ -200,6 +200,16 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self._baseline_warmup_turns: set[tuple[str, int]] = set()
         self._accelerated_warmup_started = False
         self._handoff_credits: dict[str, Credit] = {}
+        # Cache-pressure stage concurrency: every pressure turn is admitted
+        # (quota-counted) exactly as when the whole lane is issued at once, but
+        # its send waits for one of the lane's slots -- as many as the trace
+        # had streams live (started, unfinished) at t*, i.e. the streams stage
+        # 1 primed. Slots are keyed by (x_correlation_id, turn_index) at send
+        # and released on return, so no lane re-resolution is involved.
+        self._burst_cap_by_lane: dict[int, int] = {}
+        self._burst_sem_by_lane: dict[int, asyncio.Semaphore] = {}
+        self._burst_in_flight: Counter[int] = Counter()
+        self._burst_slot_lane: dict[tuple[str, int], int] = {}
         self._root_to_lane: dict[str, int] = {}
         # Accelerated warmup removes idle delays. Keep each tree's sampled t*
         # so handoff can restore every stream to one flattened dataset clock;
@@ -434,11 +444,9 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             self.scheduler.set_drain_observer(self.enforce_system_idle_cap)
         if self._has_tree_registry:
             self._session_tree_registry.set_drain_callback(self._on_tree_drained)
-        if (
-            self.config.phase == CreditPhase.WARMUP
-            and self._cache_warmup_requests_per_lane is not None
-        ):
+        if self.config.phase == CreditPhase.WARMUP and self._cache_warmup_enabled:
             self.credit_issuer.set_turn_admission(self._admit_cache_warmup_turn)
+            self.credit_issuer.set_send_pacer(self._pace_burst_send)
         if self.config.phase == CreditPhase.PROFILING:
             for trajectory in self.conversation_source.trajectories:
                 self._seed_trajectory_replay_prefix(trajectory)
@@ -486,7 +494,6 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         cache-pressure quota. The quota applies only to traffic replayed after
         all mandatory primers return.
         """
-        assert self._cache_warmup_requests_per_lane is not None
         lane = self._cache_warmup_lane(turn)
         is_baseline = (
             turn.x_correlation_id,
@@ -494,6 +501,8 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         ) in self._baseline_warmup_turns
         if is_baseline:
             self._baseline_warmup_admitted += 1
+            return TurnAdmission.ADMIT
+        if self._cache_warmup_requests_per_lane is None:
             return TurnAdmission.ADMIT
         if (
             self._cache_warmup_requests_by_lane[lane]
@@ -904,6 +913,16 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
                 root_pending=any(state.agent_depth == 0 for state in snapshot.states),
             )
 
+        live_streams = sum(
+            1
+            for state in dispatchable
+            if state.x_correlation_id in self._baseline_correlations
+        )
+        cap = max(1, live_streams)
+        self._burst_cap_by_lane[lane] = cap
+        self._burst_sem_by_lane[lane] = asyncio.Semaphore(cap)
+        # Issue every state now so admission (quota) sees the same sequence as
+        # an all-at-once dispatch; the issuer paces each send on a lane slot.
         for state in dispatchable:
             session = self.conversation_source.session_for_state(state)
             turn = self._build_turn_for_session(session, state.next_turn_index)
@@ -932,9 +951,48 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
             self._handoff_credits.pop(credit.x_correlation_id, None)
         else:
             self._handoff_credits[credit.x_correlation_id] = credit
+        self._release_burst_slot(credit)
+
+    async def _pace_burst_send(self, turn: TurnToSend) -> None:
+        """Hold a pressure turn's send until one of its lane's slots is free.
+
+        Called by the issuer after admission and before the credit is numbered
+        and sent. Stage-1 primers and turns of lanes without a snapshot are not
+        paced.
+        """
+        if not self._accelerated_warmup_started:
+            return
+        if (turn.x_correlation_id, turn.turn_index) in self._baseline_warmup_turns:
+            return
+        lane = self._root_to_lane.get(turn.effective_root_correlation_id)
+        if lane is None:
+            lane = self._correlation_to_lane.get(turn.x_correlation_id)
+        sem = self._burst_sem_by_lane.get(lane) if lane is not None else None
+        if sem is None:
+            return
+        await sem.acquire()
+        key = (turn.x_correlation_id, turn.turn_index)
+        self._burst_slot_lane[key] = lane
+        self._burst_in_flight[lane] += 1
+
+    def _release_burst_slot(self, credit: Credit) -> None:
+        """Free the lane slot of a returned pressure turn (every return path)."""
+        key = (credit.x_correlation_id, credit.turn_index)
+        lane = self._burst_slot_lane.pop(key, None)
+        if lane is None:
+            return
+        if self._burst_in_flight[lane] > 0:
+            self._burst_in_flight[lane] -= 1
+        sem = self._burst_sem_by_lane.get(lane)
+        if sem is not None:
+            sem.release()
 
     async def _handle_accelerated_warmup_return(self, credit: Credit) -> None:
-        """Issue the next compressed turn or recycle a completed tree."""
+        """Issue the next compressed turn or recycle a completed tree.
+
+        The lane slot was released in ``observe_credit_return`` (which sees
+        every return); the follow-up is admitted now and its send is paced.
+        """
         if credit.is_final_turn:
             if credit.agent_depth == 0 and not self._has_tree_registry:
                 await self._spawn_from_recycle_or_id(
@@ -999,6 +1057,12 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         self.cleanup_on_abort()
         if not self._accelerated_warmup_started:
             return
+        cancelled = self.credit_issuer.cancel_paced_sends()
+        if cancelled:
+            self.warning(
+                f"WARMUP cache pressure: {cancelled} admitted turns were still "
+                "waiting for a lane slot at phase end"
+            )
         states_by_lane = self._build_handoff_states()
         boundaries_by_lane = {
             lane: self._build_handoff_replay_boundaries(states)
