@@ -14,6 +14,7 @@ This document provides a comprehensive reference of all metrics available in AIP
   - [Record Metrics](#record-metrics)
   - [Aggregate Metrics](#aggregate-metrics)
   - [Derived Metrics](#derived-metrics)
+    - [Observation Duration for Throughput](#observation-duration-for-throughput)
 - [Detailed Metric Descriptions](#detailed-metric-descriptions)
   - [Streaming Metrics](#streaming-metrics)
     - [Time to First Token (TTFT)](#time-to-first-token-ttft)
@@ -37,6 +38,7 @@ This document provides a comprehensive reference of all metrics available in AIP
     - [E2E Output Token Throughput](#e2e-output-token-throughput)
     - [E2E Normalized Interactivity](#e2e-normalized-interactivity)
     - [Output Token Throughput](#output-token-throughput)
+    - [Input Token Throughput](#input-token-throughput)
     - [Total Token Throughput](#total-token-throughput)
   - [Image Metrics](#image-metrics)
     - [Number of Images](#number-of-images)
@@ -205,7 +207,18 @@ Derived Metrics can depend on Record Metrics, Aggregate Metrics, and other Deriv
 any knowledge of the individual request/response data.
 
 ### Example Scenario
-`request_throughput` is computed from `request_count / benchmark_duration_seconds`. This requires both `request_count` and `benchmark_duration` to be available first, then applies a formula to produce a single throughput value (e.g., 10.5 requests/sec).
+`request_throughput` is computed from `request_count / observation_duration_seconds`. It uses the request count and the observation duration described below to produce a single throughput value (e.g., 10.5 requests/sec).
+
+### Observation Duration for Throughput
+
+`request_throughput`, `input_token_throughput`, `output_token_throughput`, `total_token_throughput`, and `goodput` use an observation duration as their denominator. `observation_duration_seconds` in the formulas below is the duration used in the calculation, not a separate exported metric.
+
+- For a single phase or a named phase result, the final export uses the window from the recorded phase start to its recorded requests end. This can include waiting before the first request and bookkeeping after the last response.
+- A timeslice uses its own start and end as the observation window.
+- If either explicit window bound is unavailable, the calculation falls back to [Benchmark Duration](#benchmark-duration).
+- For a root result aggregating multiple instances of the same phase type, AIPerf recomputes these rates using the sum of the positive phase-window durations. Gaps between phase instances are excluded.
+
+For a single phase, the exported `benchmark_duration` measures the span from the first request to the last response, which can differ from the phase window. Consequently, a rate multiplied by `benchmark_duration` need not equal its count.
 
 ---
 
@@ -643,12 +656,25 @@ The aggregate token generation rate across all concurrent requests, measured as 
 
 **Formula:**
 ```python
-output_token_throughput = total_osl / benchmark_duration_seconds
+output_token_throughput = total_osl / observation_duration_seconds
 ```
 
 **Notes:**
 - Measures aggregate throughput across all concurrent requests; represents the overall system token generation rate.
 - Higher values indicate better system utilization and capacity.
+
+---
+
+### Input Token Throughput
+
+**Type:** [Derived Metric](#derived-metrics)
+
+The aggregate input token processing rate across all requests.
+
+**Formula:**
+```python
+input_token_throughput = total_isl / observation_duration_seconds
+```
 
 ---
 
@@ -660,7 +686,7 @@ Calculates the total token throughput metric, combining both input and output to
 
 **Formula:**
 ```python
-total_token_throughput = (total_isl + total_osl) / benchmark_duration_seconds
+total_token_throughput = (total_isl + total_osl) / observation_duration_seconds
 ```
 
 **Notes:**
@@ -1765,7 +1791,7 @@ The rate of SLO-compliant requests per second. This represents the effective thr
 
 **Formula:**
 ```python
-goodput = good_request_count / benchmark_duration_seconds
+goodput = good_request_count / observation_duration_seconds
 ```
 
 **Notes:**
@@ -1845,7 +1871,7 @@ The overall rate of completed requests per second across the entire benchmark. T
 
 **Formula:**
 ```python
-request_throughput = request_count / benchmark_duration_seconds
+request_throughput = request_count / observation_duration_seconds
 ```
 
 **Notes:**
@@ -1903,7 +1929,7 @@ request_error_rate = 100.0 * error_request_count / (request_count + error_reques
 
 **Type:** [Aggregate Metric](#aggregate-metrics)
 
-The wall-clock timestamp of the first request sent in the benchmark. This is used to calculate the benchmark duration and represents the start of the benchmark run.
+The wall-clock timestamp of the first request sent in the selected records. This is used to calculate the benchmark duration.
 
 **Formula:**
 ```python
@@ -1916,7 +1942,7 @@ min_request_timestamp = min(r.timestamp_ns for r in records)
 
 **Type:** [Aggregate Metric](#aggregate-metrics)
 
-The wall-clock timestamp of the last response received in the benchmark. This is used to calculate the benchmark duration and represents the end of the benchmark run.
+The wall-clock timestamp of the last response received in the selected records. This is used to calculate the benchmark duration.
 
 **Formula:**
 ```python
@@ -1929,7 +1955,7 @@ max_response_timestamp = max(r.timestamp_ns + r.request_latency for r in records
 
 **Type:** [Derived Metric](#derived-metrics)
 
-The total elapsed time from the first request sent to the last response received. This represents the complete wall-clock duration of the benchmark run.
+For a single phase or a named phase result, the elapsed time from the first request sent to the last response received in the selected records.
 
 **Formula:**
 ```python
@@ -1938,7 +1964,8 @@ benchmark_duration = max_response_timestamp - min_request_timestamp
 
 **Notes:**
 - Uses wall-clock timestamps representing real calendar time.
-- Used as the denominator for throughput calculations; represents the effective measurement window.
+- In a root result aggregating multiple instances of the same phase type, this value is replaced with the sum of the positive phase-window durations, excluding gaps between phases.
+- For a single phase, it can differ from the [observation duration](#observation-duration-for-throughput) used for throughput calculations.
 
 ---
 

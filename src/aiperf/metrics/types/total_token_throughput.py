@@ -18,7 +18,7 @@ class TotalTokenThroughputMetric(BaseDerivedMetric[float]):
     Post Processor for calculating Total Token Throughput Metric.
 
     Formula:
-        Total Token Throughput = (Total Input Tokens + Total Output Tokens) / Benchmark Duration (seconds)
+        Total Token Throughput = (Total Input Tokens + Total Output Tokens) / Observation Duration (seconds)
     """
 
     tag = "total_token_throughput"
