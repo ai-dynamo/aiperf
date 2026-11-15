@@ -11,6 +11,7 @@ import pytest
 from pytest import param
 
 from aiperf.config.config import BenchmarkConfig
+from aiperf.config.dataset import PublicDataset
 from aiperf.config.resolution.plan import BenchmarkPlan
 from aiperf.orchestrator.aggregation.base import AggregateResult
 from aiperf.orchestrator.orchestrator import MultiRunOrchestrator
@@ -151,6 +152,37 @@ def test_stamp_metadata_includes_public_dataset_provenance() -> None:
         "hf_dataset_name": "semianalysisai/cc-traces-weka-062126",
         "hf_split": "train",
         "num_dataset_entries": 393,
+    }
+
+
+@pytest.mark.parametrize(
+    "split, expected_split",
+    [
+        param(None, "test", id="default-split"),
+        param("train", "train", id="split-override"),
+    ],
+)  # fmt: skip
+def test_stamp_metadata_records_mooncake_source(
+    split: str | None, expected_split: str
+) -> None:
+    """Aggregate metadata retains the same Mooncake source as individual runs."""
+    from aiperf.cli_runner._aggregate import _stamp_scenario_submission_metadata
+
+    plan = _make_plan(scenario=None)
+    plan.configs[0].datasets[0] = PublicDataset(
+        name="main",
+        type="public",
+        dataset="mooncake_hf",
+        hf_mooncake_dataset="fixture/mooncake",
+        hf_mooncake_split=split,
+    )
+    aggregate = _make_aggregate()
+    _stamp_scenario_submission_metadata(aggregate, [], plan)
+    assert aggregate.metadata["dataset"] == {
+        "source_type": "public_dataset",
+        "loader": "mooncake_hf",
+        "hf_dataset_name": "fixture/mooncake",
+        "hf_split": expected_split,
     }
 
 
