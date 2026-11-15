@@ -21,6 +21,7 @@ from aiperf.config import AIPerfConfig
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
 from aiperf.config.loader.errors import ConfigurationError
+from aiperf.config.loader.plan import build_benchmark_plan
 from aiperf.config.phases import PhaseConfig
 
 
@@ -352,3 +353,58 @@ def test_fixed_schedule_offsets_route(trace_phase_yaml: Path) -> None:
         )
     )
     assert resolved.start_offset == 5
+
+
+@pytest.mark.parametrize(
+    "policy_key", ["continuation_dispatch", "continuationDispatch"]
+)
+@pytest.mark.parametrize("policy", ["rate_slot", "direct"])
+@pytest.mark.parametrize("templated", [False, True])
+@pytest.mark.parametrize("sweep", [False, True])
+def test_fixed_schedule_discards_yaml_continuation_policy_in_executed_plan(
+    trace_phase_yaml: Path, policy_key: str, policy: str, templated: bool, sweep: bool
+) -> None:
+    """A phase switch prunes inherited policy from validation and executed runs."""
+    phase_type = '"{{ ptype }}"' if templated else "poisson"
+    body = "variables:\n  ptype: poisson\n" + trace_phase_yaml.read_text().replace(
+        "type: concurrency",
+        f"type: {phase_type}\n    rate: 1\n    {policy_key}: {policy}",
+    )
+    if sweep:
+        body += "sweep:\n  type: grid\n  parameters:\n    phases.profiling.requests: [5, 7]\n"
+    trace_phase_yaml.write_text(body, encoding="utf-8")
+
+    config = resolve_config(cli(fixed_schedule=True), trace_phase_yaml)
+    plan = build_benchmark_plan(config)
+
+    assert profiling(config).type == "fixed_schedule"
+    assert len(plan.configs) == (2 if sweep else 1)
+    assert {run.phases[0].requests for run in plan.configs} == (
+        {5, 7} if sweep else {5}
+    )
+    for run in plan.configs:
+        phase = run.phases[0]
+        assert phase.type == "fixed_schedule"
+        assert "continuation_dispatch" not in phase.model_dump()
+        assert "continuationDispatch" not in phase.model_dump(by_alias=True)
+
+
+@pytest.mark.parametrize(
+    "policy_key", ["continuation_dispatch", "continuationDispatch"]
+)
+@pytest.mark.parametrize("policy", ["rate_slot", "direct"])
+def test_fixed_schedule_rejects_explicit_continuation_flag(
+    trace_phase_yaml: Path, policy_key: str, policy: str
+) -> None:
+    """An incompatible explicit policy still reports the CLI flag by name."""
+    trace_phase_yaml.write_text(
+        trace_phase_yaml.read_text().replace(
+            "type: concurrency",
+            f"type: poisson\n    rate: 1\n    {policy_key}: rate_slot",
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="--continuation-dispatch"):
+        resolve_config(
+            cli(fixed_schedule=True, continuation_dispatch=policy), trace_phase_yaml
+        )
