@@ -80,7 +80,8 @@ class GpuTelemetryConfig(BaseConfig):
         Field(
             default=GPUTelemetryCollectorType.DCGM,
             description="GPU telemetry collector backend. Use 'dcgm' for DCGM "
-            "exporter endpoints or a local collector (e.g. 'pynvml' for NVIDIA, "
+            "exporter endpoints, 'amd_dme' for AMD Device Metrics Exporter "
+            "endpoints, or a local collector (e.g. 'pynvml' for NVIDIA, "
             "'amdsmi' for AMD ROCm) for on-host metrics collection.",
         ),
     ]
