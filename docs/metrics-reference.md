@@ -218,7 +218,7 @@ any knowledge of the individual request/response data.
 - If either explicit window bound is unavailable, the calculation falls back to [Benchmark Duration](#benchmark-duration).
 - For a root result aggregating multiple instances of the same phase type, AIPerf recomputes these rates using the sum of the positive phase-window durations. Gaps between phase instances are excluded.
 
-For a single phase, the exported `benchmark_duration` measures the span from the first request to the last response, which can differ from the phase window. Consequently, a rate multiplied by `benchmark_duration` need not equal its count.
+For a single phase, the exported `benchmark_duration` measures the span from the first request to the last qualifying content response, which can differ from the phase window. Consequently, a rate multiplied by `benchmark_duration` need not equal its count.
 
 ---
 
@@ -1942,7 +1942,7 @@ min_request_timestamp = min(r.timestamp_ns for r in records)
 
 **Type:** [Aggregate Metric](#aggregate-metrics)
 
-The wall-clock timestamp of the last response received in the selected records. This is used to calculate the benchmark duration.
+The wall-clock timestamp of the last qualifying content response in the selected records. Later usage-only chunks do not advance this timestamp. This is used to calculate the benchmark duration.
 
 **Formula:**
 ```python
@@ -1955,7 +1955,7 @@ max_response_timestamp = max(r.timestamp_ns + r.request_latency for r in records
 
 **Type:** [Derived Metric](#derived-metrics)
 
-For a single phase or a named phase result, the elapsed time from the first request sent to the last response received in the selected records.
+For a single phase or a named phase result, the elapsed time from the first request sent to the last qualifying content response in the selected records. Later usage-only chunks do not extend this duration.
 
 **Formula:**
 ```python
