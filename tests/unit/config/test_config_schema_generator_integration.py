@@ -6,7 +6,7 @@ import copy
 import json
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 import yaml
@@ -15,6 +15,8 @@ from pydantic import ValidationError
 from pytest import param
 
 from aiperf.config import AIPerfConfig, load_config_from_string
+from aiperf.config.artifacts import ArtifactsConfig
+from tools._core import write_if_changed
 from tools.generate_config_schema import ConfigSchemaGenerator
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -73,6 +75,39 @@ def _iter_discriminators(obj: Any) -> Iterator[dict[str, Any]]:
     elif isinstance(obj, list):
         for item in obj:
             yield from _iter_discriminators(item)
+
+
+@pytest.mark.parametrize("mode", ["validation", "serialization"])
+@pytest.mark.filterwarnings("error::pydantic.json_schema.PydanticJsonSchemaWarning")
+def test_artifacts_directory_schema_has_portable_default(
+    mode: Literal["validation", "serialization"],
+) -> None:
+    schema = ArtifactsConfig.model_json_schema(mode=mode)
+
+    assert schema["properties"]["dir"]["default"] == "artifacts"
+    assert (
+        _generated_schema()["$defs"]["ArtifactsConfig"]["properties"]["dir"]["default"]
+        == "artifacts"
+    )
+
+
+def test_artifacts_directory_default_is_validated_as_native_path() -> None:
+    artifacts = ArtifactsConfig()
+
+    assert isinstance(artifacts.dir, Path)
+    assert artifacts.dir == Path("artifacts")
+    assert artifacts.profile_export_json_file == Path(
+        "artifacts/profile_export_aiperf.json"
+    )
+
+
+def test_generated_file_uses_lf_on_every_platform(tmp_path: Path) -> None:
+    path = tmp_path / "config.schema.json"
+    content = '{"default":"artifacts"}\n'
+
+    assert write_if_changed(path, content)
+    assert path.read_bytes() == content.encode("utf-8")
+    assert not write_if_changed(path, content)
 
 
 def test_generated_schema_phase_discriminators_use_phase_type() -> None:

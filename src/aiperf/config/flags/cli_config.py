@@ -1197,9 +1197,11 @@ class CLIConfig(BaseConfig):
         float,
         Field(
             ge=0,
-            description="Mean delay in milliseconds between consecutive turns within a multi-turn conversation. Simulates user think time between "
-            "receiving a response and sending the next message. Delays follow normal distribution around this mean (±`--conversation-turn-delay-stddev`). "
-            "Only applies to multi-turn conversations (`--conversation-turn-mean` > 1). Set to 0 for back-to-back turns.",
+            description="Mean parameter in milliseconds for the normal distribution of delays between consecutive turns. "
+            "Simulates user think time between receiving a response and sending the next message. "
+            "Negative draws are resampled. Only applies to multi-turn conversations (`--conversation-turn-mean` > 1). "
+            "Set both this value and `--conversation-turn-delay-stddev` to 0 for back-to-back turns. "
+            "With positive stddev, a mean of 0 still produces positive delays.",
         ),
         CLIParameter(
             name=(
@@ -2431,6 +2433,21 @@ class CLIConfig(BaseConfig):
             group=Groups.LOAD_GENERATOR,
         ),
     ] = None
+
+    continuation_dispatch: Annotated[
+        Literal["rate_slot", "direct"],
+        Field(
+            description="Schedule profiling root continuation turns at the next rate slot "
+            "(rate_slot, default), or after think time without consuming a session "
+            "arrival slot (direct). Requires constant, poisson, or gamma request-rate "
+            "scheduling; concurrency and request limits still apply. "
+            "DAG children use their independent dispatch path.",
+        ),
+        CLIParameter(
+            name=("--continuation-dispatch",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = "rate_slot"
 
     arrival_pattern: Annotated[
         ArrivalPattern,

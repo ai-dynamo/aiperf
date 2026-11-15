@@ -305,7 +305,7 @@ def _build_routed_under_config() -> frozenset[str]:
     # pair, and the AGENTIC_REPLAY fields shared with BasePhaseConfig.
     loadgen = (
         {attr for attr, _ in _LOADGEN_PHASE_FIELD_MAP}
-        | {"request_rate_series", "arrival_pattern"}
+        | {"request_rate_series", "arrival_pattern", "continuation_dispatch"}
         | (set(_AGENTIC_REPLAY_ROUTES) & LOADGEN_FIELDS)
         # Phase shaping, applied by _apply_phase_shaping_overrides through the
         # converter's own helpers. Derived from the same tables those helpers

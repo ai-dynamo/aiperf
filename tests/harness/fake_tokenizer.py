@@ -70,3 +70,7 @@ class FakeTokenizer:
     @property
     def block_separation_token_id(self) -> int | None:
         return None
+
+    @property
+    def word_start_token_ids(self) -> frozenset[int] | None:
+        return None

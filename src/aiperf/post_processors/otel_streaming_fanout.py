@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing
+import os
+import threading
 import time
 from dataclasses import dataclass
 from multiprocessing.queues import Queue
@@ -129,6 +132,42 @@ def _write_live_mlflow_metadata(
     tmp_file.replace(metadata_file)
 
 
+_ORPHAN_CLEANUP_DEADLINE_SECONDS = 10.0
+"""Hard cap on fanout cleanup once its parent has died.
+
+The graceful path (flush, end the MLflow run) makes network calls that can block
+for much longer than this, and the child is the only thing keeping the dead
+parent's inherited stdout/stderr pipe open.
+"""
+
+
+def _start_orphan_watchdog(
+    parent: multiprocessing.process.BaseProcess,
+    finished: threading.Event,
+    logger: logging.Logger,
+) -> None:
+    """Force-exit the fanout a bounded time after its parent dies.
+
+    The main loop notices a dead parent only between queue polls and then runs
+    a network-bound cleanup, so neither detection nor cleanup is bounded on its
+    own. This thread blocks on the parent's sentinel, gives the graceful path
+    ``_ORPHAN_CLEANUP_DEADLINE_SECONDS`` to finish (signalled by ``finished``),
+    and otherwise ``os._exit``s so the inherited pipes close.
+    """
+
+    def _watch() -> None:
+        parent.join()
+        if finished.wait(_ORPHAN_CLEANUP_DEADLINE_SECONDS):
+            return
+        logger.error(
+            "Fanout cleanup exceeded %.0fs after parent death; exiting now.",
+            _ORPHAN_CLEANUP_DEADLINE_SECONDS,
+        )
+        os._exit(1)
+
+    threading.Thread(target=_watch, name="fanout-orphan-watchdog", daemon=True).start()
+
+
 def run_otel_streaming_fanout(
     event_queue: Queue[FanoutEvent],
     config: OTelStreamingFanoutConfig,
@@ -172,6 +211,17 @@ def run_otel_streaming_fanout(
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     logger = logging.getLogger(__name__)
+
+    # ``multiprocessing.parent_process()`` is the real spawning process under
+    # fork, spawn and forkserver alike (``getppid`` is the forkserver in the
+    # last), and its sentinel closes when the parent dies by any means. ``None``
+    # when run in-process, which disables the check. Armed before sink setup
+    # so a parent dying during a blocked MLflow/OTel init call is covered too.
+    parent = multiprocessing.parent_process()
+    cleanup_finished = threading.Event()
+    if parent is not None:
+        _start_orphan_watchdog(parent, cleanup_finished, logger)
+
     meter_provider: Any | None = None
     meter: Any | None = None
     max_batch_records = max(config.max_batch_records, 1)
@@ -388,6 +438,9 @@ def run_otel_streaming_fanout(
 
     try:
         while not shutdown_requested:
+            if parent is not None and not parent.is_alive():
+                logger.warning("Fanout parent process died; shutting down fanout.")
+                break
             try:
                 event = event_queue.get(timeout=poll_timeout_sec)
             except Empty:
@@ -528,3 +581,4 @@ def run_otel_streaming_fanout(
             # MLflow shutdown failure must not crash fanout exit
             except Exception as exc:
                 logger.warning(f"Failed to close live MLflow run cleanly: {exc!r}")
+        cleanup_finished.set()

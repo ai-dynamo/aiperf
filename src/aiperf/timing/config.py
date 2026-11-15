@@ -305,6 +305,11 @@ class CreditPhaseConfig(AIPerfBaseModel):
     request_rate: float | None = Field(
         default=None, gt=0, description="The request rate of the credit phase."
     )
+    continuation_dispatch: Literal["rate_slot", "direct"] = Field(
+        default="rate_slot",
+        description="Whether root continuation turns consume rate slots or dispatch "
+        "directly after think time through the normal credit gates.",
+    )
     arrival_pattern: ArrivalPattern = Field(
         default=ArrivalPattern.POISSON,
         description="The arrival pattern of the credit phase.",
@@ -390,6 +395,25 @@ class CreditPhaseConfig(AIPerfBaseModel):
         default_factory=AdaptiveTimingConfig,
         description="Adaptive scale timing settings.",
     )
+
+    @model_validator(mode="after")
+    def validate_continuation_dispatch(self) -> Self:
+        """Reject a direct policy after scenario and timing-mode resolution."""
+        if self.continuation_dispatch == "direct" and (
+            self.timing_mode != TimingMode.REQUEST_RATE
+            or self.request_rate is None
+            or self.arrival_pattern
+            not in {
+                ArrivalPattern.CONSTANT,
+                ArrivalPattern.POISSON,
+                ArrivalPattern.GAMMA,
+            }
+        ):
+            raise ValueError(
+                "--continuation-dispatch / continuation_dispatch='direct' requires "
+                "constant, poisson, or gamma request-rate scheduling"
+            )
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -588,6 +612,7 @@ def _build_warmup_config(
         concurrency=phase.concurrency,
         prefill_concurrency=phase.prefill_concurrency,
         request_rate=_phase_request_rate(phase),
+        continuation_dispatch=getattr(phase, "continuation_dispatch", "rate_slot"),
         arrival_pattern=_phase_arrival_pattern(phase),
         arrival_smoothness=getattr(phase, "smoothness", None),
         seamless=False,
@@ -728,6 +753,7 @@ def _build_profiling_config(
         concurrency=phase.concurrency,
         prefill_concurrency=phase.prefill_concurrency,
         request_rate=_phase_request_rate(phase),
+        continuation_dispatch=getattr(phase, "continuation_dispatch", "rate_slot"),
         arrival_pattern=_phase_arrival_pattern(phase),
         arrival_smoothness=getattr(phase, "smoothness", None),
         seamless=phase.seamless,

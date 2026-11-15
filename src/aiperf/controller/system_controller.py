@@ -44,7 +44,6 @@ from aiperf.common.hooks import on_command, on_init, on_message, on_start, on_st
 from aiperf.common.logging import cleanup_global_log_queue, get_global_log_queue
 from aiperf.common.messages import (
     BaseServiceErrorMessage,
-    BenchmarkCompleteMessage,
     ProcessAccuracyResultMessage,
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
@@ -2483,65 +2482,150 @@ class SystemController(
             )
         return has_exit_failure
 
-    async def _announce_benchmark_complete(self) -> None:
-        """Tell the API service the benchmark is over.
+    async def _announce_benchmark_complete(self, api_ids: set[str]) -> None:
+        """Hand the API the run's terminal state and wait for it to confirm.
 
-        The results endpoint reports "running" until this arrives, so without
-        the announcement a client polling ``/api/results`` never observes a
-        terminal status and keeps polling until the listener goes away.
+        The results endpoint reports "running" until this lands, and the API is
+        retired right after, so the controller waits for the reply instead of
+        publishing and hoping. A timeout or failed reply is logged and shutdown
+        proceeds anyway; ``COMPLETE_ACK_TIMEOUT`` bounds the wait.
+        """
+        if not self._api_enabled or not api_ids:
+            return
+        service_ids = sorted(api_ids)
+        payload = {
+            "was_cancelled": self._was_cancelled,
+            "results_settled": self._results_settled(),
+        }
+        responses = await self._send_control_command_to_all(
+            CommandType.BENCHMARK_COMPLETE,
+            service_ids,
+            payload=orjson.dumps(payload),
+            timeout=Environment.API_SERVER.COMPLETE_ACK_TIMEOUT,
+        )
+        for service_id, response in zip(service_ids, responses, strict=True):
+            self._log_benchmark_complete_reply(service_id, response)
+
+    def _results_settled(self) -> bool:
+        """Whether no further final-results message can reach the API.
+
+        Locally ``shutdown_all_services`` has joined RecordsManager before the
+        handshake, so whatever it published has already arrived. Under
+        Kubernetes it runs in a sibling container the controller does not wait
+        on, and its final results may still be in flight.
+        """
+        return not self._is_kubernetes()
+
+    def _log_benchmark_complete_reply(
+        self, service_id: str, response: CommandResponse | ErrorDetails
+    ) -> None:
+        """Warn when the API cannot serve a clean terminal status."""
+        if isinstance(response, CommandOk):
+            reply = orjson.loads(response.payload) if response.payload else {}
+            if not reply.get("has_final_results", False):
+                status = "cancelled" if self._was_cancelled else "incomplete"
+                when = (
+                    "now"
+                    if self._results_settled()
+                    else "once its wait for late final results lapses"
+                )
+                self.warning(
+                    f"API '{service_id}' holds the terminal state but not the final "
+                    f"results; /api/results will report '{status}' {when}"
+                )
+                return
+            self.info(f"API '{service_id}' confirmed the run's terminal state")
+            return
+        if isinstance(response, ErrorDetails):
+            detail = response.message
+        elif isinstance(response, CommandErr):
+            detail = response.error
+        else:
+            detail = type(response).__name__
+        self.warning(
+            f"API '{service_id}' did not confirm the terminal state ({detail}); "
+            "/api/results may still report 'running' when its listener closes"
+        )
+
+    async def _retire_api_service(
+        self, api_ids: set[str], *, hold_listener: bool
+    ) -> None:
+        """Stop the API service once the run's terminal state is published.
+
+        SHUTDOWN starts the API's own ``POST_COMPLETE_GRACE`` listener hold;
+        the controller waits the same window so the shared exit deadline in
+        ``shutdown_all_services`` cannot SIGKILL the API mid-hold. Under
+        Kubernetes the API defers this command and is retired through
+        ``POST /api/shutdown`` instead.
         """
         if not self._api_enabled:
             return
-        await self.publish(
-            BenchmarkCompleteMessage(
-                service_id=self.service_id,
-                was_cancelled=self._was_cancelled,
-            )
-        )
+        await self._broadcast_control_command(CommandType.SHUTDOWN, api_ids)
+        if hold_listener:
+            delivery_grace = 0.5
+            if self._is_api_service_alive():
+                delivery_grace = max(
+                    delivery_grace, Environment.API_SERVER.POST_COMPLETE_GRACE
+                )
+            await asyncio.sleep(delivery_grace)
+        await self.service_manager.shutdown_all_services()
 
     @on_stop
     async def _stop_system_controller(self) -> None:
         """Stop the system controller and all running services."""
         await self._set_system_state(SystemState.SHUTDOWN)
 
-        await self._broadcast_control_command(
-            CommandType.SHUTDOWN, ServiceRegistry.get_all_registered_ids()
-        )
-        delivery_grace = 0.5
-        if self._api_enabled and self._is_api_service_alive():
-            delivery_grace = max(
-                delivery_grace, Environment.API_SERVER.POST_COMPLETE_GRACE
-            )
-        await asyncio.sleep(delivery_grace)
-        await self.service_manager.shutdown_all_services()
-
-        # Stop the local UI before console rendering. The message bus remains
-        # live through export so publishing the durable completion state does
-        # not race transport shutdown.
-        await self.ui.stop()
-        await asyncio.sleep(0.1)
-        await self.ui.wait_for_tasks()
-
-        # Reporting must never prevent the service shutdown below. At this
-        # point all result domains and the RAW artifact barrier are complete,
-        # but the API and event bus remain live for the export notification.
+        # The API is the only way a client can observe the export below, so it
+        # is retired last, by _retire_api_service, once the run's terminal state
+        # is published. Stopping it here would spend its grace window before
+        # there is anything to see (NVBugs 7073234).
+        api_ids = {
+            info.service_id for info in ServiceRegistry.get_services(ServiceType.API)
+        }
+        # From here until the API is retired, a cancel (the failure-shutdown
+        # deadline, which can land in a wedged ui.stop()) must still retire the
+        # API it kept alive, or on hosts without a parent-death guard its
+        # listener outlives the run.
         try:
-            await self._report_post_shutdown_results_and_errors()
-
-            if Environment.DEV.MODE:
-                print_developer_mode_warning()
-        except asyncio.CancelledError:
-            raise
-        except (UnicodeEncodeError, OSError) as e:
-            self.error(f"Pre-shutdown reporting failed (continuing to exit): {e!r}")
-        except Exception:
-            self.exception(
-                "Unexpected pre-shutdown reporting failure (continuing to exit)"
+            await self._broadcast_control_command(
+                CommandType.SHUTDOWN,
+                ServiceRegistry.get_all_registered_ids() - api_ids,
             )
+            await asyncio.sleep(0.5)
+            await self.service_manager.shutdown_all_services(exclude=(ServiceType.API,))
 
-        # BenchmarkComplete makes the API shutdown endpoint eligible only
-        # after export/ready publication has finished (or failed closed).
-        await self._announce_benchmark_complete()
+            # Stop the local UI before console rendering. The message bus
+            # remains live through export so publishing the durable completion
+            # state does not race transport shutdown.
+            await self.ui.stop()
+            await asyncio.sleep(0.1)
+            await self.ui.wait_for_tasks()
+
+            # Reporting must never prevent the service shutdown below. At this
+            # point all result domains and the RAW artifact barrier are
+            # complete, but the API and event bus remain live for the export
+            # notification.
+            try:
+                await self._report_post_shutdown_results_and_errors()
+
+                if Environment.DEV.MODE:
+                    print_developer_mode_warning()
+            except (UnicodeEncodeError, OSError) as e:
+                self.error(f"Pre-shutdown reporting failed (continuing to exit): {e!r}")
+            except Exception:
+                self.exception(
+                    "Unexpected pre-shutdown reporting failure (continuing to exit)"
+                )
+
+            # The API's confirmed terminal state makes the API shutdown
+            # endpoint eligible only after export/ready publication has
+            # finished (or failed closed), and must land before the API is
+            # retired.
+            await self._announce_benchmark_complete(api_ids)
+            await self._retire_api_service(api_ids, hold_listener=True)
+        except asyncio.CancelledError:
+            await self._retire_api_service(api_ids, hold_listener=False)
+            raise
         await self.comms.stop()
         # Stopped last of the child-facing transports: shutdown_all_services may
         # still be talking to children over it, and comms does not own it.

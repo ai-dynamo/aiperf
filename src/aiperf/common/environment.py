@@ -221,13 +221,23 @@ class _APIServerSettings(BaseSettings):
         ge=0.0,
         le=300.0,
         default=5.0,
-        description="Seconds the API listener stays open after a benchmark terminates "
-        "so polling clients can observe the final status before the server shuts down. "
-        "Set to 0 to skip the grace window and shut down immediately. Not used under "
-        "ServiceRunType.KUBERNETES, where the controller pod outlives its benchmark and "
-        "is retired explicitly via POST /api/shutdown instead -- see "
-        "FastAPIService._on_shutdown_command. A fixed window there is shorter than the "
+        description="Seconds the API listener stays open after the benchmark's final results "
+        "are published (exported, marked ready, and reported as complete/cancelled on "
+        "/api/results) so polling clients can observe and download them before the server "
+        "shuts down. Set to 0 to close the listener as soon as the results are published. "
+        "Not used under ServiceRunType.KUBERNETES, where the controller pod outlives its "
+        "benchmark and is retired explicitly via POST /api/shutdown instead -- see "
+        "FastAPIService._defers_broadcast_shutdown. A fixed window there is shorter than the "
         "operator's monitor interval and strands the AIPerfJob in a pre-terminal phase.",
+    )
+    COMPLETE_ACK_TIMEOUT: float = Field(
+        ge=0.1,
+        le=60.0,
+        default=5.0,
+        description="Seconds the SystemController waits for the API service to confirm it "
+        "holds the run's terminal state before retiring it. A healthy API answers in "
+        "milliseconds; on timeout the controller logs a warning and retires the API anyway, "
+        "so this bounds how long a wedged API can delay exit.",
     )
     WEBSOCKET_MAX_CONNECTIONS: int = Field(
         ge=1,
@@ -1890,6 +1900,15 @@ class _ServiceSettings(_ServiceCommunicationFields, _ServiceHealthFields, BaseSe
         le=100000.0,
         default=2.0,
         description="Maximum time in seconds to wait for simple tasks to complete when cancelling",
+    )
+    SHUTDOWN_EXIT_TIMEOUT: float = Field(
+        ge=1.0,
+        le=100000.0,
+        default=8.0,
+        description="Maximum time in seconds the controller waits, after broadcasting SHUTDOWN, for "
+        "service processes to exit on their own before force-killing the survivors. Must cover the "
+        "slowest service cleanup (the records manager can spend up to 7 seconds stopping its telemetry "
+        "child); killing a service mid-cleanup orphans its children.",
     )
     # Event loop health monitoring settings
     EVENT_LOOP_HEALTH_ENABLED: bool = Field(

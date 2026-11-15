@@ -72,6 +72,16 @@ the results sidecar. Kubernetes sweep aggregation uses
 the same durable ready-marker commit after plotting and scratch-artifact pruning
 finish, so the operator never harvests a partially published aggregate tree.
 
+When the API service is running, it is the last service the controller stops.
+The controller sends `SHUTDOWN` to every other service and waits for them to
+exit, exports and commits the ready marker, then sends the API a
+`BENCHMARK_COMPLETE` command on the control channel and waits (bounded by
+`AIPERF_API_SERVER_COMPLETE_ACK_TIMEOUT`) for its reply. Only then does it send
+the API `SHUTDOWN`, which starts the `AIPERF_API_SERVER_POST_COMPLETE_GRACE`
+listener hold. That reply is the controller's proof that `/api/results` reports
+the terminal status before the listener starts closing. See
+[HTTP API Endpoints](reference/api-endpoints.md#results-lifetime).
+
 ### Dataset Manager
 
 The Dataset Manager handles all aspects of input data management during benchmarking runs.
@@ -256,7 +266,7 @@ The Timing Manager uses a **credit-based flow control system** to control when r
 - Each credit grants permission to send one request
 - The Timing Manager issues credits according to the configured timing mode:
   - **Fixed schedule mode**: Replays conversation traces at precise timestamps from dataset metadata
-  - **Request-rate mode**: Issues credits at a specific rate with configurable arrival patterns (constant, Poisson, gamma, concurrency burst)
+  - **Request-rate mode**: Issues credits at a specific rate with configurable arrival patterns (constant, Poisson, gamma, concurrency burst). Constant, Poisson, and gamma phases can opt into `continuation_dispatch: direct`: rate slots then start sessions, while root continuations use the phase scheduler after think time and retain the CreditIssuer stop and concurrency checks. The default `rate_slot` policy paces every turn.
   - **User-centric rate mode**: Each session acts as a separate user with calculated gaps between turns
 
 **Flow Control Benefits:**
