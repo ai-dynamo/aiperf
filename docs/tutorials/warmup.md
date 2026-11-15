@@ -151,16 +151,18 @@ from the results.
 
 ### Measuring prefix-cache hit rate with disjoint pools
 
-Disjoint pools also make the profiling phase a cache measurement you can trust.
-Profiling conversations are text the server has not seen during warmup, so
-profiling-phase cache reads come only from prefixes shared inside the profiling
-pool itself (a common system message or a configured prefix prompt), and cache
-writes measure the profiling pool's own insertion volume. Warmup no longer
-contributes reads to the numbers.
+Disjoint pools prevent profiling from selecting the same conversation identities
+as warmup. They do not make profiling prompts physically cold: a common system
+message, `prefix_prompts.shared_system_length`, or another shared prefix can
+still reuse KV populated during warmup. AIPerf does not flush the server cache
+or track which phase originally populated a cached prefix.
 
 AIPerf excludes warmup records from profiling summaries, so the run-aggregate
 `Overall Usage Prompt Cache Read %` — token-volume-weighted total cache-read
-tokens over total prompt tokens — is the profiling pool's hit rate. The
+tokens over total prompt tokens — is the cache-read rate observed by profiling
+requests. It can include reuse from warmup as well as from earlier profiling
+requests or other traffic using the same cache. Filtering out warmup records
+does not remove that cache state. The
 per-request `Usage Prompt Cache Read Tokens` metric shows the distribution,
 and servers that make hits first-class (DeepSeek's hit/miss split) also report
 `Usage Prompt Cache Miss Tokens`.
