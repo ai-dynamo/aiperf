@@ -1666,6 +1666,79 @@ class TestRecordsManagerTimingDispatch:
         )
 
 
+class TestRecordsManagerErrorAccounting:
+    @pytest.mark.parametrize(
+        ("worker_errors", "worker_completed", "expected_accounting"),
+        [
+            param(1, 3, "worker_errors=1, response_processing_errors=1, total_errors=2", id="processing-error"),
+            param(0, 3, "worker_errors=0, response_processing_errors=2, total_errors=2", id="processing-errors-only"),
+            param(2, 3, None, id="worker-errors-only"),
+            param(None, 3, None, id="unknown-worker-errors"),
+            param(1, None, None, id="unknown-worker-completions"),
+            param(1, 4, None, id="missing-records"),
+            param(1, 2, None, id="extra-records"),
+            param(3, 3, None, id="fewer-record-errors"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.asyncio
+    async def test_final_error_accounting_explains_only_reconciled_processing_errors(
+        self,
+        worker_errors: int | None,
+        worker_completed: int | None,
+        expected_accounting: str | None,
+    ) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.info = MagicMock()
+        manager.tasks = set()
+        manager._finalize_and_process_results = AsyncMock()
+        manager._records_tracker = RecordsTracker()
+        for phase, phase_index, errors in (
+            (CreditPhase.WARMUP, 0, 3),
+            (CreditPhase.PROFILING, 1, 2),
+        ):
+            manager._records_tracker.update_phase_info(
+                CreditPhaseStats(
+                    phase=phase,
+                    phase_index=phase_index,
+                    final_requests_completed=worker_completed,
+                    final_request_errors=worker_errors,
+                )
+            )
+            for index in range(3):
+                manager._records_tracker.update_from_request(
+                    MetricRecordMetadata(
+                        session_num=index,
+                        request_start_ns=1,
+                        request_end_ns=2,
+                        worker_id="worker",
+                        record_processor_id="processor",
+                        benchmark_phase=phase,
+                        phase_index=phase_index,
+                    ),
+                    ErrorDetails(type="SyntheticError", message="failed")
+                    if index < errors
+                    else None,
+                )
+
+        await manager._handle_all_records_received(CreditPhase.PROFILING)
+        await manager.wait_for_tasks()
+
+        messages = [
+            arg() if callable(arg := call.args[0]) else arg
+            for call in manager.info.call_args_list
+        ]
+        assert "Processed 1 valid requests and 2 errors (3 total)." in messages
+        accounting = [msg for msg in messages if msg.startswith("Error accounting:")]
+        assert accounting == (
+            [f"Error accounting: {expected_accounting}."]
+            if expected_accounting is not None
+            else []
+        )
+        manager._finalize_and_process_results.assert_awaited_once_with(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+
 class TestRecordsManagerAnalyzerMetrics:
     @pytest.mark.parametrize(
         ("success_count", "error_count", "cancelled"),
