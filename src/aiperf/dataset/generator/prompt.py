@@ -624,6 +624,8 @@ class PromptGenerator(BaseGenerator):
         num_tokens: int,
         hash_ids: list[int],
         block_size: int,
+        *,
+        separate_blocks: bool = True,
     ) -> list[int]:
         """
         Build a token sequence without decoding. Used for batch parallel decode.
@@ -649,6 +651,7 @@ class PromptGenerator(BaseGenerator):
             num_tokens: The number of tokens required in the prompt.
             hash_ids: A list of hash IDs covering the cached prefix.
             block_size: The number of tokens allocated per hash block.
+            separate_blocks: Reserve a separator token at the start of each block.
 
         Returns:
             list[int]: A list of token IDs of length ``num_tokens``.
@@ -672,9 +675,10 @@ class PromptGenerator(BaseGenerator):
         if not hash_ids:
             return self._sample_tokens(num_tokens)
 
-        reject_separator_only_blocks(
-            block_size, self.tokenizer.block_separation_token_id
+        separator = (
+            self.tokenizer.block_separation_token_id if separate_blocks else None
         )
+        reject_separator_only_blocks(block_size, separator)
 
         if total_hashed > num_tokens:
             # Synthetic-prompt path: last hash is a partial block.
@@ -705,7 +709,7 @@ class PromptGenerator(BaseGenerator):
                     self._tokenized_corpus,
                     current_block_size,
                     self._hash_id_corpus_rng,
-                    self.tokenizer.block_separation_token_id,
+                    separator,
                     word_starts=word_starts,
                 )
                 self._cache[hash_id] = cached

@@ -199,6 +199,7 @@ class ReplayBarrierCoordinator:
         self._predecessors: dict[ReplayTurnKey, tuple[ReplayTurnKey, ...]] = {}
         self._dependencies: dict[ReplayTurnKey, tuple[ReplayTurnReference, ...]] = {}
         self._floor_ns: dict[ReplayTurnKey, int] = {}
+        self._virtual_roots: set[str] = set()
         self._strict_finite = strict_finite
         self._scheduler = scheduler
         if strict_finite and scheduler is None:
@@ -307,6 +308,14 @@ class ReplayBarrierCoordinator:
         if len(conversations) != len(dataset_metadata.conversations):
             raise RuntimeError("Finite replay conversation IDs must be unique")
         roots = self._resolve_conversation_roots(conversations)
+        self._virtual_roots = {
+            conversation_id
+            for conversation_id, conversation in conversations.items()
+            if roots[conversation_id] == conversation_id
+            and conversation.is_orchestrator
+            and conversation.turns
+            and conversation.turns[0].no_request
+        }
         root_timestamps = self._validate_root_timestamps(conversations, roots)
         self._add_spawn_dependencies(dataset_metadata, conversations, roots)
         self._predecessors = {
@@ -382,6 +391,8 @@ class ReplayBarrierCoordinator:
                     f"conversation {parent.conversation_id!r}: "
                     "finite replay does not support pre-session branches"
                 )
+            if parent.conversation_id in self._virtual_roots:
+                continue
             branches_by_id = {branch.branch_id: branch for branch in parent.branches}
             self._add_parent_spawn_dependencies(
                 parent, branches_by_id, conversations, roots
@@ -537,10 +548,18 @@ class ReplayBarrierCoordinator:
             or floor_scaled > _MAX_TIMESTAMP_NS
         ):
             raise RuntimeError(f"Finite replay turn {key!r} has an invalid root floor")
-        floor_ns = int(floor_scaled)
+        floor_ns = (
+            math.ceil(floor_scaled)
+            if roots[conversation_id] in self._virtual_roots
+            else int(floor_scaled)
+        )
         if floor_ns < 0:
             raise RuntimeError(f"Finite replay turn {key!r} has an invalid root floor")
-        if turn_index == 0 and turn.no_request:
+        if (
+            turn_index == 0
+            and turn.no_request
+            and conversation_id not in self._virtual_roots
+        ):
             raise RuntimeError(
                 f"Finite replay root {conversation_id!r} turn 0 must issue an HTTP request"
             )
@@ -580,7 +599,10 @@ class ReplayBarrierCoordinator:
                 raise RuntimeError(
                     f"Finite replay dependency {predecessor!r} has no finite timestamp_ms"
                 )
-            if float(predecessor_timestamp) > timestamp:
+            if (
+                roots[conversation_id] not in self._virtual_roots
+                and float(predecessor_timestamp) > timestamp
+            ):
                 raise RuntimeError(
                     f"Finite replay dependency {predecessor!r} starts after {key!r}"
                 )
@@ -802,6 +824,10 @@ class ReplayBarrierCoordinator:
         if previous is not None and previous != credit:
             raise RuntimeError(f"Finite replay credit ID {credit.id} was reused")
         self._credits_by_id[credit.id] = credit
+        if credit.conversation_id in self._virtual_roots and credit.turn_index == 0:
+            state = self._root_state(credit.effective_root_correlation_id)
+            state.root_start_perf_ns = time.perf_counter_ns()
+            self._release_finite_ready(credit.effective_root_correlation_id, state)
 
     def unregister_credit(self, credit: Credit) -> None:
         if self._credits_by_id.get(credit.id) == credit:

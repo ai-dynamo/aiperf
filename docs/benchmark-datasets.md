@@ -43,6 +43,11 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
     <td>Mooncake trace file <a href="benchmark-modes/trace-replay.md"><code>--input-file your_trace_file.jsonl --custom-dataset-type mooncake_trace</code></a></td>
     </tr>
     <tr>
+    <td><strong>Dynamo Agentic Mooncake v2</strong></td>
+    <td style="text-align: center;">✅</td>
+    <td>Finite replay of explicit agentic request graphs using <a href="#dynamo-agentic-mooncake-v2"><code>--custom-dataset-type agentic_mooncake_v2</code></a></td>
+    </tr>
+    <tr>
     <td><strong>Baseten Trace</strong></td>
     <td style="text-align: center;">✅</td>
     <td>Baseten completion trace parquet <a href="tutorials/baseten-trace.md"><code>--input-file your_trace.parquet --custom-dataset-type baseten_trace</code></a></td>
@@ -84,6 +89,28 @@ This document describes datasets that AIPerf can use to generate stimulus. Addit
     </tr>
   </tbody>
 </table>
+
+## Dynamo Agentic Mooncake v2
+
+Use a JSONL file produced by Dynamo's `request_trace_to_mooncake --agentic`, or another producer of the `dynamo.agentic_mooncake` version 2 format:
+
+```bash
+aiperf profile \
+  --model TARGET_MODEL \
+  --url http://localhost:8000 \
+  --endpoint-type chat \
+  --streaming \
+  --input-file agentic-mooncake.jsonl \
+  --custom-dataset-type agentic_mooncake_v2 \
+  --agentic-replay-lifecycle finite \
+  --concurrency 2
+```
+
+Each play occupies one concurrency slot until all of its requests finish. Requests can have multiple roots and depend on dispatch or response-body EOF events, each with its own delay. Their `not_before_ms` values are lower bounds relative to the earliest root floor in the play. Source session IDs are sent as `x-dynamo-session-id`; an unambiguous source parent session is sent as `x-dynamo-parent-session-id`. Ambiguous or cyclic session ancestry has no parent header. Dependency relation labels and source session IDs remain in the dataset metadata. Disable `AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID`, which would replace the recorded session IDs. Tools are not executed.
+
+Input prompts are synthesized from the source hash blocks, so shared hashes produce shared content. As with other hash-based trace loaders, tokenization after decoding may differ from the recorded input length; check measured input lengths when this matters. The configured target model names replace source model names in order of first appearance, wrapping when necessary. `output_length` is a maximum generation length, not a guarantee that the server produces that many tokens.
+
+Finite replay is required. Zero output lengths, fixed `output_token_ids`, non-default priority fields, and trace transformations are rejected because their source semantics cannot currently be reproduced. The execution projects requests under a virtual play root: reported AIPerf `agent_depth` reflects that execution projection rather than the source session's nested depth.
 
 ## Exgentic Agent Trace Replay
 
