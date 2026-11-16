@@ -17,6 +17,7 @@ from aiperf.common.enums import CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.models import TurnMetadata
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.credit.callback_handler import CreditCallbackHandler
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.messages import CreditReturn, FirstToken
@@ -56,7 +57,7 @@ class SessionArrivalRig:
             prefill_concurrency=2,
         )
         self.scheduler = LoopScheduler()
-        self.lifecycle = PhaseLifecycle(self.config)
+        self.lifecycle = PhaseLifecycle(self.config, clock=MonotonicClock())
         self.lifecycle.start()
         self.progress = PhaseProgressTracker(self.config)
         self.stop_checker = StopConditionChecker(

@@ -8,6 +8,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
 from aiperf.plugin.enums import TimingMode
@@ -39,7 +40,7 @@ def _build_issuer_with_real_concurrency() -> tuple[CreditIssuer, ConcurrencyMana
         CreditPhase.PROFILING, config.concurrency, config.prefill_concurrency
     )
 
-    lifecycle = PhaseLifecycle(config)
+    lifecycle = PhaseLifecycle(config, clock=MonotonicClock())
     lifecycle.start()
     progress = PhaseProgressTracker(config)
     stop_checker = StopConditionChecker(

@@ -10,12 +10,10 @@ timestamps that are:
 - Monotonic (immune to NTP step corrections during a benchmark)
 - High resolution (nanosecond, from perf_counter)
 
-Used by the worker-side ClockOffsetTracker to ensure consistent, monotonic
-timestamps for cross-machine offset measurement, and (via ``process_clock``,
-anchored with ``MonotonicClock.calibrated``) for worker-side
-``RequestRecord.timestamp_ns``. The controller (CreditIssuer) anchors its own
-perf_counter baseline
-inline rather than through this class.
+Used by the worker-side ClockOffsetTracker for cross-machine offset measurement
+and, via ``process_clock`` calibrated with ``MonotonicClock.calibrated``, for
+worker-side ``RequestRecord.timestamp_ns``. The controller's credit router owns
+a shared instance used by phase lifecycles and credit timestamps.
 """
 
 import threading
