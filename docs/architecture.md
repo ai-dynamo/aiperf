@@ -178,10 +178,12 @@ Phase completion and warmup progress logs report `worker_errors`: errors known
 when workers return request credits. Response processing can detect additional
 failures afterward, such as a successful HTTP response with no usable completion.
 The Records Manager's processed-record summary and exported `error_request_count`
-include these failures. Once profiling records reconcile with worker completions,
-an `Error accounting` log explains any additional `response_processing_errors`
-alongside `worker_errors` and `total_errors`. This does not return another request
-credit or change the completed-request count.
+include these failures. Once profiling records reconcile with worker completions
+and every participating profiling phase has a known worker-error count, an
+`Error accounting` log explains any additional `response_processing_errors`
+alongside `worker_errors` and `total_errors`. This breakdown excludes intentional
+context-overflow skips from `worker_errors` because they are not record errors.
+This does not return another request credit or change exported counts.
 
 #### Record-Type Channels
 
