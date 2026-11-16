@@ -136,7 +136,7 @@ class LoopScheduler:
 
     def _safe_callback(
         self,
-        handle_container: list[asyncio.TimerHandle | asyncio.Handle],
+        handle_container: list[asyncio.TimerHandle | asyncio.Handle | None],
         coro: Coroutine,
     ) -> None:
         """
@@ -150,6 +150,9 @@ class LoopScheduler:
         group_id = None
         if handle_container[0] is not None:
             handle_id = id(handle_container[0])
+            # The handle retains this container in its callback args. Break
+            # the cycle now because timing services run with GC disabled.
+            handle_container[0] = None
             self._handles.pop(handle_id, None)
             group_id = self._handle_groups.pop(handle_id, None)
         self.execute_async(coro, group_id=group_id)
