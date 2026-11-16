@@ -127,11 +127,13 @@ def _compute_finite_ratios(
         # error rate sends them looking for a problem that isn't there.
         missing = int((~np.isfinite(latency_ns) | ~np.isfinite(osl)).sum())
         _logger.debug(
-            lambda: f"E2E normalized interactivity: {dropped} of {total} requests "
-            f"dropped ({missing} with no recorded latency/OSL -- typically failed "
-            f"requests; the remainder for a non-positive or non-finite latency, "
-            f"OSL, TTFT, or ISL, or a non-finite ratio); percentiles computed "
-            f"over {kept} requests."
+            lambda: (
+                f"E2E normalized interactivity: {dropped} of {total} requests "
+                f"dropped ({missing} with no recorded latency/OSL -- typically failed "
+                f"requests; the remainder for a non-positive or non-finite latency, "
+                f"OSL, TTFT, or ISL, or a non-finite ratio); percentiles computed "
+                f"over {kept} requests."
+            )
         )
     return ratio
 

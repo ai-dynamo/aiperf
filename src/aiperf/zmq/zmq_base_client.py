@@ -97,7 +97,9 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             self.scheduler = LoopScheduler()
             self.socket = self.context.socket(self.socket_type)
             self.debug(
-                lambda: f"ZMQ {self.socket_type_name} socket initialized, try {'BIND' if self.bind else 'CONNECT'} to {self.address} ({self.client_id})"
+                lambda: (
+                    f"ZMQ {self.socket_type_name} socket initialized, try {'BIND' if self.bind else 'CONNECT'} to {self.address} ({self.client_id})"
+                )
             )
 
             if zmq.IDENTITY in self.socket_ops:
@@ -105,7 +107,9 @@ class BaseZMQClient(AIPerfLifecycleMixin):
                 # otherwise it will not be properly set when the socket is bound/connected
                 self.socket.setsockopt(zmq.IDENTITY, self.socket_ops[zmq.IDENTITY])
                 self.debug(
-                    lambda: f"Set IDENTITY socket option: {self.socket_ops[zmq.IDENTITY]}"
+                    lambda: (
+                        f"Set IDENTITY socket option: {self.socket_ops[zmq.IDENTITY]}"
+                    )
                 )
                 del self.socket_ops[zmq.IDENTITY]
 
@@ -129,7 +133,9 @@ class BaseZMQClient(AIPerfLifecycleMixin):
             self.socket.setsockopt(zmq.IMMEDIATE, ZMQSocketDefaults.IMMEDIATE)
 
             self.debug(
-                lambda: f"ZMQ {self.socket_type_name} socket {'BOUND' if self.bind else 'CONNECTED'} to {self.address} ({self.client_id})"
+                lambda: (
+                    f"ZMQ {self.socket_type_name} socket {'BOUND' if self.bind else 'CONNECTED'} to {self.address} ({self.client_id})"
+                )
             )
 
         except Exception as e:
@@ -229,7 +235,9 @@ class BaseZMQClient(AIPerfLifecycleMixin):
                 self.socket.close()
         except zmq.ContextTerminated:
             self.debug(
-                lambda: f"ZMQ context already terminated, skipping socket close ({self.client_id})"
+                lambda: (
+                    f"ZMQ context already terminated, skipping socket close ({self.client_id})"
+                )
             )
             return
         except Exception as e:
