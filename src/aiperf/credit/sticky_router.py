@@ -27,6 +27,7 @@ from aiperf.common.enums import CommAddress, ConversationBranchMode, CreditPhase
 from aiperf.common.environment import Environment
 from aiperf.common.hooks import background_task
 from aiperf.common.mixins import CommunicationMixin
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.common.protocols import (
     StreamingPullClientProtocol,
     StreamingRouterClientProtocol,
@@ -38,6 +39,7 @@ from aiperf.credit.messages import (
     FirstToken,
     TimePing,
     TimePong,
+    TransportDispatched,
     WorkerConnected,
     WorkerDispatchable,
     WorkerShutdown,
@@ -217,6 +219,11 @@ class CreditRouterProtocol(Protocol):
         """
         ...
 
+    @property
+    def clock(self) -> MonotonicClock:
+        """Controller monotonic wall-clock source."""
+        ...
+
 
 # =============================================================================
 # Sticky Credit Router
@@ -322,6 +329,7 @@ class StickyCreditRouter(CommunicationMixin):
         self,
         run: "BenchmarkRun",
         service_id: str,
+        clock: MonotonicClock | None = None,
         **kwargs,
     ) -> None:
         super().__init__(run=run, service_id=service_id, **kwargs)
@@ -334,9 +342,13 @@ class StickyCreditRouter(CommunicationMixin):
         self._on_first_token_callback: (
             Callable[[FirstToken], Awaitable[None]] | None
         ) = None
+        self._on_transport_dispatched_callback: (
+            Callable[[TransportDispatched], Awaitable[None]] | None
+        ) = None
         self._on_fatal_error: Callable[[BaseException], None] | None = None
         self._on_worker_count_changed: Callable[[int], None] | None = None
         self._on_worker_lost: Callable[[str], None] | None = None
+        self._clock = clock if clock is not None else MonotonicClock()
 
         # Sticky sessions: owner correlation id (or alias) -> _StickyEntry
         # Routes all turns of a session (and FORK children pinned to it) to the
@@ -398,6 +410,11 @@ class StickyCreditRouter(CommunicationMixin):
     # Public Methods
     # =============================================================================
 
+    @property
+    def clock(self) -> MonotonicClock:
+        """Controller monotonic wall-clock source."""
+        return self._clock
+
     def set_return_callback(
         self, callback: Callable[[str, CreditReturn], Awaitable[None]]
     ) -> None:
@@ -436,6 +453,11 @@ class StickyCreditRouter(CommunicationMixin):
     ) -> None:
         """Set callback for first token events (enables prefill concurrency release)."""
         self._on_first_token_callback = callback
+
+    def set_transport_dispatched_callback(
+        self, callback: Callable[[TransportDispatched], Awaitable[None]]
+    ) -> None:
+        self._on_transport_dispatched_callback = callback
 
     async def wait_for_workers(self, timeout: float) -> None:
         """Close the startup race where a phase issues its first credit before
@@ -881,28 +903,56 @@ class StickyCreditRouter(CommunicationMixin):
         worker_id = getattr(message, "worker_id", None) or ""
         await self._handle_router_message(worker_id, message)
 
+    async def _handle_transport_dispatched(
+        self, worker_id: str, message: TransportDispatched
+    ) -> None:
+        key = (message.phase, message.phase_index, message.credit_id)
+        worker_load = self._workers.get(worker_id)
+        if worker_load is None or key not in worker_load.active_credit_ids:
+            self._warn_missing_worker(worker_id, "transport dispatch")
+            return
+
+        if self._on_transport_dispatched_callback is None:
+            return
+
+        try:
+            await self._on_transport_dispatched_callback(message)
+        except Exception as exc:
+            if self._on_fatal_error is not None:
+                self._on_fatal_error(exc)
+            else:
+                raise
+
+    async def _handle_credit_return(
+        self, worker_id: str, message: CreditReturn
+    ) -> None:
+        """Release credit and truncation-ended session state before notifying the phase."""
+        self._track_credit_returned(
+            worker_id,
+            message.credit,
+            message.cancelled,
+            message.error is not None,
+        )
+        if message.ended_on_truncation and not message.cancelled:
+            self._release_sticky_for_early_end(message.credit)
+        if self._on_return_callback:
+            # Credit returns release concurrency slots, so callback delays
+            # directly impact throughput.
+            await self._on_return_callback(worker_id, message)
+
     async def _handle_router_message(
         self, worker_id: str, message: WorkerToRouterMessage
     ) -> None:
         """Handle CreditReturn, FirstToken, WorkerDispatchable, WorkerShutdown from workers."""
         match message:
             case CreditReturn():
-                self._track_credit_returned(
-                    worker_id,
-                    message.credit,
-                    message.cancelled,
-                    message.error is not None,
-                )
-                if message.ended_on_truncation and not message.cancelled:
-                    self._release_sticky_for_early_end(message.credit)
-                if self._on_return_callback:
-                    # Await directly instead of execute_async - credit returns release
-                    # concurrency slots, so delays here directly impact throughput.
-                    await self._on_return_callback(worker_id, message)
+                await self._handle_credit_return(worker_id, message)
             case FirstToken():
                 if self._on_first_token_callback:
                     # Forward TTFT to orchestrator so it can release the prefill slot.
                     await self._on_first_token_callback(message)
+            case TransportDispatched():
+                await self._handle_transport_dispatched(worker_id, message)
             case TimePing():
                 await self._handle_time_ping(worker_id, message)
             case WorkerConnected():
@@ -933,11 +983,11 @@ class StickyCreditRouter(CommunicationMixin):
     async def _handle_time_ping(self, worker_id: str, message: TimePing) -> None:
         """Echo a TimePing back as a TimePong on the credit channel.
 
-        Both fields are echoed verbatim so the worker computes RTT entirely
-        against its own clock; the router's clock never enters the measurement,
-        which is what makes the baseline immune to cross-machine skew. The
-        reply rides the same ROUTER socket credits use, so the measured latency
-        reflects the queuing real credits will see.
+        The probe fields are echoed so the worker computes RTT against its own
+        clock. The router wall timestamp is an extra sample used only by finite
+        replay's existing clock-offset tracker. The reply rides the same ROUTER
+        socket credits use, so measured latency reflects the queuing real credits
+        will see.
 
         Does not register the worker: a probing worker is not yet dispatchable,
         and adding it to the load table here would route credits to a worker
@@ -945,7 +995,11 @@ class StickyCreditRouter(CommunicationMixin):
         """
         await self._router_client.send_to(
             worker_id,
-            TimePong(sequence=message.sequence, sent_at_ns=message.sent_at_ns),
+            TimePong(
+                sequence=message.sequence,
+                sent_at_ns=message.sent_at_ns,
+                router_sent_wall_ns=self._clock.now_ns(),
+            ),
         )
 
     def _register_worker(self, worker_id: str) -> None:

@@ -266,7 +266,7 @@ The Timing Manager uses a **credit-based flow control system** to control when r
 - Each credit grants permission to send one request
 - The Timing Manager issues credits according to the configured timing mode:
   - **Fixed schedule mode**: Replays conversation traces at precise timestamps from dataset metadata
-  - **Request-rate mode**: Issues credits at a specific rate with configurable arrival patterns (constant, Poisson, gamma, concurrency burst)
+  - **Request-rate mode**: Issues credits at a specific rate with configurable arrival patterns (constant, Poisson, gamma, concurrency burst). Constant, Poisson, and gamma phases can opt into `continuation_dispatch: direct`: rate slots then start sessions, while root continuations use the phase scheduler after think time and retain the CreditIssuer stop and concurrency checks. The default `rate_slot` policy paces every turn.
   - **User-centric rate mode**: Each session acts as a separate user with calculated gaps between turns
 
 **Flow Control Benefits:**
@@ -279,7 +279,9 @@ The Timing Manager uses a **credit-based flow control system** to control when r
 - Credits are dispatched to workers via a ROUTER/DEALER pattern (the Timing Manager's sticky ROUTER to each worker's DEALER)
 - Router selects workers based on sticky sessions (multi-turn conversations) or least-loaded worker selection
 - If a registered worker that owns in-flight credits or sticky sessions is lost during an active benchmark, the Timing Manager cancels the phase and records a terminal failure rather than migrating or truncating worker-local state.
-- Credit returns travel back on a dedicated PUSH/PULL fan-in channel: each worker PUSHes its `CreditReturn`/`FirstToken` to the Timing Manager's single PULL, separating the high-volume return path from credit dispatch
+- Credit returns travel back on a dedicated PUSH/PULL fan-in channel: each worker PUSHes its `CreditReturn`/`FirstToken` to the Timing Manager's single PULL, separating the high-volume return path from credit dispatch. Finite replay also sends `TransportDispatched` on this channel to record HTTP request start and release dispatch-dependent turns. `CreditReturn` carries the successful response-body EOF timestamp for completion dependencies.
+- Finite replay sends transport start and response EOF timestamps on the return channel. Local workers send same-host performance timestamps directly; Kubernetes workers send wall timestamps with clock correction so the controller can place events on its performance clock.
+- Phase lifecycles require the credit router's shared monotonic clock, keeping phase boundaries and credit timestamps in the same frame across wall-clock adjustments. HTTP body EOF is checked before recording its timestamp and invoking the completion callback; an incomplete body reports `ResponseBodyIncompleteError` for streaming, binary, and text responses.
 - The return channel carries no ZMQ envelope identity, so the returning worker id travels inside the message
 - No coordination required between workers
 - Scales to large numbers of workers without bottlenecks

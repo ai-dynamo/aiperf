@@ -38,6 +38,7 @@ from pydantic import AfterValidator, BeforeValidator, Field
 
 from aiperf.common.constants import DEFAULT_BENCHMARK_GRACE_PERIOD_SECONDS
 from aiperf.common.enums import (
+    AgenticReplayLifecycle,
     AIPerfLogLevel,
     AudioFormat,
     CacheBustTarget,
@@ -2434,6 +2435,21 @@ class CLIConfig(BaseConfig):
         ),
     ] = None
 
+    continuation_dispatch: Annotated[
+        Literal["rate_slot", "direct"],
+        Field(
+            description="Schedule profiling root continuation turns at the next rate slot "
+            "(rate_slot, default), or after think time without consuming a session "
+            "arrival slot (direct). Requires constant, poisson, or gamma request-rate "
+            "scheduling; concurrency and request limits still apply. "
+            "DAG children use their independent dispatch path.",
+        ),
+        CLIParameter(
+            name=("--continuation-dispatch",),
+            group=Groups.LOAD_GENERATOR,
+        ),
+    ] = "rate_slot"
+
     arrival_pattern: Annotated[
         ArrivalPattern,
         Field(
@@ -2630,6 +2646,15 @@ class CLIConfig(BaseConfig):
             group=Groups.LOAD_GENERATOR,
         ),
     ] = None
+
+    agentic_replay_lifecycle: Annotated[
+        AgenticReplayLifecycle,
+        Field(
+            default=AgenticReplayLifecycle.STEADY_STATE,
+            description="Agentic replay admission: recycle traces or replay each root once.",
+        ),
+        CLIParameter(name=("--agentic-replay-lifecycle",), group=Groups.LOAD_GENERATOR),
+    ] = AgenticReplayLifecycle.STEADY_STATE
 
     system_idle_gap_cap_seconds: Annotated[
         float | None,

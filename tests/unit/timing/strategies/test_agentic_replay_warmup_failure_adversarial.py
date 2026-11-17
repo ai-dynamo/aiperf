@@ -40,6 +40,7 @@ def _make_strategy(
     cfg = MagicMock()
     cfg.phase = phase
     cfg.concurrency = max(1, len(trajectories))
+    cfg.finite_replay = False
     issuer = issuer if issuer is not None else AsyncMock()
     scheduler = scheduler if scheduler is not None else MagicMock()
     if stop_checker is None:
@@ -292,6 +293,7 @@ async def test_profiling_setup_raises_when_trajectories_empty() -> None:
     cfg = MagicMock()
     cfg.phase = CreditPhase.PROFILING
     cfg.concurrency = 1
+    cfg.finite_replay = False
     strategy = AgenticReplayStrategy(
         config=cfg,
         conversation_source=src,

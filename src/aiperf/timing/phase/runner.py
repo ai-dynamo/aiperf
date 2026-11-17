@@ -215,8 +215,10 @@ class PhaseRunner(TaskManagerMixin):
         self._on_phase_error: Callable[[BaseException], None] | None = None
 
         # Per-phase components - order matters
-        self._scheduler = LoopScheduler()
-        self._lifecycle = PhaseLifecycle(self._config)
+        self._scheduler = LoopScheduler(
+            exception_handler=self._on_scheduled_task_failed
+        )
+        self._lifecycle = PhaseLifecycle(self._config, clock=self._credit_router.clock)
         self._progress = PhaseProgressTracker(self._config)
         self._stop_checker = StopConditionChecker(
             config=self._config,
@@ -228,6 +230,8 @@ class PhaseRunner(TaskManagerMixin):
                 self._conversation_source.dataset_metadata,
                 scheduler=self._scheduler,
                 root_idle_gap_cap_seconds=self._root_idle_gap_cap_seconds(),
+                strict_finite=self._config.finite_replay,
+                fail_finite=self._record_finite_error,
             )
             if (
                 self._config.timing_mode == TimingMode.AGENTIC_REPLAY
@@ -300,7 +304,12 @@ class PhaseRunner(TaskManagerMixin):
             ),
             replay_barrier=self._replay_barrier,
             cache_bust_target=self._resolve_cache_bust_target(),
+            finite_replay=self._config.finite_replay,
         )
+
+    def _record_finite_error(self, error: BaseException) -> None:
+        self._progress.record_fatal_error(error)
+        self._progress.all_credits_sent_event.set()
 
     def _maybe_construct_branch_orchestrator(
         self, conversation_source: ConversationSource
@@ -414,7 +423,7 @@ class PhaseRunner(TaskManagerMixin):
         self, callback: Callable[[BaseException], None]
     ) -> None:
         """Set callback to invoke when a seamless non-final phase's detached
-        return-wait task ends with a fatal control-node failure.
+        return-wait task ends with a fatal phase failure.
 
         ``PhaseRunner.run()`` returns without awaiting the seamless return-wait
         task, so raising inside it would only reject the background task and
@@ -427,13 +436,12 @@ class PhaseRunner(TaskManagerMixin):
     def return_wait_task(self) -> asyncio.Task | None:
         """The detached seamless return-wait task (None unless this phase is
         seamless non-final). The orchestrator awaits it as a barrier so a late
-        fatal control-node failure surfaces before the run reports success."""
+        fatal phase failure surfaces before the run reports success."""
         return self._return_wait_task
 
     @property
-    def control_fatal_error(self) -> BaseException | None:
-        """A fatal request-free control-node failure recorded on this phase's
-        progress tracker, if any (see ``record_control_fatal_error``)."""
+    def fatal_phase_error(self) -> BaseException | None:
+        """The first fatal phase error recorded on the progress tracker, if any."""
         return self._progress.fatal_error
 
     def record_control_fatal_error(self, error: BaseException) -> None:
@@ -445,6 +453,12 @@ class PhaseRunner(TaskManagerMixin):
         under seamless mode's concurrent runners, may point at the wrong phase.
         """
         self._progress.record_fatal_error(error)
+
+    def _on_scheduled_task_failed(self, task: asyncio.Task) -> None:
+        """Wake phase waits when detached issuance fails, retaining the first cause."""
+        if (error := task.exception()) is not None:
+            self._progress.record_fatal_error(error)
+            self._progress.all_credits_sent_event.set()
 
     def _is_phase_complete(self) -> bool:
         """Return True if the request-count cap has been reached AND no DAG
@@ -501,10 +515,8 @@ class PhaseRunner(TaskManagerMixin):
             ramper.stop()
         self._scheduler.cancel_all()
 
-    def _raise_if_control_node_failed(self) -> None:
-        """Re-raise a fatal request-free control-node failure recorded on the
-        progress tracker (via the router's fatal-error sink), so the phase exits
-        with a visible error instead of reporting the graph as complete."""
+    def _raise_if_phase_failed(self) -> None:
+        """Re-raise the first fatal phase error recorded on the progress tracker."""
         if self._progress.fatal_error is not None:
             raise self._progress.fatal_error
 
@@ -522,17 +534,13 @@ class PhaseRunner(TaskManagerMixin):
         # unretrieved-task-exception, and treat it as a phase failure.
         task_exc = None if task.cancelled() else task.exception()
 
-        # Seamless path: a fatal request-free control-node failure (recorded on
-        # the progress tracker during the background wait, or raised by the task
-        # itself) must not be reported as a clean phase completion. Forward it to
-        # the orchestrator so the RUN fails -- the sync path raises
-        # ``_raise_if_control_node_failed`` for this, but the seamless task is
-        # never awaited, so we propagate via the error callback instead.
+        # run() returns before the detached wait completes, so forward fatal
+        # phase failures through the orchestrator's error callback.
         fatal = self._progress.fatal_error or task_exc
         if fatal is not None:
             self.error(
                 lambda: (
-                    "fatal request-free control-node failure in seamless "
+                    "Fatal phase failure in seamless "
                     f"phase {self._config.phase}: {fatal!r}"
                 )
             )
@@ -796,18 +804,10 @@ class PhaseRunner(TaskManagerMixin):
         self._execution_task = self.execute_async(strategy.execute_phase())
 
         await self._wait_for_sending_complete(strategy)
+        self._raise_if_phase_failed()
 
         if self._was_cancelled:
-            if not self._lifecycle.is_complete:
-                self._lifecycle.mark_complete(grace_period_triggered=False)
-                self._progress.freeze_completed_counts()
-            self._progress.all_credits_returned_event.set()
-            self._baseline_end_ns = (
-                await self._capture_baseline_boundary_before_completion(
-                    phase_id, BaselineKind.END
-                )
-            )
-            return self._create_final_stats()
+            return await self._finish_cancelled_phase(phase_id)
 
         # Seamless mode: phase flows into next without waiting for returns.
         # Progress task continues in background until phase complete.
@@ -821,11 +821,14 @@ class PhaseRunner(TaskManagerMixin):
         else:
             await self._wait_for_returning_complete(strategy, phase_id=phase_id)
             self._progress_task.cancel()
-            # Surface a fatal control-node failure recorded during the wait.
+            # Surface a fatal phase error recorded during the wait.
             # Checked HERE -- after the wait returns via ANY of its exit paths,
             # including the "all credits already returned" fast path that the
             # fatal-error callback itself unblocks -- so it is never swallowed.
-            self._raise_if_control_node_failed()
+            self._raise_if_phase_failed()
+
+        if self._config.finite_replay:
+            self._log_finite_replay_diagnostics()
 
         for ramper in self._rampers:
             ramper.stop()
@@ -848,6 +851,29 @@ class PhaseRunner(TaskManagerMixin):
             self._report_warmup_failures(strategy)
 
         return self._create_final_stats()
+
+    async def _finish_cancelled_phase(self, phase_id: str) -> CreditPhaseStats:
+        if not self._lifecycle.is_complete:
+            self._lifecycle.mark_complete(grace_period_triggered=False)
+            self._progress.freeze_completed_counts()
+        self._progress.all_credits_returned_event.set()
+        self._baseline_end_ns = await self._capture_baseline_boundary_before_completion(
+            phase_id, BaselineKind.END
+        )
+        return self._create_final_stats()
+
+    def _log_finite_replay_diagnostics(self) -> None:
+        count, total_ns, max_ns, spread_ns = (
+            self._credit_issuer.replay_gate.finite_diagnostics()
+        )
+        mean_ns = total_ns / count if count else 0
+        self.info(
+            "Finite replay timing diagnostics: "
+            f"scheduled dispatches={count}, "
+            f"mean lateness={mean_ns / 1e6:.3f}ms, "
+            f"max lateness={max_ns / 1e6:.3f}ms, "
+            f"max clock-offset sample spread={spread_ns / 1e6:.3f}ms"
+        )
 
     def _create_final_stats(self) -> CreditPhaseStats:
         return self._progress.create_stats_with_baseline_window(

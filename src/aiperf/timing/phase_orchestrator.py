@@ -256,6 +256,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 expected_duration_sec=(
                     profiling.expected_duration_sec if profiling is not None else None
                 ),
+                finite_replay=(
+                    profiling.finite_replay if profiling is not None else False
+                ),
             )
         else:
             self._conversation_source = ConversationSource(
@@ -310,6 +313,9 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
         self._credit_router.set_return_callback(self._callback_handler.on_credit_return)
         self._credit_router.set_first_token_callback(
             self._callback_handler.on_first_token
+        )
+        self._credit_router.set_transport_dispatched_callback(
+            self._callback_handler.on_transport_dispatched
         )
         self._credit_router.set_fatal_error_callback(self._record_control_fatal_error)
 
@@ -522,13 +528,13 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
 
         # Barrier: a seamless phase's return-wait runs detached and
         # ``runner.run()`` never awaited it, so await any still outstanding here.
-        # This guarantees a late fatal control-node failure has been surfaced
+        # This guarantees a late fatal phase failure has been surfaced
         # before the run is allowed to report success.
         await self._await_outstanding_seamless_waits()
         await self._drain_deferred_profiler_stops()
         if self._seamless_phase_error is not None:
             error = self._seamless_phase_error
-            self.error(f"Fatal control-node failure in a seamless phase: {error!r}")
+            self.error(f"Fatal phase failure in a seamless phase: {error!r}")
             # cancel() runs _stop_server_profiler_warn_only, so any profiler
             # ownership still outstanding here is released before we raise.
             await self.cancel()
@@ -536,7 +542,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
 
     async def _await_outstanding_seamless_waits(self) -> None:
         """Await any detached seamless return-wait tasks still running after the
-        phase loop and capture a fatal control-node failure from each.
+        phase loop and capture a fatal phase error from each.
 
         Reads each runner's recorded fatal error directly rather than relying on
         the task's done-callback having fired, so the check is deterministic.
@@ -549,7 +555,7 @@ class PhaseOrchestrator(AIPerfLifecycleMixin):
                 except Exception as exc:  # noqa: BLE001 - propagated below
                     if self._seamless_phase_error is None:
                         self._seamless_phase_error = exc
-            fatal = runner.control_fatal_error
+            fatal = runner.fatal_phase_error
             if fatal is not None and self._seamless_phase_error is None:
                 self._seamless_phase_error = fatal
 

@@ -113,6 +113,7 @@ _ROUTED_OUTSIDE_SECTIONS: frozenset[str] = frozenset(
         "wandb_run_name",
         "wandb_tags",
         # agentic phase fields, via _apply_agentic_replay_fields
+        "agentic_replay_lifecycle",
         "agentic_cache_warmup_duration",
         "agentic_warmup_grace_period",
         "warmup_requests_per_lane",
@@ -305,7 +306,7 @@ def _build_routed_under_config() -> frozenset[str]:
     # pair, and the AGENTIC_REPLAY fields shared with BasePhaseConfig.
     loadgen = (
         {attr for attr, _ in _LOADGEN_PHASE_FIELD_MAP}
-        | {"request_rate_series", "arrival_pattern"}
+        | {"request_rate_series", "arrival_pattern", "continuation_dispatch"}
         | (set(_AGENTIC_REPLAY_ROUTES) & LOADGEN_FIELDS)
         # Phase shaping, applied by _apply_phase_shaping_overrides through the
         # converter's own helpers. Derived from the same tables those helpers

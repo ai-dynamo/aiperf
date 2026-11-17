@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Self
 
 from pydantic import ConfigDict, Field, model_validator
 
-from aiperf.common.enums import CacheBustTarget, CreditPhase
+from aiperf.common.enums import AgenticReplayLifecycle, CacheBustTarget, CreditPhase
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.types import PhaseKind
 from aiperf.config.dataset.defaults import InputDefaults
@@ -17,7 +18,9 @@ from aiperf.config.sweep.adaptive import SLAFilter
 from aiperf.plugin.enums import (
     ArrivalPattern,
     PhaseType,
+    PluginType,
     TimingMode,
+    TransportType,
     URLSelectionStrategy,
 )
 from aiperf.timing.adaptive_config import (
@@ -173,14 +176,20 @@ class TimingConfig(AIPerfBaseModel):
         cfg = run.cfg
 
         profiling_phases = cfg.get_profiling_phases()
-        agentic = _is_agentic_replay(profiling_phases)
-        artifact_dir = cfg.artifacts.dir
+        finite_replay = any(
+            phase.agentic_replay_lifecycle == AgenticReplayLifecycle.FINITE
+            for phase in profiling_phases
+        )
+        agentic = _is_agentic_replay(profiling_phases) or finite_replay
+        if finite_replay:
+            _validate_finite_replay_compatibility(cfg, profiling_phases)
 
+        artifact_dir = cfg.artifacts.dir
         profiling_default_cancellation = _default_cancellation_config(cfg.phases)
         warmup_default_cancellation = RequestCancellationConfig()
 
         configs: list[CreditPhaseConfig] = []
-        if agentic:
+        if agentic and not finite_replay:
             agentic_warmup = _build_agentic_warmup_config(profiling_phases[0])
             if agentic_warmup is not None:
                 configs.append(agentic_warmup)
@@ -220,6 +229,8 @@ class TimingConfig(AIPerfBaseModel):
         allow_dataset_wrap = bool(
             getattr(synthesis, "allow_dataset_wrap", False) if synthesis else False
         )
+        if finite_replay and allow_dataset_wrap:
+            raise ValueError("Finite replay does not support dataset wrapping")
         cache_bust_enabled = cfg.get_cache_bust_target() != CacheBustTarget.NONE
 
         return cls(
@@ -239,6 +250,78 @@ class TimingConfig(AIPerfBaseModel):
         )
 
 
+def _validate_finite_replay_compatibility(
+    cfg: Any, profiling_phases: list[PhaseConfig]
+) -> None:
+    if any(
+        phase.agentic_replay_lifecycle != AgenticReplayLifecycle.FINITE
+        for phase in profiling_phases
+    ):
+        raise ValueError(
+            "All profiling phases must use the same agentic replay lifecycle"
+        )
+    if cfg.get_warmup_phases():
+        raise ValueError("Finite replay does not support explicit warmup phases")
+
+    _validate_finite_replay_endpoint(cfg)
+    _validate_finite_replay_phases(profiling_phases)
+    _validate_finite_replay_dataset(cfg.get_default_dataset())
+
+
+def _validate_finite_replay_endpoint(cfg: Any) -> None:
+    if cfg.endpoint.transport not in (None, TransportType.HTTP):
+        raise ValueError(
+            "--agentic-replay-lifecycle finite requires the HTTP transport"
+        )
+
+    from aiperf.plugin import plugins
+
+    if plugins.get_endpoint_metadata(cfg.endpoint.type).requires_polling:
+        raise ValueError("Finite replay does not support polling endpoint workflows")
+
+    transport_name = cfg.endpoint.transport or TransportType.HTTP
+    transport_class = plugins.get_class(PluginType.TRANSPORT, transport_name)
+    try:
+        inspect.signature(transport_class.send_request).bind(
+            None,
+            None,
+            None,
+            first_token_callback=None,
+            transport_start_callback=None,
+            transport_eof_callback=None,
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"--agentic-replay-lifecycle finite requires transport {transport_name!r} "
+            "to accept transport_start_callback and transport_eof_callback; "
+            "update the transport plugin for finite replay"
+        ) from exc
+
+
+def _validate_finite_replay_phases(phases: list[PhaseConfig]) -> None:
+    if any(
+        phase.cancellation is not None and phase.cancellation.rate for phase in phases
+    ):
+        raise ValueError("Finite replay does not support request cancellation")
+
+
+def _validate_finite_replay_dataset(dataset: Any) -> None:
+    delay_caps = (
+        "trace_idle_gap_cap_seconds",
+        "inter_turn_delay_cap_seconds",
+        "max_idle_gap_cap_seconds",
+        "replay_speedup",
+    )
+    if any(getattr(dataset, field, None) is not None for field in delay_caps):
+        raise ValueError(
+            "Finite replay cannot use trace or inter-turn delay compression"
+        )
+    if getattr(dataset, "ignore_trace_delays", False) or getattr(
+        dataset, "use_think_time_only", False
+    ):
+        raise ValueError("Finite replay requires authored absolute trace timestamps")
+
+
 class CreditPhaseConfig(AIPerfBaseModel):
     """Model for credit phase config. This is used to configure a credit phase.
 
@@ -249,6 +332,11 @@ class CreditPhaseConfig(AIPerfBaseModel):
     """
 
     model_config = ConfigDict(frozen=True)
+
+    finite_replay: bool = Field(
+        default=False,
+        description="Replay every selected root exactly once with strict transport timing.",
+    )
 
     phase: CreditPhase = Field(..., description="The phase of the credit phase.")
     phase_index: int | None = Field(
@@ -313,6 +401,11 @@ class CreditPhaseConfig(AIPerfBaseModel):
     )
     request_rate: float | None = Field(
         default=None, gt=0, description="The request rate of the credit phase."
+    )
+    continuation_dispatch: Literal["rate_slot", "direct"] = Field(
+        default="rate_slot",
+        description="Whether root continuation turns consume rate slots or dispatch "
+        "directly after think time through the normal credit gates.",
     )
     arrival_pattern: ArrivalPattern = Field(
         default=ArrivalPattern.POISSON,
@@ -399,6 +492,25 @@ class CreditPhaseConfig(AIPerfBaseModel):
         default_factory=AdaptiveTimingConfig,
         description="Adaptive scale timing settings.",
     )
+
+    @model_validator(mode="after")
+    def validate_continuation_dispatch(self) -> Self:
+        """Reject a direct policy after scenario and timing-mode resolution."""
+        if self.continuation_dispatch == "direct" and (
+            self.timing_mode != TimingMode.REQUEST_RATE
+            or self.request_rate is None
+            or self.arrival_pattern
+            not in {
+                ArrivalPattern.CONSTANT,
+                ArrivalPattern.POISSON,
+                ArrivalPattern.GAMMA,
+            }
+        ):
+            raise ValueError(
+                "--continuation-dispatch / continuation_dispatch='direct' requires "
+                "constant, poisson, or gamma request-rate scheduling"
+            )
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -597,6 +709,7 @@ def _build_warmup_config(
         concurrency=phase.concurrency,
         prefill_concurrency=phase.prefill_concurrency,
         request_rate=_phase_request_rate(phase),
+        continuation_dispatch=getattr(phase, "continuation_dispatch", "rate_slot"),
         arrival_pattern=_phase_arrival_pattern(phase),
         arrival_smoothness=getattr(phase, "smoothness", None),
         seamless=False,
@@ -731,12 +844,14 @@ def _build_profiling_config(
         phase_kind=phase.kind,
         request_cancellation=_phase_cancellation_config(phase, default_cancellation),
         timing_mode=timing_mode,
+        finite_replay=phase.agentic_replay_lifecycle == AgenticReplayLifecycle.FINITE,
         expected_duration_sec=phase.duration,
         total_expected_requests=phase.requests,
         **_phase_session_fields(phase),
         concurrency=phase.concurrency,
         prefill_concurrency=phase.prefill_concurrency,
         request_rate=_phase_request_rate(phase),
+        continuation_dispatch=getattr(phase, "continuation_dispatch", "rate_slot"),
         arrival_pattern=_phase_arrival_pattern(phase),
         arrival_smoothness=getattr(phase, "smoothness", None),
         seamless=phase.seamless,

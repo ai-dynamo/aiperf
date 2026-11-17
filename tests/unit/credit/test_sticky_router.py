@@ -3,18 +3,86 @@
 import asyncio
 import itertools
 from collections.abc import Awaitable, Callable
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from pytest import param
 
 from aiperf.common.enums import ConversationBranchMode, CreditPhase
-from aiperf.credit.messages import CreditReturn, FirstToken
+from aiperf.credit.messages import CreditReturn, FirstToken, TransportDispatched
 from aiperf.credit.sticky_router import StickyCreditRouter, _StickyEntry
 from aiperf.credit.structs import Credit
 from tests.unit.timing.conftest import make_credit
 
 SendFn = Callable[..., Awaitable[str]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "worker_state", ["active", "unknown", "returned", "no_callback"]
+)
+async def test_transport_dispatch_only_observes_active_credit(
+    benchmark_run, worker_state: str
+) -> None:
+    router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+    callback = AsyncMock()
+    router.set_transport_dispatched_callback(callback)
+    credit = make_credit(id=1, num_turns=1)
+    if worker_state != "unknown":
+        router._register_worker("worker-1")
+        router._track_credit_sent("worker-1", credit)
+    if worker_state == "returned":
+        router._track_credit_returned("worker-1", credit, False, False)
+    if worker_state == "no_callback":
+        router._on_transport_dispatched_callback = None
+    event = TransportDispatched(
+        credit_id=credit.id,
+        phase=credit.phase,
+        phase_index=credit.phase_index,
+        worker_id="worker-1",
+        transport_start_wall_ns=1_000,
+        clock_offset_ns=0,
+        clock_offset_spread_ns=0,
+    )
+
+    await router._handle_router_message("worker-1", event)
+
+    if worker_state == "active":
+        callback.assert_awaited_once_with(event)
+        assert router._workers["worker-1"].in_flight_credits == 1
+    else:
+        callback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("has_fatal_callback", [True, False])
+async def test_transport_dispatch_observer_failure_is_fatal(
+    benchmark_run, has_fatal_callback: bool
+) -> None:
+    router = StickyCreditRouter(run=benchmark_run, service_id="test-router")
+    error = RuntimeError("dispatch timestamp invalid")
+    router.set_transport_dispatched_callback(AsyncMock(side_effect=error))
+    fatal = Mock()
+    router._on_fatal_error = fatal if has_fatal_callback else None
+    credit = make_credit(id=1, num_turns=1)
+    router._register_worker("worker-1")
+    router._track_credit_sent("worker-1", credit)
+    event = TransportDispatched(
+        credit_id=credit.id,
+        phase=credit.phase,
+        phase_index=credit.phase_index,
+        worker_id="worker-1",
+        transport_start_wall_ns=1_000,
+        clock_offset_ns=0,
+        clock_offset_spread_ns=0,
+    )
+
+    if has_fatal_callback:
+        await router._handle_router_message("worker-1", event)
+        fatal.assert_called_once_with(error)
+    else:
+        with pytest.raises(RuntimeError, match="dispatch timestamp invalid"):
+            await router._handle_router_message("worker-1", event)
 
 
 class TestStickyCreditRouterFairLoadBalancing:

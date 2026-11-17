@@ -38,7 +38,9 @@ class RequestRateStrategy(AIPerfLoggerMixin):
 
     Subsequent turns have priority over new sessions to prevent starvation:
     multi-turn conversations hold session slots, so completing them frees slots
-    faster than starting new ones.
+    faster than starting new ones. With ``continuation_dispatch=direct``, root
+    continuations instead run after their think time through the credit issuer,
+    leaving rate intervals available for new sessions.
 
     Terminology:
         - Credit: permission token to send one request (turn)
@@ -335,17 +337,17 @@ class RequestRateStrategy(AIPerfLoggerMixin):
     async def handle_credit_return(
         self, credit: Credit, *, error: str | None = None
     ) -> None:
-        """Queue the next turn of this conversation for the main loop.
+        """Schedule the next turn according to the continuation dispatch policy.
 
         ``error`` is accepted for protocol parity (the callback handler passes
         the worker error string for context-overflow early termination in
         AgenticReplayStrategy); RequestRateStrategy ignores it.
 
         Called by CreditCallbackHandler when a worker completes a turn.
-        If not the final turn, queues the next turn for the main rate loop
-        to issue at the next available interval.
+        With the default policy, queues non-final turns for the main rate loop.
+        Direct mode schedules them through the issuer without a rate slot.
 
-        The delay_ms from turn metadata (if present) is honored before queuing,
+        The delay_ms from turn metadata (if present) is honored before dispatch,
         simulating user "think time" between turns in a conversation.
 
         DAG sub-agent children (turns carrying ``parent_correlation_id``) are
@@ -370,6 +372,14 @@ class RequestRateStrategy(AIPerfLoggerMixin):
                 )
             else:
                 await self._issue_child_continuation_or_release(turn, credit)
+            return
+
+        if self._config.continuation_dispatch == "direct":
+            # Prefill backpressure must not block the credit-return handler.
+            self._scheduler.schedule_later(
+                (meta.delay_ms or 0) / MILLIS_PER_SECOND,
+                self._credit_issuer.issue_credit(turn),
+            )
             return
 
         # Honor think-time delay from dataset metadata before queuing
