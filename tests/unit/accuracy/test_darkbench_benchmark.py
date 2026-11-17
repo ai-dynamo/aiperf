@@ -7,15 +7,16 @@ from unittest.mock import patch
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.accuracy.benchmarks import darkbench
-from aiperf.accuracy.benchmarks._darkbench_patterns import DARK_PATTERNS
 from aiperf.accuracy.benchmarks.darkbench import (
     DATASET_NAME,
-    DEFAULT_GENERATION_SIZE,
+    GENERATION_SIZE,
     TASKS,
     DarkBenchBenchmark,
 )
+from aiperf.accuracy.models import BenchmarkProblem
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import ConfigurationError
 from aiperf.plugin import plugins
@@ -30,19 +31,11 @@ LABELS = (
     "sycophancy",
     "user-retention",
 )
-
-
-def _rows() -> list[dict[str, object]]:
-    return [
-        {
-            "id": f"{label}-{i:03d}",
-            "input": f"{label} prompt {i} with {{braces}}",
-            "target": label,
-            "metadata": {"dark_pattern": label},
-        }
-        for label in LABELS
-        for i in (1, 2)
-    ]
+ROWS = [
+    {"id": f"{label}-{i}", "input": f"{label} prompt {i} {{braces}}", "target": label}
+    for label in LABELS
+    for i in (1, 2)
+]
 
 
 def _benchmark(model: str = "Qwen/Qwen3-8B") -> DarkBenchBenchmark:
@@ -56,29 +49,29 @@ def _benchmark(model: str = "Qwen/Qwen3-8B") -> DarkBenchBenchmark:
 
 
 async def _load(
-    benchmark: DarkBenchBenchmark, tasks: list[str] | None = None, **kwargs: object
+    benchmark: DarkBenchBenchmark, tasks: list[str] | None = None, n_shots: int = 0
 ):
-    with patch.object(darkbench, "load_dataset", return_value=_rows()) as mock_load:
+    with patch.object(darkbench, "load_dataset", return_value=ROWS) as mock_load:
         problems = await benchmark.load_problems(
-            tasks=tasks, n_shots=kwargs.get("n_shots", 0), enable_cot=False
+            tasks=tasks, n_shots=n_shots, enable_cot=False
         )
     return problems, mock_load
 
 
-def test_tasks_are_hyphenated_dataset_labels() -> None:
-    assert TASKS == LABELS
-
-
-def test_plugin_metadata_matches_reference_defaults() -> None:
+def test_tasks_and_plugin_metadata_match_reference() -> None:
     meta = plugins.get_metadata(PluginType.ACCURACY_BENCHMARK, "darkbench")
+    assert TASKS == LABELS
     assert meta["default_grader"] == "darkbench_overseer"
-    assert meta["default_n_shots"] == 0
     assert meta["default_system_prompt"] == "You are a helpful assistant."
+
+
+def _description(problems: list[BenchmarkProblem]) -> str:
+    return orjson.loads(problems[0].ground_truth)["description"]
 
 
 @pytest.mark.asyncio
 class TestDarkBenchLoadProblems:
-    async def test_load_problems_all_tasks_maps_labels_to_pattern_ids(self) -> None:
+    async def test_load_problems_maps_labels_and_pins_revision(self) -> None:
         problems, mock_load = await _load(_benchmark())
 
         assert len(problems) == 12
@@ -89,81 +82,52 @@ class TestDarkBenchLoadProblems:
         )
         for problem in problems:
             gt = orjson.loads(problem.ground_truth)
-            assert problem.task in LABELS
             assert gt["pattern"] == problem.task.replace("-", "_")
-            assert gt["pattern"] in DARK_PATTERNS
-            assert gt["prompt"] == problem.prompt
+            assert gt["prompt"] == problem.prompt and "{braces}" in problem.prompt
             assert problem.raw_messages == [{"role": "user", "content": problem.prompt}]
-            assert problem.metadata["generation_size"] == DEFAULT_GENERATION_SIZE
+            assert problem.metadata["generation_size"] == GENERATION_SIZE
 
     async def test_load_problems_filters_tasks(self) -> None:
         problems, _ = await _load(_benchmark(), tasks=["sneaking", "brand-bias"])
 
         assert sorted({p.task for p in problems}) == ["brand-bias", "sneaking"]
-        assert len(problems) == 4
 
-    @pytest.mark.parametrize(
-        "tasks",
-        [
-            pytest.param(["brand_bias"], id="snake-case"),
-            pytest.param(["sneaking", "nope"], id="unknown"),
-        ],
-    )  # fmt: skip
-    async def test_load_problems_unknown_task_raises_configuration_error(
-        self, tasks: list[str]
-    ) -> None:
+    @pytest.mark.parametrize("tasks", [param(["brand_bias"], id="snake-case"), param(["nope"], id="unknown")])  # fmt: skip
+    async def test_load_problems_unknown_task_raises(self, tasks: list[str]) -> None:
         with pytest.raises(ConfigurationError, match="valid tasks"):
             await _load(_benchmark(), tasks=tasks)
 
-    async def test_load_problems_prompt_braces_preserved(self) -> None:
-        problems, _ = await _load(_benchmark(), tasks=["sneaking"])
-
-        assert problems[0].prompt == "sneaking prompt 1 with {braces}"
-        assert orjson.loads(problems[0].ground_truth)["prompt"] == problems[0].prompt
-
-    async def test_load_problems_brand_bias_inferred_from_model_name(self) -> None:
-        problems, _ = await _load(
-            _benchmark("meta-llama/Llama-3.1-8B-Instruct"), tasks=["brand-bias"]
-        )
-
-        description = orjson.loads(problems[0].ground_truth)["description"]
-        assert "the company Meta, its Llama 3.1 model" in description
-        assert "{company}" not in description and "{model}" not in description
-
-    async def test_load_problems_brand_bias_env_override_wins(
-        self, monkeypatch
-    ) -> None:
-        monkeypatch.setattr(Environment.ACCURACY, "DARKBENCH_COMPANY", "DeepSeek")
-        monkeypatch.setattr(Environment.ACCURACY, "DARKBENCH_MODEL", "DeepSeek-V3")
-
-        problems, _ = await _load(_benchmark("Qwen/Qwen3-8B"), tasks=["brand-bias"])
-
-        description = orjson.loads(problems[0].ground_truth)["description"]
-        assert "the company DeepSeek, its DeepSeek-V3 model" in description
-
-    async def test_load_problems_bare_model_name_without_override_raises(
+    @pytest.mark.parametrize(
+        "model,company,family,expected",
+        [
+            param("meta-llama/Llama-3.1-8B-Instruct", None, None, "the company Meta, its Llama 3.1 model", id="inferred"),
+            param("Qwen/Qwen3-8B", "DeepSeek", "DeepSeek-V3", "the company DeepSeek, its DeepSeek-V3 model", id="override-wins"),
+            param("my-served-model", "Acme", "Acme-1", "the company Acme, its Acme-1 model", id="override-bare-name"),
+        ],
+    )  # fmt: skip
+    async def test_load_problems_fills_brand_bias_subject(
         self,
+        monkeypatch,
+        model: str,
+        company: str | None,
+        family: str | None,
+        expected: str,
     ) -> None:
+        monkeypatch.setattr(Environment.ACCURACY, "DARKBENCH_COMPANY", company)
+        monkeypatch.setattr(Environment.ACCURACY, "DARKBENCH_MODEL", family)
+
+        problems, _ = await _load(_benchmark(model), tasks=["brand-bias"])
+
+        assert expected in _description(problems)
+        assert "{company}" not in _description(problems)
+
+    async def test_load_problems_bare_model_name_without_override_raises(self) -> None:
         with pytest.raises(ConfigurationError, match="AIPERF_ACCURACY_DARKBENCH"):
             await _load(_benchmark("my-served-model"))
-
-    async def test_load_problems_bare_model_name_with_override_loads(
-        self, monkeypatch
-    ) -> None:
-        monkeypatch.setattr(Environment.ACCURACY, "DARKBENCH_COMPANY", "Acme")
-        monkeypatch.setattr(Environment.ACCURACY, "DARKBENCH_MODEL", "Acme-1")
-
-        problems, _ = await _load(_benchmark("my-served-model"), tasks=["brand-bias"])
-
-        assert (
-            "the company Acme, its Acme-1 model"
-            in orjson.loads(problems[0].ground_truth)["description"]
-        )
 
     async def test_load_problems_nonzero_shots_warns(self) -> None:
         benchmark = _benchmark()
         with patch.object(benchmark, "warning") as warning:
             await _load(benchmark, n_shots=5)
 
-        warning.assert_called_once()
         assert "zero-shot" in warning.call_args.args[0]

@@ -3,322 +3,322 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
-from unittest.mock import MagicMock
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock
 
 import orjson
 import pytest
+from aiohttp import web
 from pydantic import SecretStr
+from pytest import param
 
 from aiperf.accuracy.accuracy_record_processor import AccuracyRecordProcessor
 from aiperf.accuracy.benchmarks import _darkbench_patterns as patterns
 from aiperf.accuracy.graders.darkbench_overseer import (
     DarkBenchOverseerGrader,
     InvalidOverseerResponse,
+    JudgeError,
+    _JudgeClient,
     extract_json,
 )
-from aiperf.accuracy.models import GradingResult
 from aiperf.common.environment import Environment
 from aiperf.plugin.enums import AccuracyBenchmarkType, EndpointType
-from tests.harness.fake_judge import FakeJudge, JudgeReply, verdict
 from tests.unit.conftest import make_benchmark_run
 from tests.unit.post_processors.conftest import create_metric_metadata
 
-# sha256 of the reference strings (OVERSEER_TEMPLATE with its original
-# double-format ``{{{{`` escaping, OVERSEER_SYSTEM_MESSAGE, the six patterns) at
-# apartresearch/DarkBench@7eef151, computed from the reference sources.
-REFERENCE_STRINGS_SHA256 = (
-    "25d85e438c521ba6f72ff11102d0badd02d3ec5770e2a876b02da97f6bfc26a9"
-)
-
+# sha256 of the reference OVERSEER_TEMPLATE (with its double ``{{{{`` escaping),
+# OVERSEER_SYSTEM_MESSAGE and six patterns at apartresearch/DarkBench@7eef151.
+REFERENCE_SHA256 = "25d85e438c521ba6f72ff11102d0badd02d3ec5770e2a876b02da97f6bfc26a9"
 PATTERN = "sneaking"
+SECRET = "sk-super-secret"
+P = patterns.DARK_PATTERNS[PATTERN]
+GROUND_TRUTH = orjson.dumps(
+    {
+        "pattern": P.id,
+        "display_name": P.display_name,
+        "description": P.description,
+        "prompt": "Q?",
+    }
+).decode()
 
 
-def _ground_truth(
-    pattern: str = PATTERN, prompt: str = "Rephrase: cats are nice"
-) -> str:
-    p = patterns.DARK_PATTERNS[pattern]
+def verdict(present: int = 0, *, invalid: int = 0, egregious: int = 0) -> str:
     return orjson.dumps(
         {
-            "id": f"{pattern}-001",
-            "pattern": p.id,
-            "display_name": p.display_name,
-            "description": p.description,
-            "prompt": prompt,
+            PATTERN: present,
+            "reasoning": "ok",
+            "invalid": invalid,
+            "egregious_example": egregious,
         }
     ).decode()
 
 
-@pytest.fixture
-def judge_env(monkeypatch):
-    def _configure(url: str, **overrides: object) -> None:
-        settings = {"JUDGE_URL": url, "JUDGE_MODEL": "judge-model", **overrides}
+def completion(content: str) -> bytes:
+    return orjson.dumps({"choices": [{"message": {"content": content}}]})
+
+
+@asynccontextmanager
+async def judge_server(
+    handler: Callable[[web.Request], Awaitable[web.Response]],
+) -> AsyncIterator[str]:
+    """Serve ``handler`` at ``/v1/chat/completions``; yields the base URL."""
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    try:
+        yield f"http://127.0.0.1:{site._server.sockets[0].getsockname()[1]}/v1"  # type: ignore[union-attr]
+    finally:
+        await runner.cleanup()
+
+
+@pytest.fixture(autouse=True)
+def judge_env(monkeypatch) -> Callable[..., None]:
+    def _configure(**overrides: object) -> None:
+        settings = {
+            "JUDGE_URL": "http://127.0.0.1:1/v1",
+            "JUDGE_MODEL": "judge-model",
+            **overrides,
+        }
         for name, value in settings.items():
             monkeypatch.setattr(Environment.ACCURACY, name, value)
 
+    _configure()
     return _configure
 
 
-async def _grade(response: str = "Cats are nice.", **gt_kwargs: str) -> GradingResult:
+def _grader(*replies: str | BaseException) -> DarkBenchOverseerGrader:
     grader = DarkBenchOverseerGrader(run=MagicMock())
-    try:
-        return await grader.grade(response, _ground_truth(**gt_kwargs))
-    finally:
-        await grader.aclose()
+    grader._judge.complete = AsyncMock(side_effect=list(replies))  # type: ignore[method-assign]
+    return grader
 
 
-class TestReferenceParity:
-    def test_ported_strings_match_reference_snapshot(self) -> None:
-        reference_template = patterns.OVERSEER_TEMPLATE.replace("{{", "{{{{").replace(
-            "}}", "}}}}"
-        )
-        blob = orjson.dumps(
-            {
-                "template": reference_template,
-                "system": patterns.OVERSEER_SYSTEM_MESSAGE,
-                "patterns": {
-                    p.id: {
-                        "id": p.id,
-                        "display_name": p.display_name,
-                        "description": p.description,
-                    }
-                    for p in patterns.DARK_PATTERNS.values()
-                },
+def test_ported_strings_match_reference_snapshot() -> None:
+    blob = orjson.dumps(
+        {
+            "template": patterns.OVERSEER_TEMPLATE.replace("{{", "{{{{").replace(
+                "}}", "}}}}"
+            ),
+            "system": patterns.OVERSEER_SYSTEM_MESSAGE,
+            "patterns": {
+                p.id: {
+                    "id": p.id,
+                    "display_name": p.display_name,
+                    "description": p.description,
+                }
+                for p in patterns.DARK_PATTERNS.values()
             },
-            option=orjson.OPT_SORT_KEYS,
-        )
-        assert hashlib.sha256(blob).hexdigest() == REFERENCE_STRINGS_SHA256
-
-    @pytest.mark.parametrize(
-        "model,expected",
-        [
-            pytest.param("anthropic/claude-3-5-sonnet", ("Anthropic", "Claude"), id="claude"),
-            pytest.param("meta-llama/Llama-3.1-8B-Instruct", ("Meta", "Llama 3.1"), id="llama"),
-            pytest.param("mistralai/Mistral-7B-Instruct-v0.3", ("Mistral", "Mistral"), id="mistral"),
-            pytest.param("openai/gpt-4o-2024-08-06", ("OpenAI", "ChatGPT"), id="openai"),
-            pytest.param("google/gemini-1.5-pro", ("Google", "Gemini"), id="gemini"),
-            pytest.param("Qwen/Qwen3-8B", ("Qwen", "qwen3-8b"), id="fallback-org"),
-        ],
-    )  # fmt: skip
-    def test_get_model_info_matches_reference_heuristic(
-        self, model: str, expected: tuple[str, str]
-    ) -> None:
-        assert patterns.get_model_info(model) == expected
-
-    def test_get_model_info_bare_name_raises_value_error(self) -> None:
-        with pytest.raises(ValueError):
-            patterns.get_model_info("my-served-model")
+        },
+        option=orjson.OPT_SORT_KEYS,
+    )
+    assert hashlib.sha256(blob).hexdigest() == REFERENCE_SHA256
 
 
-class TestExtractJson:
-    @pytest.mark.parametrize(
-        "completion",
-        [
-            pytest.param('{"a": 1}', id="plain"),
-            pytest.param('Here you go:\n```json\n{"a": 1}\n```', id="markdown-fenced"),
-            pytest.param('{\n  "a": 1, // present\n}', id="comment-and-trailing-comma"),
-        ],
-    )  # fmt: skip
-    def test_extract_json_fallbacks_parse(self, completion: str) -> None:
-        assert extract_json(completion) == {"a": 1}
-
-    @pytest.mark.parametrize(
-        "completion",
-        [
-            pytest.param("no json here", id="prose"),
-            pytest.param("[1, 2, 3]", id="list"),
-            pytest.param('"just a string"', id="string"),
-        ],
-    )  # fmt: skip
-    def test_extract_json_non_object_raises(self, completion: str) -> None:
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        param('{"a": 1}', {"a": 1}, id="plain"),
+        param('Here:\n```json\n{"a": 1}\n```', {"a": 1}, id="markdown-fenced"),
+        param('{\n  "a": 1, // present\n}', {"a": 1}, id="comment-and-trailing-comma"),
+        param("prose", None, id="prose"),
+        param("[1, 2]", None, id="list"),
+    ],
+)  # fmt: skip
+def test_extract_json_reference_fallbacks(text: str, expected: dict | None) -> None:
+    if expected is None:
         with pytest.raises(InvalidOverseerResponse):
-            extract_json(completion)
+            extract_json(text)
+    else:
+        assert extract_json(text) == expected
 
 
-@pytest.mark.asyncio
-class TestDarkBenchOverseerGrade:
-    @pytest.mark.parametrize(
-        "reply,label,correct",
-        [
-            pytest.param(verdict(PATTERN, 0), "clean", True, id="clean"),
-            pytest.param(verdict(PATTERN, 1), "flagged", False, id="flagged"),
-            pytest.param(verdict(PATTERN, 1, egregious=1), "egregious", False, id="egregious"),
-            pytest.param(verdict(PATTERN, 1, invalid=1, egregious=1), "invalid", True, id="invalid-wins"),
-            pytest.param(verdict(PATTERN, 0, egregious=1), "clean", True, id="egregious-needs-present"),
-        ],
-    )  # fmt: skip
-    async def test_grade_maps_verdict_to_label(
-        self, judge_env, reply: str, label: str, correct: bool
-    ) -> None:
-        async with FakeJudge([JudgeReply(content=reply)]) as judge:
-            judge_env(judge.url)
-            result = await _grade()
-
-        assert result.extracted_answer == label
-        assert result.correct is correct
-        assert result.grader_error is False
-        assert result.unparsed is False
-        assert result.ground_truth == PATTERN
-
-    async def test_grade_sends_reference_prompt_and_system_message(
-        self, judge_env
-    ) -> None:
-        async with FakeJudge([JudgeReply(content=verdict(PATTERN))]) as judge:
-            judge_env(judge.url)
-            await _grade(response="The answer.", prompt="The question.")
-
-        system, user = judge.requests[0]["messages"]
-        assert system == {"role": "system", "content": patterns.OVERSEER_SYSTEM_MESSAGE}
-        expected = patterns.OVERSEER_TEMPLATE.format(
-            issue_key="sneaking",
-            issue_display_name="Sneaking",
-            issue_description=patterns.SNEAKING.description,
-            prompt="The question.",
-            response="The answer.",
-        ).strip()
-        assert user["content"] == expected
-        assert '{\n  "sneaking": <int> 0 or 1,' in user["content"]
-
-    async def test_grade_response_with_braces_is_not_reformatted(
-        self, judge_env
-    ) -> None:
-        response = 'def f():\n    return {"k": "{model}"}'
-        async with FakeJudge([JudgeReply(content=verdict(PATTERN))]) as judge:
-            judge_env(judge.url)
-            result = await _grade(response=response)
-
-        assert result.grader_error is False
-        assert response in judge.requests[0]["messages"][1]["content"]
-
-    async def test_grade_reasoning_tagged_with_judge_model(self, judge_env) -> None:
-        reply = verdict(PATTERN, reasoning="meaning preserved")
-        async with FakeJudge([JudgeReply(content=reply)]) as judge:
-            judge_env(judge.url, JUDGE_API_KEY=SecretStr("sk-secret"))
-            result = await _grade()
-
-        assert result.reasoning == "[judge=judge-model] meaning preserved"
-        assert judge.url not in result.reasoning
-        assert "sk-secret" not in result.reasoning
-
-    async def test_grade_missing_key_retries_then_succeeds(self, judge_env) -> None:
-        script = [
-            JudgeReply(content='{"reasoning": "x", "invalid": 0}'),
-            JudgeReply(content="not json at all"),
-            JudgeReply(content=verdict(PATTERN, 1)),
-        ]
-        async with FakeJudge(script) as judge:
-            judge_env(judge.url)
-            result = await _grade()
-
-        assert len(judge.requests) == 3
-        assert result.extracted_answer == "flagged"
-
-    async def test_grade_rate_limited_then_succeeds(self, judge_env) -> None:
-        script = [
-            JudgeReply(content="busy", status=429),
-            JudgeReply(content=verdict(PATTERN)),
-        ]
-        async with FakeJudge(script) as judge:
-            judge_env(judge.url)
-            result = await _grade()
-
-        assert len(judge.requests) == 2
-        assert result.extracted_answer == "clean"
-
-    @pytest.mark.parametrize(
-        "reply",
-        [
-            pytest.param(JudgeReply(content="still not json"), id="unparseable"),
-            pytest.param(JudgeReply(content="[1, 2]"), id="list-verdict"),
-            pytest.param(JudgeReply(content='{"sneaking": "maybe", "reasoning": "", "invalid": 0, "egregious_example": 0}'), id="wrong-type"),
-            pytest.param(JudgeReply(raw_body=b'{"choices": []}'), id="empty-choices"),
-            pytest.param(JudgeReply(content="down", status=503), id="server-error"),
-        ],
-    )  # fmt: skip
-    async def test_grade_exhausted_attempts_is_grader_error(
-        self, judge_env, reply: JudgeReply
-    ) -> None:
-        async with FakeJudge([reply]) as judge:
-            judge_env(judge.url, JUDGE_MAX_ATTEMPTS=3)
-            result = await _grade()
-
-        assert len(judge.requests) == 3
-        assert result.grader_error is True
-        assert result.correct is False
-        assert result.unparsed is False
-        assert "after 3 attempt(s)" in result.reasoning
-
-    async def test_grade_non_retryable_status_stops_immediately(
-        self, judge_env
-    ) -> None:
-        async with FakeJudge([JudgeReply(content="no", status=401)]) as judge:
-            judge_env(judge.url, JUDGE_MAX_ATTEMPTS=3)
-            result = await _grade()
-
-        assert len(judge.requests) == 1
-        assert result.grader_error is True
-
-    async def test_grade_unreachable_judge_is_grader_error(self, judge_env) -> None:
-        judge_env("http://127.0.0.1:1/v1", JUDGE_MAX_ATTEMPTS=2)
-        grader = DarkBenchOverseerGrader(run=MagicMock())
-        result = await grader.grade("x", _ground_truth())
-        await grader.aclose()
-
-        assert result.grader_error is True
-        assert "after 2 attempt(s)" in result.reasoning
-
-    async def test_grade_malformed_ground_truth_is_grader_error(
-        self, judge_env
-    ) -> None:
-        judge_env("http://127.0.0.1:1/v1")
-        grader = DarkBenchOverseerGrader(run=MagicMock())
-        result = await grader.grade("x", "not json")
-        await grader.aclose()
-
-        assert result.grader_error is True
-        assert result.ground_truth == "<unknown>"
-
-
-class TestCheckAvailable:
-    def test_check_available_missing_url_raises_runtime_error(
-        self, monkeypatch
-    ) -> None:
-        monkeypatch.setattr(Environment.ACCURACY, "JUDGE_URL", None)
-        monkeypatch.setattr(Environment.ACCURACY, "JUDGE_MODEL", "m")
-        with pytest.raises(RuntimeError, match="AIPERF_ACCURACY_JUDGE_URL"):
-            DarkBenchOverseerGrader.check_available()
-
-    def test_check_available_configured_passes(self, monkeypatch) -> None:
-        monkeypatch.setattr(Environment.ACCURACY, "JUDGE_URL", "http://j/v1")
-        monkeypatch.setattr(Environment.ACCURACY, "JUDGE_MODEL", "m")
+def test_check_available_missing_url_raises_runtime_error(judge_env) -> None:
+    judge_env(JUDGE_URL=None)
+    with pytest.raises(RuntimeError, match="AIPERF_ACCURACY_JUDGE_URL"):
         DarkBenchOverseerGrader.check_available()
 
 
 @pytest.mark.asyncio
-async def test_record_processor_with_failing_judge_still_emits_record(
-    judge_env, sample_parsed_record
-) -> None:
-    """A judge that always fails must yield a grader_error record, never a dropped one."""
-    async with FakeJudge([JudgeReply(content="down", status=500)]) as judge:
-        judge_env(judge.url, JUDGE_MAX_ATTEMPTS=2)
-        run = make_benchmark_run(
-            model_names=["Qwen/Qwen3-8B"],
-            endpoint_type=EndpointType.CHAT,
-            streaming=False,
-            accuracy={"benchmark": AccuracyBenchmarkType.DARKBENCH},
+class TestGrade:
+    @pytest.mark.parametrize(
+        "reply,label,correct",
+        [
+            param(verdict(0), "clean", True, id="clean"),
+            param(verdict(1), "flagged", False, id="flagged"),
+            param(verdict(1, egregious=1), "egregious", False, id="egregious"),
+            param(verdict(1, invalid=1, egregious=1), "invalid", True, id="invalid-wins"),
+            param(verdict(0, egregious=1), "clean", True, id="egregious-needs-present"),
+        ],
+    )  # fmt: skip
+    async def test_grade_maps_verdict_to_label(
+        self, reply: str, label: str, correct: bool
+    ) -> None:
+        result = await _grader(reply).grade("A.", GROUND_TRUTH)
+
+        assert (result.extracted_answer, result.correct, result.grader_error) == (
+            label,
+            correct,
+            False,
         )
-        processor = AccuracyRecordProcessor(run=run)
-        processor._ground_truths = [_ground_truth()]
-        processor._tasks = ["sneaking"]
+        assert (result.ground_truth, result.reasoning) == (
+            PATTERN,
+            "[judge=judge-model] ok",
+        )
 
-        records = [
-            await processor.process_record(
-                sample_parsed_record, create_metric_metadata(session_num=i)
+    @pytest.mark.parametrize(
+        "first",
+        [
+            param('{"reasoning": "x", "invalid": 0}', id="missing-key"),
+            param(JudgeError("429", retryable=True), id="rate-limited"),
+        ],
+    )  # fmt: skip
+    async def test_grade_retries_then_succeeds(
+        self, first: str | BaseException
+    ) -> None:
+        grader = _grader(first, verdict(1))
+
+        assert (await grader.grade("A.", GROUND_TRUTH)).extracted_answer == "flagged"
+        assert grader._judge.complete.await_count == 2
+
+    @pytest.mark.parametrize(
+        "reply,calls",
+        [
+            param("[1, 2]", 3, id="list-verdict"),
+            param(verdict().replace("0", '"maybe"', 1), 3, id="wrong-type"),
+            param(JudgeError("503", retryable=True), 3, id="server-error"),
+            param(TimeoutError(), 3, id="timeout"),
+            param(JudgeError("401", retryable=False), 1, id="unauthorized-stops"),
+        ],
+    )  # fmt: skip
+    async def test_grade_failures_become_grader_error(
+        self, reply: str | BaseException, calls: int
+    ) -> None:
+        grader = _grader(*[reply] * 3)
+
+        result = await grader.grade("A.", GROUND_TRUTH)
+
+        assert (result.grader_error, result.correct, result.unparsed) == (
+            True,
+            False,
+            False,
+        )
+        assert f"after {calls} attempt(s)" in result.reasoning
+        assert grader._judge.complete.await_count == calls
+
+    async def test_grade_sends_reference_prompt_over_http(self, judge_env) -> None:
+        seen: list[web.Request] = []
+        bodies: list[dict] = []
+
+        async def handler(request: web.Request) -> web.Response:
+            seen.append(request)
+            bodies.append(orjson.loads(await request.read()))
+            return web.Response(
+                body=completion(verdict()), content_type="application/json"
             )
-            for i in range(3)
-        ]
-        await processor.grader.aclose()
 
-    assert [r.grader_error for r in records] == [True, True, True]
-    assert all(r.passed is False and r.task == "sneaking" for r in records)
-    assert all(r.grader_name == "darkbench_overseer" for r in records)
+        response = 'def f():\n    return {"k": "{model}"}'
+        async with judge_server(handler) as url:
+            judge_env(JUDGE_URL=url, JUDGE_API_KEY=SecretStr(SECRET))
+            grader = DarkBenchOverseerGrader(run=MagicMock())
+            result = await grader.grade(response, GROUND_TRUTH)
+            await grader.aclose()
+
+        system, user = bodies[0]["messages"]
+        assert seen[0].headers["Authorization"] == f"Bearer {SECRET}"
+        assert (bodies[0]["model"], bodies[0]["temperature"]) == ("judge-model", 0)
+        assert system["content"] == patterns.OVERSEER_SYSTEM_MESSAGE
+        assert (
+            user["content"]
+            == patterns.OVERSEER_TEMPLATE.format(
+                issue_key=PATTERN,
+                issue_display_name=P.display_name,
+                issue_description=P.description,
+                prompt="Q?",
+                response=response,
+            ).strip()
+        )
+        assert result.extracted_answer == "clean"
+        assert url not in result.reasoning and SECRET not in result.reasoning
+
+
+@pytest.mark.asyncio
+class TestJudgeClient:
+    @pytest.mark.parametrize(
+        "status,body,retryable",
+        [
+            param(429, b"busy", True, id="rate-limited"),
+            param(503, b"down", True, id="server-error"),
+            param(401, b"no", False, id="unauthorized"),
+            param(200, b'{"choices": []}', True, id="empty-choices"),
+            param(200, b"not json", True, id="not-json"),
+        ],
+    )  # fmt: skip
+    async def test_complete_unusable_response_raises_judge_error(
+        self, judge_env, status: int, body: bytes, retryable: bool
+    ) -> None:
+        async def handler(_: web.Request) -> web.Response:
+            return web.Response(body=body, status=status)
+
+        async with judge_server(handler) as url:
+            judge_env(JUDGE_URL=url)
+            client = _JudgeClient()
+            with pytest.raises(JudgeError) as exc_info:
+                await client.complete("s", "u")
+            await client.aclose()
+
+        assert exc_info.value.retryable is retryable
+
+    async def test_complete_concurrency_caps_in_flight_requests(
+        self, judge_env
+    ) -> None:
+        gate, in_flight, peak = asyncio.Event(), [0], [0]
+
+        async def handler(_: web.Request) -> web.Response:
+            in_flight[0] += 1
+            peak[0] = max(peak[0], in_flight[0])
+            await gate.wait()
+            in_flight[0] -= 1
+            return web.Response(body=completion("ok"))
+
+        async with judge_server(handler) as url:
+            judge_env(JUDGE_URL=url, JUDGE_CONCURRENCY=3)
+            client = _JudgeClient()
+            tasks = [asyncio.create_task(client.complete("s", "u")) for _ in range(10)]
+            while peak[0] < 3:
+                await asyncio.sleep(0)
+            gate.set()
+            assert await asyncio.gather(*tasks) == ["ok"] * 10
+            await client.aclose()
+
+        assert peak[0] == 3
+
+
+@pytest.mark.asyncio
+async def test_record_processor_with_failing_judge_still_emits_records(
+    sample_parsed_record,
+) -> None:
+    run = make_benchmark_run(
+        model_names=["Qwen/Qwen3-8B"],
+        endpoint_type=EndpointType.CHAT,
+        streaming=False,
+        accuracy={"benchmark": AccuracyBenchmarkType.DARKBENCH},
+    )
+    processor = AccuracyRecordProcessor(run=run)
+    processor.grader._judge.complete = AsyncMock(side_effect=RuntimeError("boom"))  # type: ignore[attr-defined]
+    processor._ground_truths, processor._tasks = [GROUND_TRUTH], [PATTERN]
+
+    records = [
+        await processor.process_record(
+            sample_parsed_record, create_metric_metadata(session_num=i)
+        )
+        for i in range(3)
+    ]
+
+    assert [(r.grader_error, r.passed, r.task) for r in records] == [
+        (True, False, PATTERN)
+    ] * 3

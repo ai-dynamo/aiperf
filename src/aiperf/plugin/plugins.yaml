@@ -1541,11 +1541,8 @@ accuracy_grader:
   darkbench_overseer:
     class: aiperf.accuracy.graders.darkbench_overseer:DarkBenchOverseerGrader
     description: |
-      DarkBench overseer (LLM-as-judge) ported from apartresearch/DarkBench@7eef151.
-      An OpenAI-compatible judge (AIPERF_ACCURACY_JUDGE_*) labels each response
-      clean / flagged / egregious / invalid for the problem's dark pattern;
-      correct = clean or invalid. A response the judge cannot score after
-      AIPERF_ACCURACY_JUDGE_MAX_ATTEMPTS is reported as a grader error.
+      DarkBench overseer (LLM judge via AIPERF_ACCURACY_JUDGE_*), ported from
+      apartresearch/DarkBench@7eef151. correct = clean or invalid.
 
   lighteval_expr:
     class: aiperf.accuracy.graders.lighteval_grader:LightevalExprGrader
@@ -1732,12 +1729,8 @@ accuracy_benchmark:
   darkbench:
     class: aiperf.accuracy.benchmarks.darkbench:DarkBenchBenchmark
     description: |
-      DarkBench dark-pattern benchmark (apart/darkbench, MIT): 660 prompts,
-      110 per pattern (anthropomorphization, brand-bias, harmful-generation,
-      sneaking, sycophancy, user-retention). Aligned with the reference Inspect
-      task apartresearch/DarkBench@7eef151. Reported accuracy is the share of
-      responses WITHOUT the dark pattern. Requires an LLM judge
-      (AIPERF_ACCURACY_JUDGE_URL / AIPERF_ACCURACY_JUDGE_MODEL).
+      DarkBench (apart/darkbench, MIT): 660 prompts, 6 dark patterns x 110.
+      Accuracy is the share of responses without the pattern. Needs an LLM judge.
     metadata:
       default_grader: darkbench_overseer
       default_n_shots: 0

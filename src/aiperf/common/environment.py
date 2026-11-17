@@ -120,78 +120,49 @@ class _AccuracySettings(BaseSettings):
 
     JUDGE_URL: str | None = Field(
         default=None,
-        description="OpenAI-compatible base URL of the LLM judge used by LLM-judge "
-        "accuracy graders (e.g. ``darkbench_overseer``), e.g. "
-        "``http://judge:8000/v1``; ``/chat/completions`` is appended. Required by "
-        "those graders and checked at preflight. Point it at a DIFFERENT endpoint "
-        "than the one being benchmarked: grading runs inline in the record "
-        "processors during the run, so judge traffic on the benchmarked server "
-        "skews its latency and throughput numbers.",
+        description="OpenAI-compatible base URL of the LLM judge for LLM-judge graders "
+        "(e.g. ``darkbench_overseer``), e.g. ``http://judge:8000/v1``. Use an endpoint "
+        "other than the benchmarked one: grading runs inline during the run.",
     )
-
     JUDGE_MODEL: str | None = Field(
         default=None,
-        description="Model name sent to the LLM judge endpoint. Required by "
-        "LLM-judge graders; also stamped as ``[judge=<model>]`` at the start of "
-        "every grading explanation in ``accuracy_export.jsonl``.",
+        description="Model name sent to the LLM judge; also recorded as "
+        "``[judge=<model>]`` in every grading explanation.",
     )
-
     JUDGE_API_KEY: SecretStr | None = Field(
-        default=None,
-        description="Bearer token sent to the LLM judge endpoint. Never logged or "
-        "exported.",
+        default=None, description="Bearer token for the LLM judge. Never logged."
     )
-
     JUDGE_CONCURRENCY: int = Field(
         default=16,
         ge=1,
         le=1024,
-        description="Maximum in-flight judge requests per record processor. The "
-        "effective cap on the judge is this value times the number of record "
-        "processors; lower it for rate-limited judges.",
+        description="Max in-flight judge requests per record processor.",
     )
-
     JUDGE_TIMEOUT: FiniteFloat = Field(
         default=120.0,
         gt=0.0,
-        description="Total timeout (seconds) for one judge request. Also caps the "
-        "backoff sleep between retries.",
+        description="Seconds per judge request; also caps retry backoff.",
     )
-
     JUDGE_MAX_ATTEMPTS: int = Field(
         default=3,
         ge=1,
         le=10,
-        description="Judge attempts per graded response before it is reported as a "
-        "grader error. Default 3 matches the DarkBench reference "
-        "``score_attempts=3``.",
+        description="Judge attempts per response before it counts as a grader error "
+        "(DarkBench reference ``score_attempts=3``).",
     )
-
-    JUDGE_MAX_TOKENS: int = Field(
-        default=1024,
-        ge=16,
-        description="``max_tokens`` for each judge completion.",
-    )
-
     DARKBENCH_REVISION: str = Field(
         default="c27ae5f155e75f7269e903bc2ddb8458e3d09304",
-        description="Hugging Face revision of the ``apart/darkbench`` dataset, "
-        "pinned so DarkBench numbers are reproducible. Consumed by "
-        "``aiperf.accuracy.benchmarks.darkbench``.",
+        description="Pinned Hugging Face revision of ``apart/darkbench``.",
     )
-
     DARKBENCH_COMPANY: str | None = Field(
         default=None,
-        description="Company substituted for ``{company}`` in the DarkBench "
-        "brand-bias description (the developer of the model under test). "
-        "Overrides the value inferred from the model name; required when the "
-        "served model name has no ``org/`` prefix.",
+        description="``{company}`` in the DarkBench brand-bias question (developer of "
+        "the model under test); overrides the value inferred from the model name.",
     )
-
     DARKBENCH_MODEL: str | None = Field(
         default=None,
-        description="Model family substituted for ``{model}`` in the DarkBench "
-        "brand-bias description. Overrides the value inferred from the model name.",
+        description="``{model}`` in the DarkBench brand-bias question; overrides the "
+        "value inferred from the model name.",
     )
 
 
