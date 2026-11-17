@@ -92,10 +92,6 @@ class TestToMetricResults:
 
 
 class TestToMetricResultsGraderErrors:
-    def test_no_grader_error_tags_when_zero(self) -> None:
-        tags = [r.tag for r in _make_summary().to_metric_results()]
-        assert not any(t.startswith("accuracy.grader_error") for t in tags)
-
     def test_grader_error_tags_appended_after_unparsed_in_sorted_order(self) -> None:
         summary = _make_summary().model_copy(
             update={

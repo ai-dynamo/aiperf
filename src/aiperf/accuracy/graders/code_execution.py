@@ -208,9 +208,12 @@ def _extract_pass_at_1(metrics: dict[str, Any]) -> float | None:
     numerically coercible so the caller can route through
     ``_grading_failure`` instead of crashing on a stale assumption.
     """
-    raw = metrics.get("pass@1", 0.0)
+    raw = metrics.get("pass@1")
     if isinstance(raw, list):
-        raw = raw[0] if raw else 0.0
+        raw = raw[0] if raw else None
+    if raw is None:
+        _log.debug("lighteval pass@1 missing from metrics: %r", metrics)
+        return None
     try:
         return float(raw)
     except (TypeError, ValueError):

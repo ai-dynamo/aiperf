@@ -135,6 +135,30 @@ class TestGradeDelegatesToWorker:
         assert result.unparsed is False
         grader._worker.grade_codegen.assert_awaited_once()
 
+    @pytest.mark.parametrize(
+        "metrics",
+        [
+            pytest.param({}, id="missing-key"),
+            pytest.param({"pass@1": []}, id="empty-list"),
+            pytest.param({"pass@1": "n/a"}, id="not-numeric"),
+        ],
+    )  # fmt: skip
+    async def test_unusable_pass_at_1_is_grader_error(
+        self, monkeypatch, metrics: dict
+    ) -> None:
+        monkeypatch.setattr(code_execution, "_HAS_LIGHTEVAL_LCB", True)
+        monkeypatch.setattr(code_execution, "extract_code", lambda _t: "print(1)")
+        grader = CodeExecutionGrader(run=MagicMock())
+        grader._worker.grade_codegen = AsyncMock(return_value=metrics)
+
+        payload = orjson.dumps(
+            {"public_test_cases": [{"input": "1", "output": "1"}], "metadata": ""}
+        ).decode()
+        result = await grader.grade("```python\nprint(1)\n```", payload)
+        assert result.grader_error is True
+        assert result.unparsed is False
+        assert "pass@1 not numeric" in result.reasoning
+
     async def test_worker_error_becomes_grading_failure(self, monkeypatch) -> None:
         monkeypatch.setattr(code_execution, "_HAS_LIGHTEVAL_LCB", True)
         monkeypatch.setattr(code_execution, "extract_code", lambda _t: "print(1)")
