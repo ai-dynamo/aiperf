@@ -508,7 +508,7 @@ class CreditIssuer:
         is_session_start = turn.turn_index == 0 or turn.is_session_start
         url_index = (
             self._url_selection_strategy.next_url_index()
-            if self._url_selection_strategy and is_session_start
+            if self._url_selection_strategy and is_session_start and not turn.no_request
             else None
         )
 

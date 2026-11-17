@@ -917,6 +917,59 @@ class TestURLSelectionStrategy:
     Subsequent turns get url_index=None and rely on the worker's session cache.
     """
 
+    async def test_virtual_roots_do_not_advance_url_selection(
+        self,
+        mock_stop_checker: MagicMock,
+        mock_progress: MagicMock,
+        mock_concurrency: MagicMock,
+        mock_router: MagicMock,
+        mock_cancellation: MagicMock,
+        mock_lifecycle: MagicMock,
+    ) -> None:
+        strategy = MagicMock()
+        strategy.next_url_index.side_effect = [0, 1, 0, 1]
+        issuer = CreditIssuer(
+            phase=CreditPhase.PROFILING,
+            stop_checker=mock_stop_checker,
+            progress=mock_progress,
+            concurrency_manager=mock_concurrency,
+            credit_router=mock_router,
+            cancellation_policy=mock_cancellation,
+            lifecycle=mock_lifecycle,
+            url_selection_strategy=strategy,
+        )
+        for index in range(2):
+            await issuer.issue_credit(
+                TurnToSend(
+                    conversation_id=f"play-{index}",
+                    x_correlation_id=f"play-{index}",
+                    turn_index=0,
+                    num_turns=1,
+                    no_request=True,
+                )
+            )
+            await issuer.dispatch_child_turn(
+                TurnToSend(
+                    conversation_id=f"request-{index}",
+                    x_correlation_id=f"request-{index}",
+                    root_correlation_id=f"play-{index}",
+                    turn_index=0,
+                    num_turns=1,
+                    agent_depth=1,
+                )
+            )
+        credits = [
+            call.kwargs["credit"] for call in mock_router.send_credit.call_args_list
+        ]
+        assert [credit.url_index for credit in credits if credit.no_request] == [
+            None,
+            None,
+        ]
+        assert [credit.url_index for credit in credits if not credit.no_request] == [
+            0,
+            1,
+        ]
+
     async def test_first_turn_gets_url_index_from_strategy(
         self,
         mock_stop_checker,
