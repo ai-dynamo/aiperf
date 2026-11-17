@@ -25,10 +25,16 @@ class MockStreamReader:
 
     def __init__(self, chunks: list[bytes]):
         self._chunks = chunks
+        self._eof = False
 
     async def iter_any(self):
         for chunk in self._chunks:
             yield chunk
+        self._eof = True
+
+    def at_eof(self) -> bool:
+        """Report EOF only after the iterator has consumed all chunks."""
+        return self._eof
 
     def __aiter__(self):
         return self.iter_any()
@@ -156,7 +162,7 @@ def create_mock_response(
         text=AsyncMock(return_value=text_content),
         content=Mock(
             spec=aiohttp.StreamReader,
-            at_eof=AsyncMock(return_value=False),
+            at_eof=Mock(return_value=True),
             read=AsyncMock(),
             readuntil=AsyncMock(),
         ),
