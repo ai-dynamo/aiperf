@@ -138,7 +138,6 @@ def test_run_export_in_subprocess_import_failure_reported_on_queue(
 # only once the export child is gone.
 _TEARDOWN_HANG_PROG = """
 import atexit, importlib, multiprocessing as mp, os, signal, sys, threading, time, types
-from multiprocessing import util
 
 
 def child(entry_module, exporter_module, exporter_cls, hang, marker, queue):
@@ -154,11 +153,12 @@ def child(entry_module, exporter_module, exporter_cls, hang, marker, queue):
             if hang == "atexit":
                 atexit.register(_hang)
             else:
-                # Starts hanging only once run() has returned and the process
-                # is exiting, so threading._shutdown() is what blocks on it.
-                exiting = threading.Event()
-                util.Finalize(None, exiting.set, exitpriority=100)
-                threading.Thread(target=lambda: (exiting.wait(), _hang())).start()
+                # The main thread only counts as finished once run() has
+                # returned and threading._shutdown() has started, which then
+                # blocks joining this thread (3.12 and 3.13 order the other
+                # exit steps differently, so gate on nothing else).
+                main = threading.main_thread()
+                threading.Thread(target=lambda: (main.join(), _hang())).start()
 
     fake = types.ModuleType(exporter_module)
     setattr(fake, exporter_cls, _Exporter)

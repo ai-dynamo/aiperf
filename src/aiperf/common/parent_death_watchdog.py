@@ -20,6 +20,8 @@ import time
 # thread in the test process.
 _exit = os._exit
 
+WATCHDOG_THREAD_NAME = "parent-death-watchdog"
+
 
 def start_parent_death_watchdog(
     name: str, deadline_seconds: float, logger: logging.Logger
@@ -55,4 +57,4 @@ def start_parent_death_watchdog(
         )
         _exit(1)
 
-    threading.Thread(target=_watch, name="parent-death-watchdog", daemon=True).start()
+    threading.Thread(target=_watch, name=WATCHDOG_THREAD_NAME, daemon=True).start()

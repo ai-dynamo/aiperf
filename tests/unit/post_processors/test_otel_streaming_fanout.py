@@ -453,6 +453,12 @@ def test_run_fanout_exits_when_parent_process_dies(
     """
     install_fake_otel_modules(monkeypatch, {})
     _install_fake_mlflow_modules(monkeypatch, {"log_batch_calls": []})
+    # This pins the main loop's own parent check; the watchdog has its own
+    # tests below and would otherwise force-exit the worker 10 s from now.
+    monkeypatch.setattr(
+        "aiperf.post_processors.otel_streaming_fanout.start_parent_death_watchdog",
+        lambda *args, **kwargs: None,
+    )
 
     class _DeadParent:
         def is_alive(self) -> bool:

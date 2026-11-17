@@ -14,13 +14,14 @@ from pathlib import Path
 import pytest
 
 from aiperf.common.constants import IS_WINDOWS
-from aiperf.common.parent_death_watchdog import start_parent_death_watchdog
-
-_THREAD_NAME = "parent-death-watchdog"
+from aiperf.common.parent_death_watchdog import (
+    WATCHDOG_THREAD_NAME,
+    start_parent_death_watchdog,
+)
 
 
 def _watchdog_threads() -> set[threading.Thread]:
-    return {t for t in threading.enumerate() if t.name == _THREAD_NAME}
+    return {t for t in threading.enumerate() if t.name == WATCHDOG_THREAD_NAME}
 
 
 @pytest.fixture
