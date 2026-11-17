@@ -202,6 +202,8 @@ class SingleTurn(AIPerfBaseModel):
                     "video modality fields; author the full message array in "
                     "raw_messages instead"
                 )
+        if self.raw_tools is not None and not self.raw_tools:
+            raise ValueError("raw_tools must be a non-empty list")
         if self.raw_tools is not None and self.raw_messages is None:
             raise ValueError("raw_tools requires raw_messages to be set")
         return self

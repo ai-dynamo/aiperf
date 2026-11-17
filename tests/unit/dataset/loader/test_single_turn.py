@@ -279,6 +279,10 @@ class TestSingleTurn:
                 raw_tools=[{"type": "function", "function": {"name": "f"}}],
             )
 
+    def test_validation_empty_raw_tools_raises_error(self):
+        with pytest.raises(ValueError, match="raw_tools must be a non-empty list"):
+            SingleTurn(raw_messages=[{"role": "user", "content": "Hi"}], raw_tools=[])
+
     def test_validation_empty_raw_messages_raises_error(self):
         with pytest.raises(ValueError, match="must be a non-empty list"):
             SingleTurn(raw_messages=[])

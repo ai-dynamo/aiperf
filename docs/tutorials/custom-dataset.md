@@ -259,13 +259,27 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
+The tool-calling file runs the same way. Both examples use the OpenAI chat shape, so keep `--endpoint-type chat`: `raw_tools` is sent verbatim as the request's `tools`.
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --input-file tool_calling.jsonl \
+    --custom-dataset-type single_turn \
+    --streaming \
+    --url localhost:8000 \
+    --concurrency 1 \
+    --request-count 1
+```
+
 Validation rules, checked when the dataset is loaded:
 
-- `raw_messages` must be a non-empty list, and every entry must have a `role` key.
+- `raw_messages` must be a non-empty list, and every entry must have a `role` key whose value is a non-empty string.
 - `raw_messages` cannot be combined with `text`, `texts`, `image`, `images`, `audio`, `audios`, `video`, or `videos` on the same row. The endpoint would silently drop that content, so the row is rejected instead. Put the full message array in `raw_messages`.
-- `raw_tools` requires `raw_messages` on the same row.
+- `raw_tools` requires `raw_messages` on the same row, and must be a non-empty list when set.
 
-`mooncake_trace` uses the shorter keys `messages` and `tools`. `single_turn` does not accept them, because a row with a bare `messages` key would then also match the Mooncake format during automatic format detection.
+`mooncake_trace` uses the shorter keys `messages` and `tools`. `single_turn` ignores a `messages` field, so author `raw_messages` instead. It does not read `messages` as an alias, because a row with a bare `messages` key would then also match the Mooncake format during automatic format detection.
 
 In a `multi_turn` conversation, each turn accepts `raw_messages` and `raw_tools`. Messages from earlier turns stay in the conversation history sent with later turns:
 
