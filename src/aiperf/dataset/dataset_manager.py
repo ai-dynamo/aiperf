@@ -666,6 +666,17 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         if not Environment.DATASET.PREFORMAT_PAYLOADS:
             return
 
+        if any(
+            turn.source_kind == CustomDatasetType.AGENTIC_MOONCAKE_V2
+            for conversation in conversations
+            for turn in conversation.turns
+        ):
+            self.info(
+                "Skipping payload pre-formatting for agentic Mooncake v2: "
+                "source session headers require conversation storage"
+            )
+            return
+
         needs_formatting = False
         for conv in conversations:
             if all(t.raw_payload is not None for t in conv.turns):

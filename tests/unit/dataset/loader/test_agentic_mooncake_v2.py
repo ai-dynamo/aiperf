@@ -13,6 +13,7 @@ from aiperf.common.enums import ReplayDependencyEvent
 from aiperf.common.environment import Environment
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import PromptConfig
+from aiperf.dataset.generator.coding_content import CodingContentGenerator
 from aiperf.dataset.generator.prompt import PromptGenerator
 from aiperf.dataset.loader.agentic_mooncake_v2 import AgenticMooncakeV2Loader
 
@@ -139,6 +140,7 @@ def test_multiple_roots_preserve_shared_hash_prefix_and_independent_floors(
         ("strict_priority", 1),
         ("policy_class", "gold"),
         ("output_token_ids", [1, 2]),
+        ("output_length", 0),
     ],
 )
 def test_unmapped_request_features_are_not_silently_discarded(
@@ -148,7 +150,10 @@ def test_unmapped_request_features_are_not_silently_discarded(
     rows[1][field] = value
     path = tmp_path / "unsupported.jsonl"
     path.write_bytes(b"\n".join(orjson.dumps(row) for row in rows) + b"\n")
-    with pytest.raises(ValueError, match="not supported"):
+    with pytest.raises(
+        NotImplementedError,
+        match="play 'agent-play' session 'root' request 'agent-root': .*not supported",
+    ):
         _loader(path, monkeypatch).load_dataset()
 
 
@@ -159,6 +164,15 @@ def test_out_of_range_hash_id_is_rejected(tmp_path, monkeypatch, hash_id):
     path = tmp_path / "invalid-hash.jsonl"
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match="hash_ids"):
+        _loader(path, monkeypatch).load_dataset()
+
+
+def test_out_of_range_strict_priority_is_malformed(tmp_path, monkeypatch):
+    rows = [orjson.loads(line) for line in FIXTURE.read_bytes().splitlines()]
+    rows[1]["strict_priority"] = 2**32
+    path = tmp_path / "invalid-priority.jsonl"
+    path.write_bytes(b"\n".join(orjson.dumps(row) for row in rows) + b"\n")
+    with pytest.raises(ValueError, match="strict_priority"):
         _loader(path, monkeypatch).load_dataset()
 
 
@@ -201,7 +215,8 @@ def test_same_hash_in_full_and_partial_blocks_uses_one_block(tmp_path, monkeypat
     assert repeated == full + full[:2]
 
 
-def test_one_token_blocks_preserve_shared_hashes(tmp_path, monkeypatch):
+@pytest.mark.parametrize("corpus", ["sonnet", "coding"])
+def test_one_token_blocks_preserve_shared_hashes(tmp_path, monkeypatch, corpus):
     header = orjson.loads(FIXTURE.read_bytes().splitlines()[0]) | {"block_size": 1}
     base = {
         "play_id": "play",
@@ -226,8 +241,11 @@ def test_one_token_blocks_preserve_shared_hashes(tmp_path, monkeypatch):
         "aiperf.dataset.loader.hash_ids_synthesis.parallel_decode", decode
     )
     tokenizer = Tokenizer.from_pretrained("builtin")
-    generator = PromptGenerator(
-        prompts=PromptConfig(block_size=1), prefix_prompts=None, tokenizer=tokenizer
+    config = PromptConfig(block_size=1)
+    generator = (
+        CodingContentGenerator(config, tokenizer)
+        if corpus == "coding"
+        else PromptGenerator(prompts=config, prefix_prompts=None, tokenizer=tokenizer)
     )
     loader = AgenticMooncakeV2Loader(filename=path, prompt_generator=generator)
     loader.convert_to_conversations(loader.load_dataset())

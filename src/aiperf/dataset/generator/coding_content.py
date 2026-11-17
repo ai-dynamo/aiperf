@@ -950,6 +950,8 @@ class CodingContentGenerator(BaseGenerator):
         num_tokens: int,
         hash_ids: list[int],
         block_size: int,
+        *,
+        separate_blocks: bool = True,
     ) -> list[int]:
         """Build a token sequence from the tool pool without decoding.
 
@@ -970,9 +972,10 @@ class CodingContentGenerator(BaseGenerator):
         if not hash_ids:
             return self._sample_tokens(num_tokens, self._tool_pool)
 
-        reject_separator_only_blocks(
-            block_size, self.tokenizer.block_separation_token_id
+        separator = (
+            self.tokenizer.block_separation_token_id if separate_blocks else None
         )
+        reject_separator_only_blocks(block_size, separator)
 
         m = len(hash_ids)
         total_hashed = m * block_size
@@ -1002,7 +1005,7 @@ class CodingContentGenerator(BaseGenerator):
                     self._tool_pool,
                     current_block_size,
                     self._hash_id_corpus_rng,
-                    self.tokenizer.block_separation_token_id,
+                    separator,
                     word_starts=word_starts,
                 )
                 self._cache[hash_id] = cached

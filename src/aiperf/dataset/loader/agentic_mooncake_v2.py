@@ -92,9 +92,9 @@ class _Request(AIPerfBaseModel):
     output_length: int = Field(
         ge=0, alias="output_tokens", description="Output tokens."
     )
-    output_token_ids: list[int] | None = Field(
-        default=None, description="Recorded output token IDs."
-    )
+    output_token_ids: (
+        list[Annotated[int, Field(ge=0, le=2**32 - 1, strict=True)]] | None
+    ) = Field(default=None, description="Recorded output token IDs.")
     hash_ids: list[Annotated[int, Field(ge=0, le=2**64 - 1, strict=True)]] = Field(
         min_length=1, description="Input prefix block hashes."
     )
@@ -111,10 +111,13 @@ class _Request(AIPerfBaseModel):
         description="Recorded service duration.",
     )
     priority: int | None = Field(
-        default=None, description="Source scheduling priority."
+        default=None,
+        ge=-(2**31),
+        le=2**31 - 1,
+        description="Source scheduling priority.",
     )
     strict_priority: int | None = Field(
-        default=None, ge=0, description="Source strict priority."
+        default=None, ge=0, le=2**32 - 1, description="Source strict priority."
     )
     policy_class: str | None = Field(default=None, description="Source policy class.")
     dependencies: list[_Dependency] = Field(
@@ -156,6 +159,30 @@ def _session_parents(
         for session_id, parents in candidates.items()
         if valid[session_id] and parents
     }
+
+
+def _validate_play(
+    play_id: str, requests: list[_Request], requests_by_id: dict[str, _Request]
+) -> int | None:
+    ordinals = {request.source_play_ordinal for request in requests}
+    if len(ordinals) != 1:
+        raise ValueError(f"Play {play_id!r} has inconsistent source_play_ordinal")
+    graph: dict[str, list[str]] = {}
+    for request in requests:
+        graph[request.request_id] = []
+        for dependency in request.dependencies:
+            predecessor = requests_by_id.get(dependency.request_id)
+            if predecessor is None or predecessor.play_id != play_id:
+                raise ValueError(
+                    f"Request {request.request_id!r} has missing or cross-play "
+                    f"dependency {dependency.request_id!r}"
+                )
+            graph[request.request_id].append(dependency.request_id)
+    try:
+        tuple(TopologicalSorter(graph).static_order())
+    except CycleError as exc:
+        raise ValueError(f"Play {play_id!r} contains a dependency cycle") from exc
+    return ordinals.pop()
 
 
 class AgenticMooncakeV2Loader(HashIdsPromptSynthesisMixin, BaseFileLoader):
@@ -226,6 +253,45 @@ class AgenticMooncakeV2Loader(HashIdsPromptSynthesisMixin, BaseFileLoader):
     def get_preferred_sampling_strategy(cls) -> DatasetSamplingStrategy:
         return DatasetSamplingStrategy.SEQUENTIAL
 
+    def _parse_request(
+        self, record: dict[str, Any], line: int, ids: set[str]
+    ) -> _Request:
+        try:
+            request = _Request.model_validate(record)
+        except ValidationError as exc:
+            raise ValueError(f"Invalid agentic Mooncake v2 row {line}: {exc}") from exc
+        if request.request_id in ids:
+            raise ValueError(f"Duplicate request_id {request.request_id!r}")
+        ids.add(request.request_id)
+        if (
+            len(request.hash_ids)
+            != (request.input_length + self._block_size - 1) // self._block_size
+        ):
+            raise ValueError(
+                f"Request {request.request_id!r} has an invalid hash count"
+            )
+        location = (
+            f"play {request.play_id!r} session {request.session_id!r} "
+            f"request {request.request_id!r}"
+        )
+        if request.output_length == 0 or request.output_token_ids is not None:
+            raise NotImplementedError(
+                f"{location}: zero-length or fixed-token outputs "
+                "are not supported by AIPerf replay"
+            )
+        if (
+            request.priority not in (None, 0)
+            or request.strict_priority not in (None, 0)
+            or request.policy_class is not None
+        ):
+            raise NotImplementedError(f"{location}: priority fields are not supported")
+        for dependency in request.dependencies:
+            if dependency.relation != "spawn" and dependency.trigger != "completion":
+                raise ValueError(
+                    f"Request {request.request_id!r}: invalid dependency trigger"
+                )
+        return request
+
     def load_dataset(self) -> dict[str, list[_Request]]:
         self._model_map.clear()
         records = iter(self._iter_record_dicts())
@@ -240,43 +306,7 @@ class AgenticMooncakeV2Loader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         by_play: dict[str, list[_Request]] = {}
         ids: set[str] = set()
         for line, record in enumerate(records, start=2):
-            try:
-                request = _Request.model_validate(record)
-            except ValidationError as exc:
-                raise ValueError(
-                    f"Invalid agentic Mooncake v2 row {line}: {exc}"
-                ) from exc
-            if request.request_id in ids:
-                raise ValueError(f"Duplicate request_id {request.request_id!r}")
-            ids.add(request.request_id)
-            if (
-                len(request.hash_ids)
-                != (request.input_length + self._block_size - 1) // self._block_size
-            ):
-                raise ValueError(
-                    f"Request {request.request_id!r} has an invalid hash count"
-                )
-            if request.output_length == 0 or request.output_token_ids is not None:
-                raise ValueError(
-                    f"Request {request.request_id!r}: zero-length or fixed-token outputs "
-                    "are not supported by AIPerf replay"
-                )
-            if (
-                request.priority not in (None, 0)
-                or request.strict_priority not in (None, 0)
-                or request.policy_class is not None
-            ):
-                raise ValueError(
-                    f"Request {request.request_id!r}: priority fields are not supported"
-                )
-            for dependency in request.dependencies:
-                if (
-                    dependency.relation != "spawn"
-                    and dependency.trigger != "completion"
-                ):
-                    raise ValueError(
-                        f"Request {request.request_id!r}: invalid dependency trigger"
-                    )
+            request = self._parse_request(record, line, ids)
             if request.model not in self._model_map and self._configured_models:
                 self._model_map[request.model] = self._configured_models[
                     len(self._model_map) % len(self._configured_models)
@@ -296,31 +326,10 @@ class AgenticMooncakeV2Loader(HashIdsPromptSynthesisMixin, BaseFileLoader):
         requests_by_id = {
             request.request_id: request for rows in data.values() for request in rows
         }
-        ordinals = {}
-        for play_id, requests in data.items():
-            play_ordinals = {request.source_play_ordinal for request in requests}
-            if len(play_ordinals) != 1:
-                raise ValueError(
-                    f"Play {play_id!r} has inconsistent source_play_ordinal"
-                )
-            ordinals[play_id] = play_ordinals.pop()
-            graph = {}
-            for request in requests:
-                graph[request.request_id] = []
-                for dependency in request.dependencies:
-                    predecessor = requests_by_id.get(dependency.request_id)
-                    if predecessor is None or predecessor.play_id != play_id:
-                        raise ValueError(
-                            f"Request {request.request_id!r} has missing or cross-play "
-                            f"dependency {dependency.request_id!r}"
-                        )
-                    graph[request.request_id].append(dependency.request_id)
-            try:
-                tuple(TopologicalSorter(graph).static_order())
-            except CycleError as exc:
-                raise ValueError(
-                    f"Play {play_id!r} contains a dependency cycle"
-                ) from exc
+        ordinals = {
+            play_id: _validate_play(play_id, requests, requests_by_id)
+            for play_id, requests in data.items()
+        }
         nonempty_ordinals = [
             ordinal for ordinal in ordinals.values() if ordinal is not None
         ]

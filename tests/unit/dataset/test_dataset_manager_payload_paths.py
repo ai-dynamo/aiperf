@@ -360,6 +360,27 @@ class TestPreformatPayloads:
         dm._preformat_payloads(conversations)
         assert conversations[0].turns[0].raw_payload is None
 
+    def test_agentic_v2_keeps_source_headers_in_conversation_storage(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Environment.DATASET, "PREFORMAT_PAYLOADS", True)
+        dm = self._manager()
+        ordinary = _single_turn_conversation("ordinary")
+        agentic = _single_turn_conversation("agentic")
+        agentic.turns[0].source_kind = "agentic_mooncake_v2"
+        agentic.turns[0].extra_headers = {
+            "x-dynamo-session-id": "child",
+            "x-dynamo-parent-session-id": "parent",
+        }
+
+        dm._preformat_payloads([ordinary, agentic])
+
+        assert ordinary.turns[0].raw_payload is None
+        assert agentic.turns[0].raw_payload is None
+        assert (
+            dm._select_mmap_format([ordinary, agentic]) == MemoryMapFormat.CONVERSATION
+        )
+
     def test_all_raw_conversations_skip_formatting(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
