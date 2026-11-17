@@ -77,11 +77,20 @@ A structured representation of all input datasets converted to the payload forma
 
 The JSONL output contains one record per line, for each request sent during the benchmark. Each record includes request metadata, computed metrics, and error information if the request failed.
 
-Finite agentic replay adds `metadata.response_body_eof_ns` on successful HTTP
-records. It is the exact client response-body EOF in the corrected controller
-clock frame. `metadata.request_end_ns` keeps its existing last-response
-semantics. At raw export level, `response_body_eof_perf_ns` can be compared
-directly with the raw record's `start_perf_ns` on the same worker.
+The built-in HTTP client records `metadata.response_body_eof_ns` when it observes
+the complete response body, for ordinary profiling and finite replay, including
+fully read non-2xx error responses. This is a transport observation in the
+corrected controller clock frame; it does not make an unsuccessful request
+successful. Finite replay still requires a successful request before releasing
+completion dependencies.
+
+The field is omitted from JSONL when EOF was not observed, including timeouts or cancellations
+before EOF, connection failures, and intentionally unread redirect bodies.
+An error after EOF was observed does not erase the timestamp.
+`metadata.request_end_ns` keeps its existing last-response semantics. At raw
+export level, `response_body_eof_perf_ns` can be compared directly with the raw
+record's `start_perf_ns` on the same worker. EOF is captured after the body is
+consumed, even when an SSE `[DONE]` event arrives earlier.
 
 #### Successful Request Record
 
@@ -96,6 +105,7 @@ directly with the raw record's `start_perf_ns` on the same worker.
     "request_start_ns": 1759813207532900363,
     "request_ack_ns": 1759813207650730976,
     "request_end_ns": 1759813207838764604,
+    "response_body_eof_ns": 1759813208088764604,
     "worker_id": "worker_359d423a",
     "record_processor_id": "record_processor_1fa47cd7",
     "benchmark_phase": "profiling",
@@ -128,6 +138,7 @@ directly with the raw record's `start_perf_ns` on the same worker.
 - `request_start_ns`: Epoch time in nanoseconds when request was initiated by AIPerf.
 - `request_ack_ns`: Epoch time in nanoseconds when server acknowledged the request. This is only applicable to streaming requests.
 - `request_end_ns`: Epoch time in nanoseconds when the last response was received from the endpoint.
+- `response_body_eof_ns`: Optional epoch time in nanoseconds when the built-in HTTP client observed the complete response body, corrected into the controller clock frame. Omitted when EOF was not observed; its presence does not imply success.
 - `worker_id`: ID of the AIPerf worker that executed the request against the endpoint.
 - `record_processor_id`: ID of the AIPerf record processor that processed the results from the server.
 - `benchmark_phase`: Phase of the benchmark. Currently only `profiling` is supported.
@@ -271,6 +282,56 @@ producer's version; do not infer the encoding from the string. For example,
 `"abcd"` can be either legacy text or base64 for different bytes. Updated model
 readers interpret strings as base64 and cannot automatically recover untagged
 legacy text. Use matching application versions for workers and record processors.
+
+#### Response-body timing
+
+For a streaming response, the last recorded event and body EOF can happen at
+different times. The successful record above has a 250 ms gap between
+`request_end_ns` and `response_body_eof_ns`. This can happen when the server
+sends `[DONE]` and keeps the HTTP body open before closing it.
+
+These examples show elapsed time from HTTP start for readability; the exported
+fields contain timestamps in **nanoseconds**, not elapsed milliseconds:
+
+| Request outcome | Last recorded response | Observed body EOF | Export and finite replay behavior |
+|---|---|---|---|
+| Successful stream with a delayed body close | 500 ms | 750 ms | EOF is present. Completion dependencies wait until 750 ms. |
+| HTTP 500 with its error body fully read | Depends on the error path | 750 ms | EOF is present and the error is retained. Finite replay fails; the timestamp does not release completion dependencies. |
+| Timeout before the body finishes | May contain partial responses | Not observed | The EOF field is omitted. Finite replay fails. |
+
+The raw and processed exports express the same EOF observation in different
+clock frames:
+
+| Field | Clock frame | Comparison |
+|---|---|---|
+| Processed `metadata.response_body_eof_ns` | Controller-corrected epoch time | Subtract `metadata.request_start_ns` to measure time from request start to EOF. |
+| Raw `response_body_eof_perf_ns` | Worker monotonic performance clock | Subtract that raw record's `start_perf_ns` to measure time from request start to EOF. |
+
+Divide a nanosecond difference by `1_000_000` to get milliseconds. Do not subtract
+a raw performance timestamp from an epoch timestamp, or compare raw performance
+timestamps across Kubernetes workers.
+
+EOF is a client-side transport observation. It does not identify the engine's
+final-token time or replace the existing `request_end_ns` field.
+[Full Decode Duration](../metrics-reference.md#full-decode-duration) has its own
+content and request-completion requirements; it is not defined as EOF minus
+request start.
+
+### Records from failed runs
+
+A failed run can leave useful per-request records even when final exports are
+unavailable. In particular, when all requests fail, AIPerf exits nonzero and
+skips final result export because there are no successful responses to summarize.
+
+- Check the run logs for the first request, replay, or worker error.
+- Inspect `profile_export.jsonl` for records flushed before shutdown.
+- With `--export-level raw`, inspect `raw_records/raw_records_*.jsonl` if the
+  combined `profile_export_raw.jsonl` was not produced. These are per-processor
+  fragments written during the run.
+
+A failure before request processing may leave no per-request records. Partial
+files describe only the work that reached the writer; they do not prove that
+every root or descendant completed.
 
 ### Working with Input Datasets
 

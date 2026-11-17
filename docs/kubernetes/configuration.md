@@ -172,6 +172,37 @@ phases:
 | `requests` | int | - | Total requests to send (>= 1) |
 | `duration` | float \| string | - | Phase duration, alternative to `requests`. Seconds, or a suffixed string (`300`, `'5m'`, `'2h'`) |
 | `sessions` | int | - | Stop after this many sessions complete (>= 1) |
+| `agenticReplayLifecycle` | string | `steady-state` | `finite` selects agentic replay, admits each eligible root once, and finishes after all descendants drain. Requires a profiling concurrency phase without stop conditions or warmup. |
+
+#### Finite agentic replay
+
+For a finite Weka replay, use these dataset and phase settings under
+`spec.benchmark` in an `AIPerfJob`, or under `benchmark` in a local YAML config:
+
+```yaml
+datasets:
+  - name: traces
+    type: public
+    dataset: semianalysis_cc_traces_weka_062126
+    sampling: sequential
+phases:
+  - name: profiling
+    type: concurrency
+    concurrency: 2
+    agenticReplayLifecycle: finite
+```
+
+Set the model, tokenizer, and streaming HTTP chat endpoint as in the
+[complete finite replay example](../tutorials/weka-trace.md#yaml-configuration).
+The public dataset form above lets the cluster download the corpus; a local
+trace path must instead be made available to the cluster's dataset-loading
+container. Omit warmup phases, request/session/duration limits, and delay caps.
+Concurrency counts live session trees, including background descendants.
+
+Workers calibrate their clocks before becoming dispatchable so dependencies
+between requests on different pods use a common timeline. See the
+[deployment recipe](workflow.md#finite-agentic-replay) and
+[clock-calibration troubleshooting](debug-command.md#finite-replay-workers-do-not-become-ready).
 
 ### Deployment Options (spec top level)
 

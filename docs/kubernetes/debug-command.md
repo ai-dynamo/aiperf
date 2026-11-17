@@ -203,6 +203,35 @@ The report is rendered by `_print_report` in `src/aiperf/cli_commands/kube/_debu
 
 The scenarios below are grouped by the symptom you'd see in `aiperf kube list`. Each one shows the exact command to run and what to look for in the output.
 
+### Finite replay workers do not become ready
+
+Symptom: a finite replay run sends no requests, or fails with a clock-calibration
+error after traffic has started.
+
+```bash
+aiperf kube debug -j aiperf-bench-7f2a -v
+aiperf kube logs aiperf-bench-7f2a
+```
+
+- Check dataset-manager logs first if the corpus is still downloading or loading.
+  That is separate from worker readiness.
+- Check worker logs for clock-probe or calibration errors. Finite workers need
+  accepted clock-offset samples and a baseline round-trip time before becoming
+  dispatchable. A successful credit-return PUSH probe does not prove that the
+  separate credit-dispatch DEALER ping/pong path is working.
+- Check that workers can reach the controller's credit router and that network
+  latency permits calibration within `AIPERF_WORKER_CLOCK_PROBE_BUDGET`. See
+  [worker settings](../environment-variables.md#worker) for the probe controls.
+- If calibration is lost after startup, finite replay fails rather than
+  continuing with timestamps that cannot be placed on the controller timeline.
+  Keep the worker and controller logs to identify the first failure.
+
+`debug -v` only fetches logs from pods classified as problematic. Use `kube logs`
+when the containers are running but the benchmark is waiting for readiness.
+The built-in benchmark diagnostics do not provide a separate clock-calibration
+verdict. See [Cross-Pod Clock Correction](../dev/kubernetes-flow.md#cross-pod-clock-correction)
+for the calibration protocol.
+
 ### Pod OOMKilled mid-run
 
 Symptom: a worker pod restarts repeatedly; `list --watch` shows request-rate gaps.

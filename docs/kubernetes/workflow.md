@@ -559,6 +559,31 @@ aiperf kube results
 Because `profile` stays in the foreground, the last three commands are a
 tight cycle: change config, re-run `profile`, inspect artifacts.
 
+### Finite agentic replay
+
+Save the Weka guide's [finite replay YAML](../tutorials/weka-trace.md#yaml-configuration)
+as `finite-replay.yaml`. Set the endpoint URL to a server reachable from the
+worker pods, and replace its local `dataset` block with the public `datasets`
+block in the [Kubernetes finite replay example](configuration.md#finite-agentic-replay).
+Use a model and tokenizer suitable for the trace's context lengths.
+
+```bash
+aiperf kube validate finite-replay.yaml
+aiperf kube profile --config finite-replay.yaml --image aiperf:latest --detach
+aiperf kube list --watch --running
+aiperf kube results
+```
+
+The run ends after each eligible root and all its descendants finish, rather
+than at a duration or request-count limit. Keep the config free of warmup,
+stop conditions, and delay compression; see
+[supported settings](../tutorials/weka-trace.md#supported-settings).
+
+On Kubernetes, finite workers must complete clock calibration before they can
+receive requests. The credit-return connectivity probe alone does not establish
+clock readiness. If no traffic starts or calibration is lost during replay,
+follow the [finite-worker triage recipe](debug-command.md#finite-replay-workers-do-not-become-ready).
+
 ### Long-running benchmark, detached
 
 For multi-hour runs from a laptop, CI, or SSH session, detach up front and
