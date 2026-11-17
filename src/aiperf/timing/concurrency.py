@@ -442,8 +442,8 @@ class ConcurrencyManager:
             prefill_concurrency: Maximum concurrent prefill slots for this phase.
                 If None, prefill concurrency limiting is disabled globally.
             request_concurrency: Maximum concurrent in-flight request slots for
-                this phase. If None, request concurrency limiting is disabled
-                globally.
+                this phase. If None, this phase's requests are uncapped; phases
+                configured with a cap keep their own limit.
         """
         self._session_limiter.configure_for_phase(phase, concurrency)
         self._prefill_limiter.configure_for_phase(phase, prefill_concurrency)
@@ -571,12 +571,10 @@ class ConcurrencyManager:
     def request_slot_available(self, phase: PhaseRuntimeKey) -> bool:
         """Check if a request slot is available without blocking.
 
-        Returns True when request concurrency limiting is disabled (no limit
-        configured).
+        A phase configured with a cap is limited by its own cap; a phase with no
+        cap bypasses the limiter, regardless of other phases' settings.
         """
-        if not self._request_limiter.enabled or not self._request_limiter.has_phase(
-            phase
-        ):
+        if not self._request_limiter.has_phase(phase):
             return True
         return self._request_limiter.slot_available(phase)
 
@@ -589,20 +587,19 @@ class ConcurrencyManager:
         every wire request acquires its own (roots AND children); unlike the
         prefill slot, it is released when the request RETURNS (not at TTFT), so a
         decoding request still counts. This is what caps total in-flight,
-        including sub-agent fan-out.
+        including sub-agent fan-out. A phase configured with a cap is always
+        limited by that cap; a phase with no cap bypasses the limiter.
 
         Args:
             phase: The credit phase to acquire the slot for.
             can_proceed_fn: Callback that returns True if the operation should
                 proceed. Used to check phase stop conditions. ALWAYS called, even
-                when concurrency limiting is disabled, to enforce stop conditions.
+                when the phase has no request cap, to enforce stop conditions.
 
         Returns:
             True if slot was acquired and can_proceed_fn returned True, False otherwise.
         """
-        if not self._request_limiter.enabled or not self._request_limiter.has_phase(
-            phase
-        ):
+        if not self._request_limiter.has_phase(phase):
             return can_proceed_fn()
         return await self._request_limiter.acquire(phase, can_proceed_fn)
 
@@ -611,7 +608,8 @@ class ConcurrencyManager:
     ) -> bool:
         """Try to acquire a request concurrency slot without blocking.
 
-        Non-blocking version of acquire_request_slot.
+        Non-blocking version of acquire_request_slot. A phase with no request cap
+        bypasses the limiter; a capped phase is limited by its own cap.
 
         Args:
             phase: The credit phase to acquire the slot for.
@@ -622,9 +620,7 @@ class ConcurrencyManager:
             True if slot was acquired, False if no slot available or
             can_proceed_fn returned False.
         """
-        if not self._request_limiter.enabled or not self._request_limiter.has_phase(
-            phase
-        ):
+        if not self._request_limiter.has_phase(phase):
             return can_proceed_fn()
         return self._request_limiter.try_acquire(phase, can_proceed_fn)
 
