@@ -167,6 +167,48 @@ class TestBasicCreditIssuance:
         gate.unregister_credit.assert_called_once_with(credit)
         gate.observe_issued.assert_not_awaited()
 
+    async def test_issue_credit_ordinary_send_error_releases_request_and_prefill(
+        self, credit_issuer, mock_concurrency, mock_router
+    ) -> None:
+        mock_router.send_credit.side_effect = RuntimeError("send failed")
+
+        with pytest.raises(RuntimeError, match="send failed"):
+            await credit_issuer.issue_credit(make_turn(turn_index=0, num_turns=2))
+
+        mock_concurrency.release_request_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.release_prefill_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.release_session_slot.assert_not_called()
+
+    async def test_issue_credit_ordinary_send_error_skips_request_slot_for_no_request(
+        self, credit_issuer, mock_concurrency, mock_router
+    ) -> None:
+        mock_router.send_credit.side_effect = RuntimeError("send failed")
+        turn = struct_replace(make_turn(turn_index=1, num_turns=2), no_request=True)
+
+        with pytest.raises(RuntimeError, match="send failed"):
+            await credit_issuer.issue_credit(turn)
+
+        mock_concurrency.release_request_slot.assert_not_called()
+        mock_concurrency.release_prefill_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+
+    async def test_issue_credit_cancelled_send_leaves_slots_for_stuck_slot_reclaim(
+        self, credit_issuer, mock_concurrency, mock_router
+    ) -> None:
+        mock_router.send_credit.side_effect = asyncio.CancelledError()
+
+        with pytest.raises(asyncio.CancelledError):
+            await credit_issuer.issue_credit(make_turn(turn_index=1, num_turns=2))
+
+        mock_concurrency.release_request_slot.assert_not_called()
+        mock_concurrency.release_prefill_slot.assert_not_called()
+        mock_concurrency.release_session_slot.assert_not_called()
+
     async def test_finite_issue_rejects_capped_final_credit(
         self, credit_issuer, mock_progress
     ) -> None:

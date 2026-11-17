@@ -405,7 +405,7 @@ aiperf profile \
 | `--warmup-prefill-concurrency` | int | `--prefill-concurrency` | Prefill concurrency during warmup |
 | `--warmup-request-rate` | float | `--request-rate` | Request rate during warmup |
 | `--warmup-arrival-pattern` | str | `--arrival-pattern` | Arrival pattern during warmup |
-| `--warmup-request-concurrency` | int | `--request-concurrency` | Total in-flight request cap during warmup, roots and sub-agent forks |
+| `--warmup-request-concurrency` | int | `--request-concurrency` (only when given on the CLI) | Total in-flight request cap during warmup, roots and sub-agent forks. A warmup phase declared in a config file keeps its own `request_concurrency` |
 
 ### Ramping (inherit from profiling if not set)
 

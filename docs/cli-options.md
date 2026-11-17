@@ -1438,7 +1438,7 @@ The prefill concurrency value to use for the warmup phase. If not set, it will u
 
 #### `--warmup-request-concurrency` `<int>`
 
-The total in-flight request cap to use for the warmup phase. If not set, it will use the `--request-concurrency` value.
+The total in-flight request cap to use for the warmup phase. Falls back to `--request-concurrency` only when that flag is given on the command line. A phase declared in a config file keeps its own `request_concurrency` (unset means uncapped).
 <br/>_Constraints: ≥ 1_
 
 #### `--warmup-request-rate` `<float>`
@@ -3129,7 +3129,7 @@ The prefill concurrency value to use for the warmup phase. If not set, it will u
 
 #### `--warmup-request-concurrency` `<int>`
 
-The total in-flight request cap to use for the warmup phase. If not set, it will use the `--request-concurrency` value.
+The total in-flight request cap to use for the warmup phase. Falls back to `--request-concurrency` only when that flag is given on the command line. A phase declared in a config file keeps its own `request_concurrency` (unset means uncapped).
 <br/>_Constraints: ≥ 1_
 
 #### `--warmup-request-rate` `<float>`
@@ -4815,7 +4815,7 @@ The prefill concurrency value to use for the warmup phase. If not set, it will u
 
 #### `--warmup-request-concurrency` `<int>`
 
-The total in-flight request cap to use for the warmup phase. If not set, it will use the `--request-concurrency` value.
+The total in-flight request cap to use for the warmup phase. Falls back to `--request-concurrency` only when that flag is given on the command line. A phase declared in a config file keeps its own `request_concurrency` (unset means uncapped).
 <br/>_Constraints: ≥ 1_
 
 #### `--warmup-request-rate` `<float>`
@@ -7008,7 +7008,7 @@ The prefill concurrency value to use for the warmup phase. If not set, it will u
 
 #### `--warmup-request-concurrency` `<int>`
 
-The total in-flight request cap to use for the warmup phase. If not set, it will use the `--request-concurrency` value.
+The total in-flight request cap to use for the warmup phase. Falls back to `--request-concurrency` only when that flag is given on the command line. A phase declared in a config file keeps its own `request_concurrency` (unset means uncapped).
 <br/>_Constraints: ≥ 1_
 
 #### `--warmup-request-rate` `<float>`

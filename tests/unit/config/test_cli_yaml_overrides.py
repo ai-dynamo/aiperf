@@ -591,3 +591,84 @@ def test_pure_cli_user_centric_rate_still_builds_user_centric_phase() -> None:
     assert phase.type == PhaseType.USER_CENTRIC
     assert phase.users == 3
     assert phase.rate == 5.0
+
+
+_MEASURED_PHASE_BLOCK = (
+    "  phases:\n"
+    "    - name: measured\n"
+    "      kind: profiling\n"
+    "      type: poisson\n"
+    "      requests: 20\n"
+    "      rate: 2\n"
+    "      rateRamp: {duration: 9}\n"
+    "      cancellation: {rate: 3, delay: 4}\n"
+)
+
+
+def _write_phases(config_file: Path, phases_block: str) -> None:
+    content = _BASE_YAML.replace(_MEASURED_PHASE_BLOCK, phases_block)
+    assert content != _BASE_YAML
+    config_file.write_text(content, encoding="utf-8")
+
+
+def test_yaml_warmup_request_concurrency_survives_cli_request_concurrency(
+    config_file: Path,
+) -> None:
+    """--request-concurrency targets profiling; a YAML warmup keeps its own cap."""
+    _write_phases(
+        config_file,
+        "  phases:\n"
+        "    - name: warmup\n"
+        "      kind: warmup\n"
+        "      type: concurrency\n"
+        "      concurrency: 2\n"
+        "      requests: 3\n"
+        "      excludeFromResults: true\n"
+        "      requestConcurrency: 4\n"
+        "    - name: profiling\n"
+        "      kind: profiling\n"
+        "      type: concurrency\n"
+        "      concurrency: 16\n"
+        "      requests: 20\n",
+    )
+
+    config = resolve_config(
+        CLIConfig(warmup_duration=20, request_concurrency=8), config_file
+    )
+
+    phases = {phase.name: phase for phase in config.benchmark.phases}
+    assert phases["warmup"].request_concurrency == 4
+    assert phases["profiling"].request_concurrency == 8
+
+
+def test_yaml_two_profiling_phases_warmup_request_concurrency_targets_warmup(
+    config_file: Path,
+) -> None:
+    """--warmup-request-concurrency alone must not require a unique profiling phase."""
+    _write_phases(
+        config_file,
+        "  phases:\n"
+        "    - name: warmup\n"
+        "      kind: warmup\n"
+        "      type: concurrency\n"
+        "      concurrency: 2\n"
+        "      requests: 3\n"
+        "      excludeFromResults: true\n"
+        "    - name: profiling-a\n"
+        "      kind: profiling\n"
+        "      type: concurrency\n"
+        "      concurrency: 4\n"
+        "      requests: 10\n"
+        "    - name: profiling-b\n"
+        "      kind: profiling\n"
+        "      type: concurrency\n"
+        "      concurrency: 8\n"
+        "      requests: 10\n",
+    )
+
+    config = resolve_config(CLIConfig(warmup_request_concurrency=8), config_file)
+
+    phases = {phase.name: phase for phase in config.benchmark.phases}
+    assert phases["warmup"].request_concurrency == 8
+    assert phases["profiling-a"].request_concurrency is None
+    assert phases["profiling-b"].request_concurrency is None

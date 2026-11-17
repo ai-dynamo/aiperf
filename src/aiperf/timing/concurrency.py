@@ -278,7 +278,7 @@ class GlobalPhaseConcurrencyLimiter:
                 return False
 
             return True
-        except Exception:
+        except BaseException:
             if acquired_phase:
                 phase_limit.release()
             if acquired_global:

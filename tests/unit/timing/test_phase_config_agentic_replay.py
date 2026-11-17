@@ -84,9 +84,8 @@ def test_warmup_request_concurrency_overrides_profiling() -> None:
     )
     warmup = _build_agentic_warmup_config(phase)
     assert warmup is not None
-    # Gentle in-flight cap during warmup...
     assert warmup.request_concurrency == 8
-    # ...but every lane is still primed (burst size tracks profiling concurrency).
+    # Every profiling lane is still primed, so the burst tracks profiling concurrency.
     assert warmup.total_expected_requests == 64
 
 

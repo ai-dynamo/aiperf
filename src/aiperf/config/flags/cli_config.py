@@ -2843,7 +2843,9 @@ class CLIConfig(BaseConfig):
         Field(
             ge=1,
             description="The total in-flight request cap to use for the warmup phase. "
-            "If not set, it will use the `--request-concurrency` value.",
+            "Falls back to `--request-concurrency` only when that flag is given on "
+            "the command line. A phase declared in a config file keeps its own "
+            "`request_concurrency` (unset means uncapped).",
         ),
         CLIParameter(
             name=("--warmup-request-concurrency",),

@@ -215,7 +215,6 @@ class TestWarmupRequestConcurrencyUnderScenario:
         )
         prof = build_profiling(_make_user(loadgen))
         assert prof["agentic_warmup_request_concurrency"] == 8
-        # Profiling intensity is untouched.
         assert prof["request_concurrency"] == 32
 
     def test_warmup_request_concurrency_without_scenario_raises_naming_flag(self):

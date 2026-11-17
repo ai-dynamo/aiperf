@@ -321,6 +321,22 @@ class TestGlobalPhaseConcurrencyLimiter:
         assert await lim.acquire(P, lambda: True) is True
 
     @pytest.mark.asyncio
+    async def test_acquire_cancelled_while_waiting_on_phase_returns_global_permit(
+        self,
+    ) -> None:
+        lim = GlobalPhaseConcurrencyLimiter()
+        lim.configure_for_phase(P, 1)
+        lim.configure_for_phase(W, 3)
+        assert await lim.acquire(P, lambda: True)
+
+        waiter = asyncio.create_task(lim.acquire(P, lambda: True))
+        await asyncio.sleep(0)
+        await _cancel(waiter)
+
+        assert lim.try_acquire(W, lambda: True)
+        assert lim.try_acquire(W, lambda: True)
+
+    @pytest.mark.asyncio
     async def test_held_slots_tracking(self) -> None:
         lim = GlobalPhaseConcurrencyLimiter()
         lim.configure_for_phase(P, 10)

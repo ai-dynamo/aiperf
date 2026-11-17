@@ -1687,12 +1687,17 @@ def _apply_phase_loadgen_overrides(
         _apply_agentic_replay_fields,
         _apply_agentic_warmup_request_concurrency,
         _apply_continuation_dispatch,
+        scenario_is_agentic,
     )
 
     decision = phase_shape_decision or _PhaseShapeDecision()
     loadgen_set = cli.model_fields_set & _PROFILING_PHASE_OVERRIDE_FIELDS
     agentic_set = cli.model_fields_set.intersection(_AGENTIC_REPLAY_ROUTES)
-    warmup_cap_set = "warmup_request_concurrency" in cli.model_fields_set
+    # Outside agentic replay, --warmup-request-concurrency targets the warmup
+    # phase only, so it must not force a unique-profiling-phase lookup.
+    warmup_cap_set = "warmup_request_concurrency" in cli.model_fields_set and (
+        scenario_is_agentic(_resolved_scenario(merged, cli))
+    )
     if not loadgen_set and not agentic_set and not warmup_cap_set:
         return decision
 
