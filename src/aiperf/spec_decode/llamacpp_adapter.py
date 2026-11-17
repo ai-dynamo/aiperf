@@ -5,8 +5,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from pydantic import ValidationError
-
 from aiperf.common.aiperf_logger import AIPerfLogger
 from aiperf.common.models import SpecDecodeAcceptanceRecord
 from aiperf.common.models.record_models import find_last_non_empty_usage
@@ -65,7 +63,11 @@ class LlamaCppSpecDecodeAdapter:
                     f"llama.cpp draft counters must be integers, got {drafted!r}, "
                     f"{accepted!r}"
                 )
-            if drafted <= 0:
+            if drafted < 0:
+                raise ValueError(
+                    f"llama.cpp draft_n must be non-negative, got {drafted}"
+                )
+            if drafted == 0:
                 return None
             usage = find_last_non_empty_usage(responses)
             return SpecDecodeAcceptanceRecord(
@@ -75,7 +77,7 @@ class LlamaCppSpecDecodeAdapter:
                 num_draft_tokens=drafted,
                 completion_tokens=usage.completion_tokens if usage else None,
             )
-        except (TypeError, ValueError, KeyError, ValidationError) as e:
+        except (TypeError, ValueError, KeyError) as e:
             error = e
             _logger.warning(
                 lambda: f"Ignoring malformed llama.cpp spec-decode payload "

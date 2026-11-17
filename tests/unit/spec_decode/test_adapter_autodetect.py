@@ -18,6 +18,8 @@ parser's behaviour when a signature collision happens anyway.
 
 from typing import Any
 
+import pytest
+
 from aiperf.common.models import ParsedResponse, SpecDecodeAcceptanceRecord
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
@@ -86,11 +88,29 @@ class TestCrossClaim:
         responses = [ParsedResponse(perf_ns=1, spec_decode_stats=SUMMARY_PAYLOAD)]
         assert TRTLLMSpecDecodeAdapter.can_adapt(responses) is False
 
+    def test_engine_adapters_defer_on_llamacpp_payload(self) -> None:
+        responses = [ParsedResponse(perf_ns=1, spec_decode_stats=LLAMACPP_PAYLOAD)]
+        for adapter in (
+            VLLMSpecDecodeAdapter,
+            TRTLLMSpecDecodeAdapter,
+            SGLangSpecDecodeAdapter,
+        ):
+            assert adapter.can_adapt(responses) is False, adapter.__name__
+
+    @pytest.mark.parametrize(
+        "payload",
+        [SUMMARY_PAYLOAD, TRTLLM_PAYLOAD, SGLANG_PAYLOAD],
+    )  # fmt: skip
+    def test_llamacpp_defers_on_other_engine_payloads(self, payload: dict) -> None:
+        responses = [ParsedResponse(perf_ns=1, spec_decode_stats=payload)]
+        assert LlamaCppSpecDecodeAdapter.can_adapt(responses) is False
+
     def test_each_payload_resolves_to_its_own_engine(self) -> None:
         for payload, engine in (
             (SUMMARY_PAYLOAD, "vllm"),
             (TRTLLM_PAYLOAD, "tensorrt_llm"),
             (SGLANG_PAYLOAD, "sglang"),
+            (LLAMACPP_PAYLOAD, "llamacpp"),
         ):
             responses = [
                 ParsedResponse(perf_ns=1, spec_decode_stats=payload),

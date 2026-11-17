@@ -53,6 +53,7 @@ from aiperf.metrics.types.spec_decode_metrics import (
     TotalAcceptedDraftTokensMetric,
     TotalDraftTokensMetric,
     TotalSpecDecodeStepsMetric,
+    TotalSteppedAcceptedDraftTokensMetric,
 )
 from aiperf.records.records_manager import _pooled_spec_decode_histogram
 from tests.unit.conftest import make_benchmark_run
@@ -212,6 +213,23 @@ class TestAggregateOnlyRecord:
             record, MetricRecordDict()
         )
         assert value == pytest.approx(75.0)
+
+    def test_stepped_accepted_metric_raises_for_step_less_record(self):
+        record = spec_record(make_aggregate_spec())
+        with pytest.raises(NoMetricValue):
+            SpecDecodeSteppedAcceptedDraftTokensMetric().parse_record(
+                record, MetricRecordDict()
+            )
+
+    def test_token_weighted_length_depends_on_stepped_accepted_total(self):
+        assert (
+            TotalSteppedAcceptedDraftTokensMetric.tag
+            in SpecDecodeTokenWeightedAcceptanceLengthMetric.required_metrics
+        )
+        assert (
+            TotalAcceptedDraftTokensMetric.tag
+            not in SpecDecodeTokenWeightedAcceptanceLengthMetric.required_metrics
+        )
 
     def test_token_weighted_length_excludes_step_less_records(self):
         summary = asyncio.run(

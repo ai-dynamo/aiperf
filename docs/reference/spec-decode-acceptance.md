@@ -282,12 +282,16 @@ and leaves `mean_acceptance_length`, `acceptance_histogram`, `num_spec_steps`,
 and `num_spec_tokens` as `None`. Acceptance length is not derived from
 `predicted_n`. llama.cpp updates its accepted total before stop-string
 truncation, so `predicted_n - draft_n_accepted` does not give the number of
-verify steps. A request with `draft_n` of 0 or missing produces no record.
+verify steps. A request with `draft_n` of 0 or missing produces no record. A
+negative `draft_n` is malformed: it produces no record and logs a warning.
 
 To get acceptance length and the histogram for llama.cpp, read the aggregate
 Prometheus counters (see [Server metrics](../server-metrics/server-metrics-reference.md)).
 The `speed-bench-report` server-scrape path computes acceptance length from
 `llamacpp:spec_decode_num_accepted_tokens / llamacpp:spec_decode_num_drafts + 1`.
+The code reads these unsuffixed names because the Prometheus parser strips the
+`_total` suffix from a counter's family name, so the exposed `_total` counters
+above match them.
 
 Enable it by starting `llama-server` with a draft model, for example
 `llama-server -m <target>.gguf -md <draft>.gguf`. Streaming works with or without

@@ -9,6 +9,7 @@ import pytest
 from pytest import param
 
 from aiperf.common.models import ParsedResponse
+from aiperf.spec_decode import llamacpp_adapter
 from aiperf.spec_decode.llamacpp_adapter import LlamaCppSpecDecodeAdapter
 
 # A request that drafted 16 tokens and had 12 accepted. llama.cpp reports only
@@ -84,3 +85,18 @@ def test_missing_draft_counters_are_not_claimed() -> None:
 def test_malformed_counters_degrade_to_none(override: dict[str, Any]) -> None:
     payload = {**TIMINGS_PAYLOAD, **override}
     assert LlamaCppSpecDecodeAdapter.adapt(_responses(payload)) is None
+
+
+def test_negative_drafted_logs_malformed_warning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+    monkeypatch.setattr(
+        llamacpp_adapter._logger,
+        "warning",
+        lambda msg: messages.append(msg()),
+    )
+    payload = {**TIMINGS_PAYLOAD, "draft_n": -1}
+    assert LlamaCppSpecDecodeAdapter.adapt(_responses(payload)) is None
+    assert len(messages) == 1
+    assert "draft_n must be non-negative, got -1" in messages[0]

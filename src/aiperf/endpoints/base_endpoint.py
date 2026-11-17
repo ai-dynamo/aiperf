@@ -177,8 +177,8 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         interpretation downstream; None when absent.
 
         A response with more than one choice is an ``n > 1`` or multi-prompt
-        non-streaming request; its per-choice and SGLang payloads are
-        suppressed (SGLang reports only the first prompt's details as an
+        non-streaming request; its per-choice, SGLang, and llama.cpp ``timings``
+        payloads are suppressed (SGLang reports only the first prompt's details as an
         object when ``n == 1``) because a single
         per-request record cannot attribute request-level usage to one sequence
         -- reporting one choice's acceptance alongside all choices' token count
