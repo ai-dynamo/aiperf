@@ -15,9 +15,9 @@ def test_preload_loads_tokenizer_in_offline_mode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("AIPERF_LOADER_PRELOAD_TOKENIZER", "gpt2")
-    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
-    monkeypatch.delenv("TRANSFORMERS_OFFLINE", raising=False)
-    monkeypatch.delenv("TOKENIZERS_PARALLELISM", raising=False)
+    for var in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "TOKENIZERS_PARALLELISM"):
+        monkeypatch.setenv(var, "unset")
+        monkeypatch.delenv(var, raising=False)
 
     seen: dict[str, str | None] = {}
 
