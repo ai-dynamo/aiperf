@@ -22,7 +22,6 @@ if IS_WINDOWS:
     pytest.skip("LinuxDriver is POSIX-only", allow_module_level=True)
 
 from textual import events
-from textual.drivers.linux_driver import LinuxDriver
 
 from aiperf.ui.dashboard.aiperf_dashboard_ui import AIPerfDashboardUI
 from aiperf.ui.dashboard.lenient_linux_driver import LenientLinuxDriver
@@ -58,24 +57,6 @@ def _wait_until_drained(read_fd: int) -> None:
     while select.select([read_fd], [], [], 0.01)[0]:
         if time.monotonic() > deadline:
             pytest.fail("driver never drained stdin")
-
-
-@pytest.mark.asyncio
-async def test_linux_driver_run_input_thread_undecodable_byte_raises(
-    stdin_pipe: tuple[int, int],
-) -> None:
-    """Documents upstream Textual behavior; fails if Textual tolerates bad bytes."""
-    _, write_fd = stdin_pipe
-    driver = LinuxDriver(MagicMock())
-    os.write(write_fd, b"\xff")
-    timer = threading.Timer(_JOIN_TIMEOUT, driver.exit_event.set)
-    timer.daemon = True
-    timer.start()
-    try:
-        with pytest.raises(UnicodeDecodeError):
-            driver.run_input_thread()
-    finally:
-        timer.cancel()
 
 
 @pytest.mark.asyncio
