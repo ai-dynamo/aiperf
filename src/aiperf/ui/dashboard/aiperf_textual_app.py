@@ -27,6 +27,8 @@ from aiperf.ui.dashboard.rich_log_viewer import RichLogViewer
 from aiperf.ui.dashboard.worker_dashboard import WorkerDashboard
 
 if TYPE_CHECKING:
+    from textual.driver import Driver
+
     from aiperf.config.resolution.plan import BenchmarkRun
     from aiperf.controller.system_controller import SystemController
 
@@ -89,8 +91,13 @@ class AIPerfTextualApp(App):
         Binding("c", "copy_logs", "Copy Logs"),
     ]
 
-    def __init__(self, run: BenchmarkRun, controller: SystemController) -> None:
-        super().__init__()
+    def __init__(
+        self,
+        run: BenchmarkRun,
+        controller: SystemController,
+        driver_class: type[Driver] | None = None,
+    ) -> None:
+        super().__init__(driver_class=driver_class)
 
         self.title = "NVIDIA AIPerf"
         if Environment.DEV.MODE:
