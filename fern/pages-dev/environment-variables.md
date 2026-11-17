@@ -550,7 +550,7 @@ MLflow export configuration. Controls timeout behavior for post-run MLflow artif
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_MLFLOW_EXPORT_TIMEOUT_SECONDS` | `30.0` | ≥ 1.0, ≤ 600.0 | Timeout in seconds for the post-run MLflow export operation. If the MLflow tracking server is unreachable, the export will be abandoned after this duration rather than blocking indefinitely. |
+| `AIPERF_MLFLOW_EXPORT_TIMEOUT_SECONDS` | `30.0` | ≥ 1.0, ≤ 600.0 | Timeout in seconds for the post-run MLflow export operation. If the MLflow tracking server is unreachable, the export will be abandoned after this duration rather than blocking indefinitely. If the CLI dies, the export subprocess exits about this long afterwards. |
 
 ## NETWORKLATENCY
 
@@ -825,7 +825,7 @@ Weights & Biases export configuration. Controls timeout behavior for the post-ru
 
 | Environment Variable | Default | Constraints | Description |
 |----------------------|---------|-------------|-------------|
-| `AIPERF_WANDB_EXPORT_TIMEOUT_SECONDS` | `30.0` | ≥ 1.0, ≤ 600.0 | Timeout in seconds for the post-run Weights & Biases export operation. If the W&B backend is unreachable, the export will be abandoned after this duration rather than blocking indefinitely. |
+| `AIPERF_WANDB_EXPORT_TIMEOUT_SECONDS` | `30.0` | ≥ 1.0, ≤ 600.0 | Timeout in seconds for the post-run Weights & Biases export operation. If the W&B backend is unreachable, the export will be abandoned after this duration rather than blocking indefinitely. If the CLI dies, the export subprocess exits about this long afterwards. |
 
 ## WORKER
 
