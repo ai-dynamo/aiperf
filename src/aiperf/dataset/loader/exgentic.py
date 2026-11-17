@@ -289,15 +289,7 @@ class ExgenticDatasetLoader(BaseHFDatasetLoader):
         )
 
     def _max_conversations(self) -> int:
-        dataset = self.run.cfg.get_default_dataset()
-        if entries := getattr(dataset, "entries", None):
-            return entries
-        if limit := super()._max_conversations():
-            return limit
-        raise DatasetLoaderError(
-            "Exgentic requires a finite entry or request count; set "
-            "--num-conversations, --num-dataset-entries, or --request-count"
-        )
+        return self._require_finite_max_conversations("Exgentic")
 
     async def convert_to_conversations(
         self, data: dict[str, Any]

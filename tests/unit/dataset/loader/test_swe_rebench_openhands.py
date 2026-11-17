@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -466,6 +467,53 @@ async def test_requires_finite_materialization_bound() -> None:
     )
     loader = SweRebenchOpenHandsDatasetLoader(
         run=run,
+        hf_dataset_name="nebius/SWE-rebench-openhands-trajectories",
+        streaming=True,
+    )
+
+    with pytest.raises(DatasetLoaderError, match="finite entry or request count"):
+        loader._max_conversations()
+
+
+def _sessions_only_run(tmp_path: Path, sessions: str) -> Any:
+    config_file = tmp_path / "base.yaml"
+    config_file.write_text(
+        f"""
+schemaVersion: "2.0"
+benchmark:
+  model: target-model
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+  dataset:
+    type: public
+    dataset: swe_rebench_openhands
+  profiling:
+    type: concurrency
+    concurrency: 1
+    sessions: {sessions}
+"""
+    )
+    return make_run_from_cli(CLIConfig(config_file=config_file))
+
+
+def test_profiling_sessions_bound_materialization_without_entries_or_requests(
+    tmp_path: Path,
+) -> None:
+    loader = SweRebenchOpenHandsDatasetLoader(
+        run=_sessions_only_run(tmp_path, "7"),
+        hf_dataset_name="nebius/SWE-rebench-openhands-trajectories",
+        streaming=True,
+    )
+
+    assert loader._max_conversations() == 7
+
+
+def test_full_pass_profiling_sessions_is_not_a_materialization_bound(
+    tmp_path: Path,
+) -> None:
+    loader = SweRebenchOpenHandsDatasetLoader(
+        run=_sessions_only_run(tmp_path, "all"),
         hf_dataset_name="nebius/SWE-rebench-openhands-trajectories",
         streaming=True,
     )
