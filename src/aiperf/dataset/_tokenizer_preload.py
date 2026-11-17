@@ -21,6 +21,9 @@ forked from the helper:
     AIPERF_LOADER_PRELOAD_TRUST_REMOTE_CODE  "true" or "false" (default false)
     AIPERF_LOADER_PRELOAD_REVISION           HF revision (default "main")
 
+The preload forces ``HF_HUB_OFFLINE`` and ``TRANSFORMERS_OFFLINE`` on, so the
+helper loads the tokenizer from the local cache without probing the Hub.
+
 Fail-soft: any failure is logged to stderr and silently skipped. The
 worker's :func:`Tokenizer.from_pretrained` fallback covers misses, so a
 preload failure never blocks the run — it just means workers re-load
@@ -64,6 +67,11 @@ def _preload() -> None:
     name = _env_name()
     if not name:
         return
+
+    # The parent already cached this tokenizer and every worker forked from the
+    # helper runs offline, so the preload should never probe the Hub.
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 

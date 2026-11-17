@@ -187,7 +187,10 @@ class TestWorkerFunctions:
             pd_module._decode_tokens([1, 2, 3])
 
     @patch("aiperf.common.tokenizer.Tokenizer")
-    def test_init_worker_loads_tokenizer(self, mock_tokenizer_class):
+    @patch("aiperf.dataset._tokenizer_preload.get_preloaded", return_value=None)
+    def test_init_worker_loads_tokenizer(
+        self, _mock_get_preloaded, mock_tokenizer_class
+    ):
         """Test that _init_worker loads the tokenizer."""
         pd_module._worker_tokenizer = None
         pd_module._worker_tokenizer_key = None
@@ -427,21 +430,3 @@ class TestInitWorkerPreloadedTokenizer:
         mock_tokenizer_class.from_pretrained.assert_not_called()
         assert pd_module._worker_tokenizer is preloaded
         assert pd_module._worker_tokenizer_key == ("kimi-vl", True, "v1.2")
-
-    @patch("aiperf.common.tokenizer.Tokenizer")
-    @patch("aiperf.dataset._tokenizer_preload.get_preloaded", return_value=None)
-    def test_init_worker_falls_back_to_from_pretrained_when_not_preloaded(
-        self, _mock_get_preloaded, mock_tokenizer_class
-    ):
-        loaded = MagicMock(name="loaded")
-        mock_tokenizer_class.from_pretrained.return_value = loaded
-
-        pd_module._init_worker("gpt2")
-
-        mock_tokenizer_class.from_pretrained.assert_called_once_with(
-            "gpt2",
-            trust_remote_code=False,
-            revision="main",
-            resolve_alias=False,
-        )
-        assert pd_module._worker_tokenizer is loaded
