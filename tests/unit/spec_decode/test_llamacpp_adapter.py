@@ -76,7 +76,7 @@ def test_missing_draft_counters_are_not_claimed() -> None:
     [
         param({"draft_n_accepted": 17}, id="accepted_exceeds_drafted"),
         param({"draft_n": -1}, id="negative_drafted"),
-        param({"draft_n": True}, id="boolean_drafted"),
+        param({"draft_n": True, "draft_n_accepted": 1}, id="boolean_drafted"),
         param({"draft_n_accepted": "12"}, id="string_accepted"),
         param({"draft_n": 16.0}, id="float_drafted"),
     ],

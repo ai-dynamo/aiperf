@@ -46,6 +46,7 @@ from aiperf.metrics.types.spec_decode_metrics import (
     SpecDecodeDraftAcceptanceRateMetric,
     SpecDecodeDraftTokensMetric,
     SpecDecodeOverallDraftAcceptanceRateMetric,
+    SpecDecodeSteppedAcceptedDraftTokensMetric,
     SpecDecodeStepsMetric,
     SpecDecodeTokenWeightedAcceptanceLengthMetric,
     SpecDecodeZeroStepRequestsMetric,
@@ -212,6 +213,28 @@ class TestAggregateOnlyRecord:
         )
         assert value == pytest.approx(75.0)
 
+    def test_token_weighted_length_excludes_step_less_records(self):
+        summary = asyncio.run(
+            _summarize_specs(
+                make_spec([2, 2, 1, 1], k=2),
+                SpecDecodeAcceptanceRecord(
+                    engine="llamacpp",
+                    draft_acceptance_rate=4 / 16,
+                    num_accepted_draft_tokens=4,
+                    num_draft_tokens=16,
+                ),
+            )
+        )
+        results = summary.results
+        assert results[TotalAcceptedDraftTokensMetric.tag].avg == 10
+        assert results[TotalSpecDecodeStepsMetric.tag].avg == 4
+        assert results[
+            SpecDecodeTokenWeightedAcceptanceLengthMetric.tag
+        ].avg == pytest.approx(2.5)
+        assert results[SpecDecodeOverallDraftAcceptanceRateMetric.tag].avg == (
+            pytest.approx(10 / 24 * 100)
+        )
+
     def test_pooled_histogram_absent_and_draft_scalars_survive(self):
         summary = asyncio.run(_summarize_specs(make_aggregate_spec()))
         assert summary.pooled_spec_decode_acceptance_histogram is None
@@ -275,6 +298,9 @@ def _spec_metric_records_data(
         }
         if spec.num_spec_steps is not None:
             metrics[SpecDecodeStepsMetric.tag] = spec.num_spec_steps
+            metrics[SpecDecodeSteppedAcceptedDraftTokensMetric.tag] = (
+                spec.num_accepted_draft_tokens
+            )
     return MetricRecordsData(
         metadata=MetricRecordMetadata(
             session_num=session_num,

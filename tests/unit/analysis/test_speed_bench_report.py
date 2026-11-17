@@ -204,8 +204,8 @@ class TestExtractAcceptLength:
                 "num_spec_steps": 4,
             }
         )
-        totals.add({"num_accepted_draft_tokens": 12, "num_draft_tokens": 16})
-        assert totals.value("accept_rate") == 0.75
+        totals.add({"num_accepted_draft_tokens": 4, "num_draft_tokens": 16})
+        assert totals.value("accept_rate") == pytest.approx(10 / 24)
         assert totals.value("accept_length") == 2.5
 
     def test_extract_accept_length_llamacpp_counters_compute_ratio_plus_one(self):
