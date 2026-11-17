@@ -219,6 +219,10 @@ class GlobalPhaseConcurrencyLimiter:
         """Whether concurrency limiting is enabled for this limiter."""
         return self._enabled
 
+    def has_phase(self, phase: PhaseRuntimeKey) -> bool:
+        """Whether ``phase`` was configured with a cap (has a phase-specific limit)."""
+        return phase in self._phase_limits
+
     def configure_for_phase(self, phase: PhaseRuntimeKey, limit: int | None) -> None:
         """Configure limits for a new phase.
 
@@ -570,8 +574,10 @@ class ConcurrencyManager:
         Returns True when request concurrency limiting is disabled (no limit
         configured).
         """
-        if not self._request_limiter.enabled:
-            return True  # No limit - always available
+        if not self._request_limiter.enabled or not self._request_limiter.has_phase(
+            phase
+        ):
+            return True  # No limit for this phase - always available
         return self._request_limiter.slot_available(phase)
 
     async def acquire_request_slot(
@@ -594,7 +600,9 @@ class ConcurrencyManager:
         Returns:
             True if slot was acquired and can_proceed_fn returned True, False otherwise.
         """
-        if not self._request_limiter.enabled:
+        if not self._request_limiter.enabled or not self._request_limiter.has_phase(
+            phase
+        ):
             return can_proceed_fn()
         return await self._request_limiter.acquire(phase, can_proceed_fn)
 
@@ -614,7 +622,9 @@ class ConcurrencyManager:
             True if slot was acquired, False if no slot available or
             can_proceed_fn returned False.
         """
-        if not self._request_limiter.enabled:
+        if not self._request_limiter.enabled or not self._request_limiter.has_phase(
+            phase
+        ):
             return can_proceed_fn()
         return self._request_limiter.try_acquire(phase, can_proceed_fn)
 

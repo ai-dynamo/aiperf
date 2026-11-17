@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 from pytest import param
 
 from aiperf.config.flags import CLIConfig
@@ -672,3 +673,65 @@ def test_yaml_two_profiling_phases_warmup_request_concurrency_targets_warmup(
     assert phases["warmup"].request_concurrency == 8
     assert phases["profiling-a"].request_concurrency is None
     assert phases["profiling-b"].request_concurrency is None
+
+
+_STREAMING_BASE_YAML = _BASE_YAML.replace(
+    "  endpoint:\n", "  endpoint:\n    streaming: true\n"
+)
+_YAML_WARMUP_CAPPED_PHASES = (
+    "  phases:\n"
+    "    - name: warmup\n"
+    "      kind: warmup\n"
+    "      type: concurrency\n"
+    "      concurrency: 4\n"
+    "      requests: 3\n"
+    "      excludeFromResults: true\n"
+    "      requestConcurrency: 4\n"
+    "    - name: profiling\n"
+    "      kind: profiling\n"
+    "      type: concurrency\n"
+    "      concurrency: 16\n"
+    "      requests: 20\n"
+)
+
+
+def _write_streaming_capped_warmup(config_file: Path) -> None:
+    content = _STREAMING_BASE_YAML.replace(
+        _MEASURED_PHASE_BLOCK, _YAML_WARMUP_CAPPED_PHASES
+    )
+    assert content != _STREAMING_BASE_YAML
+    config_file.write_text(content, encoding="utf-8")
+
+
+def test_mirrored_profiling_prefill_clamps_to_yaml_warmup_request_concurrency(
+    config_file: Path,
+) -> None:
+    """A mirrored --prefill-concurrency must not exceed a YAML warmup's own request cap."""
+    _write_streaming_capped_warmup(config_file)
+
+    config = resolve_config(
+        CLIConfig(warmup_duration=20, request_concurrency=8, prefill_concurrency=8),
+        config_file,
+    )
+
+    phases = {phase.name: phase for phase in config.benchmark.phases}
+    assert phases["warmup"].request_concurrency == 4
+    assert phases["warmup"].prefill_concurrency == 4
+    assert phases["profiling"].prefill_concurrency == 8
+
+
+def test_explicit_warmup_prefill_above_yaml_warmup_request_concurrency_raises(
+    config_file: Path,
+) -> None:
+    """An explicit --warmup-prefill-concurrency is not clamped; validation rejects it."""
+    _write_streaming_capped_warmup(config_file)
+
+    with pytest.raises(ValidationError, match="prefill_concurrency"):
+        resolve_config(
+            CLIConfig(
+                warmup_duration=20,
+                prefill_concurrency=8,
+                warmup_prefill_concurrency=8,
+            ),
+            config_file,
+        )

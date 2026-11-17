@@ -542,6 +542,40 @@ class TestConcurrencyManager:
         assert m.try_acquire_request_slot(0, lambda: True) is True
         assert m.try_acquire_request_slot(0, lambda: True) is False
 
+    @pytest.mark.asyncio
+    async def test_uncapped_phase_request_slot_does_not_consume_capped_phase(
+        self,
+    ) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(W, None, None, None)
+        m.configure_for_phase(P, None, None, 1)
+        assert m.request_slot_available(W) is True
+        assert m.try_acquire_request_slot(W, lambda: True) is True
+        assert await m.acquire_request_slot(W, lambda: True) is True
+        assert m.try_acquire_request_slot(P, lambda: True) is True
+        assert m.try_acquire_request_slot(P, lambda: True) is False
+        assert m.request_slot_available(P) is False
+
+    @pytest.mark.asyncio
+    async def test_uncapped_phase_request_acquire_does_not_block_on_capped_phase(
+        self,
+    ) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(W, None, None, None)
+        m.configure_for_phase(P, None, None, 1)
+        assert await m.acquire_request_slot(P, lambda: True)
+        assert await asyncio.wait_for(
+            m.acquire_request_slot(W, lambda: True), timeout=0.5
+        )
+
+    @pytest.mark.asyncio
+    async def test_uncapped_phase_request_acquire_respects_can_proceed(self) -> None:
+        m = ConcurrencyManager()
+        m.configure_for_phase(W, None, None, None)
+        m.configure_for_phase(P, None, None, 1)
+        assert await m.acquire_request_slot(W, lambda: False) is False
+        assert m.try_acquire_request_slot(W, lambda: False) is False
+
 
 class TestConcurrencyStats:
     def test_default_values(self) -> None:

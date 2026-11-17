@@ -169,3 +169,24 @@ def test_warmup_request_concurrency_routes_to_agentic_warmup_for_yaml_scenario(
     """A scenario named in the config file routes --warmup-request-concurrency onto the synthesized agentic warmup rather than demanding a warmup phase."""
     cfg = resolve_config(_cli(warmup_request_concurrency=8), _scenario_yaml(tmp_path))
     assert _profiling_phase(cfg).agentic_warmup_request_concurrency == 8
+
+
+def _templated_scenario_yaml(tmp_path: pathlib.Path) -> pathlib.Path:
+    path = tmp_path / "templated_scenario_profiling.yaml"
+    path.write_text(
+        "variables:\n  scenario_name: inferencex-agentx-mvp\n"
+        + _AGENTIC_PROFILING_YAML.replace(
+            "benchmark:\n", 'benchmark:\n  scenario: "{{ scenario_name }}"\n', 1
+        )
+    )
+    return path
+
+
+def test_warmup_request_concurrency_resolves_templated_yaml_scenario(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A Jinja-templated scenario must resolve on the pre-Jinja pass too, not reach get_scenario as raw template text."""
+    cfg = resolve_config(
+        _cli(warmup_request_concurrency=8), _templated_scenario_yaml(tmp_path)
+    )
+    assert _profiling_phase(cfg).agentic_warmup_request_concurrency == 8

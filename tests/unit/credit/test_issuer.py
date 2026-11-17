@@ -20,6 +20,7 @@ from aiperf.credit.dispatch import ChildDispatchResult, TurnAdmission
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
 from aiperf.timing.branch_orchestrator import PendingBranchJoin
+from aiperf.timing.concurrency import ConcurrencyManager
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.session_tree import SessionTreeRegistry
 
@@ -1450,3 +1451,46 @@ class TestWarmupIsolationMarkerEmission:
         sent_credit = mock_router.send_credit.call_args.kwargs["credit"]
         assert sent_credit.cache_bust_marker == "[rid:abc123def456]"
         assert sent_credit.cache_bust_target == CacheBustTarget.SYSTEM_PREFIX
+
+
+class TestCancelledSendPermitReclaim:
+    async def test_cancelled_send_is_reclaimed_at_force_completion_and_late_return_keeps_cap(
+        self,
+        mock_stop_checker,
+        mock_progress,
+        mock_router,
+        mock_cancellation,
+        mock_lifecycle,
+    ) -> None:
+        cm = ConcurrencyManager()
+        cm.configure_for_phase(CreditPhase.PROFILING, None, None, 1)
+        send_started = asyncio.Event()
+
+        async def hung_send(**_: object) -> None:
+            send_started.set()
+            await asyncio.Event().wait()
+
+        mock_router.send_credit = AsyncMock(side_effect=hung_send)
+        issuer = CreditIssuer(
+            phase=CreditPhase.PROFILING,
+            stop_checker=mock_stop_checker,
+            progress=mock_progress,
+            concurrency_manager=cm,
+            credit_router=mock_router,
+            cancellation_policy=mock_cancellation,
+            lifecycle=mock_lifecycle,
+        )
+
+        issue = asyncio.create_task(issuer.issue_credit(make_turn()))
+        await asyncio.wait_for(send_started.wait(), timeout=1.0)
+        issue.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await issue
+
+        assert cm.try_acquire_request_slot(CreditPhase.PROFILING, lambda: True) is False
+
+        assert cm.release_stuck_slots(CreditPhase.PROFILING)[2] == 1
+
+        cm.release_request_slot(CreditPhase.PROFILING)
+        assert cm.try_acquire_request_slot(CreditPhase.PROFILING, lambda: True) is True
+        assert cm.try_acquire_request_slot(CreditPhase.PROFILING, lambda: True) is False

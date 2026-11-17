@@ -237,6 +237,7 @@ def _resolve_config_envelopes(
         dataset_format=getattr(base_dataset, "format", None),
         phase_shape_decision=merged.phase_shape_decision,
         phase_identity=merged.phase_identity,
+        scenario_decision=merged.scenario_decision,
     )
 
     variant_runs = _build_variant_runs(
@@ -675,6 +676,23 @@ class _PhaseIdentityDecision:
 
 
 @dataclass(slots=True)
+class _ScenarioDecision:
+    """The scenario in force, resolved once on the rendered pass.
+
+    ``benchmark.scenario`` may be a ``{{ ... }}`` template in the retained
+    pre-Jinja envelope, where ``get_scenario`` would reject it. Replayed onto
+    that pass the same way as :class:`_PhaseIdentityDecision`.
+
+    Attributes:
+        decided: Whether ``scenario`` has been resolved.
+        scenario: Scenario name in force, or ``None`` when there is none.
+    """
+
+    decided: bool = False
+    scenario: str | None = None
+
+
+@dataclass(slots=True)
 class _MergedEnvelope:
     """One override pass' merged envelope plus the decision it reached.
 
@@ -689,6 +707,7 @@ class _MergedEnvelope:
     envelope: dict[str, Any]
     phase_shape_decision: _PhaseShapeDecision
     phase_identity: _PhaseIdentityDecision
+    scenario_decision: _ScenarioDecision
 
 
 def _merge_overrides_into_envelope(
@@ -700,6 +719,7 @@ def _merge_overrides_into_envelope(
     dataset_format: Any,
     phase_shape_decision: _PhaseShapeDecision | None = None,
     phase_identity: _PhaseIdentityDecision | None = None,
+    scenario_decision: _ScenarioDecision | None = None,
 ) -> _MergedEnvelope:
     """Apply the config-file CLI override pipeline to one envelope.
 
@@ -721,6 +741,11 @@ def _merge_overrides_into_envelope(
     envelope = normalize_gpu_telemetry_base_for_override(envelope, overrides)
     envelope = normalize_server_metrics_base_for_override(envelope, overrides)
     merged = deep_merge(envelope, overrides) if overrides else envelope
+    if scenario_decision is None:
+        scenario_decision = _ScenarioDecision()
+    if not scenario_decision.decided:
+        scenario_decision.scenario = _resolved_scenario(merged, cli_config)
+        scenario_decision.decided = True
     _apply_control_hook_enable_overrides(merged, cli_config)
     _replace_profiler_start_body(merged, overrides)
     _apply_dataset_overrides(
@@ -734,8 +759,14 @@ def _merge_overrides_into_envelope(
         cli_config,
         phase_shape_decision=phase_shape_decision,
         phase_identity=identity,
+        scenario_decision=scenario_decision,
     )
-    _apply_warmup_overrides(merged, cli_config, phase_identity=identity)
+    _apply_warmup_overrides(
+        merged,
+        cli_config,
+        phase_identity=identity,
+        scenario_decision=scenario_decision,
+    )
     _strip_recipe_consumed_magic_lists(merged, cli_config)
     promote_benchmark_magic_lists(
         merged,
@@ -746,7 +777,10 @@ def _merge_overrides_into_envelope(
     )
     _coalesce_phase_aliases(merged)
     return _MergedEnvelope(
-        envelope=merged, phase_shape_decision=decision, phase_identity=identity
+        envelope=merged,
+        phase_shape_decision=decision,
+        phase_identity=identity,
+        scenario_decision=scenario_decision,
     )
 
 
@@ -1632,8 +1666,18 @@ _PROFILING_PHASE_OVERRIDE_FIELDS: frozenset[str] = frozenset(
 )
 
 
-def _resolved_scenario(merged: dict[str, Any], cli: CLIConfig) -> str | None:
-    """The scenario in force: ``--scenario`` when given, else the config file's."""
+def _resolved_scenario(
+    merged: dict[str, Any],
+    cli: CLIConfig,
+    scenario_decision: _ScenarioDecision | None = None,
+) -> str | None:
+    """The scenario in force: ``--scenario`` when given, else the config file's.
+
+    A ``benchmark.scenario`` written as a Jinja template is only a source string
+    on the pre-Jinja pass, so that pass replays the rendered pass' answer.
+    """
+    if scenario_decision is not None and scenario_decision.decided:
+        return scenario_decision.scenario
     if "scenario" in cli.model_fields_set:
         return cli.scenario
     benchmark = merged.get("benchmark")
@@ -1648,6 +1692,7 @@ def _apply_phase_loadgen_overrides(
     *,
     phase_shape_decision: _PhaseShapeDecision | None = None,
     phase_identity: _PhaseIdentityDecision | None = None,
+    scenario_decision: _ScenarioDecision | None = None,
 ) -> _PhaseShapeDecision:
     """Overlay explicit ``--request-count`` / ``--request-rate`` / etc. onto
     the YAML-supplied profiling phase.
@@ -1696,7 +1741,7 @@ def _apply_phase_loadgen_overrides(
     # Outside agentic replay, --warmup-request-concurrency targets the warmup
     # phase only, so it must not force a unique-profiling-phase lookup.
     warmup_cap_set = "warmup_request_concurrency" in cli.model_fields_set and (
-        scenario_is_agentic(_resolved_scenario(merged, cli))
+        scenario_is_agentic(_resolved_scenario(merged, cli, scenario_decision))
     )
     if not loadgen_set and not agentic_set and not warmup_cap_set:
         return decision
@@ -1717,7 +1762,7 @@ def _apply_phase_loadgen_overrides(
     _apply_default_grace_period_override(target, cli, loadgen_set)
     _apply_agentic_replay_fields(target, cli)
     _apply_agentic_warmup_request_concurrency(
-        target, cli, _resolved_scenario(merged, cli)
+        target, cli, _resolved_scenario(merged, cli, scenario_decision)
     )
     decision = _apply_phase_shape_overrides(
         target, cli, loadgen_set, decision=phase_shape_decision
@@ -2155,6 +2200,7 @@ def _apply_warmup_overrides(
     cli: CLIConfig,
     *,
     phase_identity: _PhaseIdentityDecision | None = None,
+    scenario_decision: _ScenarioDecision | None = None,
 ) -> None:
     """Overlay explicitly-set ``--warmup-*`` flags onto the warmup phase.
 
@@ -2194,7 +2240,7 @@ def _apply_warmup_overrides(
         from aiperf.config.flags._converter_profiling import scenario_is_agentic
 
         if warmup_set <= {"warmup_request_concurrency"} and scenario_is_agentic(
-            _resolved_scenario(merged, cli)
+            _resolved_scenario(merged, cli, scenario_decision)
         ):
             return
         from aiperf.config.flags._config_flag_routing import flag_names_for
@@ -2211,11 +2257,41 @@ def _apply_warmup_overrides(
         phases.insert(0, {"name": "warmup", "kind": "warmup", **built})
         return
 
+    _clamp_mirrored_warmup_prefill(built, existing, cli, warmup_set)
     _drop_alias_spellings(existing, built)
     merged_warmup = deep_merge(existing, built)
     _reject_incompatible_warmup_transition(merged_warmup, warmup_set)
     existing.clear()
     existing.update(merged_warmup)
+
+
+def _clamp_mirrored_warmup_prefill(
+    built: dict[str, Any],
+    existing: dict[str, Any],
+    cli: CLIConfig,
+    warmup_set: frozenset[str] | set[str],
+) -> None:
+    """Clamp a profiling prefill mirrored onto a YAML warmup to that warmup's request cap.
+
+    ``build_warmup`` cannot see the YAML warmup's ``requestConcurrency``, so its own
+    mirror clamp only covers a cap set on the CLI. An explicit
+    ``--warmup-prefill-concurrency`` is never clamped; it fails validation instead.
+    """
+    if (
+        "warmup_prefill_concurrency" in warmup_set
+        or "prefill_concurrency" not in cli.model_fields_set
+    ):
+        return
+    prefill = built.get("prefill_concurrency")
+    if not isinstance(prefill, int):
+        return
+    request_cap = built.get("request_concurrency")
+    if request_cap is None:
+        request_cap = existing.get("request_concurrency")
+    if request_cap is None:
+        request_cap = existing.get(_snake_to_camel("request_concurrency"))
+    if isinstance(request_cap, int):
+        built["prefill_concurrency"] = min(prefill, request_cap)
 
 
 def _reject_incompatible_warmup_transition(
