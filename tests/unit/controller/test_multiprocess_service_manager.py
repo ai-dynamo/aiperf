@@ -787,9 +787,20 @@ class TestShutdownAllServicesWaitsForExit:
         survivor.is_alive.return_value = True
         exited = MagicMock(spec=Process)
         exited.is_alive.return_value = False
-        service_manager.multi_process_info = [self._info(survivor), self._info(exited)]
+        api = MagicMock(spec=Process)
+        api.is_alive.return_value = True
+        api_info = MultiProcessRunInfo.model_construct(
+            process=api, service_type=ServiceType.API, service_id="api"
+        )
+        service_manager.multi_process_info = [
+            self._info(survivor),
+            self._info(exited),
+            api_info,
+        ]
 
-        task = asyncio.create_task(service_manager.shutdown_all_services())
+        task = asyncio.create_task(
+            service_manager.shutdown_all_services(exclude=(ServiceType.API,))
+        )
         await joining.wait()
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -797,6 +808,8 @@ class TestShutdownAllServicesWaitsForExit:
 
         survivor.kill.assert_called_once()
         exited.kill.assert_not_called()
+        api.kill.assert_not_called()
+        assert api_info in service_manager.multi_process_info
 
 
 class TestGetServiceLiveness:

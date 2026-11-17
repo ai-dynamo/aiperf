@@ -176,7 +176,7 @@ class MultiProcessServiceManager(BaseServiceManager):
         except asyncio.CancelledError:
             # _fail cancels a stop() that outlives the controller's failure
             # bound; that must not skip the force-kill and leave survivors.
-            for info in self.multi_process_info:
+            for info in targets:
                 if info.process and info.process.is_alive():
                     info.process.kill()
             raise
