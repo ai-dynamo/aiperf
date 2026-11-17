@@ -58,7 +58,7 @@ class TestSingleTurnCanLoad:
             param({"session_id": "123", "metadata": "test"}, False, id="no_modality"),
             param({"raw_messages": [{"role": "user", "content": "Hi"}]}, True, id="raw_messages_only"),
             param({"raw_messages": [{"role": "user", "content": "Hi"}], "raw_tools": [{"type": "function", "function": {"name": "f"}}]}, True, id="raw_messages_with_raw_tools"),
-            param({"raw_tools": [{"type": "function", "function": {"name": "f"}}]}, False, id="raw_tools_without_raw_messages"),
+            param({"text": "Hello", "raw_tools": [{"type": "function", "function": {"name": "f"}}]}, False, id="raw_tools_without_raw_messages"),
             param(None, False, id="none_data"),
         ],
     )  # fmt: skip
