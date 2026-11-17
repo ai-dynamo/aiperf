@@ -1847,6 +1847,20 @@ public_dataset_loader:
       streaming: true
       has_timing_data: true
 
+  swe_rebench_openhands:
+    class: aiperf.dataset.loader.swe_rebench_openhands:SweRebenchOpenHandsDatasetLoader
+    description: |
+      SWE-rebench OpenHands agent trajectories from HuggingFace (nebius). Replays
+      each recorded assistant step as one request carrying the recorded history,
+      tool schemas, and output token limits. Live responses are not added to
+      later requests. Sessions are closed-loop with no recorded timing. Use
+      `filters` to select resolved trajectories or cap turns per session.
+    metadata:
+      hf_dataset_name: nebius/SWE-rebench-openhands-trajectories
+      hf_split: train
+      streaming: true
+      has_timing_data: false
+
   sharegpt:
     class: aiperf.dataset.loader.sharegpt:ShareGPTLoader
     description: |
