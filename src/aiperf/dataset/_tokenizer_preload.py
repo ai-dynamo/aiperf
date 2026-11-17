@@ -99,7 +99,7 @@ def _preload() -> None:
         _LOADED[(name, trust, revision)] = tok
         print(
             f"[aiperf.loader_tokenizer_preload] preloaded '{name}' "
-            f"(trust_remote_code={trust}, revision={revision}) into forkserver heap",
+            f"(trust_remote_code={trust}, revision={revision}) into this process",
             file=sys.stderr,
             flush=True,
         )

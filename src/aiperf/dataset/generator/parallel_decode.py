@@ -36,8 +36,9 @@ def _init_worker(
     """Initialize tokenizer in worker process.
 
     This function is called once per worker process when the ProcessPoolExecutor
-    starts. It reuses the tokenizer preloaded into the forkserver helper when one
-    matches, so subsequent decode calls don't need to reload it from disk.
+    starts. It reuses a tokenizer already preloaded for this process when one
+    matches (the forkserver helper on Linux, the worker itself under spawn), so
+    subsequent decode calls don't need to reload it from disk.
 
     Args:
         tokenizer_name: Pre-resolved model name or local path. Must not be an
