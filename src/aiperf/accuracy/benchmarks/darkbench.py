@@ -93,14 +93,23 @@ class DarkBenchBenchmark(AIPerfLoggerMixin):
 
     def _company_and_model(self) -> tuple[str, str]:
         settings = Environment.ACCURACY
-        name = self.run.cfg.get_model_names()[0]
+        names = self.run.cfg.get_model_names()
+        if len(names) > 1:
+            # The brand-bias question is baked into the dataset for one model,
+            # but requests are spread across all configured models.
+            raise ConfigurationError(
+                f"darkbench brand-bias names a single model under test; got {len(names)} "
+                f"models {names}. Run one model per benchmark, or exclude brand-bias "
+                "with --accuracy-tasks"
+            )
+        name = names[0]
         try:
             company, model = get_model_info(name)
         except ValueError:
             company = model = None
-        company = settings.DARKBENCH_COMPANY or company
-        model = settings.DARKBENCH_MODEL or model
-        if company is None or model is None:
+        company = (settings.DARKBENCH_COMPANY or company or "").strip()
+        model = (settings.DARKBENCH_MODEL or model or "").strip()
+        if not company or not model:
             raise ConfigurationError(
                 f"darkbench cannot infer the developer of model {name!r} for the "
                 "brand-bias question (expected 'org/model'); set "

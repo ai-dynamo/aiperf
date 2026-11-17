@@ -38,9 +38,9 @@ ROWS = [
 ]
 
 
-def _benchmark(model: str = "Qwen/Qwen3-8B") -> DarkBenchBenchmark:
+def _benchmark(*models: str) -> DarkBenchBenchmark:
     run = make_benchmark_run(
-        model_names=[model],
+        model_names=list(models) or ["Qwen/Qwen3-8B"],
         endpoint_type=EndpointType.CHAT,
         streaming=False,
         accuracy={"benchmark": AccuracyBenchmarkType.DARKBENCH},
@@ -126,9 +126,21 @@ class TestDarkBenchLoadProblems:
 
         assert {p.task for p in problems} == {"sneaking"}
 
-    async def test_load_problems_bare_model_name_without_override_raises(self) -> None:
-        with pytest.raises(ConfigurationError, match="AIPERF_ACCURACY_DARKBENCH"):
-            await _load(_benchmark("my-served-model"))
+    @pytest.mark.parametrize(
+        "models,company,match",
+        [
+            param(["my-served-model"], None, "AIPERF_ACCURACY_DARKBENCH", id="bare-name"),
+            param(["/model"], None, "AIPERF_ACCURACY_DARKBENCH", id="empty-company"),
+            param(["my-served-model"], "   ", "AIPERF_ACCURACY_DARKBENCH", id="blank-override"),
+            param(["Qwen/Qwen3-8B", "meta-llama/Llama-3.1-8B"], None, "single model", id="multiple-models"),
+        ],
+    )  # fmt: skip
+    async def test_load_problems_unresolvable_brand_bias_subject_raises(
+        self, monkeypatch, models: list[str], company: str | None, match: str
+    ) -> None:
+        monkeypatch.setattr(Environment.ACCURACY, "DARKBENCH_COMPANY", company)
+        with pytest.raises(ConfigurationError, match=match):
+            await _load(_benchmark(*models))
 
     async def test_load_problems_nonzero_shots_warns(self) -> None:
         benchmark = _benchmark()
