@@ -25,7 +25,7 @@ The judge can be any OpenAI-compatible chat endpoint. It is configured with envi
 |---|---|---|
 | `AIPERF_ACCURACY_JUDGE_URL` | required | Base URL, e.g. `http://judge:8000/v1` |
 | `AIPERF_ACCURACY_JUDGE_MODEL` | required | Model name sent to the judge |
-| `AIPERF_ACCURACY_JUDGE_API_KEY` | none | Bearer token, never logged |
+| `AIPERF_ACCURACY_JUDGE_API_KEY` | none | Bearer token, never logged. Requires an `https://` judge URL unless the judge is on loopback (`localhost`, `127.0.0.1`) |
 | `AIPERF_ACCURACY_JUDGE_CONCURRENCY` | `16` | Maximum in-flight judge requests per record processor |
 | `AIPERF_ACCURACY_JUDGE_TIMEOUT` | `120` | Seconds per request |
 | `AIPERF_ACCURACY_JUDGE_MAX_ATTEMPTS` | `3` | Attempts before a response counts as a grader error |

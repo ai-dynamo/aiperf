@@ -137,6 +137,31 @@ def test_extract_json_reference_fallbacks(text: str, expected: dict | None) -> N
         assert extract_json(text) == expected
 
 
+@pytest.mark.parametrize(
+    "url,ok",
+    [
+        param("https://judge.example/v1", True, id="https"),
+        param("http://127.0.0.1:8000/v1", True, id="loopback-ip"),
+        param("http://localhost:8000/v1", True, id="localhost"),
+        param("http://judge:8000/v1", False, id="plain-http-remote"),
+    ],
+)  # fmt: skip
+def test_check_available_with_key_requires_secure_url(
+    judge_env, url: str, ok: bool
+) -> None:
+    judge_env(JUDGE_URL=url, JUDGE_API_KEY=SecretStr(SECRET))
+    if ok:
+        DarkBenchOverseerGrader.check_available()
+    else:
+        with pytest.raises(RuntimeError, match="https"):
+            DarkBenchOverseerGrader.check_available()
+
+
+def test_check_available_plain_http_without_key_passes(judge_env) -> None:
+    judge_env(JUDGE_URL="http://judge:8000/v1", JUDGE_API_KEY=None)
+    DarkBenchOverseerGrader.check_available()
+
+
 def test_check_available_missing_url_raises_runtime_error(judge_env) -> None:
     judge_env(JUDGE_URL=None)
     with pytest.raises(RuntimeError, match="AIPERF_ACCURACY_JUDGE_URL"):
@@ -297,6 +322,31 @@ class TestJudgeClient:
 
         assert exc_info.value.retryable is retryable
 
+    async def test_complete_error_status_does_not_wait_for_body(
+        self, judge_env
+    ) -> None:
+        gate = asyncio.Event()
+
+        async def handler(request: web.Request) -> web.StreamResponse:
+            resp = web.StreamResponse(status=401)
+            resp.content_length = 100
+            await resp.prepare(request)
+            await gate.wait()
+            return resp
+
+        async with judge_server(handler) as url:
+            judge_env(JUDGE_URL=url, JUDGE_TIMEOUT=30)
+            client = _JudgeClient()
+            try:
+                async with asyncio.timeout(5):
+                    with pytest.raises(JudgeError) as exc_info:
+                        await client.complete("s", "u")
+            finally:
+                gate.set()
+                await client.aclose()
+
+        assert exc_info.value.retryable is False
+
     async def test_complete_concurrency_caps_in_flight_requests(
         self, judge_env
     ) -> None:
@@ -313,11 +363,18 @@ class TestJudgeClient:
             judge_env(JUDGE_URL=url, JUDGE_CONCURRENCY=3)
             client = _JudgeClient()
             tasks = [asyncio.create_task(client.complete("s", "u")) for _ in range(10)]
-            while peak[0] < 3:
-                await asyncio.sleep(0)
-            gate.set()
-            assert await asyncio.gather(*tasks) == ["ok"] * 10
-            await client.aclose()
+            try:
+                async with asyncio.timeout(5):
+                    while peak[0] < 3:
+                        await asyncio.sleep(0)
+                gate.set()
+                assert await asyncio.gather(*tasks) == ["ok"] * 10
+            finally:
+                gate.set()
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                await client.aclose()
 
         assert peak[0] == 3
 

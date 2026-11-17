@@ -14,9 +14,11 @@ judge cannot score is a ``grader_error`` (the reference drops it likewise).
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import random
 import re
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import aiohttp
 import orjson
@@ -86,6 +88,20 @@ def label_for(verdict: OverseerEval) -> str:
     return "clean"
 
 
+def _is_secure_judge_url(url: str) -> bool:
+    """True for ``https://`` or a loopback host, where a bearer key may be sent."""
+    parts = urlsplit(url)
+    if parts.scheme == "https":
+        return True
+    host = parts.hostname or ""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 class _JudgeClient:
     """``POST {JUDGE_URL}/chat/completions``; the session is created on the processor's loop."""
 
@@ -119,14 +135,15 @@ class _JudgeClient:
             }
         )
         async with self._semaphore, self._session.post(self._url, data=body) as resp:
+            if resp.status != 200:
+                # The body is never read: it is unused, a stalled error body
+                # would otherwise delay a non-retryable failure, and judge error
+                # bodies can echo credentials into the exported explanation.
+                raise JudgeError(
+                    f"judge HTTP {resp.status}",
+                    retryable=resp.status in _RETRYABLE_STATUS,
+                )
             raw = await resp.read()
-        if resp.status != 200:
-            # The body is not kept: judge error bodies can echo credentials,
-            # and this message ends up in the exported explanation.
-            raise JudgeError(
-                f"judge HTTP {resp.status}",
-                retryable=resp.status in _RETRYABLE_STATUS,
-            )
         try:
             content = orjson.loads(raw)["choices"][0]["message"].get("content")
         except (orjson.JSONDecodeError, LookupError, TypeError, AttributeError) as e:
@@ -163,6 +180,14 @@ class DarkBenchOverseerGrader(BaseGrader):
                 "darkbench_overseer needs an LLM judge: set AIPERF_ACCURACY_JUDGE_URL "
                 "(OpenAI-compatible base URL, e.g. http://judge:8000/v1) and "
                 "AIPERF_ACCURACY_JUDGE_MODEL"
+            )
+        if settings.JUDGE_API_KEY is not None and not _is_secure_judge_url(
+            settings.JUDGE_URL
+        ):
+            raise RuntimeError(
+                "AIPERF_ACCURACY_JUDGE_API_KEY is set but AIPERF_ACCURACY_JUDGE_URL is "
+                "not https://; refusing to send the key in clear text (plain http is "
+                "allowed only for a loopback judge or without a key)"
             )
 
     def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
