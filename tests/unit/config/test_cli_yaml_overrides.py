@@ -703,10 +703,10 @@ def _write_streaming_capped_warmup(config_file: Path) -> None:
     config_file.write_text(content, encoding="utf-8")
 
 
-def test_mirrored_profiling_prefill_clamps_to_yaml_warmup_request_concurrency(
+def test_mirrored_profiling_prefill_leaves_yaml_warmup_caps_intact(
     config_file: Path,
 ) -> None:
-    """A mirrored --prefill-concurrency must not exceed a YAML warmup's own request cap."""
+    """A mirrored --prefill-concurrency is not applied to a YAML warmup that declares a request cap."""
     _write_streaming_capped_warmup(config_file)
 
     config = resolve_config(
@@ -716,7 +716,78 @@ def test_mirrored_profiling_prefill_clamps_to_yaml_warmup_request_concurrency(
 
     phases = {phase.name: phase for phase in config.benchmark.phases}
     assert phases["warmup"].request_concurrency == 4
-    assert phases["warmup"].prefill_concurrency == 4
+    assert phases["warmup"].prefill_concurrency is None
+    assert phases["profiling"].request_concurrency == 8
+    assert phases["profiling"].prefill_concurrency == 8
+
+
+def test_mirrored_profiling_prefill_keeps_yaml_warmup_prefill_with_request_cap(
+    config_file: Path,
+) -> None:
+    """A YAML warmup's own prefill cap survives a mirrored --prefill-concurrency."""
+    content = _STREAMING_BASE_YAML.replace(
+        _MEASURED_PHASE_BLOCK,
+        _YAML_WARMUP_CAPPED_PHASES.replace(
+            "      requestConcurrency: 4\n",
+            "      requestConcurrency: 4\n      prefillConcurrency: 2\n",
+        ),
+    )
+    config_file.write_text(content, encoding="utf-8")
+
+    config = resolve_config(
+        CLIConfig(warmup_duration=20, request_concurrency=8, prefill_concurrency=8),
+        config_file,
+    )
+
+    phases = {phase.name: phase for phase in config.benchmark.phases}
+    assert phases["warmup"].request_concurrency == 4
+    assert phases["warmup"].prefill_concurrency == 2
+    assert phases["profiling"].prefill_concurrency == 8
+
+
+def test_mirrored_profiling_prefill_clamps_to_warmup_request_concurrency_override(
+    config_file: Path,
+) -> None:
+    """An explicit --warmup-request-concurrency keeps the prefill mirror, clamped to that cap."""
+    _write_streaming_capped_warmup(config_file)
+
+    config = resolve_config(
+        CLIConfig(
+            warmup_duration=20,
+            warmup_request_concurrency=2,
+            request_concurrency=8,
+            prefill_concurrency=8,
+        ),
+        config_file,
+    )
+
+    phases = {phase.name: phase for phase in config.benchmark.phases}
+    assert phases["warmup"].request_concurrency == 2
+    assert phases["warmup"].prefill_concurrency == 2
+    assert phases["profiling"].prefill_concurrency == 8
+
+
+def test_mirrored_profiling_prefill_skips_templated_yaml_warmup_request_cap(
+    config_file: Path,
+) -> None:
+    """A templated YAML warmup cap decides the prefill mirror the same way in both passes."""
+    content = _STREAMING_BASE_YAML.replace(
+        _MEASURED_PHASE_BLOCK,
+        _YAML_WARMUP_CAPPED_PHASES.replace(
+            "      requestConcurrency: 4\n",
+            '      requestConcurrency: "{{ cap }}"\n',
+        ),
+    ).replace("randomSeed: 91", "variables:\n  cap: 4\nrandomSeed: 91")
+    config_file.write_text(content, encoding="utf-8")
+
+    config = resolve_config(
+        CLIConfig(warmup_duration=20, request_concurrency=8, prefill_concurrency=8),
+        config_file,
+    )
+
+    phases = {phase.name: phase for phase in config.benchmark.phases}
+    assert phases["warmup"].request_concurrency == 4
+    assert phases["warmup"].prefill_concurrency is None
     assert phases["profiling"].prefill_concurrency == 8
 
 

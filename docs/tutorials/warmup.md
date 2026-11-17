@@ -312,6 +312,8 @@ aiperf profile \
 
 Warmup runs with lower limits (20 concurrent, 2 prefill), then profiling uses full limits.
 
+With a config file that declares a warmup phase with its own `requestConcurrency`, a mirrored `--prefill-concurrency` is not applied to that warmup, so the file's prefill setting is kept. Pass `--warmup-prefill-concurrency` to set warmup prefill explicitly; it is validated against the warmup's request cap.
+
 ## Request Concurrency Warmup
 
 `--warmup-request-concurrency` caps total in-flight requests during the warmup phase, counting sub-agent forks, independently of `--request-concurrency` on profiling:

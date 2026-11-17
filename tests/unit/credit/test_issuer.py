@@ -198,7 +198,7 @@ class TestBasicCreditIssuance:
             CreditPhase.PROFILING
         )
 
-    async def test_issue_credit_cancelled_send_leaves_slots_for_stuck_slot_reclaim(
+    async def test_issue_credit_cancelled_send_releases_request_and_prefill_once(
         self, credit_issuer, mock_concurrency, mock_router
     ) -> None:
         mock_router.send_credit.side_effect = asyncio.CancelledError()
@@ -206,8 +206,12 @@ class TestBasicCreditIssuance:
         with pytest.raises(asyncio.CancelledError):
             await credit_issuer.issue_credit(make_turn(turn_index=1, num_turns=2))
 
-        mock_concurrency.release_request_slot.assert_not_called()
-        mock_concurrency.release_prefill_slot.assert_not_called()
+        mock_concurrency.release_request_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.release_prefill_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
         mock_concurrency.release_session_slot.assert_not_called()
 
     async def test_finite_issue_rejects_capped_final_credit(
@@ -1454,7 +1458,7 @@ class TestWarmupIsolationMarkerEmission:
 
 
 class TestCancelledSendPermitReclaim:
-    async def test_cancelled_send_is_reclaimed_at_force_completion_and_late_return_keeps_cap(
+    async def test_cancelled_send_restores_request_capacity_immediately(
         self,
         mock_stop_checker,
         mock_progress,
@@ -1464,13 +1468,9 @@ class TestCancelledSendPermitReclaim:
     ) -> None:
         cm = ConcurrencyManager()
         cm.configure_for_phase(CreditPhase.PROFILING, None, None, 1)
-        send_started = asyncio.Event()
-
-        async def hung_send(**_: object) -> None:
-            send_started.set()
-            await asyncio.Event().wait()
-
-        mock_router.send_credit = AsyncMock(side_effect=hung_send)
+        mock_router.send_credit = AsyncMock(
+            side_effect=asyncio.CancelledError("Socket was stopped")
+        )
         issuer = CreditIssuer(
             phase=CreditPhase.PROFILING,
             stop_checker=mock_stop_checker,
@@ -1481,16 +1481,9 @@ class TestCancelledSendPermitReclaim:
             lifecycle=mock_lifecycle,
         )
 
-        issue = asyncio.create_task(issuer.issue_credit(make_turn()))
-        await asyncio.wait_for(send_started.wait(), timeout=1.0)
-        issue.cancel()
-        with pytest.raises(asyncio.CancelledError):
-            await issue
+        with pytest.raises(asyncio.CancelledError, match="Socket was stopped"):
+            await issuer.issue_credit(make_turn())
 
-        assert cm.try_acquire_request_slot(CreditPhase.PROFILING, lambda: True) is False
-
-        assert cm.release_stuck_slots(CreditPhase.PROFILING)[2] == 1
-
-        cm.release_request_slot(CreditPhase.PROFILING)
-        assert cm.try_acquire_request_slot(CreditPhase.PROFILING, lambda: True) is True
-        assert cm.try_acquire_request_slot(CreditPhase.PROFILING, lambda: True) is False
+        mock_router.send_credit.side_effect = None
+        assert await asyncio.wait_for(issuer.issue_credit(make_turn()), timeout=1.0)
+        assert mock_router.send_credit.await_count == 2

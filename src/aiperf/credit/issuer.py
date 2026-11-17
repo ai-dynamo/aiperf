@@ -606,14 +606,13 @@ class CreditIssuer:
         self.replay_gate.register_credit(credit)
         try:
             await self._credit_router.send_credit(credit=credit)
-        except BaseException as exc:
+        except BaseException:
             self.replay_gate.unregister_credit(credit)
-            # A failed send never produces a return to free these slots. A cancelled
-            # send has unknown delivery, so release_stuck_slots reclaims it instead.
-            if isinstance(exc, Exception):
-                if not turn.no_request:
-                    self._concurrency_manager.release_request_slot(self._phase_key)
-                self._concurrency_manager.release_prefill_slot(self._phase_key)
+            # send_credit does not suspend, so an exception from it always means the
+            # credit never reached a worker.
+            if not turn.no_request:
+                self._concurrency_manager.release_request_slot(self._phase_key)
+            self._concurrency_manager.release_prefill_slot(self._phase_key)
             raise
         await self.replay_gate.observe_issued(credit)
         if is_final_credit:

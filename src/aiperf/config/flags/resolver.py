@@ -2257,7 +2257,7 @@ def _apply_warmup_overrides(
         phases.insert(0, {"name": "warmup", "kind": "warmup", **built})
         return
 
-    _clamp_mirrored_warmup_prefill(built, existing, cli, warmup_set)
+    _drop_mirrored_prefill_for_yaml_warmup_cap(built, existing, cli, warmup_set)
     _drop_alias_spellings(existing, built)
     merged_warmup = deep_merge(existing, built)
     _reject_incompatible_warmup_transition(merged_warmup, warmup_set)
@@ -2265,33 +2265,30 @@ def _apply_warmup_overrides(
     existing.update(merged_warmup)
 
 
-def _clamp_mirrored_warmup_prefill(
+def _drop_mirrored_prefill_for_yaml_warmup_cap(
     built: dict[str, Any],
     existing: dict[str, Any],
     cli: CLIConfig,
     warmup_set: frozenset[str] | set[str],
 ) -> None:
-    """Clamp a profiling prefill mirrored onto a YAML warmup to that warmup's request cap.
+    """Keep a YAML warmup's own caps when --prefill-concurrency would mirror onto it.
 
-    ``build_warmup`` cannot see the YAML warmup's ``requestConcurrency``, so its own
-    mirror clamp only covers a cap set on the CLI. An explicit
-    ``--warmup-prefill-concurrency`` is never clamped; it fails validation instead.
+    Dropping the mirror when the YAML warmup declares a request cap is the same
+    decision in the raw and rendered passes, even when that cap is a Jinja
+    template. A ``--warmup-request-concurrency`` override keeps the mirror, which
+    ``build_warmup`` clamps. An explicit ``--warmup-prefill-concurrency`` is never
+    dropped; it fails validation instead.
     """
     if (
         "warmup_prefill_concurrency" in warmup_set
         or "prefill_concurrency" not in cli.model_fields_set
+        or built.get("request_concurrency") is not None
     ):
         return
-    prefill = built.get("prefill_concurrency")
-    if not isinstance(prefill, int):
-        return
-    request_cap = built.get("request_concurrency")
-    if request_cap is None:
-        request_cap = existing.get("request_concurrency")
-    if request_cap is None:
-        request_cap = existing.get(_snake_to_camel("request_concurrency"))
-    if isinstance(request_cap, int):
-        built["prefill_concurrency"] = min(prefill, request_cap)
+    if "request_concurrency" in existing or (
+        _snake_to_camel("request_concurrency") in existing
+    ):
+        built.pop("prefill_concurrency", None)
 
 
 def _reject_incompatible_warmup_transition(

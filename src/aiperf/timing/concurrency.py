@@ -577,7 +577,7 @@ class ConcurrencyManager:
         if not self._request_limiter.enabled or not self._request_limiter.has_phase(
             phase
         ):
-            return True  # No limit for this phase - always available
+            return True
         return self._request_limiter.slot_available(phase)
 
     async def acquire_request_slot(
