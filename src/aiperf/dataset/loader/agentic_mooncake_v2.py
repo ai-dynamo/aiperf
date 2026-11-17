@@ -14,6 +14,7 @@ from pydantic import ConfigDict, Field, ValidationError
 from aiperf.common.enums import (
     AgenticReplayLifecycle,
     ConversationBranchMode,
+    PrerequisiteKind,
     ReplayDependencyEvent,
 )
 from aiperf.common.environment import Environment
@@ -24,6 +25,7 @@ from aiperf.common.models import (
     ReplayTurnReference,
     Text,
     Turn,
+    TurnPrerequisite,
 )
 from aiperf.common.models.base_models import AIPerfBaseModel
 from aiperf.common.validators.orchestrator_v1 import validate_for_orchestrator_v1
@@ -369,13 +371,24 @@ class AgenticMooncakeV2Loader(HashIdsPromptSynthesisMixin, BaseFileLoader):
                 Conversation(
                     session_id=root_id,
                     is_orchestrator=True,
-                    turns=[Turn(timestamp=0, no_request=True, branch_ids=[branch_id])],
+                    turns=[
+                        Turn(timestamp=0, no_request=True, branch_ids=[branch_id]),
+                        Turn(
+                            timestamp=0,
+                            no_request=True,
+                            prerequisites=[
+                                TurnPrerequisite(
+                                    kind=PrerequisiteKind.SPAWN_JOIN,
+                                    branch_id=branch_id,
+                                )
+                            ],
+                        ),
+                    ],
                     branches=[
                         ConversationBranchInfo(
                             branch_id=branch_id,
                             child_conversation_ids=children,
                             mode=ConversationBranchMode.SPAWN,
-                            is_background=True,
                         )
                     ],
                 )

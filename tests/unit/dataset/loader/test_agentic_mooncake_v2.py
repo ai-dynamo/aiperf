@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import orjson
 import pytest
 
-from aiperf.common.enums import ReplayDependencyEvent
+from aiperf.common.enums import PrerequisiteKind, ReplayDependencyEvent
 from aiperf.common.environment import Environment
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import PromptConfig
@@ -52,6 +52,11 @@ def test_aisim_fixture_preserves_explicit_edges(monkeypatch):
     by_id = {conversation.session_id: conversation for conversation in conversations}
     play = by_id["v2-play:agent-play"]
     assert play.is_orchestrator and play.turns[0].no_request
+    assert len(play.turns) == 2 and play.turns[1].no_request
+    assert not play.branches[0].is_background
+    assert [(p.kind, p.branch_id) for p in play.turns[1].prerequisites] == [
+        (PrerequisiteKind.SPAWN_JOIN, play.branches[0].branch_id)
+    ]
     assert set(play.branches[0].child_conversation_ids) == {
         "v2-request:agent-root",
         "v2-request:agent-child",

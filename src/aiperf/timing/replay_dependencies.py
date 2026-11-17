@@ -1016,12 +1016,13 @@ class ReplayBarrierCoordinator:
             self._schedule_finite_if_ready(root_id, state, key)
             return
         state.pending.pop(key)
-        lateness_ns = now_ns - deadline_ns
-        self._finite_dispatch_lateness_count += 1
-        self._finite_dispatch_lateness_total_ns += lateness_ns
-        self._finite_dispatch_lateness_max_ns = max(
-            self._finite_dispatch_lateness_max_ns, lateness_ns
-        )
+        if not pending.turn.no_request:
+            lateness_ns = now_ns - deadline_ns
+            self._finite_dispatch_lateness_count += 1
+            self._finite_dispatch_lateness_total_ns += lateness_ns
+            self._finite_dispatch_lateness_max_ns = max(
+                self._finite_dispatch_lateness_max_ns, lateness_ns
+            )
         try:
             issued = await pending.issue()
         except Exception as exc:
