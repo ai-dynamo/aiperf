@@ -267,7 +267,11 @@ class MetricsAccumulator(BaseMetricsProcessor):
         ``total_spec_decode_steps``.
         """
         spec = record.spec_decode_acceptance
-        if spec is None or record.error is not None:
+        if (
+            spec is None
+            or spec.acceptance_histogram is None
+            or record.error is not None
+        ):
             return
         key = (str(record.metadata.benchmark_phase), record.metadata.phase_index)
         pool = self._acceptance_pool_by_phase.setdefault(key, {})

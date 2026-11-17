@@ -35,6 +35,10 @@ _MISSING = (
     "No speculative-decoding acceptance record on this request (spec decode off, "
     "the request had no verify steps, or the engine reported no stats)."
 )
+_NO_STEP_DATA = (
+    "The engine reported no per-step acceptance data for this request "
+    "(aggregate-only, e.g. llama.cpp)."
+)
 
 
 class BaseSpecDecodeRecordMetric(
@@ -78,7 +82,10 @@ class BaseSpecDecodeRecordMetric(
                 f"{type(self).__name__} must set spec_decode_field or override "
                 "_parse_record"
             )
-        return getattr(self._record(record), self.spec_decode_field)
+        value = getattr(self._record(record), self.spec_decode_field)
+        if value is None:
+            raise NoMetricValue(_NO_STEP_DATA)
+        return value
 
 
 class SpecDecodeAcceptanceLengthMetric(BaseSpecDecodeRecordMetric[float]):
@@ -156,6 +163,8 @@ class SpecDecodeAcceptedPerVerifiedMetric(BaseSpecDecodeRecordMetric[float]):
         record_metrics: MetricRecordDict,
     ) -> float:
         spec = self._record(record)
+        if spec.num_spec_steps is None:
+            raise NoMetricValue(_NO_STEP_DATA)
         denominator = spec.num_draft_tokens + spec.num_spec_steps
         if denominator == 0:
             raise NoMetricValue(

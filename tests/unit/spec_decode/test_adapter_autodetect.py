@@ -22,10 +22,14 @@ from aiperf.common.models import ParsedResponse, SpecDecodeAcceptanceRecord
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.records.inference_result_parser import InferenceResultParser
+from aiperf.spec_decode.llamacpp_adapter import LlamaCppSpecDecodeAdapter
 from aiperf.spec_decode.sglang_adapter import SGLangSpecDecodeAdapter
 from aiperf.spec_decode.trtllm_adapter import TRTLLMSpecDecodeAdapter
 from aiperf.spec_decode.vllm_adapter import VLLMSpecDecodeAdapter
 from tests.harness import mock_plugin
+from tests.unit.spec_decode.test_llamacpp_adapter import (
+    TIMINGS_PAYLOAD as LLAMACPP_PAYLOAD,
+)
 from tests.unit.spec_decode.test_sglang_adapter import SUMMARY_PAYLOAD as SGLANG_PAYLOAD
 from tests.unit.spec_decode.test_trtllm_adapter import (
     SUMMARY_PAYLOAD as TRTLLM_PAYLOAD,
@@ -46,6 +50,20 @@ def test_adapters_are_registered() -> None:
         plugins.get_class(PluginType.SPEC_DECODE_ADAPTER, "tensorrt_llm").__name__
         == "TRTLLMSpecDecodeAdapter"
     )
+    assert (
+        plugins.get_class(PluginType.SPEC_DECODE_ADAPTER, "llamacpp")
+        is LlamaCppSpecDecodeAdapter
+    )
+
+
+def test_llamacpp_timings_are_claimed_by_llamacpp_adapter_only() -> None:
+    responses: list[ParsedResponse] = [
+        ParsedResponse(perf_ns=1, spec_decode_stats=LLAMACPP_PAYLOAD),
+        ParsedResponse(perf_ns=2, usage={"completion_tokens": 5}),
+    ]
+    record = InferenceResultParser._extract_spec_decode_acceptance(responses)
+    assert record is not None
+    assert record.engine == "llamacpp"
 
 
 class TestCrossClaim:

@@ -15,6 +15,7 @@ from aiperf.analysis.speed_bench_report import (
     PROFILE_JSONL,
     QUALITATIVE_CATEGORIES,
     SERVER_METRICS_JSON,
+    AcceptanceTotals,
     SpeedBenchReportError,
     _get_metric_stat,
     _min_table_width,
@@ -179,6 +180,59 @@ class TestExtractAcceptLength:
             }
         }
         assert extract_accept_length(metrics) == 2.5
+
+    def test_acceptance_totals_without_steps_keep_rate_but_no_length(self):
+        totals = AcceptanceTotals()
+        totals.add(
+            {
+                "num_accepted_draft_tokens": 12,
+                "num_draft_tokens": 16,
+                "num_spec_steps": None,
+            }
+        )
+        assert totals.value("accept_rate") == 0.75
+        assert totals.value("accept_length") is None
+
+    def test_acceptance_totals_mixed_step_reporting_length_uses_only_stepped_records(
+        self,
+    ):
+        totals = AcceptanceTotals()
+        totals.add(
+            {
+                "num_accepted_draft_tokens": 6,
+                "num_draft_tokens": 8,
+                "num_spec_steps": 4,
+            }
+        )
+        totals.add({"num_accepted_draft_tokens": 12, "num_draft_tokens": 16})
+        assert totals.value("accept_rate") == 0.75
+        assert totals.value("accept_length") == 2.5
+
+    def test_extract_accept_length_llamacpp_counters_compute_ratio_plus_one(self):
+        metrics = {
+            "metrics": {
+                "llamacpp:spec_decode_num_accepted_tokens": {
+                    "series": [{"stats": {"total": 300.0}}]
+                },
+                "llamacpp:spec_decode_num_drafts": {
+                    "series": [{"stats": {"total": 200.0}}]
+                },
+            }
+        }
+        assert extract_accept_length(metrics) == 2.5
+
+    def test_extract_accept_rate_llamacpp_counters_compute_ratio(self):
+        metrics = {
+            "metrics": {
+                "llamacpp:spec_decode_num_accepted_tokens": {
+                    "series": [{"stats": {"total": 300.0}}]
+                },
+                "llamacpp:spec_decode_num_draft_tokens": {
+                    "series": [{"stats": {"total": 400.0}}]
+                },
+            }
+        }
+        assert extract_accept_rate(metrics) == 0.75
 
     def test_extract_accept_length_vllm_zero_drafts_falls_through(self):
         metrics = {

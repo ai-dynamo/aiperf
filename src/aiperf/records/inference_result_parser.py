@@ -34,6 +34,7 @@ from aiperf.common.tokenizer import Tokenizer
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.records.payload_retention import resolve_disable_tokenization
+from aiperf.spec_decode.llamacpp_adapter import is_llamacpp_payload
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -440,7 +441,9 @@ class InferenceResultParser(CommunicationMixin):
         SGLang reports only the first prompt's details for a batched ``n = 1``
         request, so counting payloads alone would let either through with one.
         More than one response carrying stats is still refused as a backstop
-        for callers without the request.
+        for callers without the request. The exception is llama.cpp's cumulative
+        per-chunk ``timings``: when every such response is llama.cpp-shaped, only
+        the last one counts.
 
         Counts payloads by truthiness (not ``is not None``) to match the
         adapter's ``find_spec_decode_payload``: an empty ``{}`` is treated as
@@ -457,6 +460,12 @@ class InferenceResultParser(CommunicationMixin):
         if num_choices > 1:
             return None
         with_stats = [r for r in responses if r.spec_decode_stats]
+        if with_stats and all(
+            is_llamacpp_payload(r.spec_decode_stats) for r in with_stats
+        ):
+            # llama.cpp repeats cumulative timings on every streamed chunk, so the
+            # last one is the request total rather than a second sequence.
+            with_stats = with_stats[-1:]
         if len(with_stats) != 1:
             return None
         matches = []

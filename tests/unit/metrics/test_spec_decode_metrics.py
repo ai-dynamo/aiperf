@@ -181,6 +181,49 @@ class TestAbsentRecordDegradesCleanly:
             metric_cls().parse_record(record, MetricRecordDict())
 
 
+def make_aggregate_spec() -> SpecDecodeAcceptanceRecord:
+    """A llama.cpp-shaped record: draft counters only, no per-step data."""
+    return SpecDecodeAcceptanceRecord(
+        engine="llamacpp",
+        draft_acceptance_rate=12 / 16,
+        num_accepted_draft_tokens=12,
+        num_draft_tokens=16,
+    )
+
+
+class TestAggregateOnlyRecord:
+    @pytest.mark.parametrize(
+        "metric_cls",
+        [
+            param(SpecDecodeAcceptanceLengthMetric, id="acceptance_length"),
+            param(SpecDecodeStepsMetric, id="steps"),
+            param(SpecDecodeAcceptedPerVerifiedMetric, id="accepted_per_verified"),
+        ],
+    )  # fmt: skip
+    def test_step_derived_metric_raises_no_metric_value(self, metric_cls):
+        record = spec_record(make_aggregate_spec())
+        with pytest.raises(NoMetricValue):
+            metric_cls().parse_record(record, MetricRecordDict())
+
+    def test_draft_rate_still_reported(self):
+        record = spec_record(make_aggregate_spec())
+        value = SpecDecodeDraftAcceptanceRateMetric().parse_record(
+            record, MetricRecordDict()
+        )
+        assert value == pytest.approx(75.0)
+
+    def test_pooled_histogram_absent_and_draft_scalars_survive(self):
+        summary = asyncio.run(_summarize_specs(make_aggregate_spec()))
+        assert summary.pooled_spec_decode_acceptance_histogram is None
+        results = summary.results
+        assert results[TotalDraftTokensMetric.tag].avg == 16
+        assert results[TotalAcceptedDraftTokensMetric.tag].avg == 12
+        assert results[SpecDecodeOverallDraftAcceptanceRateMetric.tag].avg == (
+            pytest.approx(75.0)
+        )
+        assert SpecDecodeTokenWeightedAcceptanceLengthMetric.tag not in results
+
+
 class TestMetadata:
     @pytest.mark.parametrize(
         "metric_cls, unit, group, larger_is_better",
@@ -227,10 +270,11 @@ def _spec_metric_records_data(
     metrics: dict = {}
     if spec is not None:
         metrics = {
-            SpecDecodeStepsMetric.tag: spec.num_spec_steps,
             SpecDecodeAcceptedDraftTokensMetric.tag: spec.num_accepted_draft_tokens,
             SpecDecodeDraftTokensMetric.tag: spec.num_draft_tokens,
         }
+        if spec.num_spec_steps is not None:
+            metrics[SpecDecodeStepsMetric.tag] = spec.num_spec_steps
     return MetricRecordsData(
         metadata=MetricRecordMetadata(
             session_num=session_num,
