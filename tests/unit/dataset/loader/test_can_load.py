@@ -225,7 +225,7 @@ class TestRandomPoolCanLoad:
             param({"text": "Hello"}, False, id="no_explicit_type"),
             # With explicit type field, RandomPool validates via pydantic
             param({"type": "random_pool", "text": "Query"}, True, id="explicit_type_validates"),
-            param({"raw_messages": [{"role": "user", "content": "Hello"}]}, False, id="raw_messages_only_rejected"),
+            param({"type": "random_pool", "raw_messages": [{"role": "user", "content": "Hello"}]}, False, id="raw_messages_only_rejected"),
         ],
     )  # fmt: skip
     def test_can_load_content_based(self, data, expected):

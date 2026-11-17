@@ -183,14 +183,19 @@ class SingleTurn(AIPerfBaseModel):
     def validate_raw_messages_fields(self) -> "SingleTurn":
         """Validate raw_messages/raw_tools shape and mutual exclusivity.
 
-        raw_messages must be a non-empty list of role-bearing dicts, raw_tools
-        requires raw_messages, and raw_messages cannot combine with the
-        turn-based modality fields (which the endpoint would silently drop).
+        raw_messages must be a non-empty list of dicts with a non-empty string
+        role, raw_tools requires raw_messages, and raw_messages cannot combine
+        with the turn-based modality fields (which the endpoint would silently
+        drop).
         """
         if self.raw_messages is not None:
-            if not self.raw_messages:
-                raise ValueError("raw_messages must be a non-empty list")
             validate_chat_messages(self.raw_messages)
+            for i, msg in enumerate(self.raw_messages):
+                role = msg["role"]
+                if not isinstance(role, str) or not role:
+                    raise ValueError(
+                        f"raw_messages[{i}] 'role' must be a non-empty string"
+                    )
             if _has_any_modality(self):
                 raise ValueError(
                     "raw_messages cannot be combined with the text/image/audio/"

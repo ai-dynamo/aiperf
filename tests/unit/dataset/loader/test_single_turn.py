@@ -5,6 +5,7 @@ import base64
 import json
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.models import Image, Text
@@ -279,12 +280,24 @@ class TestSingleTurn:
             )
 
     def test_validation_empty_raw_messages_raises_error(self):
-        with pytest.raises(ValueError, match="raw_messages must be a non-empty list"):
+        with pytest.raises(ValueError, match="must be a non-empty list"):
             SingleTurn(raw_messages=[])
 
     def test_validation_raw_messages_missing_role_raises_error(self):
         with pytest.raises(ValueError, match="must have a 'role' key"):
             SingleTurn(raw_messages=[{"content": "no role here"}])
+
+    @pytest.mark.parametrize(
+        "role",
+        [
+            param(None, id="none"),
+            param("", id="empty"),
+            param(5, id="non_string"),
+        ],
+    )  # fmt: skip
+    def test_validation_raw_messages_invalid_role_raises_error(self, role):
+        with pytest.raises(ValueError, match="'role' must be a non-empty string"):
+            SingleTurn(raw_messages=[{"role": role, "content": "Hi"}])
 
     def test_validation_raw_messages_with_modality_raises_error(self):
         with pytest.raises(ValueError, match="raw_messages cannot be combined"):
