@@ -279,6 +279,8 @@ Validation rules, checked when the dataset is loaded:
 - `raw_messages` cannot be combined with `text`, `texts`, `image`, `images`, `audio`, `audios`, `video`, or `videos` on the same row. The endpoint would silently drop that content, so the row is rejected instead. Put the full message array in `raw_messages`.
 - `raw_tools` requires `raw_messages` on the same row, and must be a non-empty list when set.
 
+Only chat-style endpoints can send `raw_messages`: `--endpoint-type chat`, `chat_embeddings`, `responses`, and `messages`. The endpoints below build their payloads from `text` or the media fields alone, so a row with `raw_messages` raises an error that names the endpoint and `raw_messages` instead of sending a request without the authored messages. They include `completions`, `embeddings`, the rankings types, `huggingface_generate`, `solido_rag`, the image, video, and audio endpoints, and `template`. Author those as `text`.
+
 `mooncake_trace` uses the shorter keys `messages` and `tools`. `single_turn` ignores a `messages` field, so author `raw_messages` instead. It does not read `messages` as an alias, because a row with a bare `messages` key would then also match the Mooncake format during automatic format detection.
 
 In a `multi_turn` conversation, each turn accepts `raw_messages` and `raw_tools`. Messages from earlier turns stay in the conversation history sent with later turns:

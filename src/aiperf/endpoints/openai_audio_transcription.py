@@ -43,6 +43,7 @@ class AudioTranscriptionEndpoint(BaseEndpoint):
     def format_payload(self, request_info: RequestInfo) -> dict[str, Any]:
         if not request_info.turns:
             raise ValueError("Audio transcription endpoint requires at least one turn.")
+        self._reject_raw_messages(request_info)
 
         turn = request_info.turns[-1]
         model_endpoint = request_info.model_endpoint
