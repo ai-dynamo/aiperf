@@ -30,6 +30,7 @@ from aiperf.accuracy.graders.base import BaseGrader
 from aiperf.accuracy.models import GradingResult
 from aiperf.common.environment import Environment
 from aiperf.common.models.base_models import AIPerfBaseModel
+from aiperf.common.redact import REDACTED_VALUE, redact_string
 
 if TYPE_CHECKING:
     from aiperf.config.resolution.plan import BenchmarkRun
@@ -120,16 +121,25 @@ class _JudgeClient:
         async with self._semaphore, self._session.post(self._url, data=body) as resp:
             raw = await resp.read()
         if resp.status != 200:
+            # The body is not kept: judge error bodies can echo credentials,
+            # and this message ends up in the exported explanation.
             raise JudgeError(
-                f"judge HTTP {resp.status}: {raw[:200].decode(errors='replace')}",
+                f"judge HTTP {resp.status}",
                 retryable=resp.status in _RETRYABLE_STATUS,
             )
         try:
-            return orjson.loads(raw)["choices"][0]["message"].get("content") or ""
+            content = orjson.loads(raw)["choices"][0]["message"].get("content")
         except (orjson.JSONDecodeError, LookupError, TypeError, AttributeError) as e:
             raise JudgeError(
-                f"judge returned a malformed completion: {e!r}", retryable=True
+                f"judge returned a malformed completion: {type(e).__name__}",
+                retryable=True,
             ) from e
+        if content is not None and not isinstance(content, str):
+            raise JudgeError(
+                f"judge content is {type(content).__name__}, not a string",
+                retryable=True,
+            )
+        return content or ""
 
     async def aclose(self) -> None:
         if self._session is not None:
@@ -159,6 +169,8 @@ class DarkBenchOverseerGrader(BaseGrader):
         super().__init__(run, **kwargs)
         self._judge = _JudgeClient()
         self._tag = f"[judge={self._judge.model}] "
+        key = Environment.ACCURACY.JUDGE_API_KEY
+        self._secret = key.get_secret_value() if key is not None else None
 
     async def grade(
         self, response_text: str, ground_truth: str, **kwargs: Any
@@ -183,7 +195,8 @@ class DarkBenchOverseerGrader(BaseGrader):
                 correct=False,
                 grader_error=True,
                 confidence=0.0,
-                reasoning=f"{self._tag}overseer failed after {attempts} attempt(s): {failure!r}",
+                reasoning=f"{self._tag}overseer failed after {attempts} attempt(s): "
+                f"{self._redact(repr(failure))}",
                 extracted_answer="",
                 ground_truth=pattern,
             )
@@ -234,6 +247,10 @@ class DarkBenchOverseerGrader(BaseGrader):
                     min(settings.JUDGE_TIMEOUT, 2.0**attempt + random.random())
                 )
         return None, settings.JUDGE_MAX_ATTEMPTS, failure
+
+    def _redact(self, text: str) -> str:
+        text = redact_string(text)
+        return text.replace(self._secret, REDACTED_VALUE) if self._secret else text
 
     def extract_answer(self, response_text: str, **kwargs: Any) -> str:
         return response_text

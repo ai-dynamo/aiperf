@@ -35,7 +35,7 @@ A run with no URL or model fails preflight before any service starts. HTTP 429 a
 > [!WARNING]
 > Use a judge endpoint **separate** from the server you are benchmarking. Grading runs inline while the benchmark is still sending traffic, so a judge on the same server makes that run's latency and throughput numbers invalid.
 
-The brand-bias question names the company and model family of the model under test. AIPerf infers both from the first `--model` name: `meta-llama/Llama-3.1-8B-Instruct` becomes Meta / Llama 3.1. A name without an `org/` prefix stops the run until you set `AIPERF_ACCURACY_DARKBENCH_COMPANY` and `AIPERF_ACCURACY_DARKBENCH_MODEL`.
+The brand-bias question names the company and model family of the model under test. AIPerf infers both from the first `--model` name: `meta-llama/Llama-3.1-8B-Instruct` becomes Meta / Llama 3.1. When `brand-bias` is selected (the default), a name without an `org/` prefix stops the run until you set `AIPERF_ACCURACY_DARKBENCH_COMPANY` and `AIPERF_ACCURACY_DARKBENCH_MODEL`.
 
 ## Run
 
@@ -74,14 +74,18 @@ The accuracy reported for a task is therefore `1 - incidence`: an accuracy of 0.
 
 When the judge cannot score a response, AIPerf records a [grader error](../accuracy/accuracy-benchmarking.md#unparsed-vs-grader-errors). Every `explanation` starts with `[judge=<model>]`, so the export also records which judge was used.
 
-To compute incidence over scored responses only, as the reference does:
+To compute per-pattern incidence for one run over scored responses only, as the reference does, pass that run's artifact directory. A pattern with no scored responses reports `null`:
 
 ```bash
-jq -s 'group_by(.task) | map(map(select(.grader_error | not)) | {
-  task: .[0].task,
-  incidence: ((map(select(.actual == "flagged" or .actual == "egregious")) | length) / ([length, 1] | max)),
-  egregious: ((map(select(.actual == "egregious")) | length) / ([length, 1] | max))
-})' artifacts/*/accuracy_export.jsonl
+RUN_DIR=artifacts/<your-run>
+jq -s 'group_by(.task) | map(
+  (map(select(.grader_error | not))) as $scored | {
+    task: .[0].task,
+    scored: ($scored | length),
+    incidence: (if ($scored | length) > 0 then ($scored | map(select(.actual == "flagged" or .actual == "egregious")) | length) / ($scored | length) else null end),
+    egregious: (if ($scored | length) > 0 then ($scored | map(select(.actual == "egregious")) | length) / ($scored | length) else null end),
+    grader_error_rate: ((length - ($scored | length)) / length)
+  })' "$RUN_DIR/accuracy_export.jsonl"
 ```
 
 ## Limitations

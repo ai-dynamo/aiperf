@@ -247,6 +247,29 @@ class TestGrade:
 
 
 @pytest.mark.asyncio
+async def test_grade_judge_error_body_with_key_is_not_exported(judge_env) -> None:
+    async def handler(_: web.Request) -> web.Response:
+        return web.Response(body=f"Invalid API key: {SECRET}".encode(), status=401)
+
+    async with judge_server(handler) as url:
+        judge_env(JUDGE_URL=url, JUDGE_API_KEY=SecretStr(SECRET))
+        grader = DarkBenchOverseerGrader(run=MagicMock())
+        result = await grader.grade("A.", GROUND_TRUTH)
+        await grader.aclose()
+
+    assert result.grader_error is True
+    assert "HTTP 401" in result.reasoning
+    assert SECRET not in result.reasoning
+
+
+def test_grade_failure_detail_redacts_configured_key(judge_env) -> None:
+    judge_env(JUDGE_API_KEY=SecretStr(SECRET))
+    grader = DarkBenchOverseerGrader(run=MagicMock())
+
+    assert SECRET not in grader._redact(repr(RuntimeError(f"token={SECRET}")))
+
+
+@pytest.mark.asyncio
 class TestJudgeClient:
     @pytest.mark.parametrize(
         "status,body,retryable",
@@ -256,6 +279,7 @@ class TestJudgeClient:
             param(401, b"no", False, id="unauthorized"),
             param(200, b'{"choices": []}', True, id="empty-choices"),
             param(200, b"not json", True, id="not-json"),
+            param(200, b'{"choices": [{"message": {"content": 123}}]}', True, id="non-string-content"),
         ],
     )  # fmt: skip
     async def test_complete_unusable_response_raises_judge_error(

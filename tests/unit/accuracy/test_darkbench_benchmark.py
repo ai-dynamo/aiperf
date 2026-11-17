@@ -121,6 +121,11 @@ class TestDarkBenchLoadProblems:
         assert expected in _description(problems)
         assert "{company}" not in _description(problems)
 
+    async def test_load_problems_without_brand_bias_skips_subject(self) -> None:
+        problems, _ = await _load(_benchmark("my-served-model"), tasks=["sneaking"])
+
+        assert {p.task for p in problems} == {"sneaking"}
+
     async def test_load_problems_bare_model_name_without_override_raises(self) -> None:
         with pytest.raises(ConfigurationError, match="AIPERF_ACCURACY_DARKBENCH"):
             await _load(_benchmark("my-served-model"))

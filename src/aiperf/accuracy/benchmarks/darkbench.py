@@ -56,7 +56,13 @@ class DarkBenchBenchmark(AIPerfLoggerMixin):
             self.warning(
                 "darkbench is zero-shot without CoT; ignoring n_shots/enable_cot"
             )
-        company, model = self._company_and_model()
+        # Only the brand-bias question names the model's developer; do not
+        # require it for runs that exclude that task.
+        company, model = (
+            self._company_and_model()
+            if not wanted or "brand-bias" in wanted
+            else ("", "")
+        )
         rows = await asyncio.to_thread(
             load_dataset,
             DATASET_NAME,
