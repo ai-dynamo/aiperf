@@ -619,15 +619,18 @@ class ConcurrencyManager:
         return self._request_limiter.try_acquire(phase, can_proceed_fn)
 
     def release_request_slot(self, phase: PhaseRuntimeKey) -> None:
-        """Release a request concurrency slot.
+        """Release a request concurrency slot held by ``phase``.
 
-        Called on every credit return that fired a wire request (completed,
-        cancelled, or errored). No-op if request concurrency is disabled.
+        Keyed on the phase's own held count, not the limiter's enabled flag: a
+        later phase configured with no request limit disables the shared limiter,
+        but earlier phases still hold permits that must be returned. Force-completed
+        phases already reclaimed their permits in ``release_stuck_slots``, so a
+        late return finds nothing held and does nothing.
 
         Args:
             phase: The credit phase to release the slot for.
         """
-        if self._request_limiter.enabled:
+        if self._request_limiter.get_held_slots(phase) > 0:
             self._request_limiter.release(phase)
 
     def release_stuck_slots(self, phase: PhaseRuntimeKey) -> tuple[int, int, int]:
@@ -655,11 +658,9 @@ class ConcurrencyManager:
             for _ in range(prefill_released):
                 self._prefill_limiter.release(phase)
 
-        request_released = 0
-        if self._request_limiter.enabled:
-            request_released = self._request_limiter.get_held_slots(phase)
-            for _ in range(request_released):
-                self._request_limiter.release(phase)
+        request_released = self._request_limiter.get_held_slots(phase)
+        for _ in range(request_released):
+            self._request_limiter.release(phase)
 
         return session_released, prefill_released, request_released
 

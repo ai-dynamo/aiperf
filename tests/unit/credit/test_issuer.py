@@ -7,9 +7,11 @@ Tests credit issuance with concurrency control and stop condition checking.
 
 import asyncio
 import time
+from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from msgspec.structs import replace as struct_replace
 from pytest import param
 
 from aiperf.common.enums import CreditPhase
@@ -17,6 +19,7 @@ from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.credit.dispatch import ChildDispatchResult, TurnAdmission
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
+from aiperf.timing.branch_orchestrator import PendingBranchJoin
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.session_tree import SessionTreeRegistry
 
@@ -473,6 +476,7 @@ class TestSlotAcquisitionFailures:
         assert registry.open_count(CreditPhase.PROFILING) == 0
         assert not registry.has_tree(turn.effective_root_correlation_id)
         assert concurrency.session_releases == 1
+        assert concurrency.request_releases == 1
         assert registry.release_all(CreditPhase.PROFILING) == 0
         assert concurrency.session_releases == 1
         mock_router.send_credit.assert_not_called()
@@ -507,9 +511,138 @@ class TestSlotAcquisitionFailures:
         assert registry.open_count(CreditPhase.PROFILING) == 0
         assert not registry.has_tree(turn.effective_root_correlation_id)
         assert concurrency.session_releases == 1
+        assert concurrency.request_releases == 1
         assert registry.release_all(CreditPhase.PROFILING) == 0
         assert concurrency.session_releases == 1
         mock_router.send_credit.assert_not_called()
+
+
+def _join_pending(*, no_request: bool) -> PendingBranchJoin:
+    return PendingBranchJoin(
+        parent_x_correlation_id="corr-spine",
+        parent_conversation_id="spine",
+        parent_num_turns=3,
+        gated_turn_index=1,
+        parent_no_request_on_gated_turn=no_request,
+    )
+
+
+class TestRequestSlotRollback:
+    """The request slot is taken per wire request and rolled back with the other
+    slots when a later gate refuses or cancels the turn."""
+
+    async def test_issue_credit_prefill_failure_releases_request_slot(
+        self, credit_issuer, mock_concurrency, mock_router
+    ):
+        mock_concurrency.acquire_prefill_slot.return_value = False
+
+        result = await credit_issuer.issue_credit(make_turn(turn_index=1))
+
+        assert result is False
+        mock_concurrency.acquire_request_slot.assert_awaited_once()
+        mock_concurrency.release_request_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_router.send_credit.assert_not_called()
+
+    async def test_try_issue_credit_prefill_failure_releases_request_slot(
+        self, credit_issuer, mock_concurrency, mock_router
+    ):
+        mock_concurrency.try_acquire_prefill_slot.return_value = False
+
+        result = await credit_issuer.try_issue_credit(make_turn(turn_index=1))
+
+        assert result is None
+        mock_concurrency.release_request_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_router.send_credit.assert_not_called()
+
+    async def test_issue_credit_request_refusal_rolls_back_session_slot(
+        self, credit_issuer, mock_concurrency, mock_router
+    ):
+        mock_concurrency.acquire_request_slot.return_value = False
+
+        result = await credit_issuer.issue_credit(make_turn(turn_index=0))
+
+        assert result is False
+        mock_concurrency.release_session_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.acquire_prefill_slot.assert_not_called()
+        mock_concurrency.release_request_slot.assert_not_called()
+        mock_router.send_credit.assert_not_called()
+
+    async def test_issue_credit_no_request_turn_takes_no_request_slot(
+        self, credit_issuer, mock_concurrency
+    ):
+        await credit_issuer.issue_credit(
+            struct_replace(make_turn(turn_index=1), no_request=True)
+        )
+
+        mock_concurrency.acquire_request_slot.assert_not_called()
+        mock_concurrency.acquire_prefill_slot.assert_awaited_once()
+
+    async def test_issue_credit_cancelled_during_prefill_wait_releases_held_slots(
+        self, credit_issuer, mock_concurrency
+    ):
+        mock_concurrency.acquire_prefill_slot.side_effect = asyncio.CancelledError
+
+        with pytest.raises(asyncio.CancelledError):
+            await credit_issuer.issue_credit(make_turn(turn_index=0))
+
+        mock_concurrency.release_request_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.release_session_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+
+    async def test_dispatch_child_turn_prefill_failure_releases_request_slot(
+        self, credit_issuer, mock_concurrency, mock_router
+    ):
+        mock_concurrency.acquire_prefill_slot.return_value = False
+        child = struct_replace(make_turn(turn_index=1), agent_depth=1)
+
+        result = await credit_issuer.dispatch_child_turn(child)
+
+        assert result is ChildDispatchResult.REJECTED
+        mock_concurrency.release_request_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+        mock_concurrency.release_session_slot.assert_not_called()
+        mock_router.send_credit.assert_not_called()
+
+    async def test_dispatch_child_turn_request_refusal_skips_prefill(
+        self, credit_issuer, mock_concurrency
+    ):
+        mock_concurrency.acquire_request_slot.return_value = False
+        child = struct_replace(make_turn(turn_index=1), agent_depth=1)
+
+        result = await credit_issuer.dispatch_child_turn(child)
+
+        assert result is ChildDispatchResult.REJECTED
+        mock_concurrency.acquire_prefill_slot.assert_not_called()
+        mock_concurrency.release_request_slot.assert_not_called()
+
+    async def test_dispatch_join_turn_prefill_failure_releases_request_slot(
+        self, credit_issuer, mock_concurrency
+    ):
+        mock_concurrency.acquire_prefill_slot.return_value = False
+
+        result = await credit_issuer.dispatch_join_turn(_join_pending(no_request=False))
+
+        assert result is ChildDispatchResult.REJECTED
+        mock_concurrency.release_request_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+
+    async def test_dispatch_join_turn_no_request_takes_no_request_slot(
+        self, credit_issuer, mock_concurrency
+    ):
+        await credit_issuer.dispatch_join_turn(_join_pending(no_request=True))
+
+        mock_concurrency.acquire_request_slot.assert_not_called()
 
 
 class _PrefillFailConcurrency:
@@ -520,22 +653,34 @@ class _PrefillFailConcurrency:
         self.request_releases = 0
         self.prefill_releases = 0
 
-    async def acquire_session_slot(self, phase: CreditPhase, can_proceed) -> bool:
+    async def acquire_session_slot(
+        self, phase: CreditPhase, can_proceed: Callable[[], bool]
+    ) -> bool:
         return True
 
-    async def acquire_request_slot(self, phase: CreditPhase, can_proceed) -> bool:
+    async def acquire_request_slot(
+        self, phase: CreditPhase, can_proceed: Callable[[], bool]
+    ) -> bool:
         return True
 
-    async def acquire_prefill_slot(self, phase: CreditPhase, can_proceed) -> bool:
+    async def acquire_prefill_slot(
+        self, phase: CreditPhase, can_proceed: Callable[[], bool]
+    ) -> bool:
         return False
 
-    def try_acquire_session_slot(self, phase: CreditPhase, can_proceed) -> bool:
+    def try_acquire_session_slot(
+        self, phase: CreditPhase, can_proceed: Callable[[], bool]
+    ) -> bool:
         return True
 
-    def try_acquire_request_slot(self, phase: CreditPhase, can_proceed) -> bool:
+    def try_acquire_request_slot(
+        self, phase: CreditPhase, can_proceed: Callable[[], bool]
+    ) -> bool:
         return True
 
-    def try_acquire_prefill_slot(self, phase: CreditPhase, can_proceed) -> bool:
+    def try_acquire_prefill_slot(
+        self, phase: CreditPhase, can_proceed: Callable[[], bool]
+    ) -> bool:
         return False
 
     def release_session_slot(self, phase: CreditPhase) -> None:
@@ -1070,15 +1215,7 @@ class TestDispatchJoinTurnNoRequest:
     request-free orchestrator spine's join turns issue no HTTP request."""
 
     def _pending(self, *, no_request: bool):
-        from aiperf.timing.branch_orchestrator import PendingBranchJoin
-
-        return PendingBranchJoin(
-            parent_x_correlation_id="corr-spine",
-            parent_conversation_id="spine",
-            parent_num_turns=3,
-            gated_turn_index=1,
-            parent_no_request_on_gated_turn=no_request,
-        )
+        return _join_pending(no_request=no_request)
 
     async def test_dispatch_join_turn_propagates_no_request_true(
         self, credit_issuer, mock_router

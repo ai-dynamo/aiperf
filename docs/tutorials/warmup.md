@@ -312,6 +312,24 @@ aiperf profile \
 
 Warmup runs with lower limits (20 concurrent, 2 prefill), then profiling uses full limits.
 
+## Request Concurrency Warmup
+
+`--warmup-request-concurrency` caps total in-flight requests during the warmup phase, counting sub-agent forks, independently of `--request-concurrency` on profiling:
+
+```bash
+aiperf profile \
+    --model your-model \
+    --url localhost:8000 \
+    --endpoint-type chat \
+    --request-concurrency 32 \
+    --warmup-request-concurrency 8 \
+    --warmup-request-count 50
+```
+
+Under `--scenario` with `agentic_replay` timing, the auto-synthesized cache warmup takes its cap from `--warmup-request-concurrency` (falling back to `--request-concurrency`). It still primes one trajectory per profiling concurrency lane; only the number in flight at once changes. If the warmup prefill cap is mirrored from `--prefill-concurrency`, it is clamped to the warmup request cap.
+
+`--warmup-request-concurrency` is an error on a run with neither a warmup trigger nor agentic replay, since there would be no warmup to apply it to.
+
 ## Examples
 
 ### Minimal Warmup
@@ -387,6 +405,7 @@ aiperf profile \
 | `--warmup-prefill-concurrency` | int | `--prefill-concurrency` | Prefill concurrency during warmup |
 | `--warmup-request-rate` | float | `--request-rate` | Request rate during warmup |
 | `--warmup-arrival-pattern` | str | `--arrival-pattern` | Arrival pattern during warmup |
+| `--warmup-request-concurrency` | int | `--request-concurrency` | Total in-flight request cap during warmup, roots and sub-agent forks |
 
 ### Ramping (inherit from profiling if not set)
 

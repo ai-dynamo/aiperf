@@ -151,3 +151,21 @@ def test_agentic_warmup_does_not_clobber_warmup_phase(
     for phase in cfg.benchmark.phases:
         if phase.name == "warmup":
             assert getattr(phase, "agentic_cache_warmup_duration", None) is None
+
+
+def _scenario_yaml(tmp_path: pathlib.Path) -> pathlib.Path:
+    path = tmp_path / "scenario_profiling.yaml"
+    path.write_text(
+        _AGENTIC_PROFILING_YAML.replace(
+            "benchmark:\n", "benchmark:\n  scenario: inferencex-agentx-mvp\n", 1
+        )
+    )
+    return path
+
+
+def test_warmup_request_concurrency_routes_to_agentic_warmup_for_yaml_scenario(
+    tmp_path: pathlib.Path,
+) -> None:
+    """A scenario named in the config file routes --warmup-request-concurrency onto the synthesized agentic warmup rather than demanding a warmup phase."""
+    cfg = resolve_config(_cli(warmup_request_concurrency=8), _scenario_yaml(tmp_path))
+    assert _profiling_phase(cfg).agentic_warmup_request_concurrency == 8

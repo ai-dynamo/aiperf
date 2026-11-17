@@ -119,6 +119,7 @@ YAML configs have no automatic default: set `requests`, `duration`, or `sessions
 | `--prefill-concurrency` | ⚠️ | ⚠️ | ⚠️ | Requires `--streaming`; must be ≤ `--concurrency` |
 | `--concurrency-ramp-duration` | ✅ | ✅ | ✅ | Works with any scheduling option |
 | `--prefill-concurrency-ramp-duration` | ⚠️ | ⚠️ | ⚠️ | Requires `--streaming`; works with any scheduling option |
+| `--request-concurrency` | ✅ | ✅ | ✅ | Total in-flight requests, roots and sub-agent forks, until each response returns. Fixed (no ramp); must be ≥ `--prefill-concurrency` |
 
 **Concurrency behavior by configuration:**
 - **With `--request-rate`**: Concurrency acts as a ceiling; requests scheduled by rate are blocked if at limit
@@ -129,6 +130,18 @@ YAML configs have no automatic default: set `requests`, `duration`, or `sessions
 > **Important**: If `--concurrency` is not set, session concurrency limiting is **disabled** (unlimited). For `--user-centric-rate` mode, consider setting `--concurrency` to at least `--num-users` to ensure all users can have in-flight requests.
 
 > **See also**: [Prefill Concurrency Tutorial](../tutorials/prefill-concurrency.md) for detailed guidance on memory-safe long-context benchmarking.
+
+### Request Concurrency
+
+`--request-concurrency N` caps every wire request in flight, from dispatch until its response returns. Requests are counted individually, sub-agent forks and joins included:
+
+- `--concurrency` caps session trees. A fan-out parent's children inherit its slot, so forks can push the in-flight count above `--concurrency`.
+- `--prefill-concurrency` caps requests waiting for their first token and releases the slot at first token, so decoding requests do not count against it.
+- `--request-concurrency` caps all requests, roots and forks alike, until they return.
+
+Set it to bound the total in-flight requests an engine sees when sub-agent fan-out would oversubscribe `--concurrency`. `--prefill-concurrency` must be ≤ `--request-concurrency`. A `no_request` turn fires nothing on the wire and takes no slot.
+
+`--request-concurrency` has no ramp or adaptive control: the cap is fixed for the phase, and `--concurrency-ramp-duration` does not apply to it. Under `--scenario` with agentic replay, `--warmup-request-concurrency` throttles the synthesized cache-warmup burst separately from profiling.
 
 ### Grace Period Options
 
@@ -177,6 +190,7 @@ Warmup options work **independently of the main benchmark configuration**. The w
 | `--num-warmup-sessions` | ✅ | Stop condition for warmup; mutually exclusive with `--warmup-request-count` |
 | `--warmup-concurrency` | ✅ | Falls back to `--concurrency` |
 | `--warmup-prefill-concurrency` | ⚠️ | Requires `--streaming` |
+| `--warmup-request-concurrency` | ✅ | Total in-flight cap during warmup; falls back to `--request-concurrency` |
 | `--warmup-request-rate` | ✅ | Falls back to `--request-rate` |
 | `--warmup-arrival-pattern` | ✅ | Falls back to `--arrival-pattern` |
 | `--warmup-grace-period` | ⚠️ | Requires warmup to be enabled; default: ∞ |

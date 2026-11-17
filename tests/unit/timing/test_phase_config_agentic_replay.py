@@ -4,6 +4,7 @@
 
 import pydantic
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.config.phases import BasePhaseConfig, PhaseConfig
@@ -87,6 +88,32 @@ def test_warmup_request_concurrency_overrides_profiling() -> None:
     assert warmup.request_concurrency == 8
     # ...but every lane is still primed (burst size tracks profiling concurrency).
     assert warmup.total_expected_requests == 64
+
+
+@pytest.mark.parametrize(
+    "prefill,expected_prefill",
+    [param(32, 8, id="clamped-to-warmup-request-cap"), param(4, 4, id="under-cap-kept")],
+)  # fmt: skip
+def test_warmup_prefill_concurrency_clamped_to_warmup_request_concurrency(
+    prefill: int, expected_prefill: int
+) -> None:
+    """The copied profiling prefill cap must fit under the warmup's tighter request cap."""
+    phase = _PHASE_ADAPTER.validate_python(
+        {
+            "name": "profiling",
+            "type": "concurrency",
+            "concurrency": 64,
+            "prefill_concurrency": prefill,
+            "request_concurrency": 32,
+            "agentic_warmup_request_concurrency": 8,
+            "duration": 900,
+            "timing_mode": TimingMode.AGENTIC_REPLAY,
+        }
+    )
+    warmup = _build_agentic_warmup_config(phase)
+    assert warmup is not None
+    assert warmup.prefill_concurrency == expected_prefill
+    assert warmup.request_concurrency == 8
 
 
 def test_warmup_config_total_expected_requests_set() -> None:

@@ -232,8 +232,8 @@ async def test_direct_delayed_continuation_rechecks_phase_stop_before_send(
     assert stats.acquire_count == 1
     assert stats.release_count == 0
     prefill_stats = rig.concurrency._prefill_limiter.global_stats
-    assert prefill_stats.acquire_count == 2
-    assert prefill_stats.release_count == 2
+    assert prefill_stats.acquire_count == 1
+    assert prefill_stats.release_count == 1
 
 
 @pytest.mark.asyncio

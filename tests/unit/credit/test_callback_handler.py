@@ -10,6 +10,7 @@ import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from msgspec.structs import replace as struct_replace
 from pytest import param
 
 from aiperf.common.enums import CreditPhase
@@ -28,6 +29,7 @@ def mock_concurrency():
     mock = MagicMock()
     mock.release_session_slot = MagicMock()
     mock.release_prefill_slot = MagicMock()
+    mock.release_request_slot = MagicMock()
     return mock
 
 
@@ -886,6 +888,32 @@ class TestCreditReturnTTFTHandling:
 
         mock_progress.increment_prefill_released.assert_not_called()
         mock_concurrency.release_prefill_slot.assert_not_called()
+
+
+class TestCreditReturnRequestSlot:
+    """The request slot is released once per wire request, never for no_request."""
+
+    async def test_on_credit_return_releases_request_slot_once(
+        self, registered_handler, mock_concurrency
+    ):
+        await registered_handler.on_credit_return(
+            "worker-1", make_credit_return(make_credit())
+        )
+
+        mock_concurrency.release_request_slot.assert_called_once_with(
+            CreditPhase.PROFILING
+        )
+
+    async def test_on_credit_return_no_request_credit_releases_no_request_slot(
+        self, registered_handler, mock_concurrency
+    ):
+        credit = struct_replace(make_credit(), no_request=True)
+
+        await registered_handler.on_credit_return(
+            "worker-1", make_credit_return(credit)
+        )
+
+        mock_concurrency.release_request_slot.assert_not_called()
 
 
 # =============================================================================

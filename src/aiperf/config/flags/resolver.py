@@ -1632,6 +1632,16 @@ _PROFILING_PHASE_OVERRIDE_FIELDS: frozenset[str] = frozenset(
 )
 
 
+def _resolved_scenario(merged: dict[str, Any], cli: CLIConfig) -> str | None:
+    """The scenario in force: ``--scenario`` when given, else the config file's."""
+    if "scenario" in cli.model_fields_set:
+        return cli.scenario
+    benchmark = merged.get("benchmark")
+    if isinstance(benchmark, dict):
+        return benchmark.get("scenario")
+    return None
+
+
 def _apply_phase_loadgen_overrides(
     merged: dict[str, Any],
     cli: CLIConfig,
@@ -1675,13 +1685,15 @@ def _apply_phase_loadgen_overrides(
     from aiperf.config.flags._converter_profiling import (
         _AGENTIC_REPLAY_ROUTES,
         _apply_agentic_replay_fields,
+        _apply_agentic_warmup_request_concurrency,
         _apply_continuation_dispatch,
     )
 
     decision = phase_shape_decision or _PhaseShapeDecision()
     loadgen_set = cli.model_fields_set & _PROFILING_PHASE_OVERRIDE_FIELDS
     agentic_set = cli.model_fields_set.intersection(_AGENTIC_REPLAY_ROUTES)
-    if not loadgen_set and not agentic_set:
+    warmup_cap_set = "warmup_request_concurrency" in cli.model_fields_set
+    if not loadgen_set and not agentic_set and not warmup_cap_set:
         return decision
 
     benchmark = merged.get("benchmark")
@@ -1699,6 +1711,9 @@ def _apply_phase_loadgen_overrides(
     _apply_loadgen_value_overrides(target, cli, loadgen_set)
     _apply_default_grace_period_override(target, cli, loadgen_set)
     _apply_agentic_replay_fields(target, cli)
+    _apply_agentic_warmup_request_concurrency(
+        target, cli, _resolved_scenario(merged, cli)
+    )
     decision = _apply_phase_shape_overrides(
         target, cli, loadgen_set, decision=phase_shape_decision
     )
@@ -2171,6 +2186,12 @@ def _apply_warmup_overrides(
     existing = _find_warmup_phase(phases, phase_identity or _PhaseIdentityDecision())
     built = build_warmup(cli, base_warmup=existing is not None)
     if built is None:
+        from aiperf.config.flags._converter_profiling import scenario_is_agentic
+
+        if warmup_set <= {"warmup_request_concurrency"} and scenario_is_agentic(
+            _resolved_scenario(merged, cli)
+        ):
+            return
         from aiperf.config.flags._config_flag_routing import flag_names_for
 
         names = sorted("/".join(flag_names_for(f) or (f,)) for f in warmup_set)

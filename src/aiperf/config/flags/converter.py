@@ -35,6 +35,7 @@ from aiperf.config.flags._converter_optionals import (
 from aiperf.config.flags._converter_profiling import (
     REMOTE_FIXED_SCHEDULE_CHECK_KEY,
     build_profiling,
+    scenario_is_agentic,
 )
 from aiperf.config.flags._converter_runtime import (
     build_artifacts,
@@ -575,8 +576,22 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     # The profiling builder decides promotion, but the marker belongs to the dataset.
     remote_fixed_schedule_check = prof.pop(REMOTE_FIXED_SCHEDULE_CHECK_KEY, None)
 
+    warmup = build_warmup(cli)
+    if (
+        warmup is None
+        and "warmup_request_concurrency" in cli.model_fields_set
+        and not scenario_is_agentic(cli.scenario)
+    ):
+        from aiperf.config.loader.errors import ConfigurationError
+
+        raise ConfigurationError(
+            "--warmup-request-concurrency needs a warmup phase to apply to. Pass a "
+            "warmup trigger (--warmup-request-count / --warmup-num-sessions / "
+            "--warmup-duration), or --scenario with agentic_replay timing for the "
+            "auto-synthesized agentic warmup."
+        )
     phases: list[dict[str, Any]] = []
-    if (warmup := build_warmup(cli)) is not None:
+    if warmup is not None:
         phases.append({"name": "warmup", "kind": "warmup", **warmup})
     phases.append({"name": "profiling", "kind": "profiling", **prof})
 

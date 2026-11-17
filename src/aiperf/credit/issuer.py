@@ -328,17 +328,19 @@ class CreditIssuer:
             For root first turns (turn_index == 0, agent_depth == 0), acquires
             a session slot first. Root continuations and all DAG-child turns
             (``agent_depth > 0``) inherit the root's session slot and skip
-            session-slot acquisition. All turns acquire a prefill slot.
-            Slots are released automatically on failure.
+            session-slot acquisition. Every non-``no_request`` turn acquires a
+            request slot; all turns acquire a prefill slot. Slots are released
+            automatically on failure.
 
         Flow:
             1. Acquire session slot (root first turn only)
-            2. Acquire prefill slot (all turns)
-            3. Open session tree (root first turn only; after both slots succeed)
-            4. Atomic numbering via increment_sent
-            5. Calculate cancellation delay
-            6. Create and send Credit
-            7. If final credit: freeze counts + set event
+            2. Acquire request slot (unless ``no_request``)
+            3. Acquire prefill slot (all turns)
+            4. Open session tree (root first turn only; after all slots succeed)
+            5. Atomic numbering via increment_sent
+            6. Calculate cancellation delay
+            7. Create and send Credit
+            8. If final credit: freeze counts + set event
         """
         gate = getattr(self, "replay_gate", ReplayIssueGate(None))
         return await gate.submit(turn, lambda: self._issue_credit_ready(turn))
@@ -644,7 +646,7 @@ class CreditIssuer:
         We avoid the overloaded ``issue_credit`` / ``try_issue_credit``
         False (which conflates "gate refused, not issued" with "issued,
         was final credit") by inlining the child issuance path here:
-        gate check, blocking prefill-slot acquisition, then
+        gate check, blocking request and prefill slot acquisition, then
         ``_issue_credit_internal``. Children skip session-slot
         acquisition because they inherit the parent's slot.
 
@@ -713,12 +715,10 @@ class CreditIssuer:
 
         The parent already holds a session slot (acquired at turn_index=0);
         the gated turn has turn_index > 0, so ``issue_credit``'s session-slot
-        acquisition is naturally skipped. Only a prefill slot is acquired
-        here — via the blocking ``acquire_prefill_slot`` path inside
-        ``issue_credit``, matching ``dispatch_child_turn``. Prefill
-        saturation is backpressure, not a reason to permanently drop the
-        join (the old non-replay ``try_issue_credit`` path treated ``None``
-        as failure and suppressed the join with no retry).
+        acquisition is naturally skipped. The join takes its own request slot
+        (unless ``no_request``) and a prefill slot, both via the blocking
+        acquire path, matching ``dispatch_child_turn``. Saturation is
+        backpressure, not a reason to permanently drop the join.
 
         Cache-bust propagation:
             The TurnToSend constructed here re-applies the parent's
