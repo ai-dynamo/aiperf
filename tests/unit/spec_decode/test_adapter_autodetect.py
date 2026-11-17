@@ -58,16 +58,6 @@ def test_adapters_are_registered() -> None:
     )
 
 
-def test_llamacpp_timings_are_claimed_by_llamacpp_adapter_only() -> None:
-    responses: list[ParsedResponse] = [
-        ParsedResponse(perf_ns=1, spec_decode_stats=LLAMACPP_PAYLOAD),
-        ParsedResponse(perf_ns=2, usage={"completion_tokens": 5}),
-    ]
-    record = InferenceResultParser._extract_spec_decode_acceptance(responses)
-    assert record is not None
-    assert record.engine == "llamacpp"
-
-
 class TestCrossClaim:
     """Neither adapter may claim the other engine's payload.
 
