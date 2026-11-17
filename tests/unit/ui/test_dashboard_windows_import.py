@@ -8,7 +8,8 @@ import sys
 
 _IMPORT_CODE = """
 import sys
-sys.modules["termios"] = None
+for name in ("termios", "fcntl", "tty", "pty", "resource", "grp", "pwd"):
+    sys.modules[name] = None
 import aiperf.common.constants as constants
 constants.IS_WINDOWS = True
 import aiperf.ui.dashboard.aiperf_dashboard_ui

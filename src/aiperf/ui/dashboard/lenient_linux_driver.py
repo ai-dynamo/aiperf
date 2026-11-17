@@ -13,9 +13,10 @@ _logger = AIPerfLogger(__name__)
 class LenientLinuxDriver(LinuxDriver):
     """LinuxDriver that survives non-UTF-8 bytes on stdin.
 
-    Textual decodes stdin strictly and panics on the first invalid byte, which
-    freezes the dashboard. Some terminals and container runtimes (e.g. podman -it)
-    send such bytes, so the bad chunk is dropped and input reading resumes.
+    Textual decodes stdin strictly: an invalid byte makes it panic the app and
+    stop reading input. Some terminals and container runtimes (e.g. podman -it)
+    send such bytes, so input reading restarts instead. Valid keys in the same
+    read as the invalid byte are dropped; reading resumes with the next read.
     """
 
     _undecodable_input_warned: bool = False

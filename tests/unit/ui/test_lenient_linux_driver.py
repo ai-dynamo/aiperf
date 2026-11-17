@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import select
+import signal
 import sys
 import threading
 import time
@@ -27,6 +28,15 @@ from aiperf.ui.dashboard.aiperf_dashboard_ui import AIPerfDashboardUI
 from aiperf.ui.dashboard.lenient_linux_driver import LenientLinuxDriver
 
 _JOIN_TIMEOUT = 5.0
+
+
+@pytest.fixture(autouse=True)
+def _restore_signal_handlers() -> Iterator[None]:
+    # LinuxDriver.__init__ installs process-wide SIGTSTP/SIGCONT handlers.
+    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTSTP, signal.SIGCONT)}
+    yield
+    for sig, handler in handlers.items():
+        signal.signal(sig, handler)
 
 
 @pytest.fixture
@@ -54,6 +64,7 @@ def _wait_until_drained(read_fd: int) -> None:
 async def test_linux_driver_run_input_thread_undecodable_byte_raises(
     stdin_pipe: tuple[int, int],
 ) -> None:
+    """Documents upstream Textual behavior; fails if Textual tolerates bad bytes."""
     _, write_fd = stdin_pipe
     driver = LinuxDriver(MagicMock())
     os.write(write_fd, b"\xff")
