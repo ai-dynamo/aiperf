@@ -56,6 +56,9 @@ class TestSingleTurnCanLoad:
             param({"type": "random_pool", "text": "Hello"}, False, id="wrong_type_rejected"),
             param({"turns": [{"text": "Hello"}]}, False, id="has_turns_field"),
             param({"session_id": "123", "metadata": "test"}, False, id="no_modality"),
+            param({"raw_messages": [{"role": "user", "content": "Hi"}]}, True, id="raw_messages_only"),
+            param({"raw_messages": [{"role": "user", "content": "Hi"}], "raw_tools": [{"type": "function", "function": {"name": "f"}}]}, True, id="raw_messages_with_raw_tools"),
+            param({"raw_tools": [{"type": "function", "function": {"name": "f"}}]}, False, id="raw_tools_without_raw_messages"),
             param(None, False, id="none_data"),
         ],
     )  # fmt: skip
@@ -222,6 +225,7 @@ class TestRandomPoolCanLoad:
             param({"text": "Hello"}, False, id="no_explicit_type"),
             # With explicit type field, RandomPool validates via pydantic
             param({"type": "random_pool", "text": "Query"}, True, id="explicit_type_validates"),
+            param({"raw_messages": [{"role": "user", "content": "Hello"}]}, False, id="raw_messages_only_rejected"),
         ],
     )  # fmt: skip
     def test_can_load_content_based(self, data, expected):
@@ -390,6 +394,8 @@ class TestCustomDatasetComposerInferDatasetType:
             param(['{"type": "random_pool", "text": "Query"}'], CustomDatasetType.RANDOM_POOL, id="random_pool_explicit"),
             param(['{"input_length": 100, "output_length": 50}'], CustomDatasetType.MOONCAKE_TRACE, id="mooncake_input_length"),
             param(['{"text_input": "Hello"}'], CustomDatasetType.MOONCAKE_TRACE, id="mooncake_text_input"),
+            param(['{"raw_messages": [{"role": "user", "content": "Hi"}]}'], CustomDatasetType.SINGLE_TURN, id="raw_messages_only"),
+            param(['{"raw_messages": [{"role": "user", "content": "Hi"}], "raw_tools": [{"type": "function", "function": {"name": "f"}}]}'], CustomDatasetType.SINGLE_TURN, id="raw_messages_with_raw_tools"),
         ],
     )  # fmt: skip
     def test_infer_from_file(

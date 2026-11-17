@@ -30,7 +30,7 @@ def validate_chat_messages(messages: list[dict[str, Any]]) -> None:
             )
 
 
-def _has_modality_content(row: Any) -> bool:
+def _has_any_modality(row: Any) -> bool:
     """True when ``row`` has any of the multimodal content fields populated."""
     return any(
         (
@@ -44,15 +44,6 @@ def _has_modality_content(row: Any) -> bool:
             row.videos,
         )
     )
-
-
-def _has_any_modality(row: Any) -> bool:
-    """True when ``row`` satisfies the at-least-one-input requirement.
-
-    A populated ``raw_messages`` array counts as an input on its own, so
-    rows carrying only pre-formatted messages pass the modality gate.
-    """
-    return _has_modality_content(row) or bool(getattr(row, "raw_messages", None))
 
 
 class SingleTurn(AIPerfBaseModel):
@@ -200,7 +191,7 @@ class SingleTurn(AIPerfBaseModel):
             if not self.raw_messages:
                 raise ValueError("raw_messages must be a non-empty list")
             validate_chat_messages(self.raw_messages)
-            if _has_modality_content(self):
+            if _has_any_modality(self):
                 raise ValueError(
                     "raw_messages cannot be combined with the text/image/audio/"
                     "video modality fields; author the full message array in "
@@ -213,7 +204,7 @@ class SingleTurn(AIPerfBaseModel):
     @model_validator(mode="after")
     def validate_at_least_one_modality(self) -> "SingleTurn":
         """Ensure at least one modality is provided"""
-        if not _has_any_modality(self):
+        if not (_has_any_modality(self) or self.raw_messages):
             raise ValueError("At least one modality must be provided")
         return self
 

@@ -61,6 +61,10 @@ class TestRandomPool:
         with pytest.raises(ValueError):
             RandomPool()
 
+    def test_validation_raw_messages_only_rejected(self):
+        with pytest.raises(ValueError, match="At least one modality must be provided"):
+            RandomPool(raw_messages=[{"role": "user", "content": "Hello"}])
+
     @pytest.mark.parametrize(
         "text,texts,image,images,audio,audios",
         [
