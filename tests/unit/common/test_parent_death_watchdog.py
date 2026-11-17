@@ -40,10 +40,8 @@ def test_start_parent_death_watchdog_without_parent_starts_no_thread(
     )
     before = len(_watchdog_threads())
 
-    finished = start_parent_death_watchdog("Probe", 0.0, logging.getLogger("t"))
+    start_parent_death_watchdog("Probe", 0.0, logging.getLogger("t"))
 
-    assert isinstance(finished, threading.Event)
-    assert not finished.is_set()
     assert len(_watchdog_threads()) == before
     assert exit_codes == []
 
@@ -69,29 +67,6 @@ def test_start_parent_death_watchdog_dead_parent_past_deadline_exits_with_1(
 
     assert exit_codes == [1]
     assert "Probe cleanup exceeded 0s after parent death" in caplog.text
-
-
-def test_start_parent_death_watchdog_cleanup_finished_in_time_does_not_exit(
-    monkeypatch: pytest.MonkeyPatch, exit_codes: list[int]
-) -> None:
-    parent_died = threading.Event()
-
-    class _ParentDyingOnSignal:
-        def join(self, timeout: float | None = None) -> None:
-            parent_died.wait()
-
-    monkeypatch.setattr(
-        "aiperf.common.parent_death_watchdog.multiprocessing.parent_process",
-        lambda: _ParentDyingOnSignal(),
-    )
-
-    finished = start_parent_death_watchdog("Probe", 30.0, logging.getLogger("t"))
-    finished.set()
-    parent_died.set()
-    for thread in _watchdog_threads():
-        thread.join(timeout=5.0)
-
-    assert exit_codes == []
 
 
 # Parent spawns a guarded child that inherits stdout, then SIGKILLs itself.

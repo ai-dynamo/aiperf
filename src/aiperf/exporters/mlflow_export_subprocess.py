@@ -36,28 +36,26 @@ def run_export_in_subprocess(
     ``result_queue`` so the parent can log without requiring pickled
     exceptions (some MLflow errors don't round-trip through pickle).
 
-    If the CLI dies abnormally mid-export, the upload gets the same
-    ``EXPORT_TIMEOUT_SECONDS`` it would have had, then the child exits so it
-    stops holding the inherited stdout/stderr.
+    If the CLI dies abnormally, the child, including its interpreter teardown
+    and the SDK's exit hooks, gets the same ``EXPORT_TIMEOUT_SECONDS`` the
+    upload would have had, then exits so it stops holding the inherited
+    stdout/stderr.
     """
-    finished = start_parent_death_watchdog(
+    start_parent_death_watchdog(
         "MLflow export",
         Environment.MLFLOW.EXPORT_TIMEOUT_SECONDS,
         logging.getLogger(__name__),
     )
     try:
-        try:
-            # Import lazily so the module-level cost stays minimal for callers
-            # that only read ``run_export_in_subprocess`` as a spawn target.
-            from aiperf.exporters.mlflow_data_exporter import MLflowDataExporter
+        # Import lazily so the module-level cost stays minimal for callers
+        # that only read ``run_export_in_subprocess`` as a spawn target.
+        from aiperf.exporters.mlflow_data_exporter import MLflowDataExporter
 
-            exporter = MLflowDataExporter(exporter_config=exporter_config)
-            exporter._export_sync()
-            result_queue.put(None)
-        except Exception as exc:  # all errors must travel back to parent
-            result_queue.put(repr(exc))
-    finally:
-        finished.set()
+        exporter = MLflowDataExporter(exporter_config=exporter_config)
+        exporter._export_sync()
+        result_queue.put(None)
+    except Exception as exc:  # all errors must travel back to parent
+        result_queue.put(repr(exc))
 
 
 async def export_with_timeout(
