@@ -83,8 +83,8 @@ class CodeExecutionGrader(BaseGrader):
 
     Returns ``correct=True`` when pass@1 == 1.0 (every test case
     passed), else ``correct=False``. ``unparsed=True`` when the
-    grader couldn't extract code from the response or the worker
-    raised a ``CodegenWorkerError`` during execution.
+    grader couldn't extract code from the response; ``grader_error=True``
+    when the worker raised a ``CodegenWorkerError`` or returned no numeric pass@1.
     """
 
     @classmethod
