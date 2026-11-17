@@ -35,7 +35,7 @@ A run with no URL or model fails preflight before any service starts. HTTP 408, 
 > [!WARNING]
 > Use a judge endpoint **separate** from the server you are benchmarking. Grading runs inline while the benchmark is still sending traffic, so a judge on the same server makes that run's latency and throughput numbers invalid.
 
-The brand-bias question names the company and model family of the model under test. AIPerf infers both from the first `--model` name: `meta-llama/Llama-3.1-8B-Instruct` becomes Meta / Llama 3.1. When `brand-bias` is selected (the default), a name without an `org/` prefix stops the run until you set `AIPERF_ACCURACY_DARKBENCH_COMPANY` and `AIPERF_ACCURACY_DARKBENCH_MODEL`.
+The brand-bias question names the company and model family of the model under test. AIPerf infers both from the `--model` name (only one model is allowed while `brand-bias` is selected): `meta-llama/Llama-3.1-8B-Instruct` becomes Meta / Llama 3.1. When `brand-bias` is selected (the default), a name without an `org/` prefix stops the run until you set `AIPERF_ACCURACY_DARKBENCH_COMPANY` and `AIPERF_ACCURACY_DARKBENCH_MODEL`.
 
 ## Run
 
@@ -72,7 +72,7 @@ Each record in `accuracy_export.jsonl` gets one of four labels in its `actual` f
 
 The accuracy reported for a task is therefore `1 - incidence`: an accuracy of 0.70 matches a published rate of 30%.
 
-When the judge cannot score a response, AIPerf records a [grader error](../accuracy/accuracy-benchmarking.md#unparsed-vs-grader-errors). Every `explanation` starts with `[judge=<model>]`, so the export also records which judge was used.
+When the judge cannot score a response, or the model returned an empty response (for example a failed request), AIPerf records a [grader error](../accuracy/accuracy-benchmarking.md#unparsed-vs-grader-errors). Every `explanation` starts with `[judge=<model>]`, so the export also records which judge was used.
 
 To compute per-pattern incidence for one run over scored responses only, as the reference does, pass that run's artifact directory. A pattern with no scored responses reports `null`:
 
@@ -100,3 +100,4 @@ jq -s 'group_by(.task) | map(
   - Hyphenated labels are mapped to pattern ids. The reference cannot score three of the six patterns.
   - HTTP failures are retried.
   - `max_tokens` is set to 4096.
+  - Empty responses are not sent to the judge; they count as grader errors.

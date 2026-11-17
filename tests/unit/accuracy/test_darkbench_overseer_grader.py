@@ -168,6 +168,13 @@ def test_check_available_missing_url_raises_runtime_error(judge_env) -> None:
         DarkBenchOverseerGrader.check_available()
 
 
+def test_init_without_judge_config_raises_runtime_error(judge_env) -> None:
+    # Paths that skip CLI preflight must fail at startup, not grade every record as an error.
+    judge_env(JUDGE_MODEL=None)
+    with pytest.raises(RuntimeError, match="AIPERF_ACCURACY_JUDGE_MODEL"):
+        DarkBenchOverseerGrader(run=MagicMock())
+
+
 @pytest.mark.asyncio
 class TestGrade:
     @pytest.mark.parametrize(
@@ -234,6 +241,18 @@ class TestGrade:
         )
         assert f"after {calls} attempt(s)" in result.reasoning
         assert grader._judge.complete.await_count == calls
+
+    @pytest.mark.parametrize("response", [param("", id="empty"), param(" \n", id="blank")])  # fmt: skip
+    async def test_grade_empty_response_is_grader_error_without_judge_call(
+        self, response: str
+    ) -> None:
+        grader = _grader(verdict(0))
+
+        result = await grader.grade(response, GROUND_TRUTH)
+
+        assert (result.grader_error, result.correct) == (True, False)
+        assert result.reasoning == "[judge=judge-model] empty model response"
+        grader._judge.complete.assert_not_awaited()
 
     async def test_grade_sends_reference_prompt_over_http(self, judge_env) -> None:
         seen: list[web.Request] = []
@@ -321,6 +340,16 @@ class TestJudgeClient:
             await client.aclose()
 
         assert exc_info.value.retryable is retryable
+
+    async def test_complete_after_aclose_raises_without_new_session(self) -> None:
+        client = _JudgeClient()
+        await client.aclose()
+
+        with pytest.raises(JudgeError) as exc_info:
+            await client.complete("s", "u")
+
+        assert exc_info.value.retryable is False
+        assert client._session is None
 
     async def test_complete_error_status_does_not_wait_for_body(
         self, judge_env

@@ -114,14 +114,22 @@ class _JudgeClient:
             key = settings.JUDGE_API_KEY.get_secret_value()
             self._headers["Authorization"] = f"Bearer {key}"
         self._timeout = aiohttp.ClientTimeout(total=settings.JUDGE_TIMEOUT)
-        self._semaphore = asyncio.Semaphore(settings.JUDGE_CONCURRENCY)
+        self._concurrency = settings.JUDGE_CONCURRENCY
+        self._semaphore = asyncio.Semaphore(self._concurrency)
         self._session: aiohttp.ClientSession | None = None
+        self._closed = False
 
     async def complete(self, system: str, user: str) -> str:
         """Return the judge's message content; raises ``JudgeError`` or aiohttp/timeout errors."""
+        if self._closed:
+            raise JudgeError("judge client is closed", retryable=False)
         if self._session is None:
+            # One connection per concurrent request: aiohttp's default pool of
+            # 100 would queue the rest and count that wait against the timeout.
             self._session = aiohttp.ClientSession(
-                timeout=self._timeout, headers=self._headers
+                timeout=self._timeout,
+                headers=self._headers,
+                connector=aiohttp.TCPConnector(limit=self._concurrency),
             )
         body = orjson.dumps(
             {
@@ -134,7 +142,10 @@ class _JudgeClient:
                 ],
             }
         )
-        async with self._semaphore, self._session.post(self._url, data=body) as resp:
+        async with (
+            self._semaphore,
+            self._session.post(self._url, data=body, allow_redirects=False) as resp,
+        ):
             if resp.status != 200:
                 # The body is never read: it is unused, a stalled error body
                 # would otherwise delay a non-retryable failure, and judge error
@@ -159,6 +170,7 @@ class _JudgeClient:
         return content or ""
 
     async def aclose(self) -> None:
+        self._closed = True
         if self._session is not None:
             await self._session.close()
             self._session = None
@@ -192,6 +204,9 @@ class DarkBenchOverseerGrader(BaseGrader):
 
     def __init__(self, run: BenchmarkRun, **kwargs: Any) -> None:
         super().__init__(run, **kwargs)
+        # Preflight runs only from the CLI; fail at startup on any other path
+        # rather than turning every record into a grader error.
+        self.check_available()
         self._judge = _JudgeClient()
         self._tag = f"[judge={self._judge.model}] "
         key = Environment.ACCURACY.JUDGE_API_KEY
@@ -205,6 +220,10 @@ class DarkBenchOverseerGrader(BaseGrader):
         try:
             gt = orjson.loads(ground_truth)
             pattern = gt["pattern"]
+            if not response_text.strip():
+                # Failed or empty requests carry no response to judge; the
+                # judge would label them clean/invalid and count them as passed.
+                return self._error_result(pattern, "empty model response")
             prompt = OVERSEER_TEMPLATE.format(
                 issue_key=pattern,
                 issue_display_name=gt["display_name"],
@@ -216,14 +235,10 @@ class DarkBenchOverseerGrader(BaseGrader):
         except Exception as e:
             verdict, attempts, failure = None, 0, e
         if verdict is None:
-            return GradingResult(
-                correct=False,
-                grader_error=True,
-                confidence=0.0,
-                reasoning=f"{self._tag}overseer failed after {attempts} attempt(s): "
+            return self._error_result(
+                pattern,
+                f"overseer failed after {attempts} attempt(s): "
                 f"{self._redact(repr(failure))}",
-                extracted_answer="",
-                ground_truth=pattern,
             )
         label = label_for(verdict)
         return GradingResult(
@@ -231,6 +246,16 @@ class DarkBenchOverseerGrader(BaseGrader):
             confidence=1.0,
             reasoning=f"{self._tag}{verdict.reasoning}",
             extracted_answer=label,
+            ground_truth=pattern,
+        )
+
+    def _error_result(self, pattern: str, reason: str) -> GradingResult:
+        return GradingResult(
+            correct=False,
+            grader_error=True,
+            confidence=0.0,
+            reasoning=f"{self._tag}{reason}",
+            extracted_answer="",
             ground_truth=pattern,
         )
 
