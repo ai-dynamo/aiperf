@@ -372,7 +372,9 @@ occurs, the console table gains a `Grader errors` column and a warning, the
 summary carries `accuracy.grader_error` / `accuracy.grader_error.task.<task>`
 results, and the accuracy over successfully scored responses is
 `passed / (total - grader_errors)`. Runs without grader errors produce the same
-console and JSON output as before.
+console and JSON output as before. The CSV always has the trailing
+`grader_errors` column and each JSONL record always has a `grader_error`
+field, so strict header or golden-file consumers see a schema change.
 
 ### Per-record accuracy JSONL
 
