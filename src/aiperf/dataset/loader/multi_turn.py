@@ -276,6 +276,8 @@ class MultiTurnDatasetLoader(BaseFileLoader, MediaConversionMixin):
             max_tokens=single_turn.output_length,
             audio_duration_seconds=single_turn.audio_duration_seconds,
             extra_body=single_turn.extra,
+            raw_messages=single_turn.raw_messages,
+            raw_tools=single_turn.raw_tools,
         )
 
     @staticmethod

@@ -232,6 +232,47 @@ The field is supported in `single_turn` and `multi_turn` datasets. In a `multi_t
 
 The `random_pool` dataset type does not support `audio_duration_seconds`: the field is ignored there and RTFx is not reported.
 
+### Multiple Messages and Tool Calling in One Request
+
+To send several messages of different roles in one request (for example a system prompt plus a user message), author them as a `raw_messages` array in OpenAI chat format. AIPerf sends the array verbatim as the request's `messages`. On that row, the `text`, `image`, `audio`, and `video` fields are not used. Tool definitions go in a `raw_tools` array on the same row and are sent as the request's `tools`:
+
+<!-- aiperf-run-vllm-default-openai-endpoint-server -->
+```bash
+cat > system_and_user.jsonl << 'EOF'
+{"raw_messages": [{"role": "system", "content": "Answer in one sentence."}, {"role": "user", "content": "What is machine learning?"}]}
+{"raw_messages": [{"role": "system", "content": "Answer in one sentence."}, {"role": "user", "content": "What is a transformer?"}]}
+EOF
+
+cat > tool_calling.jsonl << 'EOF'
+{"raw_messages": [{"role": "system", "content": "Use tools when needed."}, {"role": "user", "content": "What is the weather in Paris?"}, {"role": "assistant", "content": null, "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "get_weather", "arguments": "{\"city\": \"Paris\"}"}}]}, {"role": "tool", "tool_call_id": "call_1", "content": "18C and sunny"}], "raw_tools": [{"type": "function", "function": {"name": "get_weather", "description": "Get the current weather for a city", "parameters": {"type": "object", "properties": {"city": {"type": "string"}}, "required": ["city"]}}}]}
+EOF
+
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --input-file system_and_user.jsonl \
+    --custom-dataset-type single_turn \
+    --streaming \
+    --url localhost:8000 \
+    --concurrency 2 \
+    --request-count 2
+```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+
+Validation rules, checked when the dataset is loaded:
+
+- `raw_messages` must be a non-empty list, and every entry must have a `role` key.
+- `raw_messages` cannot be combined with `text`, `texts`, `image`, `images`, `audio`, `audios`, `video`, or `videos` on the same row. The endpoint would silently drop that content, so the row is rejected instead. Put the full message array in `raw_messages`.
+- `raw_tools` requires `raw_messages` on the same row.
+
+`mooncake_trace` uses the shorter keys `messages` and `tools`. `single_turn` does not accept them, because a row with a bare `messages` key would then also match the Mooncake format during automatic format detection.
+
+In a `multi_turn` conversation, each turn accepts `raw_messages` and `raw_tools`. Messages from earlier turns stay in the conversation history sent with later turns:
+
+```json
+{"session_id": "chat_1", "turns": [{"raw_messages": [{"role": "system", "content": "Be terse."}, {"role": "user", "content": "Hi"}]}, {"raw_messages": [{"role": "user", "content": "Tell me more."}]}]}
+```
+
 ---
 
 ## Multi-Turn Datasets
