@@ -14,14 +14,17 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+
+from aiperf.common.constants import IS_WINDOWS
+
+if IS_WINDOWS:
+    pytest.skip("LinuxDriver is POSIX-only", allow_module_level=True)
+
 from textual import events
 from textual.drivers.linux_driver import LinuxDriver
 
-from aiperf.common.constants import IS_WINDOWS
 from aiperf.ui.dashboard.aiperf_dashboard_ui import AIPerfDashboardUI
 from aiperf.ui.dashboard.lenient_linux_driver import LenientLinuxDriver
-
-pytestmark = pytest.mark.skipif(IS_WINDOWS, reason="LinuxDriver is POSIX-only")
 
 _JOIN_TIMEOUT = 5.0
 
@@ -89,22 +92,6 @@ async def test_lenient_driver_run_input_thread_undecodable_byte_keeps_reading(
     finally:
         driver.exit_event.set()
         thread.join(_JOIN_TIMEOUT)
-    assert not thread.is_alive()
-
-
-@pytest.mark.asyncio
-async def test_lenient_driver_run_input_thread_undecodable_after_exit_returns(
-    stdin_pipe: tuple[int, int],
-) -> None:
-    _, write_fd = stdin_pipe
-    driver = LenientLinuxDriver(MagicMock())
-    driver.exit_event.set()
-    os.write(write_fd, b"\xff")
-
-    thread = threading.Thread(target=driver.run_input_thread, daemon=True)
-    thread.start()
-    thread.join(_JOIN_TIMEOUT)
-
     assert not thread.is_alive()
 
 

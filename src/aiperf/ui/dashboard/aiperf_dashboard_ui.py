@@ -13,7 +13,6 @@ from aiperf.common.hooks import (
 )
 from aiperf.ui.base_ui import BaseAIPerfUI
 from aiperf.ui.dashboard.aiperf_textual_app import AIPerfTextualApp
-from aiperf.ui.dashboard.lenient_linux_driver import LenientLinuxDriver
 from aiperf.ui.dashboard.rich_log_viewer import LogConsumer
 
 if TYPE_CHECKING:
@@ -51,10 +50,16 @@ class AIPerfDashboardUI(BaseAIPerfUI):
         )
         self.controller = controller
         self.run = run
+        # Deferred: Textual's LinuxDriver imports termios, which Windows lacks.
+        driver_class = None
+        if not IS_WINDOWS:
+            from aiperf.ui.dashboard.lenient_linux_driver import LenientLinuxDriver
+
+            driver_class = LenientLinuxDriver
         self.app: AIPerfTextualApp = AIPerfTextualApp(
             run=run,
             controller=controller,
-            driver_class=None if IS_WINDOWS else LenientLinuxDriver,
+            driver_class=driver_class,
         )
         # Setup the log consumer to consume log records from the shared log queue
         self.log_consumer: LogConsumer = LogConsumer(log_queue=log_queue, app=self.app)
