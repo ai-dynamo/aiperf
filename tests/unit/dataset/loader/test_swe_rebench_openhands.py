@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -13,6 +14,7 @@ from pytest import param
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.exceptions import DatasetLoaderError
+from aiperf.config import BenchmarkRun
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.dataset.loader.swe_rebench_openhands import (
     SweRebenchOpenHandsDatasetLoader,
@@ -363,7 +365,7 @@ def test_invalid_filters_list_valid_filters(
 async def test_conversation_limit_stops_reading_rows_early() -> None:
     pulled: list[str] = []
 
-    def rows():
+    def rows() -> Iterator[dict[str, Any]]:
         for index in range(5):
             pulled.append(f"traj-{index}")
             yield _row(f"traj-{index}")
@@ -417,6 +419,7 @@ async def test_all_rows_skipped_raises_no_matches_error() -> None:
         param({"trajectory": "not-a-list"}, None, r"^row 1 trajectory_id='traj-1': trajectory must be a list", id="trajectory_not_list"),
         param({"trajectory": [{"content": "no role"}]}, None, r"^row 1 trajectory_id='traj-1': message 0 must have a string role", id="missing_role"),
         param({"tools": "not-a-list"}, None, r"^row 1 trajectory_id='traj-1': tools must be a list", id="tools_not_list"),
+        param({"trajectory": [{"role": "user", "content": 5}]}, None, r"^row 1 trajectory_id='traj-1': message 0 content must be a string", id="content_not_string"),
         param({"resolved": 7}, {"resolved": "true"}, r"^row 1 trajectory_id='traj-1': resolved must be 0 or 1", id="resolved_out_of_range"),
     ],
 )  # fmt: skip
@@ -475,7 +478,7 @@ async def test_requires_finite_materialization_bound() -> None:
         loader._max_conversations()
 
 
-def _sessions_only_run(tmp_path: Path, sessions: str) -> Any:
+def _profiling_run(tmp_path: Path, bound: str) -> BenchmarkRun:
     config_file = tmp_path / "base.yaml"
     config_file.write_text(
         f"""
@@ -491,7 +494,7 @@ benchmark:
   profiling:
     type: concurrency
     concurrency: 1
-    sessions: {sessions}
+    {bound}
 """
     )
     return make_run_from_cli(CLIConfig(config_file=config_file))
@@ -501,7 +504,7 @@ def test_profiling_sessions_bound_materialization_without_entries_or_requests(
     tmp_path: Path,
 ) -> None:
     loader = SweRebenchOpenHandsDatasetLoader(
-        run=_sessions_only_run(tmp_path, "7"),
+        run=_profiling_run(tmp_path, "sessions: 7"),
         hf_dataset_name="nebius/SWE-rebench-openhands-trajectories",
         streaming=True,
     )
@@ -513,10 +516,69 @@ def test_full_pass_profiling_sessions_is_not_a_materialization_bound(
     tmp_path: Path,
 ) -> None:
     loader = SweRebenchOpenHandsDatasetLoader(
-        run=_sessions_only_run(tmp_path, "all"),
+        run=_profiling_run(tmp_path, "sessions: all"),
         hf_dataset_name="nebius/SWE-rebench-openhands-trajectories",
         streaming=True,
     )
 
     with pytest.raises(DatasetLoaderError, match="finite entry or request count"):
         loader._max_conversations()
+
+
+@pytest.mark.asyncio
+async def test_profiling_requests_bound_materialization_without_entries_or_sessions(
+    tmp_path: Path,
+) -> None:
+    loader = SweRebenchOpenHandsDatasetLoader(
+        run=_profiling_run(tmp_path, "requests: 7"),
+        hf_dataset_name="nebius/SWE-rebench-openhands-trajectories",
+        streaming=True,
+    )
+
+    assert loader._max_conversations() == 7
+
+
+@pytest.mark.asyncio
+async def test_tool_call_without_arguments_gets_empty_object() -> None:
+    trajectory = [
+        {"role": "user", "content": "go"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call-1",
+                    "type": "function",
+                    "function": {"name": "finish", "arguments": None},
+                }
+            ],
+        },
+        {"role": "tool", "content": "ok", "tool_call_id": "call-1"},
+        {"role": "assistant", "content": "done"},
+    ]
+
+    conversations = await _loader().convert_to_conversations(
+        {"dataset": [_row(trajectory=trajectory)]}
+    )
+
+    answering = conversations[0].turns[1].raw_messages[0]
+    assert answering["tool_calls"][0]["function"]["arguments"] == "{}"
+
+
+@pytest.mark.asyncio
+async def test_missing_resolved_flag_is_filtered_when_filter_set() -> None:
+    rows = [_row("missing", resolved=None), _row("solved", resolved=1)]
+
+    conversations = await _loader({"resolved": "true"}).convert_to_conversations(
+        {"dataset": rows}
+    )
+
+    assert [conversation.session_id for conversation in conversations] == ["solved"]
+
+
+@pytest.mark.asyncio
+async def test_missing_resolved_flag_counts_as_filtered() -> None:
+    with pytest.raises(DatasetLoaderError, match="skipped filtered=1"):
+        await _loader({"resolved": "true"}).convert_to_conversations(
+            {"dataset": [_row("missing", resolved=None)]}
+        )

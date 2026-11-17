@@ -136,6 +136,9 @@ class SweRebenchOpenHandsDatasetLoader(BaseHFDatasetLoader):
 
         if self.filters.resolved is not None:
             resolved = row.get("resolved")
+            if resolved is None:
+                stats["filtered"] += 1
+                return None
             if resolved not in (0, 1):
                 raise DatasetLoaderError(f"{location}: resolved must be 0 or 1")
             if bool(resolved) != self.filters.resolved:
@@ -201,6 +204,10 @@ class SweRebenchOpenHandsDatasetLoader(BaseHFDatasetLoader):
                 raise DatasetLoaderError(
                     f"{location}: message {index} content must be a string"
                 )
+        for message in messages:
+            if message["role"] == "assistant":
+                for call in message.get("tool_calls") or []:
+                    call.setdefault("function", {}).setdefault("arguments", "{}")
         return messages
 
     @staticmethod

@@ -226,7 +226,8 @@ class BaseHFDatasetLoader(BasePublicDatasetLoader):
             return max(session_counts)
         raise DatasetLoaderError(
             f"{dataset_label} requires a finite entry or request count; set "
-            "--num-conversations, --num-dataset-entries, or --request-count"
+            "--num-conversations, --num-dataset-entries, or --request-count, "
+            "or a profiling-phase sessions count in a config file"
         )
 
     @abstractmethod
