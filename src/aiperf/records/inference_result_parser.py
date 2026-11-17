@@ -463,8 +463,6 @@ class InferenceResultParser(CommunicationMixin):
         if with_stats and all(
             is_llamacpp_payload(r.spec_decode_stats) for r in with_stats
         ):
-            # llama.cpp repeats cumulative timings on every streamed chunk, so the
-            # last one is the request total rather than a second sequence.
             with_stats = with_stats[-1:]
         if len(with_stats) != 1:
             return None
