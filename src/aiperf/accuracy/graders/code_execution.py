@@ -341,10 +341,15 @@ def _decode_private_test_cases(raw: Any) -> list[dict[str, Any]]:
 def _grading_failure(
     response_text: str, ground_truth: str, reason: str
 ) -> GradingResult:
-    """Build a failure ``GradingResult`` with the given reason."""
+    """Build a grader-failure ``GradingResult`` with the given reason.
+
+    Every caller is a grader-side failure (malformed ground truth, crashed
+    sandbox worker, non-numeric pass@1), not a model formatting problem, so it
+    is reported as ``grader_error`` rather than ``unparsed``.
+    """
     return GradingResult(
         correct=False,
-        unparsed=True,
+        grader_error=True,
         confidence=0.0,
         reasoning=f"LCB grader failed: {reason}",
         extracted_answer=response_text.strip()[:200],

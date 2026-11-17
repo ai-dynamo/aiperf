@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from aiperf.accuracy.models import (
+    ACCURACY_GRADER_ERROR_TAG,
+    ACCURACY_GRADER_ERROR_TASK_TAG_PREFIX,
     ACCURACY_METRIC_PREFIX,
     ACCURACY_OVERALL_TAG,
     ACCURACY_TASK_TAG_PREFIX,
@@ -20,8 +22,8 @@ from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 
 AccuracyCsvRow = tuple[
-    str, int, int, int, str
-]  # (task, correct, total, unparsed, accuracy)
+    str, int, int, int, str, int
+]  # (task, correct, total, unparsed, accuracy, grader_errors)
 
 
 class AccuracyDataExporter(AIPerfLoggerMixin):
@@ -53,7 +55,8 @@ class AccuracyDataExporter(AIPerfLoggerMixin):
     async def export(self) -> None:
         """Write per-task accuracy summary to CSV at the path from ``get_export_info``.
 
-        Columns: task, correct, total, accuracy (4 decimal places). Rows are
+        Columns: task, correct, total, unparsed, accuracy (4 decimal places),
+        grader_errors (appended last so positional readers keep working). Rows are
         emitted for each ``accuracy.task.*`` metric plus a final OVERALL row.
         Does nothing if no ``accuracy.*`` metrics are present in results.
         """
@@ -75,15 +78,27 @@ class AccuracyDataExporter(AIPerfLoggerMixin):
             for m in accuracy_metrics
             if m.tag.startswith(ACCURACY_UNPARSED_TASK_TAG_PREFIX)
         }
+        grader_errors_overall = next(
+            (m for m in accuracy_metrics if m.tag == ACCURACY_GRADER_ERROR_TAG), None
+        )
+        grader_errors_by_task: dict[str, int] = {
+            m.tag.removeprefix(ACCURACY_GRADER_ERROR_TASK_TAG_PREFIX): int(m.sum or 0)
+            for m in accuracy_metrics
+            if m.tag.startswith(ACCURACY_GRADER_ERROR_TASK_TAG_PREFIX)
+        }
 
         rows: list[AccuracyCsvRow] = []
         for m in accuracy_metrics:
             if m.tag == ACCURACY_OVERALL_TAG:
                 task_name = "OVERALL"
                 unparsed = int(unparsed_overall.sum or 0) if unparsed_overall else 0
+                grader_errors = (
+                    int(grader_errors_overall.sum or 0) if grader_errors_overall else 0
+                )
             elif m.tag.startswith(ACCURACY_TASK_TAG_PREFIX):
                 task_name = m.tag.removeprefix(ACCURACY_TASK_TAG_PREFIX)
                 unparsed = unparsed_by_task.get(task_name, 0)
+                grader_errors = grader_errors_by_task.get(task_name, 0)
             else:
                 continue
             rows.append(
@@ -93,6 +108,7 @@ class AccuracyDataExporter(AIPerfLoggerMixin):
                     int(m.count or 0),
                     unparsed,
                     f"{m.current:.4f}" if m.current is not None else "",
+                    grader_errors,
                 )
             )
 
@@ -103,6 +119,8 @@ class AccuracyDataExporter(AIPerfLoggerMixin):
         self._csv_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self._csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            writer.writerow(["task", "correct", "total", "unparsed", "accuracy"])
+            writer.writerow(
+                ["task", "correct", "total", "unparsed", "accuracy", "grader_errors"]
+            )
             for row in rows:
                 writer.writerow(row)

@@ -212,6 +212,7 @@ class TestAccuracyRecordProcessorSessionBounds:
         assert result.grader_name == "multiple_choice"
         assert result.passed is False
         assert result.unparsed is True
+        assert result.grader_error is False
         assert result.confidence == 0.42
         assert result.expected == "B"
         assert result.actual == "A"
@@ -220,6 +221,31 @@ class TestAccuracyRecordProcessorSessionBounds:
         assert result.model_output == "Hello world"
         assert result.model_thinking is None
         processor.grader.grade.assert_awaited_once_with("Hello world", "B")
+
+    async def test_process_record_copies_grader_error(
+        self, monkeypatch, sample_parsed_record
+    ) -> None:
+        processor = _make_processor(monkeypatch)
+        processor._ground_truths = ["A"]
+        processor._tasks = ["t0"]
+        processor.grader.grade = AsyncMock(
+            return_value=GradingResult(
+                correct=False,
+                grader_error=True,
+                confidence=0.0,
+                reasoning="judge unreachable",
+                extracted_answer="",
+                ground_truth="A",
+            )
+        )
+
+        result = await processor.process_record(
+            sample_parsed_record, create_metric_metadata(session_num=0)
+        )
+
+        assert result.grader_error is True
+        assert result.unparsed is False
+        assert result.passed is False
 
     async def test_process_record_task_none_when_no_tasks(
         self, monkeypatch, sample_parsed_record
