@@ -285,8 +285,9 @@ truncation, so `predicted_n - draft_n_accepted` does not give the number of
 verify steps. A request with `draft_n` of 0 or missing produces no record. A
 negative `draft_n` is malformed: it produces no record and logs a warning.
 
-To get acceptance length and the histogram for llama.cpp, read the aggregate
-Prometheus counters (see [Server metrics](../server-metrics/server-metrics-reference.md)).
+To get acceptance length for llama.cpp, read the aggregate Prometheus counters
+(see [Server metrics](../server-metrics/server-metrics-reference.md)). No
+acceptance histogram is available on this path.
 The `speed-bench-report` server-scrape path computes acceptance length from
 `llamacpp:spec_decode_num_accepted_tokens / llamacpp:spec_decode_num_drafts + 1`.
 The code reads these unsuffixed names because the Prometheus parser strips the

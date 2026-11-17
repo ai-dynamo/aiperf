@@ -49,7 +49,8 @@ of the metrics reference.
 
   - **SGLang v0.5.19+** with `--extra-inputs return_spec_tokens_details:true`
     on the AIPerf command.
-  - **llama.cpp** with a draft model (`llama-server -m <target>.gguf -md <draft>.gguf`).
+  - **llama.cpp** with a draft model (`llama-server -m <target>.gguf -md <draft>.gguf --metrics`).
+    `--metrics` is required so the server exposes `/metrics` for the server-scrape path.
     Per-request data is draft acceptance only; use the server-scrape path for acceptance length.
 
   You do not tell AIPerf which engine you are pointed at -- it recognizes each engine's
