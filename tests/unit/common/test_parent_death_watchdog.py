@@ -19,15 +19,15 @@ from aiperf.common.parent_death_watchdog import start_parent_death_watchdog
 _THREAD_NAME = "parent-death-watchdog"
 
 
-def _watchdog_threads() -> list[threading.Thread]:
-    return [t for t in threading.enumerate() if t.name == _THREAD_NAME]
+def _watchdog_threads() -> set[threading.Thread]:
+    return {t for t in threading.enumerate() if t.name == _THREAD_NAME}
 
 
 @pytest.fixture
 def exit_codes(monkeypatch: pytest.MonkeyPatch) -> list[int]:
-    """Record ``os._exit`` calls instead of ending the test process."""
+    """Record the watchdog's force-exits instead of ending the test process."""
     codes: list[int] = []
-    monkeypatch.setattr("aiperf.common.parent_death_watchdog.os._exit", codes.append)
+    monkeypatch.setattr("aiperf.common.parent_death_watchdog._exit", codes.append)
     return codes
 
 
@@ -38,11 +38,11 @@ def test_start_parent_death_watchdog_without_parent_starts_no_thread(
         "aiperf.common.parent_death_watchdog.multiprocessing.parent_process",
         lambda: None,
     )
-    before = len(_watchdog_threads())
+    before = _watchdog_threads()
 
     start_parent_death_watchdog("Probe", 0.0, logging.getLogger("t"))
 
-    assert len(_watchdog_threads()) == before
+    assert not _watchdog_threads() - before
     assert exit_codes == []
 
 
@@ -60,9 +60,10 @@ def test_start_parent_death_watchdog_dead_parent_past_deadline_exits_with_1(
         lambda: _DeadParent(),
     )
 
+    before = _watchdog_threads()
     with caplog.at_level(logging.ERROR):
         start_parent_death_watchdog("Probe", 0.0, logging.getLogger("t"))
-        for thread in _watchdog_threads():
+        for thread in _watchdog_threads() - before:
             thread.join(timeout=5.0)
 
     assert exit_codes == [1]

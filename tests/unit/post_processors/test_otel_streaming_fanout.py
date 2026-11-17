@@ -517,7 +517,7 @@ def test_run_fanout_force_exits_when_cleanup_outlives_dead_parent_deadline(
         exit_codes.append(code)
         exited.set()
 
-    monkeypatch.setattr("aiperf.common.parent_death_watchdog.os._exit", _fake_exit)
+    monkeypatch.setattr("aiperf.common.parent_death_watchdog._exit", _fake_exit)
 
     class _BlockedThenShutdownQueue:
         def get(self, timeout: float | None = None) -> dict[str, Any]:
@@ -572,7 +572,7 @@ def test_run_fanout_force_exits_when_parent_dies_during_sink_initialization(
         exit_codes.append(code)
         exited.set()
 
-    monkeypatch.setattr("aiperf.common.parent_death_watchdog.os._exit", _fake_exit)
+    monkeypatch.setattr("aiperf.common.parent_death_watchdog._exit", _fake_exit)
 
     def _blocked_set_experiment(name: str) -> None:
         if not exited.wait(timeout=5.0):

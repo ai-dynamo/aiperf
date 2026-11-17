@@ -16,6 +16,10 @@ import os
 import threading
 import time
 
+# Patched by tests instead of ``os._exit`` itself, which is shared by every
+# thread in the test process.
+_exit = os._exit
+
 
 def start_parent_death_watchdog(
     name: str, deadline_seconds: float, logger: logging.Logger
@@ -49,6 +53,6 @@ def start_parent_death_watchdog(
             name,
             deadline_seconds,
         )
-        os._exit(1)
+        _exit(1)
 
     threading.Thread(target=_watch, name="parent-death-watchdog", daemon=True).start()
