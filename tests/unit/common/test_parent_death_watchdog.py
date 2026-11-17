@@ -71,6 +71,53 @@ def test_start_parent_death_watchdog_dead_parent_past_deadline_exits_with_1(
     assert "Probe cleanup exceeded 0s after parent death" in caplog.text
 
 
+def test_start_parent_death_watchdog_blocked_logging_still_exits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A log call stuck on a full stderr pipe or a held handler lock must not hold up the exit."""
+
+    class _DeadParent:
+        def join(self, timeout: float | None = None) -> None:
+            return None
+
+    monkeypatch.setattr(
+        "aiperf.common.parent_death_watchdog.multiprocessing.parent_process",
+        lambda: _DeadParent(),
+    )
+    codes: list[int] = []
+    exited = threading.Event()
+
+    def _record_exit(code: int) -> None:
+        codes.append(code)
+        exited.set()
+
+    monkeypatch.setattr("aiperf.common.parent_death_watchdog._exit", _record_exit)
+
+    release = threading.Event()
+    emitting = threading.Event()
+
+    class _BlockingHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            emitting.set()
+            release.wait()
+
+    logger = logging.getLogger("tests.parent_death_watchdog.blocked_log")
+    handler = _BlockingHandler()
+    logger.addHandler(handler)
+    before = _watchdog_threads()
+    try:
+        start_parent_death_watchdog("Probe", 0.0, logger)
+
+        assert exited.wait(timeout=5.0), "force-exit waited on a blocked log call"
+        assert emitting.is_set()
+        assert codes == [1]
+    finally:
+        release.set()
+        logger.removeHandler(handler)
+        for thread in _watchdog_threads() - before:
+            thread.join(timeout=5.0)
+
+
 # Parent spawns a guarded child that inherits stdout, then SIGKILLs itself.
 # The test reads that pipe: EOF arrives only once every writer is gone, which
 # is exactly what a caller running ``aiperf ... | tee`` waits on.

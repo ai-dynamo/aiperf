@@ -22,6 +22,9 @@ _exit = os._exit
 
 WATCHDOG_THREAD_NAME = "parent-death-watchdog"
 
+_LOG_GRACE_SECONDS = 1.0
+"""How long the force-exit waits for its own log line before exiting anyway."""
+
 
 def start_parent_death_watchdog(
     name: str, deadline_seconds: float, logger: logging.Logger
@@ -32,7 +35,8 @@ def start_parent_death_watchdog(
     spawn and forkserver and on every platform (``PR_SET_PDEATHSIG`` is
     Linux-only and fires when the creating *thread* exits). Once the parent is
     gone, the process gets ``deadline_seconds`` to finish whatever it is doing,
-    including interpreter teardown, then ``os._exit(1)``s so the inherited
+    including interpreter teardown, then logs (waiting at most
+    ``_LOG_GRACE_SECONDS`` for that) and ``os._exit(1)``s so the inherited
     pipes close.
 
     There is deliberately no way to disarm it: while the parent lives the thread
@@ -50,11 +54,19 @@ def start_parent_death_watchdog(
     def _watch() -> None:
         parent.join()
         time.sleep(deadline_seconds)
-        logger.error(
-            "%s cleanup exceeded %.0fs after parent death; exiting now.",
-            name,
-            deadline_seconds,
+        # A log call can block on a full stderr pipe, or on a handler lock held
+        # by a thread stuck writing to it; the exit must not wait on either.
+        report = threading.Thread(
+            target=logger.error,
+            args=(
+                "%s cleanup exceeded %.0fs after parent death; exiting now.",
+                name,
+                deadline_seconds,
+            ),
+            daemon=True,
         )
+        report.start()
+        report.join(_LOG_GRACE_SECONDS)
         _exit(1)
 
     threading.Thread(target=_watch, name=WATCHDOG_THREAD_NAME, daemon=True).start()
