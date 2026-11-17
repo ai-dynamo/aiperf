@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, Self
 
 import orjson
-from pydantic import BeforeValidator, Field, model_validator
+from pydantic import BeforeValidator, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -116,6 +116,82 @@ class _AccuracySettings(BaseSettings):
         "entirely — the loader surfaces a clear error with a "
         "``datasets<4`` pin). Consumed by "
         "``aiperf.accuracy.benchmarks.lcb_codegeneration``.",
+    )
+
+    JUDGE_URL: str | None = Field(
+        default=None,
+        description="OpenAI-compatible base URL of the LLM judge used by LLM-judge "
+        "accuracy graders (e.g. ``darkbench_overseer``), e.g. "
+        "``http://judge:8000/v1``; ``/chat/completions`` is appended. Required by "
+        "those graders and checked at preflight. Point it at a DIFFERENT endpoint "
+        "than the one being benchmarked: grading runs inline in the record "
+        "processors during the run, so judge traffic on the benchmarked server "
+        "skews its latency and throughput numbers.",
+    )
+
+    JUDGE_MODEL: str | None = Field(
+        default=None,
+        description="Model name sent to the LLM judge endpoint. Required by "
+        "LLM-judge graders; also stamped as ``[judge=<model>]`` at the start of "
+        "every grading explanation in ``accuracy_export.jsonl``.",
+    )
+
+    JUDGE_API_KEY: SecretStr | None = Field(
+        default=None,
+        description="Bearer token sent to the LLM judge endpoint. Never logged or "
+        "exported.",
+    )
+
+    JUDGE_CONCURRENCY: int = Field(
+        default=16,
+        ge=1,
+        le=1024,
+        description="Maximum in-flight judge requests per record processor. The "
+        "effective cap on the judge is this value times the number of record "
+        "processors; lower it for rate-limited judges.",
+    )
+
+    JUDGE_TIMEOUT: FiniteFloat = Field(
+        default=120.0,
+        gt=0.0,
+        description="Total timeout (seconds) for one judge request. Also caps the "
+        "backoff sleep between retries.",
+    )
+
+    JUDGE_MAX_ATTEMPTS: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Judge attempts per graded response before it is reported as a "
+        "grader error. Default 3 matches the DarkBench reference "
+        "``score_attempts=3``.",
+    )
+
+    JUDGE_MAX_TOKENS: int = Field(
+        default=1024,
+        ge=16,
+        description="``max_tokens`` for each judge completion.",
+    )
+
+    DARKBENCH_REVISION: str = Field(
+        default="c27ae5f155e75f7269e903bc2ddb8458e3d09304",
+        description="Hugging Face revision of the ``apart/darkbench`` dataset, "
+        "pinned so DarkBench numbers are reproducible. Consumed by "
+        "``aiperf.accuracy.benchmarks.darkbench``.",
+    )
+
+    DARKBENCH_COMPANY: str | None = Field(
+        default=None,
+        description="Company substituted for ``{company}`` in the DarkBench "
+        "brand-bias description (the developer of the model under test). "
+        "Overrides the value inferred from the model name; required when the "
+        "served model name has no ``org/`` prefix.",
+    )
+
+    DARKBENCH_MODEL: str | None = Field(
+        default=None,
+        description="Model family substituted for ``{model}`` in the DarkBench "
+        "brand-bias description. Overrides the value inferred from the model name.",
     )
 
 

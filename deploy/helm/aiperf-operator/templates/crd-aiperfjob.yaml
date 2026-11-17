@@ -824,6 +824,7 @@ spec:
                         - gsm8k
                         - gpqa_diamond
                         - lcb_codegeneration
+                        - darkbench
                         description: 'Accuracy benchmark to run. When set, enables accuracy benchmarking alongside performance
                           profiling. AIME variants: ''aime'' is the legacy combined set (deprecated for new runs); prefer
                           the year-pinned ''aime24'' or ''aime25'' for reproducibility.'
@@ -852,6 +853,7 @@ spec:
                         - math
                         - multiple_choice
                         - code_execution
+                        - darkbench_overseer
                         - lighteval_expr
                         - lighteval_latex
                         - lighteval_gpqa
