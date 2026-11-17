@@ -152,9 +152,9 @@ class LightevalGSM8KGrader(BaseGrader):
     ) -> GradingResult:
         gold = gsm8k_normalizer((ground_truth or "").strip())
         pred, used_fallback = _extract_prediction((response_text or "").strip())
-        if gold == _INVALID_ANS:
-            # A gold without an extractable number is a dataset problem, not a
-            # model formatting one.
+        if not any(ch.isdigit() for ch in gold):
+            # A gold without a number (``[invalid]``, or e.g. ``#### .``) is a
+            # dataset problem, not a model formatting one.
             return GradingResult(
                 correct=False,
                 grader_error=True,
