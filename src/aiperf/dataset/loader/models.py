@@ -192,7 +192,7 @@ class SingleTurn(AIPerfBaseModel):
             validate_chat_messages(self.raw_messages)
             for i, msg in enumerate(self.raw_messages):
                 role = msg["role"]
-                if not isinstance(role, str) or not role:
+                if not isinstance(role, str) or not role.strip():
                     raise ValueError(
                         f"raw_messages[{i}] 'role' must be a non-empty string"
                     )

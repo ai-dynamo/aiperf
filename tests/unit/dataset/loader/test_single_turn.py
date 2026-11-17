@@ -293,6 +293,7 @@ class TestSingleTurn:
             param(None, id="none"),
             param("", id="empty"),
             param(5, id="non_string"),
+            param("   ", id="whitespace"),
         ],
     )  # fmt: skip
     def test_validation_raw_messages_invalid_role_raises_error(self, role):
