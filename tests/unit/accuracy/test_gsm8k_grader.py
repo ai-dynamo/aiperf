@@ -117,11 +117,13 @@ class TestGradingIncorrect:
         assert result.unparsed is True
 
     @pytest.mark.asyncio
-    async def test_invalid_gold_never_matches(self) -> None:
-        # Gold without a #### marker normalizes to "[invalid]"; a valid
-        # prediction must not be scored correct against it.
-        result = await _grader().grade("The answer is 24.", "no marker")
+    async def test_invalid_gold_is_grader_error(self) -> None:
+        # Gold without a #### marker normalizes to "[invalid]": a dataset
+        # problem, reported as a grader error and never scored correct.
+        result = await _grader().grade("#### 24", "no marker")
         assert result.correct is False
+        assert result.grader_error is True
+        assert result.unparsed is False
         assert result.ground_truth == "[invalid]"
 
 

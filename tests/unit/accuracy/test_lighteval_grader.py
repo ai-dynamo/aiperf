@@ -30,9 +30,14 @@ def test_lighteval_base_grader_accepts_benchmark_run(
     assert grader.accuracy_config is benchmark_run.cfg.accuracy
 
 
-@pytest.mark.skipif(not lighteval_grader._HAS_LIGHTEVAL, reason="needs lighteval")
 @pytest.mark.asyncio
-async def test_gpqa_grade_malformed_gold_is_grader_error(benchmark_run) -> None:
+async def test_gpqa_grade_malformed_gold_is_grader_error(
+    monkeypatch, benchmark_run
+) -> None:
+    # Gold validation runs before any lighteval call, so no lighteval install
+    # is needed (CI's unit matrix does not install the accuracy extra).
+    monkeypatch.setattr(lighteval_grader, "_HAS_LIGHTEVAL", True)
+    monkeypatch.setattr(LightevalGPQAGrader, "_build_metric", lambda self: object())
     grader = LightevalGPQAGrader(run=benchmark_run)
 
     result = await grader.grade("The answer is A", "Z")
