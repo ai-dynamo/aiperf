@@ -406,6 +406,7 @@ class AgenticReplayStrategy(AIPerfLoggerMixin):
         occupancy at exactly the configured concurrency.
         """
         self.credit_issuer.replay_gate.close_root(root_corr)
+        self.credit_issuer.release_url_affinity(root_corr)
         if self.branch_orchestrator is not None:
             self.branch_orchestrator.close_replay_root(root_corr)
         lane = self._correlation_to_lane.pop(root_corr, None)

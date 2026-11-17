@@ -117,6 +117,7 @@ class CreditIssuer:
         self._cancellation_policy = cancellation_policy
         self._lifecycle = lifecycle
         self._url_selection_strategy = url_selection_strategy
+        self._url_affinity_by_tree: dict[str, dict[str, int]] = {}
         # Tree accounting defaults to PROFILING-only (WARMUP keeps the legacy
         # in-flight teardown release), but ``session_tree_registry_enabled``
         # overrides that gate so accelerated agentic warmup -- which DOES open
@@ -486,6 +487,27 @@ class CreditIssuer:
 
         return await self._issue_credit_internal(turn)
 
+    def release_url_affinity(self, root_correlation_id: str) -> None:
+        """Discard endpoint assignments once a replay tree has drained."""
+        self._url_affinity_by_tree.pop(root_correlation_id, None)
+
+    def _select_url_index(self, turn: TurnToSend) -> int | None:
+        strategy = self._url_selection_strategy
+        if (
+            strategy is None
+            or turn.no_request
+            or (turn.turn_index != 0 and not turn.is_session_start)
+        ):
+            return None
+        if turn.url_affinity_key is None:
+            return strategy.next_url_index()
+        assignments = self._url_affinity_by_tree.setdefault(
+            turn.effective_root_correlation_id, {}
+        )
+        if turn.url_affinity_key not in assignments:
+            assignments[turn.url_affinity_key] = strategy.next_url_index()
+        return assignments[turn.url_affinity_key]
+
     async def _issue_credit_internal(self, turn: TurnToSend) -> bool:
         """Issue credit after slots are acquired. Mark as final if this was the final credit.
 
@@ -501,16 +523,9 @@ class CreditIssuer:
         )
         issued_at_ns = self._lifecycle.now_ns()
 
-        # Get URL index from strategy (for multi-URL load balancing).
-        # Only advance the round-robin when a session starts (turn 0 or a
-        # mid-trace resume). Continuations reuse the url_index stored in the
-        # worker's UserSession.
-        is_session_start = turn.turn_index == 0 or turn.is_session_start
-        url_index = (
-            self._url_selection_strategy.next_url_index()
-            if self._url_selection_strategy and is_session_start and not turn.no_request
-            else None
-        )
+        # Continuations reuse the worker's URL; v2 requests also share their
+        # source session's URL even though each is a separate conversation.
+        url_index = self._select_url_index(turn)
 
         cache_bust_marker = turn.cache_bust_marker
         cache_bust_target_for_credit = turn.cache_bust_target
@@ -569,12 +584,18 @@ class CreditIssuer:
     ) -> ChildDispatchResult:
         """Dispatch the first turn of a mid-run DAG child session.
 
-        Thin wrapper around ``dispatch_child_turn`` that builds the
-        first ``TurnToSend`` from the sampled session.
+        V2 trace requests carry their source session as a per-tree URL affinity
+        key because each request is represented as its own conversation.
         """
-        return await self.dispatch_child_turn(
-            sampled_session.build_first_turn(), on_refused=on_refused
+        turn = sampled_session.build_first_turn()
+        first_meta = (
+            sampled_session.metadata.turns[0]
+            if sampled_session.metadata.turns
+            else None
         )
+        if first_meta is not None and first_meta.source_kind == "agentic_mooncake_v2":
+            turn = _struct_replace(turn, url_affinity_key=first_meta.source_trace_id)
+        return await self.dispatch_child_turn(turn, on_refused=on_refused)
 
     async def dispatch_child_turn(
         self,
