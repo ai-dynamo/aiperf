@@ -146,7 +146,8 @@ class TestGradeDelegatesToWorker:
         ).decode()
         result = await grader.grade("```python\nprint(1)\n```", payload)
         assert result.correct is False
-        assert result.unparsed is True
+        assert result.unparsed is False
+        assert result.grader_error is True
         assert "sandboxed exec failed" in result.reasoning
 
     async def test_aclose_terminates_worker(self, monkeypatch) -> None:

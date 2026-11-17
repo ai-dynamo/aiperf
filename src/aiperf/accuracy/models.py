@@ -21,6 +21,8 @@ ACCURACY_OVERALL_TAG = "accuracy.overall"
 ACCURACY_TASK_TAG_PREFIX = "accuracy.task."
 ACCURACY_UNPARSED_TAG = "accuracy.unparsed"
 ACCURACY_UNPARSED_TASK_TAG_PREFIX = "accuracy.unparsed.task."
+ACCURACY_GRADER_ERROR_TAG = "accuracy.grader_error"
+ACCURACY_GRADER_ERROR_TASK_TAG_PREFIX = "accuracy.grader_error.task."
 ACCURACY_METRIC_PREFIX = "accuracy."
 
 
@@ -32,6 +34,11 @@ def accuracy_task_tag(task: str) -> str:
 def accuracy_unparsed_task_tag(task: str) -> str:
     """Build the MetricResult.tag for a per-task unparsed-count result."""
     return f"{ACCURACY_UNPARSED_TASK_TAG_PREFIX}{task}"
+
+
+def accuracy_grader_error_task_tag(task: str) -> str:
+    """Build the MetricResult.tag for a per-task grader-error-count result."""
+    return f"{ACCURACY_GRADER_ERROR_TASK_TAG_PREFIX}{task}"
 
 
 class AccuracyChatMessage(TypedDict):
@@ -50,6 +57,13 @@ class GradingResult(AIPerfBaseModel):
         description="True when the model output did not match the expected format "
         "(e.g. 'The answer is B.' instead of 'B') and a regex fallback was used. "
         "A correct unparsed response is still scored as correct.",
+    )
+    grader_error: bool = Field(
+        default=False,
+        description="True when the grader itself failed to produce a verdict "
+        "(e.g. a crashed code-execution worker or an unreachable LLM judge), as "
+        "opposed to the model answering in the wrong format (``unparsed``). "
+        "Always paired with correct=False.",
     )
     confidence: float = Field(
         ge=0, le=1, description="Confidence score of the grading (0.0 to 1.0)"
@@ -132,6 +146,11 @@ class AccuracyRecordsData(RecordData):
         description="Whether the model output needed a regex fallback "
         "(maps from GradingResult.unparsed)",
     )
+    grader_error: bool = Field(
+        default=False,
+        description="Whether the grader failed to produce a verdict "
+        "(maps from GradingResult.grader_error)",
+    )
     confidence: float = Field(ge=0, le=1, description="Grading confidence (0.0 to 1.0)")
     expected: str = Field(
         description="Ground-truth answer (maps from GradingResult.ground_truth)"
@@ -172,6 +191,18 @@ class TaskAccuracyStats(AIPerfBaseModel):
     unparsed_rate: float = Field(
         ge=0, le=1, description="unparsed/total for this task, 0.0 when total==0"
     )
+    grader_errors: int = Field(
+        default=0,
+        ge=0,
+        description="Number the grader failed to score for this task (still "
+        "counted in total and as not passed)",
+    )
+    grader_error_rate: float = Field(
+        default=0.0,
+        ge=0,
+        le=1,
+        description="grader_errors/total for this task, 0.0 when total==0",
+    )
 
 
 class AccuracySummary(AIPerfBaseModel):
@@ -192,6 +223,12 @@ class AccuracySummary(AIPerfBaseModel):
         ge=0,
         description="Total responses that needed a regex fallback across all tasks",
     )
+    overall_grader_errors: int = Field(
+        default=0,
+        ge=0,
+        description="Total responses the grader failed to score across all tasks "
+        "(still counted in total_evaluated and as not passed)",
+    )
     grader_name: str | None = Field(
         default=None, description="Grader that scored these responses, if uniform"
     )
@@ -208,7 +245,10 @@ class AccuracySummary(AIPerfBaseModel):
         injected into ``ProfileResults.records``.
 
         Emitted in this exact order (load-bearing for byte-exact JSON/CSV):
-        overall, tasks sorted, unparsed overall, unparsed tasks sorted.
+        overall, tasks sorted, unparsed overall, unparsed tasks sorted, then
+        grader-error overall and tasks sorted. Grader-error results are emitted
+        only when at least one grade failed, so runs without grader failures
+        keep their legacy bytes.
         """
         from aiperf.common.enums import MetricConsoleGroup
         from aiperf.common.models import MetricResult
@@ -268,6 +308,34 @@ class AccuracySummary(AIPerfBaseModel):
                     console_group=MetricConsoleGroup.NONE,
                 )
             )
+
+        if self.overall_grader_errors > 0:
+            results.append(
+                MetricResult(
+                    tag=ACCURACY_GRADER_ERROR_TAG,
+                    header="Accuracy Grader Errors (Overall)",
+                    unit="ratio",
+                    count=self.total_evaluated,
+                    current=self.overall_grader_errors / self.total_evaluated,
+                    sum=self.overall_grader_errors,
+                    console_group=MetricConsoleGroup.NONE,
+                )
+            )
+            for task in sorted(self.per_task):
+                stats = self.per_task[task]
+                results.append(
+                    MetricResult(
+                        tag=accuracy_grader_error_task_tag(task),
+                        header=f"Accuracy Grader Errors ({task})",
+                        unit="ratio",
+                        count=stats.total,
+                        current=stats.grader_errors / stats.total
+                        if stats.total
+                        else 0.0,
+                        sum=stats.grader_errors,
+                        console_group=MetricConsoleGroup.NONE,
+                    )
+                )
 
         return results
 
