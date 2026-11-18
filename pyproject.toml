@@ -188,6 +188,11 @@ required-environments = [
   "sys_platform == 'linux' and platform_machine == 'aarch64'",
   "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
+# soupsieve>=3.0.2 (the fix for its high-severity CVEs) needs Python>=3.11.5, so the lock
+# would otherwise keep an affected 2.x for 3.11.0-3.11.4. Narrow only the lock; the
+# published requires-python stays >=3.11.
+environments = ["python_full_version >= '3.11.5'"]
+constraint-dependencies = ["soupsieve>=4.0.0"]
 # lighteval 0.13.0 (its latest release) pins nltk==3.9.1 exactly; lighteval main
 # already pins nltk==3.10.4. Drop this override once a lighteval release ships it.
 override-dependencies = ["nltk==3.10.4"]
