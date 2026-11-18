@@ -4,8 +4,6 @@
 """Real AIPerf processes against CPU-only loopback decision fixtures."""
 
 import asyncio
-import os
-import sys
 from copy import deepcopy
 from pathlib import Path
 
@@ -13,13 +11,19 @@ import orjson
 import pytest
 from aiohttp import web
 
+from tests.harness.utils import AIPerfRunnerFn
+
 
 @pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("dialect", ["decisions", "systemone"])
 @pytest.mark.parametrize("export_level", [None, "raw"])
 async def test_structured_replay_errors_and_non_token_metrics(
-    tmp_path: Path, dialect: str, export_level: str | None
+    tmp_path: Path,
+    dialect: str,
+    export_level: str | None,
+    aiperf_runner: AIPerfRunnerFn,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     body = {
         "model": "fixture",
@@ -60,66 +64,59 @@ async def test_structured_replay_errors_and_non_token_metrics(
     site = web.TCPSite(runner, "127.0.0.1", 0)
     await site.start()
     port = runner.addresses[0][1]
-    dataset = tmp_path / "payload.json"
-    dataset.write_bytes(
-        orjson.dumps({"data": [{"session_id": "fixture", "payloads": [body]}]})
-    )
-    artifact = tmp_path / "artifacts"
-    command = [
-        sys.executable,
-        "-m",
-        "aiperf",
-        "profile",
-        "--model",
-        "fixture",
-        "--endpoint-type",
-        dialect,
-        "--url",
-        f"http://127.0.0.1:{port}",
-        "--input-file",
-        str(dataset),
-        "--custom-dataset-type",
-        "inputs_json",
-        "--request-count",
-        "5",
-        "--concurrency",
-        "1",
-        "--workers-max",
-        "1",
-        "--ui",
-        "simple",
-        "--no-gpu-telemetry",
-        "--artifact-dir",
-        str(artifact),
-    ]
-    if export_level is not None:
-        command.extend(["--export-level", export_level])
-    process = None
     try:
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            env={**os.environ, "HF_HUB_OFFLINE": "1", "TRANSFORMERS_OFFLINE": "1"},
+        dataset = tmp_path / "payload.json"
+        await asyncio.to_thread(
+            dataset.write_bytes,
+            orjson.dumps({"data": [{"session_id": "fixture", "payloads": [body]}]}),
         )
-        stdout, _ = await asyncio.wait_for(process.communicate(), timeout=120)
-        (tmp_path / "aiperf.log").write_bytes(stdout)
-        assert process.returncode == 0, stdout.decode()[-12000:]
+        command = [
+            "profile",
+            "--model",
+            "fixture",
+            "--endpoint-type",
+            dialect,
+            "--url",
+            f"http://127.0.0.1:{port}",
+            "--input-file",
+            str(dataset),
+            "--custom-dataset-type",
+            "inputs_json",
+            "--request-count",
+            "5",
+            "--concurrency",
+            "1",
+            "--workers-max",
+            "1",
+            "--ui",
+            "simple",
+            "--no-gpu-telemetry",
+        ]
+        if export_level is not None:
+            command.extend(["--export-level", export_level])
+        monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+        monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+        run = await aiperf_runner(command, 120)
+        output = run.stdout + run.stderr
+        await asyncio.to_thread((tmp_path / "aiperf.log").write_text, output)
+        assert run.exit_code == 0, output[-12000:]
     finally:
-        if process is not None and process.returncode is None:
-            process.kill()
-            await process.wait()
         await runner.cleanup()
     assert seen == [body] * 5
-    records = [
-        orjson.loads(line)
-        for line in (artifact / "profile_export.jsonl").read_bytes().splitlines()
-    ]
+    exported = await asyncio.to_thread(
+        (run.output_dir / "profile_export.jsonl").read_bytes
+    )
+    records = [orjson.loads(line) for line in exported.splitlines()]
     assert len(records) == 5
     errors = [record["error"] for record in records if record.get("error")]
     assert len(errors) == 3
     assert any("Missing decision model" in error["message"] for error in errors)
-    assert any("order differ" in error["message"] for error in errors)
+    mismatch_message = (
+        "Question identifiers differ"
+        if dialect == "systemone"
+        else "Question names/order differ"
+    )
+    assert any(mismatch_message in error["message"] for error in errors)
     assert any(error.get("code") == 429 for error in errors)
     for record in records:
         if not record.get("error"):
