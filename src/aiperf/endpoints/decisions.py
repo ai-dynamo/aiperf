@@ -284,7 +284,8 @@ class _DecisionEndpoint(BaseEndpoint):
             return record._parsed_responses_cache
         try:
             _require(
-                record.request_info.payload_bytes is not None,
+                record.request_info is not None
+                and record.request_info.payload_bytes is not None,
                 "Decision validation requires retained request payload bytes",
             )
             request = orjson.loads(record.request_info.payload_bytes)

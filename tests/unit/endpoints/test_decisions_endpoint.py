@@ -407,13 +407,17 @@ def test_explicit_zero_usage_remains_measured(case):
     assert parsed.usage.completion_tokens == 0
 
 
-def test_stripped_payload_is_record_error(case):
+@pytest.mark.parametrize("missing_context", [False, True])
+def test_missing_request_context_or_payload_is_record_error(case, missing_context):
     endpoint, _, response = case
     record = Mock(error=None, _parsed_responses_cache=None)
     record.request_info.payload_bytes = None
+    if missing_context:
+        record.request_info = None
     record.responses = [create_mock_response(json_data=response)]
     assert endpoint.extract_response_data(record) == []
     assert "retained request payload" in record.error.message
+    assert record._parsed_responses_cache == []
 
 
 @pytest.mark.parametrize(
