@@ -6,6 +6,7 @@ from unittest.mock import Mock
 
 import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.models import Turn
 from aiperf.endpoints.decisions import OpenAIDecisionsEndpoint, SystemOneEndpoint
@@ -530,6 +531,35 @@ def test_systemone_structured_score_legend_matches_criteria(
     else:
         assert record.error is None
         assert parsed[0].data.body == response
+
+
+@pytest.mark.parametrize(
+    ("expected", "actual", "matches"),
+    [
+        param({"blocked": True}, {"blocked": 1}, False, id="boolean-number"),
+        param({"blocked": 1}, {"blocked": True}, False, id="number-boolean"),
+        param([{"blocked": False}], [{"blocked": 0}], False, id="nested-array"),
+        param({"a": True, "b": [1, None]}, {"b": [1.0, None], "a": True}, True, id="object-order"),
+        param(["low", "high"], ["high", "low"], False, id="array-order"),
+        param({"blocked": False}, {"blocked": True}, False, id="boolean-value"),
+        param({"value": None}, {"value": 0}, False, id="null-number"),
+    ],
+)  # fmt: skip
+def test_systemone_structured_score_labels_preserve_json_types(
+    systemone_mixed_case, expected, actual, matches
+):
+    endpoint, body, response = systemone_mixed_case
+    body["questions"]["score"]["criteria"] = ["low", expected, "high"]
+    response["answers"]["score"]["legend"] = {"0": "low", "1": actual, "2": "high"}
+    record = create_record(body, response)
+    parsed = endpoint.extract_response_data(record)
+    if matches:
+        assert record.error is None
+        assert parsed[0].data.body == response
+    else:
+        assert parsed == []
+        assert "Score labels differ" in record.error.message
+        assert record._parsed_responses_cache == []
 
 
 @pytest.mark.parametrize(

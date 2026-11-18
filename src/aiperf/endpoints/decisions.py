@@ -40,6 +40,25 @@ def _identity(value: Any) -> tuple[type, Any]:
     return type(value), value
 
 
+def _json_equal(left: Any, right: Any) -> bool:
+    """Compare JSON values without Python's boolean/number coercion."""
+    if isinstance(left, bool) or isinstance(right, bool):
+        return type(left) is type(right) and left == right
+    if isinstance(left, dict):
+        return (
+            isinstance(right, dict)
+            and left.keys() == right.keys()
+            and all(_json_equal(value, right[key]) for key, value in left.items())
+        )
+    if isinstance(left, list):
+        return (
+            isinstance(right, list)
+            and len(left) == len(right)
+            and all(_json_equal(a, b) for a, b in zip(left, right, strict=True))
+        )
+    return left == right
+
+
 @dataclass(slots=True)
 class DecisionResponseData(BaseResponseData):
     """Structured decisions; never expose their JSON as generated text."""
@@ -343,7 +362,9 @@ class _DecisionEndpoint(BaseEndpoint):
                     if self.systemone
                     else [item["label"] for item in answer["probabilities"]]
                 )
-                _require(actual == expected, "Score labels differ from request")
+                _require(
+                    _json_equal(actual, expected), "Score labels differ from request"
+                )
 
     def build_assistant_turn(self, record: RequestRecord) -> None:
         """Decisions are not generated assistant conversation text."""
