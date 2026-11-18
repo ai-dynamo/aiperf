@@ -193,6 +193,14 @@ class DarkBenchOverseerGrader(BaseGrader):
                 "(OpenAI-compatible base URL, e.g. http://judge:8000/v1) and "
                 "AIPERF_ACCURACY_JUDGE_MODEL"
             )
+        parts = urlsplit(settings.JUDGE_URL)
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            # Unlike --url, a scheme-less value ("localhost:8000/v1") parses as
+            # scheme "localhost" and would turn every grade into a grader error.
+            raise RuntimeError(
+                f"AIPERF_ACCURACY_JUDGE_URL must be an http:// or https:// URL with a "
+                f"host, e.g. http://judge:8000/v1; got {settings.JUDGE_URL!r}"
+            )
         if settings.JUDGE_API_KEY is not None and not _is_secure_judge_url(
             settings.JUDGE_URL
         ):

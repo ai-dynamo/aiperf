@@ -168,6 +168,21 @@ def test_check_available_missing_url_raises_runtime_error(judge_env) -> None:
         DarkBenchOverseerGrader.check_available()
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        param("localhost:8000/v1", id="no-scheme-host-port"),
+        param("judge/v1", id="no-scheme-path"),
+        param("ftp://judge/v1", id="non-http-scheme"),
+        param("http:///v1", id="no-host"),
+    ],
+)  # fmt: skip
+def test_check_available_non_http_url_raises_runtime_error(judge_env, url: str) -> None:
+    judge_env(JUDGE_URL=url)
+    with pytest.raises(RuntimeError, match="http:// or https://"):
+        DarkBenchOverseerGrader.check_available()
+
+
 def test_init_without_judge_config_raises_runtime_error(judge_env) -> None:
     # Paths that skip CLI preflight must fail at startup, not grade every record as an error.
     judge_env(JUDGE_MODEL=None)
