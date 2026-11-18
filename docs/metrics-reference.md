@@ -411,7 +411,7 @@ inter_chunk_latency = [request.content_responses[i].perf_ns - request.content_re
 
 ### Verified Token Gap Latency
 
-Set `benchmark.artifacts.verified_token_gaps: true` in the benchmark YAML to
+Set `benchmark.artifacts.verifiedTokenGaps: true` in the benchmark YAML to
 collect a distribution for streaming Chat Completions. This configuration also
 requests sampled-token logprobs from the server through `benchmark.endpoint.extra`.
 
@@ -423,19 +423,19 @@ benchmark:
     extra:
       logprobs: true
   artifacts:
-    verified_token_gaps: true
+    verifiedTokenGaps: true
 ```
 
 AIPerf measures adjacent visible text tokens on successful, non-cancelled
 profiling requests. The prototype accepts single-choice SSE streams with a
 `stop` or `length` finish reason and a `[DONE]` marker. A token qualifies when
 `choices[0].logprobs.content` contains exactly one sampled token and its
-`bytes` match the event's entire text delta. Missing or mismatched logprobs,
-multi-token events, and content events completed by the same read break
-adjacency. Role-only, usage-only, and terminal markers contribute no samples.
-Warmup requests contribute no samples. Servers that only expose cumulative
-usage need per-event evidence identifying how many visible tokens are delivered
-by each event, such as sampled-token bytes or a content-aligned token count.
+`bytes` match the event's entire text delta. The implementation requires these
+bytes for each sampled token. Empty SSE data events, reasoning and other
+non-text output, missing or mismatched logprobs, multi-token events, and
+content events completed by the same read break adjacency. Role-only,
+usage-only, comment-only, and terminal markers contribute no samples. Warmup
+requests contribute no samples.
 
 The worker uses `time.perf_counter_ns()` at the client read that completes
 each SSE event. Gaps include transport and buffering effects. The JSON summary

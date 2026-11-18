@@ -26,7 +26,7 @@ def _matches_one_content_token(text: object, logprobs: object) -> bool:
     )
 
 
-def _plain_text_choice(chunk: JsonObject) -> tuple[JsonObject, JsonObject] | None:
+def _single_choice_delta(chunk: JsonObject) -> tuple[JsonObject, JsonObject] | None:
     choices = chunk.get("choices")
     if not isinstance(choices, list) or len(choices) != 1:
         return None
@@ -36,9 +36,20 @@ def _plain_text_choice(chunk: JsonObject) -> tuple[JsonObject, JsonObject] | Non
     delta = choice.get("delta")
     if choice["index"] != 0 or not isinstance(delta, dict):
         return None
-    if any(value for key, value in delta.items() if key not in {"role", "content"}):
-        return None
     return choice, delta
+
+
+def _content_token_observation(choice: JsonObject, delta: JsonObject) -> bool | None:
+    if any(value for key, value in delta.items() if key not in {"role", "content"}):
+        return False
+    text, logprobs = delta.get("content"), choice.get("logprobs")
+    if (
+        text in (None, "")
+        and logprobs is None
+        and (choice.get("finish_reason") or delta.get("role"))
+    ):
+        return None
+    return _matches_one_content_token(text, logprobs)
 
 
 def _completed_sse_events(record: RequestRecord) -> list[SSEMessage]:
@@ -53,7 +64,7 @@ def _completed_sse_events(record: RequestRecord) -> list[SSEMessage]:
         if not previous_ns <= response.perf_ns <= end_perf_ns:
             return []
         previous_ns = response.perf_ns
-        if response.extract_data_content():
+        if any(packet.name == "data" for packet in response.packets):
             events.append(response)
     if not events or events.pop().extract_data_content() != "[DONE]":
         return []
@@ -65,6 +76,9 @@ def _chat_content_events(record: RequestRecord) -> list[tuple[int, bool]]:
     finished = False
     for response in _completed_sse_events(record):
         chunk = response.get_json()
+        if chunk is None and not response.extract_data_content():
+            events.append((response.perf_ns, False))
+            continue
         if (
             not isinstance(chunk, dict)
             or chunk.get("object") != "chat.completion.chunk"
@@ -72,7 +86,7 @@ def _chat_content_events(record: RequestRecord) -> list[tuple[int, bool]]:
             return []
         if chunk.get("choices") == [] and isinstance(chunk.get("usage"), dict):
             continue
-        parsed = _plain_text_choice(chunk)
+        parsed = _single_choice_delta(chunk)
         if finished or parsed is None:
             return []
         choice, delta = parsed
@@ -80,10 +94,9 @@ def _chat_content_events(record: RequestRecord) -> list[tuple[int, bool]]:
         if reason is not None and reason not in ("stop", "length"):
             return []
         finished = reason is not None
-        text, logprobs = delta.get("content"), choice.get("logprobs")
-        if text in (None, "") and logprobs is None and (finished or delta.get("role")):
-            continue
-        events.append((response.perf_ns, _matches_one_content_token(text, logprobs)))
+        verified = _content_token_observation(choice, delta)
+        if verified is not None:
+            events.append((response.perf_ns, verified))
     return events if finished else []
 
 

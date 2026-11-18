@@ -13,6 +13,7 @@ from pytest import param
 from aiperf.common.accumulator_protocols import ExportContext
 from aiperf.common.constants import NANOS_PER_MILLIS
 from aiperf.common.enums import CreditPhase
+from aiperf.common.environment import Environment
 from aiperf.common.models import (
     ErrorDetails,
     MetricRecordMetadata,
@@ -46,11 +47,11 @@ def _event(choice: JsonObject | None, *, tokens: int = 0) -> bytes:
     return b"data: " + orjson.dumps(chunk) + b"\n\n"
 
 
-def _text(text: str, logprob_tokens: list[str] | None) -> bytes:
+def _text(text: str, logprob_tokens: list[str] | None, **channels: str) -> bytes:
     return _event(
         {
             "index": 0,
-            "delta": {"content": text},
+            "delta": {"content": text, **channels},
             "logprobs": (
                 None
                 if logprob_tokens is None
@@ -122,6 +123,9 @@ async def _stream_record(
         param(_text("bc", ["b"]), id="mismatched-token-bytes"),
         param(_single("b") + _single("c"), id="coalesced-read"),
         param(_text("", ["b"]), id="undelivered-token-bytes"),
+        param(b"data:\n\n", id="empty-data"),
+        param(_event({"index": 0, "delta": {"reasoning_content": "thinking"}}), id="reasoning-only"),
+        param(_text("b", ["b"], reasoning="thinking"), id="mixed-reasoning-and-text"),
     ],
 )  # fmt: skip
 async def test_unverified_read_breaks_adjacency(
@@ -135,6 +139,7 @@ async def test_unverified_read_breaks_adjacency(
             (20, blocked_read),
             (35, _single("d")),
             (36, _event(None, tokens=5)),
+            (37, b": keepalive\n\n"),
             (41, _single("é")),
         ],
     )
@@ -142,6 +147,17 @@ async def test_unverified_read_breaks_adjacency(
         4 * NANOS_PER_MILLIS,
         6 * NANOS_PER_MILLIS,
     ]
+
+
+def test_goodput_rejects_verified_gap_slo_for_streaming_completions() -> None:
+    run = make_benchmark_run(
+        endpoint_type="completions",
+        streaming=True,
+        extra={"artifacts": {"verified_token_gaps": True}, "slos": {COVERAGE: 1.0}},
+    )
+
+    with pytest.raises(RuntimeError, match=f"Invalid --goodput: metric.*{COVERAGE}"):
+        MetricRecordProcessor(run)
 
 
 @pytest.mark.asyncio
@@ -172,6 +188,9 @@ async def test_verified_token_gaps_export(
     )
     parser = InferenceResultParser(run)
     processor = MetricRecordProcessor(run)
+    if enabled and good_phase == CreditPhase.PROFILING:
+        pytest.importorskip("crick")
+        monkeypatch.setattr(Environment.METRICS, "LIST_BACKEND", "tdigest")
     accumulator = MetricsAccumulator(run)
     irregular = [
         (10, _single("a")),
@@ -181,6 +200,12 @@ async def test_verified_token_gaps_export(
         (131, _single("e")),
     ]
     good = await _stream_record(monkeypatch, irregular, tokens=5, phase=good_phase)
+    long_gap = await _stream_record(
+        monkeypatch,
+        [(10, _single("a")), (110, _single("b"))],
+        tokens=2,
+        phase=good_phase,
+    )
     single = await _stream_record(monkeypatch, [(10, _single("a"))], tokens=1)
     unverified = await _stream_record(
         monkeypatch, [(10, _text("a", None)), (13, _text("bc", ["b", "c"]))], tokens=3
@@ -193,7 +218,7 @@ async def test_verified_token_gaps_export(
     cancelled.cancellation_perf_ns = cancelled.end_perf_ns
 
     for index, record in enumerate(
-        [good, single, unverified, incomplete, warmup, failed, cancelled]
+        [good, long_gap, single, unverified, incomplete, warmup, failed, cancelled]
     ):
         assert record.request_info is not None
         phase = record.request_info.credit_phase
@@ -218,6 +243,9 @@ async def test_verified_token_gaps_export(
         if not enabled or phase == CreditPhase.WARMUP or record in (failed, cancelled):
             assert GAP not in metrics.metrics
             assert COVERAGE not in metrics.metrics
+        if enabled and record is incomplete:
+            assert GAP not in metrics.metrics
+            assert metrics.metrics[COVERAGE] == 0
         await accumulator.process_record(metrics)
 
     summary = await accumulator.export_results(
@@ -243,10 +271,10 @@ async def test_verified_token_gaps_export(
         assert report[COVERAGE]["sum"] == 0
         return
     assert report[GAP]["unit"] == "ms"
-    assert report[GAP]["count"] == 4
-    assert report[GAP]["p50"] == 24
-    assert report[GAP]["p99"] == pytest.approx(69.1)
-    assert report[GAP]["max"] == 70
-    assert report[COVERAGE]["count"] == 4
-    assert report[COVERAGE]["sum"] == 1
-    assert report[COVERAGE]["avg"] == 0.25
+    assert report[GAP]["count"] == 5
+    assert report[GAP]["p50"] == 40
+    assert report[GAP]["p99"] == pytest.approx(98.8)
+    assert report[GAP]["max"] == 100
+    assert report[COVERAGE]["count"] == 5
+    assert report[COVERAGE]["sum"] == 2
+    assert report[COVERAGE]["avg"] == 0.4

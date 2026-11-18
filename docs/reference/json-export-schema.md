@@ -31,7 +31,7 @@ A run with 20 requests against a streaming chat endpoint produces entries shaped
 
 ```json
 {
-  "schema_version": "1.7",
+  "schema_version": "1.8",
   "request_latency": {
     "unit": "ms",
     "avg": 2620.71,
@@ -78,13 +78,13 @@ In addition to the per-metric stats blocks, `profile_export_aiperf.json` include
 
 ### Verified token gaps
 
-When `benchmark.artifacts.verified_token_gaps` is enabled, the single-run JSON
-summary contains these optional fields.
+Schema 1.8 adds these optional fields to the single-run JSON summary when
+`benchmark.artifacts.verifiedTokenGaps` is enabled.
 
 | Field | Meaning |
 |---|---|
 | `verified_token_gap_latency` | Summary statistics in `ms` over pooled, individually verified adjacent token gaps. `count` counts gaps. If none are observable, the block has `unit: "ms"` and `count: 0`, with latency statistics absent. |
-| `verified_token_gap_request_coverage` | Request coverage for configured streaming Chat Completions. `count` is the number of successful, non-cancelled profiling requests. `sum` is the number that contributed at least one gap, and `avg` is the ratio when the denominator is positive. This ratio describes requests. Individual requests can contribute only a subset of their token gaps. |
+| `verified_token_gap_request_coverage` | Request coverage for configured streaming Chat Completions. `count` is the number of non-cancelled profiling requests that AIPerf accepted as valid inference records. A valid record that reaches clean EOF without `[DONE]` or a qualifying finish reason counts toward `count` and contributes zero to `sum`. `sum` counts requests that contributed at least one gap, and `avg` is the ratio when the denominator is positive. Individual requests can contribute only a subset of their token gaps. |
 | `metadata.verified_token_gaps` | Provenance for the measurement. `clock` is `time.perf_counter_ns`, `observation_boundary` is `client_sse_read_completing_event`, and `token_evidence` is `chat_completion_chunk_logprobs_content_bytes`. |
 
 See [Verified Token Gap Latency](../metrics-reference.md#verified-token-gap-latency)
@@ -165,6 +165,7 @@ The current schema version is exported as the top-level `schema_version` field o
 | `1.5` | Added per-GPU telemetry `platform` and renamed built-in NVIDIA GPU telemetry metrics to `nvidia_*`. AMD telemetry remains under `amd_*`. This is a telemetry metric-name breaking change for consumers of `telemetry_data`. Also added the full-response metric blocks `full_decode_duration`, `full_response_inter_token_latency`, and `full_response_output_token_throughput_per_user` (emitted only when the corresponding metrics were computed), and the top-level `runtime_submission_invalid_reasons` array. Additive and backward-compatible apart from the telemetry rename. |
 | `1.6` | Added `server_metrics_error_summary` for optional collection and producer failures, independently of inference request errors. Additive and backward-compatible. |
 | `1.7` | Added top-level `conversations_ended_on_truncation` and `turns_skipped_on_truncation`, present only when `--end-conversation-on-truncation` is enabled. Additive and backward-compatible. |
+| `1.8` | Added optional verified-token-gap latency and request coverage metrics and the optional `metadata.verified_token_gaps` provenance object. |
 
 ### Other JSON exports use independent schema versions
 
