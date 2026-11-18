@@ -55,6 +55,9 @@ from aiperf.metrics.replay_sched_lag_analyzer import inject_replay_sched_lag_met
 from aiperf.metrics.types.replay_sched_lag_metrics import (
     REPLAY_SCHED_DEGRADED_THRESHOLD_MS,
 )
+from aiperf.metrics.types.verified_token_gap_metrics import (
+    VerifiedTokenGapLatencyMetric,
+)
 from aiperf.plugin.enums import UIType
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 
@@ -106,7 +109,11 @@ class MetricsAccumulator(BaseMetricsProcessor):
     ) -> None:
         super().__init__(run=run, **kwargs)
 
-        self._column_store = ColumnStore(initial_capacity=1024)
+        # Gap samples need record indexing for phase and time-window exports.
+        self._column_store = ColumnStore(
+            initial_capacity=1024,
+            exact_list_tags=frozenset({VerifiedTokenGapLatencyMetric.tag}),
+        )
         # Credit/session numbers are scoped per phase and can restart at zero
         # for warmup and profiling. Use an internal append-only row index for
         # storage so warmup record 0 cannot be overwritten by profiling record 0.

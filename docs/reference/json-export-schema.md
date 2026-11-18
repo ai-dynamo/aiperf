@@ -31,7 +31,7 @@ A run with 20 requests against a streaming chat endpoint produces entries shaped
 
 ```json
 {
-  "schema_version": "1.7",
+  "schema_version": "1.8",
   "request_latency": {
     "unit": "ms",
     "avg": 2620.71,
@@ -75,6 +75,20 @@ In addition to the per-metric stats blocks, `profile_export_aiperf.json` include
 | `conversations_ended_on_truncation` | int | Multi-turn conversation sessions ended early because a non-final turn was truncated by the output-token cap (`--end-conversation-on-truncation`). A conversation replayed to fill `--request-count` counts once per replay. Present only when that option is enabled; `0` means it was on and nothing ended early. Schema 1.7+. |
 | `turns_skipped_on_truncation` | int | Turns never sent because their conversation ended early on a truncated turn. Turns the run's stop condition would not have sent anyway are not counted: nothing is counted once `--request-count` is reached, and before that the skipped turns are capped at the remaining request budget. Present only when `--end-conversation-on-truncation` is enabled. Schema 1.7+. |
 | `runtime_submission_invalid_reasons` | array | Runtime-only reason tags that invalidate this run's scenario submission. `insufficient_profile_metric_coverage` means measured TTFT and inter-token-latency coverage did not reach the scenario threshold; `profile_metric_coverage_validation_failed` means AIPerf could not validate that coverage because required accumulator data or phase timestamps were unavailable. An empty array is not an overall submission-validity verdict because static or merged invalidity may still apply; consumers must read `metadata.submission_valid` and `metadata.submission_invalid_reasons` for the overall verdict. Schema 1.5+. |
+
+### Verified token gaps
+
+Schema 1.8 adds these optional fields to the single-run JSON summary when
+`benchmark.artifacts.verifiedTokenGaps` is enabled.
+
+| Field | Meaning |
+|---|---|
+| `verified_token_gap_latency` | Summary statistics in `ms` over pooled, individually verified adjacent token gaps. `count` counts gaps. If none are observable, the block has `unit: "ms"` and `count: 0`, with latency statistics absent. |
+| `verified_token_gap_request_coverage` | Request coverage for configured streaming Chat Completions. `count` is the number of non-cancelled profiling requests that AIPerf accepted as valid inference records. A valid record that reaches clean EOF without `[DONE]` or a qualifying finish reason counts toward `count` and contributes zero to `sum`. `sum` counts requests that contributed at least one gap, and `avg` is the ratio when the denominator is positive. Individual requests can contribute only a subset of their token gaps. |
+| `metadata.verified_token_gaps` | Provenance for the measurement. `clock` is `time.perf_counter_ns`, `observation_boundary` is `client_sse_read_completing_event`, and `token_evidence` is `chat_completion_chunk_logprobs_content_bytes`. |
+
+See [Verified Token Gap Latency](../metrics-reference.md#verified-token-gap-latency)
+for the evidence requirements.
 
 ### `telemetry_data`
 
@@ -151,6 +165,7 @@ The current schema version is exported as the top-level `schema_version` field o
 | `1.5` | Added per-GPU telemetry `platform` and renamed built-in NVIDIA GPU telemetry metrics to `nvidia_*`. AMD telemetry remains under `amd_*`. This is a telemetry metric-name breaking change for consumers of `telemetry_data`. Also added the full-response metric blocks `full_decode_duration`, `full_response_inter_token_latency`, and `full_response_output_token_throughput_per_user` (emitted only when the corresponding metrics were computed), and the top-level `runtime_submission_invalid_reasons` array. Additive and backward-compatible apart from the telemetry rename. |
 | `1.6` | Added `server_metrics_error_summary` for optional collection and producer failures, independently of inference request errors. Additive and backward-compatible. |
 | `1.7` | Added top-level `conversations_ended_on_truncation` and `turns_skipped_on_truncation`, present only when `--end-conversation-on-truncation` is enabled. Additive and backward-compatible. |
+| `1.8` | Added optional verified-token-gap latency and request coverage metrics and the optional `metadata.verified_token_gaps` provenance object. |
 
 ### Other JSON exports use independent schema versions
 
