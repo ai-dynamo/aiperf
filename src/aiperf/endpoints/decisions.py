@@ -169,6 +169,18 @@ class _DecisionEndpoint(BaseEndpoint):
                             type(count) is int and 0 <= count <= usage[limit_key],
                             "Invalid nested measured token count",
                         )
+            # Other providers' aliases must not override validated decision counts.
+            usage = {
+                key: usage[key]
+                for key in (
+                    "input_tokens",
+                    "output_tokens",
+                    "total_tokens",
+                    "input_tokens_details",
+                    "output_tokens_details",
+                )
+                if key in usage
+            }
         return ParsedResponse(
             perf_ns=response.perf_ns,
             data=DecisionResponseData(body=deepcopy(body)),
@@ -205,7 +217,13 @@ class _DecisionEndpoint(BaseEndpoint):
             "Missing decision distribution",
         )
         if self.systemone:
-            keys, probabilities = list(values), list(values.values())
+            keys = list(values)
+            if kind == "score":
+                keys = [str(i) for i in range(len(values))]
+                _require(
+                    values.keys() == set(keys), "Invalid zero-based score ordinals"
+                )
+            probabilities = [values[key] for key in keys]
         else:
             _require(
                 all(isinstance(item, dict) for item in values),
@@ -227,28 +245,23 @@ class _DecisionEndpoint(BaseEndpoint):
                 "Invalid typed decision choice",
             )
         else:
-            _require(
-                keys
-                == (
-                    [str(i) for i in range(len(keys))]
-                    if self.systemone
-                    else list(range(len(keys)))
-                )
-                and all(
-                    type(key) is str if self.systemone else type(key) is int
-                    for key in keys
-                ),
-                "Invalid zero-based score ordinals",
-            )
             if self.systemone:
                 legend = answer.get("legend")
                 _require(
                     isinstance(legend, dict)
-                    and list(legend) == keys
-                    and all(isinstance(label, str) for label in legend.values()),
+                    and legend.keys() == values.keys()
+                    and all(
+                        isinstance(label, (str, dict, list))
+                        for label in legend.values()
+                    ),
                     "Invalid score legend",
                 )
             else:
+                _require(
+                    keys == list(range(len(keys)))
+                    and all(type(key) is int for key in keys),
+                    "Invalid zero-based score ordinals",
+                )
                 _require(
                     all(isinstance(item.get("label"), str) for item in values),
                     "Missing score probability label",
@@ -293,10 +306,9 @@ class _DecisionEndpoint(BaseEndpoint):
             len(questions) == len(answers), "Decision answer count differs from request"
         )
         if self.systemone:
-            _require(
-                list(questions) == list(answers), "Question identifiers/order differ"
-            )
-            questions, answers = list(questions.values()), list(answers.values())
+            _require(questions.keys() == answers.keys(), "Question identifiers differ")
+            answers = [answers[identifier] for identifier in questions]
+            questions = list(questions.values())
         for question, answer in zip(questions, answers, strict=True):
             if not self.systemone:
                 _require(
@@ -307,28 +319,26 @@ class _DecisionEndpoint(BaseEndpoint):
                     continue
             _require(answer["type"] == question["type"], "Question type differs")
             if question["type"] == "choice":
-                expected = (
-                    list(question["criteria"])
-                    if self.systemone
-                    else [item["value"] for item in question["choices"]]
-                )
-                actual = (
-                    list(answer["probabilities"])
-                    if self.systemone
-                    else [item["value"] for item in answer["probabilities"]]
-                )
-                _require(
-                    [_identity(value) for value in actual]
-                    == [_identity(value) for value in expected],
-                    "Candidate type/order differs",
-                )
+                if self.systemone:
+                    _require(
+                        isinstance(question.get("criteria"), dict)
+                        and question["criteria"].keys()
+                        == answer["probabilities"].keys(),
+                        "Candidates differ from request",
+                    )
+                else:
+                    _require(
+                        [_identity(item["value"]) for item in answer["probabilities"]]
+                        == [_identity(item["value"]) for item in question["choices"]],
+                        "Candidate type/order differs",
+                    )
             elif question["type"] == "score":
                 levels = question["criteria" if self.systemone else "levels"]
                 expected = (
                     levels if self.systemone else [level["label"] for level in levels]
                 )
                 actual = (
-                    list(answer["legend"].values())
+                    [answer["legend"][str(i)] for i in range(len(answer["legend"]))]
                     if self.systemone
                     else [item["label"] for item in answer["probabilities"]]
                 )

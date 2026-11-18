@@ -414,3 +414,159 @@ def test_stripped_payload_is_record_error(case):
     record.responses = [create_mock_response(json_data=response)]
     assert endpoint.extract_response_data(record) == []
     assert "retained request payload" in record.error.message
+
+
+@pytest.mark.parametrize(
+    "aliases",
+    [
+        {"prompt_tokens": 100, "completion_tokens": 200},
+        {"prompt_tokens": True, "completion_tokens": "wrong"},
+        {"usageMetadata": {"prompt_tokens": 100, "completion_tokens": 200}},
+        {"cache_read_input_tokens": 100},
+        {
+            "prompt_tokens_details": {"cached_tokens": 100},
+            "completion_tokens_details": {"reasoning_tokens": 200},
+        },
+    ],
+)
+def test_only_validated_decision_usage_fields_feed_metrics(case, aliases):
+    endpoint, _, response = case
+    response["usage"] = {
+        "input_tokens": 10,
+        "output_tokens": 1,
+        "input_tokens_details": {"cached_tokens": 2},
+        "output_tokens_details": {"reasoning_tokens": 1},
+        **aliases,
+    }
+    original = deepcopy(response)
+    parsed = endpoint.parse_response(create_mock_response(json_data=response))
+    assert parsed.usage.prompt_tokens == 10
+    assert parsed.usage.completion_tokens == 1
+    assert parsed.usage.prompt_cache_read_tokens == 2
+    assert parsed.usage.reasoning_tokens == 1
+    assert parsed.data.body == original
+    assert response == original
+
+
+@pytest.fixture
+def systemone_mixed_case():
+    endpoint = SystemOneEndpoint(create_model_endpoint("systemone"))
+    body = {
+        "model": "test-model",
+        "state": "evidence",
+        "questions": {
+            "z": {"type": "noul", "instructions": "Useful?"},
+            "a": {"type": "choice", "criteria": {"yes": "Yes", "no": "No"}},
+            "score": {"type": "score", "criteria": ["low", "medium", "high"]},
+        },
+    }
+    response = {
+        "model": "test-model",
+        "answers": {
+            "z": {"type": "noul", "noul": 0.8},
+            "a": {
+                "type": "choice",
+                "choice": "yes",
+                "confidence": 0.6,
+                "probabilities": {"yes": 0.8, "no": 0.2},
+            },
+            "score": {
+                "type": "score",
+                "score": 1.3,
+                "confidence": 0.5,
+                "probabilities": {"0": 0.2, "1": 0.3, "2": 0.5},
+                "legend": {"0": "low", "1": "medium", "2": "high"},
+            },
+        },
+    }
+    return endpoint, body, response
+
+
+@pytest.mark.parametrize(
+    "reorder", ["answers", "choice", "probabilities", "legend", "all"]
+)
+def test_systemone_maps_are_correlated_by_key_not_order(systemone_mixed_case, reorder):
+    endpoint, body, response = systemone_mixed_case
+    answers = response["answers"]
+    if reorder in ("answers", "all"):
+        response["answers"] = dict(reversed(answers.items()))
+    if reorder in ("choice", "all"):
+        answers["a"]["probabilities"] = {"no": 0.2, "yes": 0.8}
+    if reorder in ("probabilities", "all"):
+        answers["score"]["probabilities"] = {"2": 0.5, "0": 0.2, "1": 0.3}
+    if reorder in ("legend", "all"):
+        answers["score"]["legend"] = {"1": "medium", "2": "high", "0": "low"}
+    record = create_record(body, response)
+    parsed = endpoint.extract_response_data(record)
+    assert record.error is None
+    assert parsed[0].data.body == response
+
+
+@pytest.mark.parametrize("mismatch", [False, True])
+def test_systemone_structured_score_legend_matches_criteria(
+    systemone_mixed_case, mismatch
+):
+    endpoint, body, response = systemone_mixed_case
+    levels = [
+        "low",
+        {"description": "medium", "examples": ["degraded"]},
+        ["high", {"blocked": True}],
+    ]
+    body["questions"]["score"]["criteria"] = levels
+    response["answers"]["score"]["legend"] = {
+        str(i): level for i, level in enumerate(levels)
+    }
+    if mismatch:
+        response["answers"]["score"]["legend"]["1"] = {"description": "wrong"}
+    record = create_record(body, response)
+    parsed = endpoint.extract_response_data(record)
+    if mismatch:
+        assert parsed == []
+        assert "Score labels differ" in record.error.message
+    else:
+        assert record.error is None
+        assert parsed[0].data.body == response
+
+
+@pytest.mark.parametrize(
+    "invalid", ["missing", "extra", "ordinal", "legend", "candidate", "criteria"]
+)
+def test_systemone_map_changes_still_rejected(systemone_mixed_case, invalid):
+    endpoint, body, response = systemone_mixed_case
+    if invalid == "missing":
+        del response["answers"]["a"]
+    elif invalid == "extra":
+        response["answers"]["extra"] = {"type": "noul", "noul": 0.5}
+    elif invalid == "legend":
+        response["answers"]["score"]["legend"]["3"] = response["answers"]["score"][
+            "legend"
+        ].pop("2")
+    elif invalid == "candidate":
+        response["answers"]["a"]["choice"] = "other"
+        response["answers"]["a"]["probabilities"] = {"other": 0.8, "no": 0.2}
+    elif invalid == "criteria":
+        body["questions"]["a"]["criteria"] = []
+    else:
+        response["answers"]["score"]["probabilities"] = {"0": 0.2, "1": 0.3, "3": 0.5}
+    record = create_record(body, response)
+    assert endpoint.extract_response_data(record) == []
+    assert record.error is not None
+
+
+def test_openai_answer_arrays_remain_positional():
+    endpoint = OpenAIDecisionsEndpoint(create_model_endpoint("decisions"))
+    body = {
+        "model": "test-model",
+        "input": "evidence",
+        "questions": [{"type": "predicate", "name": name} for name in ("z", "a")],
+    }
+    response = {
+        "model": "test-model",
+        "answers": [
+            {"type": "predicate", "name": name, "probability": 0.8}
+            for name in ("a", "z")
+        ],
+    }
+    record = create_record(body, response)
+    assert endpoint.extract_response_data(record) == []
+    assert "names/order" in record.error.message

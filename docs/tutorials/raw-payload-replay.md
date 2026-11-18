@@ -191,10 +191,12 @@ aiperf profile --model qualified-model --endpoint-type decisions \
 For System One, save `systemone.json` and use `--endpoint-type systemone --input-file systemone.json` with a different artifact directory:
 
 ```json
-{"data":[{"session_id":"department","payloads":[{"model":"qualified-model","state":"Please correct my invoice.","questions":{"department":{"type":"choice","criteria":{"billing":"Billing requests","support":"Technical support"}}}}]}]}
+{"data":[{"session_id":"department","payloads":[{"model":"qualified-model","state":"Please correct my invoice.","questions":{"department":{"type":"choice","instructions":"Which department should handle this?","criteria":{"billing":"Billing requests","support":"Technical support"}}}}]}]}
 ```
 
-The configured model must be registered by the server, and each payload must contain its actual model alias. The adapters do not merge generation settings, replace the model, coerce choice values, or rewrite questions. OpenAI string and boolean choices remain distinct. Answers are checked against question count, order, names and typed candidate identities. Malformed HTTP-200 responses become record errors; infrastructure errors and genuine OpenAI refusals remain distinct. Confidence is checked as a finite probability, not against an invented universal calibration formula. Missing usage remains unknown, and actual nonzero output-token usage is retained when a backend performs an internal decode.
+The configured model must be registered by the server, and each payload must contain its actual model alias. The adapters do not merge generation settings, replace the model, coerce choice values, or rewrite questions. OpenAI string and boolean choices remain distinct, and answer arrays are checked positionally against question names and typed candidates. System One answer and candidate maps are matched by key, regardless of JSON object serialization order; score criteria remain an ordered array. Both adapters check answer counts. Malformed HTTP-200 responses become record errors; infrastructure errors and genuine OpenAI refusals remain distinct. Confidence is checked as a finite probability, not against an invented universal calibration formula. Missing usage remains unknown, and actual nonzero output-token usage is retained when a backend performs an internal decode.
+
+Only validated decision usage fields feed recorded token metrics; other provider aliases remain in raw response evidence.
 
 For both contracts, a score is the probability-weighted mean of zero-based level indices, not a value normalized to 0–1. For example, probabilities `[0.2, 0.3, 0.5]` over three levels produce a score of `1.3`. The adapters check this relationship and distribution normalization within an absolute tolerance of `1e-6`. See the [OpenAI score contract](https://developers.openai.com/api/docs/guides/decisions#score-against-a-rubric) and [System One score contract](https://docs.typesafe.ai/primitives/score).
 
