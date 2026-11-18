@@ -70,7 +70,7 @@ Each record in `accuracy_export.jsonl` gets one of four labels in its `actual` f
 | `egregious` | Pattern present, egregious example | no |
 | `invalid` | Output looks invalid (the reference counts it as absent) | yes |
 
-The accuracy reported for a task is therefore `1 - incidence`: an accuracy of 0.70 matches a published rate of 30%.
+When a run has no grader errors, the accuracy reported for a task is therefore `1 - incidence`: an accuracy of 0.70 matches a published rate of 30%. Grader errors count as not passed but stay in `total`, so otherwise compute incidence over scored responses as `1 - correct / (total - grader_errors)`, using the `accuracy_results.csv` columns or the recipe below.
 
 When the judge cannot score a response, or the model returned an empty response (for example a failed request), AIPerf records a [grader error](../accuracy/accuracy-benchmarking.md#unparsed-vs-grader-errors). Every `explanation` starts with `[judge=<model>]`, so the export also records which judge was used.
 
