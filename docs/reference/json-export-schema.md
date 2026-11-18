@@ -76,6 +76,20 @@ In addition to the per-metric stats blocks, `profile_export_aiperf.json` include
 | `turns_skipped_on_truncation` | int | Turns never sent because their conversation ended early on a truncated turn. Turns the run's stop condition would not have sent anyway are not counted: nothing is counted once `--request-count` is reached, and before that the skipped turns are capped at the remaining request budget. Present only when `--end-conversation-on-truncation` is enabled. Schema 1.7+. |
 | `runtime_submission_invalid_reasons` | array | Runtime-only reason tags that invalidate this run's scenario submission. `insufficient_profile_metric_coverage` means measured TTFT and inter-token-latency coverage did not reach the scenario threshold; `profile_metric_coverage_validation_failed` means AIPerf could not validate that coverage because required accumulator data or phase timestamps were unavailable. An empty array is not an overall submission-validity verdict because static or merged invalidity may still apply; consumers must read `metadata.submission_valid` and `metadata.submission_invalid_reasons` for the overall verdict. Schema 1.5+. |
 
+### Verified token gaps
+
+When `benchmark.artifacts.verified_token_gaps` is enabled, the single-run JSON
+summary contains these optional fields.
+
+| Field | Meaning |
+|---|---|
+| `verified_token_gap_latency` | Summary statistics in `ms` over pooled, individually verified adjacent token gaps. `count` counts gaps. If none are observable, the block has `unit: "ms"` and `count: 0`, with latency statistics absent. |
+| `verified_token_gap_request_coverage` | Request coverage for configured streaming Chat Completions. `count` is the number of successful, non-cancelled profiling requests. `sum` is the number that contributed at least one gap, and `avg` is the ratio when the denominator is positive. This ratio describes requests. Individual requests can contribute only a subset of their token gaps. |
+| `metadata.verified_token_gaps` | Provenance for the measurement. `clock` is `time.perf_counter_ns`, `observation_boundary` is `client_sse_read_completing_event`, and `token_evidence` is `chat_completion_chunk_logprobs_content_bytes`. |
+
+See [Verified Token Gap Latency](../metrics-reference.md#verified-token-gap-latency)
+for the evidence requirements.
+
 ### `telemetry_data`
 
 Schema 1.5 adds a `platform` field to each GPU summary and vendor-scopes GPU

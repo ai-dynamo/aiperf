@@ -49,6 +49,8 @@ class BaseMetricsProcessor(AIPerfLifecycleMixin, ABC):
                 disallowed_flags |= flag
         if not self.run.cfg.endpoint.streaming:
             disallowed_flags |= MetricFlags.STREAMING_ONLY
+        elif not self.run.cfg.artifacts.verified_token_gaps:
+            disallowed_flags |= MetricFlags.VERIFIED_TOKEN_GAPS_ONLY
         if self.run.cfg.endpoint.use_server_token_count:
             # Disable usage diff metrics if server token counts are used, because
             # these metrics are only applicable when client side tokenization is enabled.

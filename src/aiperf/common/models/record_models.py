@@ -1807,6 +1807,10 @@ class ParsedResponseRecord:
     ``spec_decode_acceptance`` is None; this flag lets the run count such
     requests separately from runs where spec decode is off."""
 
+    verified_token_gaps_ns: list[int] | None = None
+    """Observed token gaps for an eligible request. An empty list means no gaps
+    were verified. None means collection was disabled or the request was excluded."""
+
     @cached_property
     def final_usage(self) -> Usage | None:
         """API-reported usage from the last streaming response chunk that had any.

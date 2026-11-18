@@ -94,6 +94,7 @@ class ColumnStore:
         "_string",
         "_ragged",
         "_list_backend_cls",
+        "_exact_list_tags",
         "_sums",
         "_counts",
         "_tag_handlers",
@@ -112,6 +113,7 @@ class ColumnStore:
         initial_capacity: int = 1024,
         *,
         list_backend_cls: type[ListMetricBackendT] | None = None,
+        exact_list_tags: frozenset[str] = frozenset(),
     ) -> None:
         self._capacity = initial_capacity
         self._count = 0
@@ -119,6 +121,7 @@ class ColumnStore:
         self._string: dict[str, list[str | None]] = {}
         self._ragged: dict[str, ListMetricBackendT] = {}
         self._list_backend_cls = list_backend_cls or _resolve_list_backend_class()
+        self._exact_list_tags = exact_list_tags
         self._sums: dict[str, float] = {}
         self._counts: dict[str, int] = {}
         # Per-tag setter closures, resolved on first sighting of each metric tag
@@ -492,7 +495,11 @@ class ColumnStore:
     def _ensure_ragged_column(self, tag: str) -> ListMetricBackendT:
         ragged = self._ragged.get(tag)
         if ragged is None:
-            ragged = self._list_backend_cls()
+            ragged = (
+                RaggedSeries()
+                if tag in self._exact_list_tags
+                else self._list_backend_cls()
+            )
             self._ragged[tag] = ragged
         return ragged
 

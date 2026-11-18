@@ -17,6 +17,10 @@ from aiperf.common.models.export_models import (
 )
 from aiperf.exporters.exporter_config import ExporterConfig, FileExportInfo
 from aiperf.exporters.metrics_base_exporter import MetricsBaseExporter
+from aiperf.metrics.types.verified_token_gap_metrics import (
+    VerifiedTokenGapLatencyMetric,
+    VerifiedTokenGapRequestCoverageMetric,
+)
 
 
 class MetricsJsonExporter(MetricsBaseExporter):
@@ -106,6 +110,7 @@ class MetricsJsonExporter(MetricsBaseExporter):
         )
         if dataset is not None:
             run_metadata["dataset"] = dataset
+        self._add_verified_token_gap_summary(prepared_json_metrics, run_metadata)
         metric_duration_coverage = getattr(
             self._results, "metric_duration_coverage", []
         )
@@ -229,6 +234,29 @@ class MetricsJsonExporter(MetricsBaseExporter):
         return orjson.dumps(
             scrub_non_finite(payload), option=orjson.OPT_INDENT_2
         ).decode("utf-8")
+
+    def _add_verified_token_gap_summary(
+        self, metrics: dict[str, JsonMetricResult], metadata: dict[str, object]
+    ) -> None:
+        if not self._cfg.artifacts.verified_token_gaps:
+            return
+        metrics.setdefault(
+            VerifiedTokenGapLatencyMetric.tag,
+            JsonMetricResult(
+                unit=str(VerifiedTokenGapLatencyMetric.display_unit), count=0
+            ),
+        )
+        metrics.setdefault(
+            VerifiedTokenGapRequestCoverageMetric.tag,
+            JsonMetricResult(
+                unit=str(VerifiedTokenGapRequestCoverageMetric.unit), count=0, sum=0
+            ),
+        )
+        metadata["verified_token_gaps"] = {
+            "clock": "time.perf_counter_ns",
+            "observation_boundary": "client_sse_read_completing_event",
+            "token_evidence": "chat_completion_chunk_logprobs_content_bytes",
+        }
 
     def _splice_run_level_aggregates(self, export_data: JsonExportData) -> None:
         """Attach optional run-level aggregates that live on ``ProfileResults``

@@ -822,6 +822,9 @@ class MetricFlags(Flag):
     early), so metrics that assume ``max_tokens`` is a target — notably the
     OSL-mismatch family — are meaningless there and only produce noise."""
 
+    VERIFIED_TOKEN_GAPS_ONLY = 1 << 20
+    """Metrics enabled by artifacts.verified_token_gaps."""
+
     def has_flags(self, flags: "MetricFlags") -> bool:
         """Return True if the metric has ALL of the given flag(s) (regardless of other flags)."""
         # Bitwise AND will return the input flags only if all of the given flags are present.
