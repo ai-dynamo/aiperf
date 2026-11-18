@@ -151,7 +151,8 @@ def resolve_strip_record_payload_bytes(
     ``None`` (unset, the default) auto-detects: strip iff no downstream consumer
     needs the bytes (``not record_payload_bytes_required``). An explicit ``True``
     forces stripping (accepting the loss of client-side tokenization, media
-    counting, and raw export); ``False`` always retains the bytes.
+    counting, raw export, and endpoint response validation); ``False`` always
+    retains the bytes.
 
     Args:
         cfg: The validated benchmark config for the run.

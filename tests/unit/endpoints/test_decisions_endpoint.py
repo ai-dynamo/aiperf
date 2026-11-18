@@ -42,6 +42,13 @@ def case(request):
     return endpoint, body, response
 
 
+def create_record(body: dict, response: dict) -> Mock:
+    record = Mock(error=None, _parsed_responses_cache=None)
+    record.request_info.payload_bytes = orjson.dumps(body)
+    record.responses = [create_mock_response(json_data=response)]
+    return record
+
+
 def test_exact_raw_payload_and_no_mutation(case):
     endpoint, body, _ = case
     original = deepcopy(body)
@@ -104,9 +111,7 @@ def test_question_count_mismatch_becomes_record_error(case):
         body["questions"].append(deepcopy(body["questions"][0]))
     else:
         body["questions"]["q2"] = deepcopy(body["questions"]["q"])
-    record = Mock(error=None, _parsed_responses_cache=None)
-    record.request_info.payload_bytes = orjson.dumps(body)
-    record.responses = [create_mock_response(json_data=response)]
+    record = create_record(body, response)
     assert endpoint.extract_response_data(record) == []
     assert record.error is not None
 
@@ -117,6 +122,7 @@ def test_registry_non_generating_non_streaming(name):
     assert entry.metadata["supports_streaming"] is False
     assert entry.metadata["produces_tokens"] is False
     assert entry.metadata["tokenizes_input"] is False
+    assert entry.metadata["requires_request_payload"] is True
 
 
 def test_complete_choice_and_score_correlation(case):
@@ -178,9 +184,7 @@ def test_complete_choice_and_score_correlation(case):
             },
         }
     body["questions"], response["answers"] = questions, answers
-    record = Mock(error=None, _parsed_responses_cache=None)
-    record.request_info.payload_bytes = orjson.dumps(body)
-    record.responses = [create_mock_response(json_data=response)]
+    record = create_record(body, response)
     parsed = endpoint.extract_response_data(record)
     assert record.error is None
     assert len(parsed) == 1
@@ -268,9 +272,7 @@ def test_missing_or_wrong_score_labels_rejected(case, wrong):
         if wrong:
             answer["probabilities"][0]["label"] = "wrong"
         response["answers"] = [answer]
-    record = Mock(error=None, _parsed_responses_cache=None)
-    record.request_info.payload_bytes = orjson.dumps(body)
-    record.responses = [create_mock_response(json_data=response)]
+    record = create_record(body, response)
     assert endpoint.extract_response_data(record) == []
     assert record.error is not None
 
@@ -302,3 +304,113 @@ def test_invalid_nested_token_usage_rejected(case, details):
     body["usage"] = {"input_tokens": 10, "output_tokens": 1, **details}
     with pytest.raises(ValueError):
         endpoint.parse_response(create_mock_response(json_data=body))
+
+
+@pytest.mark.parametrize("score", [1.3, 0.65, float("nan"), float("inf")])
+def test_three_level_score_is_expected_zero_based_ordinal(case, score):
+    endpoint, _, response = case
+    labels = ["low", "medium", "high"]
+    probabilities = [0.2, 0.3, 0.5]
+    answer = {
+        "type": "score",
+        "score": score,
+        "confidence": 0.5,
+        "probabilities": [
+            {"value": i, "label": label, "probability": probability}
+            for i, (label, probability) in enumerate(
+                zip(labels, probabilities, strict=True)
+            )
+        ],
+    }
+    if endpoint.systemone:
+        answer["probabilities"] = {str(i): p for i, p in enumerate(probabilities)}
+        answer["legend"] = {str(i): label for i, label in enumerate(labels)}
+    response["answers"] = {"q": answer} if endpoint.systemone else [answer]
+    wire = create_mock_response(json_data=response)
+    if score == 1.3:
+        assert endpoint.parse_response(wire).data.body == response
+    else:
+        with pytest.raises(ValueError, match="expected ordinal"):
+            endpoint.parse_response(wire)
+
+
+@pytest.mark.parametrize(
+    "values,choice",
+    [
+        ([1, "true"], True),
+        (["true", "false"], "true"),
+        ([True, "true"], 1),
+        (["true", True], True),
+    ],
+)
+def test_openai_choice_type_or_order_mismatch_is_record_error(values, choice):
+    endpoint = OpenAIDecisionsEndpoint(create_model_endpoint("decisions"))
+    body = {
+        "model": "test-model",
+        "input": "evidence",
+        "questions": [
+            {"type": "choice", "choices": [{"value": True}, {"value": "true"}]}
+        ],
+    }
+    response = {
+        "model": "test-model",
+        "answers": [
+            {
+                "type": "choice",
+                "choice": choice,
+                "confidence": 0.5,
+                "probabilities": [
+                    {"value": value, "probability": 0.5} for value in values
+                ],
+            }
+        ],
+    }
+    record = create_record(body, response)
+    assert endpoint.extract_response_data(record) == []
+    assert record.error is not None
+
+
+def test_refusal_cannot_contain_manufactured_answer_data():
+    endpoint = OpenAIDecisionsEndpoint(create_model_endpoint("decisions"))
+    with pytest.raises(ValueError, match="manufactured answer"):
+        endpoint.parse_response(
+            create_mock_response(
+                json_data={
+                    "model": "test-model",
+                    "answers": [{"type": "refusal", "probability": 0.0}],
+                }
+            )
+        )
+
+
+def test_refusal_name_must_match_request():
+    endpoint = OpenAIDecisionsEndpoint(create_model_endpoint("decisions"))
+    body = {
+        "model": "test-model",
+        "input": "evidence",
+        "questions": [{"type": "predicate", "name": "expected"}],
+    }
+    response = {
+        "model": "test-model",
+        "answers": [{"type": "refusal", "name": "wrong"}],
+    }
+    record = create_record(body, response)
+    assert endpoint.extract_response_data(record) == []
+    assert "names/order" in record.error.message
+
+
+def test_explicit_zero_usage_remains_measured(case):
+    endpoint, _, response = case
+    response["usage"] = {"input_tokens": 0, "output_tokens": 0}
+    parsed = endpoint.parse_response(create_mock_response(json_data=response))
+    assert parsed.usage.prompt_tokens == 0
+    assert parsed.usage.completion_tokens == 0
+
+
+def test_stripped_payload_is_record_error(case):
+    endpoint, _, response = case
+    record = Mock(error=None, _parsed_responses_cache=None)
+    record.request_info.payload_bytes = None
+    record.responses = [create_mock_response(json_data=response)]
+    assert endpoint.extract_response_data(record) == []
+    assert "retained request payload" in record.error.message

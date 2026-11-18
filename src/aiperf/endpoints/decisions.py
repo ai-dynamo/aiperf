@@ -98,13 +98,15 @@ class _DecisionEndpoint(BaseEndpoint):
                 content = message.get("content")
                 _require(
                     isinstance(content, str)
-                    or isinstance(content, list)
-                    and bool(content)
-                    and all(
-                        isinstance(part, dict)
-                        and part.get("type") == "input_text"
-                        and isinstance(part.get("text"), str)
-                        for part in content
+                    or (
+                        isinstance(content, list)
+                        and bool(content)
+                        and all(
+                            isinstance(part, dict)
+                            and part.get("type") == "input_text"
+                            and isinstance(part.get("text"), str)
+                            for part in content
+                        )
                     ),
                     "Only text content is supported",
                 )
@@ -322,10 +324,6 @@ class _DecisionEndpoint(BaseEndpoint):
                 )
             elif question["type"] == "score":
                 levels = question["criteria" if self.systemone else "levels"]
-                _require(
-                    len(answer["probabilities"]) == len(levels),
-                    "Score cardinality differs",
-                )
                 expected = (
                     levels if self.systemone else [level["label"] for level in levels]
                 )

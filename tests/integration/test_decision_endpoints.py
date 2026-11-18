@@ -6,6 +6,7 @@
 import asyncio
 import os
 import sys
+from copy import deepcopy
 from pathlib import Path
 
 import orjson
@@ -16,8 +17,9 @@ from aiohttp import web
 @pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("dialect", ["decisions", "systemone"])
+@pytest.mark.parametrize("export_level", [None, "raw"])
 async def test_structured_replay_errors_and_non_token_metrics(
-    tmp_path: Path, dialect: str
+    tmp_path: Path, dialect: str, export_level: str | None
 ) -> None:
     body = {
         "model": "fixture",
@@ -36,13 +38,19 @@ async def test_structured_replay_errors_and_non_token_metrics(
             "questions": {"q": {"type": "noul", "instructions": "Useful?"}},
         }
         result["answers"] = {"q": {"type": "noul", "noul": 0.8}}
+    mismatched = deepcopy(result)
+    if dialect == "systemone":
+        mismatched["answers"] = {"wrong": result["answers"]["q"]}
+    else:
+        mismatched["answers"][0]["name"] = "wrong"
     seen = []
 
     async def handle(request: web.Request) -> web.Response:
         seen.append(await request.json(loads=orjson.loads))
         index = len(seen)
         return web.json_response(
-            {} if index == 2 else result, status=429 if index == 3 else 200
+            {2: {}, 4: mismatched}.get(index, result),
+            status=429 if index == 3 else 200,
         )
 
     app = web.Application()
@@ -73,7 +81,7 @@ async def test_structured_replay_errors_and_non_token_metrics(
         "--custom-dataset-type",
         "inputs_json",
         "--request-count",
-        "4",
+        "5",
         "--concurrency",
         "1",
         "--workers-max",
@@ -83,9 +91,9 @@ async def test_structured_replay_errors_and_non_token_metrics(
         "--no-gpu-telemetry",
         "--artifact-dir",
         str(artifact),
-        "--export-level",
-        "raw",
     ]
+    if export_level is not None:
+        command.extend(["--export-level", export_level])
     process = None
     try:
         process = await asyncio.create_subprocess_exec(
@@ -102,14 +110,20 @@ async def test_structured_replay_errors_and_non_token_metrics(
             process.kill()
             await process.wait()
         await runner.cleanup()
-    assert seen == [body] * 4
+    assert seen == [body] * 5
     records = [
         orjson.loads(line)
         for line in (artifact / "profile_export.jsonl").read_bytes().splitlines()
     ]
-    assert len(records) == 4
-    assert sum(bool(record.get("error")) for record in records) == 2
+    assert len(records) == 5
+    errors = [record["error"] for record in records if record.get("error")]
+    assert len(errors) == 3
+    assert any("Missing decision model" in error["message"] for error in errors)
+    assert any("order differ" in error["message"] for error in errors)
+    assert any(error.get("code") == 429 for error in errors)
     for record in records:
+        if not record.get("error"):
+            assert record["metrics"]["request_latency"]["value"] > 0
         assert not {
             "time_to_first_token",
             "inter_token_latency",
