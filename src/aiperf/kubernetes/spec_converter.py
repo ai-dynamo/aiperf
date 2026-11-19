@@ -260,6 +260,8 @@ def validate_remote_datasets_for_kubernetes(config: AIPerfConfig) -> None:
 
 def prepare_workload_spec(
     spec: dict[str, Any],
+    *,
+    validation_context: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Render Config-v2 fields for CR validation and retain sweep templates.
 
@@ -271,11 +273,15 @@ def prepare_workload_spec(
 
     Args:
         spec: Raw AIPerfJob or AIPerfSweep ``spec`` mapping.
+        validation_context: Provenance supplied by the operator for derived
+            trials, not a field accepted from the workload spec.
 
     Returns:
         A rendered workload spec and its post-environment, pre-Jinja envelope.
     """
-    config = load_config_from_mapping(build_config_envelope(spec))
+    config = load_config_from_mapping(
+        build_config_envelope(spec), validation_context=validation_context
+    )
     validate_remote_datasets_for_kubernetes(config)
     envelope_keys = set(AIPerfConfig.model_fields)
     envelope_keys.update(
@@ -310,12 +316,16 @@ def validate_sweep_spec(spec: dict[str, Any]) -> AIPerfSweepSpec:
     return validated
 
 
-def validate_job_spec(spec: dict[str, Any]) -> AIPerfJobSpec:
+def validate_job_spec(
+    spec: dict[str, Any], *, validation_context: dict[str, Any] | None = None
+) -> AIPerfJobSpec:
     """Validate an AIPerfJob spec after rendering its Config-v2 envelope."""
     from aiperf.kubernetes.crd_models import AIPerfJobSpec
 
-    prepared_spec, raw_envelope = prepare_workload_spec(spec)
-    validated = AIPerfJobSpec.model_validate(prepared_spec)
+    prepared_spec, raw_envelope = prepare_workload_spec(
+        spec, validation_context=validation_context
+    )
+    validated = AIPerfJobSpec.model_validate(prepared_spec, context=validation_context)
     validated._raw_envelope = raw_envelope
     return validated
 
@@ -466,6 +476,9 @@ class AIPerfJobSpecConverter:
     job_id: str | None = field(default=None)
     """Optional job identifier; defaults to name if not provided."""
 
+    validation_context: dict[str, Any] | None = field(default=None)
+    """Operator-derived trial provenance retained across config conversion."""
+
     def __post_init__(self) -> None:
         """Set job_id to name if not explicitly provided."""
         if self.job_id is None:
@@ -495,7 +508,7 @@ class AIPerfJobSpecConverter:
         apply_k8s_runtime_config(
             config_dict, self.job_id or self.name, self.namespace, use_aliases=True
         )
-        return AIPerfConfig.model_validate(envelope)
+        return AIPerfConfig.model_validate(envelope, context=self.validation_context)
 
     def to_deployment_config(self) -> DeploymentConfig:
         """Convert CRD spec to DeploymentConfig.
@@ -844,7 +857,9 @@ def apply_k8s_runtime_config(
     config_dict["logging"].setdefault("level", AIPerfLogLevel.INFO)
 
 
-def extract_benchmark_config(spec: dict[str, Any]) -> AIPerfConfig:
+def extract_benchmark_config(
+    spec: dict[str, Any], *, validation_context: dict[str, Any] | None = None
+) -> AIPerfConfig:
     """Extract an AIPerfConfig from an AIPerfJob/AIPerfSweep CRD spec dict.
 
     Reads AIPerfConfig body fields from ``spec.benchmark`` and envelope
@@ -861,6 +876,9 @@ def extract_benchmark_config(spec: dict[str, Any]) -> AIPerfConfig:
 
     Args:
         spec: AIPerfJob spec dict (from CR's ``spec`` key).
+        validation_context: Internal context for a CLI baseline whose
+            dataset/warmup overrides have not yet been applied. Defaults to
+            strict validation for callers that consume the config directly.
 
     Returns:
         Validated AIPerfConfig populated from spec.benchmark plus any
@@ -868,4 +886,4 @@ def extract_benchmark_config(spec: dict[str, Any]) -> AIPerfConfig:
         schema_version) discovered on the spec.
     """
     expanded = expand_config_dict(build_config_envelope(spec))
-    return AIPerfConfig.model_validate(expanded)
+    return AIPerfConfig.model_validate(expanded, context=validation_context)

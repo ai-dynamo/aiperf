@@ -429,6 +429,8 @@ def _expand_capture_pre_jinja(
 def _validate_config_dict(
     data: dict[str, Any],
     file_path: Path | str | None,
+    *,
+    validation_context: dict[str, Any] | None = None,
 ) -> AIPerfConfig:
     """Validate a fully-expanded config dict into an AIPerfConfig.
 
@@ -441,8 +443,9 @@ def _validate_config_dict(
         source_dir = Path(file_path).resolve().parent
     from aiperf.config.config import AIPerfConfig
 
+    context = {**(validation_context or {}), "source_dir": source_dir}
     try:
-        return AIPerfConfig.model_validate(data, context={"source_dir": source_dir})
+        return AIPerfConfig.model_validate(data, context=context)
     except Exception as e:
         if isinstance(e, ConfigurationError):
             raise
@@ -462,6 +465,7 @@ def load_config_from_mapping(
     *,
     file_path: Path | str | None = None,
     substitute_env: bool = True,
+    validation_context: dict[str, Any] | None = None,
 ) -> AIPerfConfig:
     """Load and validate an AIPerf configuration from an in-memory mapping.
 
@@ -474,6 +478,8 @@ def load_config_from_mapping(
         data: AIPerf configuration mapping in envelope or legacy flat shape.
         file_path: Optional source path for diagnostics and relative plot paths.
         substitute_env: Whether to process environment variable substitution.
+        validation_context: Internal caller provenance for model validation;
+            never read from the configuration mapping.
 
     Returns:
         Validated AIPerfConfig with its raw sweep envelope retained.
@@ -505,7 +511,9 @@ def load_config_from_mapping(
     expanded, pre_jinja = _expand_capture_pre_jinja(
         copied, file_path, substitute_env=substitute_env
     )
-    config = _validate_config_dict(expanded, file_path)
+    config = _validate_config_dict(
+        expanded, file_path, validation_context=validation_context
+    )
     config._raw_envelope = pre_jinja
     return config
 

@@ -264,6 +264,7 @@ _VERBATIM_DATASET_FIELDS = (
     ("weka_nested_timestamp_basis", "weka_nested_timestamp_basis", False),
     ("custom_dataset_type", "format", False),
     ("dataset_sampling_strategy", "sampling", False),
+    ("warmup_dataset_entries", "warmup_entries", False),
     ("conversation_num_dataset_entries", "entries", True),
     ("trace_session_sample_ratio", "trace_session_sample_ratio", False),
     ("max_idle_gap_cap_seconds", "max_idle_gap_cap_seconds", False),
@@ -610,6 +611,7 @@ def apply_implicit_media_batch_override(
 
 
 _FILE_DATASET_INCOMPATIBLE_TRIGGERS: tuple[tuple[str, str], ...] = (
+    ("warmup_dataset_entries", "--warmup-dataset-entries"),
     (
         "prompt_prefix_length",
         "--prompt-prefix-length/--prefix-prompt-length",
