@@ -5,6 +5,7 @@ import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
+import orjson
 import pytest
 from pytest import param
 
@@ -19,6 +20,7 @@ from aiperf.common.models import (
     RequestRecord,
     SSEMessage,
     Text,
+    TextResponse,
     TextResponseData,
     Turn,
 )
@@ -26,6 +28,7 @@ from aiperf.common.monotonic_clock import process_clock
 from aiperf.config.phases import ConcurrencyPhase
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.dataset.memory_map_utils import PayloadTurnData
+from aiperf.endpoints.decisions import OpenAIDecisionsEndpoint, SystemOneEndpoint
 from aiperf.endpoints.openai_responses import ResponsesEndpoint
 from aiperf.plugin.enums import EndpointType
 from aiperf.workers.session_manager import UserSession
@@ -38,7 +41,7 @@ from tests.harness.fake_communication import FakeCommunication as FakeCommunicat
 from tests.harness.fake_service_manager import FakeServiceManager as FakeServiceManager
 from tests.harness.fake_tokenizer import FakeTokenizer
 from tests.harness.fake_transport import FakeTransport as FakeTransport
-from tests.unit.endpoints.conftest import create_model_endpoint
+from tests.unit.endpoints.conftest import create_model_endpoint, create_request_info
 
 
 @pytest.mark.parametrize(
@@ -1180,6 +1183,67 @@ class TestFinalizeSessionResponseChaining:
             conversation=conv,
             context_mode=ConversationContextMode.DELTAS_WITHOUT_RESPONSES,
         )
+
+    @pytest.mark.parametrize("dialect", ["decisions", "systemone"])
+    @pytest.mark.parametrize("malformed", [False, True])
+    async def test_extraction_error_propagates_to_session_credit(
+        self,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        monkeypatch: pytest.MonkeyPatch,
+        dialect: str,
+        malformed: bool,
+    ) -> None:
+        endpoint_type = (
+            SystemOneEndpoint if dialect == "systemone" else OpenAIDecisionsEndpoint
+        )
+        endpoint = endpoint_type(create_model_endpoint(dialect))
+        body = {
+            "model": "test-model",
+            "input": "evidence",
+            "questions": [{"type": "predicate", "instructions": "Useful?"}],
+        }
+        response = {
+            "model": "test-model",
+            "answers": [{"type": "predicate", "probability": 0.8}],
+        }
+        if dialect == "systemone":
+            body = {
+                "model": "test-model",
+                "state": "evidence",
+                "questions": {"q": {"type": "noul"}},
+            }
+            response["answers"] = {"q": {"type": "noul", "noul": 0.8}}
+        if malformed:
+            response["answers"] = {} if dialect == "systemone" else []
+        record = RequestRecord(timestamp_ns=1, start_perf_ns=1, end_perf_ns=2)
+        record.request_info = create_request_info(endpoint.model_endpoint)
+        record.request_info.payload_bytes = orjson.dumps(body)
+        record.responses = [
+            TextResponse(perf_ns=2, text=orjson.dumps(response).decode())
+        ]
+        monkeypatch.setattr(mock_worker.inference_client, "endpoint", endpoint)
+        monkeypatch.setattr(mock_worker, "_populate_response_metrics", Mock())
+        send_return = AsyncMock()
+        monkeypatch.setattr(mock_worker.credit_return_push_client, "send", send_return)
+
+        mock_worker._finalize_session_response(
+            self._chaining_session(), sample_credit_context, record
+        )
+        await mock_worker._send_ordered_credit_return(sample_credit_context)
+        returned = send_return.call_args.args[0]
+
+        if malformed:
+            assert record.error is not None
+            assert sample_credit_context.error is record.error
+            assert record._parsed_responses_cache == []
+            assert returned.error is not None
+            assert "Missing decision answers" in returned.error
+        else:
+            assert record.error is None
+            assert sample_credit_context.error is None
+            assert len(record._parsed_responses_cache) == 1
+            assert returned.error is None
 
     async def test_finalize_session_response_error_keeps_last_good_id(
         self,

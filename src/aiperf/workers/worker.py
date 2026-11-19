@@ -2099,6 +2099,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             record,
             capture_assistant_turn=session.should_store_response(),
         )
+        if record.error is not None:
+            credit_context.error = record.error
         if assistant_turn is not None:
             session.store_response(assistant_turn)
         # Response-ID chaining is only coherent for the mode that captures live
