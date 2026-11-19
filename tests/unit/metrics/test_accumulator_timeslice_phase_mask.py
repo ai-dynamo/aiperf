@@ -62,3 +62,26 @@ async def _run_last_slice_ends_with_the_exported_phase() -> None:
     assert (last.start_ns, last.end_ns) == (T0 + 10 * NS_PER_S, T0 + 15 * NS_PER_S)
     assert last.is_complete is False
     assert last.metric_results["request_throughput"].avg == 1.0
+
+
+def test_export_without_timeslices_keeps_run_level_results() -> None:
+    asyncio.run(_run_export_without_timeslices_keeps_run_level_results())
+
+
+async def _run_export_without_timeslices_keeps_run_level_results() -> None:
+    acc = MetricsAccumulator(
+        make_benchmark_run(extra={"artifacts": {"slice_duration": 10}})
+    )
+    for second in range(15):
+        await acc.process_record(_record(second, second, CreditPhase.PROFILING))
+    window = {"start_ns": T0, "end_ns": T0 + 15 * NS_PER_S}
+
+    with_slices = await acc.export_results(
+        ExportContext(**window, phase=CreditPhase.PROFILING)
+    )
+    without = await acc.export_results(
+        ExportContext(**window, phase=CreditPhase.PROFILING, include_timeslices=False)
+    )
+
+    assert with_slices.timeslices and without.timeslices is None
+    assert without.results == with_slices.results

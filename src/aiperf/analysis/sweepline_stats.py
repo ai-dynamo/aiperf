@@ -4,17 +4,41 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
+from numpy.typing import NDArray
 
 from aiperf.analysis.sweepline import (
     ZERO_SWEEP_LINE_STATS,
     FloatArray,
     SweepLineStats,
+    _merge_sorted_unique,
     _step_lookup,
 )
 from aiperf.common.enums import MetricConsoleGroup
 from aiperf.common.finite import scrub_non_finite
 from aiperf.common.models import MetricResult
+
+BoolArray = NDArray[np.bool_]
+
+
+def _window_durations(
+    sorted_ts: FloatArray, lo: int, hi: int, window_start: float, window_end: float
+) -> FloatArray:
+    """Durations of the segments [window_start, ts[lo], ..., ts[hi-1], window_end].
+
+    Equals ``np.diff`` of that grid; the end segments are computed against the
+    window edges directly so no clamp pass over the window is needed.
+    """
+    durations = np.empty(hi - lo + 1, dtype=np.float64)
+    if hi == lo:
+        durations[0] = window_end - window_start
+        return durations
+    durations[0] = sorted_ts[lo] - window_start
+    np.subtract(sorted_ts[lo + 1 : hi], sorted_ts[lo : hi - 1], out=durations[1:-1])
+    durations[-1] = window_end - sorted_ts[hi - 1]
+    return durations
 
 
 def _build_clipped_segments(
@@ -23,33 +47,52 @@ def _build_clipped_segments(
     window_start: float,
     window_end: float,
 ) -> tuple[FloatArray, FloatArray]:
-    """Slice the step function to [window_start, window_end] and return (durations, values)."""
-    lo = max(0, int(np.searchsorted(sorted_ts, window_start, side="right")) - 1)
-    hi = min(
-        len(sorted_ts), int(np.searchsorted(sorted_ts, window_end, side="left")) + 1
-    )
-    ts_slice = sorted_ts[lo:hi]
-    val_slice = values[lo:hi]
+    """Slice the step function to [window_start, window_end] and return (durations, values).
 
-    n_s = len(ts_slice)
-    seg_starts = np.empty(n_s + 1, dtype=np.float64)
-    seg_values = np.empty(n_s + 1, dtype=np.float64)
-
-    seg_starts[0] = window_start
-    seg_values[0] = float(values[lo - 1]) if lo > 0 else 0.0
-    seg_starts[1:] = ts_slice
-    seg_values[1:] = val_slice
-
-    seg_ends = np.empty(n_s + 1, dtype=np.float64)
-    seg_ends[:-1] = seg_starts[1:]
-    seg_ends[-1] = window_end
-
-    seg_starts = np.maximum(seg_starts, window_start)
-    seg_ends = np.minimum(seg_ends, window_end)
-    durations = np.maximum(seg_ends - seg_starts, 0.0)
-
+    The value held at ``window_start`` is that of the last event at or before
+    it (0 before the first event); zero-length segments from duplicate
+    timestamps are dropped. Requires ``window_start < window_end``.
+    """
+    # Events strictly inside the window are ts[lo:hi]; event lo - 1 (or the
+    # implicit zero before the first event) holds from window_start.
+    lo = int(np.searchsorted(sorted_ts, window_start, side="right"))
+    hi = int(np.searchsorted(sorted_ts, window_end, side="left"))
+    durations = _window_durations(sorted_ts, lo, hi, window_start, window_end)
+    seg_values = values[lo - 1 : hi] if lo > 0 else np.concatenate(([0.0], values[:hi]))
     mask = durations > 0
     return durations[mask], seg_values[mask]
+
+
+def _segment_stats(
+    val: FloatArray, dur: FloatArray, total_dur: float
+) -> SweepLineStats:
+    """Duration-weighted stats of ``val`` over segments of length ``dur``."""
+    avg = float(np.sum(val * dur) / total_dur)
+    mn = float(np.min(val))
+    mx = float(np.max(val))
+    # The run-level window spans every event, so square and weight the
+    # deviations in place, drop the permutation once applied and turn the
+    # cumulative duration into the CDF in place rather than holding a chain of
+    # full-length temporaries.
+    dev = val - avg
+    np.square(dev, out=dev)
+    np.multiply(dev, dur, out=dev)
+    std = float(np.sqrt(np.sum(dev) / total_dur))
+    del dev
+
+    order = np.argsort(val)
+    sorted_val = val[order]
+    cum_dur = np.cumsum(dur[order])
+    del order
+    cum_dur /= cum_dur[-1]
+
+    indices = np.searchsorted(cum_dur, [0.50, 0.90, 0.95, 0.99])
+    np.minimum(indices, len(sorted_val) - 1, out=indices)
+    p50, p90, p95, p99 = sorted_val[indices].tolist()
+
+    return SweepLineStats(
+        avg=avg, min=mn, max=mx, p50=p50, p90=p90, p95=p95, p99=p99, std=std
+    )
 
 
 def compute_time_weighted_stats(
@@ -71,47 +114,80 @@ def compute_time_weighted_stats(
     dur, val = _build_clipped_segments(sorted_ts, values, window_start, window_end)
     if dur.size == 0:
         return ZERO_SWEEP_LINE_STATS
-
-    avg = float(np.sum(val * dur) / total_dur)
-    mn = float(np.min(val))
-    mx = float(np.max(val))
-    std = float(np.sqrt(np.sum(dur * (val - avg) ** 2) / total_dur))
-
-    order = np.argsort(val)
-    sorted_val = val[order]
-    sorted_dur = dur[order]
-    cum_dur = np.cumsum(sorted_dur)
-    cum_frac = cum_dur / cum_dur[-1]
-
-    indices = np.searchsorted(cum_frac, [0.50, 0.90, 0.95, 0.99])
-    np.minimum(indices, len(sorted_val) - 1, out=indices)
-    p50, p90, p95, p99 = sorted_val[indices].tolist()
-
-    return SweepLineStats(
-        avg=avg, min=mn, max=mx, p50=p50, p90=p90, p95=p95, p99=p99, std=std
-    )
+    return _segment_stats(val, dur, total_dur)
 
 
-def _build_active_window_grid(
-    rate_ts: FloatArray,
-    mask_ts: FloatArray,
-    window_start: float,
-    window_end: float,
-) -> FloatArray:
-    rate_lo = int(np.searchsorted(rate_ts, window_start, side="right"))
-    rate_hi = int(np.searchsorted(rate_ts, window_end, side="left"))
-    mask_lo = int(np.searchsorted(mask_ts, window_start, side="right"))
-    mask_hi = int(np.searchsorted(mask_ts, window_end, side="left"))
+@dataclass(frozen=True, slots=True)
+class ActiveCurve:
+    """A rate step function joined with an activity mask on their merged event grid.
 
-    return np.unique(
-        np.concatenate(
-            [
-                np.array([window_start, window_end], dtype=np.float64),
-                rate_ts[rate_lo:rate_hi],
-                mask_ts[mask_lo:mask_hi],
-            ]
-        )
-    )
+    Built once per (rate, mask) pair so every window evaluation is a slice of
+    the precomputed grid instead of a merge and two step lookups over the
+    window's events.
+    """
+
+    grid: FloatArray
+    """Sorted unique timestamps of both curves' events."""
+    rate: FloatArray
+    """Rate value held from each grid point."""
+    active: BoolArray
+    """Whether the mask is strictly positive from each grid point."""
+
+    @classmethod
+    def from_step_functions(
+        cls,
+        rate_ts: FloatArray,
+        rate_vals: FloatArray,
+        mask_ts: FloatArray,
+        mask_vals: FloatArray,
+    ) -> ActiveCurve:
+        """Join a rate curve onto a mask curve.
+
+        Either curve being empty yields an empty grid, which every window
+        evaluates to ``ZERO_SWEEP_LINE_STATS``.
+        """
+        if len(rate_ts) == 0 or len(mask_ts) == 0:
+            empty = np.zeros(0, dtype=np.float64)
+            return cls(empty, empty, np.zeros(0, dtype=np.bool_))
+        grid = _merge_sorted_unique(rate_ts, mask_ts)
+        # A curve already defined on the merged grid (e.g. a per-user quotient
+        # of these same events) needs no lookup, and no second copy.
+        if len(grid) == len(rate_ts) and np.array_equal(grid, rate_ts):
+            grid, rate = rate_ts, rate_vals
+        else:
+            rate = _step_lookup(rate_ts, rate_vals, grid)
+        active = _step_lookup(mask_ts, mask_vals, grid) > 0
+        return cls(grid, rate, active)
+
+    def window_stats(self, window_start: float, window_end: float) -> SweepLineStats:
+        """Time-weighted stats of the rate over the window's active segments."""
+        total_dur = window_end - window_start
+        if total_dur <= 0 or len(self.grid) == 0:
+            return ZERO_SWEEP_LINE_STATS
+
+        grid = self.grid
+        lo = int(np.searchsorted(grid, window_start, side="right"))
+        hi = int(np.searchsorted(grid, window_end, side="left"))
+        durations = _window_durations(grid, lo, hi, window_start, window_end)
+
+        # The segment starting at window_start holds the value of the last
+        # grid point at or before it; the rest start at grid points.
+        rate_at = np.empty(len(durations), dtype=np.float64)
+        rate_at[0] = self.rate[lo - 1] if lo > 0 else 0.0
+        rate_at[1:] = self.rate[lo:hi]
+        active = np.empty(len(durations), dtype=np.bool_)
+        active[0] = self.active[lo - 1] if lo > 0 else False
+        active[1:] = self.active[lo:hi]
+        active &= durations > 0
+        if not active.any():
+            return ZERO_SWEEP_LINE_STATS
+
+        val = rate_at[active]
+        dur = durations[active]
+        active_dur = float(dur.sum())
+        if active_dur <= 0:
+            return ZERO_SWEEP_LINE_STATS
+        return _segment_stats(val, dur, active_dur)
 
 
 def compute_active_weighted_stats(
@@ -132,6 +208,9 @@ def compute_active_weighted_stats(
     reflects intensity *while the phase is happening* rather than averaged
     over the whole run window.
 
+    One-shot form of :meth:`ActiveCurve.window_stats`; callers evaluating
+    many windows should build the :class:`ActiveCurve` once.
+
     Args:
         rate_ts: Sorted event timestamps of the rate step function.
         rate_vals: Rate values at each rate_ts (held until next event).
@@ -144,48 +223,11 @@ def compute_active_weighted_stats(
         SweepLineStats over the active-only segments. Returns
         ZERO_SWEEP_LINE_STATS if no active segments overlap the window.
     """
-    total_dur = window_end - window_start
-    if total_dur <= 0 or len(rate_ts) == 0 or len(mask_ts) == 0:
+    if window_end - window_start <= 0:
         return ZERO_SWEEP_LINE_STATS
-
-    # Window edges cover exact-boundary events; _step_lookup resolves the value
-    # held from any predecessor outside the window.
-    grid = _build_active_window_grid(rate_ts, mask_ts, window_start, window_end)
-    if len(grid) < 2:
-        return ZERO_SWEEP_LINE_STATS
-
-    seg_starts = grid[:-1]
-    seg_durations = np.diff(grid)
-    rate_at = _step_lookup(rate_ts, rate_vals, seg_starts)
-    mask_at = _step_lookup(mask_ts, mask_vals, seg_starts)
-
-    active = (mask_at > 0) & (seg_durations > 0)
-    if not active.any():
-        return ZERO_SWEEP_LINE_STATS
-
-    val = rate_at[active]
-    dur = seg_durations[active]
-    active_dur = float(dur.sum())
-    if active_dur <= 0:
-        return ZERO_SWEEP_LINE_STATS
-
-    avg = float(np.sum(val * dur) / active_dur)
-    mn = float(np.min(val))
-    mx = float(np.max(val))
-    std = float(np.sqrt(np.sum(dur * (val - avg) ** 2) / active_dur))
-
-    order = np.argsort(val)
-    sorted_val = val[order]
-    sorted_dur = dur[order]
-    cum_dur = np.cumsum(sorted_dur)
-    cum_frac = cum_dur / cum_dur[-1]
-    indices = np.searchsorted(cum_frac, [0.50, 0.90, 0.95, 0.99])
-    np.minimum(indices, len(sorted_val) - 1, out=indices)
-    p50, p90, p95, p99 = sorted_val[indices].tolist()
-
-    return SweepLineStats(
-        avg=avg, min=mn, max=mx, p50=p50, p90=p90, p95=p95, p99=p99, std=std
-    )
+    return ActiveCurve.from_step_functions(
+        rate_ts, rate_vals, mask_ts, mask_vals
+    ).window_stats(window_start, window_end)
 
 
 def metric_result_from_sweep_line_stats(

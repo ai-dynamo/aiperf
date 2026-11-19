@@ -98,6 +98,11 @@ class ExportContext:
     warmup_end_ns: int | None = None
     """Exclusive end of the warmup window (ns); see ``warmup_start_ns``."""
 
+    include_timeslices: bool = True
+    """Compute per-timeslice results. Exports whose consumer only reads the
+    run-level summary (warmup, per-phase breakdowns) turn this off, since the
+    timeslices cost as much as the summary and would be discarded."""
+
 
 @dataclass(slots=True)
 class SummaryContext:

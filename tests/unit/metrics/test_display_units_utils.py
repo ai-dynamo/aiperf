@@ -131,3 +131,34 @@ class TestDisplayUnitsUtils:
         assert out.unit == "ms"
         assert out.avg == 1_000_000.0
         assert warn_mock.call_count == 1
+
+    def test_converted_copy_marks_only_converted_fields_as_set(self):
+        reg = FakeRegistry(base_unit="ns", display_unit="ms")
+        src = MetricResult(
+            tag="time_to_first_token",
+            unit="ns",
+            header="TTFT",
+            avg=1_000_000.0,
+            p95=None,
+            count=3,
+        )
+        out = to_display_unit(src, reg)
+        assert out.model_fields_set == {"tag", "unit", "header", "avg", "p95", "count"}
+        assert out.model_dump(exclude_none=True) == {
+            "tag": "time_to_first_token",
+            "unit": "ms",
+            "header": "TTFT",
+            "avg": 1.0,
+            "count": 3,
+        }
+        assert (
+            src.model_dump()
+            == MetricResult(
+                tag="time_to_first_token",
+                unit="ns",
+                header="TTFT",
+                avg=1_000_000.0,
+                p95=None,
+                count=3,
+            ).model_dump()
+        )
