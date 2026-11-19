@@ -30,7 +30,7 @@ The judge can be any OpenAI-compatible chat endpoint. It is configured with envi
 | `AIPERF_ACCURACY_JUDGE_TIMEOUT` | `120` | Seconds per request |
 | `AIPERF_ACCURACY_JUDGE_MAX_ATTEMPTS` | `3` | Attempts before a response counts as a grader error |
 
-A run with no URL or model, or a URL without an `http://`/`https://` scheme, fails preflight before any service starts. HTTP 408, 409, 425, 429, 500, 502, 503 and 504 responses are retried with backoff; other statuses (such as 401) fail at once. For a rate-limited judge, lower `JUDGE_CONCURRENCY`, because the total load on the judge is that value times the number of record processors.
+A run with no URL or model, or a URL without an `http://`/`https://` scheme, fails preflight before any service starts. HTTP 408, 409, 425, 429, 500, 502, 503 and 504 responses are retried with backoff, waiting at least as long as a `Retry-After` header in seconds (capped by `JUDGE_TIMEOUT`); other statuses (such as 401) fail at once. For a rate-limited judge, lower `JUDGE_CONCURRENCY`, because the total load on the judge is that value times the number of record processors.
 
 > [!WARNING]
 > Use a judge endpoint **separate** from the server you are benchmarking. Grading runs inline while the benchmark is still sending traffic, so a judge on the same server makes that run's latency and throughput numbers invalid.

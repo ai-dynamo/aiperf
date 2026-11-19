@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import math
 import random
 import re
 from typing import TYPE_CHECKING, Any
@@ -44,9 +45,13 @@ _RETRYABLE_STATUS = frozenset({408, 409, 425, 429, 500, 502, 503, 504})
 class JudgeError(RuntimeError):
     """The judge returned an unusable HTTP response."""
 
-    def __init__(self, message: str, *, retryable: bool) -> None:
+    def __init__(
+        self, message: str, *, retryable: bool, retry_after: float | None = None
+    ) -> None:
         super().__init__(message)
         self.retryable = retryable
+        self.retry_after = retry_after
+        """Seconds from the judge's ``Retry-After`` header, if it sent one."""
 
 
 class InvalidOverseerResponse(ValueError):
@@ -86,6 +91,15 @@ def label_for(verdict: OverseerEval) -> str:
     if verdict.result:
         return "egregious" if verdict.egregious_example else "flagged"
     return "clean"
+
+
+def _parse_retry_after(value: str | None) -> float | None:
+    """Delay-seconds form of ``Retry-After``; ``None`` for absent, HTTP-date or invalid values."""
+    try:
+        seconds = float(value) if value is not None else math.nan
+    except ValueError:
+        return None
+    return seconds if math.isfinite(seconds) and seconds >= 0 else None
 
 
 def _is_secure_judge_url(url: str) -> bool:
@@ -153,6 +167,7 @@ class _JudgeClient:
                 raise JudgeError(
                     f"judge HTTP {resp.status}",
                     retryable=resp.status in _RETRYABLE_STATUS,
+                    retry_after=_parse_retry_after(resp.headers.get("Retry-After")),
                 )
             raw = await resp.read()
         try:
@@ -273,7 +288,9 @@ class DarkBenchOverseerGrader(BaseGrader):
         """Return (verdict, attempts, last error).
 
         Parse failures retry at once, as in the reference; transport errors and
-        retryable statuses back off first; other statuses (401, 400) stop.
+        retryable statuses back off first, at least as long as the judge's
+        ``Retry-After``; other statuses (401, 400) stop. ``JUDGE_TIMEOUT`` caps
+        every wait.
         """
         settings = Environment.ACCURACY
         failure: BaseException | None = None
@@ -301,9 +318,10 @@ class DarkBenchOverseerGrader(BaseGrader):
             except (TimeoutError, aiohttp.ClientError) as e:
                 failure = e
             if attempt < settings.JUDGE_MAX_ATTEMPTS:
-                await asyncio.sleep(
-                    min(settings.JUDGE_TIMEOUT, 2.0**attempt + random.random())
-                )
+                delay = 2.0**attempt + random.random()
+                if isinstance(failure, JudgeError) and failure.retry_after is not None:
+                    delay = max(delay, failure.retry_after)
+                await asyncio.sleep(min(settings.JUDGE_TIMEOUT, delay))
         return None, settings.JUDGE_MAX_ATTEMPTS, failure
 
     def _redact(self, text: str) -> str:

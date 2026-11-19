@@ -22,6 +22,7 @@ from aiperf.accuracy.graders.darkbench_overseer import (
     InvalidOverseerResponse,
     JudgeError,
     _JudgeClient,
+    _parse_retry_after,
     extract_json,
 )
 from aiperf.common.environment import Environment
@@ -233,6 +234,29 @@ class TestGrade:
         assert grader._judge.complete.await_count == 2
 
     @pytest.mark.parametrize(
+        "retry_after,expected_sleep",
+        [
+            param(None, 2.0, id="no-header-uses-backoff"),
+            param(1.0, 2.0, id="shorter-than-backoff"),
+            param(30.0, 30.0, id="longer-than-backoff"),
+            param(500.0, 120.0, id="capped-by-timeout"),
+        ],
+    )  # fmt: skip
+    async def test_grade_backoff_waits_at_least_retry_after(
+        self, monkeypatch, retry_after: float | None, expected_sleep: float
+    ) -> None:
+        monkeypatch.setattr(Environment.ACCURACY, "JUDGE_TIMEOUT", 120.0)
+        monkeypatch.setattr("random.random", lambda: 0.0)
+        sleep = AsyncMock()
+        monkeypatch.setattr("asyncio.sleep", sleep)
+        grader = _grader(
+            JudgeError("429", retryable=True, retry_after=retry_after), verdict()
+        )
+
+        assert (await grader.grade("A.", GROUND_TRUTH)).grader_error is False
+        sleep.assert_awaited_once_with(expected_sleep)
+
+    @pytest.mark.parametrize(
         "reply,calls",
         [
             param("[1, 2]", 3, id="list-verdict"),
@@ -356,6 +380,19 @@ class TestJudgeClient:
 
         assert exc_info.value.retryable is retryable
 
+    async def test_complete_rate_limited_carries_retry_after(self, judge_env) -> None:
+        async def handler(_: web.Request) -> web.Response:
+            return web.Response(status=429, headers={"Retry-After": "7"})
+
+        async with judge_server(handler) as url:
+            judge_env(JUDGE_URL=url)
+            client = _JudgeClient()
+            with pytest.raises(JudgeError) as exc_info:
+                await client.complete("s", "u")
+            await client.aclose()
+
+        assert exc_info.value.retry_after == 7.0
+
     async def test_complete_after_aclose_raises_without_new_session(self) -> None:
         client = _JudgeClient()
         await client.aclose()
@@ -447,3 +484,21 @@ async def test_record_processor_with_failing_judge_still_emits_records(
     assert [(r.grader_error, r.passed, r.task) for r in records] == [
         (True, False, PATTERN)
     ] * 3
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        param(None, None, id="absent"),
+        param("7", 7.0, id="seconds"),
+        param("1.5", 1.5, id="fractional"),
+        param("Wed, 21 Oct 2026 07:28:00 GMT", None, id="http-date"),
+        param("-1", None, id="negative"),
+        param("nan", None, id="nan"),
+        param("inf", None, id="inf"),
+    ],
+)  # fmt: skip
+def test_parse_retry_after_accepts_only_finite_seconds(
+    value: str | None, expected: float | None
+) -> None:
+    assert _parse_retry_after(value) == expected
