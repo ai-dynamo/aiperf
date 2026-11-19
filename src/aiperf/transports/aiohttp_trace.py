@@ -56,7 +56,9 @@ DNS Resolution
 """
 
 import asyncio
+from dataclasses import dataclass
 from time import perf_counter_ns, time_ns
+from types import SimpleNamespace
 
 import aiohttp
 
@@ -64,292 +66,301 @@ from aiperf.common.models import AioHttpTraceData
 from aiperf.common.redact import redact_headers
 
 
-def create_aiohttp_trace_config(
+@dataclass(slots=True)
+class AioHttpRequestTrace:
+    """Per-request trace state, carried through aiohttp as ``trace_request_ctx``.
+
+    The handlers below are registered once on a shared ``TraceConfig`` and
+    read this object from ``trace_config_ctx.trace_request_ctx``, so a request
+    allocates one small state object instead of a ``TraceConfig`` with fifteen
+    closures (which aiohttp ties into a reference cycle that workers, running
+    with gc disabled, never free).
+    """
+
+    trace_data: AioHttpTraceData
+    """The AioHttpTraceData instance to populate."""
+    on_request_sent_event: asyncio.Event | None = None
+    """Set when the full request (headers + body) is sent, or on exception."""
+    expected_request_body_size: int | None = None
+    """Body size in bytes at which ``on_request_sent_event`` fires."""
+    collect_chunks: bool = False
+    """Populate per-chunk (timestamp, size) lists, not just the aggregates."""
+    bytes_sent: int = 0
+    """Request bytes sent so far."""
+    awaiting_first_chunk: bool = True
+    """True until the first response chunk arrives."""
+
+
+def start_request_trace(
     trace_data: AioHttpTraceData,
     on_request_sent_event: asyncio.Event | None = None,
     expected_request_body_size: int | None = None,
     collect_chunks: bool = False,
-) -> aiohttp.TraceConfig:
-    """Create a TraceConfig for aiohttp that populates AioHttpTraceData with timestamps.
+) -> AioHttpRequestTrace:
+    """Stamp the reference timestamps on ``trace_data`` and return the request's trace state.
 
     Timestamps are captured using `time.perf_counter_ns()` for high-precision
     duration measurements. For HTTPS, TCP timing includes TLS handshake.
-
     See module docstring for lifecycle diagrams.
-
-    Args:
-        trace_data: The AioHttpTraceData instance to populate.
-        on_request_sent_event: Optional asyncio.Event to set when the full request
-            (headers + body) is sent. Useful for request cancellation timing.
-        expected_request_body_size: Expected size of request body in bytes. If provided
-            along with on_request_sent_event, the event will be triggered when this
-            many bytes have been sent via on_request_chunk_sent.
-        collect_chunks: If True, populate request_chunks/response_chunks lists with
-            per-chunk (timestamp, size) tuples. If False (default), only aggregate
-            metrics (counts, totals, first/last timestamps) are tracked.
-
-    Returns:
-        A TraceConfig to attach to an aiohttp ClientSession.
     """
-    trace_config = aiohttp.TraceConfig()
-
-    # Cache perf_counter_ns function to avoid attribute lookup from global scope
-    _perf_counter_ns = perf_counter_ns
-
-    start_perf_ns, start_time_ns = _perf_counter_ns(), time_ns()
-
+    start_perf_ns, start_time_ns = perf_counter_ns(), time_ns()
     trace_data.reference_time_ns = start_time_ns
     trace_data.reference_perf_ns = start_perf_ns
-
-    # Track bytes sent for body completion detection
-    bytes_sent = 0
-
-    # Track whether we're awaiting the first response chunk for efficient start time recording
-    awaiting_first_chunk = True
-
-    # Cache list.append method to avoid attribute lookup (only when collecting chunks)
-    _append_request_chunk = trace_data.request_chunks.append if collect_chunks else None
-    _append_response_chunk = (
-        trace_data.response_chunks.append if collect_chunks else None
+    return AioHttpRequestTrace(
+        trace_data=trace_data,
+        on_request_sent_event=on_request_sent_event,
+        expected_request_body_size=expected_request_body_size,
+        collect_chunks=collect_chunks,
     )
 
-    # ============================================================================
-    # CONNECTION POOL EVENTS
-    # ============================================================================
 
-    async def on_connection_queued_start(
-        session: aiohttp.ClientSession,
-        trace_config_ctx: aiohttp.tracing.SimpleNamespace,
-        params: aiohttp.TraceConnectionQueuedStartParams,
-    ) -> None:
-        """Called when request starts waiting for an available connection from pool."""
-        trace_data.connection_pool_wait_start_perf_ns = _perf_counter_ns()
-
-    async def on_connection_queued_end(
-        session: aiohttp.ClientSession,
-        trace_config_ctx: aiohttp.tracing.SimpleNamespace,
-        params: aiohttp.TraceConnectionQueuedEndParams,
-    ) -> None:
-        """Called when request obtained an available connection from pool."""
-        trace_data.connection_pool_wait_end_perf_ns = _perf_counter_ns()
-
-    # ============================================================================
-    # CONNECTION CREATION EVENTS
-    # ============================================================================
-
-    async def on_connection_create_start(
-        session: aiohttp.ClientSession,
-        trace_config_ctx: aiohttp.tracing.SimpleNamespace,
-        params: aiohttp.TraceConnectionCreateStartParams,
-    ) -> None:
-        """Called when creation of a new connection starts."""
-        trace_data.tcp_connect_start_perf_ns = _perf_counter_ns()
-
-    async def on_connection_create_end(
-        session: aiohttp.ClientSession,
-        trace_config_ctx: aiohttp.tracing.SimpleNamespace,
-        params: aiohttp.TraceConnectionCreateEndParams,
-    ) -> None:
-        """Called when creation of a new connection completes."""
-        trace_data.tcp_connect_end_perf_ns = _perf_counter_ns()
-
-    # ============================================================================
-    # CONNECTION REUSE EVENT
-    # ============================================================================
-
-    async def on_connection_reuseconn(
-        session: aiohttp.ClientSession,
-        trace_config_ctx: aiohttp.tracing.SimpleNamespace,
-        params: aiohttp.TraceConnectionReuseconnParams,
-    ) -> None:
-        """Called when an existing connection is reused from pool."""
-        trace_data.connection_reused_perf_ns = _perf_counter_ns()
-
-    # ============================================================================
-    # DNS RESOLUTION EVENTS
-    # ============================================================================
-
-    async def on_dns_resolvehost_start(
-        session: aiohttp.ClientSession,
-        trace_config_ctx: aiohttp.tracing.SimpleNamespace,
-        params: aiohttp.TraceDnsResolveHostStartParams,
-    ) -> None:
-        """Called when DNS resolution starts."""
-        trace_data.dns_lookup_start_perf_ns = _perf_counter_ns()
-
-    async def on_dns_resolvehost_end(
-        session: aiohttp.ClientSession,
-        trace_config_ctx: aiohttp.tracing.SimpleNamespace,
-        params: aiohttp.TraceDnsResolveHostEndParams,
-    ) -> None:
-        """Called when DNS resolution completes."""
-        trace_data.dns_lookup_end_perf_ns = _perf_counter_ns()
-
-    async def on_dns_cache_hit(
-        session: aiohttp.ClientSession,
-        trace_config_ctx: aiohttp.tracing.SimpleNamespace,
-        params: aiohttp.TraceDnsCacheHitParams,
-    ) -> None:
-        """Called when DNS cache hit occurs."""
-        trace_data.dns_cache_hit_perf_ns = _perf_counter_ns()
-
-    async def on_dns_cache_miss(
-        session: aiohttp.ClientSession,
-        trace_config_ctx: aiohttp.tracing.SimpleNamespace,
-        params: aiohttp.TraceDnsCacheMissParams,
-    ) -> None:
-        """Called when DNS cache miss occurs."""
-        trace_data.dns_cache_miss_perf_ns = _perf_counter_ns()
-
-    # ============================================================================
-    # REQUEST EVENTS
-    # ============================================================================
-
-    async def on_request_start(
-        session: aiohttp.ClientSession,
-        trace_config_ctx: aiohttp.tracing.SimpleNamespace,
-        params: aiohttp.TraceRequestStartParams,
-    ) -> None:
-        """Called when HTTP request starts being sent."""
-        trace_data.request_send_start_perf_ns = _perf_counter_ns()
-
-    async def on_request_chunk_sent(
-        session: aiohttp.ClientSession,
-        trace_config_ctx: aiohttp.tracing.SimpleNamespace,
-        params: aiohttp.TraceRequestChunkSentParams,
-    ) -> None:
-        """Called when each request chunk is sent. Track total bytes sent and trigger event when request body is fully sent."""
-        nonlocal bytes_sent
-        perf_ns = _perf_counter_ns()
-        chunk_size = len(params.chunk)
-        trace_data.request_send_end_perf_ns = perf_ns
-        trace_data.request_chunks_count += 1
-        trace_data.request_bytes_total += chunk_size
-        if _append_request_chunk is not None:
-            _append_request_chunk((perf_ns, chunk_size))
-        bytes_sent += chunk_size
-
-        # Trigger event when request body is fully sent
-        if (
-            on_request_sent_event is not None
-            and expected_request_body_size is not None
-            and bytes_sent >= expected_request_body_size
-        ):
-            on_request_sent_event.set()
-
-    async def on_request_end(
-        session: aiohttp.ClientSession,
-        trace_config_ctx: aiohttp.tracing.SimpleNamespace,
-        params: aiohttp.TraceRequestEndParams,
-    ) -> None:
-        """Called when HTTP request finishes being SENT and the response headers have been received.
-        This is NOT the end of the full request/response cycle.
+def _state(trace_config_ctx: SimpleNamespace) -> AioHttpRequestTrace:
+    return trace_config_ctx.trace_request_ctx
 
 
-        Note: At this point, response headers have been received, so we capture
-        response metadata here (status code and headers).
-        """
-        trace_data.response_headers_received_perf_ns = _perf_counter_ns()
+# ============================================================================
+# CONNECTION POOL EVENTS
+# ============================================================================
 
-        # Capture response metadata (status and headers are available at this point)
-        trace_data.response_status_code = params.response.status
-        trace_data.response_reason = params.response.reason
-        trace_data.response_headers = dict(params.response.headers)
 
-        # Capture connection socket info (works for both new and reused connections)
-        if (conn := params.response.connection) and (transport := conn.transport):
-            if sockname := transport.get_extra_info("sockname"):
-                trace_data.local_ip = sockname[0]
-                trace_data.local_port = sockname[1]
+async def on_connection_queued_start(
+    session: aiohttp.ClientSession,
+    trace_config_ctx: SimpleNamespace,
+    params: aiohttp.TraceConnectionQueuedStartParams,
+) -> None:
+    """Called when request starts waiting for an available connection from pool."""
+    _state(
+        trace_config_ctx
+    ).trace_data.connection_pool_wait_start_perf_ns = perf_counter_ns()
 
-            if peername := transport.get_extra_info("peername"):
-                trace_data.remote_ip = peername[0]
-                trace_data.remote_port = peername[1]
 
-    async def on_request_headers_sent(
-        session: aiohttp.ClientSession,
-        trace_config_ctx: aiohttp.tracing.SimpleNamespace,
-        params: aiohttp.TraceRequestHeadersSentParams,
-    ) -> None:
-        """Called when request headers finish being sent."""
-        trace_data.request_headers_sent_perf_ns = _perf_counter_ns()
-        trace_data.request_headers = redact_headers(dict(params.headers))
+async def on_connection_queued_end(
+    session: aiohttp.ClientSession,
+    trace_config_ctx: SimpleNamespace,
+    params: aiohttp.TraceConnectionQueuedEndParams,
+) -> None:
+    """Called when request gets an available connection from pool."""
+    _state(
+        trace_config_ctx
+    ).trace_data.connection_pool_wait_end_perf_ns = perf_counter_ns()
 
-    # ============================================================================
-    # RESPONSE EVENTS
-    # ============================================================================
 
-    async def on_response_chunk_received(
-        session: aiohttp.ClientSession,
-        trace_config_ctx: aiohttp.tracing.SimpleNamespace,
-        params: aiohttp.TraceResponseChunkReceivedParams,
-    ) -> None:
-        """Called when each response chunk is received.
+# ============================================================================
+# TCP CONNECTION EVENTS
+# ============================================================================
 
-        Note: Response metadata (status/headers) is captured in on_request_end,
-        not here, since TraceResponseChunkReceivedParams doesn't include the response object.
-        """
-        nonlocal awaiting_first_chunk
-        perf_ns = _perf_counter_ns()
-        chunk_size = len(params.chunk)
-        trace_data.response_chunks_count += 1
-        trace_data.response_bytes_total += chunk_size
-        if _append_response_chunk is not None:
-            _append_response_chunk((perf_ns, chunk_size))
 
-        # Track start/end timestamps for duration calculations
-        # Use boolean flag instead of None check for ~6% performance improvement
-        if awaiting_first_chunk:
-            trace_data.response_receive_start_perf_ns = perf_ns
-            awaiting_first_chunk = False
-        trace_data.response_receive_end_perf_ns = perf_ns
+async def on_connection_create_start(
+    session: aiohttp.ClientSession,
+    trace_config_ctx: SimpleNamespace,
+    params: aiohttp.TraceConnectionCreateStartParams,
+) -> None:
+    """Called when TCP connection creation starts (includes TLS for HTTPS)."""
+    _state(trace_config_ctx).trace_data.tcp_connect_start_perf_ns = perf_counter_ns()
 
-    # ============================================================================
-    # EXCEPTION EVENTS
-    # ============================================================================
 
-    async def on_request_exception(
-        session: aiohttp.ClientSession,
-        trace_config_ctx: aiohttp.tracing.SimpleNamespace,
-        params: aiohttp.TraceRequestExceptionParams,
-    ) -> None:
-        """Called when exception occurs during request."""
-        trace_data.error_timestamp_perf_ns = _perf_counter_ns()
-        # Set the event on exception so callers waiting for request_sent don't hang
-        if on_request_sent_event is not None:
-            on_request_sent_event.set()
+async def on_connection_create_end(
+    session: aiohttp.ClientSession,
+    trace_config_ctx: SimpleNamespace,
+    params: aiohttp.TraceConnectionCreateEndParams,
+) -> None:
+    """Called when TCP connection creation ends (includes TLS for HTTPS)."""
+    _state(trace_config_ctx).trace_data.tcp_connect_end_perf_ns = perf_counter_ns()
 
-    # ============================================================================
-    # REGISTER ALL CALLBACKS
-    # ============================================================================
 
-    # Connection pool events
+async def on_connection_reuseconn(
+    session: aiohttp.ClientSession,
+    trace_config_ctx: SimpleNamespace,
+    params: aiohttp.TraceConnectionReuseconnParams,
+) -> None:
+    """Called when an existing connection is reused from the pool."""
+    _state(trace_config_ctx).trace_data.connection_reused_perf_ns = perf_counter_ns()
+
+
+# ============================================================================
+# DNS EVENTS
+# ============================================================================
+
+
+async def on_dns_resolvehost_start(
+    session: aiohttp.ClientSession,
+    trace_config_ctx: SimpleNamespace,
+    params: aiohttp.TraceDnsResolveHostStartParams,
+) -> None:
+    """Called when DNS resolution starts."""
+    _state(trace_config_ctx).trace_data.dns_lookup_start_perf_ns = perf_counter_ns()
+
+
+async def on_dns_resolvehost_end(
+    session: aiohttp.ClientSession,
+    trace_config_ctx: SimpleNamespace,
+    params: aiohttp.TraceDnsResolveHostEndParams,
+) -> None:
+    """Called when DNS resolution ends."""
+    _state(trace_config_ctx).trace_data.dns_lookup_end_perf_ns = perf_counter_ns()
+
+
+async def on_dns_cache_hit(
+    session: aiohttp.ClientSession,
+    trace_config_ctx: SimpleNamespace,
+    params: aiohttp.TraceDnsCacheHitParams,
+) -> None:
+    """Called when DNS cache is hit."""
+    _state(trace_config_ctx).trace_data.dns_cache_hit_perf_ns = perf_counter_ns()
+
+
+async def on_dns_cache_miss(
+    session: aiohttp.ClientSession,
+    trace_config_ctx: SimpleNamespace,
+    params: aiohttp.TraceDnsCacheMissParams,
+) -> None:
+    """Called when DNS cache is missed."""
+    _state(trace_config_ctx).trace_data.dns_cache_miss_perf_ns = perf_counter_ns()
+
+
+# ============================================================================
+# REQUEST EVENTS
+# ============================================================================
+
+
+async def on_request_start(
+    session: aiohttp.ClientSession,
+    trace_config_ctx: SimpleNamespace,
+    params: aiohttp.TraceRequestStartParams,
+) -> None:
+    """Called when HTTP request starts being sent."""
+    _state(trace_config_ctx).trace_data.request_send_start_perf_ns = perf_counter_ns()
+
+
+async def on_request_chunk_sent(
+    session: aiohttp.ClientSession,
+    trace_config_ctx: SimpleNamespace,
+    params: aiohttp.TraceRequestChunkSentParams,
+) -> None:
+    """Called when each request chunk is sent. Track total bytes sent and trigger event when request body is fully sent."""
+    state = _state(trace_config_ctx)
+    trace_data = state.trace_data
+    perf_ns = perf_counter_ns()
+    chunk_size = len(params.chunk)
+    trace_data.request_send_end_perf_ns = perf_ns
+    trace_data.request_chunks_count += 1
+    trace_data.request_bytes_total += chunk_size
+    if state.collect_chunks:
+        trace_data.request_chunks.append((perf_ns, chunk_size))
+    state.bytes_sent += chunk_size
+    # Trigger event when request body is fully sent
+    if (
+        state.on_request_sent_event is not None
+        and state.expected_request_body_size is not None
+        and state.bytes_sent >= state.expected_request_body_size
+    ):
+        state.on_request_sent_event.set()
+
+
+async def on_request_end(
+    session: aiohttp.ClientSession,
+    trace_config_ctx: SimpleNamespace,
+    params: aiohttp.TraceRequestEndParams,
+) -> None:
+    """Called when HTTP request finishes being SENT and the response headers have been received.
+
+    This is NOT the end of the full request/response cycle.
+
+    Note: At this point, response headers have been received, so we capture
+    response metadata here (status code and headers).
+    """
+    trace_data = _state(trace_config_ctx).trace_data
+    trace_data.response_headers_received_perf_ns = perf_counter_ns()
+    # Capture response metadata (status and headers are available at this point)
+    trace_data.response_status_code = params.response.status
+    trace_data.response_reason = params.response.reason
+    trace_data.response_headers = dict(params.response.headers)
+    # Capture connection socket info (works for both new and reused connections)
+    if (conn := params.response.connection) and (transport := conn.transport):
+        if sockname := transport.get_extra_info("sockname"):
+            trace_data.local_ip = sockname[0]
+            trace_data.local_port = sockname[1]
+        if peername := transport.get_extra_info("peername"):
+            trace_data.remote_ip = peername[0]
+            trace_data.remote_port = peername[1]
+
+
+async def on_request_headers_sent(
+    session: aiohttp.ClientSession,
+    trace_config_ctx: SimpleNamespace,
+    params: aiohttp.TraceRequestHeadersSentParams,
+) -> None:
+    """Called when request headers finish being sent."""
+    trace_data = _state(trace_config_ctx).trace_data
+    trace_data.request_headers_sent_perf_ns = perf_counter_ns()
+    trace_data.request_headers = redact_headers(dict(params.headers))
+
+
+# ============================================================================
+# RESPONSE EVENTS
+# ============================================================================
+
+
+async def on_response_chunk_received(
+    session: aiohttp.ClientSession,
+    trace_config_ctx: SimpleNamespace,
+    params: aiohttp.TraceResponseChunkReceivedParams,
+) -> None:
+    """Called when each response chunk is received.
+
+    Note: Response metadata (status/headers) is captured in on_request_end,
+    not here, since TraceResponseChunkReceivedParams doesn't include the response object.
+    """
+    state = _state(trace_config_ctx)
+    trace_data = state.trace_data
+    perf_ns = perf_counter_ns()
+    chunk_size = len(params.chunk)
+    trace_data.response_chunks_count += 1
+    trace_data.response_bytes_total += chunk_size
+    if state.collect_chunks:
+        trace_data.response_chunks.append((perf_ns, chunk_size))
+    # Track start/end timestamps for duration calculations
+    if state.awaiting_first_chunk:
+        trace_data.response_receive_start_perf_ns = perf_ns
+        state.awaiting_first_chunk = False
+    trace_data.response_receive_end_perf_ns = perf_ns
+
+
+# ============================================================================
+# EXCEPTION EVENTS
+# ============================================================================
+
+
+async def on_request_exception(
+    session: aiohttp.ClientSession,
+    trace_config_ctx: SimpleNamespace,
+    params: aiohttp.TraceRequestExceptionParams,
+) -> None:
+    """Called when exception occurs during request."""
+    state = _state(trace_config_ctx)
+    state.trace_data.error_timestamp_perf_ns = perf_counter_ns()
+    # Set the event on exception so callers waiting for request_sent don't hang
+    if state.on_request_sent_event is not None:
+        state.on_request_sent_event.set()
+
+
+def create_aiohttp_trace_config() -> aiohttp.TraceConfig:
+    """Create the shared TraceConfig; attach it to every ClientSession and pass
+    :func:`start_request_trace`'s state as ``trace_request_ctx`` per request."""
+    trace_config = aiohttp.TraceConfig()
     trace_config.on_connection_queued_start.append(on_connection_queued_start)
     trace_config.on_connection_queued_end.append(on_connection_queued_end)
-
-    # Connection creation events
     trace_config.on_connection_create_start.append(on_connection_create_start)
     trace_config.on_connection_create_end.append(on_connection_create_end)
-
-    # Connection reuse event
     trace_config.on_connection_reuseconn.append(on_connection_reuseconn)
-
-    # DNS resolution events
     trace_config.on_dns_resolvehost_start.append(on_dns_resolvehost_start)
     trace_config.on_dns_resolvehost_end.append(on_dns_resolvehost_end)
     trace_config.on_dns_cache_hit.append(on_dns_cache_hit)
     trace_config.on_dns_cache_miss.append(on_dns_cache_miss)
-
-    # Request events
     trace_config.on_request_start.append(on_request_start)
     trace_config.on_request_chunk_sent.append(on_request_chunk_sent)
     trace_config.on_request_end.append(on_request_end)
     trace_config.on_request_headers_sent.append(on_request_headers_sent)
-
-    # Response events
     trace_config.on_response_chunk_received.append(on_response_chunk_received)
-
-    # Exception events
     trace_config.on_request_exception.append(on_request_exception)
-
     return trace_config
