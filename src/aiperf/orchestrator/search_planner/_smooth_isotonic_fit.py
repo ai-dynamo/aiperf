@@ -27,7 +27,7 @@ _STRICTIFY_EPS_FRAC = 1e-9
 
 
 def smooth_isotonic_fit(
-    xs: list[int], ys: list[float]
+    xs: list[int | float], ys: list[float]
 ) -> tuple[Callable[[float], float], list[float]]:
     """Fit a monotone-denoised smooth curve through ``(xs, ys)``.
 
