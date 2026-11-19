@@ -158,6 +158,12 @@ accuracy = [
     # version as long as it satisfies our import.
     "latex2sympy2-extended>=1.0.6",
     "lighteval>=0.13.0",
+    # Security floor, not a direct import: soupsieve arrives via lighteval ->
+    # inspect-ai -> beautifulsoup4. 4.0.0 is the first release clear of
+    # CVE-2026-126190/-126191/-126193. It needs Python>=3.11.5, so
+    # `aiperf[accuracy]` refuses to install on 3.11.0-3.11.4 rather than
+    # pulling an affected 2.x. Drop once beautifulsoup4 or inspect-ai floor it.
+    "soupsieve>=4.0.0",
     "sympy>=1.14.0",
     # deepeval is the upstream reference for the HellaSwag and
     # BigBench-Hard benchmark prompt templates. Aiperf calls
@@ -188,6 +194,10 @@ required-environments = [
   "sys_platform == 'linux' and platform_machine == 'aarch64'",
   "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
+# The [accuracy] extra requires soupsieve>=4.0.0, which needs Python>=3.11.5, so
+# 3.11.0-3.11.4 cannot be locked. Narrow only the lock; the published
+# requires-python stays >=3.11.
+environments = ["python_full_version >= '3.11.5'"]
 # lighteval 0.13.0 (its latest release) pins nltk==3.9.1 exactly; lighteval main
 # already pins nltk==3.10.4. Drop this override once a lighteval release ships it.
 override-dependencies = ["nltk==3.10.4"]
