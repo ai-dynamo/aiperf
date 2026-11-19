@@ -824,6 +824,10 @@ class CreditCallbackHandler:
         if not credit_return.first_token_sent:
             concurrency.release_prefill_slot(phase)
 
+        # no_request credits never acquired a request slot.
+        if not credit.no_request:
+            concurrency.release_request_slot(phase)
+
     async def on_first_token(self, first_token: FirstToken) -> None:
         """Handle first token event (TTFT) from worker.
 

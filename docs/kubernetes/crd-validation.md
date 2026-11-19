@@ -203,6 +203,7 @@ reconcile (they are also run client-side by `aiperf kube validate`):
 | `validate_seamless_not_on_first_phase` | first phase may not set `seamless=true` |
 | `validate_phase_dataset_compatibility` | each phase is compatible with its resolved dataset |
 | `validate_prefill_requires_streaming` | a phase with `prefill_concurrency` requires `endpoint.streaming=true` |
+| `BasePhaseConfig` model validator (`src/aiperf/config/phases.py`) | `prefill_concurrency must be <= request_concurrency` when both are set on a phase |
 | `validate_sweep_no_dashboard_ui` | `sweep` set ⇒ `runtime.ui` is not `dashboard` |
 | `_apply_consistent_seed_default` | auto-fills a consistent random seed for cross-trial sweeps when none is given |
 | `_validate_image_non_empty` (`kubernetes/crd_models.py`) | `spec.image` is non-blank (the CRD also enforces `minLength: 1`, but that accepts `" "`) |

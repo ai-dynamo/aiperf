@@ -57,6 +57,7 @@ _PROF_FIELD_ROUTES: tuple[tuple[str, str], ...] = (
     ("grace_period", "benchmark_grace_period"),
     ("concurrency", "concurrency"),
     ("prefill_concurrency", "prefill_concurrency"),
+    ("request_concurrency", "request_concurrency"),
     ("requests", "request_count"),
     ("sessions", "conversation_num"),
     ("users", "num_users"),
@@ -119,6 +120,31 @@ def _apply_agentic_replay_fields(phase: dict[str, Any], cli: CLIConfig) -> None:
         and cli.warmup_grace_period is not None
     ):
         phase["agentic_warmup_grace_period"] = cli.warmup_grace_period
+
+
+def scenario_is_agentic(scenario: str | None) -> bool:
+    """Whether ``scenario`` locks AGENTIC_REPLAY, the only mode that synthesizes the agentic warmup."""
+    if scenario is None:
+        return False
+    from aiperf.common.scenario.registry import get_scenario
+    from aiperf.plugin.enums import TimingMode
+
+    return get_scenario(scenario).timing_mode == TimingMode.AGENTIC_REPLAY
+
+
+def _apply_agentic_warmup_request_concurrency(
+    phase: dict[str, Any], cli: CLIConfig, scenario: str | None
+) -> None:
+    """Route --warmup-request-concurrency onto the profiling phase under agentic replay.
+
+    The auto-synthesized agentic warmup is not a user-declared warmup phase, so
+    the flag would otherwise only reach _converter_warmup's skipped phase. The
+    profiling phase carries it into _build_agentic_warmup_config.
+    """
+    if "warmup_request_concurrency" in cli.model_fields_set and scenario_is_agentic(
+        scenario
+    ):
+        phase["agentic_warmup_request_concurrency"] = cli.warmup_request_concurrency
 
 
 _RATE_SHAPE_SEARCH_FIELDS: frozenset[str] = frozenset(
@@ -918,6 +944,7 @@ def build_profiling(cli: CLIConfig) -> dict[str, Any]:
 
     _apply_profiling_ramps(prof, cli)
     _apply_agentic_replay_fields(prof, cli)
+    _apply_agentic_warmup_request_concurrency(prof, cli, cli.scenario)
     _apply_profiling_rate_series(prof, cli)
 
     search_dims = _search_space_dimensions(cli)

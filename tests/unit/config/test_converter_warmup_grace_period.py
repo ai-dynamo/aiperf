@@ -18,8 +18,11 @@ from __future__ import annotations
 
 import pytest
 
+from aiperf.config.flags._converter_profiling import build_profiling
 from aiperf.config.flags._converter_warmup import build_warmup
 from aiperf.config.flags.cli_config import CLIConfig
+from aiperf.config.flags.converter import convert_cli_to_aiperf
+from aiperf.config.loader.errors import ConfigurationError
 
 
 def _make_user(loadgen: CLIConfig) -> CLIConfig:
@@ -174,8 +177,6 @@ class TestWarmupGracePeriodUnderScenario:
         assert "grace_period" not in w
 
     def test_warmup_grace_routes_to_agentic_barrier_on_profiling_phase(self):
-        from aiperf.config.flags._converter_profiling import build_profiling
-
         loadgen = CLIConfig(
             scenario="inferencex-agentx-mvp",
             concurrency=8,
@@ -185,8 +186,6 @@ class TestWarmupGracePeriodUnderScenario:
         assert prof["agentic_warmup_grace_period"] == 7.5
 
     def test_explicit_agentic_warmup_grace_wins_over_warmup_grace(self):
-        from aiperf.config.flags._converter_profiling import build_profiling
-
         loadgen = CLIConfig(
             scenario="inferencex-agentx-mvp",
             concurrency=8,
@@ -200,3 +199,72 @@ class TestWarmupGracePeriodUnderScenario:
         loadgen = CLIConfig(warmup_grace_period=5.0)
         with pytest.raises(ValueError, match="without any warmup trigger"):
             build_warmup(_make_user(loadgen))
+
+
+class TestWarmupRequestConcurrencyUnderScenario:
+    """Under --scenario, --warmup-request-concurrency routes onto the profiling
+    phase so the auto-synthesized agentic warmup can throttle priming
+    independently of profiling ``request_concurrency``."""
+
+    def test_warmup_request_concurrency_routes_onto_profiling_phase(self):
+        loadgen = CLIConfig(
+            scenario="inferencex-agentx-mvp",
+            concurrency=64,
+            request_concurrency=32,
+            warmup_request_concurrency=8,
+        )
+        prof = build_profiling(_make_user(loadgen))
+        assert prof["agentic_warmup_request_concurrency"] == 8
+        assert prof["request_concurrency"] == 32
+
+    def test_warmup_request_concurrency_without_scenario_raises_naming_flag(self):
+        loadgen = CLIConfig(
+            concurrency=64,
+            request_count=10,
+            warmup_request_concurrency=8,
+        )
+        with pytest.raises(ConfigurationError, match="--warmup-request-concurrency"):
+            convert_cli_to_aiperf(_make_user(loadgen))
+
+    def test_warmup_request_concurrency_with_warmup_trigger_is_not_rejected(self):
+        loadgen = CLIConfig(
+            concurrency=64,
+            request_count=10,
+            warmup_request_count=5,
+            warmup_request_concurrency=1,
+        )
+        cfg = convert_cli_to_aiperf(_make_user(loadgen))
+        assert cfg is not None
+
+
+class TestWarmupPrefillMirrorClampsToWarmupRequestCap:
+    """The profiling prefill cap is mirrored onto the synthesized warmup; it must
+    not exceed the warmup's own request cap."""
+
+    def test_mirrored_prefill_clamped_to_warmup_request_cap(self):
+        loadgen = CLIConfig(
+            warmup_request_count=10,
+            prefill_concurrency=32,
+            warmup_request_concurrency=8,
+        )
+        warmup = build_warmup(_make_user(loadgen))
+        assert warmup["prefill_concurrency"] == 8
+        assert warmup["request_concurrency"] == 8
+
+    def test_mirrored_prefill_without_warmup_request_cap_is_kept(self):
+        loadgen = CLIConfig(warmup_request_count=10, prefill_concurrency=32)
+        warmup = build_warmup(_make_user(loadgen))
+        assert warmup["prefill_concurrency"] == 32
+        assert "request_concurrency" not in warmup
+
+    def test_prefill_above_warmup_request_cap_converts_without_error(self):
+        loadgen = CLIConfig(
+            streaming=True,
+            concurrency=64,
+            request_count=100,
+            prefill_concurrency=32,
+            warmup_request_count=10,
+            warmup_request_concurrency=8,
+        )
+        cfg = convert_cli_to_aiperf(_make_user(loadgen))
+        assert cfg is not None

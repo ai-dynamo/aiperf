@@ -390,6 +390,14 @@ class CreditPhaseConfig(AIPerfBaseModel):
         "This is the max number of requests that can be waiting for the first token at once. "
         "If None, the prefill concurrency is unlimited.",
     )
+    request_concurrency: int | None = Field(
+        default=None,
+        gt=0,
+        description="The max total in-flight requests for the credit phase. "
+        "Unlike 'concurrency' (session trees) this caps every wire request, "
+        "roots and sub-agent forks alike, from dispatch until the response "
+        "returns. If None, total in-flight requests are unlimited.",
+    )
     request_rate: float | None = Field(
         default=None, gt=0, description="The request rate of the credit phase."
     )
@@ -699,6 +707,7 @@ def _build_warmup_config(
         **_phase_session_fields(phase),
         concurrency=phase.concurrency,
         prefill_concurrency=phase.prefill_concurrency,
+        request_concurrency=phase.request_concurrency,
         request_rate=_phase_request_rate(phase),
         continuation_dispatch=getattr(phase, "continuation_dispatch", "rate_slot"),
         arrival_pattern=_phase_arrival_pattern(phase),
@@ -778,6 +787,15 @@ def _build_agentic_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig | None
         total_expected_requests = None
     else:
         total_expected_requests = concurrency
+    request_concurrency = getattr(
+        phase, "agentic_warmup_request_concurrency", None
+    ) or getattr(phase, "request_concurrency", None)
+    # The warmup may cap total in-flight tighter than profiling does. Clamp the
+    # copied prefill cap so the synthesized phase keeps the prefill <=
+    # request_concurrency invariant that PhaseConfig enforces for user phases.
+    prefill_concurrency = getattr(phase, "prefill_concurrency", None)
+    if prefill_concurrency is not None and request_concurrency is not None:
+        prefill_concurrency = min(prefill_concurrency, request_concurrency)
     return CreditPhaseConfig(
         phase=CreditPhase.WARMUP,
         # Identity is stamped explicitly rather than copied from a PhaseConfig:
@@ -797,7 +815,8 @@ def _build_agentic_warmup_config(phase: PhaseConfig) -> CreditPhaseConfig | None
         expected_duration_sec=None,
         expected_num_sessions=None,
         concurrency=concurrency,
-        prefill_concurrency=getattr(phase, "prefill_concurrency", None),
+        prefill_concurrency=prefill_concurrency,
+        request_concurrency=request_concurrency,
         request_rate=None,
         arrival_pattern=ArrivalPattern.CONCURRENCY_BURST,
         arrival_smoothness=getattr(phase, "smoothness", None),
@@ -841,6 +860,7 @@ def _build_profiling_config(
         **_phase_session_fields(phase),
         concurrency=phase.concurrency,
         prefill_concurrency=phase.prefill_concurrency,
+        request_concurrency=phase.request_concurrency,
         request_rate=_phase_request_rate(phase),
         continuation_dispatch=getattr(phase, "continuation_dispatch", "rate_slot"),
         arrival_pattern=_phase_arrival_pattern(phase),
