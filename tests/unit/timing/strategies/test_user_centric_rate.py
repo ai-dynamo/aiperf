@@ -1,18 +1,27 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from collections.abc import Callable
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 from pytest import param
 
+from aiperf.common import random_generator as rng
+from aiperf.common.distributions import (
+    LognormalParams,
+    WeibullParams,
+    sample_lognormal,
+    sample_weibull,
+)
 from aiperf.common.enums import CreditPhase, UserCentricGapDistribution
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
 from aiperf.credit.structs import Credit
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
 from aiperf.timing.conversation_source import ConversationSource
+from aiperf.timing.strategies import user_centric_rate
 from aiperf.timing.strategies.user_centric_rate import User, UserCentricStrategy
 from tests.unit.timing.conftest import OrchestratorHarness, make_sampler
 
@@ -506,6 +515,100 @@ class TestGapDistributionSampling:
         strategy.set_target_users(8)
         gaps = _draw_gaps(strategy, GAP_SAMPLE_COUNT)
         assert float(np.mean(gaps)) == pytest.approx(0.8, rel=0.05)
+
+
+GAP_SCHEDULING_TURNS = 8
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "distribution",
+    [
+        param(UserCentricGapDistribution.LOGNORMAL, id="lognormal"),
+        param(UserCentricGapDistribution.WEIBULL, id="weibull"),
+    ],
+)  # fmt: skip
+async def test_handle_credit_return_schedules_continuations_at_sampled_gaps(
+    distribution: UserCentricGapDistribution, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Scheduled continuation times must advance by the sampled gaps.
+
+    Observes the scheduler, not the sampler: replacing the per-user draw with
+    the constant mean gap in handle_credit_return must fail this test. The
+    expected gaps are redrawn independently from the same derived per-user
+    seed through the public samplers, and the clock is frozen behind every
+    send so the max(now, ...) clamp never engages.
+    """
+    mean_gap, median = 1.0, 0.5
+    scheduler = MagicMock()
+    issuer = MagicMock()
+    issuer.issue_credit = lambda *a, **k: True
+    ds = DatasetMetadata(
+        conversations=[
+            ConversationMetadata(
+                conversation_id="c1",
+                turns=[
+                    TurnMetadata(delay_ms=None) for _ in range(GAP_SCHEDULING_TURNS)
+                ],
+            )
+        ],
+        sampling_strategy=DatasetSamplingStrategy.SEQUENTIAL,
+    )
+    strategy = UserCentricStrategy(
+        config=CreditPhaseConfig(
+            phase=CreditPhase.PROFILING,
+            timing_mode=TimingMode.USER_CENTRIC_RATE,
+            request_rate=1.0 / mean_gap,
+            num_users=1,
+            total_expected_requests=GAP_SCHEDULING_TURNS,
+            user_centric_gap_distribution=distribution,
+            user_centric_gap_median=median,
+        ),
+        conversation_source=ConversationSource(
+            ds, make_sampler(["c1"], DatasetSamplingStrategy.SEQUENTIAL)
+        ),
+        scheduler=scheduler,
+        stop_checker=MagicMock(),
+        credit_issuer=issuer,
+        lifecycle=MagicMock(),
+    )
+    await strategy.setup_phase()
+    x_correlation_id, user = next(iter(strategy._session_to_user.items()))
+    start = 1000.0
+    user.next_send_time = start
+    monkeypatch.setattr(
+        user_centric_rate, "time", SimpleNamespace(perf_counter=lambda: 0.0)
+    )
+
+    for turn_index in range(GAP_SCHEDULING_TURNS - 1):
+        await strategy.handle_credit_return(
+            Credit(
+                id=turn_index,
+                phase=CreditPhase.PROFILING,
+                conversation_id="c1",
+                x_correlation_id=x_correlation_id,
+                turn_index=turn_index,
+                num_turns=GAP_SCHEDULING_TURNS,
+                issued_at_ns=1000,
+            )
+        )
+
+    scheduled = [c.args[0] for c in scheduler.schedule_at_perf_sec.call_args_list]
+    observed = np.diff([start, *scheduled])
+
+    gen = rng.derive(
+        f"timing.user_centric_rate.turn_gap.user.{user.user_id}"
+    ).numpy_generator
+    if distribution == UserCentricGapDistribution.WEIBULL:
+        params = WeibullParams(distribution="weibull", mean=mean_gap, median=median)
+        expected = [float(sample_weibull(params, gen, size=1)[0]) for _ in observed]
+    else:
+        params = LognormalParams(mean=mean_gap, median=median)
+        expected = [float(sample_lognormal(params, gen, size=1)[0]) for _ in observed]
+
+    assert len(observed) == GAP_SCHEDULING_TURNS - 1
+    assert observed.tolist() == pytest.approx(expected, rel=1e-9)
+    assert not np.allclose(observed, mean_gap)
 
 
 class TestUserClass:
