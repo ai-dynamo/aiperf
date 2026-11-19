@@ -21,7 +21,7 @@ class OutputTokenThroughputMetric(BaseDerivedMetric[float]):
     Post Processor for calculating Output Token Throughput Metric.
 
     Formula:
-        Output Token Throughput = Benchmark Token Count / Benchmark Duration (seconds)
+        Output Token Throughput = Total Output Tokens / Observation Duration (seconds)
     """
 
     tag = "output_token_throughput"

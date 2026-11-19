@@ -29,3 +29,13 @@ class TestGoodputMetric:
 
         result = metric.derive_value(metric_results)
         assert result == 0.0
+
+    def test_goodput_uses_observation_window(self):
+        metric = GoodputMetric()
+        metric_results = MetricResultsDict()
+        metric_results[GoodRequestCountMetric.tag] = 15
+        metric_results[BenchmarkDurationMetric.tag] = 3_000_000_000
+        metric_results.window_start_ns = 1_000_000_000
+        metric_results.window_end_ns = 6_000_000_000
+
+        assert metric.derive_value(metric_results) == approx(3.0)
