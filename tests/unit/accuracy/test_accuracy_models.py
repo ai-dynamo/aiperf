@@ -201,7 +201,9 @@ def test_process_accuracy_result_message_carries_summary() -> None:
 
 
 def test_grading_result_grader_error_with_correct_raises_validation_error() -> None:
-    with pytest.raises(ValidationError, match="grader_error=True requires correct=False"):
+    with pytest.raises(
+        ValidationError, match="grader_error=True requires correct=False"
+    ):
         GradingResult(
             correct=True,
             grader_error=True,
