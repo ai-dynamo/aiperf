@@ -271,6 +271,7 @@ def _build_routed_under_config() -> frozenset[str]:
         _AGENTIC_REPLAY_ROUTES,
         _GAMMA_ONLY_ROUTES,
         _RAMP_FIELDS,
+        _USER_CENTRIC_ONLY_ROUTES,
     )
     from aiperf.config.flags.resolver import _LOADGEN_PHASE_FIELD_MAP
 
@@ -313,6 +314,7 @@ def _build_routed_under_config() -> frozenset[str]:
         # read, so a new ramp or gamma-only route counts as routed here too.
         | {attr for attr, _ in _RAMP_FIELDS}
         | {attr for _, attr in _GAMMA_ONLY_ROUTES}
+        | {attr for _, attr in _USER_CENTRIC_ONLY_ROUTES}
         | {"request_cancellation_rate", "request_cancellation_delay"}
         # Warmup phase shaping, applied by _apply_warmup_overrides.
         | {field for field in LOADGEN_FIELDS if field.startswith("warmup_")}

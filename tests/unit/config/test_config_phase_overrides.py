@@ -16,13 +16,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pytest import param
 
+from aiperf.common.enums import UserCentricGapDistribution
 from aiperf.config import AIPerfConfig
 from aiperf.config.flags import CLIConfig
 from aiperf.config.flags.resolver import resolve_config
 from aiperf.config.loader.errors import ConfigurationError
 from aiperf.config.loader.plan import build_benchmark_plan
-from aiperf.config.phases import PhaseConfig
+from aiperf.config.phases import PhaseConfig, PhaseType
 
 
 def cli(**kwargs: object) -> CLIConfig:
@@ -148,6 +150,129 @@ def test_arrival_smoothness_rejected_on_non_gamma_phase(
 ) -> None:
     with pytest.raises((ValueError, ConfigurationError), match="arrival-smoothness"):
         resolve_config(cli(arrival_smoothness=0.5), concurrency_yaml)
+
+
+# ---------------------------------------------------------------------------
+# User-centric gap distribution
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def user_centric_yaml(tmp_path: Path) -> Path:
+    cfg = tmp_path / "user_centric.yaml"
+    cfg.write_text(
+        """\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: synthetic
+  phases:
+    type: user_centric
+    duration: 120
+    rate: 1.0
+    users: 30
+"""
+    )
+    return cfg
+
+
+def test_user_centric_gap_flags_route_on_user_centric_phase(
+    user_centric_yaml: Path,
+) -> None:
+    resolved = profiling(
+        resolve_config(
+            cli(user_centric_gap_distribution="weibull", user_centric_gap_median=10.0),
+            user_centric_yaml,
+        )
+    )
+    assert resolved.gap_distribution == UserCentricGapDistribution.WEIBULL
+    assert resolved.gap_median == 10.0
+
+
+def test_user_centric_gap_flags_route_with_user_centric_rate_transition(
+    concurrency_yaml: Path,
+) -> None:
+    resolved = profiling(
+        resolve_config(
+            cli(
+                user_centric_rate=1.0,
+                num_users=4,
+                user_centric_gap_distribution="lognormal",
+                user_centric_gap_median=2.0,
+            ),
+            concurrency_yaml,
+        )
+    )
+    assert resolved.type == PhaseType.USER_CENTRIC
+    assert resolved.gap_distribution == UserCentricGapDistribution.LOGNORMAL
+    assert resolved.gap_median == 2.0
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        param({"user_centric_gap_distribution": "weibull", "user_centric_gap_median": 10.0}, id="both"),
+        param({"user_centric_gap_median": 10.0}, id="median-only"),
+    ],
+)  # fmt: skip
+def test_user_centric_gap_flags_rejected_on_non_user_centric_phase(
+    concurrency_yaml: Path, flags: dict[str, object]
+) -> None:
+    with pytest.raises(
+        (ValueError, ConfigurationError),
+        match="user-centric-gap.*requires a user_centric profiling phase",
+    ):
+        resolve_config(cli(**flags), concurrency_yaml)
+
+
+@pytest.fixture
+def sampled_user_centric_yaml(tmp_path: Path) -> Path:
+    cfg = tmp_path / "sampled_user_centric.yaml"
+    cfg.write_text(
+        """\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: synthetic
+  phases:
+    type: user_centric
+    duration: 120
+    rate: 1.0
+    users: 30
+    gap_distribution: weibull
+    gap_median: 10.0
+"""
+    )
+    return cfg
+
+
+@pytest.mark.parametrize(
+    "flags, phase_type",
+    [
+        param({}, PhaseType.POISSON, id="poisson"),
+        param({"arrival_pattern": "constant"}, PhaseType.CONSTANT, id="constant"),
+    ],
+)  # fmt: skip
+def test_rate_series_discards_yaml_user_centric_gap_fields(
+    sampled_user_centric_yaml: Path,
+    tmp_path: Path,
+    flags: dict[str, object],
+    phase_type: PhaseType,
+) -> None:
+    series = tmp_path / "rate.json"
+    series.write_text('{"points":[{"time_s":0,"qps":1},{"time_s":60,"qps":2}]}')
+    resolved = profiling(
+        resolve_config(
+            cli(request_rate_series=series, **flags), sampled_user_centric_yaml
+        )
+    )
+    assert resolved.type == phase_type
 
 
 # ---------------------------------------------------------------------------

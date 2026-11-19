@@ -5,12 +5,13 @@
 
 from __future__ import annotations
 
-import math
 from enum import Enum
+from typing import Annotated, Any, Literal
 
 import numpy as np
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Discriminator, Field, Tag, model_validator
 
+from aiperf.common.distributions import LognormalParams, WeibullParams
 from aiperf.common.finite import FiniteFloat
 from aiperf.common.models import AIPerfBaseModel
 from aiperf.config.base import BaseConfig
@@ -77,48 +78,6 @@ class SessionEndReason(str, Enum):
     TARGET_TURN_COUNT = "target_turn_count"
 
 
-class LognormalParams(AIPerfBaseModel):
-    """Lognormal distribution parameters with real-space summary statistics.
-
-    Can be constructed in two ways:
-    1. Full: mu, sigma, mean, median all provided (e.g. from manifest.json or fit-stats)
-    2. Simplified: just mean and median — mu/sigma auto-computed via model validator
-    """
-
-    mu: float | None = Field(default=None, description="Log-space mean")
-    sigma: float | None = Field(
-        default=None, ge=0.0, description="Log-space standard deviation"
-    )
-    mean: float = Field(gt=0.0, description="Real-space mean (derived)")
-    median: float = Field(gt=0.0, description="Real-space median (derived)")
-    min: float | None = Field(
-        default=None, gt=0.0, description="Hard lower bound (rejection sampled)"
-    )
-    max: float | None = Field(
-        default=None, gt=0.0, description="Hard upper bound (rejection sampled)"
-    )
-
-    @model_validator(mode="after")
-    def compute_mu_sigma(self) -> LognormalParams:
-        if self.mean < self.median:
-            raise ValueError(
-                f"mean ({self.mean}) must be >= median ({self.median}) for lognormal"
-            )
-        if self.min is not None and self.max is not None and self.min > self.max:
-            raise ValueError(f"min ({self.min}) must be <= max ({self.max})")
-        if (self.mu is None) != (self.sigma is None):
-            raise ValueError("mu and sigma must be supplied as a pair")
-        if self.mu is not None and not math.isfinite(self.mu):
-            raise ValueError("mu must be finite")
-        if self.sigma is not None and not math.isfinite(self.sigma):
-            raise ValueError("sigma must be finite")
-        if self.mu is None:
-            self.mu = math.log(self.median)
-            ratio = self.mean / self.median
-            self.sigma = math.sqrt(2.0 * math.log(ratio)) if ratio > 1.0 else 0.0
-        return self
-
-
 class NewTokensPerTurnConfig(LognormalParams):
     """Lognormal config for new tokens per turn with truncation-bias correction."""
 
@@ -129,19 +88,69 @@ class NewTokensPerTurnConfig(LognormalParams):
     )
 
 
-def _default_agentic_delay() -> LognormalParams:
-    return LognormalParams(mean=2_500, median=1_800)
+class LognormalDelayParams(LognormalParams):
+    """Lognormal params carrying the delay-union family tag.
+
+    Selecting a family only makes sense for a member of the inter-turn delay
+    union, so the tag lives here rather than on LognormalParams: token-count and
+    size configs reuse the plain params without advertising a distribution they
+    have no alternative to. The inherited Weibull-field rejection stays on the
+    base, where it mirrors the _reject_foreign_fields validator that fires for
+    every user of these params.
+    """
+
+    distribution: Literal["lognormal"] = Field(
+        default="lognormal",
+        description="Distribution family tag; defaults to lognormal so untagged configs stay backward compatible",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_plain_lognormal_params(cls, data: Any) -> Any:
+        """Accept a plain LognormalParams instance as a delay component."""
+        if isinstance(data, LognormalParams) and not isinstance(data, cls):
+            return dict(data)
+        return data
 
 
-def _default_human_delay() -> LognormalParams:
-    return LognormalParams(mean=40_000, median=25_000)
+def _delay_distribution_tag(value: Any) -> str:
+    """Select the delay union branch, defaulting untagged payloads to lognormal.
+
+    Untagged {mean, median} components predate the Weibull option and must keep
+    parsing as lognormal. Dispatching on the tag also keeps a rejected component
+    reporting only its own family's error instead of a misleading literal
+    mismatch from the other branch.
+    """
+    tag = (
+        value.get("distribution")
+        if isinstance(value, dict)
+        else getattr(value, "distribution", None)
+    )
+    return str(tag) if tag else "lognormal"
+
+
+DelayComponentParams = Annotated[
+    Annotated[LognormalDelayParams, Tag("lognormal")]
+    | Annotated[WeibullParams, Tag("weibull")],
+    Discriminator(_delay_distribution_tag),
+]
+
+
+def _default_agentic_delay() -> LognormalDelayParams:
+    return LognormalDelayParams(mean=2_500, median=1_800)
+
+
+def _default_human_delay() -> LognormalDelayParams:
+    return LognormalDelayParams(mean=40_000, median=25_000)
 
 
 class MixtureDelayConfig(AIPerfBaseModel):
     """Two-component mixture model for inter-turn delays.
 
     Agentic turns (tool-call follow-ups) are fast; human turns are slow.
-    A Bernoulli draw selects which component to sample from.
+    A Bernoulli draw selects which component to sample from. Each component is
+    lognormal by default; tag a component with distribution "weibull" to use a
+    Weibull instead.
     """
 
     agentic_fraction: float = Field(
@@ -150,11 +159,11 @@ class MixtureDelayConfig(AIPerfBaseModel):
         le=1.0,
         description="Probability of sampling the fast agentic delay",
     )
-    agentic_delay: LognormalParams = Field(
+    agentic_delay: DelayComponentParams = Field(
         default_factory=_default_agentic_delay,
         description="Fast delay distribution (tool-call follow-ups)",
     )
-    human_delay: LognormalParams = Field(
+    human_delay: DelayComponentParams = Field(
         default_factory=_default_human_delay,
         description="Slow delay distribution (human think time)",
     )

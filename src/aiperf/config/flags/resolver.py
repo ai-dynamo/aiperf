@@ -1627,6 +1627,8 @@ _PROFILING_PHASE_OVERRIDE_FIELDS: frozenset[str] = frozenset(
         "request_cancellation_rate",
         "request_rate_ramp_duration",
         "request_rate_series",
+        "user_centric_gap_distribution",
+        "user_centric_gap_median",
     }
 )
 
@@ -1783,6 +1785,7 @@ def _apply_phase_shape_overrides(
     )
     _apply_phase_ramp_overrides(target, cli, fields_set, validate=not replay)
     _apply_fixed_schedule_offset_overrides(target, cli, fields_set, validate=not replay)
+    _apply_user_centric_gap_overrides(target, cli, fields_set, validate=not replay)
     _apply_cancellation_override(target, cli, fields_set)
     return decision
 
@@ -1930,6 +1933,25 @@ def _apply_arrival_smoothness_override(
     target["smoothness"] = cli.arrival_smoothness
 
 
+def _apply_user_centric_gap_overrides(
+    target: dict[str, Any], cli: CLIConfig, fields_set: set[str], *, validate: bool
+) -> None:
+    from aiperf.config.flags._converter_profiling import _USER_CENTRIC_ONLY_ROUTES
+
+    for phase_field, cli_field in _USER_CENTRIC_ONLY_ROUTES:
+        if cli_field not in fields_set:
+            continue
+        if validate and target.get("type") != PhaseType.USER_CENTRIC:
+            from aiperf.config.loader.errors import ConfigurationError
+
+            flag = f"--{cli_field.replace('_', '-')}"
+            raise ConfigurationError(
+                f"{flag} requires a user_centric profiling phase. Set the phase "
+                f"type in YAML to 'user_centric', or pass --user-centric-rate."
+            )
+        target[phase_field] = getattr(cli, cli_field)
+
+
 def _apply_phase_ramp_overrides(
     target: dict[str, Any], cli: CLIConfig, fields_set: set[str], *, validate: bool
 ) -> None:
@@ -2038,13 +2060,15 @@ def _transition_phase_type(
             "smoothness",
             "users",
             "continuation_dispatch",
+            "gap_distribution",
+            "gap_median",
         )
     else:
         removed = ("auto_offset", "start_offset", "end_offset", "rate_series")
         if phase_type != PhaseType.GAMMA:
             removed += ("smoothness",)
         if phase_type != PhaseType.USER_CENTRIC:
-            removed += ("users",)
+            removed += ("users", "gap_distribution", "gap_median")
     for key in removed:
         _pop_config_value(target, key)
     target["type"] = phase_type
