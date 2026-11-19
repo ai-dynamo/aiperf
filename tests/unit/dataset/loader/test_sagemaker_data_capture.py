@@ -887,3 +887,56 @@ class TestMaxOslCapApplied:
         osls = [t.output_length for traces in data.values() for t in traces]
         assert osls == [30]
         assert loader._capped_max_osl == 0
+
+
+class TestEverythingFiltered:
+    """``load_dataset`` overrides the base template, so it must keep the base
+    "every trace was filtered out" check instead of returning an empty dataset."""
+
+    def _loader_for(
+        self, tmp_path: Path, **cli_kwargs: Any
+    ) -> SageMakerDataCaptureLoader:
+        path = tmp_path / "capture.jsonl"
+        path.write_text(
+            _make_capture_record(inference_time="2026-04-29T00:00:00Z")
+            + "\n"
+            + _make_capture_record(inference_time="2026-04-29T00:00:01Z")
+            + "\n"
+        )
+        return SageMakerDataCaptureLoader(
+            filename=str(path),
+            run=make_run_from_cli(
+                CLIConfig(model_names=["test-model"], fixed_schedule=True, **cli_kwargs)
+            ),
+            prompt_generator=MagicMock(),
+        )
+
+    def test_offset_window_excluding_everything_is_an_error(
+        self, tmp_path: Path
+    ) -> None:
+        loader = self._loader_for(
+            tmp_path,
+            fixed_schedule_start_offset=10_000,
+            fixed_schedule_end_offset=20_000,
+        )
+        with pytest.raises(ValueError, match="No trace entries remain") as exc_info:
+            loader.load_dataset()
+        message = str(exc_info.value)
+        assert "2 outside the fixed-schedule offset window" in message
+        assert "10000" in message and "20000" in message
+
+    def test_offset_window_keeping_some_rows_still_loads(self, tmp_path: Path) -> None:
+        loader = self._loader_for(tmp_path, fixed_schedule_start_offset=1_000)
+        data = loader.load_dataset()
+        assert [t.timestamp for traces in data.values() for t in traces] == [1_000]
+        assert loader._skipped_traces == 1
+
+    def test_empty_file_still_returns_empty(self, tmp_path: Path) -> None:
+        path = tmp_path / "capture.jsonl"
+        path.write_text("\n")
+        loader = SageMakerDataCaptureLoader(
+            filename=str(path),
+            run=make_run_from_cli(CLIConfig(model_names=["test-model"])),
+            prompt_generator=MagicMock(),
+        )
+        assert loader.load_dataset() == {}
