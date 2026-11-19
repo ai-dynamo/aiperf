@@ -10,20 +10,34 @@ Some record metrics carry a `list[...]` value per request rather than a single s
 
 At the run level the records-manager has to summarize across all per-request lists into a single set of stats (`avg`, `min`, `max`, `std`, `p50`, `p90`, `p99`, …). Naïvely concatenating the lists into a flat array gives exact stats but linear memory: `records × samples_per_record × 8 B`. For a long-context streaming benchmark (1 M requests × ~5 K chunks/request) that reaches **~37 GB** on the records-manager pod alone — the original cause of an OOM at ramp scale.
 
-To bound memory, AIPerf aggregates list-valued record metrics with a **t-digest sketch** + **five running side-channel scalars**.
+To bound memory, AIPerf aggregates list-valued record metrics with a **t-digest sketch** + **six running side-channel scalars**.
 
 ## What stays exact, what becomes approximate
 
 | Stat | Source | Accuracy |
 |---|---|---|
 | `count` | running `int` | bit-exact |
-| `sum` | running `float64` | bit-exact (within float round-off across summation orders) |
+| `sum` | running `float64` | agrees with a direct numpy sum to floating-point round-off; the summation order follows the ingest batches |
 | `min`, `max` | running scalars | bit-exact |
-| `avg` | `sum / count` | bit-exact |
-| `std` | `sqrt(max(0, sum_sq/count − avg²))` | bit-exact (population std, matches `np.std`) |
+| `avg` | `sum / count` | as `sum` |
+| `std` | Welford's online algorithm (`sqrt(max(0, m2/count))`) | population std; a single `extend` matched `np.std` bit-for-bit on the tested inputs; repeated `extend` (the per-record path) and per-sample `append` carry order- and offset-dependent round-off, see below |
 | `p1` … `p99` | t-digest sketch | approximate — see empirical band below |
 
-Memory cost of the side-channel scalars is **40 bytes** regardless of sample count. T-digest centroids stay bounded (~4 KB sketch at the default compression) regardless of sample count.
+Memory cost of the side-channel scalars is **48 bytes** regardless of sample count (`_count`, `_sum`, `_mean`, `_m2`, `_min`, `_max`). T-digest centroids stay bounded (~4 KB sketch at the default compression) regardless of sample count.
+
+### Why `std` uses Welford and not the textbook identity
+
+The textbook one-pass form, `sqrt(sum_sq/count − avg²)`, subtracts two large and nearly equal numbers. Latencies are stored as nanoseconds, so the offset is huge and the spread is small, which is exactly where that subtraction loses its significant digits. Measured against `np.std` over 50 K normal samples:
+
+| Samples | Welford rel. error | textbook rel. error |
+|---|---|---|
+| `5 ± 0.4` ms | 1.6e-15 | 5.8e-13 |
+| `1e9 ± 500` ns | 3.1e-14 | 1.3e-02 |
+| `1e12 ± 500` ns | 4.4e-08 | 1.0e+00 |
+
+Relative to `np.std`, seed 1342, 50 K samples per case. At `1e12` ns the textbook form cancels to exactly zero while Welford holds to eight digits. `TDigestListMetricAggregator` keeps a running mean and `m2` for this reason.
+
+The two ingest paths reduce in different orders, so neither is bit-identical to the other or, in general, to `np.std`. A single `extend` computes the batch mean and `m2` directly and matched `np.std` bit-for-bit on all three cases above. Production ingest calls `extend` once per record (`add_for_record`), so every record after the first is merged with Chan's parallel combine, and the result depends on the reduction order: with the same samples split into 100-value records, the merged `std` differs from `np.std` by 4.9e-12 relative at `1e9` ns and 9.2e-11 at `1e12` ns. `append` uses Welford's per-sample update, and its error grows with the offset relative to the spread, as the table shows. These are measurements on the fixtures above, not error bounds; at nanosecond latencies they sit far below anything a benchmark resolves.
 
 ## Empirical accuracy
 
@@ -48,7 +62,7 @@ The aggregation described above is **only** at the run-level. The per-record JSO
 For ICL specifically:
 
 - The numbers in `profile_export_aiperf.{json,csv}` come from the t-digest aggregator. Percentile values typically match a direct numpy computation to within 0.05% relative error on benchmark-scale runs; tail percentiles (p1, p99) at small N exhibit slightly more rank-jitter but stay well under the 0.5% band.
-- `count`, `sum`, `min`, `max`, `avg`, `std` are computed exactly and match what an exact array would produce.
+- `count`, `min` and `max` are exact. `sum`, `avg` and `std` agree with a direct numpy computation to floating-point round-off (see the ingest-path note above for `std`), far below anything a benchmark resolves.
 - Per-request ICL lists in `profile_export.jsonl` are unchanged — anything that needs sample-level precision can read those.
 
 For all other metrics: **no change**. Scalar record metrics still use the exact numpy column store (`ColumnStore`). Aggregate metrics (`inter_token_latency`, `request_latency`, etc.) compute through their own existing aggregator; t-digest is not in their path.
