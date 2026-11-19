@@ -146,6 +146,12 @@ Audio files are generated as synthetic Gaussian noise:
 - Gaussian amplitude distribution
 - No structured speech or music content
 
+For ASR benchmarks, white noise is not a substitute for real speech: it can change
+the generated transcript length and distort latency, throughput, and RTFx even at
+the same audio duration. For representative ASR measurements, use a
+[public speech dataset](asr.md) or
+[custom audio with its duration supplied](custom-dataset.md#per-request-audio-duration-rtfx).
+
 ### Configuration
 
 <!-- aiperf-run-vllm-audio-openai-endpoint-server -->
