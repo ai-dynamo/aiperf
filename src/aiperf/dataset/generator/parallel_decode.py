@@ -18,6 +18,7 @@ from concurrent.futures import ProcessPoolExecutor
 from typing import TYPE_CHECKING
 
 from aiperf.common.utils import allow_daemon_children
+from aiperf.dataset._mp_context import get_loader_mp_context
 
 if TYPE_CHECKING:
     from aiperf.common.tokenizer import Tokenizer
@@ -35,7 +36,9 @@ def _init_worker(
     """Initialize tokenizer in worker process.
 
     This function is called once per worker process when the ProcessPoolExecutor
-    starts. It loads the tokenizer so subsequent decode calls don't need to reload it.
+    starts. It reuses a tokenizer already preloaded for this process when one
+    matches (the forkserver helper on Linux, the worker itself under spawn), so
+    subsequent decode calls don't need to reload it from disk.
 
     Args:
         tokenizer_name: Pre-resolved model name or local path. Must not be an
@@ -53,14 +56,23 @@ def _init_worker(
         os.environ["HF_HUB_OFFLINE"] = "1"
         os.environ["TRANSFORMERS_OFFLINE"] = "1"
 
-        from aiperf.common.tokenizer import Tokenizer
+        from aiperf.dataset._tokenizer_preload import get_preloaded
 
-        _worker_tokenizer = Tokenizer.from_pretrained(
+        tokenizer = get_preloaded(
             tokenizer_name,
             trust_remote_code=trust_remote_code,
             revision=revision,
-            resolve_alias=False,
         )
+        if tokenizer is None:
+            from aiperf.common.tokenizer import Tokenizer
+
+            tokenizer = Tokenizer.from_pretrained(
+                tokenizer_name,
+                trust_remote_code=trust_remote_code,
+                revision=revision,
+                resolve_alias=False,
+            )
+        _worker_tokenizer = tokenizer
         _worker_tokenizer_key = requested_key
 
 
@@ -125,6 +137,19 @@ def parallel_decode(
 
     num_workers = max_workers or min(mp.cpu_count() or 4, 8)
 
+    # Forking a dataset_manager that has already loaded HF tokenizers while other
+    # threads run can deadlock the workers, so the pool uses the loader's
+    # forkserver/spawn context. A different tokenizer already preloaded in this
+    # process cannot be swapped, so workers fall back to loading it from disk.
+    try:
+        mp_context = get_loader_mp_context(
+            preload_tokenizer=tokenizer_name,
+            trust_remote_code=trust_remote_code,
+            revision=revision,
+        )
+    except ValueError:
+        mp_context = get_loader_mp_context()
+
     # ``allow_daemon_children`` clears the daemon flag so ProcessPoolExecutor
     # can spawn workers: Python refuses to spawn children from daemon processes,
     # and AIPerf services run as daemons.
@@ -138,6 +163,7 @@ def parallel_decode(
         allow_daemon_children(),
         ProcessPoolExecutor(
             max_workers=num_workers,
+            mp_context=mp_context,
             initializer=_init_worker,
             initargs=(tokenizer_name, trust_remote_code, revision),
         ) as executor,
