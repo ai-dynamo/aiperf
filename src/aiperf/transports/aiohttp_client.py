@@ -63,17 +63,21 @@ def _record_response_body_eof(
     record: RequestRecord,
     callback: "TransportBoundaryCallback | None" = None,
 ) -> None:
-    """Retain observed EOF independently of an optional replay completion gate."""
+    """Keep the first observed body EOF; invoke the optional callback for replay success.
+
+    Without a callback, an unfinished body is left unread and unstamped.
+    With a callback, an unfinished body raises ResponseBodyIncompleteError.
+    """
     if not response.content.at_eof():
         if callback is not None:
             raise ResponseBodyIncompleteError(
                 "Successful HTTP response did not reach body EOF"
             )
         return
-    eof_perf_ns = time.perf_counter_ns()
-    record.response_body_eof_perf_ns = eof_perf_ns
+    if record.response_body_eof_perf_ns is None:
+        record.response_body_eof_perf_ns = time.perf_counter_ns()
     if callback is not None:
-        callback(eof_perf_ns)
+        callback(record.response_body_eof_perf_ns)
 
 
 VIDEO_DOWNLOAD_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
@@ -299,22 +303,26 @@ class AioHttpClient(AIPerfLoggerMixin):
 
                         # Separate code paths for performance: avoid callback checks
                         # when no callback is registered
-                        if first_token_callback:
-                            first_token_acquired = False
-                            async for message in sse_messages:
-                                reader_cls.inspect_message_for_error(message)
-                                record.responses.append(message)
-                                # Fire callback until it returns True (meaningful content found)
-                                if not first_token_acquired:
-                                    ttft_ns = message.perf_ns - record.start_perf_ns
-                                    first_token_acquired = await first_token_callback(
-                                        ttft_ns, message
-                                    )
-                        else:
-                            # Fast path: no callback, just collect responses
-                            async for message in sse_messages:
-                                reader_cls.inspect_message_for_error(message)
-                                record.responses.append(message)
+                        try:
+                            if first_token_callback:
+                                first_token_acquired = False
+                                async for message in sse_messages:
+                                    reader_cls.inspect_message_for_error(message)
+                                    record.responses.append(message)
+                                    # Fire callback until it returns True (meaningful content found)
+                                    if not first_token_acquired:
+                                        ttft_ns = message.perf_ns - record.start_perf_ns
+                                        first_token_acquired = (
+                                            await first_token_callback(ttft_ns, message)
+                                        )
+                            else:
+                                # Fast path: no callback, just collect responses
+                                async for message in sse_messages:
+                                    reader_cls.inspect_message_for_error(message)
+                                    record.responses.append(message)
+                        finally:
+                            # Parsing can fail after HTTP EOF; replay still requires success.
+                            _record_response_body_eof(response, record)
                         _record_response_body_eof(
                             response, record, transport_eof_callback
                         )

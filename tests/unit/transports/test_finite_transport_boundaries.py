@@ -8,12 +8,23 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, Mock, patch
 
+import orjson
 import pytest
 from aiohttp import ClientTimeout, web
 from pytest import param
 
-from aiperf.common.models import RequestRecord
-from aiperf.transports.aiohttp_client import AioHttpClient
+from aiperf.common.enums import CreditPhase
+from aiperf.common.models import (
+    AioHttpTraceData,
+    ParsedResponseRecord,
+    RecordContext,
+    RequestRecord,
+)
+from aiperf.common.utils import compute_time_ns
+from aiperf.post_processors.raw_record_writer_processor import RawRecordWriterProcessor
+from aiperf.records.record_processor_service import RecordProcessor
+from aiperf.transports.aiohttp_client import AioHttpClient, _record_response_body_eof
+from aiperf.transports.aws.eventstream import EVENTSTREAM_CONTENT_TYPE
 from tests.unit.transports.conftest import create_mock_response, setup_mock_session
 
 
@@ -21,6 +32,7 @@ from tests.unit.transports.conftest import create_mock_response, setup_mock_sess
 async def _serve_http(
     handler: Callable[[web.Request], Awaitable[web.StreamResponse]],
 ) -> AsyncIterator[str]:
+    """Serve one POST handler on an ephemeral localhost port and close it on exit."""
     app = web.Application()
     app.router.add_post("/", handler)
     runner = web.AppRunner(app)
@@ -34,13 +46,192 @@ async def _serve_http(
         await runner.cleanup()
 
 
+@pytest.mark.parametrize("observe", [param(False, id="ordinary"), param(True, id="finite")])  # fmt: skip
+def test_record_response_body_eof_existing_timestamp_is_preserved(
+    observe: bool,
+) -> None:
+    """Repeated EOF observation retains the original time, including callback delivery."""
+    response = create_mock_response()
+    record = RequestRecord(response_body_eof_perf_ns=123)
+    callback = Mock()
+
+    _record_response_body_eof(response, record, callback if observe else None)
+
+    assert record.response_body_eof_perf_ns == 123
+    if observe:
+        callback.assert_called_once_with(123)
+    else:
+        callback.assert_not_called()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "content_type",
+    ("content_type", "body", "error_type", "error_message"),
     [
-        param("text/event-stream", id="sse"),
-        param("application/octet-stream", id="binary"),
-        param("application/json", id="text"),
+        param("text/event-stream", b"event: error\ndata: failure", "SSEResponseError", "Unknown error", id="sse-named-error"),
+        param("text/event-stream", b'data: {"error": {"message": "model failed"}}', "SSEResponseError", "model failed", id="sse-data-error"),
+        param(EVENTSTREAM_CONTENT_TYPE, b"\x00", "AwsEventStreamError", "1 trailing byte(s)", id="aws-incomplete-frame"),
+    ],
+)  # fmt: skip
+@pytest.mark.parametrize("observe", [param(False, id="ordinary"), param(True, id="finite")])  # fmt: skip
+@pytest.mark.parametrize("first_token", [param(False, id="fast-path"), param(True, id="first-token-path")])  # fmt: skip
+async def test_stream_error_after_http_eof_retains_timestamp_and_exports(
+    aiohttp_client: AioHttpClient,
+    content_type: str,
+    body: bytes,
+    error_type: str,
+    error_message: str,
+    observe: bool,
+    first_token: bool,
+) -> None:
+    """Fully read SSE/AWS failures export EOF and errors without releasing replay dependencies."""
+    callback = Mock()
+    token_callback = AsyncMock(return_value=True)
+    eof_sent: list[int] = []
+
+    async def stream(request: web.Request) -> web.StreamResponse:
+        """Finish HTTP framing normally while leaving an application error in the body."""
+        response = web.StreamResponse(headers={"Content-Type": content_type})
+        await response.prepare(request)
+        await response.write(body)
+        eof_sent.append(time.perf_counter_ns())
+        await response.write_eof()
+        return response
+
+    async with _serve_http(stream) as url:
+        record = await asyncio.wait_for(
+            aiohttp_client.post_request(
+                url,
+                b"{}",
+                {},
+                first_token_callback=token_callback if first_token else None,
+                transport_eof_callback=callback if observe else None,
+            ),
+            timeout=2,
+        )
+
+    assert record.status == 200
+    assert record.error is not None
+    assert record.error.type == error_type
+    assert error_message in record.error.message
+    assert record.response_body_eof_perf_ns is not None
+    assert eof_sent[0] <= record.response_body_eof_perf_ns <= record.end_perf_ns
+    callback.assert_not_called()
+    token_callback.assert_not_awaited()
+
+    record.request_info = RecordContext(
+        credit_num=0,
+        credit_phase=CreditPhase.PROFILING,
+        conversation_id="stream-error",
+        turn_index=0,
+        x_request_id="request-0",
+        x_correlation_id="credit-0",
+    )
+    metadata = RecordProcessor._create_metric_record_metadata(
+        Mock(service_id="processor-0"), record, "worker-0"
+    )
+    raw = RawRecordWriterProcessor._build_export_record(
+        Mock(spec=RawRecordWriterProcessor),
+        ParsedResponseRecord(request=record, responses=[]),
+        metadata,
+    )
+    exported = orjson.loads(raw.model_dump_json(exclude_none=True))
+    assert exported["response_body_eof_perf_ns"] == record.response_body_eof_perf_ns
+    assert exported["metadata"]["response_body_eof_ns"] == compute_time_ns(
+        record.controller_timestamp_ns,
+        record.start_perf_ns,
+        record.response_body_eof_perf_ns,
+    )
+    assert exported["error"]["type"] == error_type
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first_token", [param(False, id="fast-path"), param(True, id="first-token-path")])  # fmt: skip
+async def test_stream_error_before_http_eof_does_not_drain_or_record_completion(
+    aiohttp_client: AioHttpClient, first_token: bool
+) -> None:
+    """An early SSE error leaves EOF absent and stops before reading the remaining body."""
+    response = create_mock_response(content_type="text/event-stream")
+    response.content.at_eof.return_value = False
+    response.read = AsyncMock()
+    callback = Mock()
+    token_callback = AsyncMock(return_value=True)
+    remaining_body_read = Mock()
+
+    async def chunks() -> AsyncIterator[bytes]:
+        """Expose an error before a remaining chunk that must never be requested."""
+        yield b'event: error\ndata: {"error": {"message": "model failed"}}\n\n'
+        remaining_body_read()
+        yield b"data: [DONE]\n\n"
+
+    response.content.iter_any = Mock(side_effect=chunks)
+    with patch("aiohttp.ClientSession") as session:
+        setup_mock_session(session, response, ["request"])
+        record = await aiohttp_client.post_request(
+            "http://test.com/",
+            b"{}",
+            {},
+            first_token_callback=token_callback if first_token else None,
+            transport_eof_callback=callback,
+        )
+
+    assert record.error is not None
+    assert record.error.type == "SSEResponseError"
+    assert "model failed" in record.error.message
+    assert record.response_body_eof_perf_ns is None
+    callback.assert_not_called()
+    token_callback.assert_not_awaited()
+    remaining_body_read.assert_not_called()
+    response.read.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("at_eof", [param(False, id="unfinished-body"), param(True, id="fully-read-body")])  # fmt: skip
+async def test_stream_cancellation_records_only_observed_eof(
+    aiohttp_client: AioHttpClient, at_eof: bool
+) -> None:
+    """Cancellation during a token callback retains observed EOF without releasing replay."""
+    response = create_mock_response(content_type="text/event-stream")
+    response.content.at_eof.return_value = at_eof
+    record = RequestRecord(trace_data=AioHttpTraceData())
+    callback = Mock()
+
+    async def chunks() -> AsyncIterator[bytes]:
+        """Deliver a valid message before cancellation interrupts stream processing."""
+        yield b'data: {"choices":[{"delta":{"content":"x"}}]}\n\n'
+
+    response.content.iter_any = Mock(side_effect=chunks)
+    with patch("aiohttp.ClientSession") as session:
+        setup_mock_session(session, response, ["request"])
+        with pytest.raises(asyncio.CancelledError):
+            await aiohttp_client._request(
+                "POST",
+                "http://test.com/",
+                {},
+                record=record,
+                first_token_callback=AsyncMock(side_effect=asyncio.CancelledError),
+                transport_eof_callback=callback,
+            )
+
+    assert record.error.type == "RequestCancellationError"
+    assert (record.response_body_eof_perf_ns is not None) == at_eof
+    if at_eof:
+        assert (
+            record.start_perf_ns
+            <= record.response_body_eof_perf_ns
+            <= record.end_perf_ns
+        )
+    callback.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("content_type", "first_token"),
+    [
+        param("text/event-stream", False, id="sse-fast-path"),
+        param("text/event-stream", True, id="sse-first-token-path"),
+        param("application/octet-stream", False, id="binary"),
+        param("application/json", False, id="text"),
     ],
 )  # fmt: skip
 @pytest.mark.parametrize(
@@ -57,7 +248,9 @@ async def test_response_body_eof_preserves_callback_order_and_errors(
     at_eof: bool,
     callback_fails: bool,
     error_type: str | None,
+    first_token: bool,
 ) -> None:
+    """Successful bodies notify once; incomplete bodies and callback failures retain their errors."""
     response = create_mock_response(content_type=content_type)
     response.content.at_eof = Mock(return_value=at_eof)
     response.read = AsyncMock(return_value=b"{}")
@@ -78,7 +271,11 @@ async def test_response_body_eof_preserves_callback_order_and_errors(
     with patch("aiohttp.ClientSession") as session:
         setup_mock_session(session, response, ["request"])
         record = await aiohttp_client.post_request(
-            "http://test.com/api", b"{}", {}, transport_eof_callback=callback
+            "http://test.com/api",
+            b"{}",
+            {},
+            first_token_callback=AsyncMock(return_value=True) if first_token else None,
+            transport_eof_callback=callback,
         )
 
     if error_type is None:
@@ -226,9 +423,11 @@ async def test_fully_read_http_body_records_eof_independently_of_success(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("outcome", [param("timeout", id="timeout"), param("cancel", id="cancel"), param("truncated", id="connection-lost")])  # fmt: skip
 @pytest.mark.parametrize("status", [param(200, id="success-status"), param(500, id="error-status")])  # fmt: skip
+@pytest.mark.parametrize("content_type", [param("application/json", id="text"), param("text/event-stream", id="sse")])  # fmt: skip
 async def test_http_body_interrupted_before_eof_has_no_completion_observation(
-    aiohttp_client: AioHttpClient, outcome: str, status: int
+    aiohttp_client: AioHttpClient, outcome: str, status: int, content_type: str
 ) -> None:
+    """Timeout, cancellation, and connection loss leave unfinished text/SSE bodies unstamped."""
     release_body = asyncio.Event()
     callback = Mock()
     if outcome == "timeout":
@@ -237,7 +436,7 @@ async def test_http_body_interrupted_before_eof_has_no_completion_observation(
     async def stream(request: web.Request) -> web.StreamResponse:
         response = web.StreamResponse(
             status=status,
-            headers={"Content-Type": "application/json", "Content-Length": "1024"},
+            headers={"Content-Type": content_type, "Content-Length": "1024"},
         )
         await response.prepare(request)
         await response.write(b'{"partial":')

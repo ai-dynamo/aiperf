@@ -86,7 +86,10 @@ completion dependencies.
 
 The field is omitted from JSONL when EOF was not observed, including timeouts or cancellations
 before EOF, connection failures, and intentionally unread redirect bodies.
-An error after EOF was observed does not erase the timestamp.
+An error after EOF was observed does not erase the timestamp. This includes a
+final SSE error or an incomplete AWS eventstream frame detected after the HTTP
+body was fully consumed. These requests remain failed and do not release finite
+replay completion dependencies; unfinished bodies are not drained to obtain EOF.
 `metadata.request_end_ns` keeps its existing last-response semantics. At raw
 export level, `response_body_eof_perf_ns` can be compared directly with the raw
 record's `start_perf_ns` on the same worker. EOF is captured after the body is
@@ -297,6 +300,7 @@ fields contain timestamps in **nanoseconds**, not elapsed milliseconds:
 |---|---|---|---|
 | Successful stream with a delayed body close | 500 ms | 750 ms | EOF is present. Completion dependencies wait until 750 ms. |
 | HTTP 500 with its error body fully read | Depends on the error path | 750 ms | EOF is present and the error is retained. Finite replay fails; the timestamp does not release completion dependencies. |
+| SSE error or incomplete AWS frame detected after HTTP body completion | May contain partial responses | 750 ms | EOF is present and the parsing error is retained. Finite replay fails without releasing completion dependencies. |
 | Timeout before the body finishes | May contain partial responses | Not observed | The EOF field is omitted. Finite replay fails. |
 
 The raw and processed exports express the same EOF observation in different
