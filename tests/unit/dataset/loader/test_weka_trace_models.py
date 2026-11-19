@@ -1,5 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import orjson
 import pytest
 from pydantic import ValidationError
 
@@ -9,6 +10,55 @@ from aiperf.dataset.loader.weka_trace_models import (
     WekaSubagentEntry,
     WekaTrace,
 )
+
+
+@pytest.mark.parametrize("from_json", [False, True])
+def test_trace_reuses_id_values_without_changing_serialized_data(
+    from_json: bool,
+) -> None:
+    request = {
+        "t": 0.0,
+        "type": "n",
+        "model": "m",
+        "in": 192,
+        "out": 1,
+        "hash_ids": [70000, 70001, 70000],
+    }
+    raw = {
+        "id": "one",
+        "models": ["m"],
+        "block_size": 64,
+        "hash_id_scope": "local",
+        "requests": [
+            request,
+            dict(request, type="s"),
+            {
+                "t": 1.0,
+                "type": "subagent",
+                "agent_id": "a",
+                "subagent_type": "Explore",
+                "status": "completed",
+                "models": ["m"],
+                "requests": [request],
+            },
+            {"t": 2.0, "type": "n", "model": "m", "in": 0, "out": 1},
+        ],
+    }
+    encoded = orjson.dumps(raw)
+    parse = (
+        WekaTrace.model_validate_json
+        if from_json
+        else lambda data: WekaTrace.model_validate(orjson.loads(data))
+    )
+    trace = parse(encoded)
+    parent, stream, child, empty = trace.requests
+    assert parent.hash_ids[0] is parent.hash_ids[2]
+    assert parent.hash_ids[0] is stream.hash_ids[0]
+    assert parent.hash_ids[0] is child.requests[0].hash_ids[0]
+    assert parent.hash_ids is not stream.hash_ids
+    assert parent.hash_ids[0] is not parse(encoded).requests[0].hash_ids[0]
+    assert "hash_ids" not in empty.model_fields_set
+    assert trace.model_dump(by_alias=True, exclude_unset=True) == raw
 
 
 def test_weka_normal_request_parses_with_alias_fields():
