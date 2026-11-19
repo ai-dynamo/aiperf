@@ -1510,6 +1510,18 @@ spec_decode_adapter:
       payload that more than one adapter claims.
     metadata: {}
 
+  llamacpp:
+    class: aiperf.spec_decode.llamacpp_adapter:LlamaCppSpecDecodeAdapter
+    description: |
+      Reads llama.cpp's top-level ``timings`` draft counters (``draft_n`` and
+      ``draft_n_accepted``, sent when the server runs with a draft model) and
+      fills the record with aggregate draft acceptance only. Reports no
+      per-request acceptance length or acceptance histogram, because llama.cpp
+      publishes no per-request verification-step count. Handles chat and
+      completions, streaming and non-streaming; streamed cumulative timings
+      collapse to the final chunk.
+    metadata: {}
+
 accuracy_grader:
   exact_match:
     class: aiperf.accuracy.graders.exact_match:ExactMatchGrader

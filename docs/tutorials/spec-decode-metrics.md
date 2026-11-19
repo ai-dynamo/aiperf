@@ -20,7 +20,8 @@ cleanly when they are not.
 > - **Per-request (this guide):** the stats ride the response body, so AIPerf reads them
 >   inline during a normal `aiperf profile` run. Highest fidelity -- you get per-request
 >   distributions (avg/min/percentiles) and a pooled histogram. Supported for vLLM, SGLang, and
->   TensorRT-LLM; direct to the engine, not behind Dynamo.
+>   TensorRT-LLM; llama.cpp reports only aggregate draft acceptance per request, with no
+>   acceptance length or histogram. Direct to the engine, not behind Dynamo.
 > - **Server scrape:** aggregate acceptance is read from the server's Prometheus `/metrics`
 >   endpoint via `--server-metrics`. Works on engines with no per-request reporting
 >   and behind Dynamo, but the numbers cover the whole server.
@@ -48,6 +49,9 @@ of the metrics reference.
 
   - **SGLang v0.5.19+** with `--extra-inputs return_spec_tokens_details:true`
     on the AIPerf command.
+  - **llama.cpp** with a draft model (`llama-server -m <target>.gguf -md <draft>.gguf --metrics`).
+    `--metrics` is required so the server exposes `/metrics` for the server-scrape path.
+    Per-request data is draft acceptance only; use the server-scrape path for acceptance length.
 
   You do not tell AIPerf which engine you are pointed at -- it recognizes each engine's
   payload by shape.

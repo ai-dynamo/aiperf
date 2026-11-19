@@ -18,14 +18,20 @@ parser's behaviour when a signature collision happens anyway.
 
 from typing import Any
 
+import pytest
+
 from aiperf.common.models import ParsedResponse, SpecDecodeAcceptanceRecord
 from aiperf.plugin import plugins
 from aiperf.plugin.enums import PluginType
 from aiperf.records.inference_result_parser import InferenceResultParser
+from aiperf.spec_decode.llamacpp_adapter import LlamaCppSpecDecodeAdapter
 from aiperf.spec_decode.sglang_adapter import SGLangSpecDecodeAdapter
 from aiperf.spec_decode.trtllm_adapter import TRTLLMSpecDecodeAdapter
 from aiperf.spec_decode.vllm_adapter import VLLMSpecDecodeAdapter
 from tests.harness import mock_plugin
+from tests.unit.spec_decode.test_llamacpp_adapter import (
+    TIMINGS_PAYLOAD as LLAMACPP_PAYLOAD,
+)
 from tests.unit.spec_decode.test_sglang_adapter import SUMMARY_PAYLOAD as SGLANG_PAYLOAD
 from tests.unit.spec_decode.test_trtllm_adapter import (
     SUMMARY_PAYLOAD as TRTLLM_PAYLOAD,
@@ -45,6 +51,10 @@ def test_adapters_are_registered() -> None:
     assert (
         plugins.get_class(PluginType.SPEC_DECODE_ADAPTER, "tensorrt_llm").__name__
         == "TRTLLMSpecDecodeAdapter"
+    )
+    assert (
+        plugins.get_class(PluginType.SPEC_DECODE_ADAPTER, "llamacpp")
+        is LlamaCppSpecDecodeAdapter
     )
 
 
@@ -68,11 +78,29 @@ class TestCrossClaim:
         responses = [ParsedResponse(perf_ns=1, spec_decode_stats=SUMMARY_PAYLOAD)]
         assert TRTLLMSpecDecodeAdapter.can_adapt(responses) is False
 
+    def test_engine_adapters_defer_on_llamacpp_payload(self) -> None:
+        responses = [ParsedResponse(perf_ns=1, spec_decode_stats=LLAMACPP_PAYLOAD)]
+        for adapter in (
+            VLLMSpecDecodeAdapter,
+            TRTLLMSpecDecodeAdapter,
+            SGLangSpecDecodeAdapter,
+        ):
+            assert adapter.can_adapt(responses) is False, adapter.__name__
+
+    @pytest.mark.parametrize(
+        "payload",
+        [SUMMARY_PAYLOAD, TRTLLM_PAYLOAD, SGLANG_PAYLOAD],
+    )  # fmt: skip
+    def test_llamacpp_defers_on_other_engine_payloads(self, payload: dict) -> None:
+        responses = [ParsedResponse(perf_ns=1, spec_decode_stats=payload)]
+        assert LlamaCppSpecDecodeAdapter.can_adapt(responses) is False
+
     def test_each_payload_resolves_to_its_own_engine(self) -> None:
         for payload, engine in (
             (SUMMARY_PAYLOAD, "vllm"),
             (TRTLLM_PAYLOAD, "tensorrt_llm"),
             (SGLANG_PAYLOAD, "sglang"),
+            (LLAMACPP_PAYLOAD, "llamacpp"),
         ):
             responses = [
                 ParsedResponse(perf_ns=1, spec_decode_stats=payload),

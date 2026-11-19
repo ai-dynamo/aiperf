@@ -362,6 +362,7 @@ def _format_server_metric_name(metric_name: str) -> str:
         "vllm:": "vLLM: ",
         "sglang:": "SGLang: ",
         "trtllm:": "TensorRT-LLM: ",
+        "llamacpp:": "llama.cpp: ",
         # Dynamo (all components use same prefix, labels differentiate)
         "dynamo_": "Dynamo: ",
         # Triton Inference Server (uses nv_ prefix)

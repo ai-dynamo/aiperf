@@ -12,7 +12,7 @@ AIPerf captures this as an **engine-neutral per-request record** so the metrics
 layer can reason about acceptance without knowing which engine produced it.
 
 This page documents the record, the adapter interface that fills it, and the
-supported engines: vLLM, TensorRT-LLM, and SGLang. They emit genuinely different
+supported engines: vLLM, TensorRT-LLM, SGLang, and llama.cpp. They emit genuinely different
 payloads -- different field names and different placement in the response -- and
 the adapter layer is what keeps that difference from reaching the metrics layer.
 
@@ -27,13 +27,13 @@ drafting such as DSpark-style adaptive verification.
 
 | Field | Description |
 | --- | --- |
-| `engine` | Serving engine that produced the stats: `vllm`, `tensorrt_llm`, or `sglang`. Set by the adapter for provenance; no metric branches on it. |
-| `mean_acceptance_length` | Mean tokens per verify step including the bonus token: `1 + num_accepted_draft_tokens / num_spec_steps`. Ranges `1.0` … `num_spec_tokens + 1`. |
+| `engine` | Serving engine that produced the stats: `vllm`, `tensorrt_llm`, `sglang`, or `llamacpp`. Set by the adapter for provenance; no metric branches on it. |
+| `mean_acceptance_length` | Mean tokens per verify step including the bonus token: `1 + num_accepted_draft_tokens / num_spec_steps`. Ranges `1.0` … `num_spec_tokens + 1`. `None` when the engine reports no per-step data (llama.cpp). |
 | `draft_acceptance_rate` | `num_accepted_draft_tokens / num_draft_tokens`. Draft-only. |
-| `acceptance_histogram` | Sparse `{accepted_draft_count: num_steps}` map with **integer** keys. Zero-count buckets omitted. Excludes the bonus token. |
+| `acceptance_histogram` | Sparse `{accepted_draft_count: num_steps}` map with **integer** keys. Zero-count buckets omitted. Excludes the bonus token. `None` when the engine reports no per-step data. |
 | `num_accepted_draft_tokens` | Total accepted draft tokens (excludes bonus). |
 | `num_draft_tokens` | Total proposed draft tokens counted toward acceptance (the denominator of `draft_acceptance_rate`). Engines that discard some proposals before counting report the post-adjustment total; see the engine section. |
-| `num_spec_steps` | Number of verify steps. Equals the sum of the histogram counts. |
+| `num_spec_steps` | Number of verify steps. Equals the sum of the histogram counts when a histogram is present. `None` when the engine reports no per-step data. |
 | `num_spec_tokens` | Maximum draft length per step (`k`) when the engine has a fixed per-step bound. `None` (the field is optional) when the engine reports no fixed bound, e.g. fully variable-length drafting. |
 | `completion_tokens` | Output tokens for the request, copied from the response `usage` so a consumer holding only this record can normalize acceptance against output length. `None` when the response carried no usage. |
 | `per_step_accepted` / `per_step_drafted` | Ordered arrays, one entry per verify step (a temporal axis — not positions in a draft tree). Present only when the engine reports per-step data; `None` otherwise. |
@@ -64,6 +64,7 @@ The current signatures are:
 | vLLM | `acceptance_histogram`, `num_spec_steps`, `mean_acceptance_length` |
 | TensorRT-LLM | `total_accepted_draft_tokens`, `total_draft_tokens` |
 | SGLang | `spec_num_correct_drafts`, `spec_num_proposed_drafts`, `spec_verify_ct` |
+| llama.cpp | `draft_n`, `draft_n_accepted` (inside top-level `timings`) |
 
 `mean_acceptance_length` is load-bearing: the other two vLLM keys are also
 emitted by TensorRT-LLM, so a signature without it lets the vLLM adapter claim
@@ -88,7 +89,7 @@ class SpecDecodeAdapterProtocol(Protocol):
 
 ```mermaid
 flowchart LR
-    R["Raw response<br/>root metrics.speculative_decoding (vLLM)<br/>or choices[].speculative_decoding (TRT-LLM)<br/>or sglext.spec_tokens_details (SGLang)"]
+    R["Raw response<br/>root metrics.speculative_decoding (vLLM)<br/>or choices[].speculative_decoding (TRT-LLM)<br/>or sglext.spec_tokens_details (SGLang)<br/>or top-level timings (llama.cpp)"]
     P["ParsedResponse<br/>.spec_decode_stats (raw dict)"]
     A["Engine adapter<br/>(auto-detected)"]
     N["SpecDecodeAcceptanceRecord<br/>(engine-neutral)"]
@@ -259,6 +260,49 @@ Prometheus endpoint.
 - **Tree drafting** (EAGLE3 dynamic-tree, Medusa) works unchanged: the histogram
   counts how many steps produced each output length and encodes no
   parent/child structure.
+
+## The llama.cpp adapter
+
+`LlamaCppSpecDecodeAdapter` reads the top-level `timings` object that llama.cpp
+attaches to a completion response when the server runs with a draft model. Only
+two draft counters are used: `draft_n` (proposed draft tokens) and
+`draft_n_accepted` (accepted draft tokens). llama.cpp sends them only for a
+request that drafted at least one token.
+
+This record is **aggregate-only**. llama.cpp does not publish a per-request
+verification-step count; it keeps one internally and exposes it only as the
+aggregate Prometheus counter `llamacpp:spec_decode_num_drafts_total`. The
+adapter therefore fills:
+
+- `draft_acceptance_rate` = `draft_n_accepted / draft_n`
+- `num_accepted_draft_tokens`, `num_draft_tokens`, and `completion_tokens` (when usage is present)
+- `engine = "llamacpp"`
+
+and leaves `mean_acceptance_length`, `acceptance_histogram`, `num_spec_steps`,
+and `num_spec_tokens` as `None`. Acceptance length is not derived from
+`predicted_n`. llama.cpp updates its accepted total before stop-string
+truncation, so `predicted_n - draft_n_accepted` does not give the number of
+verify steps. A request with `draft_n` of 0 or missing produces no record. A
+negative `draft_n` is malformed: it produces no record and logs a warning.
+
+To get acceptance length for llama.cpp, read the aggregate Prometheus counters
+(see [Server metrics](../server-metrics/server-metrics-reference.md)). No
+acceptance histogram is available on this path.
+The `speed-bench-report` server-scrape path computes acceptance length from
+`llamacpp:spec_decode_num_accepted_tokens / llamacpp:spec_decode_num_drafts + 1`.
+The code reads these unsuffixed names because the Prometheus parser strips the
+`_total` suffix from a counter's family name, so the exposed `_total` counters
+above match them.
+
+Enable it by starting `llama-server` with a draft model, for example
+`llama-server -m <target>.gguf -md <draft>.gguf`. Streaming works with or without
+`timings_per_token`. Without it, llama.cpp sends `timings` on the final chunk only.
+With it, every chunk carries cumulative values, and AIPerf keeps the last one.
+
+**`n > 1`**: llama.cpp merges all choices of a multi-choice response into the
+first result and keeps only that result's `timings`. AIPerf suppresses the record
+for any request generating more than one sequence, since the timings cover only
+one of them.
 
 ## The SGLang adapter
 

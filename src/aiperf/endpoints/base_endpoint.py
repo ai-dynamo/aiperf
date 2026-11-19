@@ -29,6 +29,7 @@ from aiperf.common.models import (
     Turn,
 )
 from aiperf.common.types import RequestOutputT
+from aiperf.spec_decode.llamacpp_adapter import is_llamacpp_payload
 
 
 class BaseEndpoint(AIPerfLoggerMixin, ABC):
@@ -165,14 +166,19 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
           on the body or a separate streaming chunk with empty ``choices``,
           when the request sets ``return_spec_tokens_details: true``.
           Multi-sequence responses use a list, which is excluded.
+        - **Top-level** ``timings`` (llama.cpp), when it carries both
+          ``draft_n`` and ``draft_n_accepted``, which llama.cpp sends only for
+          requests that drafted. Streaming chunks repeat cumulative values, so
+          the parser keeps only the last one.
 
-        Root wins when multiple placements appear. Captured verbatim and
+        Root wins when multiple placements appear, and llama.cpp ``timings``
+        is the lowest-precedence placement. Captured verbatim and
         uninterpreted so a ``SpecDecodeAdapterProtocol`` owns the engine-specific
         interpretation downstream; None when absent.
 
         A response with more than one choice is an ``n > 1`` or multi-prompt
-        non-streaming request; its per-choice and SGLang payloads are
-        suppressed (SGLang reports only the first prompt's details as an
+        non-streaming request; its per-choice, SGLang, and llama.cpp ``timings``
+        payloads are suppressed (SGLang reports only the first prompt's details as an
         object when ``n == 1``) because a single
         per-request record cannot attribute request-level usage to one sequence
         -- reporting one choice's acceptance alongside all choices' token count
@@ -198,14 +204,15 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
             if isinstance(stats, dict):
                 return stats
 
-        if (
-            not isinstance(choices, list)
-            or not choices
-            or not isinstance(choices[0], dict)
-        ):
-            return None
-        stats = choices[0].get("speculative_decoding")
-        return stats if isinstance(stats, dict) else None
+        if isinstance(choices, list) and choices and isinstance(choices[0], dict):
+            stats = choices[0].get("speculative_decoding")
+            if isinstance(stats, dict):
+                return stats
+
+        timings = json_obj.get("timings")
+        if is_llamacpp_payload(timings):
+            return timings
+        return None
 
     def build_assistant_turn(self, record: RequestRecord) -> Turn | None:
         """Build a Turn representing the assistant response for context replay.

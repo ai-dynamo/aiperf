@@ -38,23 +38,27 @@ class SpecDecodeAcceptanceRecord(AIPerfBaseModel):
         "(e.g. 'vllm'). Set by the adapter so provenance is explicit while the "
         "rest of the record stays engine-neutral.",
     )
-    mean_acceptance_length: FiniteFloat = Field(
+    mean_acceptance_length: FiniteFloat | None = Field(
+        default=None,
         description="Mean tokens emitted per verification step including the "
         "always-accepted bonus token: 1 + num_accepted_draft_tokens / "
         "num_spec_steps. Ranges from 1.0 (nothing accepted) to num_spec_tokens "
-        "+ 1. The '(j + 1)' acceptance length.",
+        "+ 1. The '(j + 1)' acceptance length. None when the engine reports no "
+        "per-step data (aggregate-only engines such as llama.cpp).",
     )
     draft_acceptance_rate: FiniteFloat = Field(
         description="Fraction of proposed draft tokens that were accepted: "
         "num_accepted_draft_tokens / num_draft_tokens. Draft-only; excludes the "
         "bonus token.",
     )
-    acceptance_histogram: dict[NonNegativeInt, NonNegativeInt] = Field(
+    acceptance_histogram: dict[NonNegativeInt, NonNegativeInt] | None = Field(
+        default=None,
         description="Sparse map from accepted draft count j to the number of "
         "verification steps that accepted exactly j draft tokens. Engine "
         "adapters populate it (e.g. vLLM inflates its dense on-the-wire "
         "list[int], dropping zero-count buckets); keys are integers and "
-        "zero-count buckets are omitted. Excludes the bonus token.",
+        "zero-count buckets are omitted. Excludes the bonus token. None when "
+        "the engine reports no per-step data.",
     )
     num_accepted_draft_tokens: int = Field(
         ge=0,
@@ -68,10 +72,13 @@ class SpecDecodeAcceptanceRecord(AIPerfBaseModel):
         "discard some proposals before counting report the post-adjustment "
         "total (e.g. vLLM subtracts structured-output-invalidated drafts).",
     )
-    num_spec_steps: int = Field(
+    num_spec_steps: int | None = Field(
+        default=None,
         ge=0,
         description="Number of verification steps for the request. Equals the "
-        "sum of the histogram counts.",
+        "sum of the histogram counts when a histogram is present. None when the "
+        "engine reports no per-step data (aggregate-only engines such as "
+        "llama.cpp).",
     )
     num_spec_tokens: int | None = Field(
         default=None,
@@ -115,18 +122,19 @@ class SpecDecodeAcceptanceRecord(AIPerfBaseModel):
         The vLLM adapter catches the resulting ValidationError and degrades to
         None.
         """
-        step_count = sum(self.acceptance_histogram.values())
-        if step_count != self.num_spec_steps:
-            raise ValueError(
-                f"acceptance_histogram counts sum to {step_count}, but "
-                f"num_spec_steps is {self.num_spec_steps}"
-            )
-        accepted = sum(j * count for j, count in self.acceptance_histogram.items())
-        if accepted != self.num_accepted_draft_tokens:
-            raise ValueError(
-                f"acceptance_histogram j-weighted sum is {accepted}, but "
-                f"num_accepted_draft_tokens is {self.num_accepted_draft_tokens}"
-            )
+        if self.acceptance_histogram is not None:
+            step_count = sum(self.acceptance_histogram.values())
+            if step_count != self.num_spec_steps:
+                raise ValueError(
+                    f"acceptance_histogram counts sum to {step_count}, but "
+                    f"num_spec_steps is {self.num_spec_steps}"
+                )
+            accepted = sum(j * count for j, count in self.acceptance_histogram.items())
+            if accepted != self.num_accepted_draft_tokens:
+                raise ValueError(
+                    f"acceptance_histogram j-weighted sum is {accepted}, but "
+                    f"num_accepted_draft_tokens is {self.num_accepted_draft_tokens}"
+                )
         if self.num_accepted_draft_tokens > self.num_draft_tokens:
             raise ValueError(
                 f"num_accepted_draft_tokens ({self.num_accepted_draft_tokens}) "
@@ -144,7 +152,10 @@ class SpecDecodeAcceptanceRecord(AIPerfBaseModel):
         """Detailed level: the ordered per-step arrays (each optional) must
         reconcile with the aggregates the same way the histogram does."""
         if self.per_step_accepted is not None:
-            if len(self.per_step_accepted) != self.num_spec_steps:
+            if (
+                self.num_spec_steps is not None
+                and len(self.per_step_accepted) != self.num_spec_steps
+            ):
                 raise ValueError(
                     f"per_step_accepted has {len(self.per_step_accepted)} entries, "
                     f"but num_spec_steps is {self.num_spec_steps}"
@@ -155,7 +166,10 @@ class SpecDecodeAcceptanceRecord(AIPerfBaseModel):
                     f"num_accepted_draft_tokens is {self.num_accepted_draft_tokens}"
                 )
         if self.per_step_drafted is not None:
-            if len(self.per_step_drafted) != self.num_spec_steps:
+            if (
+                self.num_spec_steps is not None
+                and len(self.per_step_drafted) != self.num_spec_steps
+            ):
                 raise ValueError(
                     f"per_step_drafted has {len(self.per_step_drafted)} entries, "
                     f"but num_spec_steps is {self.num_spec_steps}"

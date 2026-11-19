@@ -887,10 +887,11 @@ Run-level acceptance length weighting every verify step equally rather than ever
 
 **Formula:**
 ```python
-spec_decode_token_weighted_acceptance_length = 1 + sum(num_accepted_draft_tokens) / sum(num_spec_steps)
+spec_decode_token_weighted_acceptance_length = 1 + sum(stepped_accepted_draft_tokens) / sum(num_spec_steps)
 ```
 
 **Notes:**
+- The numerator counts only records that report a step count. Aggregate-only engines (llama.cpp) add accepted tokens without steps, so including them would inflate the length. Those requests still count toward the overall draft acceptance rate.
 - Reported **alongside** the per-request-mean acceptance length and clearly labeled, because the two answer different questions (per-request vs per-step weighting).
 
 ---
@@ -964,7 +965,7 @@ spec_decode_zero_step_requests = sum(1 for r in records if r.spec_decode_zero_st
 
 **Type:** [Record Metrics](#record-metrics) · **Unit:** tokens · `console_group = NONE`
 
-`spec_decode_accepted_draft_tokens` (`num_accepted_draft_tokens`) and `spec_decode_draft_tokens` (`num_draft_tokens`) travel per request and sum into `total_accepted_draft_tokens` / `total_draft_tokens`. They are exported to JSON/CSV/JSONL but hidden from the console to keep the section compact.
+`spec_decode_accepted_draft_tokens` (`num_accepted_draft_tokens`) and `spec_decode_draft_tokens` (`num_draft_tokens`) travel per request and sum into `total_accepted_draft_tokens` / `total_draft_tokens`. They are exported to JSON/CSV/JSONL but hidden from the console to keep the section compact. Records without a step count (llama.cpp) are excluded from the length numerator. `total_stepped_accepted_draft_tokens` (internal) sums only the step-reporting records, and it is the numerator of the token-weighted acceptance length.
 
 ---
 
