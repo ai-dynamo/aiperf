@@ -81,11 +81,13 @@ class AccuracyAccumulator(BaseMetricsProcessor):
         total_evaluated = len(scoped)
         total_passed = sum(1 for r in scoped if r.passed)
         overall_unparsed = sum(1 for r in scoped if r.unparsed)
+        overall_grader_errors = sum(1 for r in scoped if r.grader_error)
         accuracy_rate = total_passed / total_evaluated if total_evaluated else 0.0
 
         task_total: dict[str, int] = defaultdict(int)
         task_passed: dict[str, int] = defaultdict(int)
         task_unparsed: dict[str, int] = defaultdict(int)
+        task_grader_errors: dict[str, int] = defaultdict(int)
         for r in scoped:
             if r.task is None:
                 continue
@@ -94,17 +96,22 @@ class AccuracyAccumulator(BaseMetricsProcessor):
                 task_passed[r.task] += 1
             if r.unparsed:
                 task_unparsed[r.task] += 1
+            if r.grader_error:
+                task_grader_errors[r.task] += 1
 
         per_task: dict[str, TaskAccuracyStats] = {}
         for task, total in task_total.items():
             passed = task_passed.get(task, 0)
             unparsed = task_unparsed.get(task, 0)
+            grader_errors = task_grader_errors.get(task, 0)
             per_task[task] = TaskAccuracyStats(
                 total=total,
                 passed=passed,
                 unparsed=unparsed,
                 accuracy_rate=passed / total if total else 0.0,
                 unparsed_rate=unparsed / total if total else 0.0,
+                grader_errors=grader_errors,
+                grader_error_rate=grader_errors / total if total else 0.0,
             )
 
         return AccuracySummary(
@@ -112,6 +119,7 @@ class AccuracyAccumulator(BaseMetricsProcessor):
             total_passed=total_passed,
             accuracy_rate=accuracy_rate,
             overall_unparsed=overall_unparsed,
+            overall_grader_errors=overall_grader_errors,
             grader_name=scoped[0].grader_name,
             per_task=per_task,
         )

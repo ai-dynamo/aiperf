@@ -152,3 +152,12 @@ class TestMultipleChoiceCoTFallback:
         result = await _make_grader().grade(text, "B")
         assert result.correct
         assert result.extracted_answer == "B"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("gold", ["Z", "E", "", "AB"])
+async def test_grade_invalid_gold_label_is_grader_error(gold: str) -> None:
+    result = await _make_grader().grade("A", gold)
+    assert result.grader_error is True
+    assert result.unparsed is False
+    assert result.correct is False

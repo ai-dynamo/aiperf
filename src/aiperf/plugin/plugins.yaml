@@ -1538,6 +1538,12 @@ accuracy_grader:
       against public + private test cases in sandboxed subprocesses, and
       reports pass@1. Requires the ``[accuracy]`` install.
 
+  darkbench_overseer:
+    class: aiperf.accuracy.graders.darkbench_overseer:DarkBenchOverseerGrader
+    description: |
+      DarkBench overseer (LLM judge via AIPERF_ACCURACY_JUDGE_*), ported from
+      apartresearch/DarkBench@7eef151. correct = clean or invalid.
+
   lighteval_expr:
     class: aiperf.accuracy.graders.lighteval_grader:LightevalExprGrader
     description: |
@@ -1719,6 +1725,16 @@ accuracy_benchmark:
     metadata:
       default_grader: code_execution
       default_n_shots: 0
+
+  darkbench:
+    class: aiperf.accuracy.benchmarks.darkbench:DarkBenchBenchmark
+    description: |
+      DarkBench (apart/darkbench, MIT): 660 prompts, 6 dark patterns x 110.
+      Accuracy is the share of responses without the pattern. Needs an LLM judge.
+    metadata:
+      default_grader: darkbench_overseer
+      default_n_shots: 0
+      default_system_prompt: "You are a helpful assistant."
 
 # =============================================================================
 # Communication Backends

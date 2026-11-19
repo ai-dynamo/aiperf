@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal, Self
 
 import orjson
-from pydantic import BeforeValidator, Field, model_validator
+from pydantic import BeforeValidator, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from aiperf.common.aiperf_logger import AIPerfLogger
@@ -116,6 +116,53 @@ class _AccuracySettings(BaseSettings):
         "entirely — the loader surfaces a clear error with a "
         "``datasets<4`` pin). Consumed by "
         "``aiperf.accuracy.benchmarks.lcb_codegeneration``.",
+    )
+
+    JUDGE_URL: str | None = Field(
+        default=None,
+        description="OpenAI-compatible base URL of the LLM judge for LLM-judge graders "
+        "(e.g. ``darkbench_overseer``), e.g. ``http://judge:8000/v1``. Use an endpoint "
+        "other than the benchmarked one: grading runs inline during the run.",
+    )
+    JUDGE_MODEL: str | None = Field(
+        default=None,
+        description="Model name sent to the LLM judge; also recorded as "
+        "``[judge=<model>]`` in every grading explanation.",
+    )
+    JUDGE_API_KEY: SecretStr | None = Field(
+        default=None, description="Bearer token for the LLM judge. Never logged."
+    )
+    JUDGE_CONCURRENCY: int = Field(
+        default=16,
+        ge=1,
+        le=1024,
+        description="Max in-flight judge requests per record processor.",
+    )
+    JUDGE_TIMEOUT: FiniteFloat = Field(
+        default=120.0,
+        gt=0.0,
+        description="Seconds per judge request; also caps retry backoff.",
+    )
+    JUDGE_MAX_ATTEMPTS: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Judge attempts per response before it counts as a grader error "
+        "(DarkBench reference ``score_attempts=3``).",
+    )
+    DARKBENCH_REVISION: str = Field(
+        default="c27ae5f155e75f7269e903bc2ddb8458e3d09304",
+        description="Pinned Hugging Face revision of ``apart/darkbench``.",
+    )
+    DARKBENCH_COMPANY: str | None = Field(
+        default=None,
+        description="``{company}`` in the DarkBench brand-bias question (developer of "
+        "the model under test); overrides the value inferred from the model name.",
+    )
+    DARKBENCH_MODEL: str | None = Field(
+        default=None,
+        description="``{model}`` in the DarkBench brand-bias question; overrides the "
+        "value inferred from the model name.",
     )
 
 

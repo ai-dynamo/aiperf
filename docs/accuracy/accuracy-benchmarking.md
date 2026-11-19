@@ -59,6 +59,7 @@ DeepEval-backed AIME path
 | Benchmark | `default_system_prompt` |
 |---|---|
 | `aime` | `Please reason step by step, and put your final answer within \boxed{}.` |
+| `darkbench` | `You are a helpful assistant.` (DarkBench reference) |
 | (others) | _none — pass via `--accuracy-system-prompt` if desired_ |
 
 The CLI's `--accuracy-system-prompt` flag always wins; the per-benchmark
@@ -80,6 +81,7 @@ system message).
 | `math_500` | `lighteval_latex` | 0 | `HuggingFaceH4/MATH-500` (trt-llm/lighteval reference, gold is full solution containing `\boxed{answer}`, `latex_gold_metric`) |
 | `gpqa_diamond` | `lighteval_gpqa` | 0 | `Idavidrein/gpqa` subset `gpqa_diamond` (trt-llm/lighteval reference, simple-evals template with SHA-256-seeded deterministic A/B/C/D shuffling, `gpqa_metric`) |
 | `lcb_codegeneration` | `code_execution` | 0 | `livecodebench/code_generation_lite` (trt-llm/lighteval reference; LCB test-case payload serialized into `BenchmarkProblem.ground_truth` as an orjson blob; `code_execution` grader runs the generated code against the bundled test cases via lighteval's `codegen_metrics`) |
+| `darkbench` | `darkbench_overseer` | 0 | `apart/darkbench` (DarkBench reference `apartresearch/DarkBench@7eef151`; 6 dark patterns x 110 prompts; LLM-judge overseer configured with `AIPERF_ACCURACY_JUDGE_*`; accuracy = share of responses without the pattern). See [DarkBench Dark-Pattern Evaluation](../tutorials/darkbench.md) |
 | `gsm8k` | `lighteval_gsm8k` | 0 | `gsm8k` subset `main` (trt-llm/lighteval reference, `gsm8k_leaderboard` config; prompt `"Question: {question}\nAnswer:"`, gold is the raw answer ending in `#### <number>`, `quasi_exact_match_gsm8k`) |
 
 ### LiveCodeBench (lcb_codegeneration) version pinning
@@ -301,7 +303,8 @@ aiperf profile my-model --url http://localhost:8000 \
 | `mmlu_pro` | Extract the final `A`-`J` letter via the upstream 3-tier cascade: `answer is (X)` → `Answer: X` → last lone in-range letter. Fallback-tier or no-match responses are flagged `unparsed`. No optional dependencies. | MMLU-Pro |
 | `math` | Extract last `\boxed{...}`, fall back to "answer is X" / last number. Apply trt-llm `strip_string` normalization, then compare via `math_equal` (lowercase string → numeric `isclose` → symbolic equivalence via sympy + latex2sympy2-extended). | AIME |
 | `exact_match` | Strict `pred.strip() == gold.strip()` — case-sensitive, no normalization (mirrors DeepEval `Scorer.exact_match_score`). Empty/whitespace-only response scores 0 and is flagged `unparsed`. | HellaSwag, BigBench-Hard |
-| `code_execution` | pass@1 by executing the model's generated code against the benchmark's bundled public + private test cases via lighteval's `codegen_metrics` (sandboxed `ProcessPoolExecutor`, 6s per-test timeout). Extracts the code block with lighteval's `extract_code`; `correct` when pass@1 == 1.0, `unparsed` when no code block was extractable. Requires the `[accuracy]` extra (lighteval). | LiveCodeBench (`lcb_codegeneration`) |
+| `darkbench_overseer` | LLM judge (OpenAI-compatible, `AIPERF_ACCURACY_JUDGE_*`) labels each response `clean` / `flagged` / `egregious` / `invalid` for the problem's dark pattern using the DarkBench overseer prompt; `correct` = `clean` or `invalid`; `grader_error` after `AIPERF_ACCURACY_JUDGE_MAX_ATTEMPTS` failed judge calls. | DarkBench (`darkbench`) |
+| `code_execution` | pass@1 by executing the model's generated code against the benchmark's bundled public + private test cases via lighteval's `codegen_metrics` (sandboxed `ProcessPoolExecutor`, 6s per-test timeout). Extracts the code block with lighteval's `extract_code`; `correct` when pass@1 == 1.0, `unparsed` when no code block was extractable, `grader_error` when the sandbox worker or test-case payload failed. Requires the `[accuracy]` extra (lighteval). | LiveCodeBench (`lcb_codegeneration`) |
 | `lighteval_expr` | Sympy-backed expression extraction and symbolic equivalence (lighteval `expr_gold_metric`): pulls the model's final expression and compares it to gold via lighteval's math parser. Requires the `[accuracy]` extra (lighteval). | AIME24, AIME25 |
 | `lighteval_latex` | Same as `lighteval_expr` but the gold/prediction extractor uses lighteval's `LatexExtractionConfig` for `\boxed{...}` LaTeX answers (lighteval `latex_gold_metric`). Requires the `[accuracy]` extra. | MATH-500 |
 | `lighteval_gpqa` | Multiple-choice `A`-`D` index extraction via lighteval's `gpqa_metric` (`NativeLetters`), using the simple-evals template the GPQA-Diamond loader mirrors for parity. Requires the `[accuracy]` extra. | GPQA-Diamond |
@@ -351,8 +354,30 @@ expected format):
 ```
 
 **Summary CSV:** `<artifact_dir>/accuracy_results.csv` — one row per task plus a
-trailing `OVERALL` row. Columns: `task, total, passed, unparsed, accuracy_rate,
-unparsed_rate`.
+trailing `OVERALL` row. Columns: `task, correct, total, unparsed, accuracy,
+grader_errors`.
+
+### Unparsed vs grader errors
+
+Two distinct failure counts are reported:
+
+- **`unparsed`** — the *model* answered in an unexpected format (the grader
+  needed a regex fallback, or found no answer at all). This is a property of the
+  model's output.
+- **`grader_error`** — the *grader* could not produce a verdict at all: a
+  crashed LiveCodeBench sandbox worker, a malformed ground-truth payload, or an
+  unreachable / malformed LLM judge. This is a property of the grading
+  infrastructure, not of the model.
+
+Grader errors are counted as not passed and stay in the denominator, so
+`accuracy` keeps its historical formula `passed / total`. When any grader error
+occurs, the console table gains a `Grader errors` column and a warning, the
+summary carries `accuracy.grader_error` / `accuracy.grader_error.task.<task>`
+results, and the accuracy over successfully scored responses is
+`passed / (total - grader_errors)`. Runs without grader errors produce the same
+console and JSON output as before. The CSV always has the trailing
+`grader_errors` column and each JSONL record always has a `grader_error`
+field, so strict header or golden-file consumers see a schema change.
 
 ### Per-record accuracy JSONL
 
@@ -378,6 +403,7 @@ Each line is a serialized `AccuracyRecordsData`
 | `grader_name` | str | Which grader scored this response (e.g. `multiple_choice`) |
 | `passed` | bool | Whether the response was graded correct |
 | `unparsed` | bool | Whether the model output needed a regex fallback |
+| `grader_error` | bool | Whether the grader failed to produce a verdict (see [Unparsed vs grader errors](#unparsed-vs-grader-errors)) |
 | `confidence` | float | Grading confidence (0.0–1.0) |
 | `expected` | str | Ground-truth answer |
 | `actual` | str | Answer extracted from the model response |
@@ -412,6 +438,7 @@ Example line (pretty-printed here; the file emits one compact object per line):
   "grader_name": "multiple_choice",
   "passed": false,
   "unparsed": false,
+  "grader_error": false,
   "confidence": 0.0,
   "expected": "B",
   "actual": "D",

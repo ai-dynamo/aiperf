@@ -114,6 +114,14 @@ _BENCHMARK_DATASETS = [
         True,
         id="lcb_codegeneration",
     ),
+    param(
+        "apart/darkbench",
+        None,
+        "train",
+        ["id", "input", "target"],
+        False,
+        id="darkbench",
+    ),
 ]
 
 # Module names of all benchmarks covered above (derived from param ids).

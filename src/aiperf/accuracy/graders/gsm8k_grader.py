@@ -152,11 +152,22 @@ class LightevalGSM8KGrader(BaseGrader):
     ) -> GradingResult:
         gold = gsm8k_normalizer((ground_truth or "").strip())
         pred, used_fallback = _extract_prediction((response_text or "").strip())
+        if not any(ch.isdigit() for ch in gold):
+            # A gold without a number (``[invalid]``, or e.g. ``#### .``) is a
+            # dataset problem, not a model formatting one.
+            return GradingResult(
+                correct=False,
+                grader_error=True,
+                confidence=0.0,
+                reasoning=f"gsm8k: invalid ground truth {ground_truth!r} (no number)",
+                extracted_answer=pred,
+                ground_truth=gold,
+            )
         parseable = pred != _INVALID_ANS
         # A correct-but-fallback (no ``####``) response is still correct;
         # unparsed only flags that the expected format wasn't matched.
         unparsed = used_fallback or not parseable
-        correct = parseable and gold != _INVALID_ANS and _numbers_match(gold, pred)
+        correct = parseable and _numbers_match(gold, pred)
         if not parseable:
             note = " (no number in response)"
         elif used_fallback:

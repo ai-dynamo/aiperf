@@ -173,6 +173,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Custom Dataset](docs/tutorials/custom-dataset.md) - Custom dataset formats
 - [Inline Datasets](docs/tutorials/inline-datasets.md) - Embed records directly in the YAML config (single_turn, multi_turn, multi-pool random_pool, traces)
 - [ShareGPT Dataset](docs/tutorials/sharegpt.md) - Profile with ShareGPT dataset
+- [DarkBench Dark-Pattern Evaluation](docs/tutorials/darkbench.md) - Measure manipulative dark patterns with an LLM-judge overseer (`--accuracy-benchmark darkbench`)
 - [AIMO Dataset](docs/tutorials/aimo.md) - Profile with AIMO math reasoning datasets (NuminaMath-TIR, NuminaMath-CoT, NuminaMath-1.5, AIME)
 - [MMStar Dataset](docs/tutorials/mmstar.md) - Profile vision language models with MMStar visual QA benchmark
 - [MMVU Dataset](docs/tutorials/mmvu.md) - Profile video language models with MMVU expert-level video understanding benchmark

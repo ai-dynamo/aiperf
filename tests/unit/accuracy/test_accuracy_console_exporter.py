@@ -174,3 +174,51 @@ class TestAccuracyConsoleExporterExport:
         output = buf.getvalue()
         assert "Warning" not in output
         assert "inference server" not in output
+
+
+@pytest.mark.asyncio
+class TestAccuracyConsoleExporterGraderErrors:
+    async def test_grader_errors_column_and_warning_when_present(self) -> None:
+        exporter = _make_exporter(
+            records=[
+                _make_metric("accuracy.overall", correct=3, total=10, accuracy=0.3),
+                _make_metric(
+                    "accuracy.task.algebra", correct=3, total=10, accuracy=0.3
+                ),
+                _make_metric(
+                    "accuracy.grader_error", correct=4, total=10, accuracy=0.4
+                ),
+                _make_metric(
+                    "accuracy.grader_error.task.algebra",
+                    correct=4,
+                    total=10,
+                    accuracy=0.4,
+                ),
+            ]
+        )
+        buf = io.StringIO()
+        console = Console(file=buf, highlight=False, width=200)
+
+        await exporter.export(console)
+
+        output = buf.getvalue()
+        assert "Grader errors" in output
+        assert "failed to score 4 of 10" in output
+
+    async def test_no_grader_errors_column_when_absent(self) -> None:
+        exporter = _make_exporter(
+            records=[
+                _make_metric("accuracy.overall", correct=8, total=10, accuracy=0.8),
+                _make_metric(
+                    "accuracy.task.algebra", correct=8, total=10, accuracy=0.8
+                ),
+            ]
+        )
+        buf = io.StringIO()
+        console = Console(file=buf, highlight=False, width=200)
+
+        await exporter.export(console)
+
+        output = buf.getvalue()
+        assert "Grader errors" not in output
+        assert "failed to score" not in output
