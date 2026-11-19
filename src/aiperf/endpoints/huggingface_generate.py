@@ -20,6 +20,7 @@ class HuggingFaceGenerateEndpoint(BaseEndpoint):
         """Format payload for Hugging Face TGI request."""
         if len(request_info.turns) != 1:
             raise ValueError("TGI endpoint supports a single turn per request.")
+        self._reject_raw_messages(request_info)
 
         turn = request_info.turns[0]
         model_endpoint = request_info.model_endpoint

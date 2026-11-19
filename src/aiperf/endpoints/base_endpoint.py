@@ -61,6 +61,22 @@ class BaseEndpoint(AIPerfLoggerMixin, ABC):
         Uses request_info.turns[0] as the turn data (currently hardcoded to first turn).
         """
 
+    @staticmethod
+    def _reject_raw_messages(request_info: RequestInfo) -> None:
+        """Fail loudly on endpoints that cannot place ``raw_messages`` on the wire.
+
+        Endpoints that build their payload from ``turn.texts`` / ``images`` /
+        ``audios`` never read ``raw_messages``, so authored messages would be
+        dropped without any error.
+        """
+        if not any(turn.raw_messages for turn in request_info.turns):
+            return
+        endpoint_type = request_info.model_endpoint.endpoint.type
+        raise ValueError(
+            f"{endpoint_type} endpoint does not support raw_messages; author the "
+            "prompt as text, or use a chat-style endpoint such as --endpoint-type chat"
+        )
+
     @abstractmethod
     def parse_response(
         self, response: InferenceServerResponse

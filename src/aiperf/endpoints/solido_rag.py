@@ -35,6 +35,7 @@ class SolidoEndpoint(BaseEndpoint):
         """
         if not request_info.turns:
             raise ValueError("SOLIDO endpoint requires at least one turn.")
+        self._reject_raw_messages(request_info)
 
         turn = request_info.turns[-1]
         model_endpoint = request_info.model_endpoint
