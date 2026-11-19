@@ -12,13 +12,13 @@ CTRL_BREAK_EVENT — passing SIGINT raises ``ValueError: Unsupported signal: 2``
 
 from __future__ import annotations
 
+import asyncio
 import signal
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 from aiperf.common.constants import IS_WINDOWS
-from tests.harness.subprocess import _new_process_group_kwargs
 from tests.harness.utils import AIPerfRunnerFn
 
 
@@ -62,14 +62,22 @@ async def test_runner_timeout_escalates_to_process_group(
         ) as spawn,
         patch("tests.integration.conftest._cancel_aiperf_for_timeout") as cancel,
         patch("tests.integration.conftest._killpg") as killpg,
+        patch(
+            "tests.integration.conftest.asyncio.wait_for", wraps=asyncio.wait_for
+        ) as wait_for,
         pytest.raises(RuntimeError, match="AIPerf timed out after 120s"),
     ):
         await aiperf_runner(["plugins"], 120)
 
-    for key, value in _new_process_group_kwargs().items():
-        assert spawn.call_args.kwargs[key] == value
+    assert (
+        spawn.call_args.kwargs.get("process_group") == 0
+        or spawn.call_args.kwargs.get("start_new_session") is True
+    )
     cancel.assert_called_once_with(process)
     assert killpg.call_args_list == [
         call(process, sig) for sig in [signal.SIGTERM, signal.SIGKILL][: timeouts - 1]
     ]
     assert process.communicate.await_count == min(timeouts + 1, 3)
+    assert [item.kwargs["timeout"] for item in wait_for.call_args_list] == [120] + [
+        5
+    ] * min(timeouts, 2)

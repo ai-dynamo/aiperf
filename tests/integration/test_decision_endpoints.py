@@ -52,8 +52,9 @@ async def test_structured_replay_errors_and_non_token_metrics(
     async def handle(request: web.Request) -> web.Response:
         seen.append(await request.json(loads=orjson.loads))
         index = len(seen)
-        return web.json_response(
-            {2: {}, 4: mismatched}.get(index, result),
+        return web.Response(
+            body=orjson.dumps({2: {}, 4: mismatched}.get(index, result)),
+            content_type="application/json",
             status=429 if index == 3 else 200,
         )
 
@@ -96,6 +97,7 @@ async def test_structured_replay_errors_and_non_token_metrics(
             command.extend(["--export-level", export_level])
         monkeypatch.setenv("HF_HUB_OFFLINE", "1")
         monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+        monkeypatch.delenv("AIPERF_RECORD_STRIP_PAYLOAD_BYTES", raising=False)
         run = await aiperf_runner(command, 120)
         output = run.stdout + run.stderr
         await asyncio.to_thread((tmp_path / "aiperf.log").write_text, output)
@@ -124,5 +126,26 @@ async def test_structured_replay_errors_and_non_token_metrics(
         assert not {
             "time_to_first_token",
             "inter_token_latency",
-            "output_token_throughput",
         }.intersection(record.get("metrics", {}))
+    summary = orjson.loads(
+        await asyncio.to_thread(
+            (run.output_dir / "profile_export_aiperf.json").read_bytes
+        )
+    )
+    assert "output_token_throughput" not in summary
+    assert summary["request_count"]["avg"] == 2
+    assert summary["error_request_count"]["avg"] == 3
+    if export_level == "raw":
+        raw_exported = await asyncio.to_thread(
+            (run.output_dir / "profile_export_raw.jsonl").read_bytes
+        )
+        raw_records = [orjson.loads(line) for line in raw_exported.splitlines()]
+        assert len(raw_records) == 5
+        assert all(record["payload"] == body for record in raw_records)
+        mismatch_record = next(
+            record
+            for record in raw_records
+            if mismatch_message in record.get("error", {}).get("message", "")
+        )
+        assert mismatch_record["status"] == 200
+        assert orjson.loads(mismatch_record["responses"][0]["text"]) == mismatched

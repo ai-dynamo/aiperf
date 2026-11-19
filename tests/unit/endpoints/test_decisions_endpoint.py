@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from copy import deepcopy
-from unittest.mock import Mock
+from typing import Any
+from unittest.mock import Mock, patch
 
 import orjson
 import pytest
@@ -17,6 +18,10 @@ from tests.unit.endpoints.conftest import (
     create_model_endpoint,
     create_request_info,
 )
+
+DecisionCase = tuple[
+    OpenAIDecisionsEndpoint | SystemOneEndpoint, dict[str, Any], dict[str, Any]
+]
 
 
 @pytest.fixture(params=["decisions", "systemone"])
@@ -56,6 +61,20 @@ def test_exact_raw_payload_and_no_mutation(case):
     info = create_request_info(endpoint.model_endpoint, turns=[Turn(raw_payload=body)])
     assert endpoint.format_payload(info) == original
     assert body == original
+
+
+def test_raw_header_validation_does_not_copy_payload(case: DecisionCase) -> None:
+    endpoint, body, _ = case
+    info = create_request_info(endpoint.model_endpoint, turns=[Turn(raw_payload=body)])
+    with patch(
+        "aiperf.endpoints.decisions.deepcopy",
+        side_effect=AssertionError("Unexpected payload copy"),
+    ):
+        assert endpoint.get_endpoint_headers(info) == {}
+    copied = endpoint.format_payload(info)
+    assert copied == body
+    assert copied is not body
+    assert copied["questions"] is not body["questions"]
 
 
 def test_structured_response_is_not_text_and_usage_unknown(case):
@@ -341,10 +360,14 @@ def test_three_level_score_is_expected_zero_based_ordinal(case, score):
         ([1, "true"], True),
         (["true", "false"], "true"),
         ([True, "true"], 1),
-        (["true", True], True),
+        ([True, True], True),
+        ([True], True),
+        ([True, "true", "extra"], True),
     ],
 )
-def test_openai_choice_type_or_order_mismatch_is_record_error(values, choice):
+def test_openai_choice_candidate_mismatch_is_record_error(
+    values: list[str | bool | int], choice: str | bool | int
+) -> None:
     endpoint = OpenAIDecisionsEndpoint(create_model_endpoint("decisions"))
     body = {
         "model": "test-model",
@@ -398,6 +421,96 @@ def test_refusal_name_must_match_request():
     record = create_record(body, response)
     assert endpoint.extract_response_data(record) == []
     assert "names/order" in record.error.message
+
+
+@pytest.mark.parametrize("field", ["images", "assets"])
+def test_image_request_fields_rejected_before_dispatch(
+    case: DecisionCase, field: str
+) -> None:
+    endpoint, body, _ = case
+    body[field] = {"photo": {"type": "image", "format": "png", "data_base64": "AA=="}}
+    info = create_request_info(endpoint.model_endpoint, turns=[Turn(raw_payload=body)])
+    with pytest.raises(ValueError, match="text inputs only"):
+        endpoint.get_endpoint_headers(info)
+
+
+@pytest.mark.parametrize("kind", ["predicate", "choice", "score"])
+@pytest.mark.parametrize(
+    "instructions,valid",
+    [
+        param("Useful?", True, id="string"),
+        param([{"type": "input_text", "text": "Useful?"}], True, id="text-parts"),
+        param([{"type": "input_image", "image_url": "data:image/png;base64,AA=="}], False, id="image"),
+        param([{"type": "input_text", "text": "Useful?"}, {"type": "input_image", "image_url": "https://example.com/image.png"}], False, id="mixed"),
+    ],
+)  # fmt: skip
+def test_question_instructions_remain_text_only(
+    kind: str, instructions: Any, valid: bool
+) -> None:
+    endpoint = OpenAIDecisionsEndpoint(create_model_endpoint("decisions"))
+    body = {
+        "model": "test-model",
+        "input": "evidence",
+        "questions": [{"type": kind, "instructions": instructions}],
+    }
+    info = create_request_info(endpoint.model_endpoint, turns=[Turn(raw_payload=body)])
+    if valid:
+        assert endpoint.get_endpoint_headers(info) == {}
+    else:
+        with pytest.raises(ValueError, match="text content"):
+            endpoint.get_endpoint_headers(info)
+
+
+@pytest.mark.parametrize("usage", [None, [], "unknown", 0])
+def test_explicit_non_object_usage_is_record_error(
+    case: DecisionCase, usage: Any
+) -> None:
+    endpoint, body, response = case
+    response["usage"] = usage
+    record = create_record(body, response)
+    assert endpoint.extract_response_data(record) == []
+    assert "Invalid decision usage" in record.error.message
+
+
+def test_nested_response_copy_failure_is_record_error(case: DecisionCase) -> None:
+    endpoint, body, response = case
+    wire = orjson.dumps(response)
+    wire = wire[:-1] + b',"extra":' + b"[" * 600 + b"0" + b"]" * 600 + b"}"
+    decoded = orjson.loads(wire)
+    record = create_record(body, response)
+    record.responses = [create_mock_response(json_data=decoded)]
+    assert endpoint.extract_response_data(record) == []
+    assert record.error.type == "RecursionError"
+    assert record._parsed_responses_cache == []
+    assert record.responses[0].get_json() is decoded
+
+
+def test_openai_choice_probabilities_can_be_reordered() -> None:
+    endpoint = OpenAIDecisionsEndpoint(create_model_endpoint("decisions"))
+    body = {
+        "model": "test-model",
+        "input": "evidence",
+        "questions": [
+            {"type": "choice", "choices": [{"value": True}, {"value": "true"}]}
+        ],
+    }
+    response = {
+        "model": "test-model",
+        "answers": [
+            {
+                "type": "choice",
+                "choice": True,
+                "confidence": 0.5,
+                "probabilities": [
+                    {"value": "true", "probability": 0.2},
+                    {"value": True, "probability": 0.8},
+                ],
+            }
+        ],
+    }
+    record = create_record(body, response)
+    assert endpoint.extract_response_data(record)[0].data.body == response
+    assert record.error is None
 
 
 def test_explicit_zero_usage_remains_measured(case):

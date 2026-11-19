@@ -40,6 +40,23 @@ def _identity(value: Any) -> tuple[type, Any]:
     return type(value), value
 
 
+def _require_text_content(content: Any) -> None:
+    _require(
+        isinstance(content, str)
+        or (
+            isinstance(content, list)
+            and bool(content)
+            and all(
+                isinstance(part, dict)
+                and part.get("type") == "input_text"
+                and isinstance(part.get("text"), str)
+                for part in content
+            )
+        ),
+        "Only text content is supported",
+    )
+
+
 def _json_equal(left: Any, right: Any) -> bool:
     """Compare JSON values without Python's boolean/number coercion."""
     if isinstance(left, bool) or isinstance(right, bool):
@@ -88,7 +105,14 @@ class _DecisionEndpoint(BaseEndpoint):
 
     def get_endpoint_headers(self, request_info: RequestInfo) -> dict[str, str]:
         """Validate mmap/raw requests too: these bypass format_payload on send."""
-        self.format_payload(request_info)
+        if (
+            request_info.payload_bytes is None
+            and len(request_info.turns) == 1
+            and request_info.turns[0].raw_payload is not None
+        ):
+            self._validate_request(request_info.turns[0].raw_payload)
+        else:
+            self.format_payload(request_info)
         return super().get_endpoint_headers(request_info)
 
     def _validate_request(self, body: Any) -> None:
@@ -101,7 +125,10 @@ class _DecisionEndpoint(BaseEndpoint):
             "Explicit model is required",
         )
         _require(not body.get("stream", False), "Decisions must be non-streaming")
-        _require(not body.get("images"), "This adapter qualifies text inputs only")
+        _require(
+            not body.get("images") and not body.get("assets"),
+            "This adapter qualifies text inputs only",
+        )
         evidence = body.get("state" if self.systemone else "input")
         _require(isinstance(evidence, (str, dict, list)), "Missing decision evidence")
         if not self.systemone and not isinstance(evidence, str):
@@ -114,21 +141,7 @@ class _DecisionEndpoint(BaseEndpoint):
                     isinstance(message, dict) and message.get("role") == "user",
                     "Only user text messages are supported",
                 )
-                content = message.get("content")
-                _require(
-                    isinstance(content, str)
-                    or (
-                        isinstance(content, list)
-                        and bool(content)
-                        and all(
-                            isinstance(part, dict)
-                            and part.get("type") == "input_text"
-                            and isinstance(part.get("text"), str)
-                            for part in content
-                        )
-                    ),
-                    "Only text content is supported",
-                )
+                _require_text_content(message.get("content"))
         questions = body.get("questions")
         _require(
             isinstance(questions, dict if self.systemone else list) and bool(questions),
@@ -141,6 +154,8 @@ class _DecisionEndpoint(BaseEndpoint):
                 in ("noul" if self.systemone else "predicate", "choice", "score"),
                 "Unsupported decision question",
             )
+            if not self.systemone and "instructions" in question:
+                _require_text_content(question["instructions"])
 
     def parse_response(self, response: InferenceServerResponse) -> ParsedResponse:
         """Validate the response envelope, typed outcomes, distributions and usage."""
@@ -162,7 +177,7 @@ class _DecisionEndpoint(BaseEndpoint):
         for answer in answers.values() if self.systemone else answers:
             refusals += self._validate_answer(answer)
         usage = body.get("usage")
-        if usage is not None:
+        if "usage" in body:
             _require(isinstance(usage, dict), "Invalid decision usage")
             for key in ("input_tokens", "output_tokens"):
                 _require(
@@ -315,7 +330,7 @@ class _DecisionEndpoint(BaseEndpoint):
             parsed = self.parse_response(record.responses[0])
             self._correlate(request, parsed.data.body)
             record._parsed_responses_cache = [parsed]
-        except (ValueError, TypeError, KeyError) as error:
+        except (ValueError, TypeError, KeyError, RecursionError) as error:
             record.error = ErrorDetails.from_exception(error)
             record._parsed_responses_cache = []
         return record._parsed_responses_cache
@@ -348,9 +363,12 @@ class _DecisionEndpoint(BaseEndpoint):
                     )
                 else:
                     _require(
-                        [_identity(item["value"]) for item in answer["probabilities"]]
-                        == [_identity(item["value"]) for item in question["choices"]],
-                        "Candidate type/order differs",
+                        len(answer["probabilities"]) == len(question["choices"])
+                        and {
+                            _identity(item["value"]) for item in answer["probabilities"]
+                        }
+                        == {_identity(item["value"]) for item in question["choices"]},
+                        "Candidate types/values differ",
                     )
             elif question["type"] == "score":
                 levels = question["criteria" if self.systemone else "levels"]
