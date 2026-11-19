@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
+import orjson
 import pytest
+from pytest import param
 
 from aiperf.common.models import MetricResult
 from aiperf.common.models.export_models import JsonExportData
@@ -85,6 +87,42 @@ def mock_results(sample_records):
 
 
 class TestMetricsJsonExporter:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "split, expected_split",
+        [
+            param(None, "test", id="default-split"),
+            param("train", "train", id="split-override"),
+        ],
+    )  # fmt: skip
+    async def test_json_export_records_mooncake_source(
+        self, mock_results: Any, tmp_path: Path, split: str | None, expected_split: str
+    ) -> None:
+        """Mooncake metadata retains the configured repository and effective split."""
+        exporter = MetricsJsonExporter(
+            make_exporter_config(
+                results=mock_results,
+                cli_config=CLIConfig(
+                    model_names=["test-model"],
+                    endpoint_type=EndpointType.CHAT,
+                    hf_mooncake_dataset="fixture/mooncake",
+                    hf_mooncake_split=split,
+                    request_count=1,
+                ),
+                artifact_directory=tmp_path,
+            )
+        )
+        await exporter.export()
+        raw = orjson.loads(
+            (tmp_path / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE).read_bytes()
+        )
+        assert raw["metadata"]["dataset"] == {
+            "source_type": "public_dataset",
+            "loader": "mooncake_hf",
+            "hf_dataset_name": "fixture/mooncake",
+            "hf_split": expected_split,
+        }
+
     @pytest.mark.asyncio
     async def test_json_export_includes_public_dataset_provenance(self, mock_results):
         cfg = BenchmarkConfig.model_validate(
