@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Self
 
-from pydantic import Field
+from pydantic import Field, model_validator
 from typing_extensions import TypedDict
 
 from aiperf.common.enums import CreditPhase
@@ -73,6 +73,12 @@ class GradingResult(AIPerfBaseModel):
         description="Answer extracted from the model response"
     )
     ground_truth: str = Field(description="Expected correct answer")
+
+    @model_validator(mode="after")
+    def _grader_error_is_never_correct(self) -> Self:
+        if self.grader_error and self.correct:
+            raise ValueError("GradingResult: grader_error=True requires correct=False")
+        return self
 
 
 class BenchmarkProblem(AIPerfBaseModel):
