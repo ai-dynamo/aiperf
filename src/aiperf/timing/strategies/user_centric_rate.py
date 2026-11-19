@@ -17,9 +17,9 @@ deterministically seeded stream, so gap sequences are reproducible under `--rand
 New-user spawn scheduling keeps using the mean gap.
 
 Sampled gaps do not preserve the realized request rate: the send-time clamp
-`max(now, next_send_time + gap)` only ever pushes a send later, so a random gap raises the
-realized interval above the pinned mean, more so under heavier skew. Heavily skewed Weibull
-draws can also approach zero. Measure the achieved rate from the run's own output rather
+`max(now, next_send_time + gap)` only ever pushes a scheduled send later, so a random gap
+raises the realized interval above the pinned mean, more so under heavier skew within one
+family. Heavily skewed Weibull draws can also approach zero. Measure the achieved rate from the run's own output rather
 than reading `--request-rate` as guaranteed; see `timing-modes-reference.md` for the full
 analysis and measurements.
 

@@ -736,9 +736,10 @@ class UserCentricPhase(RatePhaseConfig):
             "users / rate seconds; gap_median controls skew. Pinning the "
             "sampled distribution's mean does NOT preserve the realized "
             "aggregate request rate: the scheduler advances each user to "
-            "max(now, previous_send + gap), which can only lengthen an "
-            "inter-send interval, so realized throughput falls as skew "
-            "increases (measured up to -52% relative to fixed). That drop is "
+            "max(now, previous_send + gap) from the previous scheduled time, "
+            "which can only move a scheduled send later, so realized "
+            "throughput falls; within one family it falls further as the "
+            "median drops (measured up to -52% relative to fixed). That drop is "
             "scheduler behavior, not a server regression.",
         ),
     ]

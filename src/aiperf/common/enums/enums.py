@@ -920,7 +920,7 @@ class UserCentricGapDistribution(CaseInsensitiveStrEnum):
     from the named distribution whose mean is pinned to
     num_users / user_centric_rate seconds; the user-supplied median controls
     skew. Pinning the mean does not preserve the realized aggregate request
-    rate, which falls as skew grows.
+    rate, which falls, and within one family falls further as skew grows.
     """
 
     FIXED = "fixed"
