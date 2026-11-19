@@ -356,11 +356,13 @@ class UserCentricStrategy(AIPerfLoggerMixin):
     def set_target_users(self, value: int) -> None:
         if value <= 0:
             raise ValueError("target users must be positive")
+        # Recompute first: it raises on an unsolvable gap and commits nothing,
+        # so a rejected rescale leaves every user-count field untouched too.
+        self._recompute_turn_gap(value)
         old_target = self._target_num_users
         self._adaptive_target_enabled = True
         self._target_num_users = value
         self._num_users = value
-        self._recompute_turn_gap(value)
         if self._spawn_queue is None or value <= old_target:
             return
         now = time.perf_counter()

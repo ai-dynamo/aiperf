@@ -479,6 +479,9 @@ class TestGapDistributionSampling:
         )
         old_gap = strategy._turn_gap
         old_params = strategy._gap_params
+        old_users = (strategy._target_num_users, strategy._num_users)
+        old_adaptive = strategy._adaptive_target_enabled
+        old_snapshot = strategy.user_control_snapshot()
 
         with pytest.raises(ValueError):
             strategy.set_target_users(2)
@@ -488,6 +491,11 @@ class TestGapDistributionSampling:
         assert strategy._turn_gap == old_gap
         assert strategy._gap_params is old_params
         assert strategy._gap_params.mean == strategy._turn_gap
+        # Nor may it commit the rejected target: the user counts, the adaptive
+        # flag and the reported snapshot must all still describe the old state.
+        assert (strategy._target_num_users, strategy._num_users) == old_users
+        assert strategy._adaptive_target_enabled is old_adaptive
+        assert strategy.user_control_snapshot() == old_snapshot
 
     def test_adaptive_rescale_repins_sampled_mean(self) -> None:
         strategy = _make_gap_strategy(
