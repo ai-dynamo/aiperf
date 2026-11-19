@@ -246,7 +246,7 @@ class MetricRecordMetadata(AIPerfBaseModel):
     response_body_eof_ns: int | None = Field(
         default=None,
         ge=0,
-        description="Exact successful client HTTP response-body EOF in the controller's corrected wall-clock frame. Finite replay only; distinct from request_end_ns, which retains its existing last-response semantics.",
+        description="Client-observed HTTP response-body EOF in the controller's corrected wall-clock frame, including fully read error responses. None when EOF was not observed; distinct from request_end_ns, which retains its existing last-response semantics.",
     )
     worker_id: str = Field(
         ..., description="The ID of the AIPerf worker that processed the request."
@@ -1266,7 +1266,7 @@ class RequestRecord(AIPerfBaseModel):
     response_body_eof_perf_ns: int | None = Field(
         default=None,
         ge=0,
-        description="Exact successful HTTP response-body EOF in the worker's perf_counter_ns domain. Captured separately from the last response event in finite replay.",
+        description="Client-observed HTTP response-body EOF in the worker's perf_counter_ns domain, including fully read error responses. None when EOF was not observed; separate from the last response event.",
     )
     recv_start_perf_ns: int | None = Field(
         default=None,
@@ -1955,7 +1955,7 @@ class RawRecordInfo(AIPerfBaseModel):
     response_body_eof_perf_ns: int | None = Field(
         default=None,
         ge=0,
-        description="Exact successful HTTP response-body EOF in the same worker perf_counter_ns domain as start_perf_ns; distinct from the last raw SSE event.",
+        description="Client-observed HTTP response-body EOF in the same worker perf_counter_ns domain as start_perf_ns, including fully read error responses. None when EOF was not observed; distinct from the last raw SSE event.",
     )
     payload: dict[str, Any] | None = Field(
         default=None,

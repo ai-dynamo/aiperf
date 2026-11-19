@@ -67,7 +67,14 @@ aiperf profile --config benchmark.yaml
 
 Note the two `500`s map to different things. The CLI's `--request-count 500` is the *stop condition* — keep firing until 500 requests complete — and corresponds to `phases.profiling.requests: 500`. The `dataset.entries: 500` is the *dataset size* — how many unique synthetic prompts to generate up front — and has no CLI shorthand; it's recycled across requests if the phase runs longer than the dataset. They happen to share a value here but tune independently.
 
-A YAML phase needs an explicit stop condition: `requests`, `duration`, or `sessions`. To run every conversation in a fixed dataset exactly once (for example a SPEED-Bench category), set `sessions: all`; AIPerf resolves it at run time to the number of root conversations the dataset loaded (DAG fork/spawn children run inside their root's session). A full pass needs sampling without replacement, so it is rejected when the dataset sets `sampling: random`, and it is not supported on `user_centric` phases.
+A YAML phase normally needs an explicit stop condition: `requests`, `duration`, or `sessions`. To run every conversation in a fixed dataset exactly once (for example a SPEED-Bench category), set `sessions: all`; AIPerf resolves it at run time to the number of root conversations the dataset loaded (DAG fork/spawn children run inside their root's session). A full pass needs sampling without replacement, so it is rejected when the dataset sets `sampling: random`, and it is not supported on `user_centric` phases.
+
+[Finite agentic replay](weka-trace.md#yaml-configuration) is an exception: a
+profiling concurrency phase with `agenticReplayLifecycle: finite` must omit
+`requests`, `duration`, and `sessions`, including `sessions: all`. It admits
+each eligible root once and finishes after all its descendants drain, while
+preserving trace timestamp floors and transport dependencies. Use the linked
+example for Weka traces; `sessions: all` alone does not select that timing mode.
 
 What you gain over the flag form:
 

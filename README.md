@@ -187,6 +187,7 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Synthetic Dataset Generation](docs/tutorials/synthetic-dataset.md) - Generate synthetic datasets
 - [Agentic Code Generator](docs/tutorials/agentic-code-generator.md) - Generate multi-turn coding-agent traces for KV cache benchmarking
 - [Weka Traces](docs/tutorials/weka-trace.md) - Replay real agentic coding sessions with KV-cache-aware Weka traces
+- [Finite Agentic Replay](docs/tutorials/weka-trace.md#finite-agentic-replay) - Replay each eligible root once and finish after all descendants drain
 - [TraceLab Traces](docs/tutorials/tracelab-trace.md) - Replay the public TraceLab corpus of real agentic coding sessions
 - [H CUA Perf Traces](docs/tutorials/h-cua-perf.md) - Replay H Company's computer-use agent traces (tool calling, screenshots, recorded think time) from HuggingFace
 - [Run a Published Trace](docs/tutorials/remote-datasets.md) - Replay a trace straight from `hf://`, `s3://`, or `https://` with `--input-file`

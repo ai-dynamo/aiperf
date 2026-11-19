@@ -61,6 +61,15 @@ shares its replay, streaming, EOS, corpus, cache-busting, and submission-validit
 checks; conflicting invariants still fail. The different duration and trajectory
 window mean results from the two default commands are not directly equivalent.
 
+> **Want to replay each trace once?** This guide describes steady-state AgentX
+> replay: lanes recycle roots until the benchmark limit is reached. Use
+> [finite agentic replay](weka-trace.md#finite-agentic-replay) for a run that
+> starts every eligible root at turn 0 once and ends after its descendants
+> finish. Start from that guide's plain Weka command or YAML; adding
+> `--agentic-replay-lifecycle finite` to an AgentX preset conflicts with its
+> duration, warmup, and idle-gap settings. Finite replay is a different workload
+> from the AgentX submission recipe.
+
 ## What Is AgentX MVP?
 
 AgentX MVP is a multi-turn, agentic-coding benchmark proposed by SemiAnalysis as
@@ -657,6 +666,11 @@ draining keeps its slot. The shared tree id (`root_correlation_id`) is
 written to every record in `profile_export.jsonl` (in the artifact
 directory), so `aiperf analyze swim-lane` groups each tree under one lane and
 renders exactly `--concurrency` slots as a per-lane timeline.
+
+This recycling behavior describes the steady-state scenario in this guide.
+Finite replay also holds a lane until the entire tree drains, but never recycles
+roots and lets the live tree count fall as the root pool empties. See
+[root admission and completion](weka-trace.md#root-admission-and-completion).
 
 When a tree drains, the lane recycles by drawing the next root from the **dataset
 sampler** (the same sampler that built the initial trajectories, honoring the

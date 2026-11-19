@@ -2286,10 +2286,12 @@ class _WorkerSettings(BaseSettings):
         le=100000.0,
         default=30.0,
         description="Total seconds a worker may spend on startup TimePing/TimePong "
-        "clock-offset RTT probes before giving up and announcing readiness "
-        "uncalibrated. Hard ceiling on the whole probe sequence, not per probe, so "
-        "a router that never echoes cannot stall worker registration past "
-        "AIPERF_SERVICE_REGISTRATION_TIMEOUT. Sized for real cluster startup, "
+        "clock-offset RTT probes. Steady-state workers may announce readiness "
+        "uncalibrated after this budget; finite replay workers fail readiness "
+        "unless clock calibration and a baseline RTT are available. Hard ceiling "
+        "on the whole probe sequence, not per probe, so a router that never echoes "
+        "cannot stall worker registration past AIPERF_SERVICE_REGISTRATION_TIMEOUT. "
+        "Sized for real cluster startup, "
         "where the credit ROUTER is commonly not echoing for the first several "
         "seconds after a worker container starts. Kubernetes mode only.",
     )

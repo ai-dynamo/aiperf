@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
+from msgspec.structs import replace
 from pytest import param
 
 from aiperf.common.enums import ConversationContextMode, CreditPhase
@@ -1027,37 +1028,74 @@ class TestPayloadBytesFastPath:
             "test-conv-123", 0
         )
 
+    @pytest.mark.parametrize("finite", [param(False, id="ordinary"), param(True, id="finite")])  # fmt: skip
+    @pytest.mark.parametrize("path", [param("payload", id="payload-bytes"), param("session", id="session")])  # fmt: skip
     async def test_request_error_is_recorded_on_credit_context(
-        self, mock_worker, sample_credit_context
-    ):
+        self,
+        mock_worker: Worker,
+        sample_credit_context: CreditContext,
+        finite: bool,
+        path: str,
+    ) -> None:
         mock_worker._is_payload_bytes = True
         mock_worker._dataset_client = AsyncMock()
         mock_worker._dataset_client.get_payload_turn.return_value = PayloadTurnData(
             payload_bytes=b'{"p": 1}'
         )
 
+        sample_credit_context.credit = replace(
+            sample_credit_context.credit, finite_replay=finite
+        )
+        sample_credit_context.transport_start_sent = True
+        sample_credit_context.transport_eof_wall_ns = 5
+        sample_credit_context.transport_eof_perf_ns = 5
+        sample_credit_context.transport_eof_correction_ns = 0
+        sample_credit_context.transport_eof_clock_offset_spread_ns = 0
         error_record = RequestRecord(
             timestamp_ns=1,
             start_perf_ns=1,
-            end_perf_ns=2,
+            end_perf_ns=6,
+            response_body_eof_perf_ns=5,
+            status=500,
             error=ErrorDetails(message="boom", type="TestError"),
         )
         mock_worker.inference_client.send_request = AsyncMock(return_value=error_record)
         mock_worker._send_inference_result_message = AsyncMock()
         mock_worker._process_credit_with_session = AsyncMock()
 
-        handled = await mock_worker._try_payload_bytes_fast_path(
-            sample_credit_context, "x-req-4", None
-        )
-
-        assert handled is True
+        if path == "payload":
+            handled = await mock_worker._try_payload_bytes_fast_path(
+                sample_credit_context, "x-req-4", None
+            )
+            assert handled is True
+        else:
+            request_info = mock_worker._create_request_info(
+                x_request_id="x-req-4", credit_context=sample_credit_context
+            )
+            assert (
+                await mock_worker._execute_request(
+                    sample_credit_context, request_info, None
+                )
+                is error_record
+            )
         assert sample_credit_context.error == error_record.error
         assert sample_credit_context.record_emitted is True
         mock_worker._send_inference_result_message.assert_awaited_once_with(
             error_record
         )
         sent_request_info = mock_worker.inference_client.send_request.call_args.args[0]
-        assert sent_request_info.payload_bytes == b'{"p": 1}'
+        if path == "payload":
+            assert sent_request_info.payload_bytes == b'{"p": 1}'
+        assert error_record.response_body_eof_perf_ns == 5
+        assert sample_credit_context.transport_eof_wall_ns is None
+        assert sample_credit_context.transport_eof_perf_ns is None
+
+        mock_worker.credit_return_push_client.send = AsyncMock()
+        await mock_worker._send_ordered_credit_return(sample_credit_context)
+        returned = mock_worker.credit_return_push_client.send.call_args.args[0]
+        assert returned.error is not None
+        assert returned.transport_eof_wall_ns is None
+        assert returned.transport_eof_perf_ns is None
         # The fast path handled the credit; the session path never ran.
         mock_worker._process_credit_with_session.assert_not_awaited()
 

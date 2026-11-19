@@ -5,6 +5,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.accuracy.models import AccuracyRecordsData
 from aiperf.common.enums import CreditPhase, ExportLevel
@@ -13,6 +14,7 @@ from aiperf.common.messages import (
     MetricRecordsData,
     RecordsMessage,
 )
+from aiperf.common.models import ErrorDetails, RequestRecord
 from aiperf.common.utils import compute_time_ns
 from aiperf.records.record_processor_service import RecordProcessor
 from tests.unit.post_processors.conftest import create_metric_metadata
@@ -219,12 +221,20 @@ class TestRecordProcessorCreateMetricRecordMetadata:
         assert metadata.request_end_ns == expected_end_ns
         assert metadata.worker_id == worker_id
 
+    @pytest.mark.parametrize("failed", [param(False, id="success"), param(True, id="http-error")])  # fmt: skip
     def test_exact_eof_is_exported_without_redefining_request_end(
-        self, mock_record_processor, sample_request_record
+        self,
+        mock_record_processor: MagicMock,
+        sample_request_record: RequestRecord,
+        failed: bool,
     ) -> None:
         start = sample_request_record.start_perf_ns
         sample_request_record.end_perf_ns = start + 220_000
         sample_request_record.response_body_eof_perf_ns = start + 200_000
+        if failed:
+            sample_request_record.error = ErrorDetails(
+                code=500, message="Fully read HTTP error response"
+            )
         last_raw_response = start + 100_000
 
         metadata = RecordProcessor._create_metric_record_metadata(

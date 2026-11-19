@@ -1369,7 +1369,7 @@ Hard ceiling (seconds) for observed runtime idle time within each AgentX traject
 
 #### `--agentic-replay-lifecycle` `<str>`
 
-Agentic replay admission: recycle traces or replay each root once.
+Agentic replay admission: steady-state recycles traces; finite selects agentic replay timing and runs each eligible root from turn 0 once, ending after all descendants finish. Finite requires HTTP and a profiling concurrency phase without warmup, stop conditions, cancellation, or trace-delay compression.
 <br/>_Choices: [`steady-state`, `finite`]_
 <br/>_Default: `steady-state`_
 
@@ -3050,7 +3050,7 @@ Hard ceiling (seconds) for observed runtime idle time within each AgentX traject
 
 #### `--agentic-replay-lifecycle` `<str>`
 
-Agentic replay admission: recycle traces or replay each root once.
+Agentic replay admission: steady-state recycles traces; finite selects agentic replay timing and runs each eligible root from turn 0 once, ending after all descendants finish. Finite requires HTTP and a profiling concurrency phase without warmup, stop conditions, cancellation, or trace-delay compression.
 <br/>_Choices: [`steady-state`, `finite`]_
 <br/>_Default: `steady-state`_
 
@@ -4726,7 +4726,7 @@ Hard ceiling (seconds) for observed runtime idle time within each AgentX traject
 
 #### `--agentic-replay-lifecycle` `<str>`
 
-Agentic replay admission: recycle traces or replay each root once.
+Agentic replay admission: steady-state recycles traces; finite selects agentic replay timing and runs each eligible root from turn 0 once, ending after all descendants finish. Finite requires HTTP and a profiling concurrency phase without warmup, stop conditions, cancellation, or trace-delay compression.
 <br/>_Choices: [`steady-state`, `finite`]_
 <br/>_Default: `steady-state`_
 
@@ -6909,7 +6909,7 @@ Hard ceiling (seconds) for observed runtime idle time within each AgentX traject
 
 #### `--agentic-replay-lifecycle` `<str>`
 
-Agentic replay admission: recycle traces or replay each root once.
+Agentic replay admission: steady-state recycles traces; finite selects agentic replay timing and runs each eligible root from turn 0 once, ending after all descendants finish. Finite requires HTTP and a profiling concurrency phase without warmup, stop conditions, cancellation, or trace-delay compression.
 <br/>_Choices: [`steady-state`, `finite`]_
 <br/>_Default: `steady-state`_
 
