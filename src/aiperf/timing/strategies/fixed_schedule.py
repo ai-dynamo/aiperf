@@ -167,6 +167,7 @@ class FixedScheduleStrategy(AIPerfLoggerMixin):
                 self.schedule_target_perf_sec(entry.timestamp_ms),
                 self._credit_issuer.issue_credit(entry.turn),
             )
+        self._absolute_schedule.clear()
 
     async def handle_credit_return(
         self,

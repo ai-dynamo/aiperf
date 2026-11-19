@@ -13,8 +13,11 @@ Uses time_traveler_no_patch_sleep fixture which:
 """
 
 import asyncio
+import gc
 import time
+import weakref
 from collections.abc import Callable, Coroutine
+from typing import Any
 
 import pytest
 from pytest import param
@@ -22,6 +25,57 @@ from pytest import param
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.loop_scheduler import HandleId, LoopScheduler
 from aiperf.common.utils import yield_to_event_loop
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        param("absolute", id="absolute"),
+        param("relative", id="relative"),
+    ],
+)  # fmt: skip
+async def test_fired_timer_is_released_with_gc_disabled(
+    monkeypatch: pytest.MonkeyPatch, schedule: str
+) -> None:
+    """Fired timers must not accumulate when service GC is disabled."""
+    loop = asyncio.get_running_loop()
+    scheduler = LoopScheduler(loop)
+    completed = asyncio.Event()
+    handles: list[weakref.ReferenceType[asyncio.TimerHandle]] = []
+    call_at = loop.call_at
+
+    def capture_timer(*args: Any, **kwargs: Any) -> asyncio.TimerHandle:
+        handle = call_at(*args, **kwargs)
+        handles.append(weakref.ref(handle))
+        return handle
+
+    async def work() -> None:
+        completed.set()
+
+    gc_was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(loop, "call_at", capture_timer)
+            if schedule == "absolute":
+                scheduler.schedule_at_perf_sec(
+                    time.perf_counter() + 0.01, work(), group_id="test"
+                )
+            else:
+                scheduler.schedule_later(0.01, work(), group_id="test")
+        await completed.wait()
+        await yield_to_event_loop()
+        await yield_to_event_loop()
+
+        assert scheduler.is_idle()
+        assert len(handles) == 1
+        assert handles[0]() is None
+    finally:
+        if gc_was_enabled:
+            gc.enable()
+        gc.collect()
+
 
 # =============================================================================
 # Helpers

@@ -1,5 +1,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+import asyncio
+import gc
+import time
+import weakref
 from unittest.mock import MagicMock
 
 import pytest
@@ -7,11 +11,13 @@ from pydantic import ValidationError
 
 from aiperf.common.constants import MILLIS_PER_SECOND
 from aiperf.common.enums import CreditPhase
+from aiperf.common.loop_scheduler import LoopScheduler
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
-from aiperf.credit.structs import Credit
+from aiperf.common.utils import yield_to_event_loop
+from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import DatasetSamplingStrategy, TimingMode
 from aiperf.timing.config import CreditPhaseConfig
-from aiperf.timing.conversation_source import ConversationSource
+from aiperf.timing.conversation_source import ConversationSource, SampledSession
 from aiperf.timing.strategies.fixed_schedule import FixedScheduleStrategy
 from tests.unit.timing.conftest import OrchestratorHarness, make_sampler
 
@@ -152,6 +158,49 @@ class TestFixedScheduleSetup:
 
 @pytest.mark.asyncio
 class TestFixedScheduleExecutePhase:
+    async def test_completed_turn_is_not_retained_by_strategy(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Completed first turns can be reclaimed while the strategy stays alive."""
+
+        class CorrelationId(str):
+            pass
+
+        strategy, _, lifecycle = make_strategy([(0, "c1")])
+        source = strategy._conversation_source
+        original = source.session_for_conversation
+        correlation_refs: list[weakref.ReferenceType[CorrelationId]] = []
+
+        def sample(
+            conversation_id: str, *, x_correlation_id: str | None = None
+        ) -> SampledSession:
+            session = original(conversation_id, x_correlation_id=x_correlation_id)
+            session.x_correlation_id = CorrelationId(session.x_correlation_id)
+            correlation_refs.append(weakref.ref(session.x_correlation_id))
+            return session
+
+        monkeypatch.setattr(source, "session_for_conversation", sample)
+        scheduler = LoopScheduler()
+        strategy._scheduler = scheduler
+        completed = asyncio.Event()
+
+        class Issuer:
+            async def issue_credit(self, turn: TurnToSend) -> None:
+                completed.set()
+
+        strategy._credit_issuer = Issuer()
+        lifecycle.started_at_perf_sec = time.perf_counter() + 0.01
+        await strategy.setup_phase()
+        await strategy.execute_phase()
+        await completed.wait()
+        await yield_to_event_loop()
+        await yield_to_event_loop()
+        gc.collect()
+
+        assert scheduler.is_idle()
+        assert len(correlation_refs) == 1
+        assert correlation_refs[0]() is None
+
     async def test_schedules_all_first_turns(self) -> None:
         """Verify execute_phase schedules one call per first turn."""
         strategy, scheduler, _ = make_strategy([(0, "c1"), (100, "c2"), (200, "c3")])
