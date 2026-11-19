@@ -553,8 +553,8 @@ async def test_finite_successful_child_observes_before_leaf_reached(
 ) -> None:
     """In finite mode, successful child completion is observed before on_child_leaf_reached."""
     order: list[str] = []
-    mock_strategy.observe_credit_return.side_effect = (
-        lambda *args, **kwargs: order.append("observe")
+    mock_strategy.observe_credit_return.side_effect = lambda *args, **kwargs: (
+        order.append("observe")
     )
     mock_branch_orchestrator.on_child_leaf_reached = AsyncMock(
         side_effect=lambda *args, **kwargs: order.append("leaf_reached")
