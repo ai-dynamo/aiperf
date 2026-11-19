@@ -141,10 +141,19 @@ def _supports_kwarg(obj: object, method_name: str, kwarg: str) -> bool:
         return False
 
 
+_OFFLINE_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
 def _is_offline_mode() -> bool:
-    """Check if HuggingFace offline mode is enabled via environment variables."""
-    return bool(os.environ.get("HF_HUB_OFFLINE", "")) or bool(
-        os.environ.get("TRANSFORMERS_OFFLINE", "")
+    """Check if HuggingFace offline mode is enabled via environment variables.
+
+    Only ``1``/``true``/``yes``/``on`` (case-insensitive, trimmed) enable offline
+    mode. Any other value, including ``0``/``false``/``no``/``off`` or empty,
+    leaves it off, so ``HF_HUB_OFFLINE=0`` does not force offline mode.
+    """
+    return any(
+        os.environ.get(name, "").strip().lower() in _OFFLINE_TRUTHY
+        for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")
     )
 
 
@@ -582,13 +591,18 @@ class Tokenizer:
         # cache and surfaces a misleading "Cannot connect to HuggingFace Hub"
         # error).
         if _is_hf_cached(name, revision=revision):
+            # A short alias is only cached under its canonical ID; the Hub
+            # cannot resolve the alias itself, so load by the cached name.
+            cached_name = name
+            if "/" not in name and not _is_local_path(name):
+                cached_name = cls._find_cached_model_for_alias(name) or name
             return cls._build_with_kwargs(
                 AutoTokenizer.from_pretrained(
-                    name,
+                    cached_name,
                     trust_remote_code=trust_remote_code,
                     revision=revision,
                 ),
-                resolved_name=name,
+                resolved_name=cached_name,
             )
 
         resolved_name = name
