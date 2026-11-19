@@ -160,11 +160,30 @@ class _TokenBudget:
 # ============================================================================
 
 
-@lru_cache(maxsize=1024)
+_TOKENIZE_CACHE_MAX_CHARS = 4096
+"""Longest text whose tokenization is memoized.
+
+A cached entry keeps the text plus one ``str`` per ~4 characters, about 12x the
+text's size (11 MB for a 0.9 MB prompt), so an entry-count bound alone lets a
+few hundred long prompts pin gigabytes per server process. Long prompts are also
+the ones that never repeat (multi-turn sessions grow every turn), so they bypass
+the cache; the cache then holds at most ~50 MB.
+"""
+
+
 def _tokenize(text: str) -> tuple[str, ...]:
     """Tokenize text using character-based estimation (~4 chars per token).
 
-    Splits text into chunks of approximately 4 characters,
+    Short texts are memoized; texts longer than ``_TOKENIZE_CACHE_MAX_CHARS``
+    are tokenized on every call.
+    """
+    if len(text) > _TOKENIZE_CACHE_MAX_CHARS:
+        return _tokenize_uncached(text)
+    return _tokenize_cached(text)
+
+
+def _tokenize_uncached(text: str) -> tuple[str, ...]:
+    """Split text into chunks of approximately 4 characters,
     breaking on whitespace boundaries when possible for more natural tokens.
     """
     if not text:
@@ -186,6 +205,9 @@ def _tokenize(text: str) -> tuple[str, ...]:
         i = end
 
     return tuple(tokens)
+
+
+_tokenize_cached = lru_cache(maxsize=1024)(_tokenize_uncached)
 
 
 def tokenize(text: str) -> tuple[str, ...]:
