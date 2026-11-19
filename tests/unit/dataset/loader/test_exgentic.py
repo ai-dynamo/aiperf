@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -592,3 +593,35 @@ async def test_max_conversations_stops_stream(monkeypatch: pytest.MonkeyPatch) -
     conversations = await loader.convert_to_conversations({"dataset": rows})
 
     assert [conversation.session_id for conversation in conversations] == ["session-0"]
+
+
+@pytest.mark.asyncio
+async def test_profiling_sessions_bound_materialization_without_entries_or_requests(
+    tmp_path: Path,
+) -> None:
+    config_file = tmp_path / "base.yaml"
+    config_file.write_text(
+        """
+schemaVersion: "2.0"
+benchmark:
+  model: target-model
+  endpoint:
+    url: http://localhost:8000
+    type: chat
+  dataset:
+    type: public
+    dataset: exgentic
+  profiling:
+    type: concurrency
+    concurrency: 1
+    sessions: 7
+"""
+    )
+    run = make_run_from_cli(CLIConfig(config_file=config_file))
+    loader = ExgenticDatasetLoader(
+        run=run,
+        hf_dataset_name="Exgentic/agent-llm-traces",
+        streaming=True,
+    )
+
+    assert loader._max_conversations() == 7
