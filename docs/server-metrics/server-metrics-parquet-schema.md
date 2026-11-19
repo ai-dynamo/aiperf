@@ -13,9 +13,16 @@ The Parquet export provides raw time-series data with **cumulative delta calcula
 
 ### Enable Parquet Export
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=40 -->
 ```bash
-aiperf profile --model MODEL ... --server-metrics-formats json csv parquet
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --url localhost:8000 \
+    --endpoint-type chat \
+    --request-count 20 \
+    --server-metrics-formats json csv parquet
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 ### Delta Calculations
 

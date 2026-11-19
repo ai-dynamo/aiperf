@@ -26,7 +26,25 @@ The `aiperf plot` command automatically detects whether to generate multi-run co
 > [!WARNING]
 > **Custom export filenames not supported:** The plot command expects default export filenames (`profile_export.jsonl`, `profile_export_aiperf.json`). If you ran `aiperf profile` with `--profile-export-file` or a custom `--profile-export-prefix`, the output files will have different names and will not be detected by `aiperf plot`. To use the plot command, re-run profiling without custom export file options, or rename the files to match the default names.
 
-Analyze a single profiling run:
+Analyze a single profiling run. `aiperf plot` reads an existing artifact
+directory, so produce one first:
+
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=90 -->
+```bash
+aiperf profile \
+  --model Qwen/Qwen3-0.6B \
+  --url localhost:8000 \
+  --endpoint-type chat \
+  --streaming \
+  --concurrency 10 \
+  --request-count 20 \
+  --artifact-dir ./artifacts/plot-demo
+
+aiperf plot ./artifacts/plot-demo
+```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
+
+Against an existing run directory, that is just:
 
 ```bash
 aiperf plot <single_run_name>

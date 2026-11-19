@@ -10,12 +10,11 @@ guards against on newly added docs.
 > it at the in-repo mock server -- a green run would then prove nothing about
 > the documented command.
 
-> **This page deliberately never spells a tag out in full.** The parser scans
-> every markdown file in the repo line by line and does not care whether a line
-> sits inside a code fence, so a complete example here would be collected and
-> executed as if it were a real benchmark. Placeholders in `{braces}` below
-> stand in for the literal text; `docs/tutorial.md` holds working examples of
-> all three kinds.
+> **This page spells tags out only in placeholder form.** The parser skips
+> tags inside a fenced code block, so a fenced example here is safe; a tag
+> written in running prose is not, and would be collected and executed as a
+> real benchmark. Placeholders in `{braces}` below keep that distinction from
+> mattering. `docs/tutorial.md` holds working examples of the three command kinds.
 
 ## Tagging a guide
 
@@ -30,6 +29,7 @@ slash.
 | `setup` | Starts the inference server. Runs once per server group, before anything else. |
 | `health-check` | Blocks until the server answers. Gates that group's run commands. |
 | `aiperf-run` | A command to execute. A group may have many. |
+| `setup-file` | A file to write into the container before any command runs. Needs `path=`; the block is yaml/json/jsonl rather than bash. |
 
 `{server}` names the server group the block belongs to. Blocks sharing a
 `{server}` form one unit no matter which file they live in: the harness
@@ -50,14 +50,61 @@ default chat server, and `docs/tutorials/{vision,audio,mmvu,embeddings}.md` for
 the others -- and a second setup block for a group that already has one is a
 conflict, not an addition. Copy the shape from `docs/tutorial.md`.
 
+A server's containers are stopped however its test ends -- a setup that dies,
+a health check that never passes, a fixture that cannot be written. Every
+documented group binds 8000, so an engine left holding the port makes the next
+server fail to bind and report a docker networking error naming neither the
+real failure nor the server that caused it.
+
+Discovering no servers at all fails the run too. Nothing legitimately parses
+to zero -- the tags live in this repository -- so an empty result means the
+suite would boot a GPU runner, build the image and execute nothing.
+
+A duplicate `setup` or `health-check` tag skips that whole server and fails
+the run. It is not recoverable the way a dropped command is: two guides
+disagree about how to boot the group, and running either would benchmark
+against something no guide documents. Every other server still runs and
+reports.
+
 ### Attributes
 
-An opening `aiperf-run` tag may carry a `weight={seconds}` attribute, after the
-tag name and before the closing `-->`. The weight is the command's estimated
-runtime, used only by the matrix sharder to bin-pack work so one shard does not
-end up owning every slow test. The default (80s) suits a typical
-synthetic-input tutorial; set it when a command runs materially longer. Getting
-it wrong makes the sharding lopsided, not incorrect.
+An opening tag may carry `name=value` attributes, after the tag name and before
+the closing `-->`.
+
+| Attribute | Valid on | Meaning |
+|---|---|---|
+| `weight={seconds}` | `aiperf-run` | The command's estimated runtime, used only by the matrix sharder to bin-pack work so one shard does not end up owning every slow test. The default (80s) suits a typical synthetic-input tutorial; set it when a command runs materially longer. Getting it wrong makes the sharding lopsided, not incorrect. |
+| `timeout={seconds}` | `aiperf-run` | How long this one command may run before it is killed, overriding the global default. Enforced inside the container, which owns the deadline; the host watchdog fires later, as a backstop for a `docker exec` client that outlives the command it was running. Set it when a documented command is legitimately slower than the rest. It is a ceiling, not an estimate: raising it does not tell the sharder anything, so a command that really does run longer wants `weight=` raised as well. |
+| `path={relative path}` | `setup-file` | Where the block's content is written inside the container, relative to the working directory. Required. An absolute path or one containing `..` is rejected before any server boots. |
+
+`weight` and `timeout` must be positive integers. A non-integer, zero or
+negative value drops that one command rather than aborting discovery for every
+guide -- but the drop is recorded and fails the run, so a typo cannot quietly
+shrink what CI covers. The same applies to an attribute name the harness does
+not read: a misspelled `timeout=` is rejected rather than ignored, because
+ignoring it would leave the guide looking like it raised the deadline when it
+did not. The **Valid on** column is enforced, not advisory -- `weight=` or
+`timeout=` on a `setup` or `health-check` tag is rejected for the same reason,
+since nothing reads either off a lifecycle command and a correctly spelled
+attribute that does nothing misleads exactly as much as a typo. A `setup-file`
+tag with no `path=`, or one whose fenced block is missing or never closed,
+fails the run the same way.
+
+A command tag's block must be fenced as ```` ```bash ```` exactly, matched
+literally after stripping each line. A block labelled anything else, or a
+fence that is never closed, is a read failure: the command is dropped *and* a
+parse error is recorded, so the run fails rather than quietly testing less
+than the guides document. An unclosed fence is the worse of the two, because
+the tag scanner stays inside it and skips the next tag as if it were
+documentation. The recorded reason names which of these it was.
+
+An attribute must be `name=value` with no spaces around the `=` and no spaces
+inside the value. A shape the harness cannot read -- `timeout=` with nothing
+after it, `weight = 300`, a hyphen in the name -- is reported and drops the
+block, rather than making the whole tag unreadable. Getting that backwards is
+the worst available outcome: a tag that fails to parse as a tag is
+indistinguishable from prose, so the command leaves the suite with nothing
+recorded and the run stays green.
 
 ### Fixtures belong with their consumer
 
@@ -89,3 +136,13 @@ its own workflow, the `Dockerfile`, or the surface a documented command is
 written against -- the plugin registry, the config and CLI layers, and the
 enums whose members appear verbatim in tutorial flags. A behavior change deeper
 in `src/` is left to the nightly run.
+
+The hash covers everything the harness would act on: the setup and
+health-check commands, each run command with its `weight=` and `timeout=`, and
+every fixture's path and content. An edit the hash cannot see skips the matrix,
+so a new tag attribute must be added to the fingerprint in the same change that
+teaches the parser to read it. `dump_config_hash.py` also exits non-zero when
+the parser rejected anything -- a dropped command, a duplicate tag, a
+conflicting fixture -- which the workflow reads as "no comparable hash" and
+runs the matrix. Nothing else would stop a tree whose tags no longer parse from
+printing its pre-breakage digest and comparing clean against its own base.

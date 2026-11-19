@@ -59,15 +59,28 @@ By default replay is **open-loop**: every request is scheduled at its absolute r
 
 ## Command
 
+<!-- aiperf-run-vllm-default-openai-endpoint-server weight=40 -->
 ```bash
+# A Baseten trace is Parquet with at least these four columns. Build a small
+# one to try the replay without a recorded trace to hand:
+python -c "
+import pyarrow as pa, pyarrow.parquet as pq
+pq.write_table(pa.table({
+    'timestamp_start_unix_ms': [0, 1200, 2400],
+    'prompt': ['What is AI?', 'Explain embeddings.', 'Summarize the above.'],
+    'input_tokens': [12, 14, 18],
+    'output_tokens': [32, 48, 24],
+}), 'trace.parquet')"
+
 aiperf profile \
-  --model YOUR_MODEL \
+  --model Qwen/Qwen3-0.6B \
   --url http://localhost:8000 \
   --endpoint-type completions \
-  --input-file /path/to/trace.parquet \
+  --input-file trace.parquet \
   --custom-dataset-type baseten_trace \
   --fixed-schedule
 ```
+<!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
 The `completions` endpoint type already targets `/v1/completions`; if your gateway serves completions at a non-default path, add `--endpoint <path>`.
 
