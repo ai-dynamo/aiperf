@@ -228,6 +228,53 @@ def test_user_centric_gap_flags_rejected_on_non_user_centric_phase(
         resolve_config(cli(**flags), concurrency_yaml)
 
 
+@pytest.fixture
+def sampled_user_centric_yaml(tmp_path: Path) -> Path:
+    cfg = tmp_path / "sampled_user_centric.yaml"
+    cfg.write_text(
+        """\
+schemaVersion: "2.0"
+benchmark:
+  model: test-model
+  endpoint:
+    url: http://localhost:8000
+  dataset:
+    type: synthetic
+  phases:
+    type: user_centric
+    duration: 120
+    rate: 1.0
+    users: 30
+    gap_distribution: weibull
+    gap_median: 10.0
+"""
+    )
+    return cfg
+
+
+@pytest.mark.parametrize(
+    "flags, phase_type",
+    [
+        param({}, PhaseType.POISSON, id="poisson"),
+        param({"arrival_pattern": "constant"}, PhaseType.CONSTANT, id="constant"),
+    ],
+)  # fmt: skip
+def test_rate_series_discards_yaml_user_centric_gap_fields(
+    sampled_user_centric_yaml: Path,
+    tmp_path: Path,
+    flags: dict[str, object],
+    phase_type: PhaseType,
+) -> None:
+    series = tmp_path / "rate.json"
+    series.write_text('{"points":[{"time_s":0,"qps":1},{"time_s":60,"qps":2}]}')
+    resolved = profiling(
+        resolve_config(
+            cli(request_rate_series=series, **flags), sampled_user_centric_yaml
+        )
+    )
+    assert resolved.type == phase_type
+
+
 # ---------------------------------------------------------------------------
 # Warmup
 # ---------------------------------------------------------------------------

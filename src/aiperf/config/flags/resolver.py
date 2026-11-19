@@ -2060,13 +2060,15 @@ def _transition_phase_type(
             "smoothness",
             "users",
             "continuation_dispatch",
+            "gap_distribution",
+            "gap_median",
         )
     else:
         removed = ("auto_offset", "start_offset", "end_offset", "rate_series")
         if phase_type != PhaseType.GAMMA:
             removed += ("smoothness",)
         if phase_type != PhaseType.USER_CENTRIC:
-            removed += ("users",)
+            removed += ("users", "gap_distribution", "gap_median")
     for key in removed:
         _pop_config_value(target, key)
     target["type"] = phase_type
