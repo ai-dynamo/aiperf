@@ -313,6 +313,58 @@ class KubectlClient:
         result = await self.run("apply", "--server-side", "-f", url, check=True)
         return result.stdout
 
+    async def apply_server_side_manifest(
+        self,
+        manifest: str,
+        field_manager: str,
+        force_conflicts: bool = False,
+        timeout: int = 120,
+    ) -> str:
+        """Apply a YAML manifest from stdin with server-side apply.
+
+        Args:
+            manifest: YAML manifest content.
+            field_manager: SSA field manager name taking ownership of the
+                applied fields.
+            force_conflicts: Take ownership of fields currently owned by
+                other field managers (e.g. ``kubectl-client-side-apply``).
+            timeout: Timeout in seconds (prevents hangs on finalizers/blocked
+                admission webhooks).
+
+        Returns:
+            Command output.
+        """
+        args = ["apply", "--server-side", f"--field-manager={field_manager}"]
+        if force_conflicts:
+            args.append("--force-conflicts")
+        args.extend(["-f", "-"])
+        cmd = self._build_cmd(*args)
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(input=manifest.encode()), timeout=timeout
+            )
+        except TimeoutError:
+            await _terminate_process(proc)
+            logger.warning(f"kubectl apply timed out after {timeout}s: {' '.join(cmd)}")
+            raise TimeoutError(
+                f"kubectl apply timed out after {timeout}s: {' '.join(cmd)}"
+            ) from None
+        except asyncio.CancelledError:
+            await _terminate_process(proc)
+            raise
+
+        if proc.returncode != 0:
+            raise RuntimeError(f"Failed to apply manifest: {stderr.decode()}")
+
+        return stdout.decode()
+
     async def delete(
         self,
         resource: str,

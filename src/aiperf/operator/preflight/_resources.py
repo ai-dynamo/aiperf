@@ -4,6 +4,10 @@
 
 from __future__ import annotations
 
+import asyncio
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
 import aiohttp
 from kubernetes_asyncio import client
 from kubernetes_asyncio.client.exceptions import ApiException
@@ -16,10 +20,14 @@ from aiperf.kubernetes.utils import (
     parse_cpu,
     parse_memory_gib,
 )
+from aiperf.operator.environment import OperatorEnvironment
 from aiperf.operator.preflight._common import (
     _is_node_ready_typed,
     controller_resource_requirements,
 )
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 
 def _toleration_matches_taint(
@@ -95,30 +103,46 @@ def _matching_schedulable_nodes(
     ]
 
 
+@dataclass(slots=True)
+class _CapacityTotals:
+    """Free and allocatable CPU/mem summed over Ready, placement-eligible nodes."""
+
+    ready_nodes: int
+    skipped_tainted: int
+    free_cpu: float
+    free_memory: float
+    allocatable_cpu: float
+    allocatable_memory: float
+    free_known: bool
+    """Whether running-pod requests were subtracted (False => free == allocatable)."""
+
+    def allocatable_shortfall(self, required_cpu: float, required_mem: float) -> bool:
+        """True when even total allocatable cannot fit the requirement."""
+        return (
+            required_cpu > self.allocatable_cpu
+            or required_mem > self.allocatable_memory
+        )
+
+    def free_shortfall(self, required_cpu: float, required_mem: float) -> bool:
+        """True when currently-free capacity cannot fit the requirement."""
+        return required_cpu > self.free_cpu or required_mem > self.free_memory
+
+
 class _ResourceChecksMixin:
     """Checks related to cluster/node resources, quotas, memory, and tolerations."""
 
-    async def _check_node_resources(self) -> CheckResult:
-        """Check aggregate free CPU/mem across schedulable Ready nodes.
+    async def _capacity_totals(
+        self, tolerations: list[dict[str, object]]
+    ) -> _CapacityTotals | CheckResult:
+        """Sum free and allocatable capacity over Ready, untainted-for-us nodes.
 
-        Nodes carrying NoSchedule/NoExecute taints that aren't tolerated by
-        ``deploy_config.pod_template.tolerations`` are excluded from the
-        capacity sum — otherwise a 50-node cluster of all-tainted GPU nodes
-        would falsely report "sufficient resources" for a CPU-only workload.
-
-        ``allocatable`` is total node capacity, not what's actually free: it
-        does not account for requests already made by pods scheduled on the
-        node. Without subtracting those, a cluster booked to 100% still
-        reports PASS here and every AIPerf pod then sits Pending.
+        Returns a WARN CheckResult (instead of totals) when the node list is
+        unavailable or empty; the caller surfaces it directly.
         """
-        from aiperf.kubernetes.environment import K8sEnvironment
         from aiperf.kubernetes.preflight_capacity_checks import (
             _node_free,
             _requested_by_node,
         )
-
-        if skip := self._resource_mode_skip("Node Resources"):
-            return skip
 
         try:
             node_list = await client.CoreV1Api(self.api).list_node()
@@ -139,40 +163,184 @@ class _ResourceChecksMixin:
 
         requested = await _requested_by_node(self.api)
 
-        tolerations = self.deploy_config.pod_template.tolerations or []
-        total_cpu = 0.0
-        total_memory = 0.0
-        ready_nodes = 0
-        skipped_tainted = 0
-
+        totals = _CapacityTotals(0, 0, 0.0, 0.0, 0.0, 0.0, requested is not None)
         for node in nodes:
             if not _is_node_ready_typed(node):
                 continue
             if not _node_is_schedulable_for(node, tolerations):
-                skipped_tainted += 1
+                totals.skipped_tainted += 1
                 continue
-            ready_nodes += 1
+            totals.ready_nodes += 1
             cpu, memory = _node_free(node, requested)
-            total_cpu += cpu
-            total_memory += memory
+            totals.free_cpu += cpu
+            totals.free_memory += memory
+            alloc_cpu, alloc_memory = _node_free(node, None)
+            totals.allocatable_cpu += alloc_cpu
+            totals.allocatable_memory += alloc_memory
+        return totals
+
+    def _required_capacity(self) -> tuple[float, float]:
+        """Total CPU cores / memory GiB the benchmark needs (controller + workers)."""
+        from aiperf.kubernetes.environment import K8sEnvironment
 
         ctrl_cpu, ctrl_mem = controller_resource_requirements()
         worker_cpu = parse_cpu(K8sEnvironment.WORKER_POD.CPU)
         worker_mem = parse_memory_gib(K8sEnvironment.WORKER_POD.MEMORY)
-        required_cpu = ctrl_cpu + (worker_cpu * self.num_pods)
-        required_mem = ctrl_mem + (worker_mem * self.num_pods)
+        return (
+            ctrl_cpu + (worker_cpu * self.num_pods),
+            ctrl_mem + (worker_mem * self.num_pods),
+        )
+
+    @staticmethod
+    def _provable_capacity_failure(
+        totals: _CapacityTotals,
+        *,
+        required_cpu: float,
+        required_mem: float,
+    ) -> CheckResult:
+        """Build the strict-mode FAIL for a capacity shortfall that no sample
+        across the observation window could fit."""
+        tainted_suffix = (
+            f" ({totals.skipped_tainted} tainted node(s) excluded)"
+            if totals.skipped_tainted
+            else ""
+        )
+        return CheckResult(
+            name="Node Resources",
+            status=CheckStatus.FAIL,
+            message=(
+                f"Cluster cannot fit this benchmark (no sample across a "
+                f"{OperatorEnvironment.PREFLIGHT_STRICT_CONFIRM_SECONDS:.0f}s "
+                f"observation window could fit it). Need {format_cpu(required_cpu)} CPU, "
+                f"{format_memory(required_mem)} mem but only "
+                f"{format_cpu(totals.allocatable_cpu)} CPU, "
+                f"{format_memory(totals.allocatable_memory)} mem allocatable across "
+                f"{totals.ready_nodes} schedulable node(s){tainted_suffix}. "
+                "Failing fast because AIPERF_PREFLIGHT_STRICT_RESOURCES=true."
+            ),
+            hints=[
+                "Reduce worker count or add cluster capacity",
+                "Unset AIPERF_PREFLIGHT_STRICT_RESOURCES to only warn",
+            ],
+        )
+
+    async def _observe_capacity_window(
+        self,
+        tolerations: list[dict[str, object]],
+        required_cpu: float,
+        required_mem: float,
+        *,
+        window_seconds: float | None = None,
+        poll_interval: float = 2.5,
+        sleep: Callable[[float], Awaitable[None]] | None = None,
+    ) -> tuple[_CapacityTotals, bool] | None:
+        """Poll node capacity across the strict confirmation window.
+
+        Advertised allocatable oscillates under the CI test floor (kubelet
+        re-asserts real capacity between the reconciler's 5s re-applications)
+        and recovers when tainted/NotReady nodes heal, so two endpoint samples
+        can both land in lowered windows even while capacity recovers in
+        between. Poll instead: any fitting sample proves the shortfall is not
+        stable and downgrades to the normal WARN/PASS evaluation on those
+        totals; a FAIL is produced only when NO sample across the window fits.
+
+        Returns ``(totals, recovered)`` — totals from the first fitting sample
+        when recovered, else the last sample — or None when the node list
+        could not be read during the window (shortfall not provable; the
+        caller falls back to the WARN path with its original totals).
+
+        ``sleep``/``poll_interval``/``window_seconds`` are injectable so tests
+        can drive the loop with a logical clock (the unit suite's patched
+        asyncio.sleep does not advance wall time).
+        """
+        window = (
+            window_seconds
+            if window_seconds is not None
+            else OperatorEnvironment.PREFLIGHT_STRICT_CONFIRM_SECONDS
+        )
+        if sleep is None:
+            # Resolved at call time (not bound as a default) so test suites
+            # that patch asyncio.sleep control the clock.
+            sleep = asyncio.sleep
+        elapsed = 0.0
+        latest: _CapacityTotals | None = None
+        while True:
+            totals = await self._capacity_totals(tolerations)
+            if isinstance(totals, CheckResult):
+                return None
+            latest = totals
+            if not totals.allocatable_shortfall(required_cpu, required_mem):
+                return totals, True
+            remaining = window - elapsed
+            if remaining <= 0:
+                return latest, False
+            # Final sample lands exactly at the window edge: a shortfall at
+            # elapsed=10 of a 12s window must not reject a node recovering at
+            # t=11 without observing the window's last instant.
+            step = min(poll_interval, remaining)
+            await sleep(step)
+            elapsed += step
+
+    async def _check_node_resources(self) -> CheckResult:
+        """Check aggregate free CPU/mem across schedulable Ready nodes.
+
+        Nodes carrying NoSchedule/NoExecute taints that aren't tolerated by
+        ``deploy_config.pod_template.tolerations`` are excluded from the
+        capacity sum — otherwise a 50-node cluster of all-tainted GPU nodes
+        would falsely report "sufficient resources" for a CPU-only workload.
+
+        ``allocatable`` is total node capacity, not what's actually free: it
+        does not account for requests already made by pods scheduled on the
+        node. Without subtracting those, a cluster booked to 100% still
+        reports PASS here and every AIPerf pod then sits Pending.
+
+        Strict mode (``AIPERF_PREFLIGHT_STRICT_RESOURCES``) FAILs only when NO
+        sample across a bounded observation window can fit the job: capacity is
+        polled for ``AIPERF_PREFLIGHT_STRICT_CONFIRM_SECONDS``, and any fitting
+        sample (a test floor restored between kubelet re-assertions, a
+        recovering NotReady/tainted node, an autoscaler mid-scale-up)
+        downgrades to the normal WARN/PASS evaluation instead of permanently
+        rejecting the job.
+        """
+        if skip := self._resource_mode_skip("Node Resources"):
+            return skip
+
+        tolerations = self.deploy_config.pod_template.tolerations or []
+        totals = await self._capacity_totals(tolerations)
+        if isinstance(totals, CheckResult):
+            return totals
+
+        required_cpu, required_mem = self._required_capacity()
+
+        if (
+            OperatorEnvironment.PREFLIGHT_STRICT_RESOURCES
+            and totals.allocatable_shortfall(required_cpu, required_mem)
+        ):
+            observed = await self._observe_capacity_window(
+                tolerations, required_cpu, required_mem
+            )
+            if observed is not None:
+                totals, recovered = observed
+                if not recovered:
+                    return self._provable_capacity_failure(
+                        totals,
+                        required_cpu=required_cpu,
+                        required_mem=required_mem,
+                    )
 
         tainted_suffix = (
-            f" ({skipped_tainted} tainted node(s) excluded)" if skipped_tainted else ""
+            f" ({totals.skipped_tainted} tainted node(s) excluded)"
+            if totals.skipped_tainted
+            else ""
         )
-        capacity_label = "free" if requested is not None else "allocatable"
+        capacity_label = "free" if totals.free_known else "allocatable"
         unknown_suffix = (
             ""
-            if requested is not None
+            if totals.free_known
             else " (could not list running pods; showing total allocatable, not free)"
         )
 
-        if ready_nodes == 0:
+        if totals.ready_nodes == 0:
             return CheckResult(
                 name="Node Resources",
                 status=CheckStatus.WARN,
@@ -183,15 +351,16 @@ class _ResourceChecksMixin:
                 ],
             )
 
-        if required_cpu > total_cpu or required_mem > total_memory:
+        if totals.free_shortfall(required_cpu, required_mem):
             return CheckResult(
                 name="Node Resources",
                 status=CheckStatus.WARN,
                 message=(
                     f"Cluster may not have enough resources. "
                     f"Need {format_cpu(required_cpu)} CPU, {format_memory(required_mem)} mem "
-                    f"but only {format_cpu(total_cpu)} CPU, {format_memory(total_memory)} mem "
-                    f"{capacity_label} across {ready_nodes} schedulable node(s)"
+                    f"but only {format_cpu(totals.free_cpu)} CPU, "
+                    f"{format_memory(totals.free_memory)} mem "
+                    f"{capacity_label} across {totals.ready_nodes} schedulable node(s)"
                     f"{tainted_suffix}{unknown_suffix}."
                 ),
                 hints=["Reduce worker count or add cluster capacity"],
@@ -202,8 +371,9 @@ class _ResourceChecksMixin:
             status=CheckStatus.PASS,
             message=(
                 f"Cluster has sufficient resources "
-                f"({ready_nodes} schedulable nodes, {format_cpu(total_cpu)} CPU, "
-                f"{format_memory(total_memory)} {capacity_label} mem)"
+                f"({totals.ready_nodes} schedulable nodes, "
+                f"{format_cpu(totals.free_cpu)} CPU, "
+                f"{format_memory(totals.free_memory)} {capacity_label} mem)"
                 f"{tainted_suffix}{unknown_suffix}"
             ),
         )

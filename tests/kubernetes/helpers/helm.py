@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import difflib
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,6 +28,37 @@ from tests.kubernetes.helpers.operator import (
 )
 
 logger = AIPerfLogger(__name__)
+
+
+def _is_default_conversion(value: Any) -> bool:
+    """True for the API server's default top-level CRD conversion stanza.
+
+    apiextensions defaults an omitted top-level ``spec.conversion`` to
+    ``{"strategy": "None"}`` (k8s.io/apiextensions-apiserver
+    v1/defaults.go), which then serializes into API responses even though the
+    chart manifest omits it entirely. Must only ever be applied to the CRD
+    spec's top-level ``conversion`` key — a schema PROPERTY named
+    ``conversion`` (e.g. ``{"type": "string"}``) is user schema content, not
+    API defaulting.
+    """
+    return (
+        isinstance(value, dict)
+        and value.get("strategy") in (None, "None")
+        and not value.get("webhook")
+    )
+
+
+def _normalize_crd_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """Remove ONLY the API server's default top-level conversion stanza.
+
+    Everything else — schema subtrees, nested properties (including any named
+    ``conversion``), and null/default values inside schemas, which can carry
+    meaning — is compared verbatim, so genuine drift cannot be masked by
+    normalization.
+    """
+    if _is_default_conversion(spec.get("conversion")):
+        return {k: v for k, v in spec.items() if k != "conversion"}
+    return spec
 
 
 @dataclass
@@ -567,6 +599,28 @@ class HelmDeployer:
                     "app.kubernetes.io/managed-by=Helm",
                     check=False,
                 )
+        if rendered:
+            # Helm 4 applies chart resources server-side and refuses to take
+            # over fields owned by another field manager. The package-scoped
+            # operator fixture pre-installs this chart's CRDs with kubectl
+            # apply (manager kubectl-client-side-apply, release label
+            # app.kubernetes.io/instance=aiperf-operator), so the install
+            # below would fail with SSA conflicts on the CRD objects
+            # (.metadata.labels.app.kubernetes.io/instance, .spec.versions).
+            # Transfer field ownership to the "helm" manager for the CRD
+            # objects only, re-applying the chart's own rendered CRDs with
+            # the exact values helm is about to set. This is deliberately NOT
+            # a release-wide `helm install --force-conflicts`: that would let
+            # helm silently adopt stale field values on every resource in the
+            # chart, while this only re-asserts the current chart's CRD
+            # content under helm's ownership.
+            crd_docs = [
+                doc
+                for doc in yaml.safe_load_all(rendered)
+                if doc and doc.get("kind") == "CustomResourceDefinition"
+            ]
+            if crd_docs:
+                await self._adopt_crds(crd_docs)
         await asyncio.sleep(3)
 
         await self.helm.install(
@@ -584,6 +638,78 @@ class HelmDeployer:
     async def _wait_for_crd_established(self, timeout: int = 60) -> None:
         """Wait for both AIPerf CRDs (AIPerfJob, AIPerfSweep) to be Established."""
         await wait_for_aiperf_crds_established(self.kubectl, timeout=timeout)
+
+    async def _adopt_crds(self, crd_docs: list[dict[str, Any]]) -> None:
+        """Force-adopt the chart's CRD objects into the helm field manager.
+
+        Re-applies the chart's own rendered CRDs with server-side apply +
+        force-conflicts so every field helm is about to set is already owned
+        by the ``helm`` manager with the same value — the subsequent
+        ``helm install`` finds nothing foreign-owned to conflict on.
+
+        Drift guard: a live CRD whose ``spec`` differs from the chart's was
+        not produced by this chart's own CRD install (only metadata ownership
+        and labels legitimately differ after adoption), so overwriting it
+        could silently replace a schema other consumers depend on. Specs are
+        compared after stripping API-server defaulting noise (an omitted
+        ``spec.conversion`` is stored as ``{"strategy": "None"}``; null fields
+        are omitted), so a CRD installed from this exact chart compares equal.
+        Real drift fails with a diff. A genuinely missing CRD is the
+        fresh-install case and adopts cleanly; a READ failure (RBAC, API
+        error) is not proof of absence and fails closed.
+        """
+        for doc in crd_docs:
+            name = doc.get("metadata", {}).get("name", "")
+            if not name:
+                continue
+            existing = await self.kubectl.run(
+                "get", "crd", name, "-o", "json", check=False
+            )
+            if existing.returncode != 0:
+                if "NotFound" in existing.stderr:
+                    continue  # genuinely absent — fresh install
+                raise RuntimeError(
+                    f"Cannot verify CRD {name} for safe adoption "
+                    f"(kubectl get failed: {existing.stderr.strip()[:500]}); "
+                    "refusing to force-adopt an unverified live schema"
+                )
+            live_spec = orjson.loads(existing.stdout).get("spec") or {}
+            rendered_spec = doc.get("spec") or {}
+            if _normalize_crd_spec(live_spec) != _normalize_crd_spec(rendered_spec):
+                diff = "\n".join(
+                    difflib.unified_diff(
+                        orjson.dumps(
+                            live_spec, option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS
+                        )
+                        .decode()
+                        .splitlines(),
+                        orjson.dumps(
+                            rendered_spec,
+                            option=orjson.OPT_INDENT_2 | orjson.OPT_SORT_KEYS,
+                        )
+                        .decode()
+                        .splitlines(),
+                        fromfile=f"live/{name}",
+                        tofile=f"chart/{name}",
+                        lineterm="",
+                    )
+                )
+                raise RuntimeError(
+                    f"Refusing to force-adopt CRD {name}: its live spec differs "
+                    "from the chart's rendered spec (only metadata ownership "
+                    "differences are expected after a fixture CRD install). "
+                    f"Spec drift:\n{diff[:4000]}"
+                )
+        crd_manifest = "---\n".join(yaml.safe_dump(doc) for doc in crd_docs)
+        await self.kubectl.apply_server_side_manifest(
+            crd_manifest,
+            field_manager="helm",
+            force_conflicts=True,
+        )
+        logger.info(
+            f"Adopted {len(crd_docs)} CRD(s) into the helm field manager "
+            "(SSA force-conflicts scoped to CRD objects only, spec drift checked)"
+        )
 
     async def upgrade_chart(
         self,
