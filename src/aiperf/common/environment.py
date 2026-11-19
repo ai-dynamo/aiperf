@@ -118,6 +118,12 @@ class _AccuracySettings(BaseSettings):
         "``aiperf.accuracy.benchmarks.lcb_codegeneration``.",
     )
 
+    MWE_REVISION: str = Field(
+        default="d533f626cc321c92175a58ee570aa3cdb87238d1",
+        description="Pinned Hugging Face revision of ``Anthropic/model-written-evals`` "
+        "used by the ``mwe_ai_risk`` benchmark.",
+    )
+
 
 class _AgentXSettings(BaseSettings):
     """Settings for the InferenceX AgentX scenario family.

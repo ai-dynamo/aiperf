@@ -455,6 +455,7 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `math_500` | `Math500Benchmark` | MATH-500 problem set |
 | `gpqa_diamond` | `GPQADiamondBenchmark` | GPQA Diamond graduate-level science |
 | `lcb_codegeneration` | `LCBCodeGenerationBenchmark` | LiveCodeBench code generation |
+| `mwe_ai_risk` | `MWEAIRiskBenchmark` | Model-Written Evals advanced-ai-risk behavior-matching rates |
 
 ### Accuracy Graders
 

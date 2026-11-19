@@ -116,8 +116,18 @@ _BENCHMARK_DATASETS = [
     ),
 ]
 
+# Benchmarks that load one file of a multi-file dataset repo via ``data_files``.
+_DATA_FILE_DATASETS = [
+    param(
+        "Anthropic/model-written-evals",
+        "advanced-ai-risk/lm_generated_evals/survival-instinct.jsonl",
+        ["question", "answer_matching_behavior", "answer_not_matching_behavior"],
+        id="mwe_ai_risk",
+    ),
+]
+
 # Module names of all benchmarks covered above (derived from param ids).
-_COVERED_MODULE_NAMES = {p.id for p in _BENCHMARK_DATASETS}
+_COVERED_MODULE_NAMES = {p.id for p in _BENCHMARK_DATASETS + _DATA_FILE_DATASETS}
 
 
 def test_all_hf_benchmarks_are_covered_by_network_tests() -> None:
@@ -177,5 +187,21 @@ def test_hf_benchmark_dataset_is_accessible(
     missing = [f for f in required_fields if f not in row]
     assert not missing, (
         f"{dataset!r} (config={config!r}, split={split!r}) is missing fields: {missing}. "
+        f"Available: {list(row.keys())}"
+    )
+
+
+@pytest.mark.network
+@pytest.mark.slow
+@pytest.mark.parametrize("dataset,data_files,required_fields", _DATA_FILE_DATASETS)
+def test_hf_benchmark_data_file_is_accessible(
+    dataset: str, data_files: str, required_fields: list[str]
+) -> None:
+    """Data file loads and first row contains all fields the benchmark expects."""
+    ds = load_dataset(dataset, data_files=data_files, split="train", streaming=True)
+    row = next(iter(ds))
+    missing = [f for f in required_fields if f not in row]
+    assert not missing, (
+        f"{dataset!r} (data_files={data_files!r}) is missing fields: {missing}. "
         f"Available: {list(row.keys())}"
     )
