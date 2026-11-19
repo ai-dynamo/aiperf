@@ -251,6 +251,8 @@ class BucketStatistics:
         weighted_mean_sum: Sum of (mean * count) for weighted average calculation
         sample_count: Number of single-bucket intervals observed
         observed_means: List of individual mean values from each single-bucket interval
+        spans_counter_reset: True when the learning window contains a counter
+            reset, so learned observations may not belong to the endpoint deltas
     """
 
     bucket_le: str
@@ -258,6 +260,7 @@ class BucketStatistics:
     weighted_mean_sum: float = 0.0
     sample_count: int = 0
     observed_means: list[float] = field(default_factory=list)
+    spans_counter_reset: bool = False
 
     # Minimum observations required to trust variance estimate
     MIN_VARIANCE_OBSERVATIONS: int = 3
@@ -348,6 +351,8 @@ def compute_estimated_percentiles(
     bucket_stats: dict[str, BucketStatistics],
     total_sum: float,
     total_count: int,
+    *,
+    window_spans_counter_reset: bool = False,
 ) -> EstimatedPercentiles | None:
     """Compute percentiles including estimated +Inf bucket observations.
 
@@ -383,6 +388,9 @@ def compute_estimated_percentiles(
                      (from accumulate_bucket_statistics)
         total_sum: Exact total sum from histogram (sum_delta from Prometheus)
         total_count: Total observation count (count_delta from Prometheus)
+        window_spans_counter_reset: True when a count or bucket counter
+                     decreases inside the window; disables exact-edge pinning
+                     that relies only on the window average
 
     Returns:
         EstimatedPercentiles with p1 through p99 estimates, or None if insufficient data
@@ -437,6 +445,7 @@ def compute_estimated_percentiles(
     # Downsample ALL buckets (including +Inf) with a single consistent ratio
     # to prevent memory issues while preserving distribution proportions.
     # Both counts AND sum are scaled by the same ratio to preserve averages.
+    original_bucket_counts = dict(per_bucket_counts)
     total_obs_count = sum(per_bucket_counts.values())
     sample_ratio = 1.0
     if total_obs_count > _MAX_OBSERVATIONS:
@@ -472,7 +481,13 @@ def compute_estimated_percentiles(
     # Uses per-bucket learned means + sum constraint for improved accuracy
     # Note: per_bucket_counts is already downsampled, and actual_finite_sum is scaled
     finite_obs_generated = _generate_observations_with_sum_constraint(
-        per_bucket_counts, actual_finite_sum, bucket_stats
+        per_bucket_counts,
+        actual_finite_sum,
+        bucket_stats,
+        original_bucket_counts=original_bucket_counts,
+        # With +Inf observations the finite sum depends on the +Inf estimate.
+        target_sum_is_exact=inf_count == 0,
+        window_spans_counter_reset=window_spans_counter_reset,
     )
 
     # Combine finite and +Inf observations (both are now ndarrays)
@@ -497,6 +512,27 @@ def compute_estimated_percentiles(
         p90_estimate=float(p90),
         p95_estimate=float(p95),
         p99_estimate=float(p99),
+    )
+
+
+def window_has_counter_reset(
+    counts: np.ndarray,
+    bucket_counts: np.ndarray,
+    *,
+    start_idx: int = 0,
+) -> bool:
+    """Return True when any count or bucket counter decreases inside the window.
+
+    Endpoint deltas can still be positive after an in-window reset, so callers
+    can't detect it from the window's first and last samples alone.
+    """
+    if len(counts) <= start_idx + 1:
+        return False
+    if np.any(np.diff(counts[start_idx:]) < 0):
+        return True
+    return bool(
+        len(bucket_counts) > start_idx + 1
+        and np.any(np.diff(bucket_counts[start_idx:], axis=0) < 0)
     )
 
 
@@ -547,6 +583,9 @@ def accumulate_bucket_statistics(
     count_deltas = np.diff(counts[start_idx:]).astype(np.int64)
     sum_deltas = np.diff(sums[start_idx:])
     bucket_deltas_2d = np.diff(bucket_counts[start_idx:], axis=0)
+    # A reset inside the window means learned intervals may include
+    # observations that the endpoint deltas no longer contain.
+    has_reset = window_has_counter_reset(counts, bucket_counts, start_idx=start_idx)
     bucket_deltas_2d = np.maximum(bucket_deltas_2d, 0)  # Handle counter resets
 
     # Convert cumulative deltas to per-bucket deltas (vectorized)
@@ -576,6 +615,10 @@ def accumulate_bucket_statistics(
             if le not in bucket_stats:
                 bucket_stats[le] = BucketStatistics(bucket_le=le)
             bucket_stats[le].record(bucket_mean, int(count_delta))
+
+    if has_reset:
+        for stats in bucket_stats.values():
+            stats.spans_counter_reset = True
 
     return bucket_stats
 
@@ -710,8 +753,12 @@ def _estimate_bucket_sums(
         # (learned means can be invalid after counter resets or data corruption)
         if le in bucket_stats and bucket_stats[le].estimated_mean is not None:
             learned_mean = bucket_stats[le].estimated_mean
-            # Use learned mean if valid, otherwise fall back to midpoint
-            mean = learned_mean if lower < learned_mean < upper else (lower + upper) / 2
+            # Use learned mean if valid, otherwise fall back to midpoint. Buckets
+            # are (lower, upper], so a mean equal to upper is valid: every
+            # observation sat exactly on the boundary.
+            mean = (
+                learned_mean if lower < learned_mean <= upper else (lower + upper) / 2
+            )
         else:
             # Fall back to midpoint interpolation
             mean = (lower + upper) / 2
@@ -1025,6 +1072,10 @@ def _generate_observations_with_sum_constraint(
     per_bucket_counts: dict[str, float],
     target_sum: float,
     bucket_stats: dict[str, BucketStatistics] | None = None,
+    *,
+    original_bucket_counts: dict[str, float] | None = None,
+    target_sum_is_exact: bool = True,
+    window_spans_counter_reset: bool = False,
 ) -> np.ndarray:
     """Generate observations constrained to match the exact histogram sum.
 
@@ -1037,6 +1088,12 @@ def _generate_observations_with_sum_constraint(
         1. Detect single-bucket dominance: if ≥95% of observations are in one bucket,
            use the overall average as the center point (handles narrow distributions)
         2. For each bucket, choose observation placement strategy:
+           0. Exact edge: if every observation in the bucket is known to sit on
+              its upper edge (a learned mean equal to le whose single-bucket
+              intervals cover the bucket's full, pre-downsampling count with no
+              counter reset in the learning window, or the only bucket occupied
+              before downsampling whose average equals le when target_sum is
+              exact), place them all on le
            a. F3: If variance is extremely tight (< 1% of bucket width),
               use F3 two-point mass distribution for optimal moment matching
            b. Blended: If variance is tight (< 20%) AND mean is near center (< 30%),
@@ -1047,8 +1104,9 @@ def _generate_observations_with_sum_constraint(
               shift uniform distribution to center on learned mean
            e. Pure uniform: Fall back to bucket midpoint (uniform assumption)
         3. After initial placement, adjust positions proportionally across all
-           buckets to match the exact target sum. Each bucket absorbs adjustment
-           proportional to its sum contribution (capped at ±40% of bucket width).
+           buckets except exact-edge ones to match the exact target sum. Each
+           bucket absorbs adjustment proportional to its sum contribution
+           (capped at ±40% of bucket width).
 
     The variance-aware enhancement provides accuracy improvements on adversarial
     distributions while maintaining similar performance on normal distributions.
@@ -1065,6 +1123,12 @@ def _generate_observations_with_sum_constraint(
         target_sum: The exact sum of observations (from histogram sum_delta)
         bucket_stats: Optional learned per-bucket statistics from
                       accumulate_bucket_statistics()
+        original_bucket_counts: Optional per-bucket counts before any caller
+                      downsampling; learned observation counts are compared
+                      against these. Defaults to per_bucket_counts.
+        target_sum_is_exact: Whether target_sum is known rather than derived
+                      from an estimate (e.g. of the +Inf bucket sum). Only an
+                      exact target_sum can prove a lone bucket sits on its edge.
 
     Returns:
         Array of generated observation values for finite buckets (excludes +Inf)
@@ -1078,6 +1142,18 @@ def _generate_observations_with_sum_constraint(
     # Downsample if total count exceeds max to prevent memory issues.
     # Proportional sampling maintains the distribution shape for percentile accuracy.
     # Both counts AND target_sum are scaled to preserve mean values within buckets.
+    # Learned stats count original observations, so edge coverage is checked
+    # against the counts before any downsampling.
+    if original_bucket_counts is None:
+        original_bucket_counts = dict(per_bucket_counts)
+    # Occupancy is checked before downsampling: rounding can drop a small
+    # bucket to zero and make another bucket look like the only one.
+    occupied_buckets = [
+        le
+        for le in finite_buckets
+        if per_bucket_counts.get(le, 0) > 0 or original_bucket_counts.get(le, 0) > 0
+    ]
+    lone_bucket = occupied_buckets[0] if len(occupied_buckets) == 1 else None
     total_count = sum(per_bucket_counts.get(le, 0) for le in finite_buckets)
     if total_count > _MAX_OBSERVATIONS:
         sample_ratio = _MAX_OBSERVATIONS / total_count
@@ -1138,14 +1214,45 @@ def _generate_observations_with_sum_constraint(
         if stats is not None:
             if stats.estimated_mean is not None:
                 mean_val = stats.estimated_mean
-                # Validate: must be within bucket bounds
-                if lower_bound < mean_val < upper_bound:
+                if lower_bound < mean_val <= upper_bound:
                     learned_mean = mean_val
             learned_variance = stats.estimated_variance
 
         # Choose observation generation strategy based on learned variance
         # Three paths: F3 (tiny variance), blended (tight + centered), variance-aware
         generated = False
+
+        # Values in a bucket are <= upper_bound, so a mean equal to upper_bound
+        # means every one of them was exactly upper_bound (e.g. a fixed output
+        # length that lands on a bucket edge). Spreading them below the edge
+        # would invent values that were never observed. A learned mean only
+        # proves this when its single-bucket intervals cover every observation
+        # in the bucket; later mixed intervals can add values below the edge.
+        # A counter reset in the learning window breaks that link, since the
+        # learned observations may predate the reset.
+        point_mass = None
+        if (
+            learned_mean is not None
+            and stats is not None
+            and not stats.spans_counter_reset
+            and stats.observation_count >= original_bucket_counts.get(bucket_le, 0)
+        ):
+            point_mass = learned_mean
+        elif (
+            bucket_le == lone_bucket
+            and bucket_count == total_observations
+            and target_sum_is_exact
+            and not window_spans_counter_reset
+        ):
+            # A reset inside the window can leave positive endpoint deltas
+            # that no longer describe the observations, so the average alone
+            # can't prove they all sit on the edge.
+            point_mass = avg
+        if point_mass is not None and point_mass == upper_bound:
+            observations[write_idx : write_idx + bucket_count] = upper_bound
+            # Exact values: leave this bucket out of the pass 2 sum fit.
+            write_idx += bucket_count
+            continue
 
         if (
             learned_mean is not None
@@ -1192,7 +1299,7 @@ def _generate_observations_with_sum_constraint(
 
             # For dominant bucket (95%+ of observations), use avg as center.
             # This is more accurate than midpoint for narrow distributions.
-            if bucket_le == dominant_bucket and lower_bound < avg < upper_bound:
+            if bucket_le == dominant_bucket and lower_bound < avg <= upper_bound:
                 center = avg
 
             # Vectorized: generate uniform distribution centered on 'center'
@@ -1220,7 +1327,12 @@ def _generate_observations_with_sum_constraint(
         return observations  # Close enough
 
     # Distribute residual across buckets proportionally to their sum contribution
-    # This ensures large buckets absorb more of the adjustment
+    # This ensures large buckets absorb more of the adjustment. Point-mass
+    # buckets are exact and not in bucket_ranges, so weight over the rest.
+    adjustable_sum = sum(
+        observations[start : start + count].sum()
+        for start, count, _, _ in bucket_ranges
+    )
     for slice_start, bucket_count, lower_bound, upper_bound in bucket_ranges:
         if bucket_count == 0:
             continue
@@ -1229,8 +1341,8 @@ def _generate_observations_with_sum_constraint(
         bucket_slice = observations[slice_start : slice_start + bucket_count]
         bucket_sum = bucket_slice.sum()
         bucket_weight = (
-            bucket_sum / generated_sum
-            if generated_sum > 0
+            bucket_sum / adjustable_sum
+            if adjustable_sum > 0
             else 1.0 / len(bucket_ranges)
         )
 
