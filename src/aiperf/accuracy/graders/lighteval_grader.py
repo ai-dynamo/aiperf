@@ -136,7 +136,19 @@ class _LightevalBaseGrader(BaseGrader):
     async def grade(
         self, response_text: str, ground_truth: str, **kwargs: Any
     ) -> GradingResult:
-        score = self._safe_compute(response_text, ground_truth)
+        try:
+            doc = self._build_doc(ground_truth)
+        except ValueError as exc:
+            # Malformed gold is a dataset/grader problem, not a model formatting one.
+            return GradingResult(
+                correct=False,
+                grader_error=True,
+                confidence=0.0,
+                reasoning=f"lighteval {type(self).__name__}: invalid ground truth: {exc}",
+                extracted_answer=response_text.strip(),
+                ground_truth=ground_truth.strip(),
+            )
+        score = self._safe_compute(response_text, doc)
         correct = score is not None and score > self._CORRECTNESS_THRESHOLD
         unparsed = score is None
         return GradingResult(
@@ -152,7 +164,7 @@ class _LightevalBaseGrader(BaseGrader):
             ground_truth=ground_truth.strip(),
         )
 
-    def _safe_compute(self, response_text: str, ground_truth: str) -> float | None:
+    def _safe_compute(self, response_text: str, doc: Any) -> float | None:
         """Run lighteval's metric.compute with crash-safety.
 
         lighteval can raise on malformed predictions (e.g. when its
@@ -161,7 +173,6 @@ class _LightevalBaseGrader(BaseGrader):
         crashing the record processor.
         """
         try:
-            doc = self._build_doc(ground_truth)
             response = ModelResponse(text=[response_text])
             return float(self._metric.compute(doc, response))
         except Exception as exc:
@@ -277,8 +288,8 @@ class LightevalGPQAGrader(_LightevalBaseGrader):
             ValueError: when ``ground_truth`` does not normalize to a
                 single A/B/C/D letter. Silently coercing invalid gold
                 to choice A would treat every model picking "A" as
-                correct on a malformed row, so we fail fast and let
-                ``_safe_compute`` surface it as ``unparsed=True``.
+                correct on a malformed row, so we fail fast and ``grade``
+                reports it as ``grader_error=True``.
         """
         letter = ground_truth.strip().upper()
         if letter not in {"A", "B", "C", "D"}:

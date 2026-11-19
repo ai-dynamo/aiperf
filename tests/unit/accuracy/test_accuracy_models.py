@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
+import pytest
+from pydantic import ValidationError
+
 from aiperf.accuracy.models import (
     AccuracyRecordsData,
     AccuracySummary,
+    GradingResult,
     ProcessAccuracyResult,
     TaskAccuracyStats,
 )
@@ -194,3 +198,17 @@ def test_process_accuracy_result_message_carries_summary() -> None:
     )
     assert message.message_type == MessageType.PROCESS_ACCURACY_RESULT
     assert message.accuracy_result.results.total_evaluated == 5
+
+
+def test_grading_result_grader_error_with_correct_raises_validation_error() -> None:
+    with pytest.raises(
+        ValidationError, match="grader_error=True requires correct=False"
+    ):
+        GradingResult(
+            correct=True,
+            grader_error=True,
+            confidence=0.0,
+            reasoning="r",
+            extracted_answer="",
+            ground_truth="",
+        )
