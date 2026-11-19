@@ -102,7 +102,7 @@ class ClusterResponse(AIPerfBaseModel):
     cluster_name: str | None = Field(
         default=None,
         description="Optional human-readable cluster name. Taken from "
-        "AIPERF_OPERATOR_CLUSTER_NAME when set, otherwise auto-detected from "
+        "AIPERF_CLUSTER_NAME when set, otherwise auto-detected from "
         "the kube-system kubeadm-config / cluster-info ConfigMaps. The UI "
         "banner shows this in place of the bare Kubernetes version when set.",
     )

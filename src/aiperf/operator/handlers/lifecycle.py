@@ -226,7 +226,8 @@ async def on_benchmark_complete(
 
     The controller pod patches the ``benchmark-complete`` annotation after
     results are exported. This handler fires immediately via kopf's watch
-    mechanism, bypassing the 10-second monitor poll cycle.
+    mechanism instead of waiting for ``heartbeat_watchdog`` to notice a stale
+    heartbeat and invoke ``monitor_progress``.
 
     Side effects:
         - Attempts to claim completion via ``try_claim_completion`` (durable

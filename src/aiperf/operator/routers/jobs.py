@@ -195,7 +195,7 @@ async def _fetch_cluster_name(api: ApiClient) -> str | None:
 
     Best-effort: any RBAC denial / parse failure falls back to ``None``,
     which lets the UI show the Kubernetes version instead. Operators
-    can override via ``AIPERF_OPERATOR_CLUSTER_NAME`` for clusters that
+    can override via ``AIPERF_CLUSTER_NAME`` for clusters that
     don't expose either of these (managed GKE/EKS, custom installers).
     """
     name = await _cluster_name_from_kubeadm_config(api)

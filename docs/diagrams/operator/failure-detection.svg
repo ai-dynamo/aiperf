@@ -1,0 +1,120 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="1020" viewBox="0 0 1280 1020"
+     role="img" aria-labelledby="title desc">
+  <title id="title">AIPerfJob failure detection</title>
+  <desc id="desc">Four signal sources lead to three outcomes. A pod status change posts a warning event at the restart threshold, records a startup blocker, and triggers salvage when the controller exits. The startup issue record posts a warning after 30 seconds and fails the job after 90 seconds stable, for terminal-capable blockers only. A JobSet Failed condition fails the job when the controller job fails. A controller fatal report fails the job, even if it was Completed. A stale heartbeat or due timeout fails the job on timeout or a missing JobSet, and resumes an orphaned completion claim as a recovery harvest. Restart counting only warns, and capacity scheduling delays never fail a job.</desc>
+  <defs>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1565C0"/>
+    </marker>
+    <marker id="arrow-slate" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#475569"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2E7D32"/>
+    </marker>
+    <style>
+      .title { font: 700 30px system-ui, sans-serif; fill: #1f2937; }
+      .subtitle { font: 500 17px system-ui, sans-serif; fill: #4b5563; }
+      .column { font: 700 21px system-ui, sans-serif; }
+      .node-title { font: 700 17px system-ui, sans-serif; fill: #111827; }
+      .node-text { font: 500 15px system-ui, sans-serif; fill: #374151; }
+      .edge-label { font: 600 15px system-ui, sans-serif; fill: #374151; }
+      .note { font: 600 15px system-ui, sans-serif; fill: #475569; }
+      .halo { stroke: #f8fafc; stroke-width: 6px; stroke-linejoin: round; paint-order: stroke; }
+      .edge { fill: none; stroke-width: 3; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="1020" rx="24" fill="#f8fafc"/>
+  <text x="640" y="52" text-anchor="middle" class="title">AIPerfJob failure detection</text>
+  <text x="640" y="82" text-anchor="middle" class="subtitle">Four signals drive three outcomes, and container restarts alone never fail a job</text>
+
+  <!-- Columns -->
+  <rect x="40" y="115" width="330" height="715" rx="20" fill="#ffffff" stroke="#cbd5e1" stroke-width="2"/>
+  <rect x="500" y="115" width="300" height="715" rx="20" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2"/>
+  <rect x="900" y="115" width="340" height="715" rx="20" fill="#f5f3ff" stroke="#B39DDB" stroke-width="2"/>
+
+  <text x="205" y="155" text-anchor="middle" class="column" fill="#334155">Signals</text>
+  <text x="650" y="155" text-anchor="middle" class="column" fill="#475569">Startup record</text>
+  <text x="1070" y="155" text-anchor="middle" class="column" fill="#5E35B1">Outcomes</text>
+
+  <!-- Signal: pod status change -->
+  <rect x="70" y="180" width="270" height="190" rx="13" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+  <text x="205" y="255" text-anchor="middle" class="node-title">Pod status change</text>
+  <text x="205" y="279" text-anchor="middle" class="node-text">Watch event per pod</text>
+  <text x="205" y="301" text-anchor="middle" class="node-text">Restarts, waits, exits</text>
+
+  <path d="M340 205 H926" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="650" y="193" text-anchor="middle" class="edge-label">warns at restart threshold (3)</text>
+
+  <path d="M340 330 H536" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="438" y="316" text-anchor="middle" class="edge-label">records blocker</text>
+
+  <path d="M340 355 H450 V425 H926" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="680" y="413" text-anchor="middle" class="edge-label">salvages on controller exit</text>
+
+  <!-- Startup issue record -->
+  <rect x="540" y="280" width="220" height="100" rx="13" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+  <text x="650" y="310" text-anchor="middle" class="node-title">Startup issue</text>
+  <text x="650" y="334" text-anchor="middle" class="node-text">On the CR status</text>
+  <text x="650" y="356" text-anchor="middle" class="node-text">Worst blocker, aged</text>
+
+  <path d="M760 300 H1050 V259" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="890" y="288" text-anchor="middle" class="edge-label halo">warns after 30 s stable</text>
+
+  <path d="M760 365 H1210 V690 H1174" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="985" y="353" text-anchor="middle" class="edge-label halo">fails after 90 s stable, terminal-capable only</text>
+
+  <!-- Signal: stale heartbeat or due timeout -->
+  <rect x="70" y="440" width="270" height="125" rx="13" fill="#dcfce7" stroke="#2E7D32" stroke-width="2"/>
+  <text x="205" y="490" text-anchor="middle" class="node-title">Stale heartbeat or timeout</text>
+  <text x="205" y="514" text-anchor="middle" class="node-text">Operator timer, every 10 s</text>
+
+  <path d="M340 472 H926" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="680" y="460" text-anchor="middle" class="edge-label">resumes an orphaned claim</text>
+
+  <path d="M340 545 H880 V600 H926" class="edge" stroke="#2E7D32" marker-end="url(#arrow-green)"/>
+  <text x="620" y="533" text-anchor="middle" class="edge-label">fails on timeout or missing JobSet</text>
+
+  <!-- Signal: JobSet Failed condition -->
+  <rect x="70" y="600" width="270" height="80" rx="13" fill="#e2e8f0" stroke="#475569" stroke-width="2"/>
+  <text x="205" y="633" text-anchor="middle" class="node-title">JobSet Failed condition</text>
+  <text x="205" y="657" text-anchor="middle" class="node-text">Watch event, new condition</text>
+  <path d="M340 640 H926" class="edge" stroke="#475569" marker-end="url(#arrow-slate)"/>
+  <text x="620" y="628" text-anchor="middle" class="edge-label">fails when the controller job fails</text>
+
+  <!-- Signal: controller fatal report -->
+  <rect x="70" y="720" width="270" height="80" rx="13" fill="#dbeafe" stroke="#1565C0" stroke-width="2"/>
+  <text x="205" y="753" text-anchor="middle" class="node-title">Controller fatal report</text>
+  <text x="205" y="777" text-anchor="middle" class="node-text">Written to the CR status</text>
+  <path d="M340 760 H926" class="edge" stroke="#1565C0" marker-end="url(#arrow-blue)"/>
+  <text x="620" y="748" text-anchor="middle" class="edge-label">fails, even if Completed</text>
+
+  <!-- Outcomes -->
+  <rect x="930" y="180" width="240" height="75" rx="13" fill="#ede9fe" stroke="#5E35B1" stroke-width="2"/>
+  <text x="1050" y="211" text-anchor="middle" class="node-title">Warning event</text>
+  <text x="1050" y="235" text-anchor="middle" class="node-text">Phase unchanged</text>
+
+  <rect x="930" y="400" width="240" height="85" rx="13" fill="#ede9fe" stroke="#5E35B1" stroke-width="2"/>
+  <text x="1050" y="433" text-anchor="middle" class="node-title">Recovery harvest</text>
+  <text x="1050" y="457" text-anchor="middle" class="node-text">Claim, then fetch results</text>
+
+  <rect x="930" y="580" width="240" height="210" rx="13" fill="#fee2e2" stroke="#C62828" stroke-width="2"/>
+  <text x="1050" y="676" text-anchor="middle" class="node-title" fill="#C62828">Failed phase</text>
+  <text x="1050" y="700" text-anchor="middle" class="node-text">Terminal, with a reason</text>
+
+  <!-- Rules that keep jobs alive -->
+  <rect x="70" y="850" width="540" height="72" rx="13" fill="#ffffff" stroke="#94a3b8" stroke-width="2" stroke-dasharray="7 6"/>
+  <text x="340" y="880" text-anchor="middle" class="note">Restart counting only warns</text>
+  <text x="340" y="904" text-anchor="middle" class="node-text">It posts one event per pod and count, never a phase change</text>
+  <rect x="670" y="850" width="540" height="72" rx="13" fill="#ffffff" stroke="#94a3b8" stroke-width="2" stroke-dasharray="7 6"/>
+  <text x="940" y="880" text-anchor="middle" class="note">Capacity scheduling delays never fail</text>
+  <text x="940" y="904" text-anchor="middle" class="node-text">A pod waiting for capacity is recorded but not terminal</text>
+
+  <rect x="90" y="950" width="1100" height="42" rx="12" fill="#ffffff" stroke="#9E9E9E" stroke-width="2"/>
+  <text x="640" y="977" text-anchor="middle" class="node-text">Restarts alone never fail a job: only a stable blocker, a failed controller job, a fatal report, or the watchdog can</text>
+</svg>

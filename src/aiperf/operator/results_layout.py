@@ -844,9 +844,13 @@ def epoch_key_from_body(body: dict) -> str:
     whole-second timestamps append a deterministic uid-derived suffix so
     same-name resubmits created inside the same API-server second do not collide.
 
-    Example:
+    Examples:
         >>> epoch_key_from_body({"metadata": {"creationTimestamp": "2024-04-25T18:22:03Z"}})
         '1714069323'
+        >>> epoch_key_from_body({"metadata": {"creationTimestamp": "2024-04-25T18:22:03Z", "uid": "abc"}})
+        '1714069323568578'
+        >>> epoch_key_from_body({"metadata": {"creationTimestamp": "2024-04-25T18:22:03.123456Z"}})
+        '1714069323123456'
     """
     metadata = body["metadata"]
     ts = metadata["creationTimestamp"]
