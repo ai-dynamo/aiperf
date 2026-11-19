@@ -1266,6 +1266,8 @@ class SystemController(
         self._server_metrics_endpoints_reachable = message.endpoints_reachable
 
         if not message.enabled:
+            # Late registration must not rearm a producer that opted out.
+            self._retired_result_producer_ids.add(message.service_id)
             self._result_join_coordinator.unregister(
                 "server_metrics", message.service_id
             )
