@@ -63,10 +63,12 @@ def _record_response_body_eof(
     record: RequestRecord,
     callback: "TransportBoundaryCallback | None" = None,
 ) -> None:
-    """Keep the first observed body EOF; invoke the optional callback for replay success.
+    """Keep the first observed body EOF; optionally notify finite replay.
 
+    Ordinary profiling records EOF without a callback. Finite replay requires
+    a complete body before passing its timestamp to completion dependencies;
+    an unfinished body raises ResponseBodyIncompleteError when a callback is set.
     Without a callback, an unfinished body is left unread and unstamped.
-    With a callback, an unfinished body raises ResponseBodyIncompleteError.
     """
     if not response.content.at_eof():
         if callback is not None:
@@ -323,9 +325,12 @@ class AioHttpClient(AIPerfLoggerMixin):
                         finally:
                             # Parsing can fail after HTTP EOF; replay still requires success.
                             _record_response_body_eof(response, record)
-                        _record_response_body_eof(
-                            response, record, transport_eof_callback
-                        )
+                        # Only finite replay needs EOF validation for completion dependencies.
+                        # Ordinary profiling captures EOF in the finally block above.
+                        if transport_eof_callback is not None:
+                            _record_response_body_eof(
+                                response, record, transport_eof_callback
+                            )
                         record.end_perf_ns = time.perf_counter_ns()
                     else:
                         # Non-SSE response (e.g., JSON or binary)
