@@ -303,10 +303,10 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         huge (and for weka, meaningless) in inputs.json. Uses the loader's
         DETECTED type so auto-detected traces (e.g. a bare BurstGPT CSV) are
         skipped too. Most formats share the mmap cache predicate
-        (``mmap_cache.is_trace_or_verbatim_dataset``), but Baseten is a
-        deliberate skip-only special case: its large recorded prompts make
-        ``inputs.json`` prohibitively expensive, while it remains outside the
-        mmap cache. The cache gate keys off the pre-load CONFIG type, so other
+        (``mmap_cache.is_trace_or_verbatim_dataset``), but Baseten and agentic
+        Mooncake v2 are skip-only cases: their potentially large prompts make
+        ``inputs.json`` expensive, while they remain outside the mmap cache.
+        The cache gate keys off the pre-load CONFIG type, so other
         explicitly-typed traces are cached and skipped while auto-detected
         traces are skipped-but-uncached (a re-tokenize perf miss, never a
         correctness issue).
@@ -317,11 +317,11 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
             if isinstance(default_dataset, PublicDataset)
             else None
         )
-        return (
-            self._detected_dataset_type == CustomDatasetType.BASETEN_TRACE
-            or mmap_cache.is_trace_or_verbatim_dataset(
-                self._detected_dataset_type, public_dataset
-            )
+        return self._detected_dataset_type in (
+            CustomDatasetType.BASETEN_TRACE,
+            CustomDatasetType.AGENTIC_MOONCAKE_V2,
+        ) or mmap_cache.is_trace_or_verbatim_dataset(
+            self._detected_dataset_type, public_dataset
         )
 
     def _lookup_under_lock(self) -> mmap_cache.CacheHit | None:
@@ -664,6 +664,17 @@ class DatasetManager(ReplyClientMixin, BaseComponentService):
         # when input metrics aren't needed. Datasets that NATIVELY ship raw_payload
         # are untouched here (they already carry it) and still select PAYLOAD_BYTES.
         if not Environment.DATASET.PREFORMAT_PAYLOADS:
+            return
+
+        if any(
+            turn.source_kind == CustomDatasetType.AGENTIC_MOONCAKE_V2
+            for conversation in conversations
+            for turn in conversation.turns
+        ):
+            self.info(
+                "Skipping payload pre-formatting for agentic Mooncake v2: "
+                "source session headers require conversation storage"
+            )
             return
 
         needs_formatting = False

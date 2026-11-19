@@ -58,6 +58,32 @@ def _remove_headers_case_insensitive(
         del headers[key]
 
 
+def _apply_agentic_source_headers(
+    headers: dict[str, str], request_info: RequestInfo
+) -> None:
+    if (
+        not request_info.turns
+        or request_info.turns[-1].source_kind != "agentic_mooncake_v2"
+    ):
+        return
+    if (
+        request_info.x_correlation_id
+        and Environment.HTTP.X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID
+    ):
+        raise ValueError(
+            "Agentic Mooncake v2 requires source session IDs; disable "
+            "AIPERF_HTTP_X_DYNAMO_SESSION_ID_FROM_CORRELATION_ID"
+        )
+    source_headers = request_info.turns[-1].extra_headers or {}
+    dynamo_headers = ("x-dynamo-session-id", "x-dynamo-parent-session-id")
+    _remove_headers_case_insensitive(headers, dynamo_headers)
+    headers.update(
+        (key, value)
+        for key, value in source_headers.items()
+        if key.lower() in dynamo_headers
+    )
+
+
 @runtime_checkable
 class TransportProtocol(AIPerfLifecycleProtocol, Protocol):
     """Protocol for a transport that sends requests to an inference server."""
@@ -175,6 +201,8 @@ class BaseTransport(AIPerfLifecycleMixin, ABC):
         if request_info.turns and request_info.turns[-1].extra_headers:
             headers.update(request_info.turns[-1].extra_headers)
         headers.update(self.get_transport_headers(request_info))
+
+        _apply_agentic_source_headers(headers, request_info)
 
         # Apply derived session-affinity headers last so they are authoritative
         # and cannot be silently overwritten by endpoint, extra, or transport

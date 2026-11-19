@@ -211,6 +211,9 @@ class TurnToSend(Struct, frozen=True):
     max_tokens_override: int | None = None
     """Per-request generation limit override; omitted for normal requests."""
 
+    url_affinity_key: str | None = None
+    """Optional source session identity for sharing a URL within one tree."""
+
     @property
     def is_final_turn(self) -> bool:
         return self.turn_index == self.num_turns - 1

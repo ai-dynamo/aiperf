@@ -13,10 +13,12 @@ import pytest
 from pytest import param
 
 from aiperf.common.enums import CreditPhase
+from aiperf.common.models import ConversationMetadata, TurnMetadata
 from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.credit.dispatch import ChildDispatchResult, TurnAdmission
 from aiperf.credit.issuer import CreditIssuer
 from aiperf.credit.structs import TurnToSend
+from aiperf.timing.conversation_source import SampledSession
 from aiperf.timing.phase.lifecycle import PhaseLifecycle
 from aiperf.timing.session_tree import SessionTreeRegistry
 
@@ -916,6 +918,118 @@ class TestURLSelectionStrategy:
     (round-robin) should only be invoked on the first turn of a conversation.
     Subsequent turns get url_index=None and rely on the worker's session cache.
     """
+
+    async def test_v2_requests_share_url_by_source_session_and_play(
+        self,
+        mock_stop_checker: MagicMock,
+        mock_progress: MagicMock,
+        mock_concurrency: MagicMock,
+        mock_router: MagicMock,
+        mock_cancellation: MagicMock,
+        mock_lifecycle: MagicMock,
+    ) -> None:
+        strategy = MagicMock()
+        strategy.next_url_index.side_effect = [0, 1, 0, 1]
+        issuer = CreditIssuer(
+            phase=CreditPhase.PROFILING,
+            stop_checker=mock_stop_checker,
+            progress=mock_progress,
+            concurrency_manager=mock_concurrency,
+            credit_router=mock_router,
+            cancellation_policy=mock_cancellation,
+            lifecycle=mock_lifecycle,
+            url_selection_strategy=strategy,
+        )
+        sessions = []
+        for index, (root, source_session) in enumerate(
+            [
+                ("play-1", "same"),
+                ("play-1", "same"),
+                ("play-1", "other"),
+                ("play-2", "same"),
+            ]
+        ):
+            conversation_id = f"request-{index}"
+            session = SampledSession(
+                conversation_id=conversation_id,
+                metadata=ConversationMetadata(
+                    conversation_id=conversation_id,
+                    turns=[
+                        TurnMetadata(
+                            source_kind="agentic_mooncake_v2",
+                            source_trace_id=source_session,
+                        )
+                    ],
+                ),
+                x_correlation_id=conversation_id,
+                root_correlation_id=root,
+                agent_depth=1,
+            )
+            sessions.append(session)
+            await issuer.dispatch_first_turn(session)
+
+        credits = [
+            call.kwargs["credit"] for call in mock_router.send_credit.call_args_list
+        ]
+        assert [credit.url_index for credit in credits] == [0, 0, 1, 0]
+        assert strategy.next_url_index.call_count == 3
+        issuer.release_url_affinity("play-1")
+        await issuer.dispatch_first_turn(sessions[0])
+        assert mock_router.send_credit.call_args.kwargs["credit"].url_index == 1
+        assert strategy.next_url_index.call_count == 4
+
+    async def test_virtual_roots_do_not_advance_url_selection(
+        self,
+        mock_stop_checker: MagicMock,
+        mock_progress: MagicMock,
+        mock_concurrency: MagicMock,
+        mock_router: MagicMock,
+        mock_cancellation: MagicMock,
+        mock_lifecycle: MagicMock,
+    ) -> None:
+        strategy = MagicMock()
+        strategy.next_url_index.side_effect = [0, 1, 0, 1]
+        issuer = CreditIssuer(
+            phase=CreditPhase.PROFILING,
+            stop_checker=mock_stop_checker,
+            progress=mock_progress,
+            concurrency_manager=mock_concurrency,
+            credit_router=mock_router,
+            cancellation_policy=mock_cancellation,
+            lifecycle=mock_lifecycle,
+            url_selection_strategy=strategy,
+        )
+        for index in range(2):
+            await issuer.issue_credit(
+                TurnToSend(
+                    conversation_id=f"play-{index}",
+                    x_correlation_id=f"play-{index}",
+                    turn_index=0,
+                    num_turns=1,
+                    no_request=True,
+                )
+            )
+            await issuer.dispatch_child_turn(
+                TurnToSend(
+                    conversation_id=f"request-{index}",
+                    x_correlation_id=f"request-{index}",
+                    root_correlation_id=f"play-{index}",
+                    turn_index=0,
+                    num_turns=1,
+                    agent_depth=1,
+                )
+            )
+        credits = [
+            call.kwargs["credit"] for call in mock_router.send_credit.call_args_list
+        ]
+        assert [credit.url_index for credit in credits if credit.no_request] == [
+            None,
+            None,
+        ]
+        assert [credit.url_index for credit in credits if not credit.no_request] == [
+            0,
+            1,
+        ]
 
     async def test_first_turn_gets_url_index_from_strategy(
         self,
