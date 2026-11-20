@@ -3,6 +3,7 @@
 """Extract a native vLLM launch from the supported documentation setup blocks."""
 
 import shlex
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 
@@ -16,6 +17,26 @@ class NativeServerSetup:
     """Explicit environment assignments from the server setup."""
     requirements: tuple[str, ...] = ()
     """Python requirements from an inline Dockerfile."""
+
+
+def compiled_server_constraints(versions: Mapping[str, str]) -> tuple[str, ...]:
+    """Preserve the GPU ABI while allowing Python dependencies to be repaired."""
+    compiled = {
+        "vllm",
+        "torch",
+        "torchaudio",
+        "torchvision",
+        "triton",
+        "numpy",
+        "xformers",
+    }
+    prefixes = ("nvidia-", "cuda-", "flashinfer", "flash-attn", "vllm-")
+    return tuple(
+        f"{name}=={version}"
+        for name, version in sorted(versions.items())
+        if name.lower().replace("_", "-") in compiled
+        or name.lower().replace("_", "-").startswith(prefixes)
+    )
 
 
 def parse_native_setup(command: str) -> NativeServerSetup:
@@ -112,3 +133,15 @@ def _parse_run(
     if not image.startswith("vllm/vllm-openai:"):
         raise ValueError(f"Unsupported server image: {image}")
     return NativeServerSetup(image, tuple(args), env, requirements)
+
+
+if __name__ == "__main__":
+    from importlib.metadata import distributions
+
+    print(
+        "\n".join(
+            compiled_server_constraints(
+                {dist.metadata["Name"]: dist.version for dist in distributions()}
+            )
+        )
+    )

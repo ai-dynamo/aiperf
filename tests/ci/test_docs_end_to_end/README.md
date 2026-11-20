@@ -96,7 +96,8 @@ The harness translates supported Docker setup wrappers into native execution.
 It preserves server arguments and explicit environment assignments.
 Inline Dockerfiles support `FROM` and `RUN pip install` instructions.
 Their dependencies use a separate environment that inherits the installed
-server packages and constrains their versions.
+server packages. Version constraints preserve the compiled GPU stack while
+allowing Python dependencies to satisfy the documented extras.
 Unsupported setup instructions fail the test.
 If `AIPERF_DOCS_SERVER_IMAGE` is set, the documented base image must match it.
 

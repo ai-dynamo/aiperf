@@ -221,6 +221,17 @@ jobs:
 
       - name: Install AIPerf in an isolated environment
         run: |
+          for attempt in {1..5}; do
+            if mkdir -p "$HF_HOME/hub" "$HF_HOME/assets" && test -d "$HF_HOME/hub"; then
+              break
+            fi
+            if [ "$attempt" -eq 5 ]; then
+              echo 'Shared Hugging Face cache is unavailable' >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          ls -ld "$HF_HOME" "$HF_HOME/hub"
           echo "AIPERF_DOCS_VLLM_PYTHON=$(command -v python3)" >> "$GITHUB_ENV"
           uv venv --python 3.13 /scratch/aiperf-venv
           uv pip install --python /scratch/aiperf-venv/bin/python '.[test]'

@@ -134,12 +134,9 @@ class EndToEndTestRunner:
         if not setup.requirements:
             return python
         venv = self.work_dir / "server-venv"
-        freeze = (
-            "from importlib.metadata import distributions; "
-            "print('\\n'.join(f'{d.metadata[\"Name\"]}=={d.version}' for d in distributions()))"
-        )
         commands = [
-            shlex.join([python, "-c", freeze]) + " > server-constraints.txt",
+            shlex.join([python, str(Path(__file__).with_name("native_setup.py"))])
+            + " > server-constraints.txt",
             shlex.join(
                 ["uv", "venv", "--system-site-packages", "--python", python, str(venv)]
             ),

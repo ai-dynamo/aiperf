@@ -82,6 +82,28 @@ def test_native_setup_rejects_unsupported_semantics(command: str) -> None:
         parse_native_setup(command)
 
 
+def test_audio_constraints_allow_python_dependency_repairs() -> None:
+    from native_setup import compiled_server_constraints
+
+    constraints = compiled_server_constraints(
+        {
+            "vllm": "0.34.0",
+            "torch": "2.11.0+cu132",
+            "nvidia-cublas-cu13": "13.0.0",
+            "numpy": "2.2.6",
+            "opentelemetry-exporter-otlp": "1.40.0",
+            "librosa": "0.10.0",
+        }
+    )
+
+    assert "vllm==0.34.0" in constraints
+    assert "torch==2.11.0+cu132" in constraints
+    assert "nvidia-cublas-cu13==13.0.0" in constraints
+    assert "numpy==2.2.6" in constraints
+    assert not any("opentelemetry" in constraint for constraint in constraints)
+    assert not any("librosa" in constraint for constraint in constraints)
+
+
 @pytest.mark.skipif(IS_WINDOWS, reason="The documentation harness requires Bash.")
 @pytest.mark.asyncio
 async def test_native_shell_preserves_quotes_and_fixture_files(tmp_path: Path) -> None:
