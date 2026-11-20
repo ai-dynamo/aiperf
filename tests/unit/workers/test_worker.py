@@ -1186,7 +1186,7 @@ class TestFinalizeSessionResponseChaining:
 
     @pytest.mark.parametrize("dialect", ["decisions", "systemone"])
     @pytest.mark.parametrize("malformed", [False, True])
-    async def test_extraction_error_propagates_to_session_credit(
+    async def test_session_validation_precedes_record_emission_and_statistics(
         self,
         mock_worker: Worker,
         sample_credit_context: CreditContext,
@@ -1223,16 +1223,47 @@ class TestFinalizeSessionResponseChaining:
             TextResponse(perf_ns=2, text=orjson.dumps(response).decode())
         ]
         monkeypatch.setattr(mock_worker.inference_client, "endpoint", endpoint)
-        monkeypatch.setattr(mock_worker, "_populate_response_metrics", Mock())
+        monkeypatch.setattr(
+            mock_worker.inference_client, "send_request", AsyncMock(return_value=record)
+        )
+        monkeypatch.setattr(
+            mock_worker.session_manager,
+            "get",
+            Mock(return_value=self._chaining_session()),
+        )
+        monkeypatch.setattr(
+            mock_worker, "_create_request_info", Mock(return_value=record.request_info)
+        )
+        process_responses = Mock(wraps=endpoint.process_responses)
+        monkeypatch.setattr(endpoint, "process_responses", process_responses)
+        send_record = mock_worker._send_inference_result_message
+        emitted_errors = []
+
+        async def capture_emitted_error(record: RequestRecord) -> None:
+            emitted_errors.append(record.error)
+            await send_record(record)
+
+        monkeypatch.setattr(
+            mock_worker, "_send_inference_result_message", capture_emitted_error
+        )
+        monkeypatch.setattr(
+            mock_worker.inference_results_push_client, "push", AsyncMock()
+        )
         send_return = AsyncMock()
         monkeypatch.setattr(mock_worker.credit_return_push_client, "send", send_return)
 
-        mock_worker._finalize_session_response(
-            self._chaining_session(), sample_credit_context, record
+        await mock_worker._process_credit_with_session(
+            sample_credit_context, "x-req", "test-corr", None
         )
         await mock_worker._send_ordered_credit_return(sample_credit_context)
         returned = send_return.call_args.args[0]
 
+        assert mock_worker.task_stats.total == 1
+        assert mock_worker.task_stats.completed == int(not malformed)
+        assert mock_worker.task_stats.failed == int(malformed)
+        assert emitted_errors == [record.error]
+        assert sample_credit_context.record_emitted is True
+        process_responses.assert_called_once_with(record, capture_assistant_turn=True)
         if malformed:
             assert record.error is not None
             assert sample_credit_context.error is record.error

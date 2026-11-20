@@ -1981,6 +1981,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
 
         self._finalize_session_response(session, credit_context, record, request_info)
         self._detect_ended_on_truncation(credit_context, record)
+        await self._send_inference_result_message(record)
+        credit_context.record_emitted = True
 
     async def _try_payload_bytes_fast_path(
         self,
@@ -2376,10 +2378,10 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         request_info: RequestInfo,
         first_token_callback: FirstTokenCallback | None,
     ) -> RequestRecord:
-        """Send request, record result, and propagate errors to credit context.
+        """Send request and propagate transport errors to credit context.
 
-        Metrics/response storage are handled once by the caller
-        (``_finalize_session_response``) from a single response-processing pass.
+        The caller finalizes responses before emitting the result so endpoint
+        validation errors are reflected in worker statistics and the record.
         """
         self.task_stats.total += 1
         record = await self.inference_client.send_request(
@@ -2391,8 +2393,6 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             transport_eof_callback=self._make_transport_eof_callback(credit_context),
         )
         _clear_transport_eof_on_error(record, credit_context)
-        await self._send_inference_result_message(record)
-        credit_context.record_emitted = True
         if record.error is not None:
             credit_context.error = record.error
         return record
