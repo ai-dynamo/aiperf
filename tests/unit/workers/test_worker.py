@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
+from msgspec.structs import replace
 from pytest import param
 
 from aiperf.common.enums import ConversationContextMode, CreditPhase
@@ -22,10 +23,12 @@ from aiperf.common.models import (
     TextResponseData,
     Turn,
 )
+from aiperf.common.models.record_models import TextResponse
 from aiperf.common.monotonic_clock import process_clock
 from aiperf.config.phases import ConcurrencyPhase
 from aiperf.credit.structs import Credit, CreditContext
 from aiperf.dataset.memory_map_utils import PayloadTurnData
+from aiperf.endpoints.openai_chat import ChatEndpoint
 from aiperf.endpoints.openai_responses import ResponsesEndpoint
 from aiperf.plugin.enums import EndpointType
 from aiperf.workers.session_manager import UserSession
@@ -654,6 +657,7 @@ class TestEmitCreditFailureRecord:
         assert record.request_info.profiling_index == 1
         assert record.request_info.phase_name == "second-profiling"
         assert record.request_info.phase_kind == "profiling"
+        assert record.request_info.target_url_index is None
 
     async def test_emit_credit_failure_record_uses_process_clock(
         self, mock_worker, monkeypatch
@@ -1060,6 +1064,49 @@ class TestPayloadBytesFastPath:
         assert sent_request_info.payload_bytes == b'{"p": 1}'
         # The fast path handled the credit; the session path never ran.
         mock_worker._process_credit_with_session.assert_not_awaited()
+
+    async def test_response_parse_failure_preserves_selected_target(
+        self, mock_worker: Worker, sample_credit_context: CreditContext
+    ) -> None:
+        mock_worker._is_payload_bytes = True
+        mock_worker._dataset_client = AsyncMock()
+        mock_worker._dataset_client.get_payload_turn.return_value = PayloadTurnData(
+            payload_bytes=b'{"messages":[{"role":"user","content":"hi"}]}'
+        )
+        sample_credit_context.credit = replace(
+            sample_credit_context.credit, url_index=3
+        )
+        mock_worker.model_endpoint.endpoint.base_urls = [
+            "http://localhost:8000",
+            "http://localhost:8001",
+        ]
+        mock_worker.inference_client.endpoint = ChatEndpoint(
+            model_endpoint=mock_worker.model_endpoint
+        )
+        malformed_response = RequestRecord(
+            timestamp_ns=1,
+            start_perf_ns=1,
+            end_perf_ns=2,
+            responses=[
+                TextResponse(perf_ns=2, text="[1]", content_type="application/json")
+            ],
+        )
+        mock_worker.inference_client.transport.send_request = AsyncMock(
+            return_value=malformed_response
+        )
+        mock_worker._send_inference_result_message = AsyncMock()
+        mock_worker._send_ordered_credit_return = AsyncMock()
+
+        await mock_worker._on_credit_drop_message_task(sample_credit_context)
+
+        mock_worker._send_inference_result_message.assert_awaited_once()
+        mock_worker._send_ordered_credit_return.assert_awaited_once_with(
+            sample_credit_context
+        )
+        failed_record = mock_worker._send_inference_result_message.call_args.args[0]
+        assert malformed_response.request_info.target_url_index == 1
+        assert failed_record.error is not None
+        assert failed_record.request_info.target_url_index == 1
 
     async def test_successful_fast_path_sets_record_emitted(
         self, mock_worker, sample_credit_context

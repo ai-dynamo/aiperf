@@ -129,6 +129,8 @@ class CreditContext(
             credit. Used to keep the records-side count in lockstep with the
             credit-side count: a completed (non-cancelled) credit with no
             record would hang the RecordsManager completion barrier.
+        target_url_index: Resolved request target, when known, for worker-side
+            failure records emitted before the inference record is forwarded.
         request_latency_ns: Request latency in nanoseconds using records-pipeline
             semantics.
         inter_token_latency_ns: Inter-token latency in nanoseconds using
@@ -146,6 +148,7 @@ class CreditContext(
     first_token_sent: bool = False
     error: str | ErrorDetails | None = None
     record_emitted: bool = False
+    target_url_index: int | None = None
     transport_eof_wall_ns: int | None = None
     transport_eof_perf_ns: int | None = None
     transport_eof_correction_ns: int | None = None
