@@ -251,6 +251,12 @@ class MetricRecordMetadata(AIPerfBaseModel):
     worker_id: str = Field(
         ..., description="The ID of the AIPerf worker that processed the request."
     )
+    target_url_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Zero-based index of the configured endpoint URL selected for the request. "
+        "None when no target was selected or recorded.",
+    )
     record_processor_id: str = Field(
         ...,
         description="The ID of the AIPerf record processor that processed the record.",
@@ -971,6 +977,12 @@ class RecordContext(AIPerfBaseModel):
 
     # --- Identity / routing (read by MetricRecordMetadata builder) -----------
 
+    target_url_index: int | None = Field(
+        default=None,
+        ge=0,
+        description="Effective index of the configured endpoint URL after default and wrap-around resolution. "
+        "None when no target was selected or recorded.",
+    )
     credit_num: int = Field(
         ...,
         ge=0,

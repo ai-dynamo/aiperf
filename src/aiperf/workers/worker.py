@@ -1704,6 +1704,7 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                     phase_kind=credit.phase_kind,
                     x_request_id=str(uuid.uuid4()),
                     x_correlation_id=credit.x_correlation_id,
+                    target_url_index=credit_context.target_url_index,
                     agent_depth=credit.agent_depth,
                     parent_correlation_id=credit.parent_correlation_id,
                 ),
@@ -2038,13 +2039,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
             ],
         )
         request_info.num_choices = payload_turn.num_choices
-        record = await self.inference_client.send_request(
-            request_info,
-            first_token_callback=first_token_callback,
-            transport_start_callback=self._make_transport_start_callback(
-                credit_context
-            ),
-            transport_eof_callback=self._make_transport_eof_callback(credit_context),
+        record = await self._dispatch_request(
+            credit_context, request_info, first_token_callback
         )
         _clear_transport_eof_on_error(record, credit_context)
         self._populate_response_metrics(credit_context, record)
@@ -2368,6 +2364,27 @@ class Worker(BaseComponentService, ProcessHealthMixin):
                 f"is empty — marker NOT injected (further occurrences suppressed)."
             )
 
+    async def _dispatch_request(
+        self,
+        credit_context: CreditContext,
+        request_info: RequestInfo,
+        first_token_callback: FirstTokenCallback | None,
+    ) -> RequestRecord:
+        try:
+            return await self.inference_client.send_request(
+                request_info,
+                first_token_callback=first_token_callback,
+                transport_start_callback=self._make_transport_start_callback(
+                    credit_context
+                ),
+                transport_eof_callback=self._make_transport_eof_callback(
+                    credit_context
+                ),
+            )
+        finally:
+            # Worker-side processing may fail before the inference record is sent.
+            credit_context.target_url_index = request_info.target_url_index
+
     async def _execute_request(
         self,
         credit_context: CreditContext,
@@ -2380,13 +2397,8 @@ class Worker(BaseComponentService, ProcessHealthMixin):
         (``_finalize_session_response``) from a single response-processing pass.
         """
         self.task_stats.total += 1
-        record = await self.inference_client.send_request(
-            request_info,
-            first_token_callback=first_token_callback,
-            transport_start_callback=self._make_transport_start_callback(
-                credit_context
-            ),
-            transport_eof_callback=self._make_transport_eof_callback(credit_context),
+        record = await self._dispatch_request(
+            credit_context, request_info, first_token_callback
         )
         _clear_transport_eof_on_error(record, credit_context)
         await self._send_inference_result_message(record)

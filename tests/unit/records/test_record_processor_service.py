@@ -392,6 +392,7 @@ class TestRecordProcessorLockstepGuard:
         mock_self._create_metric_record_metadata = MagicMock(
             side_effect=AttributeError("request_info None")
         )
+        sample_request_record.request_info.target_url_index = 1
 
         await RecordProcessor._forward_failed_record(
             mock_self,
@@ -407,6 +408,7 @@ class TestRecordProcessorLockstepGuard:
         assert len(pushed.records) == 1
         assert pushed.records[0].metrics == {}
         assert pushed.error is not None
+        assert pushed.metadata.target_url_index == 1
 
     @pytest.mark.asyncio
     async def test_on_inference_results_forward_failed_record_raises_does_not_escape(

@@ -205,6 +205,10 @@ class EndpointInfo(AIPerfBaseModel):
         """Return the first URL for backward compatibility."""
         return self.base_urls[0]
 
+    def resolve_url_index(self, index: int | None = None) -> int:
+        """Return the effective index into ``base_urls``."""
+        return 0 if index is None else index % len(self.base_urls)
+
     def get_url(self, index: int | None = None) -> str:
         """Get a URL by index with wrap-around.
 
@@ -214,9 +218,7 @@ class EndpointInfo(AIPerfBaseModel):
         Returns:
             The URL at the given index (with modulo wrap-around).
         """
-        if index is None:
-            return self.base_urls[0]
-        return self.base_urls[index % len(self.base_urls)]
+        return self.base_urls[self.resolve_url_index(index)]
 
 
 class ModelEndpointInfo(AIPerfBaseModel):
