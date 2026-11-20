@@ -97,6 +97,7 @@ directly with the raw record's `start_perf_ns` on the same worker.
     "request_ack_ns": 1759813207650730976,
     "request_end_ns": 1759813207838764604,
     "worker_id": "worker_359d423a",
+    "target_url_index": 0,
     "record_processor_id": "record_processor_1fa47cd7",
     "benchmark_phase": "profiling",
     "was_cancelled": false,
@@ -129,6 +130,7 @@ directly with the raw record's `start_perf_ns` on the same worker.
 - `request_ack_ns`: Epoch time in nanoseconds when server acknowledged the request. This is only applicable to streaming requests.
 - `request_end_ns`: Epoch time in nanoseconds when the last response was received from the endpoint.
 - `worker_id`: ID of the AIPerf worker that executed the request against the endpoint.
+- `target_url_index`: Zero-based index into the configured URL list (`--url`), after default and wrap-around resolution. A single URL has index `0`. This identifies the selected target for both successful and failed inference attempts; it is `null` or absent when no target is known (including older exports). It does not identify individual backends behind a load balancer or proxy. No URL or credentials are included in the field. Group records by this index to compare per-target latency and error rates independently of AIPerf worker IDs.
 - `record_processor_id`: ID of the AIPerf record processor that processed the results from the server.
 - `benchmark_phase`: Phase of the benchmark. Currently only `profiling` is supported.
 - `was_cancelled`: Whether the request was cancelled during execution (such as when `--request-cancellation-rate` is enabled).

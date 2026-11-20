@@ -179,6 +179,30 @@ class TestInferenceClient:
         assert kwargs["transport_eof_callback"] is completed
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(("url_index", "expected"), [(None, 0), (3, 1)])
+    async def test_send_request_preserves_resolved_target_url_index(
+        self,
+        inference_client: InferenceClient,
+        sample_request_info: RequestInfo,
+        url_index: int | None,
+        expected: int,
+    ) -> None:
+        sample_request_info.model_endpoint.endpoint.base_urls = [
+            "http://localhost:8000",
+            "http://localhost:8001",
+        ]
+        sample_request_info.url_index = url_index
+        inference_client.transport.send_request = AsyncMock(
+            return_value=RequestRecord(request_info=sample_request_info)
+        )
+
+        record = await inference_client.send_request(sample_request_info)
+
+        assert record.request_info is not None
+        assert record.request_info.target_url_index == expected
+        assert record.request_info.model_dump()["target_url_index"] == expected
+
+    @pytest.mark.asyncio
     async def test_send_request_sets_endpoint_headers(
         self, inference_client, model_endpoint, sample_request_info
     ):
@@ -220,6 +244,7 @@ class TestInferenceClient:
         record = await inference_client.send_request(sample_request_info)
 
         assert record.error is not None
+        assert record.request_info.target_url_index == 0
         assert record.timestamp_ns == process_clock().wall_ns_at(record.start_perf_ns)
 
     @pytest.mark.asyncio
