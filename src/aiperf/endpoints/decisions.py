@@ -292,8 +292,8 @@ class _DecisionEndpoint(BaseEndpoint):
                 )
             else:
                 _require(
-                    keys == list(range(len(keys)))
-                    and all(type(key) is int for key in keys),
+                    all(type(key) is int for key in keys)
+                    and sorted(keys) == list(range(len(keys))),
                     "Invalid zero-based score ordinals",
                 )
                 _require(
@@ -304,7 +304,13 @@ class _DecisionEndpoint(BaseEndpoint):
             _require(
                 type(score) in (int, float)
                 and is_finite_value(score)
-                and abs(score - sum(i * p for i, p in enumerate(probabilities)))
+                and abs(
+                    score
+                    - sum(
+                        int(key) * probability
+                        for key, probability in zip(keys, probabilities, strict=True)
+                    )
+                )
                 <= 1e-6,
                 "Score is not the expected ordinal",
             )
@@ -378,7 +384,12 @@ class _DecisionEndpoint(BaseEndpoint):
                 actual = (
                     [answer["legend"][str(i)] for i in range(len(answer["legend"]))]
                     if self.systemone
-                    else [item["label"] for item in answer["probabilities"]]
+                    else [
+                        item["label"]
+                        for item in sorted(
+                            answer["probabilities"], key=lambda item: item["value"]
+                        )
+                    ]
                 )
                 _require(
                     _json_equal(actual, expected), "Score labels differ from request"

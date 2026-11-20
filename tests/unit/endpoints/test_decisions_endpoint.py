@@ -394,6 +394,62 @@ def test_openai_choice_candidate_mismatch_is_record_error(
     assert record.error is not None
 
 
+@pytest.mark.parametrize(
+    "fault,error",
+    [
+        param(None, None, id="reordered"),
+        param("position_score", "expected ordinal", id="position-score"),
+        param("label", "Score labels", id="wrong-label"),
+        param("duplicate", "zero-based score ordinals", id="duplicate"),
+        param("gap", "zero-based score ordinals", id="missing-ordinal"),
+        param("boolean", "zero-based score ordinals", id="boolean"),
+        param("float", "zero-based score ordinals", id="float"),
+        param("negative", "zero-based score ordinals", id="negative"),
+    ],
+)  # fmt: skip
+def test_openai_score_distribution_binds_values_to_ordinals(
+    fault: str | None, error: str | None
+) -> None:
+    endpoint = OpenAIDecisionsEndpoint(create_model_endpoint("decisions"))
+    labels = ["low", "medium", "high"]
+    probabilities = [0.2, 0.3, 0.5]
+    values = [
+        {"value": i, "label": labels[i], "probability": probabilities[i]}
+        for i in (2, 0, 1)
+    ]
+    body = {
+        "model": "test-model",
+        "input": "evidence",
+        "questions": [
+            {"type": "score", "levels": [{"label": label} for label in labels]}
+        ],
+    }
+    answer = {
+        "type": "score",
+        "score": 0.8 if fault == "position_score" else 1.3,
+        "confidence": 0.5,
+        "probabilities": values,
+    }
+    if fault == "label":
+        values[0]["label"] = "low"
+    elif fault in ("duplicate", "gap", "boolean", "float", "negative"):
+        values[1]["value"] = {
+            "duplicate": 2,
+            "gap": 3,
+            "boolean": False,
+            "float": 0.0,
+            "negative": -1,
+        }[fault]
+    record = create_record(body, {"model": "test-model", "answers": [answer]})
+    parsed = endpoint.extract_response_data(record)
+    if error is None:
+        assert record.error is None
+        assert parsed[0].data.body["answers"][0]["probabilities"] == values
+    else:
+        assert parsed == []
+        assert error in record.error.message
+
+
 def test_refusal_cannot_contain_manufactured_answer_data():
     endpoint = OpenAIDecisionsEndpoint(create_model_endpoint("decisions"))
     with pytest.raises(ValueError, match="manufactured answer"):
