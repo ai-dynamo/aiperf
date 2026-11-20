@@ -1,0 +1,675 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Profile with SPEED-Bench Dataset
+---
+
+# Profile with SPEED-Bench Dataset
+
+AIPerf supports benchmarking using [SPEED-Bench](https://huggingface.co/datasets/nvidia/SPEED-Bench) (SPEculative Evaluation Dataset), a benchmark designed for evaluating speculative decoding across diverse semantic domains and input sequence lengths.
+
+This guide covers profiling speculative-decoding-enabled inference servers with SPEED-Bench prompts and assembling a per-category acceptance matrix with `aiperf speed-bench-report`.
+
+---
+
+## Pick your measurement path first
+
+Everything downstream depends on how your server reports acceptance, so decide this before you run anything.
+
+| | Per-request | Server scrape |
+|---|---|---|
+| **Where the numbers come from** | Engine-specific acceptance details on each response body | The server's Prometheus `/metrics` endpoint, sampled during the run |
+| **Engines** | vLLM, SGLang v0.5.19+, TensorRT-LLM, direct to the engine | vLLM, SGLang, TensorRT-LLM, NIM-LLM |
+| **Runs needed for the 11-category matrix** | **One** | Eleven (one per category) |
+| **Scope of the numbers** | Exactly the requests AIPerf issued | The whole server for the sampled window |
+| **Extra AIPerf flags** | SGLang: `--extra-inputs return_spec_tokens_details:true` | `--server-metrics` (on by default) |
+| **Server setup** | See [per-request prerequisites](spec-decode-metrics.md#prerequisites) | none |
+
+The per-request path is the better measurement wherever it is available: acceptance is attributed to individual requests rather than inferred from a whole-server counter delta, so nothing another client sends during your run can leak into the result, and you get distributions and a pooled histogram instead of a single ratio. It is also what collapses the eleven-run sweep into one run.
+
+If your server does not return acceptance details, use [Portable path: server scrape](#portable-path-server-scrape). Everything else on this page - the datasets, the prepare step, the sampling defaults - applies to both paths.
+
+---
+
+## Available Dataset Variants
+
+### Aggregate Datasets
+
+These load all categories combined in a single dataset:
+
+| Dataset Name | Samples | Description |
+|---|---|---|
+| `speed_bench_qualitative` | 880 | All 11 semantic domains combined |
+| `speed_bench_throughput_1k` | 1,536 | ~1K input tokens, all 3 entropy tiers |
+| `speed_bench_throughput_2k` | 1,536 | ~2K input tokens, all 3 entropy tiers |
+| `speed_bench_throughput_8k` | 1,536 | ~8K input tokens, all 3 entropy tiers |
+| `speed_bench_throughput_16k` | 1,536 | ~16K input tokens, all 3 entropy tiers |
+| `speed_bench_throughput_32k` | 1,536 | ~32K input tokens, all 3 entropy tiers |
+| `speed_bench_throughput_100k` | 384 | ~100K input tokens, all 3 entropy tiers |
+
+On the per-request path these aggregate splits are the ones you want: every request keeps the category it came from, so one run over `speed_bench_qualitative` still produces a per-category breakdown.
+
+### Per-Category Qualitative Datasets (80 prompts each)
+
+Each of the 11 qualitative domains is also registered separately, for running one category in isolation:
+
+| Dataset Name | Category |
+|---|---|
+| `speed_bench_coding` | Code generation and programming |
+| `speed_bench_humanities` | History, philosophy, liberal arts |
+| `speed_bench_math` | Mathematical reasoning |
+| `speed_bench_multilingual` | Tasks across 23 languages |
+| `speed_bench_qa` | Question answering |
+| `speed_bench_rag` | Retrieval-augmented generation |
+| `speed_bench_reasoning` | Logical and analytical reasoning |
+| `speed_bench_roleplay` | Creative roleplay and dialogue |
+| `speed_bench_stem` | Science, technology, engineering |
+| `speed_bench_summarization` | Text summarization |
+| `speed_bench_writing` | Creative and technical writing |
+
+### Per-Entropy-Tier Throughput Datasets
+
+Each throughput ISL bucket is also available filtered by entropy tier:
+512 prompts per tier for 1K–32K, and 128 per tier for 100K.
+
+| Pattern | Tiers | Description |
+|---|---|---|
+| `speed_bench_throughput_{ISL}_low_entropy` | Code, sorting | Predictable output patterns |
+| `speed_bench_throughput_{ISL}_mixed` | Needle-in-a-haystack, exams | Moderate unpredictability |
+| `speed_bench_throughput_{ISL}_high_entropy` | Creative writing, dialogue | Highly unpredictable output |
+
+Where `{ISL}` is one of: `1k`, `2k`, `8k`, `16k`, `32k`, `100k`.
+
+---
+
+## Running SPEED-Bench
+
+Select any SPEED-Bench dataset with `--public-dataset`; AIPerf fetches and
+resolves it for you:
+
+```bash
+aiperf profile --public-dataset speed_bench_coding --model <model> --url <url>
+```
+
+### One-time setup
+
+SPEED-Bench publishes a placeholder instead of prompt text for rows whose
+source datasets do not permit redistribution, so AIPerf refetches that text
+from the 14 original sources on first use.
+
+One source, [`cais/hle`](https://huggingface.co/datasets/cais/hle), is gated
+and appears in **every** SPEED-Bench config, so access is required:
+
+1. Open <https://huggingface.co/datasets/cais/hle> and accept the terms.
+   Approval is automatic — no reviewer, no waiting period.
+2. Run `hf auth login`.
+
+AIPerf checks this before downloading anything and fails in about a second with
+these instructions if access is missing.
+
+**Access is granted per user, not per organization.** Everyone running
+SPEED-Bench needs their own HuggingFace account and their own click; it cannot
+be accepted once on a team's behalf. In CI, use a service account onboarded
+once by a human and store its token as a secret.
+
+**Budget disk and time for the first run.** Resolving a config downloads its
+source datasets in full -- around 40 GB for `qualitative` -- into the HuggingFace
+cache (`~/.cache/huggingface/hub`), not into AIPerf's cache. What AIPerf writes
+is only the extracted prompt text, which is far smaller: roughly 2 MB for
+`qualitative`, up to ~200 MB for `throughput_32k`. A small resolved file after a
+large download is expected, not a sign of a truncated dataset -- AIPerf logs the
+row count and file size when it finishes so you can confirm. The result is
+cached under
+`.cache/aiperf/datasets/speed-bench/v1.1/<config>.jsonl` and shared by every
+category of that config, so only the first run pays for it. Delete the file to
+refetch.
+
+That path is relative to the working directory you launch `aiperf` from, which
+every AIPerf public dataset shares. Running from a different directory resolves
+the config again from scratch, so run from a consistent directory -- or
+pre-stage the file as shown below -- if you want the cache to be reused.
+
+AIPerf vendors the [NeMo-Gym preparation script](https://github.com/NVIDIA-NeMo/Gym/blob/3a9b9eb981ab7a3ea0ebd517cbd4fca1d586768b/benchmarks/speed-bench/prepare.py)
+and pins the SPEED-Bench v1.1 dataset to commit
+`fa4e669bee2a4393c56aa8ed05a7c667897f9590`. The versioned cache directory
+keeps earlier prepared prompts separate; existing unversioned caches are not reused.
+When preparing files with the standalone script, select `--format raw` for
+AIPerf's `messages` JSONL format and `--dataset-revision
+fa4e669bee2a4393c56aa8ed05a7c667897f9590`.
+
+Resolution runs before AIPerf starts its services, so the download is not part
+of any measured run.
+
+NOTICE: This dataset is governed by the [NVIDIA Evaluation Dataset License Agreement](https://huggingface.co/datasets/nvidia/SPEED-Bench/blob/main/License.pdf). For each dataset a user elects to use, the user is responsible for checking if the dataset license is fit for the intended purpose. Resolution automatically fetches data from all the source datasets.
+
+<Info>
+SPEED-Bench stores prompts as references to their upstream source datasets, and the
+prepare script resolves them by downloading each source. **Some of those sources are
+gated on HuggingFace** (for example `cais/hle`), so the script fails partway through
+with `DatasetNotFoundError: Dataset '<name>' is a gated dataset on the Hub` unless you
+have requested access and authenticated:
+
+```bash
+hf auth login            # or: huggingface-cli login  (older huggingface_hub)
+# or non-interactively:  export HF_TOKEN=hf_...
+```
+
+Request access on each gated dataset's Hub page, then re-run the prepare script - it
+reuses the HuggingFace cache, so nothing already downloaded is fetched twice. Expect
+several GB of source data and tens of minutes on a first run.
+
+Do not benchmark a partially prepared file: unresolved rows still hold the literal
+placeholder `FULL BENCHMARK DATA SHOULD BE FETCHED FROM THE SOURCE USING SPECDEC_BENCH`.
+AIPerf rejects those rows at dataset load rather than benchmarking the placeholder text,
+but the run fails at startup rather than producing results.
+</Info>
+
+---
+
+## Using prepared files as custom datasets
+
+Custom loading reads an already prepared JSONL file; it does not download source
+rows or run the preparation script. All existing custom types remain available:
+`speed_bench_qualitative` and `speed_bench_throughput_{ISL}`, where `{ISL}` is
+`1k`, `2k`, `8k`, `16k`, `32k`, or `100k`.
+
+From an AIPerf checkout, prepare a split with the vendored NeMo-Gym script:
+
+```bash
+uv run python -m aiperf.dataset.loader.vendor.speed_bench_prepare \
+    --config throughput_100k \
+    --dataset-revision v1.1 \
+    --format raw \
+    --output-dir ./speed-bench-data
+
+aiperf profile \
+    --input-file ./speed-bench-data/throughput_100k.jsonl \
+    --custom-dataset-type speed_bench_throughput_100k \
+    --model <model> --url <url>
+```
+
+Replace `throughput_100k` in both commands with `qualitative` or another
+throughput split to prepare and load it. Preparation needs the source-dataset
+access described above. Once prepared, the custom loader can read the file
+offline. An explicit custom type also works if you rename the file.
+
+**Use `--format raw`.** This writes JSONL rows with benchmark metadata and a
+`messages` array containing `role` and `content`. Gym's default `--format gym`
+writes `responses_create_params` and `verifier_metadata`, which these custom
+loaders do not accept. Unresolved source rows containing `turns` placeholders
+are not prepared input either.
+
+---
+
+## Pre-staging the dataset (air-gapped or CI)
+
+Resolution writes a single JSONL per config under
+`.cache/aiperf/datasets/speed-bench/v1.1/`. To avoid every machine resolving it --
+or to run on a host with no internet and no HuggingFace credentials -- resolve
+once somewhere connected and copy the file:
+
+```bash
+# on a connected machine, with cais/hle terms accepted
+aiperf profile --public-dataset speed_bench_qa --model <model> --url <url>
+
+# then copy the cache to the target machine
+ssh target 'mkdir -p /path/to/workdir/.cache/aiperf/datasets/speed-bench/v1.1'
+scp .cache/aiperf/datasets/speed-bench/v1.1/qualitative.jsonl \
+    target:/path/to/workdir/.cache/aiperf/datasets/speed-bench/v1.1/
+```
+
+AIPerf uses a cached config as-is, so the target machine needs neither network
+access nor an accepted licence. One file covers every category of that config.
+
+## Start a Server with Speculative Decoding
+
+Launch an inference server with speculative decoding enabled. On vLLM, add `--per-request-spec-decode-metrics summary` so each response carries its own acceptance stats:
+
+```bash
+docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
+  --model meta-llama/Llama-3.1-8B-Instruct \
+  --speculative-config '{"model": "meta-llama/Llama-3.2-1B-Instruct", "num_speculative_tokens": 5, "method": "draft_model"}' \
+  --per-request-spec-decode-metrics summary
+```
+
+The flag tracks vLLM [PR #48915](https://github.com/vllm-project/vllm/pull/48915); confirm your build includes it. Use `detailed` instead of `summary` to additionally record the ordered per-step accepted/proposed arrays in the records trace. Omit the flag entirely if you are taking the server-scrape path.
+
+Verify the server is ready, and that acceptance metrics are attached (look for `metrics.speculative_decoding`):
+
+```bash
+curl -s localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"meta-llama/Llama-3.1-8B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
+```
+
+If that object is absent, the per-request path will silently produce nothing - see [When no acceptance numbers show up](#when-no-acceptance-numbers-show-up).
+
+---
+
+## SGLang per-request acceptance
+
+For SGLang v0.5.19+ with speculative decoding enabled, add
+`--extra-inputs return_spec_tokens_details:true` to the AIPerf commands below.
+In the `speed_bench_per_request` template, set
+`benchmark.endpoint.extra.return_spec_tokens_details: true`.
+The extension works with chat and completions, streaming and non-streaming.
+
+See the [SGLang adapter reference](../reference/spec-decode-acceptance.md#the-sglang-adapter)
+for the counters and formulas. The existing `--source auto` fallback also applies
+to SGLang: records, then summary, then server metrics.
+For older builds, use the `speed_bench_sweep` template with scraping enabled.
+The aggregate template disables scraping and cannot supply the server fallback.
+
+---
+
+## Recommended Defaults
+
+### Non-Reasoning Models
+
+For standard (non-reasoning) models, use `temperature=0` and a 4K output length cap:
+
+```bash
+--osl 4096 --extra-inputs temperature:0
+```
+
+Do not set `ignore_eos` - let the model stop naturally at its end-of-sequence token.
+
+### Reasoning Models
+
+For reasoning models (e.g. DeepSeek-R1, QwQ), follow the model card's recommended settings for temperature, top_p, and output length. Reasoning models typically require higher output limits and specific sampling parameters.
+
+### Truncated Turns in Multi-Turn Categories
+
+The qualitative split includes multi-turn rows whose follow-up prompts assume a complete prior answer. SPEED-Bench's convention is that when a turn reaches the output-token cap, the rest of that conversation is skipped. Inserting a canned answer instead gives acceptance lengths with high variance relative to the true value. AIPerf follows this convention by default for every SPEED-Bench qualitative dataset, whether loaded with `--public-dataset speed_bench_qualitative` / `speed_bench_<category>` or `--custom-dataset-type speed_bench_qualitative` (and for `spec_al_mtbench`):
+
+- A turn the server truncates (`finish_reason: "length"`) is still measured, and the conversation ends there.
+- The run summary prints how many conversations ended early and how many turns were skipped. `profile_export_aiperf.json` records them as `conversations_ended_on_truncation` and `turns_skipped_on_truncation`. These count conversation sessions, so a conversation replayed to fill `--request-count` counts once per replay.
+- If many conversations end early, raise `--osl` (reasoning models often need well over 4K) so later turns are measured too.
+- `--no-end-conversation-on-truncation` restores sending every turn.
+
+This is one more reason not to set `ignore_eos`: every turn would run to the cap, so every conversation would end after its first turn. See [Ending Conversations on Truncated Turns](multi-turn.md#ending-conversations-on-truncated-turns).
+
+---
+
+## Per-Category Matrix in One Run
+
+Run the aggregate qualitative split once. Every request is tagged with the category of the SPEED-Bench row it came from, so the per-request records carry the breakdown with them:
+
+```bash
+aiperf profile \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
+    --public-dataset speed_bench_qualitative \
+    --osl 4096 \
+    --extra-inputs temperature:0 \
+    --concurrency 16 \
+    --output-artifact-dir ./artifacts/speed_bench_qualitative
+```
+
+<Warning>
+**Leave the run unbounded so it covers the whole split.** With no `--request-count`,
+`--num-conversations`, or `--benchmark-duration`, AIPerf runs one full pass over
+every SPEED-Bench conversation the dataset loaded, sending every turn of every row
+once, and logs that it did so. A bound smaller than the split stops partway
+through the file and **silently drops whole categories**, which biases the matrix:
+the categories that fall off the end are not a random sample. `--request-count` is
+the easiest to get wrong because it counts *requests*, and a multi-turn row
+dispatches one request per turn - the qualitative split's 880 rows expand to
+roughly 1,140 requests, so `--request-count 880` falls short.
+
+Verify afterwards that every category is present and none was truncated:
+
+```bash
+jq -r '.metadata.source_kind' ./artifacts/speed_bench_qualitative/profile_export.jsonl \
+  | sort | uniq -c
+```
+</Warning>
+
+No spec-decode flag is needed on the AIPerf side, and `--server-metrics` is unnecessary. The end-of-run console gains a **Spec Decode** section covering the whole run:
+
+<Info>
+The output below is from a real run of the exact server command shown above
+(Llama-3.1-8B-Instruct target, Llama-3.2-1B-Instruct drafter, `num_speculative_tokens: 5`,
+greedy decoding) over the full qualitative split at concurrency 16. Treat the numbers as
+one data point, not a specification: acceptance depends on the target/drafter pair, the
+draft budget, sampling temperature, the dataset, and the load. Greedy decoding
+(`temperature: 0`) reduces rejection sampling to plain argmax agreement and is the
+acceptance ceiling - the same run at `temperature: 1` will report lower.
+</Info>
+
+```text
+                             NVIDIA AIPerf | LLM Metrics: Spec Decode
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┓
+┃                            Metric ┃    avg ┃   min ┃    max ┃    p99 ┃    p90 ┃   p50 ┃    std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━┩
+│         Acceptance Length (ratio) │   4.19 │  1.83 │   6.00 │   6.00 │   5.35 │  4.13 │   0.81 │
+│  Token-Weighted Acceptance Length │   4.63 │   N/A │    N/A │    N/A │    N/A │   N/A │    N/A │
+│                           (ratio) │        │       │        │        │        │       │        │
+│         Draft Acceptance Rate (%) │  63.83 │ 16.52 │ 100.00 │ 100.00 │  87.03 │ 62.65 │  16.23 │
+│ Overall Draft Acceptance Rate (%) │  72.65 │   N/A │    N/A │    N/A │    N/A │   N/A │    N/A │
+│     Accepted per Verified (ratio) │   0.70 │  0.30 │   1.00 │   1.00 │   0.89 │  0.69 │   0.14 │
+│         Spec Decode Steps (count) │ 118.53 │  1.00 │ 821.00 │ 744.78 │ 230.00 │ 71.00 │ 163.53 │
+└───────────────────────────────────┴────────┴───────┴────────┴────────┴────────┴───────┴────────┘
+  Accepted drafts per step (% of steps):  0: 13%   1: 9%   2: 7%   3: 6%   4: 4%   5: 61%
+```
+
+The accepted-draft histogram is typically **bimodal** rather than smoothly decaying: most verify
+steps either accept the whole draft block or almost none of it. That is content-dependent
+acceptance - easy stretches where target and drafter agree completely, punctuated by tokens where
+they diverge immediately - and it is why the per-request `Acceptance Length` distribution is wide
+(`min` 1.83, `max` 6.00 = `num_speculative_tokens + 1`).
+
+Then split that run by category:
+
+```bash
+aiperf speed-bench-report ./artifacts/speed_bench_qualitative --format both
+```
+
+```text
+                                                   Acceptance Length Report
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━┳━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┓
+┃ Model                            ┃ coding ┃ humanities ┃ math ┃ multilingual ┃   qa ┃  rag ┃ reasoning ┃ roleplay ┃ stem ┃ summarization ┃ writing ┃ Overall ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━╇━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━┩
+│ meta-llama/Llama-3.1-8B-Instruct │   5.01 │       4.84 │ 5.24 │         5.10 │ 4.93 │ 4.51 │      4.47 │     3.34 │ 4.78 │          3.81 │    4.19 │    4.56 │
+└──────────────────────────────────┴────────┴────────────┴──────┴──────────────┴──────┴──────┴───────────┴──────────┴──────┴───────────────┴─────────┴─────────┘
+CSV written to speed_bench_report.csv
+```
+
+The spread is the point of the matrix: acceptance tracks how predictable each domain's output is.
+Structured, low-entropy domains (`math`, `multilingual`, `coding`) sit near the top of the range,
+while open-ended generation (`roleplay`, `summarization`) sits well below - a 1.9-point gap here
+between `math` and `roleplay`. A matrix that comes back flat across all eleven categories is a
+signal to check the drafter configuration, not a result.
+
+The acceptance-rate matrix works the same way:
+
+```bash
+aiperf speed-bench-report ./artifacts/speed_bench_qualitative --metric accept_rate
+```
+
+The same run is available as a config template if you prefer YAML:
+
+```bash
+aiperf config init --template speed_bench_per_request --output speed_bench.yaml
+aiperf profile --config speed_bench.yaml
+```
+
+### How the report finds its numbers
+
+`aiperf speed-bench-report` takes acceptance from the highest-fidelity source each run directory offers, in this order. `--source records|summary|server` pins one explicitly.
+
+| `--source` | File read | Where the data came from | Columns per run |
+|---|---|---|---|
+| `records` | `profile_export.jsonl` | per-request acceptance details on each **response body** | one **per category** |
+| `summary` | `profile_export_aiperf.json` | the **same per-request data**, reduced by AIPerf to run-level scalars | one |
+| `server` | `server_metrics_export.json` | the engine's **Prometheus counters**, scraped during the run | one |
+
+`records` and `summary` share a provenance - both are the per-request stats AIPerf read from response bodies - and differ only in granularity. `server` is the only source that reads server-side data.
+
+Only `records` can split a single run, because only the per-request trace knows which category each request belonged to. It is written at the default `--export-level records`; a run exported at `--export-level summary` has no trace, so `auto` falls through to `summary` and yields the run-level number as a single column.
+
+`records`, `summary`, and the **counter** branch of `server` (vLLM's `vllm:spec_decode_*` totals) all compute the same two token-weighted quantities, so those columns are directly comparable:
+
+- `accept_length` - `1 + sum(accepted_draft_tokens) / sum(verify_steps)` over the category.
+- `accept_rate` - `sum(accepted_draft_tokens) / sum(proposed_draft_tokens)` over the category.
+
+Numerator and denominator are summed separately across the category's requests, then
+divided once. Averaging each request's own ratio would weight a 3-step request equally
+with a 300-step one and give a different number.
+
+<Warning>
+**Scraped gauges are not token-weighted.** SGLang exposes acceptance as a gauge
+(`sglang:spec_accept_length`), as does TensorRT-LLM, and the report reads those as the
+unweighted mean of the scrape samples - a time-average, in which an idle interval counts
+as much as a busy one. The same applies to a vLLM build that publishes
+`vllm:spec_decode_mean_accepted_length` or `vllm:spec_decode_draft_acceptance_rate`: the
+gauges are checked before vLLM's counters, so those cells are time-averaged too. Those cells answer a different question from the token-weighted
+ones and should not be compared value-for-value against them, nor averaged into a single
+`Overall` alongside them. Under `--source auto` the report prints the source it resolved
+for each run to stderr, so mixed provenance is visible rather than silent.
+</Warning>
+
+On an engine with no per-request acceptance reporting, `records` and `summary` both come up empty and `auto` falls through to `server` - identical to the behavior before `--source` existed. On vLLM **with** `--per-request-spec-decode-metrics`, `auto` now prefers the per-request numbers, so a matrix regenerated from an older run directory can shift slightly; pass `--source server` to pin the scraped values.
+
+Both weight every verify step equally, matching the console's **Token-Weighted Acceptance Length** and **Overall Draft Acceptance Rate** rather than the per-request means beside them. The two coincide when requests run a similar number of verify steps and diverge when step counts vary and correlate with acceptance. Warmup records are excluded.
+
+Two things to keep in mind when reading the matrix:
+
+- **Cells are turn-weighted, not row-weighted.** Every qualitative category holds 80 rows, but multi-turn rows expand into several requests, so a category's cell can rest on far more requests than another's (in one reference run: `reasoning` 190 requests, `summarization` 80). Later turns also carry accumulated conversation history, which shifts acceptance relative to a first turn.
+- **`Overall` is the macro-average of the category cells**, not the pooled run-level value - it weights each category equally, matching how the SPEED-Bench paper reports an overall figure. The console's **Token-Weighted Acceptance Length** is the pooled number over every verify step in the run. Expect them to differ by a few hundredths; a large gap means your categories differ a lot in both acceptance and request volume.
+
+<Tip>
+On vLLM you can cross-check the whole thing: `--source server` reduces the run to a single
+column computed from the Prometheus counters. It should match the console's
+**Token-Weighted Acceptance Length** closely - both are pooled over the same requests, by
+two independent routes. A mismatch means either another client was hitting the server
+during your run, or the per-request and scraped paths disagree.
+</Tip>
+
+
+### What a mixed run does and does not change
+
+- **Attribution stays exact.** Each acceptance record is produced by the server for that one request, so interleaving categories cannot mix their numbers.
+- **Every category sees the same load.** In an eleven-run sweep each category is measured under a load shaped by its own prompt lengths; in one mixed run they all share one steady state. That is usually the fairer comparison, but it is not identical to the paper's isolated per-category methodology - say which one you ran when you publish numbers.
+- **Load-adaptive drafting still applies.** vLLM can vary the draft budget with batch size (`num_speculative_tokens_per_batch_size`) or adapt verification per request. Those effects are driven by the mixed load, not by any one category.
+- **Throughput cannot be split.** `--metric throughput` is a rate over the whole run, so it stays one column per run even when the records carry categories. For per-category throughput you still need per-category runs.
+
+### Entropy-tier matrix, also one run
+
+The throughput splits label rows by entropy tier rather than semantic domain, so the same single-run treatment gives you the tier breakdown at a fixed ISL:
+
+```bash
+aiperf profile \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
+    --public-dataset speed_bench_throughput_1k \
+    --extra-inputs temperature:0 \
+    --concurrency 64 \
+    --output-artifact-dir ./artifacts/speed_bench_throughput_1k
+
+aiperf speed-bench-report ./artifacts/speed_bench_throughput_1k
+```
+
+The matrix comes back with `low_entropy`, `mixed`, and `high_entropy` columns. Replace `1k` with `2k`, `8k`, `16k`, `32k`, or `100k` for other input lengths.
+
+---
+
+## Literature Acceptance-Length Datasets (GSM8K, MT-Bench, MATH-500, HumanEval, MBPP)
+
+The speculative-decoding literature overwhelmingly reports acceptance length against five standard benchmarks. AIPerf registers each as a public dataset that is auto-downloaded from HuggingFace at runtime, so there is no prepare-data step: select one with `--public-dataset`.
+
+| Dataset Name | HuggingFace Source | Prompts | Turns | License |
+|---|---|---|---|---|
+| `spec_al_gsm8k` | `openai/gsm8k` (`main`, `test`) | 1,319 | single | MIT |
+| `spec_al_math500` | `HuggingFaceH4/MATH-500` (`test`) | 500 | single | MIT |
+| `spec_al_humaneval` | `openai/openai_humaneval` (`test`) | 164 | single | MIT |
+| `spec_al_mbpp` | `google-research-datasets/mbpp` (`full`, `test`) | 500 | single | CC-BY-4.0 |
+| `spec_al_mtbench` | `HuggingFaceH4/mt_bench_prompts` (`train`) | 80 | two-turn | Apache-2.0 |
+
+These are five separate datasets, so unlike the SPEED-Bench categories they cannot collapse into one run - a run takes one dataset. What the per-request path changes here is only where each run's number comes from: with `--per-request-spec-decode-metrics` enabled, the report reads it from that run's own requests instead of scraping the server, and `--server-metrics` becomes unnecessary.
+
+Prompts are emitted verbatim (the raw question/problem/prompt field); the served model's chat template wraps them at request time via `--endpoint-type chat`. HumanEval and MBPP are text-completion tasks in the spec-decode literature, so chat-wrapping them keeps the matrix uniform but shifts their acceptance length somewhat from the papers' headline numbers. Acceptance length is correctness-agnostic, so use greedy decoding (`--extra-inputs temperature:0`) to match the headline numbers reported in the literature. Cap generation with `--osl N`. `spec_al_mtbench` is multi-turn: AIPerf dispatches both turns per session and feeds the live assistant reply back as conversation history between them. Every run below covers its whole dataset by default (one full pass over every conversation), so none of them passes a count. If a turn hits the output-token cap, the conversation's later turns are skipped by default (see [Truncated Turns in Multi-Turn Categories](#truncated-turns-in-multi-turn-categories)).
+
+### Run All Five with a Matrix Report
+
+```bash
+MODEL="meta-llama/Llama-3.1-8B-Instruct"
+ART=./artifacts/spec-al   # dedicated root so this matrix never merges with speed_bench_* runs
+
+# No count needed: each run makes one full pass over its dataset, including
+# both turns of every spec_al_mtbench conversation.
+for ds in spec_al_gsm8k spec_al_math500 spec_al_humaneval spec_al_mbpp spec_al_mtbench; do
+  echo "=== Running dataset: $ds ==="
+  aiperf profile \
+      --model "$MODEL" \
+      --endpoint-type chat \
+      --streaming \
+      --url localhost:8000 \
+      --public-dataset "$ds" \
+      --osl 4096 \
+      --extra-inputs temperature:0 \
+      --concurrency 16 \
+      --output-artifact-dir "$ART/$ds"
+done
+
+# Assemble the acceptance-length matrix (one column per dataset)
+aiperf speed-bench-report "$ART" --metric accept_length --format both
+```
+
+> Leave the count off so each run covers its whole dataset. If you do bound a run,
+> prefer `--num-conversations` for `spec_al_mtbench`: `--request-count` counts
+> turns and recycles its 80 sessions to reach the count. Keep these runs in their
+> own artifacts directory so
+> `speed-bench-report` does not average them into an unrelated `speed_bench_*`
+> matrix. On the server-scrape path, add `--server-metrics http://localhost:8000/metrics`
+> to each run.
+
+The report produces one matrix column per dataset:
+
+```text
+                                   Acceptance Length Report
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━┓
+┃ Model                            ┃ gsm8k ┃ math500 ┃ mtbench ┃ humaneval ┃ mbpp ┃ Overall ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━┩
+│ meta-llama/Llama-3.1-8B-Instruct │  2.40 │    2.31 │    1.95 │      2.62 │ 2.55 │    2.37 │
+└──────────────────────────────────┴───────┴─────────┴─────────┴───────────┴──────┴─────────┘
+```
+
+The `accept_rate` and `throughput` metrics work identically.
+
+---
+
+## Portable path: server scrape
+
+Use this when the per-request path is unavailable, including older SGLang builds or proxies that strip the custom response field. Acceptance is read from the server's Prometheus endpoint during each run and written to `server_metrics_export.json`; the report computes acceptance length from vLLM's counters (`accepted_tokens / num_drafts + 1`), SGLang's `spec_accept_length` gauge, or a TensorRT-LLM equivalent.
+
+Because the scrape is a whole-server measurement rather than a per-request one, the matrix needs one run per category.
+
+### Server Metrics Endpoint
+
+AIPerf auto-discovers the Prometheus endpoint at `{url}/metrics`. If your server uses a different path, pass it explicitly with `--server-metrics`:
+
+| Server Type | Metrics Path | Flag Needed |
+|---|---|---|
+| Standalone vLLM / SGLang | `/metrics` (default) | None (auto-discovered) |
+| NIM-LLM containers | `/v1/metrics` | `--server-metrics http://localhost:8000/v1/metrics` |
+
+### All 11 Categories
+
+```bash
+CATEGORIES="coding humanities math multilingual qa rag reasoning roleplay stem summarization writing"
+MODEL="meta-llama/Llama-3.1-8B-Instruct"
+
+for cat in $CATEGORIES; do
+  echo "=== Running category: $cat ==="
+  aiperf profile \
+      --model "$MODEL" \
+      --endpoint-type chat \
+      --streaming \
+      --url localhost:8000 \
+      --public-dataset speed_bench_${cat} \
+      --server-metrics http://localhost:8000/metrics \
+      --osl 4096 \
+      --extra-inputs temperature:0 \
+      --concurrency 16 \
+      --output-artifact-dir "./artifacts/speed_bench_${cat}"
+done
+
+aiperf speed-bench-report ./artifacts/ --source server --format both
+```
+
+`--source server` is optional but worth passing: it stops the report from silently preferring per-request records if some of those runs happen to have them, so every column in the matrix is measured the same way.
+
+The same eleven runs are also available as a config-driven sweep template, which drives all eleven variations from a single `aiperf profile --config` invocation:
+
+```bash
+aiperf profile \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
+    --public-dataset speed_bench_throughput_1k \
+    --server-metrics http://localhost:8000/metrics \
+    --concurrency 64 \
+    --benchmark-duration 120
+```
+
+### Per-entropy-tier scrape
+
+```bash
+for tier in low_entropy mixed high_entropy; do
+  echo "=== Running throughput_1k tier: $tier ==="
+  aiperf profile \
+      --model meta-llama/Llama-3.1-8B-Instruct \
+      --endpoint-type chat \
+      --streaming \
+      --url localhost:8000 \
+      --public-dataset "speed_bench_throughput_1k_${tier}" \
+      --server-metrics http://localhost:8000/metrics \
+      --concurrency 64 \
+      --benchmark-duration 60
+done
+```
+
+### Disable Server Metrics
+
+Server metrics collection is enabled by default. On the per-request path it is redundant; turn it off with `--no-server-metrics`:
+
+```bash
+aiperf profile \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
+    --public-dataset speed_bench_qualitative \
+    --no-server-metrics \
+    --concurrency 16
+```
+
+---
+
+## Throughput per Category
+
+Output-token throughput is a rate over a whole run, so it cannot be attributed to a category inside a mixed run. `--metric throughput` therefore always reports one column per run directory:
+
+```bash
+aiperf speed-bench-report ./artifacts/ --metric throughput
+```
+
+To compare throughput across categories, run them separately (the eleven-run loop above) and point the report at the parent directory.
+
+---
+
+## When no acceptance numbers show up
+
+An empty matrix, or a run with no **Spec Decode** console section, is expected clean degradation rather than an error. Common causes, per path:
+
+**Per-request path**
+
+- The server was not started with `--per-request-spec-decode-metrics`.
+- The vLLM build predates [PR #48915](https://github.com/vllm-project/vllm/pull/48915).
+- The server is behind Dynamo, which strips the custom field - use the server-scrape path.
+- The run used `n > 1`; vLLM only reports per-request stats for single-sequence requests.
+- The run was exported at `--export-level summary`, so there is no `profile_export.jsonl` to split by category. The run-level number is still reported as one column.
+
+**Server-scrape path**
+
+- No `server_metrics_export.json` in the run directory: the run used `--no-server-metrics`, or the endpoint was unreachable.
+- The engine exposes acceptance under a metric name the report does not recognize. Inspect `server_metrics_export.json` for a `spec`-flavored metric and file an issue with the name.
+
+**Either path**
+
+- Speculative decoding is off on the server, or the requests produced no verify steps.
+
+---
+
+## See also
+
+- [Per-Request Spec-Decode Metrics](spec-decode-metrics.md) - the per-request path in detail, on any dataset.
+- [Speculative Decoding Metrics](../metrics-reference.md#speculative-decoding-metrics) - metric definitions and formulas.
+- [Per-Request Speculative-Decoding Acceptance](../reference/spec-decode-acceptance.md) - the engine-neutral record and adapter architecture.
+- [SpecBench tutorial](spec-bench.md) - profiling with the SpecBench speculative-decoding dataset.

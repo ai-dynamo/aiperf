@@ -1,0 +1,221 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Trace Replay with Mooncake Traces
+---
+
+# Trace Replay with Mooncake Traces
+
+This tutorial covers replaying production traces using the Mooncake trace format. Trace replay benchmarking reproduces real-world traffic patterns with precise timing control, enabling performance validation and capacity planning under realistic load.
+
+## When to Use This Tutorial
+
+Use this approach when you need to:
+- Replay production traffic patterns captured from real systems
+- Validate performance with industry-standard Mooncake FAST'25 traces
+- Test system behavior under specific temporal load patterns
+- Reproduce benchmark results for regression testing
+
+For other use cases:
+- **Custom prompts without timing**: See [Custom Prompt Benchmarking](../tutorials/custom-prompt-benchmarking.md)
+- **Precise timestamp control for any dataset**: See [Fixed Schedule](../tutorials/fixed-schedule.md)
+- **Multi-turn conversations from files**: See [Multi-Turn Conversations](../tutorials/multi-turn.md)
+- **Alibaba Bailian traces**: See [Bailian Traces](../tutorials/bailian-trace.md). Unlike Mooncake sessions, each Bailian row already covers its full request context, so turns are replayed as self-contained prompts ([`message_array_with_responses`](../reference/conversation-context-mode.md)) rather than accumulating history
+
+## Start a vLLM Server
+
+Launch a vLLM server with a chat model:
+
+```bash
+docker pull vllm/vllm-openai:latest
+docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
+  --model Qwen/Qwen3-0.6B
+```
+
+Verify the server is ready:
+
+```bash
+curl -s localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
+```
+
+## Mooncake Trace Format
+
+Mooncake provides a specification and sample datasets for [trace replay](https://github.com/kvcache-ai/Mooncake?tab=readme-ov-file#-open-source-trace) that can be replayed for performance benchmarking.
+
+Mooncake traces use a JSONL file where each line represents a request with timing information.
+
+Mooncake and Bailian traces may also be parquet files or directories of parquet shards (see [Parquet Datasets](../tutorials/remote-datasets.md#parquet-datasets)).
+
+Required fields for trace replay:
+- `timestamp`: Request arrival time in milliseconds
+- `input_length`: Number of input tokens
+- `output_length`: Number of output tokens
+- `hash_ids`: List of block hashes (optional)
+- `tools`: List of OpenAI-compatible tool definitions (optional, requires `messages`)
+- `extra`: Dict of vendor extras (optional). Shallow-merged into the top of the request body at dispatch; user-supplied keys win over `--extra-inputs`.
+
+Example entry:
+
+```json
+{"timestamp": 0, "input_length": 655, "output_length": 52, "hash_ids": [0, 1, 2]}
+```
+
+## Profile using a Custom Trace File
+
+Create a trace file with timing information:
+
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
+```bash
+cat > custom_trace.jsonl << 'EOF'
+{"timestamp": 0, "input_length": 1200, "output_length": 52, "hash_ids": [0, 1, 2]}
+{"timestamp": 105, "input_length": 1800, "output_length": 26, "hash_ids": [0, 3, 4, 5]}
+{"timestamp": 274, "input_length": 1300, "output_length": 52, "hash_ids": [1, 4, 6]}
+EOF
+```
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+Run AIPerf with the trace file:
+
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
+```bash
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
+    --input-file custom_trace.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --fixed-schedule
+```
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}
+
+The `--fixed-schedule` flag tells AIPerf to send requests at the exact timestamps specified in the trace. This reproduces the original timing pattern.
+
+### Automatic Fixed-Schedule Promotion
+
+When you supply a trace dataset (`--custom-dataset-type mooncake_trace`, `bailian_trace`, `burst_gpt_trace`, ...) and the file's first record carries a `timestamp` field, AIPerf automatically switches the profiling phase to fixed-schedule mode and fills `--request-count` from the number of trace entries. You can pass `--fixed-schedule` explicitly for clarity, but it's no longer required.
+
+`weka_trace` is recognized by type rather than by probing: its timing lives at `requests[].t` and it is normally given as a *directory*, so neither is visible to a first-record probe. It also skips the `--request-count` autofill, because a weka trace is one JSON object per file — counting lines would measure formatting rather than workload. The real total comes from the dataset at run time.
+
+Several other formats also carry timing somewhere a first-record probe cannot see — `sagemaker_data_capture` nests it under `eventMetadata`, `burst_gpt_trace` enforces a `Timestamp` column, and `tracelab` derives a submission time per round from `timing_events[]`. Fixed-schedule **validation** accepts all of these by type, so `--fixed-schedule` works with them. Auto-promotion does not yet cover them, so for those formats pass `--fixed-schedule` explicitly.
+
+To override the auto-promotion — for example, to replay the same trace under a fresh `--concurrency` or `--request-rate` setting and ignore the captured timestamps — pass `--no-fixed-schedule`:
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --url localhost:8000 \
+    --input-file custom_trace.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --no-fixed-schedule \
+    --concurrency 4 \
+    --request-count 100
+```
+
+AIPerf refuses parameter sweeps (e.g. `--concurrency 1,2,4`) against an auto-promoted trace; either pin a single value or pass `--no-fixed-schedule` to keep your sweep semantics.
+
+AIPerf sends the stable replay-session ID in both `X-Correlation-ID` and
+`X-Session-Affinity` so session-based traffic can be routed consistently.
+
+### Large Baseten Parquet Traces
+
+The `baseten_trace` loader reads trace rows and sampled-session metadata in
+bounded batches and projects only the columns required by the selected replay
+options. It also skips `inputs.json` generation, which would otherwise
+duplicate large recorded prompts. This is independent of the mmap dataset
+cache; Baseten traces remain uncached.
+
+The same schema can be stored as one uncompressed Arrow IPC file with an
+`.arrow` or `.ipc` suffix. AIPerf memory-maps that file and materializes only
+rows selected for replay. Use `--custom-dataset-type baseten_trace`; no schema
+or row-order conversion beyond the storage format is required.
+
+## Using Pre-formatted Messages
+
+Instead of synthetic prompts generated from `input_length` and `hash_ids`, you can provide an OpenAI-compatible `messages` array directly per trace entry. This is useful for replaying captured conversations (e.g., coding agent sessions) with exact prompt content. Pass `--custom-dataset-type mooncake_trace` when profiling these files so their structured-message rows are interpreted as Mooncake traces rather than another chat dataset format.
+
+By default, each entry's `messages` field contains the full conversation history up to that point. In multi-turn sessions, later entries include prior turns so the server receives the complete context:
+
+```json
+{"session_id": "sess-1", "messages": [{"role": "user", "content": "Hello"}], "output_length": 50, "timestamp": 0}
+{"session_id": "sess-1", "messages": [{"role": "user", "content": "Hello"}, {"role": "assistant", "content": "Hi!"}, {"role": "user", "content": "How are you?"}], "output_length": 30, "timestamp": 2000}
+```
+
+The `messages` field is mutually exclusive with `input_length` and `text_input`. When set, the messages array is sent directly to the API payload, bypassing prompt synthesis entirely. By default (`"assistant_responses": "recorded"`), the model's actual response is not carried forward between turns -- each turn uses its pre-defined messages.
+
+### Live Responses for Structured Messages
+
+Plain-text multi-turn Mooncake sessions (`text_input` or synthesized `input_length`, including `hash_ids`) already retain live assistant responses by default. Structured `messages` rows default to recorded responses because each row is assumed to contain its complete history. Set `"assistant_responses": "live"` on every `messages` entry in a session to retain the model's generated responses with structured messages too ([`deltas_without_responses` context mode](../reference/conversation-context-mode.md)).
+
+With `live`, rows must be incremental: the first entry carries the initial history, which may include recorded assistant messages from before the replay begins; each later entry carries only the new messages for that turn. AIPerf inserts the live assistant response between entries, including text and streamed `tool_calls` with reassembled `id`, `function.name`, and `function.arguments` fields. Do not repeat preceding history or recorded substitutes for these newly generated replies in later rows:
+
+```json
+{"session_id": "sess-1", "assistant_responses": "live", "messages": [{"role": "system", "content": "You are helpful."}, {"role": "user", "content": "Hello"}], "output_length": 512, "timestamp": 0}
+{"session_id": "sess-1", "assistant_responses": "live", "messages": [{"role": "user", "content": "How are you?"}], "output_length": 512, "delay": 2000}
+```
+
+Request 2 is then `[system, user "Hello", assistant <live reply to request 1>, user "How are you?"]`.
+
+Both settings send complete message arrays to the chat endpoint. Both can produce growing input lengths: `recorded` uses the histories authored in the trace, while `live` builds the history from replies generated during this run.
+
+Behavior and constraints:
+
+- **One setting per session.** Omitting `assistant_responses` (or setting `"recorded"`) keeps the existing verbatim replay for `messages`. A session mixing `"live"` and `"recorded"` entries -- including entries that omit the field and default to `"recorded"` -- is rejected at load time. Repeat `"live"` on every row rather than relying on first-row inheritance. This catches accidental omissions and lets independent sessions in one file use different settings, without a run-wide flag. Values are case-insensitive.
+- **Suspicious omissions produce a warning.** For a multi-row `messages` session that omits `assistant_responses` everywhere, AIPerf warns if no row contains an assistant message or a later row does not preserve the preceding row's messages as a prefix. Replay still uses `recorded`. Set `"recorded"` explicitly to acknowledge intentional verbatim replay, or use `"live"` on every row for incremental replay.
+- **Pin a compatible runner.** Use an AIPerf build or version that supports `assistant_responses` wherever these traces run. Older readers may silently ignore this field and replay each row as a complete recorded history; validation in newer readers cannot protect runs using those older builds.
+- **`messages` only.** Set `assistant_responses` only for `messages` rows. `"live"` is rejected for `payload`, `text_input`, and synthesized (`input_length`) entries; plain-text and synthesized sessions already retain live responses through their existing context mode.
+- **Timing is unchanged.** `timestamp`/`delay` values are preserved with millisecond scheduling accuracy, exactly as with recorded responses.
+- **No offset cropping.** `--fixed-schedule-start-offset` / `--fixed-schedule-end-offset` drop individual rows before sessions are assembled, which would silently remove the initial history or preceding turns that later rows depend on. If the trace file contains any `"assistant_responses": "live"` entry, configuring either offset fails at load time. Recorded-response and synthesized traces keep the existing offset filtering. To replay a subset, construct a trace file containing only the complete sessions you want instead of cropping with offsets.
+- **`output_length` is a ceiling, not a forced length.** It maps to the request's max-completion-tokens cap (e.g. keep your usual 8192 ceiling); the model stops naturally at EOS. Because live replies are threaded into later requests, the actual context length grows with whatever the model generated and can diverge from the recorded transcript's token counts.
+- **New tool calls use the live IDs.** Assistant `tool_calls` captured during the run carry the IDs the server actually generated. A later `role: "tool"` delta must reference a `tool_call_id` the live model emitted for the conversation to remain coherent; AIPerf performs no remapping from recorded IDs to live IDs, so recorded tool-result deltas can diverge from what the live model called. AIPerf never executes tools -- tool-result content comes only from your dataset deltas.
+- **Failed turns can leave gaps.** If a call fails before producing replayable assistant content, no assistant message is added, but its input messages remain in session history. If replay continues, later tool-result deltas may have no matching assistant tool call. Interrupted streams can leave partial assistant content in history.
+- **`extra` cannot override the assembled history.** A per-entry or endpoint-global extra containing `messages` or `input` is rejected for sessions using live responses. These fields carry the assembled conversation for Chat Completions and the Responses API, respectively, and an extra input would overwrite it.
+- **Sticky transport is not KV affinity.** Multi-turn sessions reuse a sticky connection/correlation ID so all turns hit the same backend, but that does not guarantee the server keeps the session's KV cache on the same GPU -- prefix-cache hit rates depend on the serving stack.
+
+### Tool Definitions
+
+When replaying conversations that involve tool use (function calling), include the `tools` field alongside `messages` to provide the tool definitions the model needs:
+
+```json
+{"messages": [{"role": "user", "content": "What's the weather?"}], "tools": [{"type": "function", "function": {"name": "get_weather", "description": "Get weather", "parameters": {"type": "object", "properties": {"location": {"type": "string"}}}}}], "output_length": 50, "timestamp": 0}
+```
+
+The `tools` field is only valid when `messages` is provided. It is injected directly into the API payload as the `tools` parameter. With `"assistant_responses": "live"`, later turns inherit the most recent `tools` declaration (typically the first turn's); a turn that redeclares `tools` replaces them for that turn onward.
+
+## Per-Request Extra Inputs
+
+Use the `extra` field to inject arbitrary key-value pairs into the HTTP payload for individual trace entries. This works alongside (and after) the global `--extra-inputs` flag, so per-entry values override global defaults for the same top-level key.
+
+```json
+{"input_length": 100, "output_length": 50, "timestamp": 0, "extra": {"nvext": {"priority": 99}}}
+{"input_length": 200, "output_length": 30, "timestamp": 500}
+{"messages": [{"role": "user", "content": "Hello"}], "output_length": 50, "timestamp": 1000, "extra": {"routing": "fast"}}
+```
+
+**Merge semantics:** Merging is shallow — a per-entry `{"nvext": {...}}` replaces the entire global `nvext` key. Deep merge is not performed.
+
+## Profile using real Mooncake Trace
+
+For real-world benchmarking, use the FAST25 production trace data from the Mooncake research paper:
+
+{/* aiperf-run-vllm-default-openai-endpoint-server */}
+```bash
+# Download the Mooncake trace data
+curl -Lo mooncake_trace.jsonl https://raw.githubusercontent.com/kvcache-ai/Mooncake/refs/heads/main/FAST25-release/arxiv-trace/mooncake_trace.jsonl
+
+# Create a subset for quick testing
+head -n 10 mooncake_trace.jsonl > mooncake_trace_short.jsonl
+
+# Run the trace replay
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
+    --input-file mooncake_trace_short.jsonl \
+    --custom-dataset-type mooncake_trace \
+    --fixed-schedule
+```
+{/* /aiperf-run-vllm-default-openai-endpoint-server */}

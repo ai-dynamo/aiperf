@@ -1,0 +1,263 @@
+<!--
+SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+SPDX-License-Identifier: Apache-2.0
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AIPerf — GPU Telemetry &amp; Power-Efficiency Metrics Dataflow</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --ink: #e6edf3;
+    --muted: #8b949e;
+    --edge: #30363d;
+    --nv: #76b900;          /* NVIDIA green */
+    --nv-soft: #1c2a05;
+    --amd: #ed1c24;         /* AMD red */
+    --amd-soft: #2a0708;
+    --shared: #58a6ff;      /* shared store / cross-vendor */
+    --shared-soft: #0d2440;
+    --code: #d2a8ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.45;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 32px 24px 64px; }
+  header h1 { font-size: 1.5rem; margin: 0 0 4px; }
+  header p { color: var(--muted); margin: 0 0 24px; max-width: 70ch; }
+  code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; color: var(--code); font-size: 0.85em; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 0 0 28px; font-size: 0.82rem; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--edge); display: inline-block; }
+  .sw-nv { background: var(--nv-soft); border-color: var(--nv); }
+  .sw-amd { background: var(--amd-soft); border-color: var(--amd); }
+  .sw-shared { background: var(--shared-soft); border-color: var(--shared); }
+
+  /* Stage grid: 5 columns (Produce, Converge, Aggregate, Tags, Render) */
+  .flow {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 0;
+    align-items: stretch;
+  }
+  .col { padding: 0 10px; position: relative; }
+  .col > .stage-label {
+    text-align: center;
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 14px;
+    padding-bottom: 6px;
+    border-bottom: 1px dashed var(--edge);
+  }
+
+  .node {
+    background: var(--panel);
+    border: 1px solid var(--edge);
+    border-radius: 8px;
+    padding: 9px 11px;
+    margin: 8px 0;
+    font-size: 0.78rem;
+  }
+  .node .t { font-weight: 600; display: block; margin-bottom: 3px; }
+  .node .d { color: var(--muted); font-size: 0.72rem; }
+  .node.nv { border-left: 4px solid var(--nv); }
+  .node.amd { border-left: 4px solid var(--amd); }
+  .node.shared { border-left: 4px solid var(--shared); background: var(--shared-soft); }
+
+  .lane-tag { font-size: 0.66rem; font-weight: 700; letter-spacing: 0.06em; }
+  .lane-tag.nv { color: var(--nv); }
+  .lane-tag.amd { color: var(--amd); }
+
+  .arrows { width: 100%; height: 18px; display: block; }
+  .converge-note, .split-note {
+    text-align: center; font-size: 0.7rem; color: var(--muted); font-style: italic; margin: 6px 0 2px;
+  }
+
+  .console {
+    margin-top: 40px;
+    border: 1px solid var(--edge);
+    border-radius: 10px;
+    background: #010409;
+    padding: 18px 20px;
+  }
+  .console h2 { font-size: 0.95rem; margin: 0 0 4px; }
+  .console p.sub { color: var(--muted); font-size: 0.8rem; margin: 0 0 16px; }
+  .term { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.78rem; }
+  .term .banner { border: 1px solid var(--shared); color: #f2cc60; border-radius: 6px; padding: 6px 10px; margin-bottom: 10px; }
+  .term .sect { border-radius: 6px; padding: 6px 10px; margin-bottom: 8px; }
+  .term .sect.nv { border: 1px solid var(--nv); background: var(--nv-soft); }
+  .term .sect.amd { border: 1px solid var(--amd); background: var(--amd-soft); }
+  .term .sect.shared { border: 1px solid var(--edge); }
+  .term .sect .title { font-weight: 700; }
+  .term .sect .row { color: var(--muted); }
+
+  footer { margin-top: 36px; color: var(--muted); font-size: 0.74rem; border-top: 1px solid var(--edge); padding-top: 14px; }
+  footer code { color: var(--code); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>GPU Telemetry &amp; Power-Efficiency Metrics — Dataflow</h1>
+    <p>
+      How per-vendor GPU power/energy signals flow from the collectors to the
+      console. NVIDIA and AMD stay in separate lanes end-to-end: they converge
+      only in the shared <code>TelemetryHierarchy</code> store, then re-split at
+      the per-platform aggregation so each vendor's totals sum only its own GPUs.
+    </p>
+  </header>
+
+  <div class="legend">
+    <span><i class="swatch sw-nv"></i> NVIDIA lane (<code>nvidia_*</code>, DCGM / pynvml)</span>
+    <span><i class="swatch sw-amd"></i> AMD lane (<code>amd_*</code>, amdsmi)</span>
+    <span><i class="swatch sw-shared"></i> Shared / cross-vendor</span>
+  </div>
+
+  <div class="flow">
+    <!-- 1. PRODUCE -->
+    <div class="col">
+      <div class="stage-label">1 · Produce</div>
+      <div class="lane-tag nv">NVIDIA</div>
+      <div class="node nv">
+        <span class="t">DCGMTelemetryCollector</span>
+        <span class="d">Scrapes DCGM <code>/metrics</code>; <code>DCGM_TO_FIELD_MAPPING</code> → <code>nvidia_*</code></span>
+      </div>
+      <div class="node nv">
+        <span class="t">PyNVMLTelemetryCollector</span>
+        <span class="d">Local NVML → <code>nvidia_power_usage</code>, <code>nvidia_energy_consumption</code>, …</span>
+      </div>
+      <div class="lane-tag amd" style="margin-top:14px;">AMD</div>
+      <div class="node amd">
+        <span class="t">AMDSMITelemetryCollector</span>
+        <span class="d">amdsmi → <code>amd_power</code> (W), <code>amd_energy_consumption</code> (MJ)</span>
+      </div>
+      <div class="node shared">
+        <span class="t">TelemetryRecord + TelemetryMetrics</span>
+        <span class="d">Each record stamps <code>platform</code> (<code>nvidia</code>/<code>amd</code>) + vendor fields</span>
+      </div>
+    </div>
+
+    <!-- 2. CONVERGE -->
+    <div class="col">
+      <div class="stage-label">2 · Converge (shared store)</div>
+      <div class="converge-note">both lanes flow in →</div>
+      <div class="node shared">
+        <span class="t">GPUTelemetryAccumulator<br/>.process_telemetry_record()</span>
+        <span class="d">Routes every record into the hierarchy</span>
+      </div>
+      <div class="node shared">
+        <span class="t">TelemetryHierarchy</span>
+        <span class="d">telemetry_source_url → gpu_uuid → <code>GpuTelemetryData</code> time series. Holds <b>both</b> vendors, each GPU tagged by <code>metadata.platform</code>.</span>
+      </div>
+    </div>
+
+    <!-- 3. AGGREGATE -->
+    <div class="col">
+      <div class="stage-label">3 · Aggregate (re-split per vendor)</div>
+      <div class="node shared">
+        <span class="t">compute_efficiency_metrics()</span>
+        <span class="d">Once per profiling phase. Loops <code>_EFFICIENCY_VENDORS</code> (NVIDIA, AMD).</span>
+      </div>
+      <div class="split-note">→ per-platform filter splits back into lanes →</div>
+      <div class="node nv">
+        <span class="lane-tag nv">NVIDIA</span>
+        <span class="t" style="margin-top:3px;">_sum_gpu_power_watts / _sum_gpu_energy_joules</span>
+        <span class="d">platform=<code>nvidia</code>, fields <code>NVIDIA_POWER_USAGE_FIELD</code> / <code>NVIDIA_ENERGY_CONSUMPTION_FIELD</code></span>
+      </div>
+      <div class="node amd">
+        <span class="lane-tag amd">AMD</span>
+        <span class="t" style="margin-top:3px;">_sum_gpu_power_watts / _sum_gpu_energy_joules</span>
+        <span class="d">platform=<code>amd</code>, fields <code>AMD_POWER_FIELD</code> / <code>AMD_ENERGY_CONSUMPTION_FIELD</code></span>
+      </div>
+      <div class="node shared">
+        <span class="t">shared inputs</span>
+        <span class="d"><code>total_output_tokens</code> (records) + <code>concurrency</code> (config) feed tokens/J and J/user for both lanes</span>
+      </div>
+    </div>
+
+    <!-- 4. TAGS -->
+    <div class="col">
+      <div class="stage-label">4 · Vendor MetricResults</div>
+      <div class="node nv">
+        <span class="lane-tag nv">NVIDIA</span>
+        <span class="d" style="margin-top:4px;">
+          <code>nvidia_total_gpu_power</code><br/>
+          <code>nvidia_total_gpu_energy</code><br/>
+          <code>nvidia_output_tokens_per_joule</code><br/>
+          <code>nvidia_energy_per_user</code>
+        </span>
+      </div>
+      <div class="node amd">
+        <span class="lane-tag amd">AMD</span>
+        <span class="d" style="margin-top:4px;">
+          <code>amd_total_gpu_power</code><br/>
+          <code>amd_total_gpu_energy</code><br/>
+          <code>amd_output_tokens_per_joule</code><br/>
+          <code>amd_energy_per_user</code>
+        </span>
+      </div>
+      <div class="node shared">
+        <span class="t">console_group</span>
+        <span class="d"><code>GPU_POWER_EFFICIENCY_NVIDIA</code> / <code>_AMD</code> route each tag to its section</span>
+      </div>
+    </div>
+
+    <!-- 5. RENDER -->
+    <div class="col">
+      <div class="stage-label">5 · Render</div>
+      <div class="node shared">
+        <span class="t">ConsoleGpuVendorDisclaimerExporter</span>
+        <span class="d">Vendor warning banner — heads all GPU sections</span>
+      </div>
+      <div class="node nv">
+        <span class="t">ConsoleNvidiaPowerEfficiencyExporter</span>
+        <span class="d">“GPU Power Efficiency (NVIDIA)”, avg-only</span>
+      </div>
+      <div class="node amd">
+        <span class="t">ConsoleAmdPowerEfficiencyExporter</span>
+        <span class="d">“GPU Power Efficiency (AMD)”, avg-only</span>
+      </div>
+      <div class="node shared">
+        <span class="t">GPUTelemetryConsoleExporter</span>
+        <span class="d">Per-GPU telemetry tables</span>
+      </div>
+      <div class="node shared">
+        <span class="t">CSV / JSON exporters</span>
+        <span class="d">All vendor tags persisted to artifacts</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Final console layout -->
+  <div class="console">
+    <h2>Resulting console order</h2>
+    <p class="sub">The disclaimer banner renders first, so it's clear everything below it is vendor-specific.</p>
+    <div class="term">
+      <div class="banner">╭─ GPU Telemetry Platform ─╮ &nbsp; Platform: nvidia, amd · metric semantics are platform-specific</div>
+      <div class="sect nv"><span class="title">GPU Power Efficiency (NVIDIA)</span> &nbsp; <span class="row">Total GPU Power · Total GPU Energy · Output Tokens per Joule · Energy per User (avg only)</span></div>
+      <div class="sect amd"><span class="title">GPU Power Efficiency (AMD)</span> &nbsp; <span class="row">Total GPU Power · Total GPU Energy · Output Tokens per Joule · Energy per User (avg only)</span></div>
+      <div class="sect shared"><span class="title">AIPerf | GPU Telemetry Summary</span> &nbsp; <span class="row">per-GPU tables (power, util, mem, temp, …)</span></div>
+    </div>
+  </div>
+
+  <footer>
+    Source of truth: <code>src/aiperf/gpu_telemetry/</code> (collectors, <code>accumulator.py</code>,
+    <code>constants.py</code>), <code>src/aiperf/metrics/types/power_efficiency_metrics.py</code>, and
+    <code>src/aiperf/exporters/console_*_exporter.py</code>. A mixed NVIDIA+AMD run emits both lanes'
+    sections; a vendor with no reporting GPU is omitted entirely.
+  </footer>
+</div>
+</body>
+</html>

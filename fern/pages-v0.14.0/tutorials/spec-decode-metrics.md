@@ -1,0 +1,280 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+sidebar-title: Per-Request Spec-Decode Metrics
+---
+
+# Per-Request Speculative-Decoding Metrics
+
+When an inference server reports **per-request** speculative-decoding acceptance on
+each response, AIPerf turns it into an end-of-run **Spec Decode** console section, the
+same scalars in the aggregate JSON/CSV, a pooled acceptance histogram in JSON, and
+per-request values in the records trace. It is **engine-agnostic** -- AIPerf reads a
+normalized acceptance record and never branches on the engine -- and needs **no AIPerf
+flag**: the section appears automatically whenever the stats are present, and disappears
+cleanly when they are not.
+
+<Note>
+There are two ways to get acceptance metrics out of AIPerf; pick by what your server exposes:
+
+- **Per-request (this guide):** the stats ride the response body, so AIPerf reads them
+  inline during a normal `aiperf profile` run. Highest fidelity -- you get per-request
+  distributions (avg/min/percentiles) and a pooled histogram. Supported for vLLM, SGLang, and
+  TensorRT-LLM; direct to the engine, not behind Dynamo.
+- **Server scrape:** aggregate acceptance is read from the server's Prometheus `/metrics`
+  endpoint via `--server-metrics`. Works on engines with no per-request reporting
+  and behind Dynamo, but the numbers cover the whole server.
+
+For a per-category acceptance matrix over a ready-made speculative-decoding dataset, see the
+[SPEED-Bench tutorial](speed-bench.md), which covers both paths: on the per-request path a
+single run produces the whole matrix, on the scrape path it takes one run per category.
+</Note>
+
+For the record shape and the adapter that fills it, see
+[Per-Request Speculative-Decoding Acceptance](../reference/spec-decode-acceptance.md); for
+the metric definitions and formulas, see the
+[Speculative Decoding Metrics](../metrics-reference.md#speculative-decoding-metrics) section
+of the metrics reference.
+
+---
+
+## Prerequisites
+
+- A server running **speculative decoding** with **per-request metrics enabled**. Either:
+  - **vLLM** with `--per-request-spec-decode-metrics summary` (or `detailed`). The field
+    shape tracks vLLM [PR #48915](https://github.com/vllm-project/vllm/pull/48915) --
+    confirm your vLLM build includes it.
+  - **TensorRT-LLM** with `per_request_spec_decode_stats: true` in the YAML passed to
+    `--extra_llm_api_options`. PyTorch backend only.
+
+  - **SGLang v0.5.19+** with `--extra-inputs return_spec_tokens_details:true`
+    on the AIPerf command.
+
+  You do not tell AIPerf which engine you are pointed at -- it recognizes each engine's
+  payload by shape.
+- **Direct to the engine.** Behind Dynamo the custom stats field is currently stripped, so
+  the per-request path is unavailable there (use the server-scrape path instead).
+- Streaming works out of the box, though the engines place the payload differently:
+  vLLM sends it on the trailing usage chunk -- so AIPerf requests
+  `stream_options.include_usage` on every streaming run -- while TensorRT-LLM attaches it
+  to the terminal chunk's choice. SGLang sends `sglext.spec_tokens_details`
+  on a separate chunk when the request enables it.
+
+---
+
+## Start a vLLM server with per-request spec-decode metrics
+
+This example uses a Llama-3.1-8B target with a Llama-3.2-1B draft model and a 5-token draft
+budget. `--per-request-spec-decode-metrics` is the flag that makes vLLM attach acceptance
+metrics to each response at the root `metrics.speculative_decoding` object (single-sequence
+requests only):
+
+```bash
+docker run --gpus all -p 8000:8000 vllm/vllm-openai:latest \
+  --model meta-llama/Llama-3.1-8B-Instruct \
+  --speculative-config '{"model": "meta-llama/Llama-3.2-1B-Instruct", "num_speculative_tokens": 5, "method": "draft_model"}' \
+  --per-request-spec-decode-metrics summary
+```
+
+Verify the server is ready and emitting the field (look for `metrics.speculative_decoding`
+in the response):
+
+```bash
+curl -s localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"meta-llama/Llama-3.1-8B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":32}'
+```
+
+---
+
+## Or start a TensorRT-LLM server
+
+TensorRT-LLM has no CLI flag for metrics — they are `TorchLlmArgs` fields set through the
+YAML passed to `--extra_llm_api_options`:
+
+```yaml
+# extra-llm-api-config.yaml
+per_request_spec_decode_stats: true
+speculative_config:
+  decoding_type: Eagle
+  speculative_model_dir: <draft-model-path>
+  max_draft_len: 3
+```
+
+```bash
+trtllm-serve meta-llama/Llama-3.1-8B-Instruct \
+  --extra_llm_api_options extra-llm-api-config.yaml
+```
+
+That YAML field is the whole opt-in -- clients need send nothing, so AIPerf detects the
+payload the same way it detects vLLM's. Verify the server is emitting the field — note it
+sits on the **choice**, not at the response root:
+
+```bash
+curl -s localhost:8000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model":"meta-llama/Llama-3.1-8B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":32}'
+```
+
+Look for `choices[0].speculative_decoding`. A few things differ from vLLM and are expected:
+`num_spec_tokens` is `null` when the server runs with `draft_len_schedule`; the per-step
+arrays are never populated; and the field is absent entirely for a request that drafted
+nothing. Support is PyTorch-backend only.
+
+---
+
+## Enable SGLang response details
+
+For SGLang v0.5.19+, add `--extra-inputs return_spec_tokens_details:true` to the
+AIPerf command below. In YAML, set
+`benchmark.endpoint.extra.return_spec_tokens_details: true`.
+
+See the [SGLang adapter reference](../reference/spec-decode-acceptance.md#the-sglang-adapter)
+for the counter definitions and fallback behavior.
+
+---
+
+## Run AIPerf
+
+No spec-decode-specific flag is required -- run a normal profile. Add `--export-level
+records` if you want the per-request acceptance struct in the records trace (see
+[Per-request trace](#per-request-trace) below):
+
+```bash
+aiperf profile \
+    --model meta-llama/Llama-3.1-8B-Instruct \
+    --endpoint-type chat \
+    --streaming \
+    --url localhost:8000 \
+    --synthetic-input-tokens-mean 512 \
+    --output-tokens-mean 256 \
+    --concurrency 16 \
+    --export-level records
+```
+
+---
+
+## Reading the output
+
+### Console: the Spec Decode section
+
+The end-of-run console gains a dedicated **Spec Decode** table followed by a one-line
+pooled acceptance histogram.
+
+<Info>
+The table below is **illustrative -- it shows the output format, not a benchmark
+result.** The numbers are placeholders; real values depend entirely on your model,
+drafter, draft budget, dataset, and concurrency.
+</Info>
+
+```text
+                                    NVIDIA AIPerf: Spec Decode
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━━┳━━━━━━━┓
+┃                            Metric ┃    avg ┃   min ┃    max ┃    p99 ┃    p90 ┃    p50 ┃   std ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━━╇━━━━━━━┩
+│         Acceptance Length (ratio) │   3.21 │  1.00 │   6.00 │   5.80 │   4.90 │   3.10 │  1.05 │
+│  Token-Weighted Acceptance Length │   3.20 │   N/A │    N/A │    N/A │    N/A │    N/A │   N/A │
+│                           (ratio) │        │       │        │        │        │        │       │
+│         Draft Acceptance Rate (%) │  44.20 │  0.00 │ 100.00 │  96.00 │  82.00 │  42.00 │ 18.00 │
+│ Overall Draft Acceptance Rate (%) │  46.80 │   N/A │    N/A │    N/A │    N/A │    N/A │   N/A │
+│     Accepted per Verified (ratio) │   0.53 │  0.17 │   1.00 │   0.97 │   0.82 │   0.52 │  0.17 │
+│         Spec Decode Steps (count) │ 128.00 │ 40.00 │ 410.00 │ 390.00 │ 250.00 │ 118.00 │ 60.00 │
+└───────────────────────────────────┴────────┴───────┴────────┴────────┴────────┴────────┴───────┘
+  Accepted drafts per step (% of steps):  0: 25%   1: 18%   2: 15%   3: 13%   4: 12%   5: 17%
+```
+
+Quick reading (full definitions in the
+[metrics reference](../metrics-reference.md#speculative-decoding-metrics)):
+
+- **Acceptance Length** -- tokens emitted per verify step (`j + 1`); the headline speed
+  number. **Token-Weighted Acceptance Length** is the run-level companion that weights every
+  verify step equally instead of every request.
+- **Draft Acceptance Rate** -- fraction of proposed draft tokens accepted (`j / l`); the
+  drafter-quality number. **Overall Draft Acceptance Rate** is its draft-volume-weighted
+  run-level companion.
+- **Accepted per Verified** -- `(j + 1) / (l + 1)`, a `[~0, 1]` utilization: how close each
+  step got to accepting everything it proposed.
+- **Spec Decode Steps** -- verify steps per request.
+- **Zero-Step Requests** -- requests that reported stats but never ran a verify step (e.g.
+  `max_tokens: 1`, or an NGram drafter that never matched). They are excluded from the
+  per-request metrics above; the row appears only when the count is nonzero.
+- **Accepted-draft histogram** -- share of verify steps that accepted exactly `j` draft
+  tokens, pooled across the run. Capped to buckets `0..7` on the console (any `j >= 8` folds
+  into a trailing `>=8` bucket); the full histogram is in the JSON export.
+
+The section is omitted entirely when no request carried spec-decode stats.
+
+### Aggregate JSON and CSV
+
+The scalar metrics land in `profile_export_aiperf.json` and `profile_export.csv`. The full
+pooled histogram is structured, so it goes to JSON only, under
+`pooled_spec_decode_acceptance_histogram` (its counts sum to `total_spec_decode_steps`):
+
+<Note>Illustrative values.</Note>
+
+```json
+"pooled_spec_decode_acceptance_histogram": {
+  "0": 6400, "1": 4608, "2": 3840, "3": 3328, "4": 3072, "5": 4352
+}
+```
+
+### Per-request trace
+
+At `--export-level records`, each line of `profile_export.jsonl` carries the neutral
+acceptance struct under `spec_decode_acceptance`, so the per-request histogram, counts, and (when the
+server reports them) per-step arrays travel with the trace:
+
+<Note>Illustrative values.</Note>
+
+```json
+{
+  "metadata": { "...": "..." },
+  "metrics": { "...": "..." },
+  "spec_decode_acceptance": {
+    "engine": "vllm",
+    "mean_acceptance_length": 3.18,
+    "draft_acceptance_rate": 0.436,
+    "acceptance_histogram": {"0": 34, "1": 22, "2": 19, "3": 16, "4": 15, "5": 22},
+    "num_accepted_draft_tokens": 281,
+    "num_draft_tokens": 640,
+    "num_spec_steps": 128,
+    "num_spec_tokens": 5
+  }
+}
+```
+
+At `--export-level raw`, the histogram is already present in the raw response body that raw
+export preserves, so no additional field is needed there.
+
+---
+
+## When nothing shows up
+
+If the Spec Decode section, histogram, and `spec_decode_*` fields are all absent, that is
+the expected clean-degradation behavior -- not an error. Common causes:
+
+- speculative decoding is off, or, on TensorRT-LLM, the requests had no verify steps. On
+  vLLM such requests still send a payload with `num_spec_steps: 0`, so instead of no
+  section you see a lone **Zero-Step Requests** row: speculation never fired;
+- the server was not started with per-request reporting enabled -- vLLM's
+  `--per-request-spec-decode-metrics`, or TensorRT-LLM's
+  `per_request_spec_decode_stats: true`;
+- SGLang predates v0.5.19, or the request omits `return_spec_tokens_details: true`;
+- the server is behind Dynamo, which strips the custom field (use the
+  [server-scrape path](speed-bench.md#portable-path-server-scrape) instead);
+- the vLLM build predates [PR #48915](https://github.com/vllm-project/vllm/pull/48915);
+- on TensorRT-LLM, the run used the C++/TRT backend, which has no per-position
+  vectors -- per-request reporting is PyTorch-backend only;
+- on TensorRT-LLM, drafting was switched off at the batch sizes the run reached:
+  speculation stops above `max_concurrency`, or above the largest batch size in
+  `draft_len_schedule`, so a run held above that concurrency drafts nothing and
+  reports no per-request stats.
+
+---
+
+## See also
+
+- [Speculative Decoding Metrics](../metrics-reference.md#speculative-decoding-metrics) -- metric definitions and formulas.
+- [Per-Request Speculative-Decoding Acceptance](../reference/spec-decode-acceptance.md) -- the engine-neutral record and adapter architecture.
+- [SPEED-Bench tutorial](speed-bench.md) -- ready-made speculative-decoding datasets and the per-category acceptance matrix, on either path.
+- [SpecBench tutorial](spec-bench.md) -- profiling with the SpecBench speculative-decoding dataset.
