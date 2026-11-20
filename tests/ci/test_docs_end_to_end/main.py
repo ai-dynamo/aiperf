@@ -4,10 +4,10 @@
 """
 Simple end-to-end test tool for AIPerf documentation.
 
-Parses markdown files for server setup and AIPerf run commands,
-builds AIPerf container, and executes tests.
+Parse documented server arguments and run benchmarks against native vLLM.
 """
 
+import asyncio
 import logging
 import sys
 
@@ -67,7 +67,7 @@ def shard_commands(
     return my_bin, shard_load
 
 
-def main():
+def main() -> int:
     """Main function"""
     import argparse
 
@@ -182,7 +182,7 @@ def main():
 
     # Run tests
     runner = EndToEndTestRunner()
-    success = runner.run_tests(servers)
+    success = asyncio.run(runner.run_tests(servers))
 
     if success:
         logger.info("All tests passed!")
