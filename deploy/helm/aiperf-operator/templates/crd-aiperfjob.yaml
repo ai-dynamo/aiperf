@@ -179,6 +179,8 @@ spec:
                       type:
                         type: string
                         enum:
+                        - decisions
+                        - systemone
                         - audio_transcription
                         - chat
                         - cohere_rankings

@@ -76,6 +76,11 @@ class TestResolveDisableTokenization:
 class TestRecordPayloadBytesRequired:
     """The predicate is True iff some downstream consumer reads payload_bytes."""
 
+    @pytest.mark.parametrize("endpoint_type", ["decisions", "systemone"])
+    def test_decision_validation_requires_payload(self, endpoint_type):
+        run = _make_run(endpoint_type=endpoint_type, use_server_token_count=True)
+        assert record_payload_bytes_required(run.cfg, _model_endpoint(run)) is True
+
     def test_text_only_server_tokens_no_export_is_not_required(self):
         """The canonical strippable run: server token counts, text-only,
         records (non-raw) export -> nothing reads payload_bytes."""
