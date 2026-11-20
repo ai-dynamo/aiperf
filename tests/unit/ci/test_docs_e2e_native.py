@@ -1,0 +1,213 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+"""Native execution preserves documented server arguments and shell commands."""
+
+from __future__ import annotations
+
+import asyncio
+import shlex
+import shutil
+import sys
+from collections.abc import Generator
+from pathlib import Path
+
+import psutil
+import pytest
+from pytest import param
+
+from aiperf.common.constants import IS_WINDOWS
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+HARNESS = REPO_ROOT / "tests/ci/test_docs_end_to_end"
+
+
+@pytest.fixture(autouse=True)
+def _contain_import_side_effects() -> Generator[None]:
+    saved_path = list(sys.path)
+    saved_modules = set(sys.modules)
+    sys.path.insert(0, str(HARNESS))
+    try:
+        yield
+    finally:
+        sys.path[:] = saved_path
+        for name in set(sys.modules) - saved_modules:
+            del sys.modules[name]
+
+
+@pytest.mark.parametrize(
+    "server_name,model",
+    [
+        param("vllm-default-openai", "Qwen/Qwen3-0.6B", id="chat"),
+        param("vllm-audio-openai", "Qwen/Qwen2.5-Omni-3B", id="audio"),
+        param("vllm-embeddings-openai", "BAAI/bge-small-en-v1.5", id="embeddings"),
+        param("vllm-vision-openai", "Qwen/Qwen2-VL-2B-Instruct", id="vision"),
+        param("vllm-video-openai", "Qwen/Qwen2-VL-2B-Instruct", id="video"),
+    ],
+)  # fmt: skip
+def test_native_setup_uses_documented_model(server_name: str, model: str) -> None:
+    from native_setup import parse_native_setup
+    from parser import MarkdownParser
+
+    server = MarkdownParser().parse_directory(str(REPO_ROOT))[server_name]
+    setup = parse_native_setup(server.setup_command.command)
+
+    assert setup.image == "vllm/vllm-openai:latest"
+    assert setup.args[setup.args.index("--model") + 1] == model
+    if server_name == "vllm-audio-openai":
+        assert setup.requirements == ("vllm[audio]",)
+        assert "--trust-remote-code" in setup.args
+    if server_name == "vllm-video-openai":
+        assert setup.env == {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}
+        assert setup.args[setup.args.index("--media-io-kwargs") + 1] == (
+            '{"video": {"num_frames": 16}}'
+        )
+        assert setup.args[setup.args.index("--max-num-seqs") + 1] == "1"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        param("echo unhandled-setup\ndocker run vllm/vllm-openai:latest --model m", id="prelude"),
+        param("docker run --privileged vllm/vllm-openai:latest --model m", id="unknown-option"),
+        param("docker run -p 9000:8000 vllm/vllm-openai:latest --model m", id="port-remapping"),
+        param("docker run vllm/vllm-openai:latest --model m\necho ignored", id="trailing-command"),
+        param("docker run vllm/vllm-openai:latest --model m && false", id="shell-operator"),
+        param("docker pull other/image\ndocker run vllm/vllm-openai:latest --model m", id="image-mismatch"),
+    ],
+)  # fmt: skip
+def test_native_setup_rejects_unsupported_semantics(command: str) -> None:
+    from native_setup import parse_native_setup
+
+    with pytest.raises(ValueError, match="Unsupported"):
+        parse_native_setup(command)
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="The documentation harness requires Bash.")
+@pytest.mark.asyncio
+async def test_native_shell_preserves_quotes_and_fixture_files(tmp_path: Path) -> None:
+    from test_runner import run_script
+
+    script = """cat <<'EOF' > input.jsonl
+{"text": "it's quoted", "value": "$literal"}
+EOF
+"""
+    assert await run_script(script, cwd=tmp_path, prefix="TEST", timeout=5) == 0
+    assert (
+        await run_script(
+            "cp input.jsonl result.jsonl", cwd=tmp_path, prefix="TEST", timeout=5
+        )
+        == 0
+    )
+    assert (tmp_path / "result.jsonl").read_text() == (
+        '{"text": "it\'s quoted", "value": "$literal"}\n'
+    )
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="The documentation harness requires Bash.")
+@pytest.mark.asyncio
+async def test_native_shell_stops_after_failed_fixture_creation(tmp_path: Path) -> None:
+    from test_runner import run_script
+
+    assert (
+        await run_script(
+            "false\ntouch must-not-exist", cwd=tmp_path, prefix="TEST", timeout=5
+        )
+        != 0
+    )
+    assert not (tmp_path / "must-not-exist").exists()
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="The documentation harness requires Bash.")
+@pytest.mark.asyncio
+async def test_native_shell_timeout_kills_descendants(tmp_path: Path) -> None:
+    from test_runner import run_script
+
+    child = "import os,time;open('pid','w').write(str(os.getpid()));time.sleep(60)"
+    command = f"{shlex.quote(sys.executable)} -c {shlex.quote(child)} & wait"
+    with pytest.raises(TimeoutError):
+        await run_script(command, cwd=tmp_path, prefix="TEST", timeout=1)
+
+    pid = int((tmp_path / "pid").read_text())
+    assert (
+        not psutil.pid_exists(pid)
+        or psutil.Process(pid).status() == psutil.STATUS_ZOMBIE
+    )
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="The documentation harness requires Bash.")
+@pytest.mark.asyncio
+async def test_native_shell_cancellation_stops_running_command(tmp_path: Path) -> None:
+    from test_runner import run_script
+
+    command = "echo $$ > pid; exec sleep 60"
+    task = asyncio.create_task(
+        run_script(command, cwd=tmp_path, prefix="TEST", timeout=60)
+    )
+    async with asyncio.timeout(5):
+        while not (tmp_path / "pid").exists():
+            await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert not psutil.pid_exists(int((tmp_path / "pid").read_text()))
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="The documentation harness requires Bash.")
+@pytest.mark.asyncio
+@pytest.mark.parametrize("health_passes", [True, False])
+async def test_native_runner_keeps_fixtures_and_stops_server(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, health_passes: bool
+) -> None:
+    from data_types import Command, Server
+    from test_runner import EndToEndTestRunner
+
+    executable = tmp_path / "server-python"
+    executable.write_text("#!/usr/bin/env bash\necho $$ > server-pid\nexec sleep 60\n")
+    executable.chmod(0o755)
+    monkeypatch.setenv("AIPERF_DOCS_VLLM_PYTHON", str(executable))
+    monkeypatch.setenv("AIPERF_DOCS_SERVER_IMAGE", "vllm/vllm-openai:latest")
+
+    def command(text: str) -> Command:
+        return Command("test", text, "guide.md", 1, 1)
+
+    health = "while [ ! -s server-pid ]; do sleep 0.01; done"
+    if not health_passes:
+        health += "\nfalse"
+    server = Server(
+        "test",
+        command("docker run vllm/vllm-openai:latest --model test"),
+        command(health),
+        [
+            command("printf 'fixture data' > input.txt"),
+            command("test -d ./fixtures/audio && cp input.txt result.txt"),
+        ],
+    )
+    runner = EndToEndTestRunner()
+    try:
+        assert await runner.run_tests({server.name: server}) is health_passes
+        assert not psutil.pid_exists(int((runner.work_dir / "server-pid").read_text()))
+        if health_passes:
+            assert (runner.work_dir / "result.txt").read_text() == "fixture data"
+        else:
+            assert not (runner.work_dir / "result.txt").exists()
+    finally:
+        if runner.work_dir:
+            shutil.rmtree(runner.work_dir)
+
+
+@pytest.mark.asyncio
+async def test_native_runner_rejects_mismatched_container_image(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from data_types import Command, Server
+    from test_runner import EndToEndTestRunner
+
+    monkeypatch.setenv("AIPERF_DOCS_SERVER_IMAGE", "vllm/vllm-openai:different")
+    setup = Command(
+        "test", "docker run vllm/vllm-openai:latest --model m", "guide.md", 1, 1
+    )
+    command = Command("test", "true", "guide.md", 1, 1)
+    server = Server("test", setup, command, [command])
+
+    assert await EndToEndTestRunner().run_tests({server.name: server}) is False
