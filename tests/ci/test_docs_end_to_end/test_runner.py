@@ -14,6 +14,7 @@ import tempfile
 from contextlib import suppress
 from pathlib import Path
 
+import psutil
 from constants import AIPERF_COMMAND_TIMEOUT, AIPERF_UI_TYPE
 from data_types import Server
 from native_setup import NativeServerSetup, parse_native_setup
@@ -24,14 +25,31 @@ from aiperf.common.constants import IS_WINDOWS
 logger = logging.getLogger(__name__)
 
 
+def owned_process_groups(pid: int) -> set[int]:
+    """Include groups created by descendants such as GNU timeout."""
+    groups = {pid}
+    with suppress(psutil.NoSuchProcess):
+        for child in psutil.Process(pid).children(recursive=True):
+            with suppress(ProcessLookupError):
+                groups.add(os.getpgid(child.pid))
+    return groups
+
+
 async def stop_process(process: asyncio.subprocess.Process) -> None:
-    """Stop the owned process group, including children that outlive its leader."""
+    """Stop the owned process and its descendant process groups."""
+    groups = (
+        set()
+        if IS_WINDOWS
+        else await asyncio.to_thread(owned_process_groups, process.pid)
+    )
     with suppress(ProcessLookupError):
         if IS_WINDOWS:
             if process.returncode is None:
                 process.terminate()
         else:
-            os.killpg(process.pid, signal.SIGTERM)
+            for group in groups:
+                with suppress(ProcessLookupError):
+                    os.killpg(group, signal.SIGTERM)
     try:
         await asyncio.wait_for(process.wait(), timeout=5)
     except TimeoutError:
@@ -42,7 +60,9 @@ async def stop_process(process: asyncio.subprocess.Process) -> None:
                 if process.returncode is None:
                     process.kill()
             else:
-                os.killpg(process.pid, signal.SIGKILL)
+                for group in groups:
+                    with suppress(ProcessLookupError):
+                        os.killpg(group, signal.SIGKILL)
         await process.wait()
 
 

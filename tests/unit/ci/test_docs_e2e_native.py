@@ -5,11 +5,14 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import shlex
 import shutil
+import signal
 import sys
 import zipfile
 from collections.abc import Generator
+from contextlib import suppress
 from pathlib import Path
 
 import psutil
@@ -179,6 +182,53 @@ async def test_native_shell_cancellation_stops_running_command(tmp_path: Path) -
         await task
 
     assert not psutil.pid_exists(int((tmp_path / "pid").read_text()))
+
+
+@pytest.mark.skipif(IS_WINDOWS, reason="The documentation harness requires Bash.")
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cancel",
+    [param(False, id="timeout"), param(True, id="cancellation")],
+)  # fmt: skip
+async def test_native_shell_stops_separate_child_process_group(
+    tmp_path: Path, cancel: bool
+) -> None:
+    from test_runner import run_script
+
+    child = (
+        "import os,signal,time; os.setpgrp(); "
+        "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+        "open('child-pid','w').write(str(os.getpid())); time.sleep(60)"
+    )
+    command = f"{shlex.quote(sys.executable)} -c {shlex.quote(child)} & wait"
+    task = asyncio.create_task(
+        run_script(
+            command, cwd=tmp_path, prefix="TEST", timeout=2 if not cancel else 60
+        )
+    )
+    pid = None
+    try:
+        async with asyncio.timeout(5):
+            while not (tmp_path / "child-pid").exists():
+                await asyncio.sleep(0)
+        pid = int((tmp_path / "child-pid").read_text())
+        if cancel:
+            task.cancel()
+        with pytest.raises(asyncio.CancelledError if cancel else TimeoutError):
+            await task
+
+        async with asyncio.timeout(5):
+            while psutil.pid_exists(pid):
+                with suppress(psutil.NoSuchProcess):
+                    if psutil.Process(pid).status() == psutil.STATUS_ZOMBIE:
+                        break
+                await asyncio.sleep(0)
+    finally:
+        task.cancel()
+        if pid is not None:
+            with suppress(ProcessLookupError, PermissionError):
+                os.killpg(pid, signal.SIGKILL)
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.mark.skipif(IS_WINDOWS, reason="The documentation harness requires Bash.")

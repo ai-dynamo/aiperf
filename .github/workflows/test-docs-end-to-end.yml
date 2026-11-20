@@ -215,6 +215,14 @@ jobs:
         with:
           ref: ${{ inputs.source_ref || github.sha }}
 
+      - name: Use the workflow's native harness for historical sources
+        if: inputs.source_ref != ''
+        env:
+          HARNESS_REF: ${{ github.workflow_sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$HARNESS_REF"
+          git restore --source=FETCH_HEAD --worktree -- tests/ci/test_docs_end_to_end/
+
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: false
@@ -233,8 +241,9 @@ jobs:
           done
           ls -ld "$HF_HOME" "$HF_HOME/hub"
           echo "AIPERF_DOCS_VLLM_PYTHON=$(command -v python3)" >> "$GITHUB_ENV"
-          uv venv --python 3.13 /scratch/aiperf-venv
-          uv pip install --python /scratch/aiperf-venv/bin/python '.[test]'
+          UV_PROJECT_ENVIRONMENT=/scratch/aiperf-venv \
+            uv sync --python 3.13 --locked --no-editable --no-default-groups \
+              --extra test --extra botorch --extra aws
           ffmpeg -version
           echo /scratch/aiperf-venv/bin >> "$GITHUB_PATH"
 

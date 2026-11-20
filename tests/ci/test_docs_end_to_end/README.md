@@ -88,9 +88,14 @@ python3 main.py --server vllm-default-openai --shard-index 0 --shard-total 4
 
 CI uses `ai-dynamo-gpu-1-amd64-v1` in the `ai-dynamo-gpu` organization runner
 group. Kubernetes launches a vLLM job container with one GPU.
-The workflow installs AIPerf in an isolated Python environment.
+The workflow installs AIPerf from `uv.lock` in an isolated Python environment,
+with the image's `botorch` and `aws` extras and the `test` extra.
 The harness starts vLLM directly and runs benchmark commands through Bash.
 It requires no Docker daemon or privileged container.
+
+For nightly builds of older commits, CI uses the harness from the workflow
+revision. Application code, docs, fixtures, and locked dependencies come from
+the selected source commit.
 
 The harness translates supported Docker setup wrappers into native execution.
 It preserves server arguments and explicit environment assignments.
@@ -105,8 +110,9 @@ If `AIPERF_DOCS_SERVER_IMAGE` is set, the documented base image must match it.
 
 Each server uses one working directory so fixture files survive between
 commands. The harness maps `/fixtures/` references to a link to
-`tests/fixtures/`. It stops its own process groups after completion, failure,
-timeout, or cancellation. It then removes that server's working directory.
+`tests/fixtures/`. It stops its own process groups, including groups created by
+health checks, after completion, failure, timeout, or cancellation.
+It then removes that server's working directory.
 
 The suite tests native server startup, documented health checks, and benchmark
 commands. It does not build Docker images or test Docker runtime flags.
