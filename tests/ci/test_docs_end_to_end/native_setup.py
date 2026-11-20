@@ -53,6 +53,8 @@ def parse_native_setup(command: str) -> NativeServerSetup:
         tokens = shlex.split(line, comments=True)
         if not tokens:
             continue
+        if any("$" in token or "`" in token for token in tokens):
+            raise ValueError(f"Unsupported shell expansion in server setup: {line}")
         if setup is not None:
             raise ValueError(f"Unsupported command after server launch: {line}")
         if tokens[:2] == ["docker", "pull"] and len(tokens) == 3:

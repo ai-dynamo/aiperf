@@ -98,13 +98,15 @@ Inline Dockerfiles support `FROM` and `RUN pip install` instructions.
 Their dependencies use a separate environment that inherits the installed
 server packages. Version constraints preserve the compiled GPU stack while
 allowing Python dependencies to satisfy the documented extras.
+The dependency resolver checks the compiled packages but omits them from
+installation so the overlay reuses the image's copies.
 Unsupported setup instructions fail the test.
 If `AIPERF_DOCS_SERVER_IMAGE` is set, the documented base image must match it.
 
 Each server uses one working directory so fixture files survive between
 commands. The harness maps `/fixtures/` references to a link to
 `tests/fixtures/`. It stops its own process groups after completion, failure,
-timeout, or cancellation.
+timeout, or cancellation. It then removes that server's working directory.
 
 The suite tests native server startup, documented health checks, and benchmark
 commands. It does not build Docker images or test Docker runtime flags.

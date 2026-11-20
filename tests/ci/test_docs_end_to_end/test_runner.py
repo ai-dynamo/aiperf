@@ -7,6 +7,7 @@ import logging
 import os
 import re
 import shlex
+import shutil
 import signal
 import sys
 import tempfile
@@ -126,6 +127,10 @@ class EndToEndTestRunner:
                     f"{server.setup_command.file_path}:{server.setup_command.start_line}: {server.name} failed"
                 )
                 all_passed = False
+            finally:
+                if self.work_dir is not None:
+                    await asyncio.to_thread(shutil.rmtree, self.work_dir)
+                    self.work_dir = None
         return all_passed
 
     async def _server_python(self, setup: NativeServerSetup) -> str:
@@ -140,6 +145,28 @@ class EndToEndTestRunner:
             shlex.join(
                 ["uv", "venv", "--system-site-packages", "--python", python, str(venv)]
             ),
+            "printf '%s\\n' "
+            + shlex.join(setup.requirements)
+            + " > server-requirements.in",
+            "omit_args=()\n"
+            "while IFS='=' read -r package _; do\n"
+            '  omit_args+=(--no-emit-package "$package")\n'
+            "done < server-constraints.txt",
+            shlex.join(
+                [
+                    "uv",
+                    "pip",
+                    "compile",
+                    "--python",
+                    python,
+                    "--constraint",
+                    "server-constraints.txt",
+                    "--output-file",
+                    "server-overlay.txt",
+                    "server-requirements.in",
+                ]
+            )
+            + ' "${omit_args[@]}"',
             shlex.join(
                 [
                     "uv",
@@ -147,9 +174,9 @@ class EndToEndTestRunner:
                     "install",
                     "--python",
                     str(venv / "bin/python"),
-                    "--constraint",
-                    "server-constraints.txt",
-                    *setup.requirements,
+                    "--no-deps",
+                    "--requirements",
+                    "server-overlay.txt",
                 ]
             ),
         ]

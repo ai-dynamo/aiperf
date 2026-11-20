@@ -8,6 +8,7 @@ import asyncio
 import shlex
 import shutil
 import sys
+import zipfile
 from collections.abc import Generator
 from pathlib import Path
 
@@ -73,6 +74,11 @@ def test_native_setup_uses_documented_model(server_name: str, model: str) -> Non
         param("docker run vllm/vllm-openai:latest --model m\necho ignored", id="trailing-command"),
         param("docker run vllm/vllm-openai:latest --model m && false", id="shell-operator"),
         param("docker pull other/image\ndocker run vllm/vllm-openai:latest --model m", id="image-mismatch"),
+        param('docker run vllm/vllm-openai:latest --model "$MODEL"', id="variable-expansion"),
+        param('docker run vllm/vllm-openai:latest --model "${MODEL}"', id="braced-expansion"),
+        param('docker run vllm/vllm-openai:latest --model "$(printf model)"', id="command-expansion"),
+        param('docker run vllm/vllm-openai:latest --model "`printf model`"', id="backtick-expansion"),
+        param('docker run -e HF_TOKEN="$HF_TOKEN" vllm/vllm-openai:latest --model m', id="environment-expansion"),
     ],
 )  # fmt: skip
 def test_native_setup_rejects_unsupported_semantics(command: str) -> None:
@@ -185,7 +191,12 @@ async def test_native_runner_keeps_fixtures_and_stops_server(
     from test_runner import EndToEndTestRunner
 
     executable = tmp_path / "server-python"
-    executable.write_text("#!/usr/bin/env bash\necho $$ > server-pid\nexec sleep 60\n")
+    pid_file = shlex.quote(str(tmp_path / "server-pid"))
+    directory_file = shlex.quote(str(tmp_path / "work-dir"))
+    executable.write_text(
+        f"#!/usr/bin/env bash\necho $$ > {pid_file}\npwd > {directory_file}\n"
+        "touch server-started\nexec sleep 60\n"
+    )
     executable.chmod(0o755)
     monkeypatch.setenv("AIPERF_DOCS_VLLM_PYTHON", str(executable))
     monkeypatch.setenv("AIPERF_DOCS_SERVER_IMAGE", "vllm/vllm-openai:latest")
@@ -193,7 +204,7 @@ async def test_native_runner_keeps_fixtures_and_stops_server(
     def command(text: str) -> Command:
         return Command("test", text, "guide.md", 1, 1)
 
-    health = "while [ ! -s server-pid ]; do sleep 0.01; done"
+    health = "while [ ! -f server-started ]; do sleep 0.01; done"
     if not health_passes:
         health += "\nfalse"
     server = Server(
@@ -202,17 +213,21 @@ async def test_native_runner_keeps_fixtures_and_stops_server(
         command(health),
         [
             command("printf 'fixture data' > input.txt"),
-            command("test -d ./fixtures/audio && cp input.txt result.txt"),
+            command(
+                f"test -d ./fixtures/audio && cp input.txt {shlex.quote(str(tmp_path / 'result.txt'))}"
+            ),
         ],
     )
     runner = EndToEndTestRunner()
     try:
         assert await runner.run_tests({server.name: server}) is health_passes
-        assert not psutil.pid_exists(int((runner.work_dir / "server-pid").read_text()))
+        assert not psutil.pid_exists(int((tmp_path / "server-pid").read_text()))
+        assert not Path((tmp_path / "work-dir").read_text().strip()).exists()
+        assert runner.work_dir is None
         if health_passes:
-            assert (runner.work_dir / "result.txt").read_text() == "fixture data"
+            assert (tmp_path / "result.txt").read_text() == "fixture data"
         else:
-            assert not (runner.work_dir / "result.txt").exists()
+            assert not (tmp_path / "result.txt").exists()
     finally:
         if runner.work_dir:
             shutil.rmtree(runner.work_dir)
@@ -233,3 +248,75 @@ async def test_native_runner_rejects_mismatched_container_image(
     server = Server("test", setup, command, [command])
 
     assert await EndToEndTestRunner().run_tests({server.name: server}) is False
+
+
+@pytest.mark.skipif(
+    IS_WINDOWS or shutil.which("uv") is None,
+    reason="The native dependency installer requires Bash and uv.",
+)
+@pytest.mark.asyncio
+@pytest.mark.parametrize("compatible", [True, False])
+async def test_native_audio_overlay_reuses_compiled_packages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, compatible: bool
+) -> None:
+    from native_setup import NativeServerSetup
+    from test_runner import EndToEndTestRunner
+
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    base = tmp_path / "base-site"
+    base.mkdir()
+
+    def wheel(name: str, requirements: tuple[str, ...] = ()) -> Path:
+        filename = wheels / f"{name}-1.0-py3-none-any.whl"
+        metadata = f"Metadata-Version: 2.1\nName: {name}\nVersion: 1.0\n"
+        metadata += "Provides-Extra: audio\n"
+        metadata += "".join(
+            f"Requires-Dist: {requirement}\n" for requirement in requirements
+        )
+        with zipfile.ZipFile(filename, "w") as archive:
+            archive.writestr(f"{name}/__init__.py", "")
+            archive.writestr(f"{name}-1.0.dist-info/METADATA", metadata)
+            archive.writestr(
+                f"{name}-1.0.dist-info/WHEEL",
+                "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+            )
+            archive.writestr(f"{name}-1.0.dist-info/RECORD", "")
+        return filename
+
+    for filename in (
+        wheel("torch"),
+        wheel("vllm", ("torch==1.0", "probe-audio==1.0; extra == 'audio'")),
+    ):
+        with zipfile.ZipFile(filename) as archive:
+            archive.extractall(base)
+    wheel("probe_audio", ("torch==1.0" if compatible else "torch>=2.0",))
+    monkeypatch.setenv("PYTHONPATH", str(base))
+    monkeypatch.setenv("AIPERF_DOCS_VLLM_PYTHON", sys._base_executable)
+    monkeypatch.setenv("UV_NO_INDEX", "1")
+    monkeypatch.setenv("UV_FIND_LINKS", wheels.as_uri())
+    monkeypatch.delenv("UV_OVERRIDE", raising=False)
+    runner = EndToEndTestRunner()
+    runner.work_dir = tmp_path / "work"
+    runner.work_dir.mkdir()
+    setup = NativeServerSetup("vllm/vllm-openai:test", (), {}, ("vllm[audio]",))
+
+    if not compatible:
+        with pytest.raises(ValueError, match="dependencies failed to install"):
+            await runner._server_python(setup)
+        return
+
+    python = await runner._server_python(setup)
+    script = (
+        "import pathlib,sys,torch,vllm,probe_audio; "
+        f"base=pathlib.Path({str(base)!r}); "
+        "assert pathlib.Path(torch.__file__).is_relative_to(base); "
+        "assert pathlib.Path(vllm.__file__).is_relative_to(base); "
+        "assert pathlib.Path(probe_audio.__file__).is_relative_to(pathlib.Path(sys.prefix))"
+    )
+    process = await asyncio.create_subprocess_exec(python, "-c", script)
+    assert await process.wait() == 0
+    assert not list(
+        runner.work_dir.glob("server-venv/lib/python*/site-packages/torch*")
+    )
+    assert not list(runner.work_dir.glob("server-venv/lib/python*/site-packages/vllm*"))
