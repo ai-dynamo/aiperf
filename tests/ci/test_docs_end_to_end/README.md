@@ -80,6 +80,10 @@ python3 main.py --server vllm-default-openai --shard-index 0 --shard-total 4
 `setup_test.sh` is the CI entry point and forwards `SERVER_NAME`,
 `SHARD_INDEX`, and `SHARD_TOTAL` to these flags.
 
+CI uses `ai-dynamo-gpu-1-amd64-dind-v1` in the organization runner group
+`ai-dynamo-gpu`. Each job receives one GPU and its own Docker daemon.
+The daemon runs the documented server commands and builds the AIPerf test image.
+
 ## When CI runs it
 
 `.github/workflows/test-docs-end-to-end.yml` decides per push. It runs the GPU

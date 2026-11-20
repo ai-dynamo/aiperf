@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Runs tests/ci/test_docs_end_to_end/setup_test.sh on the AMD GPU runner.
+# Runs tests/ci/test_docs_end_to_end/setup_test.sh on the organization GPU runner.
 #
 # Triggers:
 #   push          — runs for trusted main, release, and mirrored PR branch
@@ -157,18 +157,14 @@ jobs:
             echo "run_test=true" >> "$GITHUB_OUTPUT"
           fi
 
-  # Sharded across 8 GPU runners: 4 shards for vllm-default-openai (the
-  # chat server with 35+ tutorial commands, the wall-clock bottleneck) and
-  # one shard each for the smaller modality-specific servers. The runner
-  # pool (prod-aiperf-tester-amd-gpu-v1) caps at maxRunners=16, so 8 in
-  # parallel fits comfortably; see velonix/flux-apps/.../prod-tester-v1/.
-  # Each shard pays its own ~5-10 min vLLM boot + AIPerf docker build, so
-  # going past ~8 shards has diminishing returns.
+  # Four chat shards balance the larger tutorial set against the four modality shards.
   test-docs-end-to-end:
     name: Test Docs End-to-End (${{ matrix.shard.id }})
     needs: detect-changes
     if: needs.detect-changes.outputs.run_test == 'true'
-    runs-on: prod-aiperf-tester-amd-gpu-v1
+    runs-on:
+      group: ai-dynamo-gpu
+      labels: ai-dynamo-gpu-1-amd64-dind-v1
     strategy:
       fail-fast: false
       matrix:
