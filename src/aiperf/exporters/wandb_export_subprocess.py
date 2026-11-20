@@ -12,11 +12,14 @@ extract a shared helper.
 from __future__ import annotations
 
 import asyncio
+import logging
 import multiprocessing as mp
 from collections.abc import Callable
 from contextlib import suppress
 from typing import Any
 
+from aiperf.common.environment import Environment
+from aiperf.common.parent_death_watchdog import start_parent_death_watchdog
 from aiperf.exporters.exporter_config import ExporterConfig
 
 
@@ -29,12 +32,22 @@ def run_export_in_subprocess(
     Reports success as ``None`` and failure as a ``repr(exc)`` string on
     ``result_queue`` so the parent can log without requiring pickled
     exceptions.
-    """
-    # Import lazily so the module-level cost stays minimal for callers that
-    # only read ``run_export_in_subprocess`` as a spawn target.
-    from aiperf.exporters.wandb_data_exporter import WandbDataExporter
 
+    If the CLI dies abnormally, the child, including its interpreter teardown
+    and the SDK's exit hooks, gets the same ``EXPORT_TIMEOUT_SECONDS`` the
+    upload would have had, then exits so it stops holding the inherited
+    stdout/stderr.
+    """
+    start_parent_death_watchdog(
+        "W&B export",
+        Environment.WANDB.EXPORT_TIMEOUT_SECONDS,
+        logging.getLogger(__name__),
+    )
     try:
+        # Import lazily so the module-level cost stays minimal for callers
+        # that only read ``run_export_in_subprocess`` as a spawn target.
+        from aiperf.exporters.wandb_data_exporter import WandbDataExporter
+
         exporter = WandbDataExporter(exporter_config=exporter_config)
         exporter._export_sync()
         result_queue.put(None)
