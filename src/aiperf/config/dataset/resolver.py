@@ -449,7 +449,21 @@ class DatasetResolver:
 
         if record is None:
             return False
-        return record.get("timestamp") is not None or record.get("delay") is not None
+        if record.get("timestamp") is not None or record.get("delay") is not None:
+            return True
+        from aiperf.plugin.enums import CustomDatasetType
+
+        if dataset_type != CustomDatasetType.MULTI_TURN:
+            return False
+        # multi_turn keeps timing on each turn; the fixed schedule starts each
+        # session at its first turn's timestamp, so a delay alone is not enough.
+        turns = record.get("turns")
+        return (
+            isinstance(turns, list)
+            and bool(turns)
+            and isinstance(turns[0], dict)
+            and turns[0].get("timestamp") is not None
+        )
 
     @staticmethod
     def _probe_first_record(file_path: str) -> dict | None:

@@ -8,6 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import orjson
 import pytest
 from pydantic import ValidationError
 from pytest import param
@@ -31,7 +32,7 @@ from aiperf.config.resolution.resolvers import (
     build_default_resolver_chain,
 )
 from aiperf.config.tokenizer import TokenizerConfig
-from aiperf.plugin.enums import PhaseType
+from aiperf.plugin.enums import CustomDatasetType, PhaseType
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -640,6 +641,88 @@ class TestDatasetResolver:
         assert run.resolved.dataset_has_timing_data == {"main": True}
         # Pair with TimingResolver to confirm fixed_schedule validation passes.
         TimingResolver().resolve(run)
+
+    @staticmethod
+    def _multi_turn_run(tmp_path: Path, turns: list[dict]) -> BenchmarkRun:
+        dataset_file = tmp_path / "multi_turn.jsonl"
+        dataset_file.write_text(
+            orjson.dumps({"session_id": "session_123", "turns": turns}).decode() + "\n"
+        )
+        config = BenchmarkConfig(
+            models=["test-model"],
+            endpoint={"urls": ["http://localhost:8000/v1/chat/completions"]},
+            datasets=[
+                {
+                    "name": "main",
+                    "type": "file",
+                    "path": str(dataset_file),
+                    "format": "multi_turn",
+                }
+            ],
+            phases=[{"name": "profiling", "type": "fixed_schedule"}],
+        )
+        return _make_run(config, artifact_dir=tmp_path / "out")
+
+    def test_multi_turn_per_turn_timestamps_report_timing_data(self, tmp_path):
+        """multi_turn sessions keep their timing on each turn (the loader's
+        "Fixed schedule version"), so the top-level probe alone would reject
+        ``--fixed-schedule`` for a file that does carry timing."""
+        run = self._multi_turn_run(
+            tmp_path,
+            [
+                {"timestamp": 0, "text": "What is deep learning?"},
+                {"timestamp": 1000, "text": "Who are you?"},
+            ],
+        )
+
+        DatasetResolver().resolve(run)
+
+        assert run.resolved.dataset_has_timing_data == {"main": True}
+        TimingResolver().resolve(run)
+
+    def test_turn_timestamps_count_only_for_multi_turn(self, tmp_path):
+        dataset_file = tmp_path / "turns.jsonl"
+        dataset_file.write_text(
+            orjson.dumps({"turns": [{"timestamp": 0, "text": "hello"}]}).decode() + "\n"
+        )
+
+        multi_turn = DatasetResolver._check_timing_data(
+            str(dataset_file), None, CustomDatasetType.MULTI_TURN
+        )
+        single_turn = DatasetResolver._check_timing_data(
+            str(dataset_file), None, CustomDatasetType.SINGLE_TURN
+        )
+
+        assert multi_turn is True
+        assert single_turn is False
+
+    @pytest.mark.parametrize(
+        "turns",
+        [
+            param([{"text": "What is deep learning?"}], id="no_timing"),
+            param(
+                [
+                    {"delay": 0, "text": "What is deep learning?"},
+                    {"delay": 1000, "text": "Who are you?"},
+                ],
+                id="delay_only",
+            ),
+            param([], id="empty_turns"),
+        ],
+    )  # fmt: skip
+    def test_multi_turn_without_first_turn_timestamp_reports_no_timing_data(
+        self, tmp_path, turns
+    ):
+        """The fixed schedule starts each session at its first turn's
+        timestamp, so a delay-only session must be rejected here instead of
+        failing in the timing manager after the run has started."""
+        run = self._multi_turn_run(tmp_path, turns)
+
+        DatasetResolver().resolve(run)
+
+        assert run.resolved.dataset_has_timing_data == {"main": False}
+        with pytest.raises(ValueError, match="uses fixed_schedule which requires"):
+            TimingResolver().resolve(run)
 
 
 # ---------------------------------------------------------------------------
