@@ -137,8 +137,8 @@ RUN mkdir -p /opt/licenses/dpkg \
 # that ends inside the retry window, so a transfer that stalls after connecting
 # is retried only if its timeout fires first. 120 s still allows ~100 KB/s for
 # the ~12 MB tarball.
-ARG FFMPEG_VERSION=8.1.2
-ARG FFMPEG_SHA256=464beb5e7bf0c311e68b45ae2f04e9cc2af88851abb4082231742a74d97b524c
+ARG FFMPEG_VERSION=8.1.3
+ARG FFMPEG_SHA256=7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3
 ARG ENABLE_FFMPEG=1
 RUN if [ "${ENABLE_FFMPEG}" != "1" ]; then \
         echo "ENABLE_FFMPEG=${ENABLE_FFMPEG}: skipping ffmpeg build"; \
@@ -344,7 +344,7 @@ ENTRYPOINT ["/bin/bash", "-c"]
 ############################################
 ############# Runtime Image ################
 ############################################
-FROM nvcr.io/nvidia/distroless/python:3.13-v4.1.4-dev AS runtime
+FROM nvcr.io/nvidia/distroless/python:3.13-v4.2.1-dev AS runtime
 
 # Include project license and asset attributions
 COPY LICENSE ATTRIBUTIONS.md /legal/

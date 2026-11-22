@@ -11,6 +11,7 @@ import zlib
 from typing import TYPE_CHECKING, Any
 
 from aiperf.common.aiperf_logger import AIPerfLogger
+from aiperf.common.enums import AgenticReplayLifecycle
 
 _logger = AIPerfLogger(__name__)
 
@@ -86,6 +87,7 @@ _RAMP_FIELDS: tuple[tuple[str, str], ...] = (
 # AGENTIC_REPLAY phase fields that pass through verbatim onto BasePhaseConfig.
 # (output_key == attr_name on CLIConfig.)
 _AGENTIC_REPLAY_ROUTES: tuple[str, ...] = (
+    "agentic_replay_lifecycle",
     "failed_request_threshold",
     "trajectory_start_min_ratio",
     "trajectory_start_max_ratio",
@@ -395,6 +397,8 @@ def _apply_phase_specific_routes(prof: dict[str, Any], cli: CLIConfig) -> None:
     phase_type = prof["type"]
     fields_set = cli.model_fields_set
 
+    _apply_continuation_dispatch(prof, cli)
+
     for output_key, attr_name in _GAMMA_ONLY_ROUTES:
         if attr_name not in fields_set:
             continue
@@ -416,6 +420,26 @@ def _apply_phase_specific_routes(prof: dict[str, Any], cli: CLIConfig) -> None:
                 "these flags."
             )
         prof[output_key] = getattr(cli, attr_name)
+
+
+def _apply_continuation_dispatch(
+    prof: dict[str, Any], cli: CLIConfig, *, validate: bool = True
+) -> None:
+    """Route the continuation policy, validating the rendered phase type.
+
+    The resolver disables validation only when replaying an already-validated
+    override onto the retained pre-Jinja envelope.
+    """
+    from aiperf.config.phases import CONTINUATION_DISPATCH_PHASE_TYPES
+
+    if "continuation_dispatch" not in cli.model_fields_set:
+        return
+    if validate and prof.get("type") not in CONTINUATION_DISPATCH_PHASE_TYPES:
+        raise ValueError(
+            "--continuation-dispatch requires constant, poisson, or gamma "
+            "request-rate scheduling"
+        )
+    prof["continuation_dispatch"] = cli.continuation_dispatch
 
 
 def _detect_cli_magic_sweep(cli: CLIConfig) -> tuple[str, list] | None:
@@ -465,7 +489,12 @@ def _validate_profiling(prof: dict[str, Any], cli: CLIConfig) -> None:
         param_name, param_values = sweep
         raise ValueError(fixed_schedule_sweep_message(param_name, param_values))
 
-    if not _has_stop_condition(prof) and prof["type"] != PhaseType.FIXED_SCHEDULE:
+    if (
+        not _has_stop_condition(prof)
+        and prof["type"] != PhaseType.FIXED_SCHEDULE
+        and prof.get("agentic_replay_lifecycle", cli.agentic_replay_lifecycle)
+        != AgenticReplayLifecycle.FINITE
+    ):
         _apply_default_stop_condition(prof, cli)
     apply_cancellation(prof, cli)
 
@@ -718,6 +747,11 @@ def _apply_dataset_aware_autodefaults(prof: dict[str, Any], cli: CLIConfig) -> N
     from aiperf.config.dataset.remote_ref import RemoteRef
     from aiperf.config.phases import PhaseType
 
+    if (
+        prof.get("agentic_replay_lifecycle", cli.agentic_replay_lifecycle)
+        == AgenticReplayLifecycle.FINITE
+    ):
+        return
     if isinstance(cli.input_file, RemoteRef):
         # The file does not exist locally yet; the access preflight finishes these
         # decisions after it can read the first record (see dataset/remote/preflight.py).

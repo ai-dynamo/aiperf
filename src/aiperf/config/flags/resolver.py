@@ -1616,6 +1616,7 @@ _PROFILING_PHASE_OVERRIDE_FIELDS: frozenset[str] = frozenset(
     | {
         "arrival_pattern",
         "arrival_smoothness",
+        "continuation_dispatch",
         "concurrency_ramp_duration",
         "fixed_schedule",
         "fixed_schedule_auto_offset",
@@ -1673,6 +1674,7 @@ def _apply_phase_loadgen_overrides(
     from aiperf.config.flags._converter_profiling import (
         _AGENTIC_REPLAY_ROUTES,
         _apply_agentic_replay_fields,
+        _apply_continuation_dispatch,
     )
 
     decision = phase_shape_decision or _PhaseShapeDecision()
@@ -1700,6 +1702,7 @@ def _apply_phase_loadgen_overrides(
         target, cli, loadgen_set, decision=phase_shape_decision
     )
     _apply_rate_series_override(target, cli, loadgen_set)
+    _apply_continuation_dispatch(target, cli, validate=phase_shape_decision is None)
     return decision
 
 
@@ -2028,7 +2031,14 @@ def _transition_phase_type(
         PhaseType.USER_CENTRIC,
     }
     if phase_type not in rate_types:
-        removed = ("rate", "rate_ramp", "rate_series", "smoothness", "users")
+        removed = (
+            "rate",
+            "rate_ramp",
+            "rate_series",
+            "smoothness",
+            "users",
+            "continuation_dispatch",
+        )
     else:
         removed = ("auto_offset", "start_offset", "end_offset", "rate_series")
         if phase_type != PhaseType.GAMMA:

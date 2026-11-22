@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.enums import CaseInsensitiveStrEnum
+from aiperf.common.monotonic_clock import MonotonicClock
 
 if TYPE_CHECKING:
     from aiperf.timing.config import CreditPhaseConfig
@@ -43,15 +44,20 @@ class PhaseLifecycle:
     Cancellation is orthogonal to state - a cancelled phase still completes
     its lifecycle for cleanup.
 
-    Uses wall-clock time (time.time_ns()) for timestamps since they're published
-    across services and need to be comparable. perf_counter is process-local.
+    Publishes timestamps in the wall-clock domain for cross-service comparison.
+    All timestamps share the credit router's injected monotonic clock frame.
     """
 
-    def __init__(self, config: CreditPhaseConfig) -> None:
+    def __init__(
+        self,
+        config: CreditPhaseConfig,
+        clock: MonotonicClock,
+    ) -> None:
         self._config = config
+        self._clock = clock
         self.state: PhaseState = PhaseState.CREATED
 
-        # Timestamps (wall clock - time.time_ns())
+        # Wall-clock-domain timestamps from the shared clock
         self.started_at_ns: int | None = None
         self.sending_complete_at_ns: int | None = None
         self.complete_at_ns: int | None = None
@@ -78,24 +84,17 @@ class PhaseLifecycle:
     def now_ns(self) -> int:
         """Current wall-clock-domain time in this phase's clock frame.
 
-        The single clock every controller-side wall-clock timestamp must be read
-        from. It anchors on the phase's start (``time.time_ns()``) and advances
-        by ``perf_counter_ns`` deltas, so it stays in the wall-clock domain for
-        cross-machine comparison while being immune to an NTP step mid-phase.
+        Use the credit router's shared anchor and advance
+        by ``perf_counter_ns`` deltas. This keeps controller timestamps in one
+        wall-clock-domain frame despite NTP steps during a benchmark.
 
         Credits carry ``issued_at_ns`` from this frame, so anything compared
         against a credit timestamp -- sustain-window boundaries, phase-relative
         cutoffs -- must read it here rather than calling ``time.time_ns()``
-        directly. A raw wall-clock read and this frame diverge by exactly the
-        slew accumulated since the phase started, which silently misclassifies
-        credits that straddle a boundary.
-
-        Falls back to a raw wall-clock read before the phase has started, when
-        there is no anchor to advance from.
+        directly. Wall-clock adjustments after the anchor can make raw reads
+        diverge from this frame and misclassify credits at a boundary.
         """
-        if self.started_at_ns is None or self.started_at_perf_ns is None:
-            return time.time_ns()
-        return self.started_at_ns + (time.perf_counter_ns() - self.started_at_perf_ns)
+        return self._clock.now_ns()
 
     def start(self) -> None:
         """Transition to STARTED state.
@@ -106,9 +105,9 @@ class PhaseLifecycle:
         if self.state != PhaseState.CREATED:
             raise ValueError("Credit phase already started")
         self.state = PhaseState.STARTED
-        perf_ns, time_ns = time.perf_counter_ns(), time.time_ns()
-        self.started_at_ns = time_ns
+        perf_ns = time.perf_counter_ns()
         self.started_at_perf_ns = perf_ns
+        self.started_at_ns = self._clock.wall_ns_at(perf_ns)
 
     def mark_sending_complete(self, *, timeout_triggered: bool = False) -> None:
         """Transition to SENDING_COMPLETE state.
@@ -121,7 +120,7 @@ class PhaseLifecycle:
         if self.state in _SENDING_COMPLETE_STATES:
             raise ValueError("Credit phase already completed sending")
         self.state = PhaseState.SENDING_COMPLETE
-        self.sending_complete_at_ns = time.time_ns()
+        self.sending_complete_at_ns = self._clock.now_ns()
         if timeout_triggered:
             self.timeout_triggered = True
 
@@ -138,7 +137,7 @@ class PhaseLifecycle:
                 "Credit phase has not completed sending. Call mark_sending_complete() first."
             )
         self.state = PhaseState.COMPLETE
-        self.complete_at_ns = time.time_ns()
+        self.complete_at_ns = self._clock.now_ns()
         if grace_period_triggered:
             self.grace_period_triggered = True
 

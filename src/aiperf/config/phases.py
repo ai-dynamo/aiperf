@@ -16,9 +16,11 @@ from pydantic import (
     ConfigDict,
     Discriminator,
     Field,
+    PrivateAttr,
     model_validator,
 )
 
+from aiperf.common.enums import AgenticReplayLifecycle
 from aiperf.common.phase import infer_legacy_phase_kind
 from aiperf.common.types import PhaseKind
 from aiperf.config.adaptive_scale_phase import AdaptiveScalePhaseMixin
@@ -37,11 +39,17 @@ from aiperf.plugin.enums import PhaseType, PhaseTypeStr, RampType, TimingMode
 FULL_PASS_SESSIONS: Final = "all"
 """``sessions`` value that runs every loaded conversation exactly once."""
 
+CONTINUATION_DISPATCH_PHASE_TYPES: Final = frozenset(
+    {PhaseType.CONSTANT, PhaseType.POISSON, PhaseType.GAMMA}
+)
+"""Phase types supporting the root continuation dispatch policy."""
+
 __all__ = [
     "FULL_PASS_SESSIONS",
     "BasePhaseConfig",
     "CancellationConfig",
     "ConcurrencyPhase",
+    "CONTINUATION_DISPATCH_PHASE_TYPES",
     "ConstantPhase",
     "DEFAULT_UNBOUNDED_REQUESTS",
     "DurationSpec",
@@ -402,11 +410,16 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
         ),
     ]
 
-    _failed_request_threshold_explicitly_set: bool = False
-    _trajectory_start_min_ratio_explicitly_set: bool = False
-    _trajectory_start_max_ratio_explicitly_set: bool = False
-    _burst_phase_starts_explicitly_set: bool = False
-    _system_idle_gap_cap_seconds_explicitly_set: bool = False
+    _failed_request_threshold_explicitly_set: bool = PrivateAttr(default=False)
+    _trajectory_start_min_ratio_explicitly_set: bool = PrivateAttr(default=False)
+    _trajectory_start_max_ratio_explicitly_set: bool = PrivateAttr(default=False)
+    _burst_phase_starts_explicitly_set: bool = PrivateAttr(default=False)
+    _system_idle_gap_cap_seconds_explicitly_set: bool = PrivateAttr(default=False)
+
+    agentic_replay_lifecycle: AgenticReplayLifecycle = Field(
+        default=AgenticReplayLifecycle.STEADY_STATE,
+        description="Agentic replay admission policy for the profiling phase.",
+    )
 
     # Subclasses set False to opt out (e.g. FixedSchedulePhase, where the
     # stop condition is inferred from the dataset). Otherwise CLI users
@@ -460,6 +473,7 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
             self.exclude_from_results = required
         if (
             self._stop_condition_required
+            and self.agentic_replay_lifecycle != AgenticReplayLifecycle.FINITE
             and self.requests is None
             and self.duration is None
             and self.sessions is None
@@ -480,6 +494,45 @@ class BasePhaseConfig(AdaptiveScalePhaseMixin, BaseConfig):
             raise ValueError(
                 f"Phase '{self.name}': grace_period requires duration to be set"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_finite_replay(self) -> Self:
+        """Reject controls that truncate or rewrite a finite trace."""
+        if self.agentic_replay_lifecycle != AgenticReplayLifecycle.FINITE:
+            return self
+        if self.kind == "warmup":
+            raise ValueError(
+                "--agentic-replay-lifecycle finite does not support warmup phases"
+            )
+        if self.kind != "profiling" or self.type != PhaseType.CONCURRENCY:
+            raise ValueError(
+                "--agentic-replay-lifecycle finite requires a profiling concurrency phase"
+            )
+        if self.timing_mode not in (None, TimingMode.AGENTIC_REPLAY):
+            raise ValueError(
+                "--agentic-replay-lifecycle finite conflicts with timing_mode"
+            )
+        conflicts = {
+            "requests": self.requests,
+            "duration": self.duration,
+            "sessions": self.sessions,
+            "agentic_cache_warmup_duration": self.agentic_cache_warmup_duration,
+            "agentic_warmup_grace_period": self.agentic_warmup_grace_period,
+            "system_idle_gap_cap_seconds": self.system_idle_gap_cap_seconds,
+            "concurrency_ramp": self.concurrency_ramp,
+            "prefill_ramp": self.prefill_ramp,
+        }
+        for name, value in conflicts.items():
+            if value is not None:
+                raise ValueError(
+                    f"--agentic-replay-lifecycle finite conflicts with {name}"
+                )
+        if self.burst_phase_starts or self.seamless:
+            raise ValueError(
+                "Finite replay does not support burst_phase_starts or seamless phases"
+            )
+        self.timing_mode = TimingMode.AGENTIC_REPLAY
         return self
 
     @model_validator(mode="after")
@@ -565,6 +618,17 @@ class RatePhaseConfig(BasePhaseConfig):
         ),
     ]
 
+    continuation_dispatch: Annotated[
+        Literal["rate_slot", "direct"],
+        Field(
+            default="rate_slot",
+            description="Root continuation scheduling for constant, poisson, and gamma phases. "
+            "rate_slot counts every turn against rate; direct paces session starts "
+            "and sends later root turns after think time, subject to concurrency limits. "
+            "DAG children use their independent dispatch path.",
+        ),
+    ]
+
     rate_ramp: Annotated[
         RampSpec,
         Field(
@@ -589,6 +653,16 @@ class RatePhaseConfig(BasePhaseConfig):
             raise ValueError("rate-controlled phases require rate or rate_series")
         if self.rate is not None and self.rate_series is not None:
             raise ValueError("rate and rate_series are mutually exclusive")
+        if self.continuation_dispatch == "direct" and (
+            self.type not in CONTINUATION_DISPATCH_PHASE_TYPES
+            or self.adaptive_scale
+            or self.timing_mode not in {None, TimingMode.REQUEST_RATE}
+        ):
+            raise ValueError(
+                "continuation_dispatch='direct' requires constant, poisson, or gamma "
+                "request-rate scheduling; adaptive_scale and other timing modes "
+                "are unsupported"
+            )
         return self
 
 

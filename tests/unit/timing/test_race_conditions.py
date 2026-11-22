@@ -8,6 +8,7 @@ import pytest
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import CreditPhaseStats
 from aiperf.common.models.record_models import MetricRecordMetadata
+from aiperf.common.monotonic_clock import MonotonicClock
 from aiperf.credit.sticky_router import StickyCreditRouter, WorkerLoad
 from aiperf.credit.structs import Credit, TurnToSend
 from aiperf.plugin.enums import TimingMode
@@ -41,7 +42,7 @@ def _credit(ph=CreditPhase.PROFILING, cid=1, conv="c1", tidx=0, nt=1):
 
 
 def _components(cfg):
-    lc = PhaseLifecycle(cfg)
+    lc = PhaseLifecycle(cfg, clock=MonotonicClock())
     pr = PhaseProgressTracker(cfg)
     sc = StopConditionChecker(config=cfg, lifecycle=lc, counter=pr.counter)
     return lc, pr, sc

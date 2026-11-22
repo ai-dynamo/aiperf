@@ -91,7 +91,15 @@ class MultiProcessServiceManager(BaseServiceManager):
                 if service_metadata.replicable
                 else str(service_type)
             )
-            process = Process(
+            # forkserver makes its server the OS parent, so the controller's
+            # PR_SET_PDEATHSIG guard would immediately exit. Keep services direct
+            # children without changing the context used by other process pools.
+            process_factory = (
+                multiprocessing.get_context("spawn").Process
+                if multiprocessing.get_start_method() == "forkserver"
+                else Process
+            )
+            process = process_factory(
                 target=bootstrap_and_run_service,
                 name=f"{service_type}_process",
                 kwargs={
@@ -109,8 +117,9 @@ class MultiProcessServiceManager(BaseServiceManager):
             process.start()
 
             self.debug(
-                lambda pid=process.pid,
-                type=service_type: f"Service {type} started as process (pid: {pid})"
+                lambda pid=process.pid, type=service_type: (
+                    f"Service {type} started as process (pid: {pid})"
+                )
             )
 
             self.multi_process_info.append(
@@ -159,10 +168,18 @@ class MultiProcessServiceManager(BaseServiceManager):
             info for info in self.multi_process_info if info.service_type not in exclude
         ]
         deadline = time.monotonic() + Environment.SERVICE.SHUTDOWN_EXIT_TIMEOUT
-        await asyncio.gather(
-            *[self._join_until(info, deadline) for info in targets],
-            return_exceptions=True,
-        )
+        try:
+            await asyncio.gather(
+                *[self._join_until(info, deadline) for info in targets],
+                return_exceptions=True,
+            )
+        except asyncio.CancelledError:
+            # _fail cancels a stop() that outlives the controller's failure
+            # bound; that must not skip the force-kill and leave survivors.
+            for info in targets:
+                if info.process and info.process.is_alive():
+                    info.process.kill()
+            raise
         return await asyncio.gather(
             *[self._wait_for_process(info) for info in targets],
             return_exceptions=True,
