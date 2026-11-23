@@ -141,8 +141,13 @@ checker — while the server is under whatever load the run applies.
 ### Install
 
 ```bash
-uv pip install 'aiperf[bfcl]'
+echo 'filelock>=4.2.1' > bfcl-overrides.txt
+uv pip install 'aiperf[bfcl]' --override bfcl-overrides.txt
 ```
+
+> **The override is required:** `bfcl-eval` pins `filelock==3.20.0`, below
+> AIPerf's `filelock>=4.2.1` security floor. See
+> [BFCL tool-calling](../tutorials/bfcl-tool-calling.md#setup).
 
 > **The `[bfcl]` and `[accuracy]` extras cannot be installed together.**
 > `bfcl-eval` pins `numpy==1.26.4` while lighteval (`[accuracy]`) requires

@@ -37,8 +37,15 @@ same measurement.
 BFCL needs its own optional extra:
 
 ```bash
-uv pip install 'aiperf[bfcl]'
+echo 'filelock>=4.2.1' > bfcl-overrides.txt
+uv pip install 'aiperf[bfcl]' --override bfcl-overrides.txt
 ```
+
+> **The override is required.** `bfcl-eval` pins `filelock==3.20.0` exactly,
+> below AIPerf's security floor of `filelock>=4.2.1`, so a plain install is
+> unsatisfiable. `bfcl-eval` only uses `FileLock(path)`, which 4.x keeps. A
+> `uv sync --extra bfcl` from an AIPerf checkout applies the override for you.
+> `bfcl-eval` has no Windows ARM64 build.
 
 > **`[bfcl]` cannot be installed alongside `[accuracy]`.** `bfcl-eval` pins
 > `numpy==1.26.4` while lighteval (`[accuracy]`) requires `numpy>=2`. AIPerf
