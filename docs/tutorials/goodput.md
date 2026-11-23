@@ -18,6 +18,10 @@ is under 50ms and inter-token latency is under 10ms.
 
 AIPerf provides this value as goodput.
 
+Use `--goodput inter_chunk_latency:10` to count a streaming request only
+when every gap between consecutive content chunks is at most 10 ms.
+Requests with fewer than two content chunks do not meet this constraint.
+
 ## Tutorial
 
 Below you can find a tutorial on how to benchmark a model

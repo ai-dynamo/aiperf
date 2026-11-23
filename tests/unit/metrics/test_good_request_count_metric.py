@@ -7,6 +7,7 @@ from aiperf.common.enums import MetricFlags, MetricTimeUnit
 from aiperf.common.exceptions import MetricTypeError
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.types.good_request_count_metric import GoodRequestCountMetric
+from aiperf.metrics.types.inter_chunk_latency_metric import InterChunkLatencyMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from tests.unit.metrics.conftest import create_record, run_simple_metrics_pipeline
 
@@ -77,3 +78,19 @@ class TestGoodRequestCountMetric:
             GoodRequestCountMetric.tag,
         )
         assert metrics[GoodRequestCountMetric.tag] == 0.0
+
+    def test_inter_chunk_slo_requires_every_gap_to_pass(self):
+        GoodRequestCountMetric.set_slos({InterChunkLatencyMetric.tag: 10})
+        records = [
+            create_record(start_ns=0, responses=[2_000_000, 6_000_000, 16_000_000]),
+            create_record(start_ns=0, responses=[2_000_000, 3_000_000, 14_000_000]),
+            create_record(start_ns=0, responses=[2_000_000]),
+        ]
+
+        metrics = run_simple_metrics_pipeline(
+            records,
+            InterChunkLatencyMetric.tag,
+            GoodRequestCountMetric.tag,
+        )
+
+        assert metrics[GoodRequestCountMetric.tag] == 1.0
