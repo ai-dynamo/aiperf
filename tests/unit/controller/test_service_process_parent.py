@@ -57,7 +57,7 @@ async def main() -> None:
         except Empty:
             raise AssertionError(f"Service failed to start: exitcode={child.exitcode}") from None
         assert parent_pid == os.getpid()
-        assert child_method == ("spawn" if method == "forkserver" else method)
+        assert child_method == ("fork" if method == "forkserver" else method)
         assert mp.get_start_method() == method
         assert child.is_alive()
         print("ready", flush=True)

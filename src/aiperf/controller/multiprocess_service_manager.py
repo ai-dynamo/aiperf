@@ -13,7 +13,7 @@ from multiprocessing.context import SpawnProcess
 from pydantic import BaseModel, ConfigDict, Field
 
 from aiperf.common.bootstrap import bootstrap_and_run_service
-from aiperf.common.constants import IS_WINDOWS
+from aiperf.common.constants import IS_LINUX, IS_WINDOWS
 from aiperf.common.enums import ServiceRegistrationStatus
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError
@@ -94,8 +94,11 @@ class MultiProcessServiceManager(BaseServiceManager):
             # forkserver makes its server the OS parent, so the controller's
             # PR_SET_PDEATHSIG guard would immediately exit. Keep services direct
             # children without changing the context used by other process pools.
+            # On Linux, where forkserver is the default from Python 3.14, fork
+            # rather than spawn: spawned workers and record processors boot
+            # slowly enough to register after PROFILE_CONFIGURE and miss it.
             process_factory = (
-                multiprocessing.get_context("spawn").Process
+                multiprocessing.get_context("fork" if IS_LINUX else "spawn").Process
                 if multiprocessing.get_start_method() == "forkserver"
                 else Process
             )

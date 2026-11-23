@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import multiprocessing
 import os
 from collections import Counter
 from collections.abc import Callable
@@ -12,6 +13,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from aiperf.common.constants import IS_LINUX
 from aiperf.common.environment import Environment
 from aiperf.common.exceptions import AIPerfError
 from aiperf.controller.multiprocess_service_manager import (
@@ -19,6 +21,21 @@ from aiperf.controller.multiprocess_service_manager import (
     MultiProcessServiceManager,
 )
 from aiperf.plugin.enums import ServiceType
+
+
+def _patch_service_process(
+    monkeypatch: pytest.MonkeyPatch, process_cls: MagicMock
+) -> None:
+    """Patch the class services launch with under any default start method.
+
+    Under a ``forkserver`` default (Linux on Python 3.14+), services launch
+    through an explicit context rather than ``multiprocessing.Process``.
+    """
+    monkeypatch.setattr(
+        "aiperf.controller.multiprocess_service_manager.Process", process_cls
+    )
+    for method in multiprocessing.get_all_start_methods():
+        monkeypatch.setattr(multiprocessing.get_context(method), "Process", process_cls)
 
 
 class TestForkProcessRemovalSmokeTest:
@@ -179,10 +196,7 @@ class TestMultiProcessServiceManager:
         can arm the PR_SET_PDEATHSIG parent-death guard against it (and detect
         the reparent race where the controller died before the guard armed)."""
         mock_process_cls = MagicMock(return_value=MagicMock(spec=Process))
-        monkeypatch.setattr(
-            "aiperf.controller.multiprocess_service_manager.Process",
-            mock_process_cls,
-        )
+        _patch_service_process(monkeypatch, mock_process_cls)
 
         await service_manager.run_service(ServiceType.DATASET_MANAGER)
 
@@ -191,6 +205,29 @@ class TestMultiProcessServiceManager:
         assert launch_kwargs["daemon"] is True
         assert launch_kwargs["kwargs"]["controller_pid"] == os.getpid()
         mock_process_cls.return_value.start.assert_called_once()
+
+    @pytest.mark.skipif(not IS_LINUX, reason="services fork only on Linux")
+    @pytest.mark.asyncio
+    async def test_forkserver_default_forks_services_on_linux(
+        self,
+        service_manager: MultiProcessServiceManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Spawned workers and record processors boot slowly enough to register
+        after PROFILE_CONFIGURE and miss it, so a forkserver default (Linux on
+        Python 3.14+) must fork services, as the fork default did before it."""
+        fork_cls = MagicMock(return_value=MagicMock(spec=Process))
+        spawn_cls = MagicMock(return_value=MagicMock(spec=Process))
+        monkeypatch.setattr(
+            multiprocessing, "get_start_method", lambda *_: "forkserver"
+        )
+        monkeypatch.setattr(multiprocessing.get_context("fork"), "Process", fork_cls)
+        monkeypatch.setattr(multiprocessing.get_context("spawn"), "Process", spawn_cls)
+
+        await service_manager.run_service(ServiceType.DATASET_MANAGER)
+
+        fork_cls.assert_called_once()
+        spawn_cls.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_optional_dead_drops_and_continues(
@@ -481,9 +518,8 @@ class TestWorkersDyingBeforeRegistration:
 
 
 async def _spawn_workers(manager, monkeypatch, count: int) -> list[MultiProcessRunInfo]:
-    monkeypatch.setattr(
-        "aiperf.controller.multiprocess_service_manager.Process",
-        MagicMock(side_effect=lambda **_: MagicMock(spec=Process)),
+    _patch_service_process(
+        monkeypatch, MagicMock(side_effect=lambda **_: MagicMock(spec=Process))
     )
     await manager.run_service(ServiceType.WORKER, num_replicas=count)
     return list(manager.multi_process_info)
