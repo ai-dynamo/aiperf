@@ -174,6 +174,17 @@ The Records Manager handles the collection, organization, and storage of benchma
 or analyzers produce. Profiling counts exclude warmup requests, and cancelled
 summaries count the requests processed so far.
 
+Phase completion and warmup progress logs report `worker_errors`: errors known
+when workers return request credits. Response processing can detect additional
+failures afterward, such as a successful HTTP response with no usable completion.
+The Records Manager's processed-record summary and exported `error_request_count`
+include these failures. Once profiling records reconcile with worker completions
+and every participating profiling phase has a known worker-error count, an
+`Error accounting` log explains any additional `response_processing_errors`
+alongside `worker_errors` and `total_errors`. This breakdown excludes intentional
+context-overflow skips from `worker_errors` because they are not record errors.
+This does not return another request credit or change exported counts.
+
 #### Record-Type Channels
 
 The Records Manager does not hard-wire one handler per producer. Instead, every typed record carries a `record_type` class attribute and is fanned out through a metadata-driven routing table: each accumulator and stream exporter declares the record types it consumes via `record_types` in `plugins.yaml`, and `_dispatch_record` routes each record by `getattr(record, "record_type")` to all registered handlers. This makes each record type a dedicated channel.
