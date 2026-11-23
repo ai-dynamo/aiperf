@@ -9,6 +9,9 @@ from aiperf.common.constants import GOOD_REQUEST_COUNT_TAG
 from aiperf.common.enums import MetricFlags, MetricType
 from aiperf.metrics.metric_registry import MetricRegistry
 from aiperf.metrics.types.error_request_count import ErrorRequestCountMetric
+from aiperf.metrics.types.output_sequence_length_metric import (
+    OutputSequenceLengthMetric,
+)
 from aiperf.metrics.types.replay_sched_lag_metrics import (
     ReplaySchedDegradedMetric,
     ReplaySchedLagP50Metric,
@@ -19,6 +22,8 @@ from aiperf.metrics.types.replay_sched_lag_metrics import (
 from aiperf.metrics.types.request_count_metric import RequestCountMetric
 from aiperf.metrics.types.request_latency_metric import RequestLatencyMetric
 from aiperf.metrics.types.request_throughput_metric import RequestThroughputMetric
+from aiperf.metrics.types.usage_diff_metrics import UsageDiscrepancyCountMetric
+from aiperf.metrics.types.usage_metrics import UsageCompletionTokensMetric
 from aiperf.plugin.enums import EndpointType
 from aiperf.post_processors.base_metrics_processor import BaseMetricsProcessor
 from tests.unit.post_processors.conftest import (
@@ -91,6 +96,46 @@ class TestBaseMetricsProcessor:
             assert not (disallowed_flags & supported_flag), (
                 f"Expected supported flag {supported_flag} should not be disallowed"
             )
+
+    @pytest.mark.parametrize(
+        "endpoint_type",
+        [
+            EndpointType.EMBEDDINGS,
+            EndpointType.NIM_RANKINGS,
+            EndpointType.IMAGE_GENERATION,
+        ],
+    )
+    def test_setup_metrics_no_output_tokens_on_non_token_endpoints(
+        self, mock_run, endpoint_type: EndpointType
+    ) -> None:
+        """Dependencies are added back after flag filtering, so a selected metric
+        must not pull OSL into a run on an endpoint that generates no tokens.
+        """
+        mock_run.cfg.endpoint.type = endpoint_type
+
+        tags = {
+            metric.tag
+            for metric in BaseMetricsProcessor(mock_run)._setup_metrics(
+                MetricType.RECORD, MetricType.AGGREGATE, exclude_error_metrics=True
+            )
+        }
+
+        assert OutputSequenceLengthMetric.tag not in tags
+        assert UsageCompletionTokensMetric.tag not in tags
+
+    def test_setup_metrics_keeps_usage_discrepancy_count_on_token_endpoints(
+        self, mock_run
+    ) -> None:
+        mock_run.cfg.endpoint.type = EndpointType.CHAT
+
+        tags = {
+            metric.tag
+            for metric in BaseMetricsProcessor(mock_run)._setup_metrics(
+                MetricType.RECORD, MetricType.AGGREGATE, exclude_error_metrics=True
+            )
+        }
+
+        assert UsageDiscrepancyCountMetric.tag in tags
 
     def test_setup_metrics_basic(
         self,

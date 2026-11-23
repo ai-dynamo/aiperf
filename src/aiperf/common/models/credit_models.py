@@ -133,6 +133,19 @@ class BasePhaseStats(AIPerfBaseModel):
         default=False, description="Whether the credit phase was cancelled."
     )
 
+    sessions_ended_on_truncation: int = Field(
+        default=0,
+        ge=0,
+        description="Root sessions ended early because a turn was truncated by "
+        "the output-token cap (end_conversation_on_truncation).",
+    )
+    turns_skipped_on_truncation: int = Field(
+        default=0,
+        ge=0,
+        description="Turns never sent because their session ended early on a "
+        "truncated turn (end_conversation_on_truncation).",
+    )
+
     @property
     def is_warmup(self) -> bool:
         """Whether this phase has warmup semantics."""

@@ -312,6 +312,4 @@ AssertionError: Cancelled request req_456 has wrong error code:
 
 ## See Also
 
-- [HELPER_USAGE.md](./HELPER_USAGE.md) - Comprehensive usage examples
-- [/SESSION_HELPERS_SUMMARY.md](../../../SESSION_HELPERS_SUMMARY.md) - Implementation summary
 - [/tests/component_integration/conftest.py](../conftest.py) - Source code

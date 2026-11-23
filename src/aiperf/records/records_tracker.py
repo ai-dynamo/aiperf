@@ -66,6 +66,8 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
         self._timeout_triggered: bool = False
         self._grace_period_timeout_triggered: bool = False
         self._was_cancelled: bool = False
+        self._sessions_ended_on_truncation: int = 0
+        self._turns_skipped_on_truncation: int = 0
 
         # Completion fields
         self._sent_all_records_received: bool = False
@@ -113,6 +115,8 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
             timeout_triggered=self._timeout_triggered,
             grace_period_timeout_triggered=self._grace_period_timeout_triggered,
             was_cancelled=self._was_cancelled,
+            sessions_ended_on_truncation=self._sessions_ended_on_truncation,
+            turns_skipped_on_truncation=self._turns_skipped_on_truncation,
         )
 
     def update_from_credit_phase_stats(self, credit_stats: CreditPhaseStats) -> None:
@@ -135,6 +139,8 @@ class CreditPhaseRecordsTracker(AIPerfLoggerMixin):
             credit_stats.grace_period_timeout_triggered
         )
         self._was_cancelled = credit_stats.was_cancelled
+        self._sessions_ended_on_truncation = credit_stats.sessions_ended_on_truncation
+        self._turns_skipped_on_truncation = credit_stats.turns_skipped_on_truncation
 
     def increment_success_records(self) -> None:
         """Increment the success records count."""
@@ -331,6 +337,12 @@ class RecordsTracker:
                 s.grace_period_timeout_triggered for s in stats
             ),
             was_cancelled=any(s.was_cancelled for s in stats),
+            sessions_ended_on_truncation=sum(
+                s.sessions_ended_on_truncation for s in stats
+            ),
+            turns_skipped_on_truncation=sum(
+                s.turns_skipped_on_truncation for s in stats
+            ),
         )
 
     def total_records_for_phase(

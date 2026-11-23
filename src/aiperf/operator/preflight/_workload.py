@@ -141,6 +141,14 @@ class _WorkloadChecksMixin:
             message=f"All {len(needed)} secret(s) verified",
         )
 
+    async def _check_remote_datasets(self) -> CheckResult:
+        """Check remote dataset references against the pod spec's credentials."""
+        from aiperf.kubernetes.remote_datasets import check_remote_datasets
+
+        return await check_remote_datasets(
+            self.config.benchmark.datasets, self.deploy_config.pod_template
+        )
+
     async def _check_image_reference(self) -> CheckResult:
         """Validate image format and warn on implicit latest or missing pull secrets."""
         image = self.deploy_config.image

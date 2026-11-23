@@ -4,10 +4,17 @@ name: "Pre-commit"
 
 on:
   pull_request:
+  merge_group:
+    types: [checks_requested]
 
 jobs:
   pre-commit:
     runs-on: ubuntu-latest
+    # A merge group has no pull_request payload; its base is the target branch
+    # tip in this repository, and its diff also covers PRs queued ahead of it.
+    env:
+      BASE_URL: ${{ github.event.pull_request.base.repo.clone_url || format('{0}/{1}.git', github.server_url, github.repository) }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
     steps:
     - uses: actions/checkout@v6
       with:
@@ -15,8 +22,8 @@ jobs:
 
     - name: Fetch base commit
       run: |
-        git remote add base "${{ github.event.pull_request.base.repo.clone_url }}"
-        git fetch --no-tags --depth=1 base ${{ github.event.pull_request.base.sha }}
+        git remote add base "${BASE_URL}"
+        git fetch --no-tags --depth=1 base "${BASE_SHA}"
 
     - uses: actions/setup-python@v6
       with:
@@ -29,5 +36,5 @@ jobs:
     - uses: pre-commit/action@v3.0.1
       with:
         extra_args: >-
-          --from-ref ${{ github.event.pull_request.base.sha }}
+          --from-ref ${{ env.BASE_SHA }}
           --to-ref   ${{ github.sha }}

@@ -2,15 +2,17 @@
 # SPDX-License-Identifier: Apache-2.0
 import asyncio
 import contextlib
+import errno
 import socket
 import time
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import aiohttp
+from yarl import URL
 
 from aiperf.common.constants import NANOS_PER_SECOND
 from aiperf.common.environment import Environment
-from aiperf.common.exceptions import SSEResponseError
+from aiperf.common.exceptions import ResponseBodyIncompleteError, SSEResponseError
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import (
     AioHttpTraceData,
@@ -19,6 +21,7 @@ from aiperf.common.models import (
     RequestRecord,
     TextResponse,
 )
+from aiperf.common.monotonic_clock import process_clock
 from aiperf.transports.aiohttp_trace import create_aiohttp_trace_config
 from aiperf.transports.aws.eventstream import (
     EVENTSTREAM_CONTENT_TYPE,
@@ -29,7 +32,10 @@ from aiperf.transports.http_defaults import AioHttpDefaults, SocketDefaults
 from aiperf.transports.sse_utils import AsyncSSEStreamReader
 
 if TYPE_CHECKING:
-    from aiperf.transports.base_transports import FirstTokenCallback
+    from aiperf.transports.base_transports import (
+        FirstTokenCallback,
+        TransportBoundaryCallback,
+    )
 
 
 def _expected_request_body_size(data: Any) -> int | None:
@@ -52,12 +58,40 @@ def _expected_request_body_size(data: Any) -> int | None:
     return None
 
 
+def _record_response_body_eof(
+    response: aiohttp.ClientResponse,
+    record: RequestRecord,
+    callback: "TransportBoundaryCallback",
+) -> None:
+    """Validate body EOF and stamp the record before notifying the observer."""
+    if not response.content.at_eof():
+        raise ResponseBodyIncompleteError(
+            "Successful HTTP response did not reach body EOF"
+        )
+    eof_perf_ns = time.perf_counter_ns()
+    record.response_body_eof_perf_ns = eof_perf_ns
+    callback(eof_perf_ns)
+
+
+VIDEO_DOWNLOAD_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+
+
+def _is_local_port_exhaustion(e: BaseException) -> bool:
+    """Return True if a connect failed because no local port was free."""
+    return (
+        isinstance(e, aiohttp.ClientConnectorError)
+        and e.os_error.errno == errno.EADDRNOTAVAIL
+    )
+
+
 class AioHttpClient(AIPerfLoggerMixin):
     """A high-performance HTTP client for communicating with HTTP based REST APIs using aiohttp.
 
     This class is optimized for maximum performance and accurate timing measurements,
     making it ideal for benchmarking scenarios.
     """
+
+    _port_exhaustion_logged: ClassVar[bool] = False
 
     def __init__(
         self,
@@ -71,6 +105,8 @@ class AioHttpClient(AIPerfLoggerMixin):
         self.tcp_connector = create_tcp_connector(**tcp_kwargs or {})
         self.timeout = aiohttp.ClientTimeout(total=timeout)
         self.collect_trace_chunks = collect_trace_chunks
+        # Read by the worker's health report; see WorkerTaskStats.stream_chunks_received.
+        self.stream_chunks_received = 0
 
     async def close(self) -> None:
         """Close the client."""
@@ -81,15 +117,19 @@ class AioHttpClient(AIPerfLoggerMixin):
     async def _request(
         self,
         method: str,
-        url: str,
+        url: str | URL,
         headers: dict[str, str],
         *,
         data: bytes | aiohttp.FormData | None = None,
         on_request_sent: asyncio.Event | None = None,
         first_token_callback: "FirstTokenCallback | None" = None,
+        transport_start_callback: "TransportBoundaryCallback | None" = None,
+        transport_eof_callback: "TransportBoundaryCallback | None" = None,
         trace_data: AioHttpTraceData | None = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
+        capture_redirects: bool = False,
+        trust_env: bool | None = None,
         **kwargs: Any,
     ) -> RequestRecord:
         """Generic request method that handles common logic for all HTTP methods.
@@ -106,11 +146,18 @@ class AioHttpClient(AIPerfLoggerMixin):
                 If None, uses self.tcp_connector (shared pool).
             connector_owner: If True, the session will close the connector when done.
                 Use True for per-request connections that should be closed after use.
+            capture_redirects: Capture download redirect headers without reading the body.
+                Requires GET and explicit allow_redirects=False.
+            trust_env: Override environment proxy and netrc use for this session.
             **kwargs: Additional arguments to pass to the request
 
         Returns:
             RequestRecord with the response data
         """
+        if capture_redirects and (
+            method != "GET" or kwargs.get("allow_redirects") is not False
+        ):
+            raise ValueError("Redirect capture requires GET with allow_redirects=False")
         self.debug(lambda: f"Sending {method} request to {url}")
 
         # Use provided trace_data or create new one
@@ -152,18 +199,31 @@ class AioHttpClient(AIPerfLoggerMixin):
                 ],
                 connector_owner=connector_owner,
                 trace_configs=[trace_config],
-                trust_env=AioHttpDefaults.TRUST_ENV,
+                trust_env=AioHttpDefaults.TRUST_ENV if trust_env is None else trust_env,
             ) as session:
-                # Re-pair start_perf_ns with timestamp_ns at the same instant: the Pydantic
-                # default_factory fired at record construction (above), but session setup
-                # has now moved start_perf_ns forward, so timestamp_ns needs the same shift
-                # to keep the (wall, perf) pairing used by compute_time_ns.
+                # Session setup moved start_perf_ns past record construction; re-derive
+                # timestamp_ns from it.
                 record.start_perf_ns = time.perf_counter_ns()
-                record.timestamp_ns = time.time_ns()
+                record.timestamp_ns = process_clock().wall_ns_at(record.start_perf_ns)
+                if transport_start_callback is not None:
+                    transport_start_callback(record.start_perf_ns)
+
                 async with session.request(
                     method, url, data=data, headers=headers, **kwargs
                 ) as response:
                     record.status = response.status
+
+                    if (
+                        capture_redirects
+                        and response.status in VIDEO_DOWNLOAD_REDIRECT_STATUSES
+                    ):
+                        record._redirect_locations = tuple(
+                            response.headers.getall("Location", ())
+                        )
+                        record.end_perf_ns = time.perf_counter_ns()
+                        # An unfinished redirect body must not delay the next hop.
+                        response.close()
+                        return record
 
                     # Treat the full 2xx range as success so async job APIs can
                     # return accepted/created responses without being rejected.
@@ -203,6 +263,7 @@ class AioHttpClient(AIPerfLoggerMixin):
                             async for chunk in response.content.iter_any():
                                 chunk_ns = time.perf_counter_ns()
                                 chunk_len = len(chunk)
+                                self.stream_chunks_received += 1
                                 _trace.response_chunks_count += 1
                                 _trace.response_bytes_total += chunk_len
                                 if _chunks_append is not None:
@@ -247,6 +308,10 @@ class AioHttpClient(AIPerfLoggerMixin):
                             async for message in sse_messages:
                                 reader_cls.inspect_message_for_error(message)
                                 record.responses.append(message)
+                        if transport_eof_callback is not None:
+                            _record_response_body_eof(
+                                response, record, transport_eof_callback
+                            )
                         record.end_perf_ns = time.perf_counter_ns()
                     else:
                         # Non-SSE response (e.g., JSON or binary)
@@ -263,6 +328,10 @@ class AioHttpClient(AIPerfLoggerMixin):
 
                         if is_binary:
                             raw_bytes = await response.read()
+                            if transport_eof_callback is not None:
+                                _record_response_body_eof(
+                                    response, record, transport_eof_callback
+                                )
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
                                 BinaryResponse(
@@ -272,6 +341,11 @@ class AioHttpClient(AIPerfLoggerMixin):
                                 )
                             )
                         else:
+                            if transport_eof_callback is not None:
+                                await response.read()
+                                _record_response_body_eof(
+                                    response, record, transport_eof_callback
+                                )
                             raw_response = await response.text()
                             record.end_perf_ns = time.perf_counter_ns()
                             record.responses.append(
@@ -297,9 +371,13 @@ class AioHttpClient(AIPerfLoggerMixin):
                             f"{method} request to {url} completed in {(record.end_perf_ns - record.start_perf_ns) / NANOS_PER_SECOND} seconds"
                         )
                     )
-        except (SSEResponseError, AwsEventStreamError) as e:
+        except (
+            ResponseBodyIncompleteError,
+            SSEResponseError,
+            AwsEventStreamError,
+        ) as e:
             record.end_perf_ns = time.perf_counter_ns()
-            self.error(f"Error in streaming response: {e!r}")
+            self.error(f"Error in HTTP response: {e!r}")
             record.error = ErrorDetails.from_exception(e)
             if isinstance(e, AwsEventStreamError) and e.exception_type:
                 # Preserve AWS's own label (ModelStreamError,
@@ -322,6 +400,16 @@ class AioHttpClient(AIPerfLoggerMixin):
             record.end_perf_ns = time.perf_counter_ns()
             self.error(f"Error in aiohttp request: {e!r}")
             record.error = ErrorDetails.from_exception(e)
+            if (
+                _is_local_port_exhaustion(e)
+                and not AioHttpClient._port_exhaustion_logged
+            ):
+                AioHttpClient._port_exhaustion_logged = True
+                self.warning(
+                    f"Connect to {e.host}:{e.port} failed with EADDRNOTAVAIL: likely "
+                    "out of local ports (net.ipv4.ip_local_port_range). Lower the "
+                    "concurrency, add --url addresses, or widen the port range."
+                )
 
         return record
 
@@ -333,6 +421,8 @@ class AioHttpClient(AIPerfLoggerMixin):
         *,
         cancel_after_ns: int | None = None,
         first_token_callback: "FirstTokenCallback | None" = None,
+        transport_start_callback: "TransportBoundaryCallback | None" = None,
+        transport_eof_callback: "TransportBoundaryCallback | None" = None,
         connector: aiohttp.TCPConnector | None = None,
         connector_owner: bool = False,
         **kwargs: Any,
@@ -360,6 +450,8 @@ class AioHttpClient(AIPerfLoggerMixin):
                 headers,
                 data=payload,
                 first_token_callback=first_token_callback,
+                transport_start_callback=transport_start_callback,
+                transport_eof_callback=transport_eof_callback,
                 connector=connector,
                 connector_owner=connector_owner,
                 **kwargs,
@@ -370,6 +462,8 @@ class AioHttpClient(AIPerfLoggerMixin):
             headers,
             cancel_after_ns,
             first_token_callback=first_token_callback,
+            transport_start_callback=transport_start_callback,
+            transport_eof_callback=transport_eof_callback,
             connector=connector,
             connector_owner=connector_owner,
             **kwargs,
@@ -473,7 +567,7 @@ class AioHttpClient(AIPerfLoggerMixin):
             )
 
     async def get_request(
-        self, url: str, headers: dict[str, str], **kwargs: Any
+        self, url: str | URL, headers: dict[str, str], **kwargs: Any
     ) -> RequestRecord:
         """Send a GET request to the specified URL with the given headers.
 

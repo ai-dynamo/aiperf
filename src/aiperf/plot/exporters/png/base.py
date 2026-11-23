@@ -13,6 +13,12 @@ import plotly.graph_objects as go
 
 from aiperf.common.constants import IS_WINDOWS_ARM
 from aiperf.common.exceptions import ConfigurationError
+from aiperf.plot.browser import (
+    browser_installation_guidance,
+    is_browser_not_found,
+    is_browser_start_failure,
+    is_linux_arm64,
+)
 from aiperf.plot.constants import (
     DEFAULT_PLOT_DPI,
     DEFAULT_PLOT_HEIGHT,
@@ -50,12 +56,24 @@ class BasePNGExporter(BaseExporter):
                 "Export plots on Linux or WSL, or use the interactive dashboard "
                 "('--dashboard')."
             )
-        fig.write_image(
-            str(path),
-            width=DEFAULT_PLOT_WIDTH,
-            height=DEFAULT_PLOT_HEIGHT,
-            scale=DEFAULT_PLOT_DPI / 100,
-        )
+        try:
+            fig.write_image(
+                str(path),
+                width=DEFAULT_PLOT_WIDTH,
+                height=DEFAULT_PLOT_HEIGHT,
+                scale=DEFAULT_PLOT_DPI / 100,
+            )
+        except RuntimeError as exc:
+            if is_linux_arm64():
+                if is_browser_not_found(exc):
+                    raise ConfigurationError(
+                        f"PNG export requires Chrome or Chromium. {browser_installation_guidance()}"
+                    ) from None
+                if is_browser_start_failure(exc):
+                    raise ConfigurationError(
+                        f"Chrome or Chromium could not start. Check its dependencies. {browser_installation_guidance()}"
+                    ) from exc
+            raise
 
     def _create_summary_file(self, generated_files: list[Path]) -> None:
         """

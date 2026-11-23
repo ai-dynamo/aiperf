@@ -86,6 +86,7 @@ class BaseComponentService(BaseService):
         # lets the later handshake strand the earlier one's wait forever.
         self._pending_registrations: dict[str, asyncio.Event] = {}
         self._registration_complete = False
+        self._registration_instance_id = uuid.uuid4().hex
         self._reregistration_requested = False
         self._reregistration_task: asyncio.Task | None = None
         self._early_heartbeat_task: asyncio.Task | None = None
@@ -175,6 +176,7 @@ class BaseComponentService(BaseService):
             pod_name=os.environ.get("HOSTNAME"),
             pod_index=os.environ.get("AIPERF_POD_INDEX"),
             capabilities=tuple(self.extra_capabilities),
+            instance_id=self._registration_instance_id,
         )
 
     @on_start

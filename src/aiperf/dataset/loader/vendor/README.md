@@ -10,11 +10,11 @@ re-vendor and a SHA bump.
 
 | | |
 |---|---|
-| Upstream | [`NVIDIA-NeMo/Skills`](https://github.com/NVIDIA-NeMo/Skills) `nemo_skills/dataset/speed-bench/prepare.py` |
-| Source URL | `https://raw.githubusercontent.com/NVIDIA-NeMo/Skills/5ac8609a56ac941540b10c92e68d556e6343cd4c/nemo_skills/dataset/speed-bench/prepare.py` |
-| Pinned commit | `5ac8609a56ac941540b10c92e68d556e6343cd4c` (authored 2026-03-04) |
-| Retrieved | 2026-09-01 |
-| sha256 | `a551be4df541474e54e21b480022b0cbb66c2da068fda61b2a64bd3223bbbed2` |
+| Upstream | [`NVIDIA-NeMo/Gym`](https://github.com/NVIDIA-NeMo/Gym) `benchmarks/speed-bench/prepare.py` |
+| Source URL | `https://raw.githubusercontent.com/NVIDIA-NeMo/Gym/3a9b9eb981ab7a3ea0ebd517cbd4fca1d586768b/benchmarks/speed-bench/prepare.py` |
+| Pinned commit | `3a9b9eb981ab7a3ea0ebd517cbd4fca1d586768b` (authored 2026-11-04) |
+| Retrieved | 2026-11-04 |
+| sha256 | `640de89c585d6e7a7ad8a5e09ef3621c3471e459e992848d1387f43d7e47ec8a` |
 | Licence | Apache-2.0, Copyright (c) 2026 NVIDIA CORPORATION (header retained verbatim) |
 
 Unmodified. AIPerf adds no changes; the Apache-2.0 §4(b) modification notice
@@ -36,15 +36,25 @@ unreachable, so the offline pin remains the contract that always holds.
 ### Why this file and not `specdec_bench`
 
 The SPEED-Bench dataset card designates `specdec_bench/datasets/speed.py` in
-NVIDIA/Model-Optimizer as canonical. This is *not* that file: NeMo-Skills
+NVIDIA/Model-Optimizer as canonical. This is *not* that file: NeMo-Gym
 carries an independent flattened implementation that has already diverged.
 
 The divergence is load-bearing. Canonical writes parquet with a `turns` column;
-this writes JSONL with `messages=[{"role": ..., "content": ...}]`, which is the
-shape `SpeedBenchRow` validates. Switching to canonical would require changing
-our row model, so the two are not interchangeable.
+Gym supports JSONL with `messages=[{"role": ..., "content": ...}]` via
+`--format raw`, which is the shape `SpeedBenchRow` validates. Its default
+`--format gym` emits Gym-specific rows instead. AIPerf calls the resolver
+directly and retains its existing raw-row conversion and atomic cache writes.
+The custom loaders accept resolved `messages` JSONL from either the old
+NeMo-Skills script or Gym raw output. A `turns`-based output needs conversion
+before those loaders can consume it; loading an old file does not regenerate
+its prompts with the new resolver.
 
-Both share one flaw worth knowing: the source dispatch in
+The resolver retains one behavior worth knowing: the source dispatch in
 `_fetch_all_turns_data` ends in `return example` with no terminal `else`, so an
 unrecognised source silently yields placeholder text. AIPerf detects this after
 the fact by counting unresolved rows rather than trusting the exit status.
+
+The Gym resolver requires v1.1 source references for HLE and StackSelect
+throughput prompts. AIPerf pins the matching dataset commit in
+`speed_bench_public.py` and stores resolved rows under `speed-bench/v1.1/`.
+Source caches are scoped to a resolution call.

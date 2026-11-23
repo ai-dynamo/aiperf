@@ -6,15 +6,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
-
-import orjson
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from aiperf.common.enums import ConversationContextMode
 from aiperf.common.mixins import AIPerfLoggerMixin
 from aiperf.common.models import Conversation
+from aiperf.common.record_files import iter_records
 from aiperf.common.session_id_generator import SessionIDGenerator
-from aiperf.common.utils import open_text_maybe_gzip
 from aiperf.dataset.loader.models import CustomDatasetT
 from aiperf.plugin.enums import DatasetSamplingStrategy
 
@@ -133,6 +131,13 @@ class BaseFileLoader(BaseLoader):
         **kwargs: Additional arguments to pass to the base class.
     """
 
+    reads_parquet: ClassVar[bool] = False
+    """True when this loader accepts parquet input: through ``_iter_record_dicts``,
+    or natively (``baseten_trace``)."""
+
+    reads_parquet_directories: ClassVar[bool] = True
+    """False when a parquet-reading loader takes only a single file, not a directory of shards."""
+
     def __init__(
         self,
         *,
@@ -164,9 +169,9 @@ class BaseFileLoader(BaseLoader):
             raises ``ValueError`` if absent). Unknown pool names raise ``KeyError``.
 
         For file mode:
-          - Yields ``orjson.loads`` of each non-empty stripped line. A ``.gz``
-            suffix is transparently decompressed, so a gzipped JSONL corpus
-            can be replayed without inflating it first.
+          - Yields each record of a JSONL file (``.gz`` transparently
+            decompressed) or of parquet input (a file, or a directory of
+            shards), via :func:`aiperf.common.record_files.iter_records`.
           - ``source`` (if provided) is treated as an alternate file path
             (used by directory-walking loaders such as ``random_pool``).
         """
@@ -183,15 +188,7 @@ class BaseFileLoader(BaseLoader):
             return
 
         target = source if source is not None else self.filename
-        with open_text_maybe_gzip(target) as f:
-            for lineno, line in enumerate(f, start=1):
-                if line := line.strip():
-                    try:
-                        yield orjson.loads(line)
-                    except orjson.JSONDecodeError as e:
-                        raise ValueError(
-                            f"Invalid JSON in dataset file {target} at line {lineno}: {e}"
-                        ) from None
+        yield from iter_records(target)
 
 
 class BaseRawPayloadLoader(BaseFileLoader):

@@ -30,6 +30,7 @@ from aiperf.common.messages import (
     ProcessServerMetricsResultMessage,
     RealtimeServerMetricsMessage,
     ServerMetricsStatusMessage,
+    ServerMetricsWarmupBoundaryReadyMessage,
 )
 from aiperf.common.metric_utils import normalize_metrics_endpoint_url
 from aiperf.common.mixins import BaselineCollectorMixin
@@ -38,6 +39,7 @@ from aiperf.common.models import (
     ErrorDetailsCount,
     ProcessServerMetricsResult,
     ServerMetricsRecord,
+    ServerMetricsResults,
 )
 from aiperf.common.redact import redact_url
 from aiperf.common.types import PhaseKind
@@ -46,7 +48,9 @@ from aiperf.credit.messages import (
     CreditPhaseStartMessage,
 )
 from aiperf.plugin import plugins
-from aiperf.plugin.enums import AccumulatorType, PluginType
+from aiperf.plugin.enums import AccumulatorType, PluginType, ServiceRunType
+from aiperf.server_metrics.array_store import ServerMetricsStorageError, run_history_io
+from aiperf.server_metrics.constants import SERVER_METRICS_COLLECTION_STOPPED
 from aiperf.server_metrics.data_collector import ServerMetricsDataCollector
 from aiperf.server_metrics.discovery import is_running_in_kubernetes
 from aiperf.server_metrics.protocols import ServerMetricsAccumulatorProtocol
@@ -56,6 +60,7 @@ if TYPE_CHECKING:
 
 
 _SERVER_METRICS_RECORD_TYPE = "server_metrics"
+_MAX_DISTINCT_COLLECTION_ERRORS = 100
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -119,6 +124,15 @@ class _ErrorState:
 
     def record(self, error: ErrorDetails) -> None:
         """Increment the count for one error shape."""
+        if (
+            error.type != SERVER_METRICS_COLLECTION_STOPPED
+            and error not in self.error_counts
+            and len(self.error_counts) >= _MAX_DISTINCT_COLLECTION_ERRORS
+        ):
+            error = ErrorDetails(
+                type="AdditionalServerMetricsErrors",
+                message="Additional distinct server metrics collection errors were suppressed",
+            )
         self.error_counts[error] += 1
 
 
@@ -185,6 +199,8 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         self._phase_started_after_profiling = False
         self._last_realtime_publish_ns = 0
         self._profile_complete_lock = asyncio.Lock()
+        self._ingest_lock = asyncio.Lock()
+        self._collection_failure: ErrorDetails | None = None
         self._scrape_timeout = Environment.SERVER_METRICS.SCRAPE_TIMEOUT
         self._load_server_metrics_processors()
 
@@ -219,6 +235,15 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         # ``_collect_metrics_loop``).
         self._next_phase_instance_id = 0
         self._last_profiling_phase: _ServerMetricsPhaseIdentity | None = None
+        # Periodic scrapes are fire-and-forget and can outlive the flush
+        # deadline. Track them so the warmup boundary can drain before
+        # profiling credits start (see #1435 follow-up).
+        self._in_flight_scrapes: set[asyncio.Task] = set()
+        # Subset of ``_in_flight_scrapes`` started by the collector loop. Only
+        # these are safe to cancel when the drain times out: a manager-initiated
+        # scrape runs inside a command handler task that must not be cancelled.
+        self._periodic_in_flight_scrapes: set[asyncio.Task] = set()
+        self._periodic_scrapes_suspended = False
 
     def _load_server_metrics_processors(self) -> None:
         """Load only accumulator/exporter plugins consuming server metrics."""
@@ -575,6 +600,13 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
     ) -> None:
         """Capture an end-of-warmup scrape and retire non-profiling phases.
 
+        Warmup waits for ``COLLECTION_FLUSH_PERIOD``, suspends periodic scrapes,
+        drains any in-flight warmup-tagged scrapes, then takes the final scrape.
+        ``PhaseRunner`` holds the same flush deadline and then waits for
+        ``SERVER_METRICS_WARMUP_BOUNDARY_READY`` before profiling credits start,
+        so a delayed scrape cannot retain the warmup label while observing
+        profiling traffic.
+
         ``PROFILE_COMPLETE`` still owns the final profiling scrape. We do not
         clear profiling here because the profile-complete command is delivered
         after the profiling phase completes and should still tag the final
@@ -602,26 +634,45 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             self._profiling_window_end_ns = max(
                 self._profiling_window_end_ns or 0, end_ns
             )
-        if is_warmup and self._collectors:
-            self.info(
-                "Server Metrics: Warmup complete, capturing final warmup metrics..."
-            )
-            for endpoint_url, collector in list(self._collectors.items()):
-                try:
-                    await self._collect_and_process_metrics_for_phase(
-                        collector, identity
+        if is_warmup:
+            try:
+                if self._collectors:
+                    await self._wait_for_collection_flush(
+                        self._warmup_window_end_ns,
+                        reason="warmup phase complete",
                     )
-                    self.debug(
-                        lambda url=endpoint_url: (
-                            f"Server Metrics: Captured warmup final state from {url}"
-                        )
+                    self._periodic_scrapes_suspended = True
+                    await self._drain_in_flight_scrapes()
+                    self.info(
+                        "Server Metrics: Warmup complete, capturing final warmup metrics..."
                     )
-                except Exception as e:  # noqa: BLE001 - one endpoint's scrape failure must not skip the rest
-                    self.warning(
-                        f"Server Metrics: Failed to capture warmup final state from {endpoint_url}: {e}"
-                    )
-
-        if (
+                    for endpoint_url, collector in list(self._collectors.items()):
+                        try:
+                            await self._collect_and_process_metrics_for_phase(
+                                collector, identity
+                            )
+                            self.debug(
+                                lambda url=endpoint_url: (
+                                    "Server Metrics: Captured warmup final state "
+                                    f"from {url}"
+                                )
+                            )
+                        except Exception as e:  # noqa: BLE001 - one endpoint must not skip the rest
+                            self.warning(
+                                "Server Metrics: Failed to capture warmup final "
+                                f"state from {endpoint_url}: {e}"
+                            )
+            finally:
+                if (
+                    not is_profiling
+                    and self._active_phase is not None
+                    and self._active_phase.phase == identity.phase
+                    and self._active_phase.phase_index == identity.phase_index
+                ):
+                    self._active_phase = None
+                self._periodic_scrapes_suspended = False
+                await self._publish_warmup_boundary_ready(identity.phase_name)
+        elif (
             not is_profiling
             and self._active_phase is not None
             and self._active_phase.phase == identity.phase
@@ -675,8 +726,89 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                     warmup_end_ns=window.get("warmup_end_ns"),
                 )
 
+    async def _drain_in_flight_scrapes(self) -> None:
+        """Await scrapes that started before the warmup boundary hold.
+
+        Periodic collection is fire-and-forget, so a scrape tagged warmup can
+        still be in flight when the flush deadline elapses. Draining those
+        tasks before the final warmup scrape (and before publishing boundary
+        ready) keeps their observations out of the profiling window.
+
+        The wait is bounded by ``SCRAPE_TIMEOUT`` because periodic scrapes have
+        no total timeout of their own and ``PhaseRunner`` budgets this drain at
+        one scrape timeout. Periodic scrapes still running after the bound are
+        cancelled so a straggler cannot record warmup-tagged observations once
+        profiling starts. Never raises.
+        """
+        current = asyncio.current_task()
+        pending = [
+            task
+            for task in self._in_flight_scrapes
+            if not task.done() and task is not current
+        ]
+        if not pending:
+            return
+        self.info(
+            f"Server Metrics: Draining {len(pending)} in-flight scrape(s) "
+            "before warmup boundary..."
+        )
+        _, still_pending = await asyncio.wait(pending, timeout=self._scrape_timeout)
+        if not still_pending:
+            return
+        to_cancel = [
+            task for task in still_pending if task in self._periodic_in_flight_scrapes
+        ]
+        self.warning(
+            f"Server Metrics: {len(still_pending)} in-flight scrape(s) did not "
+            f"finish within {self._scrape_timeout}s; cancelling {len(to_cancel)} "
+            "periodic scrape(s) before warmup boundary"
+        )
+        for task in to_cancel:
+            task.cancel()
+        if to_cancel:
+            await asyncio.wait(to_cancel, timeout=self._scrape_timeout)
+
+    async def _publish_warmup_boundary_ready(self, phase_name: str | None) -> None:
+        """Tell TimingManager the warmup server-metrics boundary is settled."""
+        try:
+            await self.publish(
+                ServerMetricsWarmupBoundaryReadyMessage(
+                    service_id=self.service_id,
+                    phase_name=phase_name,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - timing has a wait timeout
+            self.warning(
+                f"Server Metrics: Failed to publish warmup boundary ready: {exc}"
+            )
+
+    async def _wait_for_collection_flush(
+        self, end_ns: int | None, *, reason: str
+    ) -> None:
+        """Wait until ``end_ns + COLLECTION_FLUSH_PERIOD`` before a boundary scrape.
+
+        Prometheus histograms are cumulative and may publish after the client
+        observes response completion. Holding the scrape until the flush
+        deadline lets late observations land in the correct phase bucket.
+        Callers that gate the next request phase on the same deadline (see
+        ``PhaseRunner._wait_for_server_metrics_warmup_flush``) must use the
+        same ``end_ns`` so profiling credits cannot start during the wait.
+        """
+        flush_end_ns = (end_ns or time.time_ns()) + int(
+            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD * 1_000_000_000
+        )
+        remaining_seconds = (flush_end_ns - time.time_ns()) / 1_000_000_000
+        if remaining_seconds > 0:
+            self.info(
+                f"Waiting {remaining_seconds:.1f}s for server metrics flush "
+                f"period ({reason})..."
+            )
+            await asyncio.sleep(remaining_seconds)
+
     async def _capture_profile_complete_scrape(self, end_ns: int | None) -> None:
         """Scrape every endpoint one last time, attributed to the final profile."""
+        if self._collection_failure is not None:
+            return
         if not self._collectors:
             self.debug("Server Metrics: Already stopped, skipping final scrape")
             return
@@ -688,15 +820,10 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
             )
             return
 
-        flush_end_ns = (end_ns or time.time_ns()) + int(
-            Environment.SERVER_METRICS.COLLECTION_FLUSH_PERIOD * 1_000_000_000
+        await self._wait_for_collection_flush(
+            end_ns,
+            reason="profiling complete",
         )
-        remaining_seconds = (flush_end_ns - time.time_ns()) / 1_000_000_000
-        if remaining_seconds > 0:
-            self.info(
-                f"Waiting {remaining_seconds:.1f}s for server metrics flush period..."
-            )
-            await asyncio.sleep(remaining_seconds)
 
         self.info("Server Metrics: Profiling complete, capturing final metrics...")
         final_phase = self._last_profiling_phase or _ServerMetricsPhaseIdentity(
@@ -866,6 +993,17 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                 self.exception(f"Failed to export server metrics results: {exc!r}")
                 self._error_state.record(ErrorDetails.from_exception(exc))
 
+        if result is None and self._error_state.error_counts:
+            result = ServerMetricsResults(
+                benchmark_id=self.run.benchmark_id,
+                start_ns=start_ns or 0,
+                end_ns=end_ns or time.time_ns(),
+                error_summary=[
+                    ErrorDetailsCount(error_details=error, count=count)
+                    for error, count in self._error_state.error_counts.items()
+                ],
+            )
+
         await self.publish(
             ProcessServerMetricsResultMessage(
                 service_id=self.service_id,
@@ -900,6 +1038,8 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         Waits before calling stop() to ensure the command response
         has time to be published and transmitted to the SystemController.
         """
+        if self.run.cfg.runtime.service_run_type == ServiceRunType.KUBERNETES:
+            return
         await asyncio.sleep(Environment.SERVER_METRICS.SHUTDOWN_DELAY)
         await asyncio.shield(self.stop())
 
@@ -913,8 +1053,10 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         )
         if now_ns - self._last_realtime_publish_ns < publish_interval_ns:
             return
-        endpoint_summaries = self._accumulator.compute_endpoint_summaries(
-            self._profiling_start_ns or 0, now_ns
+        endpoint_summaries = await run_history_io(
+            self._accumulator.compute_endpoint_summaries,
+            self._profiling_start_ns or 0,
+            now_ns,
         )
         snapshot = self._accumulator.realtime_snapshot(
             start_ns=self._profiling_start_ns
@@ -940,15 +1082,29 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
         original_collect = collector.collect_and_process_metrics
 
         async def collect_with_phase_snapshot() -> None:
-            if _SERVER_METRICS_SCRAPE_PHASE.get() is not None:
-                await original_collect()
+            manager_initiated = _SERVER_METRICS_SCRAPE_PHASE.get() is not None
+            if self._periodic_scrapes_suspended and not manager_initiated:
                 return
 
-            token = _SERVER_METRICS_SCRAPE_PHASE.set(self._active_phase)
+            task = asyncio.current_task()
+            if task is not None:
+                self._in_flight_scrapes.add(task)
+                if not manager_initiated:
+                    self._periodic_in_flight_scrapes.add(task)
             try:
-                await original_collect()
+                if manager_initiated:
+                    await original_collect()
+                    return
+
+                token = _SERVER_METRICS_SCRAPE_PHASE.set(self._active_phase)
+                try:
+                    await original_collect()
+                finally:
+                    _SERVER_METRICS_SCRAPE_PHASE.reset(token)
             finally:
-                _SERVER_METRICS_SCRAPE_PHASE.reset(token)
+                if task is not None:
+                    self._in_flight_scrapes.discard(task)
+                    self._periodic_in_flight_scrapes.discard(task)
 
         collector.collect_and_process_metrics = collect_with_phase_snapshot
 
@@ -990,8 +1146,18 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                     endpoint returned no metrics.
             collector_id: Unique identifier of the collector (typically endpoint URL)
         """
-        if not records:
+        if not records or self._collection_failure is not None:
             return
+
+        async with self._ingest_lock:
+            if self._collection_failure is not None:
+                return
+            await self._process_server_metrics_records(records, collector_id)
+
+    async def _process_server_metrics_records(
+        self, records: list[ServerMetricsRecord], collector_id: str
+    ) -> None:
+        """Serialize history writes against the off-thread realtime reader."""
 
         scrape_phase = _SERVER_METRICS_SCRAPE_PHASE.get() or self._active_phase
         if scrape_phase is not None:
@@ -1023,8 +1189,21 @@ class ServerMetricsManager(BaselineCollectorMixin, BaseComponentService):
                     f"Failed to process server metrics record from {collector_id}: {result!r}"
                 )
                 self._error_state.record(ErrorDetails.from_exception(result))
+                if isinstance(
+                    result, (ServerMetricsStorageError, OSError, MemoryError)
+                ):
+                    self._collection_failure = ErrorDetails(
+                        type=SERVER_METRICS_COLLECTION_STOPPED,
+                        message=f"Server metrics collection stopped after a resource failure: {result}. Inference request processing and export continue; server metrics are incomplete.",
+                    )
+                    self._error_state.record(self._collection_failure)
+                    self.warning(self._collection_failure.message)
+                    for collector in self._collectors.values():
+                        collector.disable()
+                    self.execute_async(self._stop_all_collectors())
 
-        await self._publish_realtime_server_metrics()
+        if self._collection_failure is None:
+            await self._publish_realtime_server_metrics()
 
     async def _on_server_metrics_error(
         self, error: ErrorDetails, collector_id: str

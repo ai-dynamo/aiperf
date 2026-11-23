@@ -9,6 +9,7 @@ subprocesses, enabling fast isolated testing of the full service mesh.
 import asyncio
 import sys
 import uuid
+from collections.abc import Collection
 
 from aiperf.common.enums import LifecycleState, ServiceRegistrationStatus
 from aiperf.common.environment import Environment
@@ -112,16 +113,24 @@ class FakeServiceManager(BaseServiceManager):
 
         return results
 
-    async def shutdown_all_services(self) -> list[BaseException | None]:
-        """Stop all services gracefully."""
+    async def shutdown_all_services(
+        self, *, exclude: Collection[ServiceTypeT] = ()
+    ) -> list[BaseException | None]:
+        """Stop all services gracefully, leaving types in ``exclude`` running."""
         self.debug("Stopping all in-process services")
+        targets = [
+            service
+            for service in self.services.values()
+            if service.service_type not in exclude
+        ]
         results = await asyncio.gather(
-            *[
-                self._stop_service_gracefully(service)
-                for service in self.services.values()
-            ],
+            *[self._stop_service_gracefully(service) for service in targets],
             return_exceptions=True,
         )
+        if exclude:
+            for service in targets:
+                self._untrack(service.service_id, service.service_type)
+            return results
         # Clear all tracking state after shutdown
         self.services.clear()
         self.service_map.clear()
@@ -129,6 +138,16 @@ class FakeServiceManager(BaseServiceManager):
         # Clean up shared bus
         FakeCommunication.clear_shared_bus()
         return results
+
+    def _untrack(self, service_id: str, service_type: ServiceTypeT) -> None:
+        self.services.pop(service_id, None)
+        self.service_id_map.pop(service_id, None)
+        if service_type in self.service_map:
+            self.service_map[service_type] = [
+                info
+                for info in self.service_map[service_type]
+                if info.service_id != service_id
+            ]
 
     async def kill_all_services(self) -> list[BaseException | None]:
         """Kill all services (for in-process, same as shutdown)."""

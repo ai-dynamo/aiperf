@@ -9,6 +9,7 @@ and made available to test functions in the same directory and subdirectories.
 
 import asyncio
 import os
+import threading
 import time
 import uuid
 from collections.abc import Callable, Generator
@@ -34,6 +35,7 @@ from aiperf.common.models import (
     Turn,
 )
 from aiperf.common.models.record_models import TokenCounts
+from aiperf.common.parent_death_watchdog import WATCHDOG_THREAD_NAME
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.common.types import MessageTypeT
 from aiperf.config.flags.cli_config import CLIConfig
@@ -422,6 +424,32 @@ def restore_kube_logger_level():
 
 
 @pytest.fixture(autouse=True)
+def no_leaked_parent_death_watchdog() -> Generator[None, None, None]:
+    """Fail a test that leaves a parent-death watchdog thread running.
+
+    The watchdog force-exits its process once its deadline passes after the
+    parent it watches dies, and it cannot be disarmed. A test that arms it
+    against a fake dead parent without patching its ``_exit`` leaves a thread
+    that kills the pytest worker seconds later, which xdist then reports as a
+    crash of whatever unrelated test that worker is running.
+    """
+    before = set(threading.enumerate())
+    yield
+    leaked = [
+        t
+        for t in threading.enumerate()
+        if t.name == WATCHDOG_THREAD_NAME and t not in before
+    ]
+    for thread in leaked:
+        thread.join(timeout=1.0)
+    alive = [t for t in leaked if t.is_alive()]
+    assert not alive, (
+        f"test left {len(alive)} parent-death watchdog thread(s) running; stub "
+        "start_parent_death_watchdog or patch aiperf.common.parent_death_watchdog._exit"
+    )
+
+
+@pytest.fixture(autouse=True)
 def isolate_last_kube_benchmark_file(tmp_path, monkeypatch):
     """Redirect the kube CLI's last-benchmark cache into a per-test temp dir.
 
@@ -472,6 +500,27 @@ def reset_service_registry():
     from aiperf.common.service_registry import ServiceRegistry
 
     ServiceRegistry.reset()
+
+
+@pytest.fixture(autouse=True)
+def isolate_fake_communication_bus(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Give every test its own ``FakeCommunication`` bus.
+
+    ``FakeCommunication.shared_bus`` is class-level, and every instance
+    registers on it. A service built by one test (e.g. a ``Worker`` subscribed
+    to ``DatasetConfigured``) stays subscribed for the rest of the xdist
+    process, so a later test that publishes on the bus delivers to it. That
+    surfaced as an order-dependent failure: a dataset-manager test's
+    placeholder mmap index was opened by a ``Worker`` left over from
+    ``test_worker.py``. ``monkeypatch`` restores the attribute, so tests that
+    install their own bus via ``set_shared_bus`` still unwind cleanly.
+    """
+    from tests.harness.fake_communication import (
+        FakeCommunication,
+        FakeCommunicationBus,
+    )
+
+    monkeypatch.setattr(FakeCommunication, "shared_bus", FakeCommunicationBus())
 
 
 @pytest.fixture

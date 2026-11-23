@@ -22,6 +22,16 @@ from aiperf.common.models import (
     SlimRecord,
 )
 
+EVENT_WAIT_HANG_GUARD_S = 20.0
+"""Timeout for ``asyncio.wait_for(event.wait(), ...)`` hang guards.
+
+A passing test returns as soon as the event fires; this bound only decides how
+long a genuine hang takes to fail. It is wall time (``no_sleep`` does not patch
+``wait_for``), so it must outlast whole-runner stalls on loaded CI runners: a
+2 s guard failed on windows-arm during a ~2-3 s stall (AIP-3603). Do not use it
+for waits that assert latency or expect the timeout to fire.
+"""
+
 
 @dataclass(frozen=True)
 class AIPerfRunnerResult:

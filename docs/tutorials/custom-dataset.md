@@ -203,6 +203,35 @@ EOF
 
 The `extra` field also works per-turn in multi_turn datasets.
 
+### Per-Request Audio Duration (RTFx)
+
+For ASR/audio-transcription benchmarks (`--endpoint-type audio_transcription`), AIPerf computes the RTFx (Inverse Real-Time Factor) metric from each request's audio duration. Synthetic audio and HuggingFace ASR datasets (e.g. LibriSpeech) report this automatically, but custom audio files have no built-in way to know their duration. Self-report it with the `audio_duration_seconds` field:
+
+```bash
+cat > audio_with_duration.jsonl << 'EOF'
+{"audios": ["/path/to/call_30s.wav"], "audio_duration_seconds": 30.0}
+{"audios": ["/path/to/call_120s.wav"], "audio_duration_seconds": 120.0}
+EOF
+
+aiperf profile \
+    --model openai/whisper-large-v3 \
+    --endpoint-type audio_transcription \
+    --input-file audio_with_duration.jsonl \
+    --custom-dataset-type single_turn \
+    --url localhost:8000 \
+    --request-count 2
+```
+
+Without `audio_duration_seconds`, RTFx is omitted from the results for these requests. The value is self-reported and unvalidated against the actual audio content; it must be a finite value greater than 0 (`0`, negative, or infinite values are rejected when the dataset is loaded). It must also describe exactly one clip: the transcription endpoint only sends the first clip, so pairing it with more than one clip (several `audios` entries, or one `audios` object with several `contents`) is rejected at load time rather than silently computing RTFx against the wrong duration. Use one JSONL line per clip.
+
+The field is supported in `single_turn` and `multi_turn` datasets. In a `multi_turn` conversation, set it on each turn that carries audio; every turn is dispatched as its own request and reports RTFx against its own duration:
+
+```json
+{"session_id": "call_1", "turns": [{"audios": ["/path/to/part1_30s.wav"], "audio_duration_seconds": 30.0}, {"audios": ["/path/to/part2_45s.wav"], "audio_duration_seconds": 45.0}]}
+```
+
+The `random_pool` dataset type does not support `audio_duration_seconds`: the field is ignored there and RTFx is not reported.
+
 ---
 
 ## Multi-Turn Datasets
@@ -287,7 +316,7 @@ Log File: artifacts/Qwen_Qwen3-0.6B-openai-chat-concurrency2/logs/aiperf.log
 - Each turn includes full conversation history
 - Turns execute sequentially within each conversation
 - Multiple conversations run concurrently (up to `--concurrency`)
-- Each turn supports `output_length` and `extra` (same semantics as single_turn — vendor extras shallow-merged into the top of the wire body, latest turn wins for chat-style endpoints)
+- Each turn supports `output_length`, `audio_duration_seconds`, and `extra` (same semantics as single_turn — vendor extras shallow-merged into the top of the wire body, latest turn wins for chat-style endpoints; see [Per-Request Audio Duration](#per-request-audio-duration-rtfx))
 
 ### Inline alternative
 
@@ -515,7 +544,8 @@ conversation. Unlike `--shared-system-prompt-length`, which generates synthetic 
 target token length, these take the **exact text** — so prefix-cache hit rates and TTFT
 reflect the system prompt your deployment actually sends.
 
-They work with every dataset kind: synthetic, file-based, and public.
+They work with synthetic, public, and structured file-based datasets. The one exclusion is
+datasets that author their own request payloads — see the note at the end of this section.
 
 ```bash
 # Inline, for short prompts
@@ -551,6 +581,12 @@ Behavior worth knowing:
 - **Supported on `chat`, `responses`, `messages`, and `chat_embeddings`.** Endpoints with no
   system role (`completions`, `embeddings`, the rankings endpoints) reject the option at
   startup rather than silently dropping it.
+- **Not supported on datasets that author their own request payloads** — `raw_payload`,
+  `inputs_json`, and `mooncake_trace` in payload mode. Those payloads are sent to the server
+  byte-for-byte, bypassing the formatting step that puts the system message on the wire, so
+  the prompt would be silently dropped. AIPerf rejects the combination at startup. Either
+  author the system message directly into the trace payloads, or use a dataset type that
+  produces structured turns (`single_turn`, `multi_turn`, `dag_jsonl`).
 - **Mutually exclusive** with `--shared-system-prompt-length` and with
   `--num-prefix-prompts`/`--prefix-prompt-length`, all of which fill the same slot. Setting
   two of them is rejected at startup rather than one taking precedence, so a misconfigured

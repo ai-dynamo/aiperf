@@ -74,8 +74,8 @@ def test_request_record_carries_clock_offset() -> None:
         param(True, ["WorkerConnected"], id="kubernetes-defers-dispatchable"),
         param(
             False,
-            ["WorkerConnected", "WorkerDispatchable"],
-            id="local-dispatchable-immediately",
+            ["WorkerConnected"],
+            id="local-defers-dispatchable",
         ),
     ],
 )  # fmt: skip
@@ -99,12 +99,14 @@ async def test_worker_announces_connectivity_without_awaiting_the_rtt_probe(
 
     sent: list[object] = []
     worker = MagicMock(spec=Worker)
+    worker._finite_replay_enabled = False
     # The probe is enabled exactly when the worker runs under Kubernetes.
     worker._tracks_clock_offset = group_managed
     probe_coros: list[object] = []
     worker._measure_baseline_rtt = MagicMock(side_effect=lambda: "probe-coro")
     worker.execute_async = MagicMock(side_effect=probe_coros.append)
     worker.credit_dealer_client = AsyncMock()
+    worker.conversation_request_client = AsyncMock()
     worker.credit_dealer_client.send = AsyncMock(
         side_effect=lambda msg: sent.append(type(msg).__name__)
     )
@@ -114,6 +116,8 @@ async def test_worker_announces_connectivity_without_awaiting_the_rtt_probe(
     worker.pod_lifecycle_dealer_client = None
     worker._ensure_group_dataset_state_retry = MagicMock()
     worker._complete_group_startup_flow = AsyncMock()
+    worker._dataset_configured_event = MagicMock()
+    worker._dataset_configured_event.is_set.return_value = False
     worker._mark_worker_ready = AsyncMock(
         side_effect=lambda: sent.append("WorkerDispatchable")
     )
@@ -121,7 +125,6 @@ async def test_worker_announces_connectivity_without_awaiting_the_rtt_probe(
     await Worker._send_worker_ready_message(worker)
 
     assert sent == expected_sent
-    # Dispatched, never awaited on this path -- in both modes.
     assert probe_coros == (["probe-coro"] if group_managed else [])
 
 
@@ -171,7 +174,8 @@ async def test_probe_budget_bounds_a_router_that_never_echoes(
     monkeypatch.setattr(Environment.WORKER, "CLOCK_PROBE_COUNT", 7)
 
     worker = MagicMock(spec=Worker)
-    worker.clock_offset_tracker = MagicMock()
+    worker._finite_replay_enabled = False
+    worker.clock_offset_tracker = MagicMock(_finite_replay_enabled=False)
 
     # Stands in for the serial probe loop when no TimePong ever arrives: the
     # real call would run probe_count timeouts back to back.
@@ -209,6 +213,7 @@ async def test_kubernetes_worker_stamps_records_before_the_tracker_calibrates() 
     from aiperf.workers.worker import Worker
 
     worker = MagicMock(spec=Worker)
+    worker._finite_replay_enabled = False
     worker.clock_offset_tracker = ClockOffsetTracker()
     worker._tracks_clock_offset = True
     worker.clock_offset_tracker.observe(issued_at_ns=1_000, received_at_ns=3_500)
@@ -230,6 +235,7 @@ async def test_kubernetes_worker_stamps_offset_after_clock_calibrates() -> None:
     from aiperf.workers.worker import Worker
 
     worker = MagicMock(spec=Worker)
+    worker._finite_replay_enabled = False
     worker.clock_offset_tracker = ClockOffsetTracker()
     worker._tracks_clock_offset = True
     for _ in range(5):
@@ -256,6 +262,7 @@ async def test_worker_stamps_the_transit_corrected_offset_not_the_raw_sample() -
     from aiperf.workers.worker import Worker
 
     worker = MagicMock(spec=Worker)
+    worker._finite_replay_enabled = False
     worker.clock_offset_tracker = ClockOffsetTracker()
     worker._tracks_clock_offset = True
     for _ in range(5):
@@ -292,6 +299,7 @@ async def test_credit_to_start_latency_keeps_the_delivery_hop_it_measures() -> N
     queue_wait_ns = 1_000_000  # worker-side wait after the credit lands
 
     worker = MagicMock(spec=Worker)
+    worker._finite_replay_enabled = False
     worker.clock_offset_tracker = ClockOffsetTracker()
     worker._tracks_clock_offset = True
     for _ in range(5):
@@ -331,6 +339,7 @@ def test_clock_remeasure_is_registered_as_a_periodic_background_task() -> None:
 
     assert params.interval == Environment.WORKER.CLOCK_REMEASURE_INTERVAL
     assert params.immediate is False
+    assert params.stop_on_error is False
 
 
 @pytest.mark.asyncio
@@ -339,6 +348,7 @@ async def test_clock_remeasure_task_reprobes_only_under_kubernetes() -> None:
     from aiperf.workers.worker import Worker
 
     worker = MagicMock(spec=Worker)
+    worker._finite_replay_enabled = False
     worker._measure_baseline_rtt = AsyncMock()
 
     worker._tracks_clock_offset = False
@@ -362,6 +372,7 @@ async def test_concurrent_probe_rounds_are_serialized() -> None:
     from aiperf.workers.worker import Worker
 
     worker = MagicMock(spec=Worker)
+    worker._finite_replay_enabled = False
     worker._clock_probe_lock = asyncio.Lock()
     worker.credit_dealer_client = AsyncMock()
     worker.warning = MagicMock()

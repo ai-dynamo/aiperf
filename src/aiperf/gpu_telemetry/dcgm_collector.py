@@ -154,7 +154,9 @@ class DCGMTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
                             gpu_uuid=labels.get("UUID"),
                             pci_bus_id=labels.get("pci_bus_id"),
                             device=labels.get("device"),
-                            hostname=labels.get("Hostname"),
+                            # dcgm-exporter#655 lowercased this label; the
+                            # legacy form is kept for older exporters.
+                            hostname=labels.get("hostname") or labels.get("Hostname"),
                             namespace=labels.get("namespace"),
                             pod_name=labels.get("pod"),
                             platform=NVIDIA_GPU_TELEMETRY_PLATFORM,
@@ -178,7 +180,7 @@ class DCGMTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
 
             record = TelemetryRecord(
                 timestamp_ns=current_timestamp,
-                telemetry_source_url=self.endpoint_url,
+                telemetry_source_url=self._display_url,
                 **metadata.model_dump(),
                 telemetry_data=TelemetryMetrics(**scaled_metrics),
             )

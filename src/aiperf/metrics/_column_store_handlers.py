@@ -17,13 +17,17 @@ clearing all handlers on grow is simpler and grow runs ~log2(N) times.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
 
-from aiperf.metrics.list_metric_aggregation import TDigestListMetricAggregator
 from aiperf.metrics.ragged_series import RaggedSeries
+
+if TYPE_CHECKING:
+    # Optional ``crick`` dependency; used here only as an annotation, which
+    # never evaluates thanks to ``from __future__ import annotations``.
+    from aiperf.metrics.list_metric_aggregation import TDigestListMetricAggregator
 
 
 def make_numeric_handler(

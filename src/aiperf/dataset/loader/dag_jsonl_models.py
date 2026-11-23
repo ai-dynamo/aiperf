@@ -149,8 +149,9 @@ class DagTurn(AIPerfBaseModel):
     spawns: list[str | DagSpawn] = Field(
         default_factory=list,
         description="Child session ids to dispatch as SPAWN branches after "
-        "this turn completes (children start fresh; sticky-colocated on the "
-        "parent worker while its sticky entry is live, least-loaded after). "
+        "this turn completes (children start fresh on the parent worker when "
+        "its sticky entry is live, else least-loaded, then stay pinned to "
+        "that worker under their own id). "
         "Each entry may be a bare string (auto-join on next turn) or a "
         "``DagSpawn`` object carrying a ``join_at`` index for delayed joins.",
     )

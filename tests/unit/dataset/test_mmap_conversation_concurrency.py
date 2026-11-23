@@ -12,7 +12,9 @@ The reads are now position-free slices, so no reader depends on the shared
 position.
 """
 
+import asyncio
 import mmap
+import threading
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
@@ -22,10 +24,13 @@ from typing import Any
 import pytest
 
 from aiperf.common.enums import MemoryMapFormat
-from aiperf.common.models import Conversation, Text, Turn
+from aiperf.common.environment import Environment
+from aiperf.common.models import Conversation, MemoryMapClientMetadata, Text, Turn
 from aiperf.dataset.memory_map_utils import (
     MemoryMapDatasetBackingStore,
     MemoryMapDatasetClient,
+    MemoryMapDatasetClientStore,
+    MemoryMapDatasetIndex,
 )
 
 # Wildly varying sizes so a cross-read lands mid-record and is caught either as
@@ -170,3 +175,71 @@ async def test_get_conversation_matches_written_data_under_prefault_setting(
             conv = client.get_conversation(f"conv-{i}")
             assert conv.session_id == f"conv-{i}"
             assert conv.turns[0].texts[0].contents[0].startswith(f"conv-{i}:")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel", [False, True])  # fmt: skip
+async def test_client_setup_keeps_event_loop_live_during_prefault(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel: bool
+) -> None:
+    """A stalled page preload must allow callbacks and cancellation to run."""
+    data_path = tmp_path / "data"
+    index_path = tmp_path / "index"
+    data_path.write_bytes(b"x")
+    index_path.write_text(MemoryMapDatasetIndex().model_dump_json())
+    store = MemoryMapDatasetClientStore(
+        client_metadata=MemoryMapClientMetadata(
+            data_file_path=data_path,
+            index_file_path=index_path,
+            conversation_count=0,
+            total_size_bytes=1,
+        )
+    )
+    loop = asyncio.get_running_loop()
+    loop_thread = threading.get_ident()
+    entered = asyncio.Event()
+    release = threading.Event()
+    closed = threading.Event()
+    resources: list[Any] = []
+    cleanup = MemoryMapDatasetClient._cleanup_finalizer
+
+    def slow_prefault(client: MemoryMapDatasetClient) -> None:
+        assert threading.get_ident() != loop_thread
+        resources.extend(
+            [client.data_mmap, client.index_mmap, client.data_file, client.index_file]
+        )
+        loop.call_soon_threadsafe(entered.set)
+        assert release.wait(timeout=5), "event loop did not release the preload"
+
+    def record_cleanup(*args: Any) -> None:
+        cleanup(*args)
+        closed.set()
+
+    monkeypatch.setattr(Environment.DATASET, "MMAP_PREFAULT", True)
+    monkeypatch.setattr(MemoryMapDatasetClient, "_prefault_data_mmap", slow_prefault)
+    monkeypatch.setattr(
+        MemoryMapDatasetClient, "_cleanup_finalizer", staticmethod(record_cleanup)
+    )
+    setup = asyncio.create_task(store._setup())
+    try:
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        assert not setup.done()
+        assert store._client is None
+        if cancel:
+            setup.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await setup
+            await store._cleanup()
+            release.set()
+            assert await asyncio.to_thread(closed.wait, 5)
+            assert store._client is None
+        else:
+            release.set()
+            await asyncio.wait_for(setup, timeout=5)
+            assert store._client is not None
+            await store._cleanup()
+        assert all(resource.closed for resource in resources)
+    finally:
+        release.set()
+        await asyncio.gather(setup, return_exceptions=True)
+        await store._cleanup()

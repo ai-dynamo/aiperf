@@ -4,12 +4,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import overload
 
 import numpy as np
 from numpy.typing import DTypeLike, NDArray
 
 __all__ = ["GrowableArray", "Growable2DArray"]
+
+ArrayFactory = Callable[[int | tuple[int, ...], DTypeLike], NDArray]
+ArrayAccessCallback = Callable[[NDArray], None]
 
 
 class GrowableArray:
@@ -27,13 +31,16 @@ class GrowableArray:
         (10, 16)
     """
 
-    __slots__ = ("_data", "_size", "_sum")
+    __slots__ = ("_data", "_size", "_sum", "_array_factory", "_on_access")
 
     def __init__(
         self,
         initial_capacity: int = 256,
         dtype: DTypeLike = np.float64,
         track_sum: bool = False,
+        array_factory: ArrayFactory | None = None,
+        *,
+        on_access: ArrayAccessCallback | None = None,
     ) -> None:
         """Initialize with pre-allocated capacity.
 
@@ -41,10 +48,14 @@ class GrowableArray:
             initial_capacity: Initial array capacity. Must be positive.
             dtype: NumPy dtype for the array.
             track_sum: If True, maintain a running sum for O(1) mean calculation.
+            array_factory: Optional allocator for disk-backed numeric histories.
+            on_access: Optional notification of written views and growth-copy sources.
         """
         if initial_capacity <= 0:
             raise ValueError("initial_capacity must be positive")
-        self._data: NDArray = np.empty(initial_capacity, dtype=dtype)
+        self._array_factory = array_factory or np.empty
+        self._on_access = on_access
+        self._data: NDArray = self._array_factory(initial_capacity, dtype)
         self._size: int = 0
         self._sum: float | None = 0.0 if track_sum else None
 
@@ -60,6 +71,8 @@ class GrowableArray:
         if self._size >= len(self._data):
             self._grow()
         self._data[self._size] = value
+        if self._on_access is not None:
+            self._on_access(self._data[self._size : self._size + 1])
         self._size += 1
         if self._sum is not None:
             self._sum += value
@@ -77,14 +90,16 @@ class GrowableArray:
         n = len(values)
         if n == 0:
             return
-        self._ensure_capacity(n)
+        self.reserve(n)
         self._data[self._size : self._size + n] = values
+        if self._on_access is not None:
+            self._on_access(self._data[self._size : self._size + n])
         self._size += n
         if self._sum is not None:
             self._sum += float(values.sum())
 
-    def _ensure_capacity(self, additional: int) -> None:
-        """Ensure capacity for `additional` more elements.
+    def reserve(self, additional: int) -> None:
+        """Reserve room for `additional` more elements without changing stored data.
 
         Grows capacity by doubling repeatedly until sufficient space available.
         More efficient than doubling incrementally when bulk inserting.
@@ -111,13 +126,16 @@ class GrowableArray:
         """Grow to a specific capacity.
 
         Allocates new array and copies existing data. Used by both _grow()
-        and _ensure_capacity() to avoid code duplication.
+        and reserve() to avoid code duplication.
 
         Args:
             new_capacity: New array capacity (must be >= current size)
         """
-        new_data = np.empty(new_capacity, dtype=self._data.dtype)
+        new_data = self._array_factory(new_capacity, self._data.dtype)
         new_data[: self._size] = self._data[: self._size]
+        if self._on_access is not None:
+            self._on_access(self._data[: self._size])
+            self._on_access(new_data[: self._size])
         self._data = new_data
 
     @property
@@ -228,6 +246,8 @@ class GrowableArray:
             self._sum -= self._data[index]
             self._sum += value
         self._data[index] = value
+        if self._on_access is not None:
+            self._on_access(self._data[index : index + 1])
 
 
 class Growable2DArray:

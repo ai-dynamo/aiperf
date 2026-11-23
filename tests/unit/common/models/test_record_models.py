@@ -1,8 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import time
+
+import orjson
 import pytest
-from pydantic import BaseModel, Field, SerializeAsAny
+from pydantic import BaseModel, Field, SerializeAsAny, ValidationError
+from pytest import param
 
 from aiperf.common.messages import InferenceResultsMessage
 from aiperf.common.models import (
@@ -15,8 +19,90 @@ from aiperf.common.models import (
     SSEMessage,
     TextResponse,
     TimesliceResult,
+    record_models,
 )
 from aiperf.common.models.export_models import JsonMetricResult
+from aiperf.common.monotonic_clock import MonotonicClock, process_clock
+
+
+class TestRequestRecordTimestampAnchor:
+    """An omitted ``timestamp_ns`` must be the wall time of ``start_perf_ns``."""
+
+    def test_omitted_timestamp_is_wall_time_of_start_perf(self) -> None:
+        start_perf_ns = time.perf_counter_ns() - 500_000_000
+        record = RequestRecord(start_perf_ns=start_perf_ns)
+        assert record.timestamp_ns == process_clock().wall_ns_at(start_perf_ns)
+
+    def test_explicit_timestamp_is_kept(self) -> None:
+        record = RequestRecord(timestamp_ns=123, start_perf_ns=456)
+        assert record.timestamp_ns == 123
+
+    def test_omitted_timestamp_stays_out_of_fields_set(self) -> None:
+        # A fifth fields-set entry resizes the set: +512 B on every in-flight
+        # record, which the memory estimator's constants do not budget for.
+        record = RequestRecord(start_perf_ns=456)
+        assert "timestamp_ns" not in record.model_fields_set
+
+    def test_fully_defaulted_record_is_in_the_wall_clock_domain(self) -> None:
+        record = RequestRecord()
+        assert abs(record.timestamp_ns - time.time_ns()) < 1_000_000_000
+
+    def test_deserialized_timestamp_is_not_re_anchored(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        payload = RequestRecord(start_perf_ns=time.perf_counter_ns()).model_dump_json()
+        sent = RequestRecord.model_validate_json(payload).timestamp_ns
+        # A receiving process has a different anchor; it must not re-derive.
+        monkeypatch.setattr(
+            record_models, "process_clock", lambda: MonotonicClock(0, 10**18)
+        )
+        assert RequestRecord.model_validate_json(payload).timestamp_ns == sent
+
+
+class TestBinaryResponse:
+    """Binary response construction and record validation preserve the contract."""
+
+    def test_python_construction_and_dump_preserve_raw_bytes(self) -> None:
+        """Python construction and dumps retain bytes and the slots layout."""
+        body = bytes(range(256))
+        positional = BinaryResponse(123, body, "application/octet-stream")
+        keyword = BinaryResponse(
+            perf_ns=123, raw_bytes=body, content_type="application/octet-stream"
+        )
+        record = RequestRecord(responses=[positional])
+
+        assert positional == keyword
+        assert not hasattr(positional, "__dict__")
+        assert positional.get_raw() == body
+        assert positional.get_text() is None
+        assert positional.get_json() is None
+        assert record.model_dump()["responses"][0]["raw_bytes"] == body
+        assert positional.raw_bytes == body
+
+    @pytest.mark.parametrize(
+        "encoded",
+        [param("!", id="invalid-character"), param("a", id="invalid-length")],
+    )  # fmt: skip
+    @pytest.mark.parametrize("json_mode", [False, True])
+    def test_malformed_base64_response_rejected(
+        self, encoded: str, json_mode: bool
+    ) -> None:
+        """Both record validation routes reject malformed base64 bodies."""
+        data = {"responses": [{"perf_ns": 123, "raw_bytes": encoded}]}
+        with pytest.raises(ValidationError):
+            if json_mode:
+                RequestRecord.model_validate_json(orjson.dumps(data))
+            else:
+                RequestRecord.model_validate(data)
+
+    def test_valid_base64_response_decoded_without_legacy_text_detection(self) -> None:
+        """An ambiguous legacy text value is always interpreted as base64."""
+        record = RequestRecord.model_validate(
+            {"responses": [{"perf_ns": 123, "raw_bytes": "abcd"}]}
+        )
+
+        assert isinstance(record.responses[0], BinaryResponse)
+        assert record.responses[0].raw_bytes == b"i\xb7\x1d"
 
 
 class TestProfileResults:

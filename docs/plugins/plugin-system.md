@@ -100,7 +100,7 @@ for entry, cls in plugins.iter_all(PluginType.ENDPOINT):
 
 ## Plugin Categories
 
-AIPerf supports 34 plugin categories organized by function, including `api_router` and `public_dataset_loader`:
+AIPerf's plugin categories are organized by function; the groups below include `api_router` and `public_dataset_loader`. `aiperf plugins --all` lists every category:
 
 ### Timing Categories
 
@@ -120,6 +120,7 @@ AIPerf supports 34 plugin categories organized by function, including `api_route
 | `dataset_composer` | `ComposerType` | Dataset generation (synthetic, custom, rankings) |
 | `custom_dataset_loader` | `CustomDatasetType` | JSONL format loaders |
 | `public_dataset_loader` | `PublicDatasetType` | Shared benchmark dataset fetchers (HTTP, HuggingFace) |
+| `dataset_source_resolver` | `DatasetSourceScheme` | Fetch remote `--input-file` references (hf, s3, https) into a local cache |
 
 ### Endpoint and Transport Categories
 
@@ -128,6 +129,15 @@ AIPerf supports 34 plugin categories organized by function, including `api_route
 | `api_router` | `APIRouterType` | Lifecycle-managed HTTP/WebSocket routers exposed via `BaseRouter` |
 | `endpoint` | `EndpointType` | API endpoint implementations (chat, completions, embeddings, etc.) |
 | `transport` | `TransportType` | Network transport (HTTP via aiohttp) |
+
+Finite agentic replay requires an HTTP transport whose `send_request` accepts
+`transport_start_callback` and `transport_eof_callback` as keyword arguments,
+alongside `first_token_callback`. Configuration validation rejects legacy HTTP
+plugins without this signature before sending any requests. Update custom plugins
+to accept and invoke both callbacks: pass a freshly captured `time.perf_counter_ns()`
+at HTTP request invocation and at successful response-body EOF, respectively.
+An SSE `[DONE]` event does not establish body EOF. Steady-state requests omit the
+boundary callback keywords when they are unused, preserving legacy signatures.
 
 ### Processing Categories
 

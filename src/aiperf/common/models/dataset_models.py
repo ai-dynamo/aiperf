@@ -12,6 +12,7 @@ from aiperf.common.enums import (
     ConversationContextMode,
     MediaType,
     MemoryMapFormat,
+    ReplayDependencyEvent,
     TurnInputKind,
 )
 from aiperf.common.enums.enums import SubagentType
@@ -156,6 +157,16 @@ class ReplayTurnReference(AIPerfBaseModel):
 
     conversation_id: str = Field(description="Referenced conversation ID.")
     turn_index: int = Field(ge=0, description="Referenced turn index.")
+    event: ReplayDependencyEvent = Field(
+        default=ReplayDependencyEvent.COMPLETION,
+        description="Required predecessor transport boundary.",
+    )
+    delay_ns: int = Field(
+        default=0,
+        ge=0,
+        le=2**63 - 1,
+        description="Delay after the predecessor event in nanoseconds.",
+    )
 
 
 class TurnMetadata(AIPerfBaseModel):
@@ -677,6 +688,20 @@ class DatasetMetadata(AIPerfBaseModel):
         if len(self.conversations) == 0:
             return 0
         return self.total_turn_count / len(self.conversations)
+
+    @cached_property
+    def sampleable_conversation_ids(self) -> list[str]:
+        """Conversations the dataset sampler draws sessions from.
+
+        Only roots are sampled: DAG fork/spawn children belong to their root's
+        session and are dispatched by the BranchOrchestrator. Filters on
+        ``is_root`` rather than ``agent_depth == 0`` so SPAWN-mode children
+        (which keep ``agent_depth == 0`` for fresh-context semantics but carry
+        ``is_root=False``) are also excluded. Falls back to every conversation
+        when none is marked root.
+        """
+        roots = [c.conversation_id for c in self.conversations if c.is_root]
+        return roots or [c.conversation_id for c in self.conversations]
 
 
 class Conversation(AIPerfBaseModel):

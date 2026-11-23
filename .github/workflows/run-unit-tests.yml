@@ -3,16 +3,80 @@
 name: "Run Unit Tests"
 
 # The Linux matrix leg runs on Velonix. Only run repository code from trusted
-# branch pushes; fork PRs enter CI after being copied to pull-request/<number>.
+# branch pushes and merge queue groups; fork PRs enter CI after being copied
+# to pull-request/<number>, and only PRs whose vetted head already passed
+# Unit Tests Gate can be added to the merge queue.
 on:
   push:
     branches:
       - main
       - 'pull-request/[0-9]+'
       - 'release/*'
+  merge_group:
+    types: [checks_requested]
+
+# A new copy of a PR supersedes the run on its previous head. Every other
+# event gets its own group so main, release, and queue runs are never cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ startsWith(github.ref, 'refs/heads/pull-request/') && github.ref || github.run_id }}
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/heads/pull-request/') }}
 
 jobs:
+  # PR copies run one leg per OS so a vetted head gets fast feedback; the
+  # merge queue, main, and release branches run the full matrix before code
+  # lands. Windows ARM and BoTorch run only in the full matrix.
+  select-matrix:
+    name: Select Test Matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      full: ${{ steps.select.outputs.full }}
+    steps:
+    - name: Select legs for this event
+      id: select
+      shell: python
+      env:
+        REF: ${{ github.ref }}
+      run: |
+        import json
+        import os
+
+        runners = {
+            "linux": "prod-aiperf-builder-amd-v1",
+            "macos": "macos-latest",
+            "windows": "windows-latest",
+            "windows-arm": "windows-11-arm",
+        }
+        # Both matrices include this leg, so PR heads and their Codecov base
+        # are measured on the same interpreter.
+        coverage_leg = ("linux", "3.13")
+        pr_subset = [coverage_leg, ("macos", "3.12"), ("windows", "3.11")]
+        full = not os.environ["REF"].startswith("refs/heads/pull-request/")
+        legs = (
+            [(o, py) for o in runners for py in ("3.11", "3.12", "3.13")]
+            if full
+            else pr_subset
+        )
+        matrix = {
+            "include": [
+                {
+                    "os": o,
+                    "python-version": py,
+                    "runner": runners[o],
+                    "coverage": (o, py) == coverage_leg,
+                }
+                for o, py in legs
+            ]
+        }
+        print(json.dumps(matrix, indent=2))
+        with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+            out.write(f"matrix={json.dumps(matrix)}\n")
+            out.write(f"full={str(full).lower()}\n")
+
   build:
+    needs: select-matrix
     runs-on: ${{ matrix.runner }}
     # Windows x64 runners can finish the component tier just past 30 minutes.
     timeout-minutes: 90
@@ -23,18 +87,7 @@ jobs:
       PYTHONUTF8: "1"
     strategy:
       fail-fast: false
-      matrix:
-        os: [linux, macos, windows, windows-arm]
-        python-version: ["3.11", "3.12", "3.13"]
-        include:
-          - os: linux
-            runner: prod-aiperf-builder-amd-v1
-          - os: macos
-            runner: macos-latest
-          - os: windows
-            runner: windows-latest
-          - os: windows-arm
-            runner: windows-11-arm
+      matrix: ${{ fromJSON(needs.select-matrix.outputs.matrix) }}
 
     steps:
     - uses: actions/checkout@v6
@@ -108,8 +161,8 @@ jobs:
         # builder pod. -n auto without this OOM-kills the runner agent.
         PYTEST_XDIST_AUTO_NUM_WORKERS: "4"
       run: |
-        # Only collect coverage on the linux/3.12 leg where Codecov upload runs.
-        COV=${{ (matrix.os == 'linux' && matrix.python-version == '3.12') && '1' || '0' }}
+        # Only collect coverage on the leg where Codecov upload runs.
+        COV=${{ matrix.coverage && '1' || '0' }}
         make test-ci PYTHON_VERSION=${{ matrix.python-version }} COV=$COV
     # Mirrors POSIX ``make test-ci`` semantics: run BOTH tiers and
     # aggregate exit codes so unit-test failures don't mask component-
@@ -126,8 +179,13 @@ jobs:
       # --continue-on-collection-errors preserves the previous two-step
       # behaviour where a unit collection error did not block the zmq suite.
       if: runner.os == 'Windows'
+      # -n logical, not -n auto: xdist's ``auto`` asks psutil for the PHYSICAL
+      # core count, and the GitHub x86 Windows VM reports 1 physical core for
+      # its 4 vCPUs, so ``auto`` ran the whole suite in a single worker (~3x
+      # slower than windows-11-arm, which happens to report 3). ``logical``
+      # uses the logical count on both and tracks the runner size if it grows.
       run: |
-        uv run pytest tests/unit tests/ui tests/zmq -n auto --dist=worksteal --tb=short --continue-on-collection-errors -m 'not performance and not stress and not slow'
+        uv run pytest tests/unit tests/ui tests/zmq -n logical --dist=worksteal --tb=short --continue-on-collection-errors -m 'not performance and not stress and not slow'
     - name: Run component integration tests (Windows)
       # ``!cancelled()`` overrides the implicit ``success()`` so component
       # integration still runs even if the unit-test step failed — matching
@@ -135,10 +193,11 @@ jobs:
       # Cancellation is still respected so we don't burn runner minutes
       # finishing after a manual stop.
       if: ${{ !cancelled() && runner.os == 'Windows' }}
+      # -n logical for the reason given on the unit-test step above.
       run: |
-        uv run pytest tests/component_integration -n auto --dist=worksteal --tb=short -v -m 'not performance and not stress and not slow'
+        uv run pytest tests/component_integration -n logical --dist=worksteal --tb=short -v -m 'not performance and not stress and not slow'
     - name: Upload results to Codecov
-      if: matrix.os == 'linux' && matrix.python-version == '3.12'
+      if: matrix.coverage
       uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
@@ -146,6 +205,8 @@ jobs:
 
   botorch-regression:
     name: BoTorch Regression Tests (CPU)
+    needs: select-matrix
+    if: needs.select-matrix.outputs.full == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -187,19 +248,27 @@ jobs:
   # The merge ruleset requires this single check rather than each matrix leg,
   # whose names change whenever a leg is added or renamed. always() keeps it
   # from being skipped, because GitHub treats a skipped required check as passed.
+  # BoTorch may be skipped only when the PR subset deliberately left it out.
   unit-tests-gate:
     name: Unit Tests Gate
-    needs: [build, botorch-regression]
+    needs: [select-matrix, build, botorch-regression]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions: {}
     steps:
-    - name: Require every unit test job to pass
+    - name: Require every selected unit test job to pass
       env:
-        RESULTS: ${{ join(needs.*.result, ' ') }}
+        SELECT: ${{ needs.select-matrix.result }}
+        FULL: ${{ needs.select-matrix.outputs.full }}
+        BUILD: ${{ needs.build.result }}
+        BOTORCH: ${{ needs.botorch-regression.result }}
       run: |
-        echo "Job results: ${RESULTS}"
-        for result in ${RESULTS}; do
-          [ "${result}" = "success" ] || exit 1
-        done
+        echo "select-matrix=${SELECT} full=${FULL} build=${BUILD} botorch-regression=${BOTORCH}"
+        [ "${SELECT}" = "success" ] || exit 1
+        [ "${BUILD}" = "success" ] || exit 1
+        if [ "${FULL}" = "true" ]; then
+          [ "${BOTORCH}" = "success" ] || exit 1
+        else
+          [ "${BOTORCH}" = "skipped" ] || exit 1
+        fi

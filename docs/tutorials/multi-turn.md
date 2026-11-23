@@ -1,5 +1,5 @@
 ---
-# SPDX-FileCopyrightText: Copyright (c) 2024-2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2024-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 sidebar-title: Multi-Turn Conversations
 ---
@@ -226,7 +226,7 @@ Combine request rate control with multi-turn conversations for controlled, susta
 
 <!-- aiperf-run-vllm-default-openai-endpoint-server -->
 ```bash
-# Start new conversations at 5 conversations/second
+# Pace all turns at 5 requests/second (the default)
 aiperf profile \
     --model Qwen/Qwen3-0.6B \
     --endpoint-type chat \
@@ -243,8 +243,41 @@ aiperf profile \
 ```
 <!-- /aiperf-run-vllm-default-openai-endpoint-server -->
 
-This approach is ideal for:
-- Modeling steady conversation arrival patterns
+By default, `--request-rate` counts **all root-session turns**, including continuations.
+After a turn completes and its think time elapses, the continuation waits for
+the next arrival slot and takes priority over new sessions. For fixed four-turn
+conversations, a rate of 5 requests/second therefore does not mean 5 session
+starts/second.
+
+Add `--continuation-dispatch direct` to pace **session starts** instead.
+Continuations become eligible after the previous completion plus the configured
+think time, without consuming another rate slot. Session and prefill concurrency
+limits still apply, so backpressure can delay dispatch. `--request-count` still
+limits all requests, and duration/cancellation still stop continuation issuance.
+Reported request throughput continues to count requests, not session starts.
+
+`continuation_dispatch` controls only **root continuation turns** (`agent_depth == 0`).
+DAG children (`agent_depth > 0`) follow their existing direct-dispatch and branch
+lifecycle rules under either policy.
+
+In YAML, set `continuation_dispatch: direct` on a `constant`, `poisson`, or
+`gamma` phase. The default is `rate_slot`. The CLI flag overrides the profiling
+phase, including with `--config` when its `type` uses a Jinja variable. Compatibility
+is checked against the rendered phase type, and the override also applies to sweep
+runs. Warmup keeps its own policy and can be configured independently in YAML.
+User-centric, fixed-schedule, adaptive, and agentic-replay
+timing do not support direct session-arrival pacing.
+
+When `--fixed-schedule` replaces a YAML rate phase, the inherited continuation
+policy is discarded with the other rate-only fields. Explicitly combining
+`--fixed-schedule` with `--continuation-dispatch` raises a configuration error.
+
+The generated JSON Schema checks these policy constraints for phase lists,
+single-phase objects, and the `warmup`/`profiling` shorthands. It accepts either
+`continuation_dispatch` or `continuationDispatch`; supplying both is an error.
+
+This approach is useful for:
+- Modeling either request arrivals or session arrivals explicitly
 - Avoiding thundering herd problems during testing
 - Measuring performance under controlled, sustained multi-turn load
 
@@ -418,6 +451,32 @@ The delays between turns are controlled by:
    - Repeat for all remaining turns in the conversation
 4. **Metrics Collection**: Metrics are collected per-turn and aggregated across all conversations
 
+### Ending Conversations on Truncated Turns
+
+A follow-up prompt such as "now add tests to it" assumes the previous answer is complete. If the server stops a turn at the output-token cap (`--osl`, or `max_tokens` from the dataset or `--extra-inputs`), often partway through reasoning, the next turn is sent with a cut-off answer in its history. The model is then measured on input it would not see in normal use, which skews any metric that depends on what gets generated, such as speculative-decoding acceptance length.
+
+`--end-conversation-on-truncation` ends a conversation as soon as one of its turns is truncated and skips its remaining turns:
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --url localhost:8000 \
+    --endpoint-type chat \
+    --streaming \
+    --conversation-num 50 \
+    --conversation-turn-mean 3 \
+    --osl 512 \
+    --end-conversation-on-truncation
+```
+
+- A turn is truncated when the server reports it: `finish_reason: "length"` (Chat Completions, Completions), `stop_reason: "max_tokens"` (Anthropic Messages), or `status: "incomplete"` with `incomplete_details.reason: "max_output_tokens"` (Responses API). Other endpoints never report truncation.
+- The truncated turn is still sent, measured, and included in every metric. Only the turns after it are skipped. Truncating the final turn changes nothing.
+- An ended conversation counts as completed for `--conversation-num`, so the run sends fewer requests than conversations × turns. With `--request-count`, the request cap is unchanged, but freed capacity starts new conversations, so more distinct conversations run.
+- At the end of the run, a console panel and the `conversations_ended_on_truncation` and `turns_skipped_on_truncation` fields in `profile_export_aiperf.json` report how many conversations ended early and how many turns were skipped. They count conversation sessions, so a conversation replayed to fill `--request-count` counts once per replay. Only turns the run would otherwise have sent are counted: a truncation after the run has stopped sending (for example, once `--request-count` is reached) is not counted, and with `--request-count` the skipped turns are capped at the requests left in the budget. Both fields are absent when the option is off.
+- It is on by default for SPEED-Bench qualitative datasets (`--public-dataset speed_bench_qualitative` or `speed_bench_<category>`, and `--custom-dataset-type speed_bench_qualitative`) and `spec_al_mtbench`, and off otherwise. A file dataset whose format is auto-detected rather than set with `--custom-dataset-type` defaults to off. Pass `--no-end-conversation-on-truncation` to send every turn. In a YAML config, set `end_conversation_on_truncation` on the dataset.
+- Do not combine it with `--extra-inputs ignore_eos:true`. That setting makes every turn run to the cap, so every conversation would end after its first turn. AIPerf warns when both are set.
+- DAG datasets (`dag_jsonl` and other datasets that declare branches) and agentic replay reject the option at startup, because their branch orchestration owns when a session ends.
+
 ## Quick Reference
 
 **Conversation Control:**
@@ -429,6 +488,9 @@ The delays between turns are controlled by:
 - `--conversation-turn-mean <N>` — Average turns per conversation (default: 1)
 - `--conversation-turn-stddev <N>` — Standard deviation of turns (default: 0)
 
+**Truncation Handling:**
+- `--end-conversation-on-truncation` / `--no-end-conversation-on-truncation` — End a conversation after a turn truncated at the output-token cap (default: on for SPEED-Bench and `spec_al_mtbench`, off otherwise)
+
 **Turn Delays:**
 - `--conversation-turn-delay-mean <MS>` — Average delay between turns in ms (default: 0)
 - `--conversation-turn-delay-stddev <MS>` — Standard deviation of delays in ms (default: 0)
@@ -437,7 +499,7 @@ The delays between turns are controlled by:
 - Start with lower concurrency when testing multi-turn (2-5) to understand baseline behavior
 - Use turn delays to model realistic user interaction patterns
 - Monitor context window growth in long conversations (turns × output tokens)
-- Consider using `--request-rate` to control conversation start rate for more predictable load
+- Use `--request-rate` with `--continuation-dispatch direct` to control conversation start rate; the default rate counts all turns
 - Use `--random-seed` for reproducible conversation patterns
 
 **See also:**

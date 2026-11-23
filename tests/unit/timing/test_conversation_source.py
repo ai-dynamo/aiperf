@@ -154,3 +154,29 @@ class TestMultiTurn:
         cr = make_credit(conv_id="mt", turn=2, is_final=True)
         with pytest.raises(ValueError, match="No turn 3"):
             mt_src.get_next_turn_metadata(cr)
+
+
+def test_start_full_pass_after_shuffle_draws_covers_every_conversation(ds) -> None:
+    src = _mk_source(
+        ds.model_copy(update={"sampling_strategy": DatasetSamplingStrategy.SHUFFLE})
+    )
+    src.next()
+
+    src.start_full_pass()
+
+    assert sorted(src.next().conversation_id for _ in range(3)) == ["c1", "c2", "c3"]
+
+
+def test_start_full_pass_sampler_without_hook_is_noop(ds) -> None:
+    class ProtocolOnlySampler:
+        def __init__(self, conversation_ids: list[str]) -> None:
+            self._ids = conversation_ids
+
+        def next_conversation_id(self) -> str:
+            return self._ids[0]
+
+    src = ConversationSource(ds, ProtocolOnlySampler(["c1", "c2", "c3"]))
+
+    src.start_full_pass()
+
+    assert src.next().conversation_id == "c1"

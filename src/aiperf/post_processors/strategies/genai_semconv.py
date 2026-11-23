@@ -248,6 +248,7 @@ _ERROR_TYPE_MAP: dict[str, str] = {
     "asyncio.TimeoutError": "timeout",
     "TimeoutError": "timeout",
     "cancelled": "cancelled",
+    "RequestCancellationError": "cancelled",
 }
 
 
@@ -263,6 +264,11 @@ def _classify_error_type(error: Any | None) -> str | None:
     error_type = getattr(error, "type", None)
     cause_chain = getattr(error, "cause_chain", None) or []
 
+    # Check error type string first: a client-side cancellation is recorded with
+    # the synthetic status 499, which the server never sent.
+    if error_type and error_type in _ERROR_TYPE_MAP:
+        return _ERROR_TYPE_MAP[error_type]
+
     # HTTP status code classification. Guard on isinstance(code, int) because
     # the input type is Any — a non-integer `.code` (e.g. a string "timeout")
     # would raise TypeError on the range comparison, crashing the fanout.
@@ -272,10 +278,6 @@ def _classify_error_type(error: Any | None) -> str | None:
             return "http_5xx"
         if 400 <= code <= 499:
             return "http_4xx"
-
-    # Check error type string
-    if error_type and error_type in _ERROR_TYPE_MAP:
-        return _ERROR_TYPE_MAP[error_type]
 
     # Check cause chain for timeout indicators
     for cause in cause_chain:

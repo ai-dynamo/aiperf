@@ -19,7 +19,10 @@ from __future__ import annotations
 import contextlib
 from typing import TYPE_CHECKING, Any
 
-from aiperf.config.flags._converter_dataset import build_dataset
+from aiperf.config.flags._converter_dataset import (
+    build_dataset,
+    reject_parquet_without_reader,
+)
 from aiperf.config.flags._converter_endpoint import build_endpoint, build_models
 from aiperf.config.flags._converter_optionals import (
     build_accuracy,
@@ -29,7 +32,10 @@ from aiperf.config.flags._converter_optionals import (
     expand_search_recipe,
     resolve_auto_plot,
 )
-from aiperf.config.flags._converter_profiling import build_profiling
+from aiperf.config.flags._converter_profiling import (
+    REMOTE_FIXED_SCHEDULE_CHECK_KEY,
+    build_profiling,
+)
 from aiperf.config.flags._converter_runtime import (
     build_artifacts,
     build_logging_runtime,
@@ -187,9 +193,26 @@ def _apply_recipe_scenarios(
             "--search-recipe (scenarios path) is mutually exclusive with a "
             "YAML-declared sweep block. Drop one."
         )
-    nested["sweep"] = {"type": "scenarios", "runs": list(scenarios)}
+    nested["sweep"] = _recipe_scenarios_sweep(recipe_output)
     if recipe_output.get("recipe_name"):
         nested["sweep"]["recipe_name"] = recipe_output["recipe_name"]
+
+
+def _recipe_scenarios_sweep(recipe_output: dict[str, Any]) -> dict[str, Any]:
+    """Build a ScenarioSweep block from a scenario recipe's output.
+
+    ``build_sweep`` carries ``sla_filters`` / ``post_process`` only for grid
+    recipes, so they are copied here; dropping ``post_process`` silently skips
+    the recipe's export (e.g. pareto-sweep's ``pareto_sweep.json``).
+    """
+    sweep: dict[str, Any] = {
+        "type": "scenarios",
+        "runs": list(recipe_output["scenarios"]),
+    }
+    for key in ("sla_filters", "post_process"):
+        if recipe_output.get(key):
+            sweep[key] = recipe_output[key]
+    return sweep
 
 
 def _reject_recipe_plus_magic_lists(
@@ -494,9 +517,48 @@ def convert_cli_to_aiperf(cli: CLIConfig) -> AIPerfConfig:
     """
     from aiperf.config.config import AIPerfConfig
 
+    cli = _apply_scenario_defaults(cli)
     nested = _assemble_envelope_dict(cli)
     _apply_variants_scenario_sweep(nested, cli)
     return AIPerfConfig(**nested)
+
+
+def _apply_scenario_defaults(cli: CLIConfig) -> CLIConfig:
+    """Apply a scenario's CLI preset before builders fill general defaults."""
+    from aiperf.common.scenario import get_scenario
+
+    if not cli.scenario:
+        return cli
+    spec = get_scenario(cli.scenario)
+    defaults = {
+        "benchmark_duration": spec.default_benchmark_duration_seconds,
+        "trajectory_start_min_ratio": spec.default_trajectory_start_min_ratio,
+        "trajectory_start_max_ratio": spec.default_trajectory_start_max_ratio,
+        **spec.cli_defaults,
+    }
+    defaults = {
+        key: value
+        for key, value in defaults.items()
+        if value is not None and key not in cli.model_fields_set
+    }
+    for enabled, disabled in (
+        ("gpu_telemetry", "no_gpu_telemetry"),
+        ("server_metrics", "no_server_metrics"),
+        ("request_rate", "request_rate_series"),
+    ):
+        if enabled in cli.model_fields_set:
+            defaults.pop(disabled, None)
+        if disabled in cli.model_fields_set:
+            defaults.pop(enabled, None)
+    if cli.agentic_cache_warmup_duration is not None:
+        defaults.pop("warmup_requests_per_lane", None)
+    unknown = sorted(defaults.keys() - type(cli).model_fields.keys())
+    if unknown:
+        raise TypeError(
+            f"Scenario {cli.scenario!r} cli_defaults has unknown CLI field(s): {unknown}"
+        )
+    defaults = type(cli).model_validate(defaults).model_dump(exclude_unset=True)
+    return cli.model_copy(update=defaults)
 
 
 def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
@@ -506,9 +568,12 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     re-assemble per-variant dicts without re-validating against
     ``AIPerfConfig``.
     """
+    reject_parquet_without_reader(cli)
     endpoint = build_endpoint(cli)
     models = build_models(cli)
     prof = build_profiling(cli)
+    # The profiling builder decides promotion, but the marker belongs to the dataset.
+    remote_fixed_schedule_check = prof.pop(REMOTE_FIXED_SCHEDULE_CHECK_KEY, None)
 
     phases: list[dict[str, Any]] = []
     if (warmup := build_warmup(cli)) is not None:
@@ -516,6 +581,8 @@ def _assemble_envelope_dict(cli: CLIConfig) -> dict[str, Any]:
     phases.append({"name": "profiling", "kind": "profiling", **prof})
 
     ds = build_dataset(cli)
+    if remote_fixed_schedule_check is not None:
+        ds["remote_fixed_schedule_check"] = remote_fixed_schedule_check
 
     _init_random_seed(cli)
     artifacts = build_artifacts(cli)
@@ -586,6 +653,20 @@ def _apply_scenario_fields(nested: dict[str, Any], cli: CLIConfig) -> None:
         nested["unsafe_override"] = cli.unsafe_override
 
 
+# (CLIConfig field, sweep key) for the --parameter-sweep-* knobs, shared by
+# the CLI-only converter and the --config resolver.
+_PARAMETER_SWEEP_KEYS: tuple[tuple[str, str], ...] = (
+    ("parameter_sweep_mode", "iteration_order"),
+    ("parameter_sweep_same_seed", "same_seed"),
+    ("parameter_sweep_cooldown_seconds", "cooldown_seconds"),
+)
+_ORDERING_KEYS: frozenset[str] = frozenset({"iteration_order", "same_seed"})
+
+
+def _sweep_accepts_ordering(sweep_type: str) -> bool:
+    return sweep_type != "adaptive_search"
+
+
 def _apply_parameter_sweep_meta_to_sweep(
     nested: dict[str, Any], cli: CLIConfig
 ) -> None:
@@ -598,26 +679,23 @@ def _apply_parameter_sweep_meta_to_sweep(
     ``_assemble_optional`` / ``_promote_magic_lists_to_sweep_block``
     already produced. No-op when no sweep is in flight.
 
-    ``iteration_order`` and ``same_seed`` only exist on grid-shaped sweeps
-    (``GridSweep`` / ``ScenarioSweep`` via ``_GridSweepBase``); the
-    adaptive-search envelope inherits from ``_SweepBase`` directly and
-    sets ``extra="forbid"``, so writing those keys onto an
-    ``adaptive_search`` sweep would crash Pydantic validation. Gate the
-    stamp on the sweep being grid-shaped. ``cooldown_seconds`` lives on
-    ``_SweepBase`` and applies to all sweep types, so it stays
-    unconditional.
+    ``iteration_order`` and ``same_seed`` exist on every sweep type except
+    ``adaptive_search``, which sets ``extra="forbid"``; writing them there
+    would crash Pydantic validation, so they are skipped for it.
+    ``cooldown_seconds`` lives on ``_SweepBase`` and applies to all sweep
+    types.
     """
     sweep = nested.get("sweep")
     if not isinstance(sweep, dict):
         return
     set_fields = cli.model_fields_set
-    is_grid_shaped = sweep.get("type") in ("grid", "scenarios")
-    if is_grid_shaped and "parameter_sweep_mode" in set_fields:
-        sweep["iteration_order"] = cli.parameter_sweep_mode
-    if is_grid_shaped and "parameter_sweep_same_seed" in set_fields:
-        sweep["same_seed"] = cli.parameter_sweep_same_seed
-    if "parameter_sweep_cooldown_seconds" in set_fields:
-        sweep["cooldown_seconds"] = cli.parameter_sweep_cooldown_seconds
+    accepts_ordering = _sweep_accepts_ordering(sweep.get("type", "grid"))
+    for cli_field, key in _PARAMETER_SWEEP_KEYS:
+        if cli_field not in set_fields:
+            continue
+        if key in _ORDERING_KEYS and not accepts_ordering:
+            continue
+        sweep[key] = getattr(cli, cli_field)
 
 
 def _apply_variants_scenario_sweep(
@@ -635,9 +713,32 @@ def _apply_variants_scenario_sweep(
     """
     if not cli.sweep_variants:
         return
+    _validate_variant_flags(cli)
+    if nested.get("sweep") is not None:
+        raise TypeError(
+            "--variant is mutually exclusive with a YAML-declared sweep block "
+            "(or --search-* flags). Drop --variant or remove the sweep "
+            "configuration."
+        )
 
-    variants = list(cli.sweep_variants)
-    if len(variants) == 1:
+    runs: list[dict[str, Any]] = []
+    for name, variant_cli in _build_variant_clis(cli):
+        variant_envelope = _assemble_envelope_dict(variant_cli)
+        run_benchmark = _diff_envelope_benchmark(
+            base=nested.get("benchmark", {}),
+            override=variant_envelope.get("benchmark", {}),
+        )
+        run: dict[str, Any] = {"name": name}
+        if run_benchmark:
+            run["benchmark"] = run_benchmark
+        runs.append(run)
+
+    nested["sweep"] = {"type": "scenarios", "runs": runs}
+    _apply_parameter_sweep_meta_to_sweep(nested, cli)
+
+
+def _validate_variant_flags(cli: CLIConfig) -> None:
+    if len(cli.sweep_variants) == 1:
         raise TypeError(
             "--variant: single occurrence is rejected. Use the individual "
             "--isl/--osl/--concurrency flags for a one-off; --variant is for "
@@ -650,19 +751,19 @@ def _apply_variants_scenario_sweep(
             "recipes own the sweep parameters, --variant declares scenarios."
         )
     _reject_variants_plus_magic_lists(cli)
-    if nested.get("sweep") is not None:
-        raise TypeError(
-            "--variant is mutually exclusive with a YAML-declared sweep block "
-            "(or --search-* flags). Drop --variant or remove the sweep "
-            "configuration."
-        )
 
+
+def _build_variant_clis(cli: CLIConfig) -> list[tuple[str, CLIConfig]]:
+    """Return ``(run name, CLIConfig)`` per `--variant`, overrides applied.
+
+    Unnamed variants are labelled ``v<index>``. Raises ``TypeError`` naming
+    any key that is not a CLI flag.
+    """
     from aiperf.config.flags.variant_parser import build_alias_table, parse_variant
 
     alias_table = build_alias_table()
-
-    runs: list[dict[str, Any]] = []
-    for auto_index, raw in enumerate(variants):
+    variant_clis: list[tuple[str, CLIConfig]] = []
+    for auto_index, raw in enumerate(cli.sweep_variants):
         name, kvpairs = parse_variant(raw)
         unknown = sorted(k for k in kvpairs if k not in alias_table)
         if unknown:
@@ -675,21 +776,11 @@ def _apply_variants_scenario_sweep(
         variant_cli = cli.model_copy(deep=True)
         variant_cli.sweep_variants = []
         for alias, value in kvpairs.items():
-            cli_path = alias_table[alias]
-            _set_cli_path(variant_cli, cli_path, value)
-        variant_envelope = _assemble_envelope_dict(variant_cli)
-        run_benchmark = _diff_envelope_benchmark(
-            base=nested.get("benchmark", {}),
-            override=variant_envelope.get("benchmark", {}),
+            _set_cli_path(variant_cli, alias_table[alias], value)
+        variant_clis.append(
+            (name if name is not None else f"v{auto_index}", variant_cli)
         )
-        run: dict[str, Any] = {"name": name if name is not None else f"v{auto_index}"}
-        if run_benchmark:
-            run["benchmark"] = run_benchmark
-        runs.append(run)
-
-    sweep_block: dict[str, Any] = {"type": "scenarios", "runs": runs}
-    nested["sweep"] = sweep_block
-    _apply_parameter_sweep_meta_to_sweep(nested, cli)
+    return variant_clis
 
 
 def _reject_variants_plus_magic_lists(cli: CLIConfig) -> None:

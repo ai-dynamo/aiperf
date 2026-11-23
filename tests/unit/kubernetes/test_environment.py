@@ -211,6 +211,23 @@ class TestK8sEnvironmentHealth:
         assert 1 <= health.FAILURE_THRESHOLD <= 20
         assert 1 <= health.SUCCESS_THRESHOLD <= 10
 
+    def test_dataset_download_startup_budget_defaults_to_an_hour(self) -> None:
+        assert K8sEnvironment.HEALTH.DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS == 3600
+
+    @pytest.mark.parametrize("value", ["59", "86401"])
+    def test_dataset_download_startup_budget_out_of_bounds_is_rejected(
+        self, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        from pydantic import ValidationError
+
+        from aiperf.kubernetes.environment import _HealthProbeSettings
+
+        monkeypatch.setenv(
+            "AIPERF_K8S_HEALTH_DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS", value
+        )
+        with pytest.raises(ValidationError):
+            _HealthProbeSettings()
+
 
 class TestK8sEnvironmentPorts:
     """Tests for K8sEnvironment.PORTS settings."""

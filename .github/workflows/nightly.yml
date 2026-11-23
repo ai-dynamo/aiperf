@@ -322,8 +322,13 @@ jobs:
         with:
           python-version: '3.12'
 
+      # ``ci-install``, not ``first-time-setup``: this job must test the
+      # dependency set ``uv.lock`` pins — the same set every PR's unit-test job
+      # installs. ``first-time-setup`` runs an unpinned
+      # ``uv pip install -e ".[dev]"``, which takes whatever PyPI released
+      # minutes ago and so tests versions the project never validated.
       - name: Install dependencies
-        run: make first-time-setup PYTHON_VERSION=3.12
+        run: make ci-install PYTHON_VERSION=3.12
 
       - name: Run unit and component integration tests
         run: make test-ci PYTHON_VERSION=3.12

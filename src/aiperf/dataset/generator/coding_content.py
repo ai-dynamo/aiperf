@@ -27,7 +27,10 @@ from aiperf.common.hash_id_random_generator import HashIdRandomGenerator
 from aiperf.common.tokenizer import Tokenizer
 from aiperf.config.dataset.content import PrefixPromptConfig, PromptConfig
 from aiperf.dataset.generator.base import BaseGenerator
-from aiperf.dataset.generator.prompt import sample_tokens_from_corpus
+from aiperf.dataset.generator.prompt import (
+    reject_separator_only_blocks,
+    sample_tokens_from_corpus,
+)
 
 # fmt: off
 # -- Vocabulary tuples for template fills --
@@ -967,6 +970,10 @@ class CodingContentGenerator(BaseGenerator):
         if not hash_ids:
             return self._sample_tokens(num_tokens, self._tool_pool)
 
+        reject_separator_only_blocks(
+            block_size, self.tokenizer.block_separation_token_id
+        )
+
         m = len(hash_ids)
         total_hashed = m * block_size
         final_prompt: list[int] = []
@@ -984,6 +991,7 @@ class CodingContentGenerator(BaseGenerator):
             # Exact-tile or prefix-only path: every hash is a full block.
             final_block_size = block_size
 
+        word_starts = self.tokenizer.word_start_token_ids
         for index, hash_id in enumerate(hash_ids):
             current_block_size = final_block_size if index == m - 1 else block_size
 
@@ -995,6 +1003,7 @@ class CodingContentGenerator(BaseGenerator):
                     current_block_size,
                     self._hash_id_corpus_rng,
                     self.tokenizer.block_separation_token_id,
+                    word_starts=word_starts,
                 )
                 self._cache[hash_id] = cached
             elif len(cached) != current_block_size:
@@ -1014,7 +1023,14 @@ class CodingContentGenerator(BaseGenerator):
         # Prefix-only: pad the un-hashed tail with sampled (uncached) tokens.
         tail = num_tokens - len(final_prompt)
         if tail > 0:
-            final_prompt.extend(self._sample_tokens(tail, self._tool_pool))
+            final_prompt.extend(
+                sample_tokens_from_corpus(
+                    self._tool_pool,
+                    tail,
+                    self._corpus_rng,
+                    word_starts=word_starts,
+                )
+            )
 
         return final_prompt
 

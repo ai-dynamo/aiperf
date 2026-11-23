@@ -92,6 +92,7 @@ def _mk_credit(
     c.agent_depth = agent_depth
     c.parent_correlation_id = parent_correlation_id
     c.branch_mode = branch_mode
+    c.finite_replay = False
     c.is_final_turn = turn_index == num_turns - 1
     return c
 
@@ -236,10 +237,10 @@ async def test_fixed_schedule_negative_timestamp_no_validation() -> None:
 async def test_fixed_schedule_very_large_timestamp_no_overflow() -> None:
     """timestamp_ms = 2^53 (boundary of float-safe-integer).
 
-    Verify the strategy's float arithmetic for ``_timestamp_to_perf_sec``
+    Verify the strategy's float arithmetic for ``schedule_target_perf_sec``
     survives without raising. The math: (2^53 - 0)/1000 + offset_sec.
     Pydantic accepts ints of arbitrary size, but the strategy converts to
-    float in ``_timestamp_to_perf_sec`` — at 2^53 we are at the boundary
+    float in ``schedule_target_perf_sec`` — at 2^53 we are at the boundary
     where consecutive integers stop being representable, but the test only
     verifies we do not crash."""
     ts = 2**53

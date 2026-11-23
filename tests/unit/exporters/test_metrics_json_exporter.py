@@ -252,7 +252,7 @@ class TestMetricsJsonExporter:
 
         # Schema bump landed
         assert raw["schema_version"] == JsonExportData.SCHEMA_VERSION
-        assert JsonExportData.SCHEMA_VERSION == "1.5"
+        assert JsonExportData.SCHEMA_VERSION == "1.7"
 
         # Record metric: count and sum are present
         assert raw["request_latency"]["count"] == 100
@@ -306,7 +306,6 @@ class TestMetricsJsonExporter:
             expected_file = output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE
             data = JsonExportData.model_validate_json(expected_file.read_text())
 
-            assert data.schema_version == "1.5"
             assert data.run_info is not None
             assert data.run_info.benchmark_id == "abc123"
             assert data.run_info.sweep_id == "sweep-uuid-xyz"
@@ -1094,3 +1093,36 @@ class TestMetricsJsonExporterWarmupMetrics:
                 data = json.load(f)
 
         assert "warmup_metrics" not in data
+
+
+class TestMetricsJsonExporterTruncationCounts:
+    async def _export(self, mock_results, mock_cfg) -> dict:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir)
+            mock_cfg.artifact_directory = output_dir
+            exporter = MetricsJsonExporter(
+                make_exporter_config(
+                    results=mock_results, cli_config=mock_cfg, telemetry_results=None
+                )
+            )
+            await exporter.export()
+            with open(output_dir / OutputDefaults.PROFILE_EXPORT_AIPERF_JSON_FILE) as f:
+                return json.load(f)
+
+    @pytest.mark.asyncio
+    async def test_json_export_includes_truncation_counts_when_set(
+        self, mock_results, mock_cfg
+    ):
+        mock_results.conversations_ended_on_truncation = 0
+        mock_results.turns_skipped_on_truncation = 0
+        data = await self._export(mock_results, mock_cfg)
+        assert data["conversations_ended_on_truncation"] == 0
+        assert data["turns_skipped_on_truncation"] == 0
+
+    @pytest.mark.asyncio
+    async def test_json_export_omits_truncation_counts_when_option_off(
+        self, mock_results, mock_cfg
+    ):
+        data = await self._export(mock_results, mock_cfg)
+        assert "conversations_ended_on_truncation" not in data
+        assert "turns_skipped_on_truncation" not in data

@@ -556,6 +556,30 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         return self
 
     @model_validator(mode="after")
+    def validate_hf_mooncake_replay(self) -> Self:
+        from aiperf.plugin.enums import EndpointType, PhaseType, PublicDatasetType
+
+        if (
+            getattr(self.get_default_dataset(), "dataset", None)
+            != PublicDatasetType.MOONCAKE_HF
+        ):
+            return self
+        if self.endpoint.type != EndpointType.CHAT:
+            raise ValueError("mooncake_hf requires --endpoint-type chat")
+        if any(p.type == PhaseType.FIXED_SCHEDULE for p in self.phases):
+            raise ValueError(
+                "mooncake_hf has no recorded timing; use concurrency or request-rate, "
+                "not --fixed-schedule"
+            )
+        if keys := {"messages", "input", "model", "tools"}.intersection(
+            self.endpoint.extra
+        ):
+            raise ValueError(
+                f"mooncake_hf: --extra-inputs must not override {sorted(keys)}"
+            )
+        return self
+
+    @model_validator(mode="after")
     def validate_phase_dataset_compatibility(self) -> Self:
         """Validate that each phase is compatible with the dataset.
 
@@ -580,9 +604,12 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
         Cache-bust markers are minted by every timing strategy and injected by
         the worker into structured endpoint turns. Endpoint plugins opt in via
         ``supports_cache_bust`` metadata; timing mode is not a restriction.
+        ``media_uuids`` is further limited to the chat endpoint, the only one
+        that sends ``Image.uuids``, like ``--uuid-and-strip``.
         """
         from aiperf.common.enums import CacheBustTarget
         from aiperf.plugin import plugins
+        from aiperf.plugin.enums import EndpointType
 
         if self.get_cache_bust_target() == CacheBustTarget.NONE:
             return self
@@ -593,6 +620,14 @@ class BenchmarkConfig(BaseConfig, BenchmarkHelpersMixin):
                 "cache-bust is not supported by endpoint "
                 f"{self.endpoint.type}; select an endpoint whose plugin metadata "
                 "sets supports_cache_bust=true"
+            )
+        if (
+            self.is_cache_bust_media_uuids_enabled()
+            and self.endpoint.type != EndpointType.CHAT
+        ):
+            raise ValueError(
+                "--cache-bust-media-uuids requires endpoint type 'chat', "
+                f"got '{self.endpoint.type}'"
             )
 
         return self

@@ -109,6 +109,9 @@ class WorkerTracker:
             total=sum(c.task_stats.total for c in children),
             completed=sum(c.task_stats.completed for c in children),
             failed=sum(c.task_stats.failed for c in children),
+            stream_chunks_received=sum(
+                c.task_stats.stream_chunks_received for c in children
+            ),
         )
         group.declared_workers = max(group.declared_workers, len(group.workers))
         group.status = worst_status(c.status for c in children)

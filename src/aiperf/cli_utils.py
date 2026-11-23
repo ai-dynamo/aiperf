@@ -123,7 +123,7 @@ class exit_on_error(AbstractContextManager):
             # corrupting the message. Any intentional markup in the template
             # itself is preserved.
             message = (
-                self.message.format(e=escape(str(exc_value)))
+                self.message.format(e=escape(_describe_error(exc_value)))
                 if isinstance(self.message, str)
                 else self.message
             )
@@ -133,6 +133,22 @@ class exit_on_error(AbstractContextManager):
                 title=self.title,
                 exit_code=self.exit_code,
             )
+
+
+def _describe_error(error: BaseException) -> str:
+    """Render an error for the terminal without echoing credentials.
+
+    Config errors routinely quote dataset or endpoint URLs, which may carry a
+    presigned signature or userinfo.
+    """
+    from pydantic import ValidationError
+
+    from aiperf.common.redact import redact_text
+    from aiperf.config.loader.errors import describe_validation_error
+
+    if isinstance(error, ValidationError):
+        return redact_text(describe_validation_error(error))
+    return redact_text(str(error))
 
 
 def print_developer_mode_warning() -> None:

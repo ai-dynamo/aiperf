@@ -18,6 +18,7 @@ from pydantic import (
     AfterValidator,
     ConfigDict,
     Field,
+    PrivateAttr,
     field_serializer,
     model_validator,
 )
@@ -60,6 +61,7 @@ class EndpointDefaults:
     CUSTOM_ENDPOINT = None
     TYPE = EndpointType.CHAT
     STREAMING = False
+    ALLOW_EMPTY_CONTENT = False
     URL = "http://localhost:8000"
     URL_STRATEGY = URLSelectionStrategy.ROUND_ROBIN
     TIMEOUT = 6 * 60 * 60  # 6 hours, match vLLM benchmark default
@@ -394,7 +396,17 @@ class EndpointConfig(BaseConfig):
         ),
     ]
 
-    _streaming_explicitly_set: bool = False
+    allow_empty_content: Annotated[
+        bool,
+        Field(
+            default=EndpointDefaults.ALLOW_EMPTY_CONTENT,
+            description="Retain explicitly empty content or reasoning strings as "
+            "timed responses for streaming OpenAI Chat Completions. This changes "
+            "the shared response timeline without adding output tokens.",
+        ),
+    ]
+
+    _streaming_explicitly_set: bool = PrivateAttr(default=False)
 
     transport: Annotated[
         TransportType | None,
@@ -856,6 +868,19 @@ class EndpointConfig(BaseConfig):
                 "--per-chunk-usage requires --streaming "
                 "(continuous_usage_stats and inter-token latency apply only to "
                 "streaming responses)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _warn_inactive_allow_empty_content(self) -> Self:
+        """Surface ``--allow-empty-content`` where the chat stream parser never sees it."""
+        if self.allow_empty_content and (
+            not self.streaming or self.type != EndpointType.CHAT
+        ):
+            _logger.warning(
+                "--allow-empty-content has no effect unless --streaming is set with "
+                f"endpoint type 'chat' (got streaming={self.streaming}, type "
+                f"'{self.type}'). Drop --allow-empty-content to silence this warning."
             )
         return self
 

@@ -3,6 +3,7 @@
 
 import { html } from 'htm/preact';
 import { route, navigate } from '../lib/router.js';
+import { appPath } from '../lib/base-path.js';
 
 const PRIMARY_GROUP = {
   label: 'OPERATE',
@@ -24,11 +25,15 @@ const ANALYTICS_GROUP = {
 
 function buildNavGroups(features) {
   const groups = [PRIMARY_GROUP, ANALYTICS_GROUP];
-  if (features && features.dashboard_enabled) {
+  // The Dash app requests its assets and callbacks from the origin-root
+  // /dashboard/ prefix, so it cannot load when the UI is served under a path
+  // prefix. Only offer Plots at the origin root.
+  const servedAtOriginRoot = appPath('./') === '/';
+  if (servedAtOriginRoot && features && features.dashboard_enabled) {
     groups.push({
       items: [
         {
-          path: '/dashboard/',
+          path: appPath('dashboard/'),
           label: 'Plots ↗',
           external: true,
           testId: 'nav-link-plots',

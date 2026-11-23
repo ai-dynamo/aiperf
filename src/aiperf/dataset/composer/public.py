@@ -88,10 +88,17 @@ class PublicDatasetComposer(BaseDatasetComposer):
         # CLI converter already auto-selects weka_hf and rejects pairing it with
         # any other dataset, so only the repo lookup is needed here.
         hf_weka_dataset = getattr(self._public_dataset, "hf_weka_dataset", None)
-        hf_dataset_name = hf_weka_dataset or loader_metadata.hf_dataset_name
+        hf_mooncake_dataset = getattr(self._public_dataset, "hf_mooncake_dataset", None)
+        mooncake_trace_to_hf_mapping = getattr(
+            self._public_dataset, "mooncake_trace_to_hf_mapping", None
+        )
+        hf_mooncake_split = getattr(self._public_dataset, "hf_mooncake_split", None)
+        hf_dataset_name = (
+            hf_mooncake_dataset or hf_weka_dataset or loader_metadata.hf_dataset_name
+        )
         if hf_dataset_name is not None:
             kwargs["hf_dataset_name"] = hf_dataset_name
-            kwargs["hf_split"] = loader_metadata.hf_split
+            kwargs["hf_split"] = hf_mooncake_split or loader_metadata.hf_split
             cli_subset = self._public_dataset.hf_subset
             subset = cli_subset if cli_subset is not None else loader_metadata.hf_subset
             if subset is not None:
@@ -103,6 +110,7 @@ class PublicDatasetComposer(BaseDatasetComposer):
             "video_column": loader_metadata.video_column,
             "audio_column": loader_metadata.audio_column,
             "prompt_template": loader_metadata.prompt_template,
+            "field_mapping": mooncake_trace_to_hf_mapping or None,
         }
         kwargs.update({k: v for k, v in optional_fields.items() if v is not None})
 

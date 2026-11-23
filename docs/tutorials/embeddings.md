@@ -76,6 +76,11 @@ JSON Export: artifacts/BAAI_bge-small-en-v1.5-embeddings-concurrency4/profile_ex
 
 Embeddings endpoints return metrics focused on request latency and throughput. No token-level metrics (TTFT, ITL) since embeddings return a single vector per request.
 
+The `chat_embeddings` endpoint sends chat-style multimodal messages to vLLM,
+but parses the embedding `data` array in its response. Returned vectors are
+retained in request records, and optional `usage.prompt_tokens` values populate
+the server-reported prompt token metric. Responses without `usage` remain valid.
+
 ### Profile with Custom Input File
 
 Create a JSONL embeddings input file and run AIPerf against it. The two

@@ -243,6 +243,8 @@ class ConfigSchemaGenerator(Generator):
                 f"Added nested adaptiveScale form to {adaptive_scale_count} phase schemas"
             )
 
+        self._tighten_continuation_dispatch_schema_contract(enhanced_schema)
+
         # Add models field simplified forms (string/list[str] → ModelsAdvanced)
         self._add_models_simplified_forms(enhanced_schema)
         if self.verbose:
@@ -1599,6 +1601,54 @@ class ConfigSchemaGenerator(Generator):
             process_properties(schema["properties"])
 
         return modified_count
+
+    def _tighten_continuation_dispatch_schema_contract(self, schema: dict) -> None:
+        """Mirror RatePhaseConfig's continuation gates before copying shorthands."""
+        disabled_adaptive = {
+            "anyOf": [
+                {"const": False},
+                {"$ref": "#/$defs/DisabledAdaptiveScaleNestedBlock"},
+            ]
+        }
+        for name in ("ConstantPhase", "PoissonPhase", "GammaPhase", "UserCentricPhase"):
+            phase = schema["$defs"][name]
+            properties = phase["properties"]
+            policy = properties["continuationDispatch"]
+            if name == "UserCentricPhase":
+                policy["enum"] = ["rate_slot"]
+            properties["continuation_dispatch"] = copy.deepcopy(policy)
+            constraints = phase.setdefault("allOf", [])
+            constraints.append(
+                {"not": {"required": ["continuationDispatch", "continuation_dispatch"]}}
+            )
+            constraints.append(
+                {
+                    "if": {
+                        "anyOf": [
+                            {
+                                "required": [key],
+                                "properties": {key: {"const": "direct"}},
+                            }
+                            for key in ("continuationDispatch", "continuation_dispatch")
+                        ]
+                    },
+                    "then": {
+                        "properties": {"timingMode": {"enum": [None, "request_rate"]}},
+                        # AdaptiveScalePhaseMixin gives the snake_case key precedence.
+                        "if": {"required": ["adaptive_scale"]},
+                        "then": {
+                            "properties": {
+                                "adaptive_scale": copy.deepcopy(disabled_adaptive)
+                            }
+                        },
+                        "else": {
+                            "properties": {
+                                "adaptiveScale": copy.deepcopy(disabled_adaptive)
+                            }
+                        },
+                    },
+                }
+            )
 
     def _tighten_rate_series_schema_contract(self, schema: dict) -> int:
         """Align generated rate-series JSON schema with runtime validators."""

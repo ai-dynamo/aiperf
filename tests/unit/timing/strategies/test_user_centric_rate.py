@@ -1,8 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
+from collections.abc import Callable
 from unittest.mock import MagicMock
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import CreditPhase
 from aiperf.common.models import ConversationMetadata, DatasetMetadata, TurnMetadata
@@ -179,6 +181,38 @@ def make_strategy(num_turns: int = 2) -> UserCentricStrategy:
         stop_checker=stop_checker,
         credit_issuer=issuer,
         lifecycle=lifecycle,
+    )
+
+
+@pytest.mark.parametrize(
+    "requested,expected", [param(None, 2, id="default"), param(1, 1, id="short"), param(5, 2, id="too-long")]
+)  # fmt: skip
+def test_user_turn_budget_fits_sampled_conversation(
+    requested: int | None, expected: int
+) -> None:
+    strategy = make_strategy(num_turns=2)
+    user = strategy._generate_next_user(max_turns=requested)
+    assert user.max_turns == expected
+
+
+@pytest.mark.asyncio
+async def test_user_centric_mixed_conversation_lengths(
+    create_orchestrator_harness: Callable[..., OrchestratorHarness],
+) -> None:
+    conversations = [(f"c{i}", 1 if i % 2 else 6) for i in range(20)]
+    lengths = dict(conversations)
+    harness = create_orchestrator_harness(
+        conversations=conversations,
+        user_centric_rate=20.0,
+        num_users=8,
+        request_count=24,
+    )
+    await harness.run_with_auto_return()
+
+    assert len(harness.sent_credits) == 24
+    assert all(
+        credit.num_turns <= lengths[credit.conversation_id]
+        for credit in harness.sent_credits
     )
 
 

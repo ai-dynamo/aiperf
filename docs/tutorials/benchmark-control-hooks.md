@@ -87,12 +87,52 @@ benchmark:
 | `--reset-kv-cache-path` | `endpoint.reset_kv_cache.path` |
 | `--reset-kv-cache-timeout-seconds` | `endpoint.reset_kv_cache.timeout_seconds` |
 | `--server-profiler` | Enable profiler with defaults |
+| `--server-profiler-url` | `endpoint.server_profiler.urls` (repeatable) |
+| `--server-profiler-start-body` | `endpoint.server_profiler.start_body` (JSON object) |
 | `--server-profiler-start-path` | `endpoint.server_profiler.start_path` |
 | `--server-profiler-stop-path` | `endpoint.server_profiler.stop_path` |
 | `--server-profiler-timeout-seconds` | `endpoint.server_profiler.timeout_seconds` |
 
-Setting any path/timeout override also enables the corresponding hook
+Setting any profiler URL/body or path/timeout override also enables the corresponding hook
 (same as passing `true` / `--reset-kv-cache` / `--server-profiler`).
+
+## Separate profiler control server
+
+Set profiler targets and backend-specific start parameters independently
+of the inference endpoint. This Dynamo-SGLang configuration fragment uses
+the worker's system server:
+
+```yaml
+benchmark:
+  endpoint:
+    url: http://frontend:8000
+    server_profiler:
+      urls: [http://worker:9090]
+      start_path: /engine/control/start_profile
+      stop_path: /engine/control/stop_profile
+      start_body: {num_steps: 20, output_dir: /profiles/capture}
+```
+
+For Dynamo-vLLM, use `start_body: {profile_prefix: capture}` instead;
+`num_steps` and `output_dir` are SGLang parameters. The JSON body is sent
+with `Content-Type: application/json` after warmup. A native capture limit
+does not change AIPerf's load limit. Stop runs after the profiling phase,
+and failures produce a warning.
+
+KV-cache reset still uses inference origins. Profiler URLs use unique
+origins, ignoring paths and queries. Targets share the start body and
+endpoint auth headers; URL userinfo (`user:password@`) is unsupported.
+YAML requires `http://` or `https://`; the CLI also accepts scheme-less
+host/port values and prepends `http://`.
+
+`--server-profiler-start-body` replaces the YAML body completely, including
+with `{}`. Omitted start bodies, stop requests and cache resets use empty
+bodies.
+
+Start bodies are non-secret runtime parameters and remain in runtime
+configuration and typed config exports. Supply credentials through endpoint
+authentication headers. Saved commands and public spec views hide the entire
+start body.
 
 ## Defaults and relative paths
 
@@ -101,6 +141,8 @@ Setting any path/timeout override also enables the corresponding hook
 | Reset path | `/reset_prefix_cache` |
 | Profiler start path | `/start_profile` |
 | Profiler stop path | `/stop_profile` |
+| Profiler URLs | Inference endpoint origins |
+| Profiler start body | Empty body |
 | Timeouts | 30s when unset (independent of `endpoint.timeout`) |
 | `reset_kv_cache` retry budget | 60s when unset |
 
@@ -114,7 +156,8 @@ that's transiently busy with unrelated control-plane
 work (e.g. finishing a profiler stop) when starting the next run.
 
 Paths must be **relative** (start with `/`) and must not contain `://`.
-AIPerf joins each path to every endpoint URL origin. Absolute URLs in
+AIPerf joins each path to every endpoint URL origin, or the explicit
+profiler origins when `server_profiler.urls` is set. Absolute URLs in
 `path` / `start_path` / `stop_path` are rejected at config validation.
 
 Control hooks require HTTP transport. Non-HTTP transports raise a

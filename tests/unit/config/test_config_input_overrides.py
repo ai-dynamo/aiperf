@@ -582,6 +582,18 @@ def test_input_file_swaps_the_path_on_a_file_dataset(
     assert Path(resolved.path) == other
 
 
+def test_remote_input_file_swaps_the_path_on_a_file_dataset(
+    random_pool_yaml: Path,
+) -> None:
+    """A remote --input-file routes under --config exactly like a local one."""
+    from aiperf.config.dataset.remote_ref import RemoteRef
+
+    resolved = dataset(
+        resolve_config(CLIConfig(input_file="hf://org/repo/t.jsonl"), random_pool_yaml)
+    )
+    assert resolved.path == RemoteRef(ref="hf://org/repo/t.jsonl")
+
+
 def test_input_file_leaves_the_rest_of_the_dataset_alone(
     tmp_path: Path,
 ) -> None:
