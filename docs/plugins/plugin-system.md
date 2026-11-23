@@ -455,6 +455,7 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `math_500` | `Math500Benchmark` | MATH-500 problem set |
 | `gpqa_diamond` | `GPQADiamondBenchmark` | GPQA Diamond graduate-level science |
 | `lcb_codegeneration` | `LCBCodeGenerationBenchmark` | LiveCodeBench code generation |
+| `impossible_lcb` | `ImpossibleLCBBenchmark` | Impossible-LiveCodeBench reward-hacking splits |
 
 ### Accuracy Graders
 
@@ -464,6 +465,7 @@ pkg = plugins.get_package_metadata("aiperf")  # PackageInfo(version, author, ...
 | `math` | `MathGrader` | Mathematical expression evaluation |
 | `multiple_choice` | `MultipleChoiceGrader` | Multiple choice answer extraction |
 | `code_execution` | `CodeExecutionGrader` | Code execution and output comparison |
+| `impossible_code_execution` | `ImpossibleCodeExecutionGrader` | Impossible-LCB `check()` test execution with early-exit detection |
 
 ## Troubleshooting
 

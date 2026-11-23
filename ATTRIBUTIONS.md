@@ -227,6 +227,39 @@ This document provides attribution information for public domain assets used in 
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
 
+### ImpossibleBench (Impossible-LiveCodeBench prompt and scoring)
+
+**Asset Information:**
+- **File(s)**: [`src/aiperf/accuracy/benchmarks/impossible_lcb.py`](src/aiperf/accuracy/benchmarks/impossible_lcb.py), [`src/aiperf/accuracy/graders/impossible_code_execution.py`](src/aiperf/accuracy/graders/impossible_code_execution.py) (ported at commit `d4f9a14`)
+- **Source**: [safety-research/impossiblebench](https://github.com/safety-research/impossiblebench); dataset [fjzzq2002/impossible_livecodebench](https://huggingface.co/datasets/fjzzq2002/impossible_livecodebench) (downloaded at run time from revision `98650ffc`, not vendored), derived from [LiveCodeBench](https://livecodebench.github.io/)
+- **Author**: ImpossibleBench Team; Zhong et al., "ImpossibleBench: Measuring LLMs' Propensity of Exploiting Test Cases", 2025 ([arXiv:2510.20270](https://arxiv.org/abs/2510.20270))
+- **License**: MIT License
+- **Usage**: Instruction prompt and the single-turn `humaneval_scorer` script layout used by the `impossible_lcb` accuracy benchmark. AIPerf adds a completion token after `check()` and selects the last code block by position.
+
+**License Text:**
+
+> MIT License
+>
+> Copyright (c) 2025 ImpossibleBench Team
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
 ### Preact (browser runtime)
 
 **Asset Information:**
