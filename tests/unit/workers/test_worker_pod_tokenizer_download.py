@@ -333,18 +333,22 @@ def test_extract_rejects_path_traversal_pre_pep706_fallback(
     assert not (tmp_path / "escaped.txt").exists()
 
 
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
 def test_extract_fallback_extracts_safe_members(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The manual fallback must still extract legitimate (non-escaping) files.
 
-    Forcing the pre-PEP-706 branch on a modern interpreter routes through the
-    unfiltered ``extractall`` (guarded by the manual validation above it),
-    which emits the 3.14 filter DeprecationWarning; that warning is irrelevant
-    to real 3.11.0-3.11.3 targets, so it is suppressed here.
+    Forcing the pre-PEP-706 branch on a modern interpreter also restores the
+    unfiltered default extraction those interpreters had: from Python 3.14
+    ``extractall()`` defaults to ``data_filter``, which this test removes.
     """
     monkeypatch.delattr(tarfile, "data_filter", raising=False)
+    monkeypatch.setattr(
+        tarfile.TarFile,
+        "extraction_filter",
+        staticmethod(tarfile.fully_trusted_filter),
+        raising=False,
+    )
     dest = tmp_path / "dest"
     dest.mkdir()
     bundle = _make_bundle({"tokenizer.json": b'{"v":1}', "nested/vocab.json": b"{}"})

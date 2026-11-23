@@ -116,19 +116,23 @@ class TestSnapshotBytes:
         ghost = tmp_path / "ghost.txt"
         ghost.write_bytes(b"will-vanish")
 
+        real_is_file = Path.is_file
         real_stat = Path.stat
-        # is_file() calls stat() internally and falls back to False on OSError;
-        # we only want the *second* stat (the explicit st_size lookup at line 94)
-        # to raise, so let is_file succeed and only fail the size read.
-        ghost_calls = {"n": 0}
+
+        # The file is still there for is_file() and gone by the size read.
+        # Faking both keeps this independent of whether is_file() goes through
+        # Path.stat (it does before Python 3.14, not after).
+        def fake_is_file(self: Path, *args: Any, **kwargs: Any) -> bool:
+            if self.name == "ghost.txt":
+                return True
+            return real_is_file(self, *args, **kwargs)
 
         def fake_stat(self: Path, *args: Any, **kwargs: Any) -> Any:
             if self.name == "ghost.txt":
-                ghost_calls["n"] += 1
-                if ghost_calls["n"] >= 2:
-                    raise OSError("vanished")
+                raise OSError("vanished")
             return real_stat(self, *args, **kwargs)
 
+        monkeypatch.setattr(Path, "is_file", fake_is_file)
         monkeypatch.setattr(Path, "stat", fake_stat)
         assert _snapshot_bytes(tmp_path) == 4
 
