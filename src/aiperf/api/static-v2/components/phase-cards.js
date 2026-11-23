@@ -119,7 +119,7 @@ export function PhaseCards() {
                   <span class="phase-stat-val">${fmtInt(completed)}${total ? ` / ${fmtInt(total)}` : ''}</span>
                 </div>
                 <div class="phase-stat">
-                  <span class="phase-stat-label">Errors</span>
+                  <span class="phase-stat-label">Worker errors</span>
                   <span class="phase-stat-val">${fmtInt(p.request_errors ?? p.errors ?? 0)}</span>
                 </div>
                 <div class="phase-stat">
