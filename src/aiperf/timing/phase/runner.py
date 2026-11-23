@@ -1109,7 +1109,7 @@ class PhaseRunner(TaskManagerMixin):
         parts.append(
             f"completed={stats.final_requests_completed:,}, "
             f"cancelled={stats.final_requests_cancelled:,}, "
-            f"errors={stats.final_request_errors:,}"
+            f"worker_errors={stats.final_request_errors:,}"
         )
         if stats.final_sent_sessions and stats.final_sent_sessions > 0:
             parts.append(
@@ -1142,7 +1142,7 @@ class PhaseRunner(TaskManagerMixin):
             returned_desc,
             f"sent={stats.requests_sent:,}",
             f"in_flight={stats.in_flight_requests:,}",
-            f"errors={stats.request_errors:,}",
+            f"worker_errors={stats.request_errors:,}",
             f"elapsed={stats.requests_elapsed_time:.1f}s",
         ]
         return " | ".join(parts)

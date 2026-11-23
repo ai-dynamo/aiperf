@@ -1433,6 +1433,22 @@ class RecordsManager(PullClientMixin, BaseComponentService):
                 f"Processed {phase_stats.success_records} valid requests and {phase_stats.error_records} errors ({phase_stats.total_records} total)."
             )
         )
+        worker_errors = phase_stats.final_request_errors
+        if worker_errors is not None:
+            worker_errors -= self._skipped_context_overflow_counts_by_phase.get(
+                phase, 0
+            )
+        if (
+            worker_errors is not None
+            and self._records_tracker.has_complete_worker_error_counts_for_phase(phase)
+            and phase_stats.total_records == phase_stats.final_requests_completed
+            and 0 <= worker_errors < phase_stats.error_records
+        ):
+            self.info(
+                f"Error accounting: worker_errors={worker_errors:,}, "
+                f"response_processing_errors={phase_stats.error_records - worker_errors:,}, "
+                f"total_errors={phase_stats.error_records:,}."
+            )
 
         self.info("Received all records, processing now...")
         self.execute_async(

@@ -345,6 +345,14 @@ class RecordsTracker:
             ),
         )
 
+    def has_complete_worker_error_counts_for_phase(self, phase: CreditPhase) -> bool:
+        """Whether every tracker for the phase has a final worker-error count."""
+        return all(
+            tracker._final_request_errors is not None
+            for (tracker_phase, _), tracker in self._phase_trackers.items()
+            if tracker_phase == phase
+        )
+
     def total_records_for_phase(
         self, phase: CreditPhase, phase_index: int | None = None
     ) -> int:
