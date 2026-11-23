@@ -2263,16 +2263,18 @@ http_req_chunks_received = trace.response_chunks_count
 ## GPU Power Efficiency Metrics
 
 > [!NOTE]
-> All metrics in this section require `--gpu-telemetry` to be enabled and the underlying collector to expose the relevant signal. They are computed **per vendor**, once per profiling phase, by the `EnergyEfficiencyAnalyzer` — an `analyzer` plugin that joins the GPU-telemetry accumulator (energy/power) to the metrics-accumulator summary (tokens/throughput/latency) via the `SummaryContext` — not by the standard derivation walk. See the [Externally-Injected Derived Metric pattern](dev/patterns.md#externally-injected-derived-metric-pattern) and the `analyzer` plugin category. Each metric exists in an NVIDIA variant (tag prefix `nvidia_`, from `nvidia_power_usage` / `nvidia_energy_consumption`, populated by the DCGM and pynvml collectors) and an AMD variant (tag prefix `amd_`, from `amd_power` / `amd_energy_consumption`, populated by the amdsmi collector). A mixed NVIDIA+AMD run reports both, each summing only its own vendor's GPUs.
+> All metrics in this section require `--gpu-telemetry` to be enabled and the underlying collector to expose the relevant signal. They are computed **per vendor**, once per profiling phase, by the `EnergyEfficiencyAnalyzer` — an `analyzer` plugin that joins the GPU-telemetry accumulator (energy/power) to the metrics-accumulator summary (tokens/throughput/latency) via the `SummaryContext` — not by the standard derivation walk. See the [Externally-Injected Derived Metric pattern](dev/patterns.md#externally-injected-derived-metric-pattern) and the `analyzer` plugin category. Each metric exists in an NVIDIA variant (tag prefix `nvidia_`, from `nvidia_power_usage` / `nvidia_energy_consumption`, populated by the DCGM and pynvml collectors), an AMD variant (tag prefix `amd_`, from `amd_power` / `amd_energy_consumption`, populated by the amdsmi collector), and a Huawei Ascend variant (tag prefix `ascend_`, from `ascend_power`, populated by the npu-smi collector). A mixed-vendor run reports each family separately, each summing only its own vendor's devices.
 
 > [!NOTE]
-> Each vendor's metrics render in their own console section — `GPU Power Efficiency (NVIDIA)` (`console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_NVIDIA`) and `GPU Power Efficiency (AMD)` (`MetricConsoleGroup.GPU_POWER_EFFICIENCY_AMD`) — separate from the main metrics table. A section is omitted entirely when no GPU of that vendor reported.
+> Each vendor's metrics render in their own console section — `GPU Power Efficiency (NVIDIA)` (`console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_NVIDIA`), `GPU Power Efficiency (AMD)` (`MetricConsoleGroup.GPU_POWER_EFFICIENCY_AMD`), and `GPU Power Efficiency (Ascend)` (`MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND`) — separate from the main metrics table. A section is omitted entirely when no device of that vendor reported.
 
 **Energy source.** Per-vendor total GPU energy is taken from that vendor's energy counter delta when available (`source = dcgm_counter`), and the time-averaged fleet power is derived from it as `total_gpu_energy / profiling_duration_s`. When only the power gauge is exposed, energy is integrated from it instead (`source = power_integration`, energy = fleet power * duration). If neither signal is present the family is skipped for that vendor.
 
 The `power_integration` fallback is vendor-agnostic: `EnergyEfficiencyAnalyzer._resolve_energy` selects on whether the energy counter reported, not on which vendor asked. It therefore covers AMD GPUs exposing only the power gauge and NVIDIA GPUs without the NVML total-energy counter alike, so a pre-Volta card still reports power efficiency metrics, integrated from power rather than counted, provided no GPU on that platform reported the counter. The choice is fleet-wide, not per GPU: in a mixed-generation fleet one reporting GPU sends the whole platform down the counter branch, and the GPUs without a counter then contribute power but no energy, so `total_gpu_energy` is short by their share while still labelled `dcgm_counter`.
 
-The family is skipped entirely when GPU telemetry is not collected. Each tag is independently omitted when its underlying signal is unavailable (e.g. `nvidia_energy_per_user` only appears for concurrency runs; `nvidia_goodput_per_watt` only when goodput SLOs are configured). NVIDIA tags: `nvidia_energy_delay_product`, `nvidia_performance_per_watt`, `nvidia_output_tps_per_watt`, `nvidia_goodput_per_watt`, `nvidia_average_gpu_power`, `nvidia_total_gpu_energy`, `nvidia_total_gpu_power`, `nvidia_energy_per_total_token`, `nvidia_energy_per_output_token`, `nvidia_energy_per_request`, `nvidia_output_tokens_per_joule`, `nvidia_energy_per_user`. AMD tags follow the same pattern with the `amd_` prefix.
+Because the npu-smi collector exposes no energy counter at all, the Ascend family always takes the `power_integration` branch: `ascend_total_gpu_energy` is the measured power gauge integrated over the profiling window, not a counter delta.
+
+The family is skipped entirely when GPU telemetry is not collected. Each tag is independently omitted when its underlying signal is unavailable (e.g. `nvidia_energy_per_user` only appears for concurrency runs; `nvidia_goodput_per_watt` only when goodput SLOs are configured). NVIDIA tags: `nvidia_energy_delay_product`, `nvidia_performance_per_watt`, `nvidia_output_tps_per_watt`, `nvidia_goodput_per_watt`, `nvidia_average_gpu_power`, `nvidia_total_gpu_energy`, `nvidia_total_gpu_power`, `nvidia_energy_per_total_token`, `nvidia_energy_per_output_token`, `nvidia_energy_per_request`, `nvidia_output_tokens_per_joule`, `nvidia_energy_per_user`. AMD and Ascend tags follow the same pattern with the `amd_` and `ascend_` prefixes.
 
 ### Total GPU Power
 
@@ -2285,6 +2287,8 @@ Sum of average GPU power across all reporting GPUs during the profiling phase, i
 # Vendor source fields:
 #   NVIDIA: nvidia_power_usage   (pynvml / DCGM collectors)
 #   AMD:    amd_power             (amdsmi collector)
+#   Ascend: ascend_power          (npu-smi collector)
+#   Ascend: ascend_power          (npu-smi collector)
 #
 # Per GPU: average of the vendor power gauge samples in the profiling window
 # (warmup excluded). Summed across all GPUs that reported valid samples.
@@ -2298,7 +2302,7 @@ total_gpu_power_w = sum(
 - Unit: watts (`W`).
 - Time-filtered to the profiling-phase window; warmup samples are excluded.
 - Power is a gauge, so the window stays bounded — post-bench idle samples don't drag the average down.
-- Omitted when no GPU reports `nvidia_power_usage` (NVIDIA) or `amd_power` (AMD) in the window.
+- Omitted when no GPU reports a vendor power gauge (`nvidia_power_usage`, `amd_power`, or `ascend_power`) in the window.
 
 ---
 
@@ -2313,6 +2317,8 @@ Sum of energy consumed across all reporting GPUs during the profiling phase, in 
 # Vendor source fields:
 #   NVIDIA: nvidia_energy_consumption   (pynvml / DCGM collectors, in megajoules)
 #   AMD:    amd_energy_consumption       (amdsmi collector, in megajoules)
+#   Ascend: none -- npu-smi has no energy counter, so the analyzer integrates
+#           ascend_power over the window instead (see Energy source above)
 #
 # Per GPU: delta of the vendor energy monotonic counter over the profiling
 # window, widened on the end by FINAL_SCRAPE_GRACE_NS so the trailing scrape
@@ -2329,7 +2335,7 @@ total_gpu_energy_j = sum(
 - Unit: joules (`J`). Source samples are reported in megajoules and converted via `EnergyMetricUnit.MEGAJOULE.joules`.
 - The end-of-window grace is bounded (not open-ended) so cooldown samples and any subsequent-phase samples cannot leak into the delta. Tune via `AIPERF_GPU_FINAL_SCRAPE_GRACE_NS` if you also tune `AIPERF_GPU_COLLECTION_INTERVAL` — keep grace at roughly `2x` the collection cadence.
 - Per-GPU deltas use the nearest non-NaN baseline and the nearest non-NaN final sample; arrays containing transient NaN sensor failures still yield a meaningful delta.
-- Omitted when no GPU reports `nvidia_energy_consumption` (NVIDIA) or `amd_energy_consumption` (AMD) in the window.
+- Omitted when no GPU reports an energy counter (`nvidia_energy_consumption` / `amd_energy_consumption`) and power integration produced nothing — the Ascend platform always takes the power-integration path.
 
 ---
 
@@ -2576,6 +2582,7 @@ The `console_group` class attribute on a metric controls which console table the
 | <a id="group-spec-decode"></a>`MetricConsoleGroup.SPEC_DECODE` | Speculative-decoding acceptance metrics (acceptance length, draft acceptance rate, accepted-per-verified, spec-decode steps). Rendered in a dedicated `Spec Decode` section, followed by a one-line pooled accepted-draft histogram from a separate exporter. |
 | <a id="group-gpu-power-efficiency-nvidia"></a>`MetricConsoleGroup.GPU_POWER_EFFICIENCY_NVIDIA` | NVIDIA cross-GPU power efficiency totals (`nvidia_total_gpu_power`, `nvidia_total_gpu_energy`, `nvidia_output_tokens_per_joule`, `nvidia_energy_per_user`). Rendered in a dedicated `GPU Power Efficiency (NVIDIA)` section instead of the main table. |
 | <a id="group-gpu-power-efficiency-amd"></a>`MetricConsoleGroup.GPU_POWER_EFFICIENCY_AMD` | AMD cross-GPU power efficiency totals (`amd_total_gpu_power`, `amd_total_gpu_energy`, `amd_output_tokens_per_joule`, `amd_energy_per_user`). Rendered in a dedicated `GPU Power Efficiency (AMD)` section instead of the main table. |
+| <a id="group-gpu-power-efficiency-ascend"></a>`MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND` | Huawei Ascend cross-NPU power efficiency totals (`ascend_total_gpu_power`, `ascend_total_gpu_energy`, `ascend_output_tokens_per_joule`, `ascend_energy_per_user`). Rendered in a dedicated `GPU Power Efficiency (Ascend)` section instead of the main table. |
 
 Set as a class attribute on a `BaseMetric` subclass:
 

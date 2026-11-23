@@ -9,6 +9,7 @@ from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.exporters.console_metrics_exporter import ConsoleMetricsExporter
 from aiperf.exporters.console_power_efficiency_exporter import (
     ConsoleAmdPowerEfficiencyExporter,
+    ConsoleAscendPowerEfficiencyExporter,
     ConsoleNvidiaPowerEfficiencyExporter,
 )
 from aiperf.metrics.types.power_efficiency_metrics import (
@@ -16,6 +17,10 @@ from aiperf.metrics.types.power_efficiency_metrics import (
     AmdOutputTokensPerJouleMetric,
     AmdTotalGpuEnergyMetric,
     AmdTotalGpuPowerMetric,
+    AscendEnergyPerUserMetric,
+    AscendOutputTokensPerJouleMetric,
+    AscendTotalGpuEnergyMetric,
+    AscendTotalGpuPowerMetric,
     NvidiaEnergyPerUserMetric,
     NvidiaOutputTokensPerJouleMetric,
     NvidiaTotalGpuEnergyMetric,
@@ -89,6 +94,12 @@ VENDOR_CASES = [
         "GPU Power Efficiency (AMD)",
         id="amd",
     ),
+    pytest.param(
+        ConsoleAscendPowerEfficiencyExporter,
+        "ascend",
+        "GPU Power Efficiency (Ascend)",
+        id="ascend",
+    ),
 ]  # fmt: skip
 
 
@@ -149,6 +160,14 @@ class TestConsolePowerEfficiencyExporters:
             assert cls.console_group == MetricConsoleGroup.GPU_POWER_EFFICIENCY_NVIDIA
         for cls in amd:
             assert cls.console_group == MetricConsoleGroup.GPU_POWER_EFFICIENCY_AMD
+        ascend = (
+            AscendTotalGpuPowerMetric,
+            AscendTotalGpuEnergyMetric,
+            AscendOutputTokensPerJouleMetric,
+            AscendEnergyPerUserMetric,
+        )
+        for cls in ascend:
+            assert cls.console_group == MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND
 
     @pytest.mark.asyncio
     async def test_efficiency_metrics_absent_from_main_metrics_table(

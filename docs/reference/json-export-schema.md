@@ -80,7 +80,8 @@ In addition to the per-metric stats blocks, `profile_export_aiperf.json` include
 
 Schema 1.5 adds a `platform` field to each GPU summary and vendor-scopes GPU
 telemetry metric names. NVIDIA metrics collected through DCGM or pynvml use
-`nvidia_*` names, and AMD metrics collected through amdsmi use `amd_*` names.
+`nvidia_*` names, AMD metrics collected through amdsmi use `amd_*` names, and
+Huawei Ascend metrics collected through npu-smi use `ascend_*` names.
 Metric semantics are platform-specific; cross-platform comparisons require
 validation of the workload, collector behavior, and metric definitions.
 

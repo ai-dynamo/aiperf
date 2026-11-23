@@ -219,6 +219,7 @@ The GPU Telemetry Manager collects GPU metrics during benchmarking runs via plug
   - **DCGM**: Scrapes DCGM Exporter HTTP endpoints (Prometheus format) — NVIDIA GPUs; exposes `nvidia_power_usage` and `nvidia_energy_consumption`
   - **PyNVML**: Queries NVIDIA GPUs directly via the pynvml Python library (no external endpoint required) — exposes `nvidia_power_usage`
   - **amdsmi**: Queries AMD GPUs via the amdsmi Python library — exposes `amd_power` and `amd_energy_consumption`
+  - **npu_smi**: Queries Huawei Ascend NPUs by invoking the `npu-smi` CLI from the Ascend driver — exposes `ascend_power` (no energy counter; energy comes from power integration)
 - Auto-discovering DCGM endpoints
 - Supporting custom endpoints via `--gpu-telemetry` flag
 - Exporting GPU telemetry alongside benchmark results
@@ -235,7 +236,7 @@ sequence fails result finalization closed instead of publishing a partial JSONL 
 
 At the end of each profiling phase, `EnergyEfficiencyAnalyzer` — an `analyzer` plugin — joins GPU telemetry energy/power data with inference token and throughput totals to produce the GPU power-efficiency metric family.
 
-`EnergyEfficiencyAnalyzer.analyze()` is called by the `SummaryContext` at summarize time. It calls `GPUTelemetryAccumulator.available_platforms()` to discover which vendors reported data, then fans out per vendor: querying windowed energy and power totals, computing the 12 derived metrics (total power, total energy, tokens/joule, energy/token, energy/request, energy/user, energy-delay product, performance/watt, output TPS/watt, goodput/watt, average power), and returning them as injected `MetricResult` objects. Each vendor's metrics render in their own console section (`GPU_POWER_EFFICIENCY_NVIDIA`, `GPU_POWER_EFFICIENCY_AMD`); a section is omitted entirely when no GPU of that vendor reported.
+`EnergyEfficiencyAnalyzer.analyze()` is called by the `SummaryContext` at summarize time. It calls `GPUTelemetryAccumulator.available_platforms()` to discover which vendors reported data, then fans out per vendor: querying windowed energy and power totals, computing the 12 derived metrics (total power, total energy, tokens/joule, energy/token, energy/request, energy/user, energy-delay product, performance/watt, output TPS/watt, goodput/watt, average power), and returning them as injected `MetricResult` objects. Each vendor's metrics render in their own console section (`GPU_POWER_EFFICIENCY_NVIDIA`, `GPU_POWER_EFFICIENCY_AMD`, `GPU_POWER_EFFICIENCY_ASCEND`); a section is omitted entirely when no device of that vendor reported.
 
 ![GPU Power Efficiency Data Flow](diagrams/gpu-power-efficiency-flow.svg)
 

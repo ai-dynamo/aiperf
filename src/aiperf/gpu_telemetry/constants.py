@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Constants for GPU telemetry collection (DCGM, pynvml, and amdsmi)."""
+"""Constants for GPU telemetry collection (DCGM, pynvml, amdsmi, and npu-smi)."""
 
 from aiperf.common.enums import (
     EnergyMetricUnit,
@@ -19,8 +19,12 @@ PYNVML_SOURCE_IDENTIFIER = "pynvml://localhost"
 # Source identifier for amdsmi collector (used in TelemetryRecord.telemetry_source_url field)
 AMDSMI_SOURCE_IDENTIFIER = "amdsmi://localhost"
 
+# Source identifier for npu-smi collector (used in TelemetryRecord.telemetry_source_url field)
+NPU_SMI_SOURCE_IDENTIFIER = "npu-smi://localhost"
+
 NVIDIA_GPU_TELEMETRY_PLATFORM = "nvidia"
 AMD_GPU_TELEMETRY_PLATFORM = "amd"
+ASCEND_GPU_TELEMETRY_PLATFORM = "ascend"
 UNKNOWN_GPU_TELEMETRY_PLATFORM = "unknown"
 
 # Canonical namespaced NVIDIA telemetry field names. After AIP-905 namespacing,
@@ -37,6 +41,18 @@ NVIDIA_ENERGY_CONSUMPTION_FIELD = "nvidia_energy_consumption"
 # the power-efficiency accumulator resolves AMD power/energy through them.
 AMD_POWER_FIELD = "amd_power"
 AMD_ENERGY_CONSUMPTION_FIELD = "amd_energy_consumption"
+
+# Canonical Ascend NPU field names, populated by the npu-smi collector. The
+# underlying signals come from the CANN driver's `npu-smi info -t ...` output;
+# there is deliberately no `ascend_*` energy field because npu-smi exposes no
+# cumulative energy counter. `EnergyEfficiencyAnalyzer` therefore derives Ascend
+# energy by integrating `ascend_power` over the profiling window.
+ASCEND_POWER_FIELD = "ascend_power"
+ASCEND_TEMPERATURE_FIELD = "ascend_temperature"
+ASCEND_AICORE_UTILIZATION_FIELD = "ascend_aicore_utilization"
+ASCEND_MEMORY_UTILIZATION_FIELD = "ascend_memory_utilization"
+ASCEND_MEMORY_USED_FIELD = "ascend_memory_used"
+ASCEND_HEALTH_FIELD = "ascend_health"
 
 NVIDIA_TELEMETRY_FIELD_ALIASES = {
     "gpu_power_usage": NVIDIA_POWER_USAGE_FIELD,
@@ -131,6 +147,32 @@ GPU_TELEMETRY_METRICS_CONFIG: list[tuple[str, str, MetricUnitT]] = [
     ("AMD GPU Temperature", "amd_temperature", TemperatureMetricUnit.CELSIUS),
     ("AMD ECC Uncorrectable", "amd_ecc_uncorrectable", GenericMetricUnit.COUNT),
     ("AMD Throttle Status", "amd_throttle_status", GenericMetricUnit.COUNT),
+    # Ascend NPU telemetry (collected by NPUSMITelemetryCollector). Field names
+    # mirror the npu-smi signals rather than NVML semantics: AI Core occupancy
+    # and HBM occupancy are sampled by the CANN driver and are not the same
+    # physical quantity as NVML `sm_utilization` / `memory_utilization`.
+    ("Ascend NPU Power", ASCEND_POWER_FIELD, PowerMetricUnit.WATT),
+    (
+        "Ascend NPU Temperature",
+        ASCEND_TEMPERATURE_FIELD,
+        TemperatureMetricUnit.CELSIUS,
+    ),
+    (
+        "Ascend AI Core Utilization",
+        ASCEND_AICORE_UTILIZATION_FIELD,
+        GenericMetricUnit.PERCENT,
+    ),
+    (
+        "Ascend HBM Memory Used",
+        ASCEND_MEMORY_USED_FIELD,
+        MetricSizeUnit.GIGABYTES,
+    ),
+    (
+        "Ascend HBM Utilization",
+        ASCEND_MEMORY_UTILIZATION_FIELD,
+        GenericMetricUnit.PERCENT,
+    ),
+    ("Ascend NPU Health", ASCEND_HEALTH_FIELD, GenericMetricUnit.COUNT),
 ]
 
 # Metrics that are cumulative counters (need delta calculation).

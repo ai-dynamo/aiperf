@@ -10,11 +10,13 @@ when GPU telemetry is not collected. See design doc ``0005-energy-efficiency-met
 
 Energy source: prefers the DCGM ``energy_consumption`` counter delta; falls back
 to power-integration (``fleet_power * duration``) when only the power gauge is
-available (e.g. pynvml/amdsmi collectors that expose no energy counter).
+available (e.g. npu-smi, which exposes no energy counter at all, and collectors
+whose device cannot report one).
 
 Vendor fan-out: the analyzer calls ``gpu.available_platforms()`` and emits
-``nvidia_*`` metrics for NVIDIA GPUs and ``amd_*`` metrics for AMD GPUs.
-Mixed-vendor runs emit both families independently.
+``nvidia_*`` metrics for NVIDIA GPUs, ``amd_*`` metrics for AMD GPUs, and
+``ascend_*`` metrics for Huawei Ascend NPUs. Mixed-vendor runs emit each
+family independently.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from aiperf.common.logging import AIPerfLogger
 from aiperf.common.models import MetricResult
 from aiperf.gpu_telemetry.constants import (
     AMD_GPU_TELEMETRY_PLATFORM,
+    ASCEND_GPU_TELEMETRY_PLATFORM,
     NVIDIA_GPU_TELEMETRY_PLATFORM,
 )
 from aiperf.metrics.types.power_efficiency_metrics import (
@@ -42,6 +45,18 @@ from aiperf.metrics.types.power_efficiency_metrics import (
     AmdPerformancePerWattMetric,
     AmdTotalGpuEnergyMetric,
     AmdTotalGpuPowerMetric,
+    AscendAverageGpuPowerMetric,
+    AscendEnergyDelayProductMetric,
+    AscendEnergyPerOutputTokenMetric,
+    AscendEnergyPerRequestMetric,
+    AscendEnergyPerTotalTokenMetric,
+    AscendEnergyPerUserMetric,
+    AscendGoodputPerWattMetric,
+    AscendOutputTokensPerJouleMetric,
+    AscendOutputTokensPerSecondPerWattMetric,
+    AscendPerformancePerWattMetric,
+    AscendTotalGpuEnergyMetric,
+    AscendTotalGpuPowerMetric,
     NvidiaAverageGpuPowerMetric,
     NvidiaEnergyDelayProductMetric,
     NvidiaEnergyPerOutputTokenMetric,
@@ -95,6 +110,20 @@ _VENDOR_METRICS: dict[str, dict[str, type]] = {
         "performance_per_watt": AmdPerformancePerWattMetric,
         "output_tps_per_watt": AmdOutputTokensPerSecondPerWattMetric,
         "goodput_per_watt": AmdGoodputPerWattMetric,
+    },
+    ASCEND_GPU_TELEMETRY_PLATFORM: {
+        "total_power": AscendTotalGpuPowerMetric,
+        "average_power": AscendAverageGpuPowerMetric,
+        "total_energy": AscendTotalGpuEnergyMetric,
+        "output_tokens_per_joule": AscendOutputTokensPerJouleMetric,
+        "energy_per_output_token": AscendEnergyPerOutputTokenMetric,
+        "energy_per_total_token": AscendEnergyPerTotalTokenMetric,
+        "energy_per_request": AscendEnergyPerRequestMetric,
+        "energy_per_user": AscendEnergyPerUserMetric,
+        "energy_delay_product": AscendEnergyDelayProductMetric,
+        "performance_per_watt": AscendPerformancePerWattMetric,
+        "output_tps_per_watt": AscendOutputTokensPerSecondPerWattMetric,
+        "goodput_per_watt": AscendGoodputPerWattMetric,
     },
 }
 

@@ -78,7 +78,7 @@ aiperf profile --config benchmark.yaml
 | [kv_cache_test.yaml](kv_cache_test.yaml) | KV Cache / Prefix Caching | Test KV cache efficiency with shared system prompts using user-centric mode |
 | [long_context.yaml](long_context.yaml) | Long Context Benchmark (32K+) | Test performance with long input contexts and prefill concurrency limits |
 | [user_files.yaml](user_files.yaml) | User Files (Templated Artifacts) | Capture run parameters as JSON/YAML/text files materialized into the artifact directory |
-| [gpu_telemetry.yaml](gpu_telemetry.yaml) | GPU Telemetry (DCGM / pynvml) | Collect GPU power, utilization, memory, and temperature during a benchmark via DCGM or pynvml |
+| [gpu_telemetry.yaml](gpu_telemetry.yaml) | GPU Telemetry (DCGM / pynvml / npu_smi) | Collect GPU power, utilization, memory, and temperature during a benchmark via DCGM, pynvml, amdsmi, or npu-smi |
 | [http_trace_metrics.yaml](http_trace_metrics.yaml) | HTTP Trace Metrics (Latency Breakdown) | Capture per-phase HTTP timing (DNS, connect, sending, waiting/TTFB, receiving) for transport-layer debugging |
 
 ### Multimodal

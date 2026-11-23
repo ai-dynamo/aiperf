@@ -37,3 +37,19 @@ class ConsoleAmdPowerEfficiencyExporter(ConsoleMetricsExporter):
     console_groups = (MetricConsoleGroup.GPU_POWER_EFFICIENCY_AMD,)
     split_by_group = False
     STAT_COLUMN_KEYS = ["avg"]
+
+
+class ConsoleAscendPowerEfficiencyExporter(ConsoleMetricsExporter):
+    """Console exporter for Ascend cross-NPU power efficiency totals.
+
+    Ascend-side counterpart to `ConsoleNvidiaPowerEfficiencyExporter`. Renders
+    the `ascend_*` efficiency totals computed from `ascend_power` (npu-smi
+    collector). npu-smi has no energy counter, so `ascend_total_gpu_energy` is
+    the power gauge integrated over the profiling window rather than a measured
+    counter delta. Omitted entirely when no Ascend NPU reported.
+    """
+
+    title = "GPU Power Efficiency (Ascend)"
+    console_groups = (MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND,)
+    split_by_group = False
+    STAT_COLUMN_KEYS = ["avg"]

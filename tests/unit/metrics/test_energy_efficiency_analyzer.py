@@ -153,6 +153,52 @@ class TestEnergyEfficiencyAnalyzer:
         assert by_tag["amd_goodput_per_watt"] == pytest.approx(0.08)
 
     @pytest.mark.asyncio
+    async def test_full_metric_set_matches_doc_formulas_ascend(self) -> None:
+        gpu = _StubGpu(energy=(1000.0, 2), power=(200.0, 2), platforms={"ascend"})
+        summary = _metrics_summary(
+            total_osl=5000.0,
+            total_isl=3000.0,
+            request_count=100.0,
+            request_throughput=10.0,
+            output_token_throughput=50.0,
+            goodput=8.0,
+            request_latency=500.0,
+        )
+
+        results = await _analyzer(concurrency=8).analyze(_ctx(gpu, summary))
+        by_tag = {r.tag: r.avg for r in results}
+
+        assert by_tag["ascend_total_gpu_power"] == pytest.approx(200.0)
+        assert by_tag["ascend_average_gpu_power"] == pytest.approx(100.0)
+        assert by_tag["ascend_total_gpu_energy"] == pytest.approx(1000.0)
+        assert by_tag["ascend_output_tokens_per_joule"] == pytest.approx(5.0)
+        assert by_tag["ascend_energy_per_output_token"] == pytest.approx(200.0)
+        assert by_tag["ascend_energy_per_total_token"] == pytest.approx(125.0)
+        assert by_tag["ascend_energy_per_request"] == pytest.approx(10.0)
+        assert by_tag["ascend_energy_per_user"] == pytest.approx(125.0)
+        assert by_tag["ascend_energy_delay_product"] == pytest.approx(5.0)
+        assert by_tag["ascend_performance_per_watt"] == pytest.approx(0.1)
+        assert by_tag["ascend_output_tps_per_watt"] == pytest.approx(0.5)
+        assert by_tag["ascend_goodput_per_watt"] == pytest.approx(0.08)
+
+    @pytest.mark.asyncio
+    async def test_ascend_energy_comes_from_power_integration(self) -> None:
+        # npu-smi exposes no energy counter, so the accumulator reports
+        # (0.0, 0) for total_energy_joules and the analyzer must fall back to
+        # fleet_power * duration instead of dropping the whole family.
+        gpu = _StubGpu(energy=(0.0, 0), power=(150.0, 4), platforms={"ascend"})
+        summary = _metrics_summary(total_osl=1200.0)
+
+        results = await _analyzer(concurrency=None).analyze(_ctx(gpu, summary))
+        by_tag = {r.tag: r.avg for r in results}
+
+        assert by_tag["ascend_total_gpu_power"] == pytest.approx(150.0)
+        assert by_tag["ascend_average_gpu_power"] == pytest.approx(150.0)
+        # 150 W fleet power * 10 s window
+        assert by_tag["ascend_total_gpu_energy"] == pytest.approx(1500.0)
+        assert by_tag["ascend_output_tokens_per_joule"] == pytest.approx(0.8)
+
+    @pytest.mark.asyncio
     async def test_mixed_vendor_emits_both_families(self) -> None:
         gpu = _StubGpu(
             energy=(1000.0, 2), power=(200.0, 2), platforms={"nvidia", "amd"}

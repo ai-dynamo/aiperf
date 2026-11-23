@@ -806,8 +806,8 @@ analyzer-injected values are never overwritten.
 
 The `_derive_value` invariants are pinned by
 [`tests/unit/metrics/test_energy_efficiency_analyzer.py`](https://github.com/ai-dynamo/aiperf/blob/main/tests/unit/metrics/test_energy_efficiency_analyzer.py)
-and the property tests in `tests/unit/property/`. The 24 concrete classes
-(12 NVIDIA × 12 AMD) are each exercised: every `_derive_value` call must
+and the property tests in `tests/unit/property/`. The 36 concrete classes
+(12 NVIDIA × 12 AMD × 12 Ascend) are each exercised: every `_derive_value` call must
 raise `NoMetricValue` with a message naming the tag, the injection site, and
 the catching path. A future weakening of any message fails the test rather
 than silently drifting.

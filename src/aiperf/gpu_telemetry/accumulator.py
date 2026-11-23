@@ -34,6 +34,8 @@ from aiperf.gpu_telemetry.constants import (
     AMD_ENERGY_CONSUMPTION_FIELD,
     AMD_GPU_TELEMETRY_PLATFORM,
     AMD_POWER_FIELD,
+    ASCEND_GPU_TELEMETRY_PLATFORM,
+    ASCEND_POWER_FIELD,
     GPU_TELEMETRY_COUNTER_METRICS,
     NVIDIA_ENERGY_CONSUMPTION_FIELD,
     NVIDIA_GPU_TELEMETRY_PLATFORM,
@@ -51,11 +53,15 @@ if TYPE_CHECKING:
 _PLATFORM_POWER_FIELDS: dict[str, str] = {
     NVIDIA_GPU_TELEMETRY_PLATFORM: NVIDIA_POWER_USAGE_FIELD,
     AMD_GPU_TELEMETRY_PLATFORM: AMD_POWER_FIELD,
+    ASCEND_GPU_TELEMETRY_PLATFORM: ASCEND_POWER_FIELD,
 }
 
 _PLATFORM_ENERGY_FIELDS: dict[str, str] = {
     NVIDIA_GPU_TELEMETRY_PLATFORM: NVIDIA_ENERGY_CONSUMPTION_FIELD,
     AMD_GPU_TELEMETRY_PLATFORM: AMD_ENERGY_CONSUMPTION_FIELD,
+    # No Ascend entry: npu-smi exposes no cumulative energy counter, so
+    # total_energy_joules returns (0.0, 0) and EnergyEfficiencyAnalyzer falls
+    # back to integrating ASCEND_POWER_FIELD over the profiling window.
 }
 
 
@@ -513,8 +519,8 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         return total_energy_j, gpu_count
 
     def available_platforms(self) -> set[str]:
-        """Return the set of GPU platforms (e.g. ``"nvidia"``, ``"amd"``) that
-        have contributed at least one telemetry record.
+        """Return the set of GPU platforms (e.g. ``"nvidia"``, ``"amd"``,
+        ``"ascend"``) that have contributed at least one telemetry record.
 
         Query surface for ``EnergyEfficiencyAnalyzer`` so it can fan out
         per-vendor without hard-coding which platforms are present.
@@ -532,7 +538,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         """Per-vendor total of avg(power) over ``[start_ns, end_ns)``.
 
         Query surface for cross-accumulator analyzers (e.g. energy efficiency).
-        ``platform`` selects the vendor (``"nvidia"`` or ``"amd"``); when
+        ``platform`` selects the vendor (``"nvidia"``, ``"amd"`` or ``"ascend"``); when
         ``None``, only NVIDIA GPUs are summed using ``nvidia_power_usage``
         (backward compat for single-vendor callers — AMD and unknown-platform
         GPUs are excluded). Returns ``(total_power_watts, gpu_count)``;
@@ -554,7 +560,7 @@ class GPUTelemetryAccumulator(BaseMetricsProcessor):
         """Per-vendor total energy (J) over ``[start_ns, end_ns)``.
 
         Query surface for cross-accumulator analyzers. ``platform`` selects the
-        vendor (``"nvidia"`` or ``"amd"``); when ``None``, only NVIDIA GPUs are
+        vendor (``"nvidia"``, ``"amd"`` or ``"ascend"``); when ``None``, only NVIDIA GPUs are
         summed using ``nvidia_energy_consumption`` (backward compat for
         single-vendor callers — AMD and unknown-platform GPUs are excluded).
         ``end_ns`` is widened by ``Environment.GPU.FINAL_SCRAPE_GRACE_NS`` so

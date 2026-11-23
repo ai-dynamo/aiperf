@@ -29,8 +29,8 @@ class GpuTelemetryConfig(BaseConfig):
 
     Collects GPU metrics through DCGM exporter endpoints by default. The
     ``collector`` field can switch to a local backend (``pynvml`` for NVIDIA,
-    ``amdsmi`` for AMD ROCm); ``mode`` controls summary vs. realtime dashboard
-    display.
+    ``amdsmi`` for AMD ROCm, ``npu_smi`` for Huawei Ascend); ``mode`` controls
+    summary vs. realtime dashboard display.
 
     Accepts shorthand forms:
         - String URL: "http://localhost:9400/metrics"
@@ -81,7 +81,8 @@ class GpuTelemetryConfig(BaseConfig):
             default=GPUTelemetryCollectorType.DCGM,
             description="GPU telemetry collector backend. Use 'dcgm' for DCGM "
             "exporter endpoints or a local collector (e.g. 'pynvml' for NVIDIA, "
-            "'amdsmi' for AMD ROCm) for on-host metrics collection.",
+            "'amdsmi' for AMD ROCm, 'npu_smi' for Huawei Ascend) for on-host "
+            "metrics collection.",
         ),
     ]
 
