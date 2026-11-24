@@ -481,3 +481,40 @@ class TestNormalizeHttpUrl:
 
     def test_normalize_http_urls_empty_list_returns_empty(self) -> None:
         assert normalize_http_urls([]) == []
+
+
+class TestParseServiceTypes:
+    """parse_service_types accepts its own output, which Environment.defaults() re-validates."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "worker,records-manager",
+            ["worker", "records_manager"],
+            {"worker", "records_manager"},
+            ("worker", "records_manager"),
+        ],
+    )
+    def test_accepts_strings_lists_sets_and_tuples(self, value: Any) -> None:
+        from aiperf.config.loader.parsing import parse_service_types
+        from aiperf.plugin.enums import ServiceType
+
+        expected = {ServiceType("worker"), ServiceType("records_manager")}
+        assert parse_service_types(value) == expected
+        assert parse_service_types(parse_service_types(value)) == expected
+
+    def test_none_is_none(self) -> None:
+        from aiperf.config.loader.parsing import parse_service_types
+
+        assert parse_service_types(None) is None
+
+    def test_scenario_defaults_keep_debug_services(self, monkeypatch) -> None:
+        from aiperf.common.environment import Environment
+        from aiperf.common.scenario import get_scenario
+        from aiperf.plugin.enums import ServiceType
+
+        monkeypatch.setenv("AIPERF_DEV_DEBUG_SERVICES", "worker")
+        env = type(Environment)()
+        with env.defaults(get_scenario("agentx").environment_defaults):
+            debug_services = env.DEV.DEBUG_SERVICES
+        assert debug_services == {ServiceType("worker")}

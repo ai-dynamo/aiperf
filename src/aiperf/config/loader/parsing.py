@@ -139,9 +139,14 @@ def parse_str_or_csv_list(input: Any) -> list[Any]:
 
 def parse_service_types(input: Any | None) -> set[ServiceType] | None:
     """Parses the input to ensure it is a set of service types.
-    Will replace hyphens with underscores for user convenience."""
+    Will replace hyphens with underscores for user convenience.
+
+    Also accepts a set or tuple, such as an already-parsed value: Environment.defaults()
+    re-validates the whole environment, so AIPERF_DEV_DEBUG_SERVICES comes back as a set."""
     if input is None:
         return None
+    if isinstance(input, (set, frozenset, tuple)):
+        input = sorted(input)
 
     return {
         ServiceType(service_type.replace("-", "_"))
