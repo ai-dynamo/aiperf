@@ -163,6 +163,8 @@ class _PendingDispatch:
     """Coroutine factory that resolves the credit's dispatch disposition."""
     on_refused: Callable[[], Awaitable[None]] | None
     """Optional callback run when the dispatch is refused or cancelled."""
+    release_scheduled: bool = False
+    """An interval-barrier release is queued on the event loop."""
 
 
 @dataclass(slots=True)
@@ -704,10 +706,14 @@ class ReplayBarrierCoordinator:
         state.completed.add(ReplayTurnKey(credit.conversation_id, credit.turn_index))
         if self._releases_paused:
             return
-        ready = [key for key in state.pending if self._ready(state, key)]
+        ready = [
+            key
+            for key, pending in state.pending.items()
+            if not pending.release_scheduled and self._ready(state, key)
+        ]
         for key in sorted(ready):
-            pending = state.pending.pop(key)
-            task = asyncio.create_task(self._dispatch_pending(pending))
+            state.pending[key].release_scheduled = True
+            task = asyncio.create_task(self._dispatch_pending(state, key))
             self._dispatch_tasks.add(task)
             task.add_done_callback(self._dispatch_tasks.discard)
         if state.in_flight == 0:
@@ -1103,8 +1109,14 @@ class ReplayBarrierCoordinator:
             for predecessor in self._predecessors.get(key, ())
         )
 
-    @staticmethod
-    async def _dispatch_pending(pending: _PendingDispatch) -> None:
+    async def _dispatch_pending(
+        self, state: _RootBarrierState, key: ReplayTurnKey
+    ) -> None:
+        # Warmup can pause after complete() queues this task. Leave the turn
+        # in the handoff snapshot until its release actually starts.
+        if self._releases_paused:
+            return
+        pending = state.pending.pop(key)
         try:
             issued = await pending.issue()
         except Exception:
