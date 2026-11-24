@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pytest import param
 
 from aiperf.common.enums import BaselineKind, CreditPhase
 from aiperf.common.environment import Environment
@@ -1364,6 +1365,28 @@ class TestPhaseRunnerWorkerReadiness:
         assert strategy.execute_called
 
 
+@pytest.mark.parametrize(
+    "phase",
+    [
+        param(CreditPhase.WARMUP, id="warmup"),
+        param(CreditPhase.PROFILING, id="profiling"),
+    ],
+)  # fmt: skip
+def test_phase_completion_labels_worker_errors(phase: CreditPhase) -> None:
+    runner = PhaseRunner.__new__(PhaseRunner)
+    stats = CreditPhaseStats(
+        phase=phase,
+        final_requests_completed=3,
+        final_requests_cancelled=0,
+        final_request_errors=1,
+    )
+
+    message = runner._format_phase_complete(stats)
+
+    assert f"Phase {phase} ({phase}) complete" in message
+    assert "completed=3, cancelled=0, worker_errors=1" in message
+
+
 class TestWarmupProgressHeartbeat:
     """Warmup emits a throttled INFO heartbeat in _progress_report_loop
     (AIPERF_SERVICE_WARMUP_PROGRESS_LOG_INTERVAL, default 30s, 0 disables) so
@@ -1383,7 +1406,7 @@ class TestWarmupProgressHeartbeat:
         assert "Phase warmup progress" in msg
         assert "returned=32/50" in msg  # completed + cancelled / target
         assert "sent=40" in msg
-        assert "errors=1" in msg
+        assert " | worker_errors=1 | " in msg
         assert "elapsed=" in msg
 
     def test_format_warmup_progress_prefers_final_requests_sent(self):
