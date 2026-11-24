@@ -16,7 +16,7 @@ For Whisper-compatible `/v1/audio/transcriptions` servers, use
 `42` that also happen to be valid JSON. Request text output with
 `--extra-inputs response_format:text`. Responses labeled `text/*` are treated as
 literal transcripts, even when the body resembles a JSON object. They carry no
-server-reported `usage`; output token counts are derived from the tokenizer.
+server-reported `usage`.
 JSON responses must contain an object with a `text` field.
 
 Five ASR datasets are built in:
