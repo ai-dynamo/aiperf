@@ -169,6 +169,10 @@ async def _resolve_snapshot_dir(name: str, revision: str = "main") -> Path:
     404 when HF Hub doesn't recognise the name. Never reaches the network at
     request time.
     """
+    local = Path(name)
+    if local.is_dir():
+        return local
+
     from huggingface_hub import snapshot_download
     from huggingface_hub.errors import (
         EntryNotFoundError,
