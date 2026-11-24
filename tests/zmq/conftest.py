@@ -11,28 +11,10 @@ FD edge-trigger, re-arm, and bootstrap-drain behaviors are exercised against
 the actual event loop and kernel objects.
 """
 
-import asyncio
 import contextlib
 import itertools
 
 import pytest
-
-from aiperf.common.constants import IS_WINDOWS
-
-
-@pytest.fixture(scope="session")
-def event_loop_policy():
-    """Force the selector loop on Windows so the FD-driver can register.
-
-    The FD-driver calls ``loop.add_reader(getsockopt(zmq.FD), ...)``, which the
-    default Windows ``ProactorEventLoop`` does not implement. Production switches
-    to the selector policy in ``bootstrap``; these tests never run bootstrap, so
-    mirror it here (no-op on Linux/macOS).
-    """
-    if IS_WINDOWS:
-        return asyncio.WindowsSelectorEventLoopPolicy()
-    return asyncio.get_event_loop_policy()
-
 
 # Per-process counter -> unique inproc endpoint names. inproc namespaces are
 # scoped to a Context, and each xdist worker is its own process with its own

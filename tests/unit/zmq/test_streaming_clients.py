@@ -22,6 +22,7 @@ from aiperf.credit.messages import (
 from aiperf.credit.structs import Credit
 from aiperf.zmq.streaming_dealer_client import ZMQStreamingDealerClient
 from aiperf.zmq.streaming_router_client import ZMQStreamingRouterClient
+from tests.harness.utils import EVENT_WAIT_HANG_GUARD_S
 
 # ============================================================================
 # ZMQStreamingRouterClient Tests
@@ -115,7 +116,9 @@ class TestStreamingRouterClientReceiver:
 
         try:
             # Wait for message to be received
-            await asyncio.wait_for(handler_called.wait(), timeout=1.0)
+            await asyncio.wait_for(
+                handler_called.wait(), timeout=EVENT_WAIT_HANG_GUARD_S
+            )
 
             assert received_identity == "worker-1"
             assert isinstance(received_message, WorkerDispatchable)
@@ -241,7 +244,9 @@ class TestStreamingDealerClientReceiver:
         await client.start()
 
         try:
-            await asyncio.wait_for(handler_called.wait(), timeout=1.0)
+            await asyncio.wait_for(
+                handler_called.wait(), timeout=EVENT_WAIT_HANG_GUARD_S
+            )
             assert isinstance(received_message, Credit)
             assert received_message.id == sample_credit.id
         finally:
@@ -270,7 +275,9 @@ class TestStreamingDealerClientReceiver:
         await client.start()
 
         try:
-            await asyncio.wait_for(handler_called.wait(), timeout=1.0)
+            await asyncio.wait_for(
+                handler_called.wait(), timeout=EVENT_WAIT_HANG_GUARD_S
+            )
             assert isinstance(received_message, Credit)
             assert received_message.conversation_id == sample_credit.conversation_id
         finally:

@@ -73,6 +73,8 @@ class SageMakerDataCaptureLoader(
     after loading all files.
     """
 
+    reads_parquet = False
+
     @classmethod
     def can_load(
         cls,

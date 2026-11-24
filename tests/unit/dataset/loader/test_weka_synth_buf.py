@@ -3,6 +3,7 @@
 """Unit tests for the byte-exact weka conversation reconstructor."""
 
 import math
+import random
 
 import pytest
 from pytest import param
@@ -10,10 +11,12 @@ from pytest import param
 from aiperf.dataset.loader.weka_synth_buf import (
     ConversationReconstructor,
     RoleSegment,
+    compose_weka_prompt_tokens,
     compute_asst_block_caps,
     longest_common_prefix,
-    truncate_synth_buf_at_block,
+    truncate_segments_at,
 )
+from tests.unit.dataset.loader.conftest import make_segments
 
 
 def _stub_decode_block_tokens(hash_ids):
@@ -44,6 +47,31 @@ def _make_recon(bs=64, terminator_tokens=None):
     )
 
 
+def _assert_tiles(r, in_tokens):
+    """The segments are contiguous from token 0 and end at ``in_tokens``."""
+    ends = [0] + [s.end for s in r._segments]
+    assert [s.start for s in r._segments] == ends[:-1]
+    assert ends[-1] == in_tokens
+
+
+def test_request_tokens_from_start_match_compose_weka_prompt_tokens():
+    """Turn 0 and the prompt composer build the same tokens, with empty ids, partial last blocks, missing blocks and extra ids."""
+    rng = random.Random(0)
+    r = _make_recon()
+    for i in range(50):
+        hash_ids = list(range(1, rng.randint(0, 6) + 1))
+        in_tokens = rng.randint(0, 6 * 64)
+        expected = compose_weka_prompt_tokens(
+            hash_ids=hash_ids,
+            input_length=in_tokens,
+            decode_block_tokens=_stub_decode_block_tokens,
+            sample_partial_tail_tokens=_stub_partial_tail_tokens,
+            seed=f"s{i}",
+        )
+        actual = r._request_tokens(hash_ids, in_tokens, start=0, seed=f"s{i}")
+        assert actual == expected, (hash_ids, in_tokens)
+
+
 def test_init_creates_empty_synth_buf():
     r = _make_recon()
     assert r.snapshot_messages() == []
@@ -58,8 +86,7 @@ def test_init_turn_0_no_prefix_emits_one_user_segment():
     segs = r._segments
     assert len(segs) == 1
     assert segs[0].role == "user"
-    assert segs[0].block_start == 0
-    assert segs[0].block_count == 3
+    assert segs[0].start == 0
     assert segs[0].content_token_count == 200
     assert len(segs[0].tokens) == 200
 
@@ -99,22 +126,20 @@ def test_init_turn_0_prefix_block_rounding_overshoot_clamps_to_budget():
         hash_ids=[1, 2, 3], in_tokens=170, tool_tokens=130, system_tokens=0, seed="t:0"
     )
     segs = r._segments
-    assert all(s.block_count >= 0 for s in segs), [s.block_count for s in segs]
     sys_seg = next(s for s in segs if s.role == "system")
-    assert sys_seg.block_count == 2  # clamped from 3 to floor(170/64)
+    assert len(sys_seg.tokens) == 2 * 64  # clamped from 3 to floor(170/64)
     assert sum(len(s.tokens) for s in segs) == 170
 
 
 def test_init_turn_0_prefix_exceeding_input_tokens_clamps_to_budget():
-    """A prefix that exceeds the whole turn-0 input clamps to the covered block budget rather than producing a negative-block_count segment."""
+    """A prefix that exceeds the whole turn-0 input clamps to the covered block budget rather than producing an over-budget segment."""
     r = _make_recon()
     r.init_turn_0(
         hash_ids=[1, 2, 3], in_tokens=100, tool_tokens=130, system_tokens=0, seed="t:0"
     )
     segs = r._segments
-    assert all(s.block_count >= 0 for s in segs), [s.block_count for s in segs]
     sys_seg = next(s for s in segs if s.role == "system")
-    assert sys_seg.block_count == 1
+    assert len(sys_seg.tokens) == 64
     assert sum(len(s.tokens) for s in segs) == 100
 
 
@@ -163,45 +188,25 @@ def test_init_turn_0_combines_tool_and_system_into_single_system():
     assert roles == ["system", "user"]
     sys_seg = r._segments[0]
     expected_prefix_blocks = math.ceil((tool_tokens + system_tokens) / bs)
-    assert sys_seg.block_count == expected_prefix_blocks
     assert len(sys_seg.tokens) == expected_prefix_blocks * bs
     # The merged system segment consumes the prefix block range [0..N).
-    assert sys_seg.block_start == 0
+    assert sys_seg.start == 0
     # Byte-exact: all segments together total in_tokens.
     assert sum(len(s.tokens) for s in r._segments) == in_tokens
 
 
 def test_role_segment_invariants():
-    seg = RoleSegment(
-        role="user",
-        block_start=0,
-        block_count=3,
-        tokens=list(range(180)),
-        content="abc",
-    )
-    # content_token_count is a property derived from tokens.
+    seg = RoleSegment(role="user", start=10, tokens=list(range(180)), content="abc")
+    # content_token_count and end are derived from tokens.
     assert seg.content_token_count == 180
-    # content_token_count <= block_count * bs (with bs=64)
-    assert seg.content_token_count <= seg.block_count * 64
+    assert seg.end == 190
 
 
 def test_snapshot_messages_round_trips_segments():
     r = _make_recon()
     r._segments = [
-        RoleSegment(
-            role="system",
-            block_start=0,
-            block_count=1,
-            tokens=list(range(50)),
-            content="sys",
-        ),
-        RoleSegment(
-            role="user",
-            block_start=1,
-            block_count=2,
-            tokens=list(range(120)),
-            content="usr",
-        ),
+        RoleSegment(role="system", start=0, tokens=list(range(50)), content="sys"),
+        RoleSegment(role="user", start=50, tokens=list(range(120)), content="usr"),
     ]
     msgs = r.snapshot_messages()
     assert msgs == [
@@ -230,154 +235,42 @@ def test_lcp(cases):
 
 
 def test_truncate_at_segment_boundary():
-    segs = [
-        RoleSegment(
-            role="system",
-            block_start=0,
-            block_count=2,
-            tokens=list(range(120)),
-            content="sys",
-        ),
-        RoleSegment(
-            role="user",
-            block_start=2,
-            block_count=3,
-            tokens=list(range(180)),
-            content="usr",
-        ),
-        RoleSegment(
-            role="assistant",
-            block_start=5,
-            block_count=2,
-            tokens=list(range(120)),
-            content="ast",
-        ),
-    ]
-    truncate_synth_buf_at_block(segs, target_blocks=5, block_size=64)
+    segs = make_segments(("system", 128), ("user", 192), ("assistant", 128))
+    assert truncate_segments_at(segs, 320) == 2
     assert [s.role for s in segs] == ["system", "user"]
 
 
 def test_truncate_at_zero_drops_all():
-    segs = [
-        RoleSegment(
-            role="system",
-            block_start=0,
-            block_count=2,
-            tokens=list(range(120)),
-            content="sys",
-        ),
-        RoleSegment(
-            role="user",
-            block_start=2,
-            block_count=3,
-            tokens=list(range(180)),
-            content="usr",
-        ),
-    ]
-    truncate_synth_buf_at_block(segs, target_blocks=0, block_size=64)
+    segs = make_segments(("system", 128), ("user", 192))
+    assert truncate_segments_at(segs, 0) == 0
     assert segs == []
 
 
 def test_truncate_mid_segment_preserves_partial_content():
-    segs = [
-        RoleSegment(
-            role="system",
-            block_start=0,
-            block_count=2,
-            tokens=list(range(120)),
-            content="sys",
-        ),
-        RoleSegment(
-            role="user",
-            block_start=2,
-            block_count=4,
-            tokens=list(range(240)),
-            content="x" * 240,
-        ),
-    ]
-    # truncate at block 4 — drops last 2 blocks of user segment
-    truncate_synth_buf_at_block(
-        segs,
-        target_blocks=4,
-        block_size=64,
-        decode_tokens_to_text=_stub_decode_tokens_to_text,
+    segs = make_segments(("system", 128), ("user", 256))
+    # Cut at token 256 drops the last 128 tokens of the user segment.
+    disturbed = truncate_segments_at(
+        segs, 256, decode_tokens_to_text=_stub_decode_tokens_to_text
     )
+    assert disturbed == 1
     assert [s.role for s in segs] == ["system", "user"]
     user = segs[1]
-    assert user.block_count == 2
-    assert user.content_token_count == 128  # 2 * 64
-    assert len(user.tokens) == 128
+    assert user.tokens == list(range(128))
     # content should have been re-derived from the sliced tokens.
     assert user.content == _stub_decode_tokens_to_text(list(range(128)))
 
 
-def test_truncate_beyond_total_blocks_no_op():
-    segs = [
-        RoleSegment(
-            role="system",
-            block_start=0,
-            block_count=2,
-            tokens=list(range(120)),
-            content="sys",
-        ),
-    ]
-    truncate_synth_buf_at_block(segs, target_blocks=999, block_size=64)
-    assert len(segs) == 1
+def test_truncate_past_end_no_op():
+    segs = make_segments(("system", 128), ("user", 192))
+    assert truncate_segments_at(segs, 999) is None
+    assert [len(s.tokens) for s in segs] == [128, 192]
 
 
-def test_truncate_at_boundary_strips_partial_tail():
-    """At a boundary cut, the trailing ``prev_partial_tail`` tokens past ``block_count * bs`` are stripped."""
-    bs = 64
-    block_count = 1
-    partial_tail = 36  # superseded by next turn's tiling
-    total_tokens = block_count * bs + partial_tail
-    segs = [
-        RoleSegment(
-            role="user",
-            block_start=4,
-            block_count=block_count,
-            tokens=list(range(total_tokens)),
-            content="usr",
-        ),
-    ]
-    truncate_synth_buf_at_block(
-        segs,
-        target_blocks=block_count,
-        block_size=bs,
-        decode_tokens_to_text=_stub_decode_tokens_to_text,
-    )
-    assert len(segs) == 1
-    seg = segs[0]
-    assert len(seg.tokens) == block_count * bs
-    assert seg.tokens == list(range(block_count * bs))
-    # Content re-derived from the surviving tokens.
-    assert seg.content == _stub_decode_tokens_to_text(list(range(block_count * bs)))
-
-
-def test_truncate_at_boundary_no_partial_tail_keeps_all_tokens():
-    """With ``prev_partial_tail=0``, no trailing tokens are stripped."""
-    bs = 64
-    block_count = 2
-    total_tokens = block_count * bs
-    segs = [
-        RoleSegment(
-            role="user",
-            block_start=2,
-            block_count=block_count,
-            tokens=list(range(total_tokens)),
-            content="usr",
-        ),
-    ]
-    truncate_synth_buf_at_block(
-        segs,
-        target_blocks=block_count,
-        block_size=bs,
-        decode_tokens_to_text=_stub_decode_tokens_to_text,
-    )
-    assert len(segs) == 1
-    seg = segs[0]
-    assert len(seg.tokens) == total_tokens
-    assert seg.tokens == list(range(total_tokens))
+def test_truncate_inside_a_block():
+    """A cut may fall inside a block: the segment keeps tokens up to it."""
+    segs = make_segments(("user", 100), ("assistant", 50))
+    assert truncate_segments_at(segs, 70) == 0
+    assert [(s.role, s.start, len(s.tokens)) for s in segs] == [("user", 0, 70)]
 
 
 def test_advance_pattern_a_clean_append():
@@ -402,28 +295,26 @@ def test_advance_pattern_a_clean_append():
     assert roles == ["user", "assistant", "user"]
     asst = r._segments[1]
     assert asst.content_token_count == 128
-    assert asst.block_count == 2
     user_k = r._segments[2]
     assert user_k.content_token_count == 64
-    assert user_k.block_count == 1
     # Byte-exact sum: 128 (turn-0 user, untouched) + 128 (asst) + 64 (user_k) == 320.
     assert sum(len(s.tokens) for s in r._segments) == 320
+    _assert_tiles(r, 320)
 
 
 def test_advance_pattern_b_trailing_block_churn():
-    """LCP == M_prev - 1 trailing-block recomposition clamps the new region to the covered-block budget so ``sum(seg.tokens) == curr_in_tokens`` holds."""
+    """The last hashed block is replaced: the cut drops its tokens and the new region fills the request so ``sum(seg.tokens) == curr_in_tokens`` holds."""
     r = _make_recon()
     r.init_turn_0(
         hash_ids=[1, 2, 3], in_tokens=180, tool_tokens=0, system_tokens=0, seed="s0"
     )
-    # turn-0 user: in=180, m_full=2, partial_tail=52 -> block_count=2, 180 tokens.
+    # turn-0 user: in=180 -> 2 blocks + the first 52 tokens of hash 3 = 180 tokens.
     #
-    # turn k: LCP=2, m_curr=5, m_curr_full=300//64=4 -> m_curr_covered=4.
-    # truncate at LCP=2 strips turn-0 user's 52-token partial tail -> 128 tokens.
-    # new_region = (m_curr_covered - lcp)=2 covered blocks * 64 + (300 % 64)=44
-    #            = 128 + 44 = 172 tokens (the partial 5th hash is the tail).
+    # turn k: lcp=2 -> cut = min(2*64, 180, 300) = 128 drops hash 3's 52 tokens.
+    # new region = hashes 99, 100 (128) + the first 300 % 64 = 44 tokens of
+    # hash 101 = 172 tokens.
     # out=50 -> asst_blocks = ceil(50/64) = 1 -> asst_tokens = 64.
-    # user_k = 172 - 64 = 108 tokens, block_count = (m_curr_covered-lcp)-asst = 1.
+    # user_k = 172 - 64 = 108 tokens.
     # sum = 128 + 64 + 108 = 300 == curr_in_tokens (exact).
     r.advance_turn(
         prev_hash_ids=[1, 2, 3],
@@ -435,17 +326,15 @@ def test_advance_pattern_b_trailing_block_churn():
     )
     roles = [s.role for s in r._segments]
     assert roles == ["user", "assistant", "user"]
-    # turn-0 user truncated to LCP=2 with prev_partial_tail=52 stripped -> 128.
-    assert r._segments[0].block_count == 2
+    # turn-0 user cut at token 128.
     assert r._segments[0].content_token_count == 128
     # asst: ceil(50/64)*64 = 64.
     assert r._segments[1].content_token_count == 64
-    assert r._segments[1].block_count == 1
-    # user_k: 1 remaining covered block * 64 + 44 partial_tail = 108.
+    # user_k: hash 100 (64) + the first 44 tokens of hash 101 = 108.
     assert r._segments[2].content_token_count == 108
-    assert r._segments[2].block_count == 1
     # Byte-exact: total equals the recorded input length.
     assert sum(len(s.tokens) for s in r._segments) == 300
+    _assert_tiles(r, 300)
 
 
 def test_advance_pattern_c_pull_back():
@@ -458,16 +347,14 @@ def test_advance_pattern_c_pull_back():
         system_tokens=0,
         seed="s0",
     )
-    # turn-0: m_full = 620 // 64 = 9, partial_tail = 620 % 64 = 44.
-    # User block_count = 9, len(tokens) = 9*64 + 44 = 620.
+    # turn-0: 9 full blocks + the first 620 % 64 = 44 tokens of hash 10.
+    # User len(tokens) = 9*64 + 44 = 620.
     #
-    # turn k: LCP=3. prev_partial_tail = 620 % 64 = 44.
-    # truncate at LCP=3: mid-segment cut on turn-0 user (kept_blocks=3) ->
-    # block_count=3, len(tokens)=192. Trailing partial_tail/asst-overflow gone.
-    # new_region = 2*64 + (320 mod 64) = 128 + 0 = 128 tokens.
-    # out=80 -> asst_blocks_target = ceil(80/64) = 2 == new_blocks_count (2),
-    # synth_tail = 0 -> the final new block is handed to the user so the turn
-    # ends with a user segment: asst = 1 block (64), user_k = 1 block (64).
+    # turn k: lcp=3 -> cut = 192, inside the turn-0 user segment.
+    # new region = 2 blocks (hashes 99, 100) = 128 tokens.
+    # out=80 -> 2 assistant blocks, which fill the region, so the final block
+    # is handed to the user and the turn ends with a user segment:
+    # asst = 1 block (64), user_k = 1 block (64).
     r.advance_turn(
         prev_hash_ids=list(range(1, 11)),
         prev_in_tokens=620,
@@ -478,14 +365,12 @@ def test_advance_pattern_c_pull_back():
     )
     roles = [s.role for s in r._segments]
     assert roles == ["user", "assistant", "user"]
-    assert r._segments[0].block_count == 3
     assert r._segments[0].content_token_count == 192
     assert r._segments[1].content_token_count == 64
-    assert r._segments[1].block_count == 1
     assert r._segments[2].content_token_count == 64
-    assert r._segments[2].block_count == 1
     # Sum = 192 + 64 + 64 = 320 == curr_in_tokens.
     assert sum(len(s.tokens) for s in r._segments) == 320
+    _assert_tiles(r, 320)
 
 
 def test_advance_asst_overflow_pattern_a_template_drift():
@@ -502,15 +387,13 @@ def test_advance_asst_overflow_pattern_a_template_drift():
         curr_in_tokens=256,
         seed="s1",
     )
-    # new_region = 2*64 = 128 tokens. asst_blocks_target = ceil(200/64) = 4,
-    # clamped to new_blocks_count = 2. The region is tail-free, so the last
-    # block is handed to the user: asst = 1 block (64), user_k = 1 block (64).
+    # new region = 2*64 = 128 tokens. ceil(200/64) = 4 assistant blocks,
+    # clamped to the 2 new blocks. The region ends on a block boundary, so the
+    # last block is handed to the user: asst = 1 block (64), user_k = 1 block (64).
     roles = [s.role for s in r._segments]
     assert roles == ["user", "assistant", "user"]
     assert r._segments[1].content_token_count == 64
-    assert r._segments[1].block_count == 1
     assert r._segments[2].content_token_count == 64
-    assert r._segments[2].block_count == 1
 
 
 def test_advance_asst_overflow_pattern_c_deep_compaction():
@@ -531,14 +414,13 @@ def test_advance_asst_overflow_pattern_c_deep_compaction():
         curr_in_tokens=128,
         seed="s1",
     )
-    # LCP=1, kept=1 block (64 tokens). new_region = 1*64 = 64 tokens (tail-free).
-    # asst_blocks_target = ceil(200/64) = 4, clamped to new_blocks_count = 1,
-    # then decremented to 0 to reserve the block for the user. No assistant
+    # lcp=1 -> cut = 64. new region = 1 block (64 tokens).
+    # ceil(200/64) = 4 assistant blocks, clamped to the 1 new block, then
+    # decremented to 0 to reserve the block for the user. No assistant
     # segment; the new block becomes the trailing user segment.
     roles = [s.role for s in r._segments]
     assert roles == ["user", "user"]
     assert r._segments[1].content_token_count == 64
-    assert r._segments[1].block_count == 1
 
 
 def test_advance_zero_out_skips_assistant_segment():
@@ -573,15 +455,15 @@ def test_advance_asst_exactly_fills_region_yields_trailing_user():
         curr_in_tokens=192,
         seed="s1",
     )
-    # new_region = 1 block + 0 partial_tail = 64 tokens. asst_blocks_target =
-    # ceil(64/64) = 1 == new_blocks_count, decremented to 0 to reserve the
-    # block for the user. No assistant segment; the block is the user segment.
+    # new region = 1 block = 64 tokens. ceil(64/64) = 1 assistant block, the
+    # whole region, so it is decremented to 0 to reserve the block for the
+    # user. No assistant segment; the block is the user segment.
     roles = [s.role for s in r._segments]
     assert roles == ["user", "user"]
 
 
 def test_advance_boundary_cut_strips_missing_block_overhang():
-    """A boundary cut on the trailing segment strips its entire overhang past ``block_count * bs`` — both missing-block synth tokens and the partial tail."""
+    """A cut at the last hashed block drops the trailing segment's synth tokens for the missing blocks and the partial tail."""
     r = _make_recon()
     # in=242, hash covers 2 of floor(242/64)=3 blocks -> user seg holds
     # 2*64 block tokens + (64 missing + 50 tail) = 242 tokens.
@@ -672,7 +554,7 @@ def test_byte_exact_sum_matches_recorded_advance_turn():
         curr_in_tokens=320,
         seed="s1",
     )
-    # turn-0 user kept (lcp=2 boundary cut, prev_partial_tail=0 -> no strip).
+    # cut = min(2*64, 128, 320) = 128: the turn-0 user is kept whole.
     assert sum(len(s.tokens) for s in r._segments) == 320
 
     # Pattern C: pull-back via mid-segment cut.
@@ -692,12 +574,12 @@ def test_byte_exact_sum_matches_recorded_advance_turn():
         curr_in_tokens=320,
         seed="s1",
     )
-    # lcp=3, kept=3 blocks=192. new_region=2*64+0=128. asst_target=ceil(80/64)=2
-    # == new_blocks_count, tail-free -> final block reserved for the user:
+    # lcp=3 -> cut = 192. new region = 2*64 = 128. ceil(80/64) = 2 assistant
+    # blocks fill the region -> final block reserved for the user:
     # asst=64, user=64. sum = 192 + 64 + 64 = 320.
     assert sum(len(s.tokens) for s in r2._segments) == 320
 
-    # Pattern A with non-zero partial tail in the new turn.
+    # Pattern A with a hashed partial last block in the new turn.
     r3 = _make_recon()
     r3.init_turn_0(
         hash_ids=[1, 2], in_tokens=128, tool_tokens=0, system_tokens=0, seed="s0"
@@ -707,16 +589,15 @@ def test_byte_exact_sum_matches_recorded_advance_turn():
         prev_in_tokens=128,
         prev_out_tokens=50,
         curr_hash_ids=[1, 2, 3, 4],
-        curr_in_tokens=200,  # 3 full blocks + 8 partial_tail; hash 4 is partial
+        curr_in_tokens=200,  # 3 full blocks + 8 tokens of hash 4
         seed="s1",
     )
-    # lcp=2 boundary, prev_partial_tail=0 (128 % 64 = 0) -> turn-0 user kept (128).
-    # m_curr=4, m_curr_full=200//64=3 -> m_curr_covered=3: the 4th hash is the
-    # partial last block, so the new region is clamped to the covered budget.
-    # new_region = (3-2) covered block * 64 + (200 % 64)=8 = 72 tokens.
+    # cut = min(2*64, 128, 200) = 128 -> turn-0 user kept (128).
+    # new region = hash 3 (64) + the first 200 % 64 = 8 tokens of hash 4 = 72.
     # asst = ceil(50/64)*64 = 64. user = 72 - 64 = 8.
     # sum = 128 + 64 + 8 = 200 == curr_in_tokens (exact byte-exact contract).
     assert sum(len(s.tokens) for s in r3._segments) == 200
+    assert r3._segments[-1].tokens == _stub_decode_block_tokens([4])[:8]
 
 
 def test_hash_content_stability_across_segments():
@@ -727,8 +608,8 @@ def test_hash_content_stability_across_segments():
         hash_ids=[1, 2, 3], in_tokens=192, tool_tokens=0, system_tokens=0, seed="t:0"
     )
     turn0_tokens = list(r._segments[0].tokens)
-    # turn 1: hash_ids = [1, 2, 3, 4, 5], LCP=3 -> turn-0 user (3 blocks)
-    # is preserved as-is (boundary cut, no partial_tail to strip).
+    # turn 1: hash_ids = [1, 2, 3, 4, 5], cut = 192 -> turn-0 user (3 blocks)
+    # is kept as-is.
     r.advance_turn(
         prev_hash_ids=[1, 2, 3],
         prev_in_tokens=192,
@@ -764,18 +645,18 @@ def test_hash_content_stability_terminator_field_unused():
 
 
 def _snapshot_segments(recon):
-    """Snapshot (role, block_start, tokens copy) per segment so identity by (role, block_start) distinguishes a survivor from a freshly appended segment."""
-    return [(seg.role, seg.block_start, list(seg.tokens)) for seg in recon._segments]
+    """Snapshot (role, start, tokens copy) per segment so identity by (role, start) distinguishes a survivor from a freshly appended segment."""
+    return [(seg.role, seg.start, list(seg.tokens)) for seg in recon._segments]
 
 
 def _assert_prefix_stable(snapshot, recon):
-    """Assert every surviving old segment (same index, role, block_start) keeps its tokens as a strict prefix of the old tokens; dropped/rebound segments are skipped."""
+    """Assert every surviving old segment (same index, role, start) keeps its tokens as a strict prefix of the old tokens; dropped/rebound segments are skipped."""
     new_segs = recon._segments
     for i, (old_role, old_start, old_tokens) in enumerate(snapshot):
         if i >= len(new_segs):
             break
         new = new_segs[i]
-        if new.role != old_role or new.block_start != old_start:
+        if new.role != old_role or new.start != old_start:
             # Different segment occupies this index now — old one was dropped.
             # All remaining indices are post-drop appends; stop checking.
             break
@@ -816,10 +697,10 @@ def test_prefix_stability_pattern_a_clean_append():
 
 
 def test_prefix_stability_pattern_b_trailing_block_churn():
-    """Pattern B (LCP == M_prev - 1): the boundary segment shrinks to drop partial_tail while earlier segments stay byte-identical and later ones drop."""
+    """Pattern B (the last hashed block is replaced): the segment shrinks to the cut while earlier segments stay byte-identical and later ones drop."""
     r = _make_recon()
-    # in=180 -> m_full=2, partial_tail=52. turn-0 user holds 180 tokens,
-    # block_count=2.
+    # in=180 -> turn-0 user holds 2 full blocks + the first 52 tokens of
+    # hash 3 = 180 tokens.
     r.init_turn_0(
         hash_ids=[1, 2, 3], in_tokens=180, tool_tokens=0, system_tokens=0, seed="t:0"
     )
@@ -835,8 +716,8 @@ def test_prefix_stability_pattern_b_trailing_block_churn():
         seed="t:1",
     )
     _assert_prefix_stable(snapshot, r)
-    # Boundary cut at LCP=2 with prev_partial_tail=52: turn-0 user shrinks
-    # from 180 to 128 tokens (2 blocks * 64), strict prefix of original.
+    # cut = 2*64 = 128 drops hash 3's 52 tokens: turn-0 user shrinks from 180
+    # to 128 tokens, strict prefix of original.
     old_user_tokens = snapshot[0][2]
     assert len(r._segments[0].tokens) == 128
     assert r._segments[0].tokens == old_user_tokens[:128]
@@ -845,7 +726,8 @@ def test_prefix_stability_pattern_b_trailing_block_churn():
 def test_prefix_stability_pattern_c_deep_pull_back():
     """Pattern C (LCP < M_prev - 1, mid-segment cut): the boundary segment is suffix-truncated while earlier segments stay byte-identical and later ones drop."""
     r = _make_recon()
-    # turn-0: 10 blocks + 44 partial_tail = 620 tokens, all in one user segment.
+    # turn-0: 9 blocks + the first 44 tokens of hash 10 = 620 tokens, all in
+    # one user segment.
     r.init_turn_0(
         hash_ids=list(range(1, 11)),
         in_tokens=620,
@@ -865,8 +747,7 @@ def test_prefix_stability_pattern_c_deep_pull_back():
         seed="t:1",
     )
     _assert_prefix_stable(snapshot, r)
-    # Mid-segment cut at LCP=3 lands inside the single turn-0 user segment
-    # (block_count=10). kept_blocks=3 -> 192 tokens, strict prefix.
+    # LCP=3 cuts at token 192, inside the single turn-0 user segment.
     old_user_tokens = snapshot[0][2]
     assert len(r._segments[0].tokens) == 192
     assert r._segments[0].tokens == old_user_tokens[:192]
@@ -876,7 +757,7 @@ def test_prefix_stability_sweep_multi_turn():
     """Chain advances exercising A -> B -> C -> A -> C, asserting prefix-stability on every step via distinct hash-keyed token IDs."""
     r = _make_recon()
 
-    # Turn 0: seed with 5 blocks + 32 partial_tail = 352 tokens.
+    # Turn 0: seed with 5 blocks + 32 filler tokens = 352 tokens.
     r.init_turn_0(
         hash_ids=[10, 11, 12, 13, 14],
         in_tokens=352,
@@ -885,8 +766,8 @@ def test_prefix_stability_sweep_multi_turn():
         seed="t:0",
     )
 
-    # Turn 1: Pattern A. LCP=5, append 3 new blocks. prev_partial_tail=32,
-    # boundary cut at end of turn-0 user strips the 32 tail tokens.
+    # Turn 1: Pattern A. LCP=5, append 3 new blocks. The cut at 5*64 = 320
+    # drops the 32 filler tokens of the turn-0 user.
     snapshot = _snapshot_segments(r)
     r.advance_turn(
         prev_hash_ids=[10, 11, 12, 13, 14],
@@ -922,8 +803,8 @@ def test_prefix_stability_sweep_multi_turn():
     )
     _assert_prefix_stable(snapshot, r)
 
-    # Turn 4: Pattern A again. LCP=6 (full M_prev), append 2 blocks.
-    # prev_in=384 % 64 = 0, no partial_tail to strip.
+    # Turn 4: Pattern A again. LCP=6 (all of prev), append 2 blocks.
+    # cut = 384 == prev_in, so nothing is cut.
     snapshot = _snapshot_segments(r)
     r.advance_turn(
         prev_hash_ids=[10, 11, 12, 40, 41, 42],
@@ -1198,15 +1079,15 @@ def test_advance_turn_with_full_curr_hash_ids_unchanged():
 
 
 def test_advance_turn_partial_last_hashed_block_clamps_to_budget():
-    """A hashed-but-partial last block clamps to the covered-block budget instead of decoding the partial block as full and appending the partial tail."""
+    """A hashed partial last block holds the first ``in % bs`` tokens of its own hash, so the request has exactly ``in`` tokens."""
     r = _make_recon()
     # turn 0: in=200, hash_ids=[1,2,3] (3 full blocks + 8 partial tail).
     r.init_turn_0(
         hash_ids=[1, 2, 3], in_tokens=200, tool_tokens=0, system_tokens=0, seed="t:0"
     )
     assert sum(len(s.tokens) for s in r._segments) == 200
-    # turn 1: in=250, hash_ids=[1,2,3,4]; m_curr_full = 250 // 64 = 3 < 4, so
-    # hash 4 is a partial last block contributing only 250 % 64 = 58 tokens.
+    # turn 1: in=250, hash_ids=[1,2,3,4]; hash 4 is a partial last block that
+    # holds its first 250 % 64 = 58 tokens.
     r.advance_turn(
         prev_hash_ids=[1, 2, 3],
         prev_in_tokens=200,
@@ -1218,7 +1099,8 @@ def test_advance_turn_partial_last_hashed_block_clamps_to_budget():
     # Byte-exact: the reconstructed prefix is exactly the recorded input length,
     # not 250 + bs.
     assert sum(len(s.tokens) for s in r._segments) == 250
-    assert all(s.block_count >= 0 for s in r._segments)
+    all_tokens = [t for s in r._segments for t in s.tokens]
+    assert all_tokens[192:250] == _stub_decode_block_tokens([4])[:58]
 
 
 @pytest.mark.parametrize(
@@ -1356,7 +1238,7 @@ def test_compute_caps_two_targets_same_owner_takes_min():
 
 
 def test_compute_caps_overcovered_prefix_clamps_no_indexerror():
-    """When lcp exceeds the current turn's covered-block count, the effective-lcp clamp keeps tile indexing in range (no IndexError)."""
+    """When lcp exceeds the current turn's blocks, the cut is clamped to ``in_tokens`` and the planner does not fail."""
     # turn 1 covers only 2 blocks (in=128) but shares a 4-long hash prefix.
     caps = compute_asst_block_caps(
         [([1, 2, 3, 4], 256), ([1, 2, 3, 4], 128), ([1, 2], 128)],
@@ -1368,13 +1250,29 @@ def test_compute_caps_overcovered_prefix_clamps_no_indexerror():
 
 
 def test_compute_caps_partial_last_hashed_block_uses_covered_budget():
-    """end_k uses min(len(hash_ids), in_tokens // bs), so a partial last hashed block contributes to the tail, not the covered tile."""
-    # turn 1: in=250 -> m_full=3, hash has 4 ids (4th is partial) -> end=3.
+    """A growth turn that ends in a hashed partial last block needs no cap."""
+    # turn 1: in=250 -> 3 full blocks + the first 58 tokens of hash 4.
     caps = compute_asst_block_caps(
         [([1, 2, 3], 192), ([1, 2, 3, 4], 250)],
         64,
     )
     assert caps == [None, None]
+
+
+def test_compute_caps_pullback_inside_a_block_caps_the_owner():
+    """A zero-growth pull-back that cuts inside a block caps the assistant before it."""
+    # bs=4: turn 1 ends at token 8; turn 2 cuts at token 2, inside block 0.
+    caps = compute_asst_block_caps([([1], 1), ([1, 2], 8), ([1], 2)], 4)
+    assert caps == [None, 0, None]
+
+
+def test_compute_caps_records_a_pullback_to_the_turn_0_end():
+    """A pull-back to the end of turn 0 is recorded in ``turn_0_pullbacks``."""
+    pullbacks: set[int] = set()
+    compute_asst_block_caps(
+        [([1, 2], 8), ([1, 2, 3, 4], 16), ([1, 2], 8)], 4, pullbacks
+    )
+    assert pullbacks == {8}
 
 
 def _run_canonical_three_turns(caps):
@@ -1423,7 +1321,7 @@ def test_advance_without_cap_reproduces_trailing_assistant():
 
 
 def test_advance_cap_larger_than_region_is_noop():
-    """A cap >= new_blocks_count does not shrink the assistant below what the target/region already allow."""
+    """A cap at or above the new block count does not shrink the assistant below what the target/region already allow."""
     r = _make_recon()
     r.init_turn_0(
         hash_ids=[1, 2], in_tokens=128, tool_tokens=0, system_tokens=0, seed="s0"
@@ -1439,7 +1337,7 @@ def test_advance_cap_larger_than_region_is_noop():
         max_asst_blocks=99,
     )
     assert [s.role for s in r._segments] == ["user", "assistant", "user"]
-    assert r._segments[1].block_count == 2  # unchanged by the loose cap
+    assert len(r._segments[1].tokens) == 128  # unchanged by the loose cap
 
 
 def _make_tool_shaped_recon(bs=64):

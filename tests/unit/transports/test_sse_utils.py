@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 import time
+from collections.abc import AsyncIterator
 
 import orjson
 import pytest
@@ -470,6 +471,95 @@ retry: 5000"""
         assert result.get_json() is None
 
 
+class TestParseSSEMessageUnicode:
+    """Unicode separators in data are not SSE field delimiters."""
+
+    @pytest.mark.parametrize(
+        "separator,line_ending",
+        [
+            param("\u0085", "\n", id="next-line-lf"),
+            param("\u2028", "\n", id="line-separator-lf"),
+            param("\u2029", "\n", id="paragraph-separator-lf"),
+            param("\u2028", "\r\n", id="line-separator-crlf"),
+            param("\u2028", "\r", id="line-separator-cr"),
+        ],
+    )  # fmt: skip
+    def test_parse_named_event_preserves_unicode_json_content(
+        self, separator: str, line_ending: str, base_perf_ns: int
+    ) -> None:
+        payload = {"delta": {"type": "text_delta", "text": f"before{separator}after"}}
+        data = orjson.dumps(payload).decode()
+        raw_message = f"event: content_block_delta{line_ending}data: {data}"
+        result = SSEMessage.parse(raw_message, base_perf_ns)
+
+        assert result.get_json() == payload
+        assert result.extract_data_content() == data
+        assert [packet.name for packet in result.packets] == ["event", "data"]
+
+    def test_parse_named_event_preserves_unicode_bytes(self, base_perf_ns: int) -> None:
+        payload = {"delta": {"type": "text_delta", "text": "a\u0085b\u2028c\u2029d"}}
+        data = orjson.dumps(payload)
+        result = SSEMessage.parse(
+            b"event: content_block_delta\ndata: " + data, base_perf_ns
+        )
+
+        assert result.get_json() == payload
+        assert [packet.name for packet in result.packets] == ["event", "data"]
+
+    def test_parse_named_event_preserves_unicode_plain_text(
+        self, base_perf_ns: int
+    ) -> None:
+        text = "before\u2028after"
+        result = SSEMessage.parse(f"event: message\ndata: {text}", base_perf_ns)
+
+        assert result.get_text() == text
+        assert [packet.name for packet in result.packets] == ["event", "data"]
+
+
+class TestParseSSEMessageEdgeWhitespace:
+    """Only ASCII space and tab are stripped from field edges."""
+
+    @pytest.mark.parametrize(
+        "prefix,value",
+        [
+            param("", "\u2028", id="fast-path-line-separator-only"),
+            param("", "tok\u2029", id="fast-path-trailing-paragraph-separator"),
+            param("", "\x1ftok", id="fast-path-leading-unit-separator"),
+            param("event: message\n", "\u0085tok", id="named-event-leading-next-line"),
+            param("event: message\n", "tok\x0c", id="named-event-trailing-form-feed"),
+        ],
+    )  # fmt: skip
+    def test_parse_preserves_non_padding_edges(
+        self, prefix: str, value: str, base_perf_ns: int
+    ) -> None:
+        result = SSEMessage.parse(f"{prefix}data: {value}", base_perf_ns)
+
+        assert result.get_text() == value
+
+    @pytest.mark.parametrize(
+        "prefix",
+        [
+            param("", id="fast-path"),
+            param("event: message\n", id="named-event"),
+        ],
+    )  # fmt: skip
+    def test_parse_strips_ascii_padding_around_done(
+        self, prefix: str, base_perf_ns: int
+    ) -> None:
+        result = SSEMessage.parse(f"{prefix}data: \t [DONE] \t", base_perf_ns)
+
+        assert result.extract_data_content() == "[DONE]"
+        assert result.get_json() is None
+
+    def test_parse_continuation_line_preserves_leading_separator(
+        self, base_perf_ns: int
+    ) -> None:
+        result = SSEMessage.parse('event: x\ndata: {"a":"b\n\u2028c"}', base_perf_ns)
+
+        assert result.extract_data_content() == '{"a":"b\\n\u2028c"}'
+        assert result.get_json() == {"a": "b\n\u2028c"}
+
+
 class TestParseSSEMessageIncompleteJSON:
     """Tests for SSE messages where a literal newline in a JSON value splits a data field."""
 
@@ -836,6 +926,52 @@ def create_mock_sse_iterator():
         return mock_async_iter()
 
     return _factory
+
+
+@pytest.mark.asyncio
+async def test_sse_reader_preserves_unicode_in_named_event() -> None:
+    payload = {"type": "response.output_text.delta", "delta": "a\u0085b\u2028c\u2029d"}
+    body = (
+        f"event: response.output_text.delta\ndata: {orjson.dumps(payload).decode()}\n\n"
+    ).encode()
+
+    async def chunks() -> AsyncIterator[bytes]:
+        for byte in body:
+            yield bytes([byte])
+
+    messages = await AsyncSSEStreamReader(chunks()).read_complete_stream()
+
+    assert len(messages) == 1
+    assert messages[0].get_json() == payload
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        param("event: message\ndata: tok\u2028\n\n", id="delimited"),
+        param("event: message\ndata: tok\u2028", id="no-final-delimiter"),
+    ],
+)  # fmt: skip
+async def test_sse_reader_preserves_trailing_separator(body: str) -> None:
+    async def chunks() -> AsyncIterator[bytes]:
+        yield body.encode()
+
+    messages = await AsyncSSEStreamReader(chunks()).read_complete_stream()
+
+    assert [message.get_text() for message in messages] == ["tok\u2028"]
+
+
+@pytest.mark.asyncio
+async def test_sse_reader_preserves_trailing_form_feed_without_final_delimiter() -> (
+    None
+):
+    async def chunks() -> AsyncIterator[bytes]:
+        yield b"data: tok\x0c"
+
+    messages = await AsyncSSEStreamReader(chunks()).read_complete_stream()
+
+    assert [message.get_text() for message in messages] == ["tok\x0c"]
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,7 @@ from aiperf.credit.structs import (
     Credit,
 )
 from aiperf.zmq.streaming_router_client import ZMQStreamingRouterClient
+from tests.harness.utils import EVENT_WAIT_HANG_GUARD_S
 
 
 class TestZMQStreamingRouterClientInitialization:
@@ -202,7 +203,7 @@ class TestZMQStreamingRouterClientReceiver:
             client.register_receiver(test_handler)
             await client.start()
 
-            await asyncio.wait_for(event.wait(), timeout=1.0)
+            await asyncio.wait_for(event.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
             assert len(received) == 1
             recv_identity, recv_message = received[0]
             assert recv_identity == identity
@@ -296,7 +297,7 @@ class TestZMQStreamingRouterClientReceiver:
             client.register_receiver(test_handler)
             await client.start()
 
-            await asyncio.wait_for(event.wait(), timeout=1.0)
+            await asyncio.wait_for(event.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
             assert len(received) == 1
             recv_identity, _ = received[0]
             assert recv_identity == ""  # Empty identity

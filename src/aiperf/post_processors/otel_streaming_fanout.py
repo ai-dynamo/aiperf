@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import logging
+import multiprocessing
 import time
 from dataclasses import dataclass
 from multiprocessing.queues import Queue
@@ -17,6 +18,7 @@ from aiperf.common.optional_dependencies import (
     mlflow_dependency_message,
     otel_dependency_message,
 )
+from aiperf.common.parent_death_watchdog import start_parent_death_watchdog
 from aiperf.config.mlflow import MLflowConfig
 
 # Hashable canonical form for attribute dicts used as dict keys in gauge snapshots.
@@ -129,6 +131,15 @@ def _write_live_mlflow_metadata(
     tmp_file.replace(metadata_file)
 
 
+_ORPHAN_CLEANUP_DEADLINE_SECONDS = 10.0
+"""Hard cap on the fanout's remaining lifetime once its parent has died.
+
+The graceful path (flush, end the MLflow run) and the SDKs' exit hooks make
+network calls that can block for much longer than this, and the child is the
+only thing keeping the dead parent's inherited stdout/stderr pipe open.
+"""
+
+
 def run_otel_streaming_fanout(
     event_queue: Queue[FanoutEvent],
     config: OTelStreamingFanoutConfig,
@@ -172,6 +183,15 @@ def run_otel_streaming_fanout(
     signal.signal(signal.SIGTERM, _handle_sigterm)
 
     logger = logging.getLogger(__name__)
+
+    # ``multiprocessing.parent_process()`` is the real spawning process under
+    # fork, spawn and forkserver alike (``getppid`` is the forkserver in the
+    # last), and its sentinel closes when the parent dies by any means. ``None``
+    # when run in-process, which disables the check. Armed before sink setup
+    # so a parent dying during a blocked MLflow/OTel init call is covered too.
+    parent = multiprocessing.parent_process()
+    start_parent_death_watchdog("Fanout", _ORPHAN_CLEANUP_DEADLINE_SECONDS, logger)
+
     meter_provider: Any | None = None
     meter: Any | None = None
     max_batch_records = max(config.max_batch_records, 1)
@@ -388,6 +408,9 @@ def run_otel_streaming_fanout(
 
     try:
         while not shutdown_requested:
+            if parent is not None and not parent.is_alive():
+                logger.warning("Fanout parent process died; shutting down fanout.")
+                break
             try:
                 event = event_queue.get(timeout=poll_timeout_sec)
             except Empty:

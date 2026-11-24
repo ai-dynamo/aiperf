@@ -54,6 +54,7 @@ def _make_strategy(
     cfg = MagicMock()
     cfg.phase = phase
     cfg.concurrency = max(1, len(trajectories))
+    cfg.finite_replay = False
     issuer = issuer if issuer is not None else AsyncMock()
     scheduler = scheduler if scheduler is not None else MagicMock()
     if stop_checker is None:
@@ -276,7 +277,9 @@ def test_wrap_fill_with_cache_bust_none_warns_about_identical_traffic() -> None:
             none_calls.append(args)
 
     SpyNone(
-        config=SimpleNamespace(phase=CreditPhase.WARMUP, concurrency=2),
+        config=SimpleNamespace(
+            phase=CreditPhase.WARMUP, concurrency=2, finite_replay=False
+        ),
         conversation_source=_build_real_trajectory_source(
             dataset=ds, trajectories=wrap_fill
         ),
@@ -295,7 +298,9 @@ def test_wrap_fill_with_cache_bust_none_warns_about_identical_traffic() -> None:
             nonnone_calls.append(args)
 
     SpyNonNone(
-        config=SimpleNamespace(phase=CreditPhase.WARMUP, concurrency=2),
+        config=SimpleNamespace(
+            phase=CreditPhase.WARMUP, concurrency=2, finite_replay=False
+        ),
         conversation_source=_build_real_trajectory_source(
             dataset=ds, trajectories=wrap_fill
         ),

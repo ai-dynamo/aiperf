@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import os
 from unittest.mock import patch
 
 import pytest
@@ -10,6 +11,7 @@ from aiperf.common.environment import (
     _APIServerSettings,
     _CompressionSettings,
     _Environment,
+    _HTTPSettings,
     _SearchPlannerSettings,
     _ServerMetricsSettings,
     _ServiceSettings,
@@ -17,6 +19,29 @@ from aiperf.common.environment import (
     _WorkerSettings,
     _ZMQSettings,
 )
+
+
+@pytest.mark.parametrize("value,expected", [param(None, 5), param("0", 0), param("1", 1), param("100", 100)])  # fmt: skip
+def test_video_download_redirect_setting(
+    monkeypatch: pytest.MonkeyPatch, value: str | None, expected: int
+) -> None:
+    key = "AIPERF_HTTP_VIDEO_DOWNLOAD_MAX_REDIRECTS"
+    monkeypatch.delenv(key, raising=False)
+    if value is not None:
+        monkeypatch.setenv(key, value)
+    assert expected == _HTTPSettings().VIDEO_DOWNLOAD_MAX_REDIRECTS
+
+
+@pytest.mark.parametrize("value", [param("-1"), param("101"), param("1.5"), param("invalid")])  # fmt: skip
+def test_video_download_redirect_setting_invalid(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("AIPERF_HTTP_VIDEO_DOWNLOAD_MAX_REDIRECTS", value)
+    with pytest.raises(ValidationError):
+        _HTTPSettings()
+
 
 _RUNTIME_SETTING_CASES = [
     param(
@@ -838,3 +863,30 @@ class TestUISettingsRealtimeMetricsInterval:
 
         settings = _UISettings(REALTIME_METRICS_INTERVAL=configured)
         assert settings.realtime_metrics_interval(UIType(ui_type.lower())) == expected
+
+
+class TestEnvironmentDefaultsExplicitSettingsWin:
+    """Each "already explicit" guard in ``defaults()`` must hold on its own."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_keepidle(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("AIPERF_HTTP_TCP_KEEPIDLE", raising=False)
+
+    def test_programmatic_setting_is_not_overridden(self) -> None:
+        settings = _Environment()
+        settings.HTTP = _HTTPSettings(TCP_KEEPIDLE=33)
+
+        with settings.defaults({"HTTP": {"TCP_KEEPIDLE": 90}}):
+            assert settings.HTTP.TCP_KEEPIDLE == 33
+            assert "AIPERF_HTTP_TCP_KEEPIDLE" not in os.environ
+
+    def test_env_var_exported_after_load_is_kept_for_children_and_after_exit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        settings = _Environment()
+        monkeypatch.setenv("AIPERF_HTTP_TCP_KEEPIDLE", "33")
+
+        with settings.defaults({"HTTP": {"TCP_KEEPIDLE": 90}}):
+            assert settings.HTTP.TCP_KEEPIDLE != 90
+            assert os.environ["AIPERF_HTTP_TCP_KEEPIDLE"] == "33"
+        assert os.environ["AIPERF_HTTP_TCP_KEEPIDLE"] == "33"

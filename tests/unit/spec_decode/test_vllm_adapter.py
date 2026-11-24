@@ -7,7 +7,8 @@ Covers the engine-neutral ``SpecDecodeAcceptanceRecord`` filled from vLLM's
 root ``metrics.speculative_decoding`` payload across the shapes the ticket calls
 out: present, absent, zero-step, and fully-rejected, in both streaming and
 non-streaming layouts, plus the detailed per-step arrays and malformed
-degradation.
+degradation. The adapter adapts a zero-step payload faithfully; it is
+``InferenceResultParser``, not the adapter, that drops the resulting record.
 
 The sample payloads mirror the wire format from vLLM PR
 https://github.com/vllm-project/vllm/pull/48915: ``acceptance_histogram`` is a
@@ -52,6 +53,18 @@ DETAILED_PAYLOAD: dict[str, Any] = {
     "num_spec_tokens": 3,
     "per_step_accepted": [0, 1, 3, 0],
     "per_step_drafted": [3, 3, 3, 3],
+}
+
+
+# What vLLM sends for a request that never ran a verify step, e.g. max_tokens: 1.
+ZERO_STEP_PAYLOAD: dict[str, Any] = {
+    "mean_acceptance_length": 1.0,
+    "draft_acceptance_rate": 0.0,
+    "acceptance_histogram": [0, 0, 0, 0],
+    "num_spec_steps": 0,
+    "num_accepted_draft_tokens": 0,
+    "num_draft_tokens": 0,
+    "num_spec_tokens": 3,
 }
 
 
@@ -153,17 +166,12 @@ class TestVLLMSpecDecodeAdapter:
         assert VLLMSpecDecodeAdapter.adapt(responses) is None
 
     def test_adapt_zero_step_payload_fills_record(self) -> None:
-        """No verify steps: empty histogram, mean 1.0, rate 0.0 (server-computed)."""
-        payload = {
-            "mean_acceptance_length": 1.0,
-            "draft_acceptance_rate": 0.0,
-            "acceptance_histogram": [0, 0, 0, 0],
-            "num_spec_steps": 0,
-            "num_accepted_draft_tokens": 0,
-            "num_draft_tokens": 0,
-            "num_spec_tokens": 3,
-        }
-        record = VLLMSpecDecodeAdapter.adapt(_non_streaming(payload))
+        """No verify steps: empty histogram, mean 1.0, rate 0.0 (server-computed).
+
+        Adapter-level only: ``InferenceResultParser`` drops a zero-step record,
+        so it never reaches the metrics.
+        """
+        record = VLLMSpecDecodeAdapter.adapt(_non_streaming(ZERO_STEP_PAYLOAD))
 
         assert record is not None
         assert record.mean_acceptance_length == 1.0
@@ -416,6 +424,10 @@ class TestRecordConstraints:
                     "num_draft_tokens": 1,
                 },
                 id="accepted_exceeds_drafted",
+            ),
+            param(
+                {"acceptance_histogram": {}, "num_spec_steps": 0},  # 1 draft, 0 steps
+                id="drafts_without_steps",
             ),
         ],
     )  # fmt: skip

@@ -51,7 +51,12 @@ def build_worker_group_stats(
     failed = sum(t.failed for t in task_stats_map.values())
     completed = sum(t.completed for t in task_stats_map.values())
     aggregated_task_stats = WorkerTaskStats(
-        total=total, failed=failed, completed=completed
+        total=total,
+        failed=failed,
+        completed=completed,
+        stream_chunks_received=sum(
+            t.stream_chunks_received for t in task_stats_map.values()
+        ),
     )
 
     aggregated_health: ProcessHealth | None = None

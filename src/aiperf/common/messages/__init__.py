@@ -32,7 +32,6 @@ from aiperf.common.messages.network_latency_messages import (
 )
 from aiperf.common.messages.progress_messages import (
     AllRecordsReceivedMessage,
-    BenchmarkCompleteMessage,
     ProcessAllResultsMessage,
     ProcessRecordsResultMessage,
     ProfileResultsMessage,
@@ -44,6 +43,7 @@ from aiperf.common.messages.server_metrics_messages import (
     ProcessServerMetricsResultMessage,
     RealtimeServerMetricsMessage,
     ServerMetricsStatusMessage,
+    ServerMetricsWarmupBoundaryReadyMessage,
 )
 from aiperf.common.messages.service_messages import (
     BaseServiceErrorMessage,
@@ -69,7 +69,6 @@ from aiperf.common.messages.worker_messages import (
 
 __all__ = [
     "AllRecordsReceivedMessage",
-    "BenchmarkCompleteMessage",
     "BaseServiceErrorMessage",
     "BaseServiceMessage",
     "BaseStatusMessage",
@@ -104,6 +103,7 @@ __all__ = [
     "ResultsExportedMessage",
     "RealtimeServerMetricsMessage",
     "ServerMetricsStatusMessage",
+    "ServerMetricsWarmupBoundaryReadyMessage",
     "SystemStateChangedMessage",
     "TargetedServiceMessage",
     "TelemetryRecordsMessage",

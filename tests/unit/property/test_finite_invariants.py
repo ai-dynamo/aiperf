@@ -363,6 +363,10 @@ NUMERIC_BOUNDS_WHITELIST: set[str] = {
     # RateSeriesConfig.points: list[RateSeriesPoint], not a numeric field. The
     # substring-based heuristic sees "int" inside "Point".
     "RateSeriesConfig.points",
+    # ScenarioSpec.environment_defaults: nested dict of Environment overrides,
+    # not a numeric leaf. Each value is validated against its target
+    # Environment field, which carries its own bounds.
+    "ScenarioSpec.environment_defaults",
     # RequestRecord.clock_offset_ns: signed controller/worker clock difference
     # (received - issued). Either sign is legitimate -- a worker clock behind
     # the controller's is negative -- so no field-level bound applies.

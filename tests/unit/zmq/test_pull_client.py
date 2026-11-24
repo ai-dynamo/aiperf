@@ -14,6 +14,7 @@ from aiperf.common.enums import LifecycleState, MessageType
 from aiperf.common.environment import Environment
 from aiperf.common.messages import HeartbeatMessage, Message
 from aiperf.zmq.pull_client import ZMQPullClient
+from tests.harness.utils import EVENT_WAIT_HANG_GUARD_S
 
 
 class TestZMQPullClientInitialization:
@@ -116,7 +117,7 @@ class TestZMQPullClientBackgroundTask:
             )  # Yield to event loop to let background task run
 
             # Wait for callback to be called
-            await asyncio.wait_for(event.wait(), timeout=1.0)
+            await asyncio.wait_for(event.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
 
             assert len(received_messages) == 1
 
@@ -212,7 +213,7 @@ class TestZMQPullClientConcurrency:
         await client.initialize()
         await client.start()
 
-        await asyncio.wait_for(done_event.wait(), timeout=1.0)
+        await asyncio.wait_for(done_event.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
 
         await client.stop()
 
@@ -242,7 +243,7 @@ class TestZMQPullClientConcurrency:
         await client.initialize()
         await client.start()
 
-        await asyncio.wait_for(done_event.wait(), timeout=1.0)
+        await asyncio.wait_for(done_event.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
         # Let the _process_message_fd finally-block run (_inflight -= 1).
         await asyncio.sleep(0)
 

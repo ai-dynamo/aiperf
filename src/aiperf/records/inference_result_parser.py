@@ -374,16 +374,43 @@ class InferenceResultParser(CommunicationMixin):
         else:
             token_counts = TokenCounts()
 
+        # Stripped payload bytes leave no inputs; the worker counted the
+        # sequences before stripping them.
+        ctx = request_record.request_info
+        if inputs is not None:
+            num_choices = inputs.num_choices
+        elif ctx is not None and ctx.num_choices is not None:
+            num_choices = ctx.num_choices
+        else:
+            num_choices = 1
+        spec_decode_acceptance = self._extract_spec_decode_acceptance(
+            resp, self._spec_decode_warned, num_choices=num_choices
+        )
+        # A record exists only for a request that speculated. vLLM sends a
+        # payload even when no verify step ran (max_tokens: 1, EOS first, an
+        # NGram drafter that never matched) while TensorRT-LLM sends none;
+        # counting it would add AL 1.0 / rate 0% to the per-request means. The
+        # flag keeps the request countable, so "never speculated" stays
+        # distinguishable from "spec decode off".
+        spec_decode_zero_step = (
+            spec_decode_acceptance is not None
+            and spec_decode_acceptance.num_spec_steps == 0
+        )
+        if spec_decode_zero_step:
+            engine = spec_decode_acceptance.engine
+            self.debug(
+                lambda: f"Dropping zero-step {engine} spec-decode record: "
+                "the request never ran a verify step"
+            )
+            spec_decode_acceptance = None
+
         return ParsedResponseRecord(
             request=request_record,
             responses=resp,
             token_counts=token_counts,
             media_counts=media_counts or MediaCounts(),
-            spec_decode_acceptance=self._extract_spec_decode_acceptance(
-                resp,
-                self._spec_decode_warned,
-                num_choices=inputs.num_choices if inputs is not None else 1,
-            ),
+            spec_decode_acceptance=spec_decode_acceptance,
+            spec_decode_zero_step=spec_decode_zero_step,
         )
 
     @staticmethod
@@ -401,13 +428,19 @@ class InferenceResultParser(CommunicationMixin):
         priority order and uses the first whose ``can_adapt`` recognizes the
         payload -- mirroring custom-dataset-loader auto-detection.
 
-        Suppresses the record for any ``n > 1`` request: the per-request record
-        can't attribute request-level ``completion_tokens`` to a single
-        sequence, so a mixed record is worse than none. ``num_choices`` is the
-        request's own ``n`` and is the primary guard -- a sibling that never
-        drafted carries no payload, so counting payloads alone would let an
-        ``n = 2`` stream through with one. More than one response carrying
-        stats is still refused as a backstop for callers without the request.
+        Returns zero-step records as adapted; ``process_valid_record`` drops
+        them engine-neutrally, so no adapter has to repeat that rule.
+
+        Suppresses the record for any request that generates more than one
+        sequence: the per-request record can't attribute request-level
+        ``completion_tokens`` to a single sequence, so a mixed record is worse
+        than none. ``num_choices`` counts every sequence the request generates
+        (``n`` times the number of batched completions prompts) and is the
+        primary guard -- a sibling that never drafted carries no payload, and
+        SGLang reports only the first prompt's details for a batched ``n = 1``
+        request, so counting payloads alone would let either through with one.
+        More than one response carrying stats is still refused as a backstop
+        for callers without the request.
 
         Counts payloads by truthiness (not ``is not None``) to match the
         adapter's ``find_spec_decode_payload``: an empty ``{}`` is treated as
@@ -588,6 +621,7 @@ class InferenceResultParser(CommunicationMixin):
                 messages,
                 tokenize=True,
                 add_generation_prompt=True,
+                return_dict=False,
             )
         except Exception as exc:  # noqa: BLE001 - best-effort; fall back to bare encode
             self.debug(

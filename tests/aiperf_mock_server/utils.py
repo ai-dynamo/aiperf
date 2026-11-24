@@ -626,6 +626,22 @@ async def stream_chat_completion(
     num_reasoning = len(ctx.reasoning_content_tokens)
 
     try:
+        if server_config.emit_empty_chat_content:
+            yield _sse(
+                {
+                    "id": ctx.request_id,
+                    "object": "chat.completion.chunk",
+                    "created": int(time.time()),
+                    "model": ctx.model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"role": "assistant", "content": ""},
+                        }
+                    ],
+                }
+            )
+
         # Stream reasoning tokens first (if any)
         completion_so_far = 0
         for ri, token in enumerate(ctx.reasoning_content_tokens):
@@ -646,6 +662,10 @@ async def stream_chat_completion(
             }
             if ctx.continuous_usage:
                 chunk["usage"] = _partial_usage(ctx, completion_so_far)
+            if not ctx.tokens and ri == num_reasoning - 1:
+                # Reasoning used the whole budget, so no content chunk follows
+                # to carry finish_reason; real servers still send it.
+                chunk["choices"][0]["finish_reason"] = ctx.finish_reason
             if (
                 not ctx.tokens
                 and ri == num_reasoning - 1

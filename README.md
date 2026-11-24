@@ -189,7 +189,9 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Weka Traces](docs/tutorials/weka-trace.md) - Replay real agentic coding sessions with KV-cache-aware Weka traces
 - [TraceLab Traces](docs/tutorials/tracelab-trace.md) - Replay the public TraceLab corpus of real agentic coding sessions
 - [H CUA Perf Traces](docs/tutorials/h-cua-perf.md) - Replay H Company's computer-use agent traces (tool calling, screenshots, recorded think time) from HuggingFace
-- [InferenceX AgentX MVP](docs/tutorials/agentx-mvp.md) - SemiAnalysis AgentX-MVP submission benchmark (`--scenario inferencex-agentx-mvp`)
+- [Run a Published Trace](docs/tutorials/remote-datasets.md) - Replay a trace straight from `hf://`, `s3://`, or `https://` with `--input-file`
+- [Publishing Traces](docs/tutorials/publishing-traces.md) - Publish an AIPerf-runnable trace with an `aiperf.json` manifest
+- [AgentX scenarios](docs/tutorials/agentx-mvp.md) - InferenceX defaults (`--scenario agentx`) and the original MVP benchmark (`--scenario inferencex-agentx-mvp`)
 - [Fixed Schedule](docs/tutorials/fixed-schedule.md) - Precise timestamp-based execution
 - [Time-based Benchmarking](docs/tutorials/time-based-benchmarking.md) - Duration-based testing
 - [Sequence Distributions](docs/tutorials/sequence-distributions.md) - Mixed ISL/OSL pairings
@@ -214,7 +216,6 @@ Log File: /home/user/Code/aiperf/artifacts/granite4:350m-openai-chat-concurrency
 - [Synthetic Video](docs/tutorials/synthetic-video.md) - Synthetic video generation
 
 ### Kubernetes
-- [Kubernetes Benchmark Recipes](recipes/README.md) - Validated model and engine workload manifests
 - [Getting Started on Kubernetes](docs/kubernetes/getting-started.md) - Install operator, run first benchmark, retrieve results
 - [Deploy from Source Checkout](docs/kubernetes/source-checkout-deploy.md) - Build and push AIPerf, Helm install, run on a real cluster
 - [Kubernetes Configuration](docs/kubernetes/configuration.md) - CRD fields, CLI flags, Helm chart, config patterns

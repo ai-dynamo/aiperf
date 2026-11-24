@@ -139,8 +139,10 @@ class MemoryEstimationParams:
         """
         bench = config.benchmark
         topology = _derive_topology(bench, total_workers, workers_per_pod)
-        max_conc, total_req, total_dur = _derive_load_profile(bench)
         ds = bench.get_default_dataset()
+        max_conc, total_req, total_dur = _derive_load_profile(
+            bench, full_pass_requests=_full_pass_requests(ds)
+        )
         isl, osl, turns, count = _extract_dataset_params(ds)
         est_gpus = _derive_gpu_telemetry(bench)
         num_sm_urls = _derive_server_metrics(bench)
@@ -228,17 +230,37 @@ def _derive_topology(
     )
 
 
-def _derive_load_profile(config: BenchmarkConfig) -> tuple[int, int, float]:
-    """Return (max_concurrency, total_requests, total_duration_s) across phases."""
+def _derive_load_profile(
+    config: BenchmarkConfig, *, full_pass_requests: int | None = None
+) -> tuple[int, int, float]:
+    """Return (max_concurrency, total_requests, total_duration_s) across phases.
+
+    ``full_pass_requests`` sizes ``sessions: all`` phases; see ``_full_pass_requests``.
+    """
     max_conc = 1
     total_req = 0
     total_dur = 0.0
     for phase in config.phases:
         conc = getattr(phase, "concurrency", None) or 1
         max_conc = max(max_conc, conc)
-        total_req += _estimate_phase_requests(phase, conc)
-        total_dur += _estimate_phase_duration(phase, conc)
+        total_req += _estimate_phase_requests(
+            phase, conc, full_pass_requests=full_pass_requests
+        )
+        total_dur += _estimate_phase_duration(
+            phase, conc, full_pass_requests=full_pass_requests
+        )
     return max_conc, total_req, total_dur
+
+
+def _full_pass_requests(ds: object) -> int | None:
+    """Requests in one full pass when the dataset declares its size, else None.
+
+    Public and file datasets usually leave ``entries`` unset because their size
+    is only known after loading, so ``sessions: all`` on them falls back to the
+    generic default request count.
+    """
+    entries = getattr(ds, "entries", None) or getattr(ds, "count", None)
+    return entries * _extract_max_turns(ds) if entries else None
 
 
 def _derive_gpu_telemetry(config: BenchmarkConfig) -> int:
@@ -280,8 +302,15 @@ def _derive_http_trace(config: BenchmarkConfig) -> bool:
     return bool(getattr(config.artifacts, "trace", False))
 
 
-def _estimate_phase_requests(phase: BasePhaseConfig, concurrency: int) -> int:
+def _estimate_phase_requests(
+    phase: BasePhaseConfig,
+    concurrency: int,
+    *,
+    full_pass_requests: int | None = None,
+) -> int:
     """Estimate total requests for a phase."""
+    from aiperf.config.phases import FULL_PASS_SESSIONS
+
     if phase.requests is not None:
         return phase.requests
     if phase.duration is not None:
@@ -295,20 +324,25 @@ def _estimate_phase_requests(phase: BasePhaseConfig, concurrency: int) -> int:
         # Inverse of the concurrency-driven branch of _estimate_phase_duration:
         # each slot completes one request every _PHASE_AVG_SEC_PER_REQUEST.
         return int(phase.duration * concurrency / _PHASE_AVG_SEC_PER_REQUEST)
-    if phase.sessions is not None:
+    if phase.sessions == FULL_PASS_SESSIONS and full_pass_requests is not None:
+        return full_pass_requests
+    if isinstance(phase.sessions, int):
         return phase.sessions * 3  # assume ~3 turns average
     return _DEFAULT_PHASE_REQUEST_COUNT
 
 
-def _estimate_phase_duration(phase: BasePhaseConfig, concurrency: int) -> float:
+def _estimate_phase_duration(
+    phase: BasePhaseConfig,
+    concurrency: int,
+    *,
+    full_pass_requests: int | None = None,
+) -> float:
     """Estimate phase duration in seconds."""
     if phase.duration is not None:
         return phase.duration
-    requests = phase.requests
-    if requests is None and phase.sessions is not None:
-        requests = phase.sessions * 3
-    if requests is None:
-        requests = _DEFAULT_PHASE_REQUEST_COUNT
+    requests = _estimate_phase_requests(
+        phase, concurrency, full_pass_requests=full_pass_requests
+    )
     rate = getattr(phase, "rate", None)
     if rate is not None:
         return requests / rate

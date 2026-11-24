@@ -167,9 +167,9 @@ async def test_release_blocked_join_applies_think_time_before_dispatch():
 
     slept: list[float] = []
 
-    # The wait now rides the interruptible _sleep_think_ms seam (asyncio.wait_for
-    # on the cleanup event), not asyncio.sleep -- spy on it directly.
-    async def _capture(seconds: float) -> None:
+    # The wait rides the interruptible _sleep_think_ms seam (asyncio.wait_for
+    # on the think-time wake event), not asyncio.sleep -- spy on it directly.
+    async def _capture(seconds: float, _still_sendable: object) -> None:
         slept.append(seconds)
 
     orch._sleep_think_ms = _capture
@@ -198,7 +198,7 @@ async def test_release_blocked_join_no_sleep_when_think_time_zero():
 
     slept: list[float] = []
 
-    async def _capture(seconds: float) -> None:
+    async def _capture(seconds: float, _still_sendable: object) -> None:
         slept.append(seconds)
 
     orch._sleep_think_ms = _capture

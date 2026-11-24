@@ -78,7 +78,7 @@ def _make_plan(*, trials: int = 1) -> MagicMock:
     plan.variation_seeds = []
     plan.variables = {}
     plan.failure_policy = None
-    plan.sweep = None  # _plan_iteration_order falls back to REPEATED
+    plan.sweep = None  # _plan_iteration_order resolves this to INDEPENDENT
     plan.sweep_id = "test-sweep-id"
     return plan
 

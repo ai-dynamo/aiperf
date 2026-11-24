@@ -256,7 +256,15 @@ class UsageDiscrepancyCountMetric(BaseAggregateCounterMetric[int]):
     short_header = "Discrepancies"
     short_header_hide_unit = True
     unit = GenericMetricUnit.REQUESTS
-    flags = MetricFlags.USAGE_DIFF_ONLY | MetricFlags.NO_INDIVIDUAL_RECORDS
+    # Carries its dependencies' capability flags: flag filtering only looks at the
+    # metrics it selects, and dependencies are added back unfiltered, so without
+    # these every endpoint would compute OSL through this metric.
+    flags = (
+        MetricFlags.TOKENIZES_INPUT_ONLY
+        | MetricFlags.PRODUCES_TOKENS_ONLY
+        | MetricFlags.USAGE_DIFF_ONLY
+        | MetricFlags.NO_INDIVIDUAL_RECORDS
+    )
     console_group = MetricConsoleGroup.NONE
     # Required metrics ensures dependency ordering. We require prompt and completion
     # which are always available, and opportunistically check reasoning in _parse_record

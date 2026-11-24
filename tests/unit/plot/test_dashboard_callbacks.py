@@ -2,11 +2,24 @@
 # SPDX-License-Identifier: Apache-2.0
 """Tests for dashboard single-run figure generation."""
 
-import pandas as pd
+import base64
+import io
+import zipfile
+from pathlib import Path
+from unittest.mock import Mock
 
+import dash
+import pandas as pd
+import plotly.graph_objects as go
+import pytest
+from pytest import param
+
+from aiperf.plot import browser
 from aiperf.plot.constants import PlotTheme
 from aiperf.plot.core.data_loader import RunData, RunMetadata
+from aiperf.plot.core.mode_detector import VisualizationMode
 from aiperf.plot.core.plot_specs import DataSource, MetricSpec, PlotSpec, PlotType
+from aiperf.plot.dashboard import callbacks
 from aiperf.plot.dashboard.callbacks import _generate_singlerun_figure
 
 
@@ -91,3 +104,56 @@ class TestGenerateSingleRunFigure:
 
         assert fig is not None  # error placeholder figure, not None
         assert [r for r in caplog.records if r.levelname == "ERROR"]
+
+
+@pytest.mark.parametrize(
+    "linux_arm64,expected,absent",
+    [
+        param(True, "BROWSER_PATH", "plotly_get_chrome", id="linux-arm64"),
+        param(False, "plotly_get_chrome", "BROWSER_PATH", id="other-platform"),
+    ],
+)  # fmt: skip
+def test_export_bundle_includes_fallback_readme(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    linux_arm64: bool,
+    expected: str,
+    absent: str,
+) -> None:
+    monkeypatch.setattr(browser, "IS_LINUX_ARM64", linux_arm64)
+    monkeypatch.setattr(callbacks, "_drill_down_run_cache", {})
+    fig = go.Figure()
+    monkeypatch.setattr(
+        go.Figure, "to_image", Mock(side_effect=RuntimeError("no browser"))
+    )
+    cache = Mock()
+    cache.get.return_value = fig
+    monkeypatch.setattr(callbacks, "get_plot_cache", lambda: cache)
+    app = dash.Dash(__name__)
+    config = Mock()
+    config.get_single_run_plot_specs.return_value = []
+    callbacks.register_export_png_callback(
+        app,
+        [_non_streaming_run(tmp_path)],
+        VisualizationMode.SINGLE_RUN,
+        PlotTheme.DARK,
+        config,
+    )
+    export = app.callback_map["download-png-bundle.data"]["callback"].__wrapped__
+    result = export(
+        1,
+        "png",
+        "small",
+        {
+            "visible_plots": ["latency"],
+            "plot_configs": {"latency": {"is_default": True}},
+        },
+        [],
+        {},
+    )
+    with zipfile.ZipFile(io.BytesIO(base64.b64decode(result["content"]))) as bundle:
+        assert set(bundle.namelist()) == {"latency.html", "README.txt"}
+        assert b"<html>" in bundle.read("latency.html")
+        readme = bundle.read("README.txt").decode()
+    assert expected in readme
+    assert absent not in readme

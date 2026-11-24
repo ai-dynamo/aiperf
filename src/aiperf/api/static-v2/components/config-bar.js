@@ -57,7 +57,9 @@ function buildItems(cfg) {
       const secs = typeof phase.duration === 'number' ? phase.duration : null;
       add(`${prefix}Duration`, secs != null ? fmtDuration(secs) : String(phase.duration));
     }
-    if (phase.sessions != null) add(`${prefix}Sessions`, fmtInt(phase.sessions));
+    if (phase.sessions != null) {
+      add(`${prefix}Sessions`, typeof phase.sessions === 'number' ? fmtInt(phase.sessions) : String(phase.sessions));
+    }
   }
   return items;
 }

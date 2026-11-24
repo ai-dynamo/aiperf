@@ -52,6 +52,9 @@ def test_scenario_sweep_stamps_submission_invalid(monkeypatch) -> None:
     monkeypatch.setattr(
         "aiperf.dataset.provenance.public_dataset_provenance", lambda _c: None
     )
+    monkeypatch.setattr(
+        "aiperf.dataset.provenance.remote_dataset_provenance", lambda _c: None
+    )
     monkeypatch.setattr("aiperf.cli_runner._make_benchmark_run", lambda _c: clean_run)
     monkeypatch.setattr("aiperf.common.scenario.apply_scenario", lambda _r: None)
     monkeypatch.setattr(_aggregate, "_sum_runtime_response_counts", lambda _r: (0, 0))

@@ -134,15 +134,6 @@ MANIFEST: tuple[VendoredAsset, ...] = (
     # htm-preact.mjs is a hand-written 7-line shim binding htm to the vendored
     # Preact's h()/render()/Component -- not an upstream file, not in MANIFEST.
     VendoredAsset(
-        name="operator-js-yaml",
-        npm_package="js-yaml",
-        version="4.1.1",
-        license="MIT",
-        url="https://unpkg.com/js-yaml@4.1.1/dist/js-yaml.mjs",
-        dest=f"{_OPERATOR_UI_VENDOR}/js-yaml.mjs",
-        sha256="efbc45850bf15f0c8ee3434983f512be656002d7507dc292c7ade4449b5d57fa",
-    ),
-    VendoredAsset(
         name="operator-chartjs",
         npm_package="chart.js",
         version="4.5.1",

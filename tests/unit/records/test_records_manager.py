@@ -97,6 +97,25 @@ def test_orphan_phase_tracker_does_not_block_aggregate_completion() -> None:
     assert tracker.check_and_set_all_records_received_for_phase(CreditPhase.PROFILING)
 
 
+def test_aggregate_stats_sums_truncation_early_end_counts() -> None:
+    tracker = RecordsTracker()
+    for phase_index, ended, skipped in ((1, 2, 3), (2, 1, 4)):
+        tracker.update_phase_info(
+            CreditPhaseStats(
+                phase=CreditPhase.PROFILING,
+                phase_index=phase_index,
+                start_ns=100,
+                sessions_ended_on_truncation=ended,
+                turns_skipped_on_truncation=skipped,
+            )
+        )
+
+    aggregate = tracker.create_aggregate_stats_for_phase(CreditPhase.PROFILING)
+
+    assert aggregate.sessions_ended_on_truncation == 3
+    assert aggregate.turns_skipped_on_truncation == 7
+
+
 def test_indexed_phase_counter_accessors_aggregate_without_creating_orphan() -> None:
     """Counter reads must observe named phases without creating ``(phase, None)``."""
     tracker = RecordsTracker()
@@ -1029,6 +1048,12 @@ def _create_credit_phase_stats() -> CreditPhaseStats:
 
 def _create_manager_for_timing_dispatch() -> RecordsManager:
     manager = RecordsManager.__new__(RecordsManager)
+    # Built via __new__, so __init__ never ran. The stall watchdog indexes
+    # these by phase_index, which needs the containers to already exist.
+    manager._latest_profiling_credit_stats = {}
+    manager._progress_stall_last_total = {}
+    manager._progress_stall_since = {}
+    manager._progress_stall_triggered = False
     manager._dataset_configured_event = asyncio.Event()
     manager._dataset_configured_event.set()
     manager._records_tracker = MagicMock()
@@ -1641,6 +1666,187 @@ class TestRecordsManagerTimingDispatch:
         )
 
 
+class TestRecordsManagerErrorAccounting:
+    @pytest.mark.parametrize(
+        ("worker_errors", "worker_completed", "overflow_skips", "expected_accounting"),
+        [
+            param(1, 3, 0, "worker_errors=1, response_processing_errors=1, total_errors=2", id="processing-error"),
+            param(0, 3, 0, "worker_errors=0, response_processing_errors=2, total_errors=2", id="processing-errors-only"),
+            param(2, 3, 0, None, id="worker-errors-only"),
+            param(None, 3, 0, None, id="unknown-worker-errors"),
+            param(1, None, 0, None, id="unknown-worker-completions"),
+            param(1, 4, 0, None, id="missing-records"),
+            param(1, 2, 0, None, id="extra-records"),
+            param(3, 3, 0, None, id="fewer-record-errors"),
+            param(2, 4, 1, "worker_errors=1, response_processing_errors=1, total_errors=2", id="overflow-and-worker-error"),
+            param(1, 4, 1, "worker_errors=0, response_processing_errors=2, total_errors=2", id="overflow-and-processing-errors-only"),
+            param(3, 5, 2, "worker_errors=1, response_processing_errors=1, total_errors=2", id="multiple-overflow-skips"),
+            param(3, 4, 1, None, id="overflow-and-worker-errors-only"),
+            param(None, 4, 1, None, id="overflow-and-unknown-worker-errors"),
+            param(0, 4, 1, None, id="overflow-exceeds-worker-errors"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.asyncio
+    async def test_final_error_accounting_explains_only_reconciled_processing_errors(
+        self,
+        worker_errors: int | None,
+        worker_completed: int | None,
+        overflow_skips: int,
+        expected_accounting: str | None,
+    ) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.info = MagicMock()
+        manager.tasks = set()
+        manager._finalize_and_process_results = AsyncMock()
+        manager._records_tracker = RecordsTracker()
+        manager._skipped_context_overflow_counts_by_phase = {}
+        manager._complete_credit_phases = set()
+        for phase, phase_index, errors in (
+            (CreditPhase.WARMUP, 0, 3),
+            (CreditPhase.PROFILING, 1, 2),
+        ):
+            manager._records_tracker.update_phase_info(
+                CreditPhaseStats(
+                    phase=phase,
+                    phase_index=phase_index,
+                    final_requests_completed=worker_completed,
+                    final_request_errors=worker_errors,
+                )
+            )
+            for index in range(3):
+                manager._records_tracker.update_from_request(
+                    MetricRecordMetadata(
+                        session_num=index,
+                        request_start_ns=1,
+                        request_end_ns=2,
+                        worker_id="worker",
+                        record_processor_id="processor",
+                        benchmark_phase=phase,
+                        phase_index=phase_index,
+                    ),
+                    ErrorDetails(type="SyntheticError", message="failed")
+                    if index < errors
+                    else None,
+                )
+            for index in range(1 if phase == CreditPhase.WARMUP else overflow_skips):
+                await manager._handle_context_overflow_skip(
+                    RecordsMessage(
+                        service_id="processor",
+                        metadata=MetricRecordMetadata(
+                            session_num=3 + index,
+                            request_start_ns=1,
+                            request_end_ns=2,
+                            worker_id="worker",
+                            record_processor_id="processor",
+                            benchmark_phase=phase,
+                            phase_index=phase_index,
+                            context_overflow_skip=True,
+                        ),
+                        records=[],
+                        error=ErrorDetails(type="ContextOverflow", message="overflow"),
+                    ),
+                    phase,
+                )
+
+        await manager._handle_all_records_received(CreditPhase.PROFILING)
+        await manager.wait_for_tasks()
+
+        messages = [
+            arg() if callable(arg := call.args[0]) else arg
+            for call in manager.info.call_args_list
+        ]
+        assert (
+            f"Processed {1 + overflow_skips} valid requests and 2 errors ({3 + overflow_skips} total)."
+            in messages
+        )
+        accounting = [msg for msg in messages if msg.startswith("Error accounting:")]
+        assert accounting == (
+            [f"Error accounting: {expected_accounting}."]
+            if expected_accounting is not None
+            else []
+        )
+        manager._finalize_and_process_results.assert_awaited_once_with(
+            phase=CreditPhase.PROFILING, cancelled=False
+        )
+
+    @pytest.mark.parametrize(
+        ("second_phase_index", "second_worker_errors"),
+        [
+            param(2, None, id="indexed-unknown"),
+            param(None, None, id="unindexed-unknown"),
+            param(2, 0, id="indexed-known-zero"),
+            param(None, 0, id="unindexed-known-zero"),
+            param(2, 1, id="indexed-known-error"),
+            param(None, 1, id="unindexed-known-error"),
+        ],
+    )  # fmt: skip
+    @pytest.mark.asyncio
+    async def test_error_accounting_requires_all_profiling_worker_error_counts(
+        self, second_phase_index: int | None, second_worker_errors: int | None
+    ) -> None:
+        manager = RecordsManager.__new__(RecordsManager)
+        manager.info = MagicMock()
+        manager.tasks = set()
+        manager._finalize_and_process_results = AsyncMock()
+        manager._records_tracker = RecordsTracker()
+        manager._skipped_context_overflow_counts_by_phase = {}
+        manager._records_tracker.update_phase_info(
+            CreditPhaseStats(phase=CreditPhase.WARMUP)
+        )
+        for phase_index, worker_errors, record_count in (
+            (second_phase_index, second_worker_errors, 2),
+            (1, 0, 1),
+        ):
+            manager._records_tracker.update_phase_info(
+                CreditPhaseStats(
+                    phase=CreditPhase.PROFILING,
+                    phase_index=phase_index,
+                    final_requests_completed=record_count,
+                    final_request_errors=worker_errors,
+                )
+            )
+            for index in range(record_count):
+                manager._records_tracker.update_from_request(
+                    MetricRecordMetadata(
+                        session_num=index,
+                        request_start_ns=1,
+                        request_end_ns=2,
+                        worker_id="worker",
+                        record_processor_id="processor",
+                        benchmark_phase=CreditPhase.PROFILING,
+                        phase_index=phase_index,
+                    ),
+                    ErrorDetails(type="SyntheticError", message="failed")
+                    if phase_index == second_phase_index
+                    else None,
+                )
+
+        await manager._handle_all_records_received(CreditPhase.PROFILING)
+        await manager.wait_for_tasks()
+
+        accounting = [
+            call.args[0]
+            for call in manager.info.call_args_list
+            if isinstance(call.args[0], str)
+            and call.args[0].startswith("Error accounting:")
+        ]
+        assert accounting == (
+            [
+                f"Error accounting: worker_errors={second_worker_errors}, "
+                f"response_processing_errors={2 - second_worker_errors}, total_errors=2."
+            ]
+            if second_worker_errors is not None
+            else []
+        )
+        aggregate = manager._records_tracker.create_aggregate_stats_for_phase(
+            CreditPhase.PROFILING
+        )
+        assert aggregate.final_request_errors == (second_worker_errors or 0)
+        assert aggregate.final_requests_completed == 3
+        assert aggregate.success_records == 1
+        assert aggregate.error_records == 2
+
+
 class TestRecordsManagerAnalyzerMetrics:
     @pytest.mark.parametrize(
         ("success_count", "error_count", "cancelled"),
@@ -1939,3 +2145,31 @@ class TestRecordsManagerDatasetConfiguredBarrier:
         assert isinstance(published, BaseServiceErrorMessage)
         # ... and the record is not processed.
         manager._dispatch_record.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_abort_request_clears_the_latch_so_a_later_record_retries() -> (
+    None
+):
+    """A cancel that never left the process must not look like one in flight.
+
+    ``_failed_request_abort_triggered`` is set before the request goes out, so
+    leaving it set after a failed send would suppress every later attempt and
+    the run would keep going past its own failure threshold in silence.
+    """
+    manager = _create_manager_for_timing_dispatch()
+    manager._failed_request_threshold = 0.2
+    manager._failed_request_grace_floor = 1
+    manager.warning = MagicMock()
+    manager._records_tracker.total_records_for_phase.return_value = 10
+    manager._records_tracker.error_records_for_phase.return_value = 10
+    manager._request_profile_cancel = AsyncMock(return_value=False)
+
+    await RecordsManager._maybe_trigger_failed_request_abort(
+        manager, CreditPhase.PROFILING, phase_index=0, profiling_index=0
+    )
+
+    manager._request_profile_cancel.assert_awaited_once()
+    assert manager._failed_request_abort_triggered is False, (
+        "a cancel that could not be sent must leave the abort retryable"
+    )

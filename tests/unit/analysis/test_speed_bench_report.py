@@ -35,6 +35,9 @@ from aiperf.analysis.speed_bench_report import (
     print_table,
     write_csv,
 )
+from aiperf.common.models import ParsedResponse
+from aiperf.records.inference_result_parser import InferenceResultParser
+from tests.unit.spec_decode.test_sglang_adapter import SUMMARY_PAYLOAD
 
 
 def _server_metric(name: str, stats: dict) -> dict:
@@ -1196,3 +1199,46 @@ class TestUnrelatedRunsDoNotPolluteTheMatrix:
 
         assert report == {"m1": {"coding": 2.0}}
         assert "weka_main" not in report["m1"]
+
+
+@pytest.mark.parametrize(
+    "payload_kind",
+    [param("valid", id="valid"), param("absent", id="absent"), param("malformed", id="malformed")],
+)  # fmt: skip
+@pytest.mark.parametrize(
+    "metric, expected",
+    [param("accept_length", 2.5, id="length"), param("accept_rate", 0.5, id="rate")],
+)  # fmt: skip
+def test_sglang_auto_uses_request_counters_or_server_fallback(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    payload_kind: str,
+    metric: str,
+    expected: float,
+) -> None:
+    """Exercise SGLang normalization and the user-visible fallback together."""
+    has_stats = payload_kind == "valid"
+    payload = {
+        "valid": SUMMARY_PAYLOAD,
+        "absent": None,
+        "malformed": {**SUMMARY_PAYLOAD, "spec_verify_ct": -1},
+    }[payload_kind]
+    acceptance = InferenceResultParser._extract_spec_decode_acceptance(
+        [ParsedResponse(perf_ns=1, spec_decode_stats=payload)]
+    )
+    record = _record("coding", accepted=0, drafted=0, steps=0)
+    record["spec_decode_acceptance"] = (
+        acceptance.model_dump(mode="json") if acceptance else None
+    )
+    _write_run_dir(
+        tmp_path,
+        "run",
+        _profile(dataset="speed_bench_coding"),
+        server_metrics=_server_metric(f"sglang:spec_{metric}", {"avg": 0.25}),
+        records=[record],
+    )
+    assert build_report(find_run_dirs([tmp_path]), metric_type=metric) == {
+        "test-model": {"coding": expected if has_stats else 0.25}
+    }
+    source = "records" if has_stats else "server"
+    assert f"acceptance from {source}" in capsys.readouterr().err

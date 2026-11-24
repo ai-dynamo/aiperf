@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     )
     from aiperf.config.comm import BaseZMQCommunicationConfig
     from aiperf.config.dataset import DatasetConfig
+    from aiperf.config.dataset.content import CacheBustConfig
     from aiperf.config.phases import PhaseConfig
     from aiperf.plugin.enums import UIType
 
@@ -90,16 +91,22 @@ class BenchmarkHelpersMixin:
         """
         from aiperf.common.enums import CacheBustTarget
 
+        cache_bust = self._get_cache_bust_config()
+        return cache_bust.target if cache_bust is not None else CacheBustTarget.NONE
+
+    def is_cache_bust_media_uuids_enabled(self) -> bool:
+        """Whether ``media_uuids`` is set in the block :meth:`get_cache_bust_target` reads."""
+        cache_bust = self._get_cache_bust_config()
+        return cache_bust is not None and cache_bust.media_uuids
+
+    def _get_cache_bust_config(self) -> CacheBustConfig | None:
         dataset = self.get_default_dataset()
         prompts = getattr(dataset, "prompts", None)
         if prompts is not None:
             cache_bust = getattr(prompts, "cache_bust", None)
             if cache_bust is not None:
-                return cache_bust.target
-        cache_bust = getattr(dataset, "cache_bust", None)
-        if cache_bust is not None:
-            return cache_bust.target
-        return CacheBustTarget.NONE
+                return cache_bust
+        return getattr(dataset, "cache_bust", None)
 
     def get_prompt_corpus(self) -> PromptCorpus | None:
         """Resolve the active dataset's authored ``prompts.corpus``."""

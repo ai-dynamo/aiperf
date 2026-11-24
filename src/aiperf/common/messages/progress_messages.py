@@ -93,28 +93,6 @@ class ProcessAllResultsMessage(BaseServiceMessage):
     )
 
 
-class BenchmarkCompleteMessage(BaseServiceMessage):
-    """Benchmark completion signal.
-
-    Published by the SystemController after all result artifacts have been
-    exported, so external consumers (the API results router, the operator)
-    only report "complete" once every file is safe to fetch.
-    """
-
-    message_type: MessageTypeT = MessageType.BENCHMARK_COMPLETE
-
-    request_ns: int | None = Field(
-        default=None,
-        ge=0,
-        description="Timestamp of the message in nanoseconds",
-    )
-
-    was_cancelled: bool = Field(
-        default=False,
-        description="True when the benchmark was cancelled before completing normally",
-    )
-
-
 class SystemStateChangedMessage(BaseServiceMessage):
     """Published by the SystemController whenever its outer-lifecycle
     ``SystemState`` advances (e.g. CONFIGURING -> READY -> PROFILING ->

@@ -240,6 +240,51 @@ For clusters using [Kueue](https://kueue.sigs.k8s.io/) for resource management:
 | `queueName` | string | Kueue LocalQueue name for gang-scheduling |
 | `priorityClass` | string | Kueue WorkloadPriorityClass for scheduling priority |
 
+### Remote Datasets
+
+`spec.benchmark.datasets[].path` accepts `hf://`, `s3://` and `https://` references; see
+[Run a published trace](../tutorials/remote-datasets.md#kubernetes) for pinning, credentials
+and presigned URLs. The dataset-manager container downloads into:
+
+| Source | Location in the pod | Override with |
+|---|---|---|
+| `hf://` | `/aiperf/hf_home` (`HF_HOME` is forced; shared `tokenizer-cache` emptyDir) | `HF_HUB_CACHE` |
+| `s3://`, `https://` | `/aiperf/remote-cache` (`remote-cache` emptyDir) | `AIPERF_DATASET_REMOTE_CACHE_DIR` |
+
+Both emptyDirs use the node's ephemeral storage and disappear with the pod. To reuse downloads
+across jobs, or for datasets larger than the node's ephemeral storage, mount a PVC:
+
+```yaml
+spec:
+  podTemplate:
+    volumes:
+      - name: dataset-cache
+        persistentVolumeClaim:
+          claimName: aiperf-dataset-cache
+    volumeMounts:
+      - name: dataset-cache
+        mountPath: /cache
+    env:
+      - name: HF_HUB_CACHE
+        value: /cache/hf
+      - name: AIPERF_DATASET_REMOTE_CACHE_DIR
+        value: /cache/remote
+```
+
+`podTemplate.volumeMounts` reach every container in the controller and worker pods, so use a
+`ReadWriteMany` claim when worker pods can land on other nodes. A value you set for
+`AIPERF_DATASET_REMOTE_CACHE_DIR` wins over AIPerf's, and a mount of yours at
+`/aiperf/remote-cache` replaces AIPerf's emptyDir there.
+
+Pods turn off the memory-mapped dataset cache (`AIPERF_DATASET_MMAP_CACHE_ENABLED=false`): its
+default directory, `~/.cache/aiperf/dataset_mmap`, is on the read-only root filesystem, and
+nothing would reuse it after the pod ends. With a PVC like the one above, you can keep it by
+setting `AIPERF_DATASET_MMAP_CACHE_ENABLED` to `true` and `AIPERF_DATASET_MMAP_CACHE_DIR` to a
+path on the claim (for example `/cache/mmap`) in `podTemplate.env`.
+
+A large download can outlast the dataset-manager's download budget (3600 s by default); see
+[Large datasets and the startup probe](../tutorials/remote-datasets.md#large-datasets-and-the-startup-probe).
+
 ---
 
 ## CLI Flags
@@ -629,6 +674,20 @@ These variables tune the operator and individual benchmark pods. `operator.env` 
 
 Resource-sizing and JobSet variables are read by the process that *renders* the JobSet, so `spec.podTemplate.env` has no effect on them; they must be set on the operator.
 
+### Server-metrics isolation and storage
+
+Server metrics require Kubernetes 1.29+ and run in a restartable native sidecar.
+An optional metrics-container crash does not fail the controller job. The
+controller reports incomplete telemetry and exports the measured inference
+results before reporting a degraded run.
+
+Set `AIPERF_SERVER_METRICS_STORAGE_MAX_BYTES`,
+`AIPERF_SERVER_METRICS_STORAGE_FLUSH_BYTES`, and
+`AIPERF_SERVER_METRICS_MAX_SERIES` through `spec.podTemplate.env` to configure
+one run's disk and series budgets. Their defaults are 16 GiB, 8 MiB, and 20,000.
+The numeric sample store uses the artifact filesystem; keep the results volume
+disk-backed. See [long-run collection behavior](../server-metrics/server-metrics.md#long-runs-and-collection-failures).
+
 ### Resource sizing (per-container CPU / memory)
 
 Every control-plane container, the event-bus proxy sidecar, the results sidecar, and the worker pod have a paired `_CPU` / `_MEMORY` variable. Defaults are low burstable requests so many tiny jobs can start concurrently; raise them for very large concurrency or high-token workloads.
@@ -671,6 +730,7 @@ Every control-plane container, the event-bus proxy sidecar, the results sidecar,
 |---|---|---|
 | `AIPERF_K8S_HEALTH_STARTUP_PERIOD_SECONDS` | `5` | Startup probe interval. |
 | `AIPERF_K8S_HEALTH_STARTUP_FAILURE_THRESHOLD` | `30` | Consecutive failures before the container is killed during startup. Raise for slow-starting workloads (large tokenizers, cold container images). |
+| `AIPERF_K8S_HEALTH_DATASET_DOWNLOAD_STARTUP_BUDGET_SECONDS` | `3600` | Startup time the dataset-manager container gets when the run reads a remote dataset, which it downloads before its health server starts. Its failure threshold becomes this budget divided by the startup period, rounded up. The dataset-manager registers only after the download, so the controller-pod containers' `AIPERF_SERVICE_REGISTRATION_TIMEOUT` grows by the same budget. Worker pods and local-dataset runs are unaffected. |
 | Other `AIPERF_K8S_HEALTH_*` | see code | Liveness/readiness intervals, timeouts, thresholds. |
 
 ### Ports

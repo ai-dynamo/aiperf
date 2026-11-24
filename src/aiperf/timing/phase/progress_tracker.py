@@ -55,19 +55,18 @@ class PhaseProgressTracker:
         self.all_credits_sent_event: asyncio.Event = asyncio.Event()
         self.all_credits_returned_event: asyncio.Event = asyncio.Event()
 
-        # Fatal error from a request-free control node (e.g. a virtual-return
-        # callback that raised while firing an orchestrator's branches). Recorded
+        # Fatal error from scheduled work or a request-free control node. Recorded
         # here so a detached failure surfaces to the phase instead of being
         # logged and swallowed while the graph silently stops progressing.
         self._fatal_error: BaseException | None = None
 
     @property
     def fatal_error(self) -> BaseException | None:
-        """A recorded fatal control-node error, or None."""
+        """The first recorded fatal phase error, or None."""
         return self._fatal_error
 
     def record_fatal_error(self, error: BaseException) -> None:
-        """Record a fatal control-node error and unblock the drain wait.
+        """Record a fatal phase error and unblock the drain wait.
 
         Keeps only the first error. Sets ``all_credits_returned_event`` so the
         runner's completion wait returns promptly; the runner then re-raises the
@@ -181,6 +180,17 @@ class PhaseProgressTracker:
         """
         self._counter.increment_prefill_released()
 
+    def end_session_early(self, skipped_turns: int) -> bool:
+        """Account for a root session ended early on a truncated turn.
+
+        Delegates to :meth:`CreditCounter.end_session_early`. If it returns
+        True, the caller should freeze sent counts and set
+        ``all_credits_sent_event``.
+
+        CRITICAL: No async calls in this method - preserves atomicity.
+        """
+        return self._counter.end_session_early(skipped_turns)
+
     def account_lane_session(self, session_turns: int) -> None:
         """Count a deferred-lane session that acquires its slot directly.
 
@@ -267,6 +277,8 @@ class PhaseProgressTracker:
             completed_sessions=self._counter.completed_sessions,
             cancelled_sessions=self._counter.cancelled_sessions,
             total_session_turns=self._counter.total_session_turns,
+            sessions_ended_on_truncation=self._counter.sessions_ended_on_truncation,
+            turns_skipped_on_truncation=self._counter.turns_skipped_on_truncation,
             # Final counts (frozen values)
             final_requests_sent=self._counter.final_requests_sent,
             final_requests_completed=self._counter.final_requests_completed,

@@ -28,6 +28,9 @@ their full contents.
 Clips longer than 30 seconds are automatically skipped to stay within typical ASR model context
 limits.
 
+To benchmark your own audio files instead, see
+[Per-Request Audio Duration (RTFx)](custom-dataset.md#per-request-audio-duration-rtfx).
+
 ---
 
 ## Start a vLLM Server

@@ -1,9 +1,10 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 from aiperf.common.scenario.base import ScenarioSpec, UnknownScenarioError
-from aiperf.common.scenario.inferencex_agentx_mvp import INFERENCEX_AGENTX_MVP
+from aiperf.common.scenario.inferencex_agentx_mvp import AGENTX, INFERENCEX_AGENTX_MVP
 
 SCENARIOS: dict[str, ScenarioSpec] = {
+    AGENTX.name: AGENTX,
     INFERENCEX_AGENTX_MVP.name: INFERENCEX_AGENTX_MVP,
 }
 

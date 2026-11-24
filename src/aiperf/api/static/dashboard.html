@@ -717,7 +717,9 @@ SPDX-License-Identifier: Apache-2.0
                     const durSec = typeof phase.duration === 'number' ? phase.duration : null;
                     add(`${prefix}Duration`, durSec != null ? formatTime(durSec) : String(phase.duration));
                 }
-                if (phase.sessions != null) add(`${prefix}Sessions`, Number(phase.sessions).toLocaleString());
+                if (phase.sessions != null) {
+                    add(`${prefix}Sessions`, typeof phase.sessions === 'number' ? phase.sessions.toLocaleString() : String(phase.sessions));
+                }
             }
 
             if (!items.length) return;

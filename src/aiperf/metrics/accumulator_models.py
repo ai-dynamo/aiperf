@@ -13,10 +13,10 @@ from aiperf.common.types import MetricTagT
 
 @dataclass
 class AccumulatorMetricsSummary:
-    """Typed result from MetricsAccumulator.summarize().
+    """Typed result from MetricsAccumulator summaries and final exports.
 
     Unified summary replacing both the old MetricsSummary (results only) and
-    TimesliceSummary (timeslices only). When timeslicing is configured,
+    TimesliceSummary (timeslices only). On final export, when timeslicing is configured,
     ``timeslices`` is populated as an ordered list of :class:`TimesliceResult`
     — each entry bundles window bounds (start_ns / end_ns / is_complete)
     with the slice's metric results. Position in the list is the slice's

@@ -89,6 +89,10 @@ class CommAddress(CaseInsensitiveStrEnum):
 
 
 class CommandType(CaseInsensitiveStrEnum):
+    BENCHMARK_COMPLETE = "benchmark_complete"
+    """Hand the API the run's terminal state once results are exported and marked
+    ready. The ack is the controller's proof that the API serves the terminal
+    status before it is retired."""
     FINALIZE_ARTIFACTS = "finalize_artifacts"
     """Flush and durably publish artifacts before service communication stops."""
     GET_POD_STATES = "get_pod_states"
@@ -114,6 +118,7 @@ class ProfileCancelReason(CaseInsensitiveStrEnum):
     USER = "user"
     WARMUP_FAILURE = "warmup_failure"
     FAILED_REQUEST_THRESHOLD = "failed_request_threshold"
+    PROGRESS_STALL = "progress_stall"
 
     @property
     def is_abort(self) -> bool:
@@ -129,10 +134,11 @@ class ConversationBranchMode(CaseInsensitiveStrEnum):
     - ``FORK``: child inherits the parent's accumulated message context and
       sticky-routes to the parent's worker (prefix-cache locality). Used by
       aiperf's native DAG conversation-forking semantics.
-    - ``SPAWN``: child starts with a fresh context but still sticky-co-locates
-      on the parent's worker while that sticky entry is live (no SPAWN
-      refcount bump; least-loaded after the parent entry is gone). Used for
-      sub-agent dispatch and upcoming graph-mode fan-out.
+    - ``SPAWN``: child starts with a fresh context; its first turn co-locates
+      on the parent's worker when that sticky entry is live (least-loaded
+      otherwise), then it pins to that worker under its own id (no parent
+      refcount bump). Used for sub-agent dispatch and upcoming graph-mode
+      fan-out.
     """
 
     FORK = "fork"
@@ -140,8 +146,8 @@ class ConversationBranchMode(CaseInsensitiveStrEnum):
     live responses); sticky-routes to parent's worker for prefix-cache locality."""
 
     SPAWN = "spawn"
-    """Child gets a fresh context; sticky-co-locates on the parent's worker
-    while that sticky entry is live (no SPAWN refcount bump).
+    """Child gets a fresh context; starts on the parent's worker when that
+    sticky entry is live, then pins under its own id (no parent refcount bump).
 
     Disambiguation note: this SPAWN is the DAG-branch mode (a child
     *conversation* that runs alongside its parent). It is unrelated to
@@ -438,7 +444,6 @@ class MessageType(CaseInsensitiveStrEnum):
     CONNECTION_PROBE = "connection_probe"
     CONVERSATION_REQUEST = "conversation_request"
     CONVERSATION_RESPONSE = "conversation_response"
-    BENCHMARK_COMPLETE = "benchmark_complete"
     CONVERSATION_TURN_REQUEST = "conversation_turn_request"
     CONVERSATION_TURN_RESPONSE = "conversation_turn_response"
     CREDIT_PHASE_COMPLETE = "credit_phase_complete"
@@ -473,6 +478,7 @@ class MessageType(CaseInsensitiveStrEnum):
     TELEMETRY_RECORDS = "telemetry_records"
     TELEMETRY_STATUS = "telemetry_status"
     SERVER_METRICS_STATUS = "server_metrics_status"
+    SERVER_METRICS_WARMUP_BOUNDARY_READY = "server_metrics_warmup_boundary_ready"
     NETWORK_LATENCY_RECORD = "network_latency_record"
     WORKER_GROUP_STATS = "worker_group_stats"
     WORKER_HEALTH = "worker_health"
@@ -890,3 +896,17 @@ class RandomCorpusStyle(CaseInsensitiveStrEnum):
 
     The default ``--dataset-name random`` is a different algorithm upstream
     (repeat/truncate ShareGPT token ids) and is not what this style mirrors."""
+
+
+class AgenticReplayLifecycle(CaseInsensitiveStrEnum):
+    """Admission policy for agentic trace replay."""
+
+    STEADY_STATE = "steady-state"
+    FINITE = "finite"
+
+
+class ReplayDependencyEvent(CaseInsensitiveStrEnum):
+    """Transport boundary required by a recorded dependency."""
+
+    DISPATCH = "dispatch"
+    COMPLETION = "completion"

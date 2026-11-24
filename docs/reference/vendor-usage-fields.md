@@ -81,7 +81,7 @@ All field names match AIPerf's modelled synonyms. `cached_tokens` is read-only o
 
 ### vLLM
 
-**Verified against:** [`vllm` / `vllm/entrypoints/openai/engine/protocol.py`](https://github.com/vllm-project/vllm/blob/main/vllm/entrypoints/openai/engine/protocol.py).
+**Verified against:** [`vllm` / `vllm/entrypoints/serve/engine/protocol.py`](https://github.com/vllm-project/vllm/blob/main/vllm/entrypoints/serve/engine/protocol.py).
 
 ```python
 class UsageInfo(OpenAIBaseModel):
@@ -89,12 +89,25 @@ class UsageInfo(OpenAIBaseModel):
     total_tokens: int = 0
     completion_tokens: int | None = 0
     prompt_tokens_details: PromptTokenUsageInfo | None = None
+    completion_tokens_details: CompletionTokenUsageInfo | None = None
 
 class PromptTokenUsageInfo(OpenAIBaseModel):
     cached_tokens: int | None = None
+    created_cache_tokens: int | None = None
+    multimodal_tokens: dict[str, int] | None = None
+
+class CompletionTokenUsageInfo(OpenAIBaseModel):
+    reasoning_tokens: int = 0
 ```
 
-vLLM is OpenAI-compatible. Its `prompt_tokens_details` is narrower than OpenAI's (only `cached_tokens`, no `audio_tokens`). vLLM may emit `prompt_tokens_details: null` and `completion_tokens_details: null` explicitly; AIPerf's nested-field walk handles that case (the `isinstance(details, dict)` guard returns False, and the property returns None).
+vLLM is OpenAI-compatible, but its `*_tokens_details` sub-objects are neither a strict subset nor a superset of OpenAI's:
+
+- `prompt_tokens_details` has no `audio_tokens`, but adds `created_cache_tokens` (cache *writes*, which OpenAI does not surface at all) and `multimodal_tokens` — a per-modality breakdown (`image`, `audio`, `video`) of placeholder tokens already counted in `prompt_tokens`, `None` when the request has no multimodal input.
+- `completion_tokens_details` carries only `reasoning_tokens`, with none of OpenAI's `audio_tokens` / `accepted_prediction_tokens` / `rejected_prediction_tokens`.
+
+AIPerf models `cached_tokens` and `reasoning_tokens`; `created_cache_tokens` and `multimodal_tokens` are not currently mapped to metrics, so vLLM cache-write and per-modality counts are available on the wire but unreported.
+
+vLLM may emit `prompt_tokens_details: null` and `completion_tokens_details: null` explicitly; AIPerf's nested-field walk handles that case (the `isinstance(details, dict)` guard returns False, and the property returns None).
 
 **Enablement (opt-in):** vLLM populates `cached_tokens` only when the server is launched with `--enable-prompt-tokens-details` (default off, per [vllm-project/vllm#10174](https://github.com/vllm-project/vllm/pull/10174) — "guarded by a flag ... OFF by default"). Without the flag, `prompt_tokens_details` is `null` and AIPerf's cache-read metrics are all-None even when prefix caching is active. The flag is independent of `--enable-prefix-caching` (the cache must still be on for `cached_tokens` to be non-zero).
 

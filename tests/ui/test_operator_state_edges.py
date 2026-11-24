@@ -50,6 +50,7 @@ def _api_import_script() -> str:
               "import {{ setError }} from './state.js';",
               `import {{ setError }} from '${{stateUrl}}';`,
             );
+        apiSource = apiSource.replace("import {{ API_BASE }} from './base-path.js';", "const API_BASE = '/api/v1';");
         const apiUrl = 'data:text/javascript;base64,' + Buffer.from(apiSource).toString('base64');
         const apiModule = await import(apiUrl);
     """

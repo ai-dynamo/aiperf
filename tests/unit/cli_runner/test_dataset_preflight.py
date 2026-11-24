@@ -7,16 +7,18 @@ no event loop and must not construct loaders (whose base class opens an
 aiohttp client).
 """
 
+import contextlib
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from pytest import param
 
 from aiperf.cli_runner._preflight import (
     _preflight_dataset_access,
     _preflight_dataset_materialize,
     _public_dataset_loaders,
-    preflight_public_datasets_for_run,
+    preflight_datasets_for_run,
 )
 from aiperf.config.dataset import FileDataset, PublicDataset
 
@@ -190,7 +192,7 @@ class TestKubernetesServiceEntryPoint:
                 calls.append("materialize")
 
         with patch("aiperf.plugin.plugins.get_class", return_value=RecordingLoader):
-            preflight_public_datasets_for_run(run)
+            preflight_datasets_for_run(run)
 
         assert calls == ["access", "materialize"]
 
@@ -209,7 +211,7 @@ class TestKubernetesServiceEntryPoint:
             ),
             pytest.raises(ConfigurationError, match="gated"),
         ):
-            preflight_public_datasets_for_run(run)
+            preflight_datasets_for_run(run)
 
     def test_non_public_dataset_is_a_no_op(self) -> None:
         run = SimpleNamespace(
@@ -220,7 +222,7 @@ class TestKubernetesServiceEntryPoint:
             )
         )
 
-        preflight_public_datasets_for_run(run)
+        preflight_datasets_for_run(run)
 
 
 class TestResolutionOutputStaysReadable:
@@ -256,3 +258,145 @@ class TestResolutionOutputStaysReadable:
         _preflight_dataset_materialize(_plan(_public("sharegpt")))
 
         assert logging.getLogger("httpx").level == logging.DEBUG
+
+
+class TestRemoteDatasetPreflightWiring:
+    def test_access_and_materialize_call_remote_preflights(self) -> None:
+        plan = _plan(
+            FileDataset(name="main", type="file", path="hf://org/repo/t.jsonl")
+        )
+        with (
+            patch("aiperf.dataset.remote.preflight.preflight_remote_access") as access,
+            patch(
+                "aiperf.dataset.remote.preflight.preflight_remote_materialize"
+            ) as materialize,
+        ):
+            _preflight_dataset_access(plan)
+            _preflight_dataset_materialize(plan)
+        access.assert_called_once_with(plan.configs)
+        materialize.assert_called_once_with(plan.configs)
+
+    def test_access_runs_before_anything_reads_the_promoted_phase(self) -> None:
+        """The CLI builds a remote trace's phase optimistically as fixed_schedule.
+
+        The access preflight settles it, so it must run before the endpoint
+        probe, the download, and the run itself (whose resolver chain checks the
+        dataset's timing data against the phase type).
+        """
+        import aiperf.cli_runner as cli_runner
+
+        calls: list[str] = []
+        plan = SimpleNamespace(
+            use_adaptive=False,
+            trials=1,
+            is_single_run=False,
+            configs=[SimpleNamespace(artifacts=SimpleNamespace(auto_plot=False))],
+        )
+        names = (
+            "_preflight_artifact_dir",
+            "_preflight_accuracy_deps",
+            "_preflight_fd_limit",
+            "_preflight_dataset_access",
+            "_preflight_endpoint_ready",
+            "_preflight_dataset_materialize",
+            "_run_multi_benchmark",
+        )
+        with contextlib.ExitStack() as stack:
+            stack.enter_context(
+                patch("aiperf.common.bootstrap.register_sigusr1_faulthandler")
+            )
+            for name in names:
+                stack.enter_context(
+                    patch.object(
+                        cli_runner,
+                        name,
+                        side_effect=lambda *a, _n=name, **k: calls.append(_n),
+                    )
+                )
+            cli_runner.run_benchmark(plan)
+        assert calls.index("_preflight_dataset_access") < calls.index(
+            "_preflight_endpoint_ready"
+        )
+        assert calls[-3:] == [
+            "_preflight_endpoint_ready",
+            "_preflight_dataset_materialize",
+            "_run_multi_benchmark",
+        ]
+
+
+class TestRemoteDatasetsInTheDatasetManagerPod:
+    """The pod pins only what the CLI host could not, then always downloads."""
+
+    @staticmethod
+    def _run(path: str, version: str | None = None):
+        dataset = FileDataset(
+            name="main",
+            type="file",
+            path=path
+            if version is None
+            else {"ref": path, "resolved_version": version},
+        )
+        return SimpleNamespace(cfg=SimpleNamespace(get_default_dataset=lambda: dataset))
+
+    def test_preflight_datasets_for_run_unpinned_remote_runs_access_then_materialize(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        run = self._run("hf://org/repo/t.jsonl")
+        with (
+            patch(
+                "aiperf.dataset.remote.preflight.preflight_remote_access",
+                side_effect=lambda configs: calls.append("access"),
+            ),
+            patch(
+                "aiperf.dataset.remote.preflight.preflight_remote_materialize",
+                side_effect=lambda configs: calls.append("materialize"),
+            ),
+        ):
+            preflight_datasets_for_run(run)
+        assert calls == ["access", "materialize"]
+
+    @pytest.mark.parametrize(
+        "path,version",
+        [
+            param("hf://org/repo/t.jsonl", "a" * 40, id="pinned-remote"),
+            param("x.jsonl", None, id="local"),
+        ],
+    )  # fmt: skip
+    def test_preflight_datasets_for_run_pinned_or_local_skips_access(
+        self, path: str, version: str | None
+    ) -> None:
+        run = self._run(path, version)
+        with (
+            patch("aiperf.dataset.remote.preflight.preflight_remote_access") as access,
+            patch(
+                "aiperf.dataset.remote.preflight.preflight_remote_materialize"
+            ) as materialize,
+        ):
+            preflight_datasets_for_run(run)
+        access.assert_not_called()
+        materialize.assert_called_once_with([run.cfg])
+
+    def test_preflight_datasets_for_run_open_fixed_schedule_choice_raises(
+        self,
+    ) -> None:
+        from aiperf.config.dataset.remote_ref import RemoteFixedScheduleCheck
+        from aiperf.config.loader.errors import ConfigurationError
+
+        dataset = FileDataset(
+            name="main",
+            type="file",
+            path="hf://org/repo/t.jsonl",
+            remote_fixed_schedule_check=RemoteFixedScheduleCheck(promoted=True),
+        )
+        run = SimpleNamespace(cfg=SimpleNamespace(get_default_dataset=lambda: dataset))
+        with (
+            patch("aiperf.dataset.remote.preflight.preflight_remote_access") as access,
+            patch(
+                "aiperf.dataset.remote.preflight.preflight_remote_materialize"
+            ) as materialize,
+            pytest.raises(ConfigurationError, match="before submission"),
+        ):
+            preflight_datasets_for_run(run)
+        access.assert_not_called()
+        materialize.assert_not_called()

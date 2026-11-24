@@ -376,6 +376,10 @@ class AIPerfLifecycleMixin(TaskManagerMixin, HooksMixin):
         """Set the state to FAILED and raise an asyncio.CancelledError.
         This is used when the transition from one state to another fails.
         """
+        # Bounded stop runs in a separate task; it must not cancel this task
+        # before cleanup finishes and the terminal FAILED state is recorded.
+        if (failure_task := asyncio.current_task()) is not None:
+            self.tasks.discard(failure_task)
         self.error(f"Failed for {self}: {e}")
         if not isinstance(e, LifecycleOperationError):
             # Only add to exit errors if the exception has not already been added

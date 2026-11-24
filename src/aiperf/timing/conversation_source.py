@@ -84,9 +84,10 @@ class SampledSession:
     def routing_key(self) -> str:
         """Sticky-routing key.
 
-        Returns the parent's correlation_id when set (so FORK children share
-        a worker with the parent), otherwise this session's own
-        x_correlation_id.
+        Returns the parent's correlation_id when set, otherwise this
+        session's own x_correlation_id. The router computes its own key; a
+        SPAWN child follows this only on its first turn, then pins under its
+        own x_correlation_id.
         """
         return self.parent_correlation_id or self.x_correlation_id
 
@@ -253,6 +254,15 @@ class ConversationSource:
         if metadata.is_orchestrator and metadata.think_time is not None:
             self._orchestrator_ordinal[session.x_correlation_id] = seq
         return session
+
+    def start_full_pass(self) -> None:
+        """Align the sampler so the next session draws cover every root conversation once."""
+        # Optional sampler hook, defined by ShuffleSampler. Sequential sampling
+        # already wraps in a fixed order and random sampling is rejected for
+        # full passes, so samplers without it need nothing.
+        start = getattr(self._dataset_sampler, "start_full_pass", None)
+        if start is not None:
+            start()
 
     def sample_ordinal(self, x_correlation_id: str) -> int | None:
         """Deterministic sampling ordinal for an orchestrator root instance.

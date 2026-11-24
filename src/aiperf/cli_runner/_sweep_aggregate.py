@@ -61,12 +61,17 @@ def _resolve_model_name_for_variation(
 
 
 def _plan_iteration_order(plan: BenchmarkPlan) -> Any:
-    """Resolve the sweep iteration order, defaulting to REPEATED outside grids."""
+    """Resolve the iteration order: the sweep's, or INDEPENDENT without one.
+
+    Only the INDEPENDENT loop checks the convergence criterion between trials.
+    """
     from aiperf.common.enums import SweepMode
     from aiperf.config.sweep import _GridSweepBase
 
     if isinstance(plan.sweep, _GridSweepBase):
         return plan.sweep.iteration_order
+    if plan.sweep is None:
+        return SweepMode.INDEPENDENT
     return SweepMode.REPEATED
 
 

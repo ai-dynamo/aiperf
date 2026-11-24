@@ -19,11 +19,11 @@ cleanly when they are not.
 >
 > - **Per-request (this guide):** the stats ride the response body, so AIPerf reads them
 >   inline during a normal `aiperf profile` run. Highest fidelity -- you get per-request
->   distributions (avg/min/percentiles) and a pooled histogram. Supported for vLLM and
+>   distributions (avg/min/percentiles) and a pooled histogram. Supported for vLLM, SGLang, and
 >   TensorRT-LLM; direct to the engine, not behind Dynamo.
 > - **Server scrape:** aggregate acceptance is read from the server's Prometheus `/metrics`
 >   endpoint via `--server-metrics`. Works on engines with no per-request reporting
->   (SGLang) and behind Dynamo, but the numbers cover the whole server.
+>   and behind Dynamo, but the numbers cover the whole server.
 >
 > For a per-category acceptance matrix over a ready-made speculative-decoding dataset, see the
 > [SPEED-Bench tutorial](speed-bench.md), which covers both paths: on the per-request path a
@@ -46,14 +46,18 @@ of the metrics reference.
   - **TensorRT-LLM** with `per_request_spec_decode_stats: true` in the YAML passed to
     `--extra_llm_api_options`. PyTorch backend only.
 
+  - **SGLang v0.5.19+** with `--extra-inputs return_spec_tokens_details:true`
+    on the AIPerf command.
+
   You do not tell AIPerf which engine you are pointed at -- it recognizes each engine's
   payload by shape.
 - **Direct to the engine.** Behind Dynamo the custom stats field is currently stripped, so
   the per-request path is unavailable there (use the server-scrape path instead).
-- Streaming works out of the box, though the two engines place the payload differently:
+- Streaming works out of the box, though the engines place the payload differently:
   vLLM sends it on the trailing usage chunk -- so AIPerf requests
   `stream_options.include_usage` on every streaming run -- while TensorRT-LLM attaches it
-  to the terminal chunk's choice. No extra flag is needed for either.
+  to the terminal chunk's choice. SGLang sends `sglext.spec_tokens_details`
+  on a separate chunk when the request enables it.
 
 ---
 
@@ -77,7 +81,7 @@ in the response):
 ```bash
 curl -s localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model":"meta-llama/Llama-3.1-8B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":1}'
+  -d '{"model":"meta-llama/Llama-3.1-8B-Instruct","messages":[{"role":"user","content":"test"}],"max_tokens":32}'
 ```
 
 ---
@@ -115,6 +119,17 @@ Look for `choices[0].speculative_decoding`. A few things differ from vLLM and ar
 `num_spec_tokens` is `null` when the server runs with `draft_len_schedule`; the per-step
 arrays are never populated; and the field is absent entirely for a request that drafted
 nothing. Support is PyTorch-backend only.
+
+---
+
+## Enable SGLang response details
+
+For SGLang v0.5.19+, add `--extra-inputs return_spec_tokens_details:true` to the
+AIPerf command below. In YAML, set
+`benchmark.endpoint.extra.return_spec_tokens_details: true`.
+
+See the [SGLang adapter reference](../reference/spec-decode-acceptance.md#the-sglang-adapter)
+for the counter definitions and fallback behavior.
 
 ---
 
@@ -178,6 +193,9 @@ Quick reading (full definitions in the
 - **Accepted per Verified** -- `(j + 1) / (l + 1)`, a `[~0, 1]` utilization: how close each
   step got to accepting everything it proposed.
 - **Spec Decode Steps** -- verify steps per request.
+- **Zero-Step Requests** -- requests that reported stats but never ran a verify step (e.g.
+  `max_tokens: 1`, or an NGram drafter that never matched). They are excluded from the
+  per-request metrics above; the row appears only when the count is nonzero.
 - **Accepted-draft histogram** -- share of verify steps that accepted exactly `j` draft
   tokens, pooled across the run. Capped to buckets `0..7` on the console (any `j >= 8` folds
   into a trailing `>=8` bucket); the full histogram is in the JSON export.
@@ -235,10 +253,13 @@ export preserves, so no additional field is needed there.
 If the Spec Decode section, histogram, and `spec_decode_*` fields are all absent, that is
 the expected clean-degradation behavior -- not an error. Common causes:
 
-- speculative decoding is off, or the requests had no verify steps;
+- speculative decoding is off, or, on TensorRT-LLM, the requests had no verify steps. On
+  vLLM such requests still send a payload with `num_spec_steps: 0`, so instead of no
+  section you see a lone **Zero-Step Requests** row: speculation never fired;
 - the server was not started with per-request reporting enabled -- vLLM's
   `--per-request-spec-decode-metrics`, or TensorRT-LLM's
   `per_request_spec_decode_stats: true`;
+- SGLang predates v0.5.19, or the request omits `return_spec_tokens_details: true`;
 - the server is behind Dynamo, which strips the custom field (use the
   [server-scrape path](speed-bench.md#portable-path-server-scrape) instead);
 - the vLLM build predates [PR #48915](https://github.com/vllm-project/vllm/pull/48915);

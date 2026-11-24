@@ -75,6 +75,8 @@ When a response comes back, AIPerf needs to compute "what was the input length?"
 
 So the record processor uses the same `apply_chat_template` call the server uses. It walks the wire payload (which is preserved on the request record as `payload_bytes`), reconstructs the messages list, and runs it through the tokenizer's chat template with `add_generation_prompt=True`. The returned token count includes role markers, headers, the assistant prompt suffix — everything the server saw.
 
+The call explicitly requests a token-ID list with `return_dict=False`, including on Transformers versions that return a dictionary by default. Replayed tool histories preserve both assistant `tool_calls` and tool-result `tool_call_id` fields, so templates that require linked tool results can render the same history as the server.
+
 When this works, the metric value matches `--isl` to within a small rounding error (the chat template overhead is averaged from samples, not exact). When it doesn't work — completions endpoints, embeddings, models with no chat template configured — the record processor falls back to the bare-text encoding, just like before. The fallback never raises.
 
 For models whose HF tokenizer explicitly carries `chat_template = None` (most "base" / un-instruct-tuned checkpoints), the parser short-circuits before calling `apply_chat_template`: a single attribute check avoids one raise + one f-string format per record on the bare-text fallback path. With `--apply-chat-template` off, the entire chat-template branch is skipped regardless of the tokenizer.

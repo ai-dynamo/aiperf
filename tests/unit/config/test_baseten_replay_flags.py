@@ -31,12 +31,10 @@ from pydantic import ValidationError
 from pytest import param
 
 from aiperf.config.flags._converter_dataset import build_dataset
-from aiperf.config.flags._converter_profiling import (
-    _count_dataset_records,
-    _first_record_has_timestamp,
-)
+from aiperf.config.flags._converter_profiling import _count_dataset_records
 from aiperf.config.flags.cli_config import CLIConfig
 from aiperf.config.flags.converter import convert_cli_to_aiperf
+from aiperf.dataset.trace_timestamps import first_record_has_timestamp
 
 _REPLAY_BOOL_FIELDS = (
     "open_loop_replay",
@@ -102,7 +100,7 @@ def test_arrow_ipc_profiling_metadata(tmp_path: Path, suffix: str) -> None:
     ):
         writer.write_table(table)
 
-    assert _first_record_has_timestamp(path) is True
+    assert first_record_has_timestamp(path) is True
     assert _count_dataset_records(path) == 1
 
 
@@ -123,7 +121,7 @@ def test_first_record_has_timestamp_returns_false_on_truncated_gz(
     tmp_path: Path,
 ) -> None:
     """A truncated gzip must degrade to False, not raise EOFError."""
-    assert _first_record_has_timestamp(_truncated_gz(tmp_path)) is False
+    assert first_record_has_timestamp(_truncated_gz(tmp_path)) is False
 
 
 def test_count_dataset_records_returns_zero_on_truncated_gz(tmp_path: Path) -> None:
@@ -156,7 +154,7 @@ def test_first_record_has_timestamp_logs_on_corrupt_gz_header(
     import logging
 
     with caplog.at_level(logging.WARNING):
-        result = _first_record_has_timestamp(_corrupt_gz_header(tmp_path))
+        result = first_record_has_timestamp(_corrupt_gz_header(tmp_path))
     assert result is False
     assert any("corrupt" in r.message.lower() for r in caplog.records)
 
@@ -177,7 +175,7 @@ def test_first_record_has_timestamp_returns_false_on_crc_corrupt_gz(
     tmp_path: Path,
 ) -> None:
     """zlib.error from CRC corruption must degrade to False, not propagate."""
-    assert _first_record_has_timestamp(_crc_corrupt_gz(tmp_path)) is False
+    assert first_record_has_timestamp(_crc_corrupt_gz(tmp_path)) is False
 
 
 def test_count_dataset_records_returns_zero_on_crc_corrupt_gz(

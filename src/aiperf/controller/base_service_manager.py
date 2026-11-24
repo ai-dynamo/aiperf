@@ -3,7 +3,7 @@
 import asyncio
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from typing import TYPE_CHECKING
 
 from aiperf.common.environment import Environment
@@ -342,7 +342,9 @@ class BaseServiceManager(AIPerfLifecycleMixin, ABC):
         pass
 
     @abstractmethod
-    async def shutdown_all_services(self) -> list[BaseException | None]:
+    async def shutdown_all_services(
+        self, *, exclude: Collection[ServiceTypeT] = ()
+    ) -> list[BaseException | None]:
         pass
 
     @abstractmethod

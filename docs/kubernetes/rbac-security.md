@@ -485,7 +485,7 @@ spec:
 
 ### What `readOnlyRootFilesystem: true` requires
 
-The root filesystem is read-only. AIPerf writes to five locations, which
+The root filesystem is read-only. AIPerf writes to six locations, which
 must be provided as writable volumes. The JobSet builder already handles
 this: `build_shared_volumes()` declares them as pod-level `emptyDir`
 volumes and `build_volume_mounts()` attaches them to each container, both in
@@ -496,6 +496,7 @@ plus writable `/tmp`, which is all it needs.)
 - `/aiperf/ipc` — ZMQ IPC socket files (controller mode)
 - `/aiperf/datasets` — shared dataset mmap files (dataset-manager writes, API serves to workers)
 - `/aiperf/hf_home` — HuggingFace cache (`tokenizer-cache` volume; `HF_HOME` points here)
+- `/aiperf/remote-cache` — S3 and HTTPS dataset downloads and their index (`remote-cache` volume, mounted in the control-plane and dataset-manager containers; `AIPERF_DATASET_REMOTE_CACHE_DIR` points here)
 - `/results` — exported metrics, profile artifacts
 - `/tmp` — general scratch (tempfile, matplotlib config)
 

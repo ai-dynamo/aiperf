@@ -93,7 +93,7 @@ def is_speed_bench_row(data: object) -> bool:
 
 
 class SpeedBenchLoader(MultiTurnDatasetLoader):
-    """HuggingFace dataset loader for nvidia/SPEED-Bench.
+    """Custom JSONL loader for prepared nvidia/SPEED-Bench prompts.
 
     SPEED-Bench (SPEculative Evaluation Dataset) provides prompts for
     benchmarking speculative decoding across diverse semantic domains and
@@ -112,7 +112,7 @@ class SpeedBenchLoader(MultiTurnDatasetLoader):
     coding, humanities, math, multilingual, qa, rag, reasoning, roleplay,
     stem, summarization, writing
 
-    **Throughput subset categories** (512 samples each per ISL bucket):
+    **Throughput subset categories** (512 samples each for 1K–32K, 128 for 100K):
     low_entropy, mixed, high_entropy
 
     Example plugins.yaml entries::
@@ -363,3 +363,9 @@ class SpeedBenchThroughput32KLoader(SpeedBenchSplitLoader):
     """Loader for the SPEED-Bench throughput 32K split."""
 
     split_filename = "throughput_32k.jsonl"
+
+
+class SpeedBenchThroughput100KLoader(SpeedBenchSplitLoader):
+    """Loader for the SPEED-Bench throughput 100K split."""
+
+    split_filename = "throughput_100k.jsonl"

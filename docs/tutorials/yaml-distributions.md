@@ -26,6 +26,27 @@ Any field in a YAML config typed as a sampling distribution accepts the full set
 
 Wherever you see `{mean: ..., stddev: ...}` in a template, you can swap in any other shape from this page.
 
+For synthetic conversations, `turns` is sampled once per conversation and rounded
+up to at least one turn. The resulting integer stays within the configured bounds:
+fractional minima round up and maxima round down. Bounds with no positive integer
+are rejected. This also applies to fixed values: `turns: 3.2` produces 4 turns,
+and `turns: 1.0000001` produces 2. Distribution parameters describe the values
+before integer conversion. For example, `turns: {mean: 10, stddev: 2}` produces
+an average of approximately 10.5 turns after rounding up.
+
+`turn_delay` is sampled for each subsequent turn and scaled by
+`turn_delay_ratio`; a non-positive sample means no wait. Normal sampling redraws
+negative values, so `turn_delay: {mean: 0, stddev: 100}` produces positive delays
+with a mean of approximately 80 ms. For back-to-back turns, use `turn_delay: 0`
+or `{mean: 0, stddev: 0}`, with no positive `min` bound.
+
+> **Compatibility note:** Compared with the former mean/stddev approximation,
+> synthetic conversations now retain fractional turn parameters, round fractional
+> fixed turn counts up, sample non-normal shapes and bounds, and retain fractional
+> milliseconds in delays. A normal delay with zero mean and positive stddev now
+> produces positive delays. These changes can alter generated datasets for the
+> same seed across versions.
+
 ## The five distribution types
 
 AIPerf supports five distribution shapes, and **figures out which one you mean from the keys you wrote** — you don't have to add a `type:` key. The discriminator is purely structural:
@@ -72,7 +93,9 @@ This is the workhorse for "vary around a target." If `stddev: 0` is set or omitt
 
 A few details worth knowing:
 
-- `mean` must be `>= 0`. Zero is allowed (e.g. `osl: {mean: 0}` disables output, `turn_delay: {mean: 0}` disables inter-turn delay).
+- `mean` must be `>= 0` and is the Gaussian mean before truncation. With positive
+  `stddev`, a zero mean produces a positive half-normal distribution. With
+  `stddev: 0`, raw samples equal the mean; `min`/`max` bounds apply afterward.
 - `stddev` must be `>= 0`. Default is `0`.
 - A bare `{mean: 512}` (no `stddev`, no `median`) is still treated as Normal — a Normal with zero stddev. This is intentional: it keeps the rule "set `mean` and you get a Normal" simple. If you want a *log-normal* with no skew, write `{mean: 512, median: 512}`.
 

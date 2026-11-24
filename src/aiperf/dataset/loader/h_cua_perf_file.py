@@ -39,6 +39,8 @@ class HCuaPerfFileLoader(MooncakeTraceDatasetLoader):
     ``--dataset-filter`` applies here.
     """
 
+    reads_parquet = False
+
     tag: ClassVar[str] = "HCuaPerf"
 
     def __init__(

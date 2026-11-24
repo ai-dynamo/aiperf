@@ -14,7 +14,7 @@ Key responsibilities:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from msgspec.structs import replace as _struct_replace
@@ -85,6 +85,7 @@ class CreditIssuer:
         session_tree_registry_enabled: bool | None = None,
         replay_barrier: ReplayBarrierCoordinator | None = None,
         cache_bust_target: CacheBustTarget = CacheBustTarget.NONE,
+        finite_replay: bool = False,
     ) -> None:
         """Initialize credit issuer.
 
@@ -130,6 +131,7 @@ class CreditIssuer:
             else None
         )
         self._cache_bust_target = cache_bust_target
+        self._finite_replay = finite_replay
         self._issuing_stopped = False
         self._max_tokens_override: int | None = None
         self._turn_admission: Callable[[TurnToSend], TurnAdmission | bool] | None = None
@@ -184,6 +186,33 @@ class CreditIssuer:
         return (
             self._concurrency_manager.session_slot_available(self._phase_key)
             and self._stop_checker.can_start_new_session()
+        )
+
+    def can_dispatch_child_turn(self) -> bool:
+        """True if a DAG child turn would pass the stop checks right now.
+
+        Side-effect free; ``--num-conversations`` and root sending-complete do
+        not apply to children (see ``StopConditionChecker.can_send_dag_child_turn``).
+        """
+        return not self._issuing_stopped and self._stop_checker.can_send_child_turn()
+
+    def can_dispatch_join(self, parent_agent_depth: int) -> bool:
+        """True if a parent's gated (join) turn would pass the stop checks right now.
+
+        Side-effect free mirror of ``_dispatch_join_turn_ready``'s gate, so the
+        branch orchestrator can tell whether a think-time wait still precedes a
+        turn that will be sent.
+        """
+        return not self._issuing_stopped and self._join_stop_check(parent_agent_depth)()
+
+    def _join_stop_check(self, parent_agent_depth: int) -> Callable[[], bool]:
+        # A nested (agent_depth > 0) join is reactive DAG work that must progress
+        # past the root-sampler-done signal; a top-level join is a normal
+        # continuation. Mirrors _issue_credit_ready's check selection.
+        return (
+            self._stop_checker.can_send_child_turn
+            if parent_agent_depth > 0
+            else self._stop_checker.can_send_any_turn
         )
 
     async def acquire_lane_credit(
@@ -503,6 +532,7 @@ class CreditIssuer:
             turn_index=turn.turn_index,
             num_turns=turn.num_turns,
             issued_at_ns=issued_at_ns,
+            finite_replay=self._finite_replay,
             cancel_after_ns=cancel_after_ns,
             url_index=url_index,
             agent_depth=turn.agent_depth,
@@ -517,27 +547,40 @@ class CreditIssuer:
             max_tokens_override=turn.max_tokens_override,
         )
 
-        await self._credit_router.send_credit(credit=credit)
-        replay_gate = getattr(self, "replay_gate", None)
-        if replay_gate is not None:
-            await replay_gate.observe_issued(credit)
+        self.replay_gate.register_credit(credit)
+        try:
+            await self._credit_router.send_credit(credit=credit)
+        except BaseException:
+            self.replay_gate.unregister_credit(credit)
+            raise
+        await self.replay_gate.observe_issued(credit)
         if is_final_credit:
+            if self._finite_replay:
+                raise RuntimeError("Finite replay cannot issue a capped final credit")
             self._progress.freeze_sent_counts()
             self._progress.all_credits_sent_event.set()
 
         return not is_final_credit
 
     async def dispatch_first_turn(
-        self, sampled_session: SampledSession
+        self,
+        sampled_session: SampledSession,
+        on_refused: Callable[[], Awaitable[None]] | None = None,
     ) -> ChildDispatchResult:
         """Dispatch the first turn of a mid-run DAG child session.
 
         Thin wrapper around ``dispatch_child_turn`` that builds the
         first ``TurnToSend`` from the sampled session.
         """
-        return await self.dispatch_child_turn(sampled_session.build_first_turn())
+        return await self.dispatch_child_turn(
+            sampled_session.build_first_turn(), on_refused=on_refused
+        )
 
-    async def dispatch_child_turn(self, turn: TurnToSend) -> ChildDispatchResult:
+    async def dispatch_child_turn(
+        self,
+        turn: TurnToSend,
+        on_refused: Callable[[], Awaitable[None]] | None = None,
+    ) -> ChildDispatchResult:
         """Dispatch a DAG child turn (first or continuation).
 
         ``DEFERRED`` means the turn is retained by a replay barrier or phase
@@ -561,16 +604,15 @@ class CreditIssuer:
             turn,
             lambda: self._dispatch_child_turn_ready(turn),
             child_refusal_cleanup=True,
+            on_refused=on_refused,
             retained_result=ChildDispatchResult.DEFERRED,
         )
 
     async def _dispatch_child_turn_ready(self, turn: TurnToSend) -> ChildDispatchResult:
         """Dispatch a child after its recorded predecessor frontier completes."""
-        if self._issuing_stopped:
+        if not self.can_dispatch_child_turn():
             return ChildDispatchResult.REJECTED
         can_proceed_fn = self._stop_checker.can_send_child_turn
-        if not can_proceed_fn():
-            return ChildDispatchResult.REJECTED
         # Children inherit the parent's session slot; wait for prefill
         # capacity so temporary saturation does not delete sibling branches.
         if not await self._concurrency_manager.acquire_prefill_slot(
@@ -656,18 +698,9 @@ class CreditIssuer:
         prefill slot. The final-credit bookkeeping (freeze counts + done event)
         still runs inside ``_issue_credit_internal``.
         """
-        if self._issuing_stopped:
+        if not self.can_dispatch_join(turn.agent_depth):
             return ChildDispatchResult.REJECTED
-        # Nested (agent_depth > 0) join is reactive DAG work that must progress
-        # past the root-sampler-done signal; a top-level join is a normal
-        # continuation. Mirrors _issue_credit_ready's check selection.
-        can_proceed_fn = (
-            self._stop_checker.can_send_child_turn
-            if turn.agent_depth > 0
-            else self._stop_checker.can_send_any_turn
-        )
-        if not can_proceed_fn():
-            return ChildDispatchResult.REJECTED
+        can_proceed_fn = self._join_stop_check(turn.agent_depth)
         if not await self._concurrency_manager.acquire_prefill_slot(
             self._phase_key, can_proceed_fn
         ):

@@ -17,6 +17,7 @@ from aiperf.common.exceptions import NotInitializedError
 from aiperf.credit.messages import RouterToWorkerMessage, WorkerDispatchable
 from aiperf.credit.structs import Credit
 from aiperf.zmq.streaming_dealer_client import ZMQStreamingDealerClient
+from tests.harness.utils import EVENT_WAIT_HANG_GUARD_S
 
 
 class TestZMQStreamingDealerClientInitialization:
@@ -230,7 +231,7 @@ class TestZMQStreamingDealerClientReceiver:
             client.register_receiver(test_handler)
             await client.start()
 
-            await asyncio.wait_for(event.wait(), timeout=1.0)
+            await asyncio.wait_for(event.wait(), timeout=EVENT_WAIT_HANG_GUARD_S)
             assert len(received) == 1
             recv_credit = received[0]
             assert isinstance(recv_credit, Credit)
@@ -414,7 +415,9 @@ class TestZMQStreamingDealerClientEdgeCases:
             client.register_receiver(test_handler)
             await client.start()
 
-            await asyncio.wait_for(received_event.wait(), timeout=2.0)
+            await asyncio.wait_for(
+                received_event.wait(), timeout=EVENT_WAIT_HANG_GUARD_S
+            )
 
             assert len(received) == len(credits)
             for i, credit in enumerate(received):
@@ -449,7 +452,9 @@ class TestZMQStreamingDealerClientEdgeCases:
             client.register_receiver(test_handler)
             await client.start()
 
-            await asyncio.wait_for(received_event.wait(), timeout=2.0)
+            await asyncio.wait_for(
+                received_event.wait(), timeout=EVENT_WAIT_HANG_GUARD_S
+            )
 
         assert len(received) == 1
         assert isinstance(received[0], Credit)
