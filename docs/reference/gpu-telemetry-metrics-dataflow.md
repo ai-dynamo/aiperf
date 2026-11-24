@@ -26,7 +26,7 @@ flowchart LR
         dcgm["DCGMTelemetryCollector<br/><small>DCGM /metrics → DCGM_TO_FIELD_MAPPING → nvidia_*</small>"]
         pynvml["PyNVMLTelemetryCollector<br/><small>local NVML → nvidia_power_usage, nvidia_energy_consumption</small>"]
         amdsmi["AMDSMITelemetryCollector<br/><small>amdsmi → amd_power (W), amd_energy_consumption (MJ)</small>"]
-        npusmi["NPUSMITelemetryCollector<br/><small>npu-smi → ascend_power (W) · no energy counter</small>"]
+        npusmi["NPUSMITelemetryCollector / NpuExporterTelemetryCollector<br/><small>npu-smi CLI or npu-exporter HTTP → ascend_power (W) · no energy counter</small>"]
         record["TelemetryRecord + TelemetryMetrics<br/><small>stamps platform (nvidia/amd/ascend) + vendor fields</small>"]
         dcgm --> record
         pynvml --> record
@@ -106,7 +106,8 @@ flowchart LR
   names via `DCGM_TO_FIELD_MAPPING`; both stamp `platform="nvidia"`.
 - **AMD lane** (red): `AMDSMITelemetryCollector` writes `amd_power` /
   `amd_energy_consumption` and stamps `platform="amd"`.
-- **Ascend lane** (amber): `NPUSMITelemetryCollector` writes `ascend_power` /
+- **Ascend lane** (amber): `NPUSMITelemetryCollector` (local CLI) or
+  `NpuExporterTelemetryCollector` (Prometheus HTTP) writes `ascend_power` /
   `ascend_temperature` / `ascend_aicore_utilization` and stamps
   `platform="ascend"`. It writes no energy field because `npu-smi` exposes no
   cumulative energy counter, so `total_energy_joules` returns `(0.0, 0)` for

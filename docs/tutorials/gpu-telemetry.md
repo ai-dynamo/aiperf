@@ -24,6 +24,9 @@ If you want **simple local GPU monitoring without DCGM**, use `--gpu-telemetry p
 ### Path 4: AMD ROCm GPUs (amdsmi)
 If you're benchmarking against an inference server running on **AMD ROCm GPUs** (Instinct MI300X, MI355X, etc.), use `--gpu-telemetry amdsmi`. This uses the `amdsmi` Python bindings shipped with ROCm to collect metrics directly from the AMD driver. No HTTP endpoints required. Install the bindings via `pip install /opt/rocm/share/amd_smi/amdsmi-*.whl` if not already present (they ship with ROCm).
 
+### Path 6: Huawei Ascend NPUs via npu-exporter (npu_exporter)
+If the cluster already runs the Ascend **npu-exporter** DaemonSet (it ships with MindCluster / the Ascend device plugin), use `--gpu-telemetry npu_exporter <metrics-url>`. This scrapes `npu_chip_info_*` over HTTP, so AIPerf needs neither the `npu-smi` binary nor an NPU allocation of its own - the only Ascend source that works when every NPU is already allocated to inference pods.
+
 ### Path 5: Huawei Ascend NPUs (npu_smi)
 If you're benchmarking against an inference server running on **Huawei Ascend NPUs** (910B/910C training cards, 310P/300I inference cards, etc.), use `--gpu-telemetry npu_smi`. This shells out to the `npu-smi` CLI that ships with the Ascend driver (CANN), so no exporter container, CANN toolkit, or Python binding is needed.
 
@@ -55,6 +58,7 @@ interval would suggest.
 | **pynvml + dashboard** | `aiperf profile --model MODEL ... --gpu-telemetry pynvml dashboard` | Local GPUs via pynvml library | ✅ Yes | ✅ Yes ([see dashboard](#real-time-dashboard-view)) | ✅ Yes |
 | **amdsmi mode** | `aiperf profile --model MODEL ... --gpu-telemetry amdsmi` | Local AMD ROCm GPUs via amdsmi library | ✅ Yes | ❌ No | ✅ Yes |
 | **npu_smi mode** | `aiperf profile --model MODEL ... --gpu-telemetry npu_smi` | Local Ascend NPUs via the npu-smi CLI ([see npu-smi section](#5-using-npu_smi-huawei-ascend-npu-monitoring)) | ✅ Yes | ❌ No | ✅ Yes |
+| **npu_exporter mode** | `aiperf profile --model MODEL ... --gpu-telemetry npu_exporter node1:8082/metrics` | Ascend NPUs via the npu-exporter Prometheus endpoint ([see npu-exporter section](#6-using-npu_exporter-ascend-npu-via-prometheus-exporter)) | ✅ Yes | ❌ No | ✅ Yes |
 | **npu_smi + dashboard** | `aiperf profile --model MODEL ... --gpu-telemetry npu_smi dashboard` | Local Ascend NPUs via the npu-smi CLI | ✅ Yes | ✅ Yes ([see dashboard](#real-time-dashboard-view)) | ✅ Yes |
 | **Disabled** | `aiperf profile --model MODEL ... --no-gpu-telemetry` | None | ❌ No | ❌ No | ❌ No |
 
@@ -64,6 +68,8 @@ interval would suggest.
 > **pynvml mode:** When using `--gpu-telemetry pynvml`, DCGM endpoints are NOT used. Metrics are collected directly from local GPUs via the nvidia-ml-py library.
 >
 > **Platform naming:** NVIDIA metrics from DCGM and pynvml are emitted under `nvidia_*` field names, AMD metrics from amdsmi under `amd_*`, and Huawei Ascend metrics from npu_smi under `ascend_*`. Final GPU summaries include a `platform` field (`nvidia`, `amd`, or `ascend`). Metric semantics are platform-specific; do not compare telemetry across platforms without validating the workload, collector behavior, and metric definitions.
+>
+> **npu_exporter mode:** When using `--gpu-telemetry npu_exporter`, DCGM endpoints are NOT used. Metrics come from scraping each node's npu-exporter (`http://<node>:8082/metrics`) and are emitted under the same `ascend_*` field names as npu_smi. Each node runs its own exporter, so pass **one URL per node**; no `npu-smi` binary, driver mount, or NPU allocation is required inside AIPerf. The exporter refreshes every `-updateTime` seconds (5 s by default), so resolution is coarser than npu_smi's 1 s floor.
 >
 > **npu_smi mode:** When using `--gpu-telemetry npu_smi`, DCGM endpoints are NOT used. Metrics are collected from local Ascend NPUs by invoking `npu-smi` and are emitted under vendor-namespaced `ascend_*` field names (`ascend_power`, `ascend_temperature`, etc.). Because each scrape forks one `npu-smi` process per NPU, the collection interval is floored at 1 second; `npu-smi` exposes no cumulative energy counter, so Ascend energy metrics come from integrating the power gauge over the profiling window.
 >
@@ -563,6 +569,68 @@ Signals the driver does not report stay absent instead of defaulting to zero, so
 | Error reporting | XID errors | (none) | ECC uncorrectable count | Health flag (`ascend_health`) |
 | SM-level utilization | Yes (DCGM_FI_PROF_SM_ACTIVE) | Yes (GPM API) | Aliased to `gfx_activity` | AI Core occupancy (`ascend_aicore_utilization`) |
 | Cumulative energy counter | Yes | Yes (Volta+) | Yes | No (power integration) |
+
+---
+
+## 6. Using npu_exporter (Ascend NPU via Prometheus Exporter)
+
+When the cluster already deploys the Ascend **npu-exporter** (a DaemonSet that ships with MindCluster / the Ascend device plugin), AIPerf can scrape it over HTTP instead of invoking `npu-smi`. This is the only Ascend source that works when **every NPU is already allocated to inference pods** - npu_smi would need an NPU allocation itself and would otherwise sit `Pending`.
+
+### When to Use npu_exporter
+
+- The cluster runs `npu-exporter` (check for a DaemonSet named `npu-exporter` in the monitoring namespace).
+- AIPerf runs as a separate pod/container that cannot or should not take NPU devices.
+- Multi-node coverage is wanted from one AIPerf run.
+
+### Run AIPerf with npu_exporter
+
+```bash
+aiperf profile \
+    --model Qwen/Qwen3-0.6B \
+    --endpoint-type chat \
+    --url http://localhost:8000 \
+    --concurrency 16 --request-count 200 \
+    --gpu-telemetry npu_exporter 10.233.224.133:8082/metrics 10.233.218.121:8082/metrics
+```
+
+Each node's exporter publishes only that node's chips, so pass one URL per node. The `http://` prefix is optional. In a YAML config or an `AIPerfJob` CR, the same reads as:
+
+```yaml
+gpuTelemetry:
+  enabled: true
+  collector: npu_exporter
+  urls:
+    - http://10.233.224.133:8082/metrics
+    - http://10.233.218.121:8082/metrics
+```
+
+> A bare Service IP does not cover all nodes: a ClusterIP service load-balances each scrape to a single exporter pod. Use per-node Pod IPs (they change when the DaemonSet restarts), or ask the platform to add `hostPort: 8082` / `hostNetwork` to the npu-exporter DaemonSet so `http://<node-ip>:8082/metrics` is stable.
+
+### Metrics Collected via npu_exporter
+
+Same six `ascend_*` fields as npu_smi, mapped from these families:
+
+| Field | npu-exporter family | Notes |
+|---|---|---|
+| `ascend_power` | `npu_chip_info_power` | Watts, as published. |
+| `ascend_temperature` | `npu_chip_info_temperature` | °C. `npu_chip_info_hbm_temperature` is a separate HBM sensor and is not used for this field. |
+| `ascend_aicore_utilization` | `npu_chip_info_utilization` | AI Core % (`overall_utilization` / `vector_utilization` are published too but not mapped). |
+| `ascend_memory_utilization` | `npu_chip_info_hbm_utilization` | %. |
+| `ascend_memory_used` | `npu_chip_info_hbm_used_memory` | MB -> GB. |
+| `ascend_health` | `npu_chip_info_health_status` | `1` healthy, otherwise `0`. |
+
+Identity comes from the exporter's labels: `vdie_id` is the GPU UUID, `id` is the chip index, plus `model_name`, `pcie_bus_info`, `pod_name`, `namespace`. Info-style families (`npu_chip_info_name`, `npu_chip_info_serial_number`) carry non-numeric values and are skipped without failing the scrape.
+
+### npu_smi vs npu_exporter
+
+| | npu_smi | npu_exporter |
+|---|---|---|
+| Needs `npu-smi` in the AIPerf container | Yes | No |
+| Needs an NPU allocation | Yes | No |
+| Resolution | 1 s floor | exporter update interval (5 s default) |
+| Device identity | `NPU-<id>` (no UUID from npu-smi) | `vdie_id` UUID + pod/namespace |
+| Multi-node | local host only | one URL per node |
+| Works when all NPUs are allocated | No (Pending) | Yes |
 
 ---
 

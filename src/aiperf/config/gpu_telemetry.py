@@ -136,6 +136,15 @@ class GpuTelemetryConfig(BaseConfig):
 
         meta = plugins.get_gpu_telemetry_collector_metadata(self.collector)
         if not meta.is_local:
+            # Only DCGM has default endpoints; any other URL-based backend must be
+            # told where to scrape, otherwise the manager would silently probe the
+            # DCGM defaults and report them unreachable.
+            if not self.urls and self.collector != GPUTelemetryCollectorType.DCGM:
+                raise ValueError(
+                    f"Collector '{self.collector}' requires at least one metrics "
+                    "URL. Pass one URL per exporter, e.g. "
+                    "'http://<node-ip>:8082/metrics' for npu_exporter."
+                )
             return self
 
         if self.urls:

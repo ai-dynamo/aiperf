@@ -220,6 +220,7 @@ The GPU Telemetry Manager collects GPU metrics during benchmarking runs via plug
   - **PyNVML**: Queries NVIDIA GPUs directly via the pynvml Python library (no external endpoint required) — exposes `nvidia_power_usage`
   - **amdsmi**: Queries AMD GPUs via the amdsmi Python library — exposes `amd_power` and `amd_energy_consumption`
   - **npu_smi**: Queries Huawei Ascend NPUs by invoking the `npu-smi` CLI from the Ascend driver — exposes `ascend_power` (no energy counter; energy comes from power integration)
+  - **npu_exporter**: Scrapes the Ascend `npu-exporter` Prometheus endpoint (`npu_chip_info_*`) — same `ascend_*` fields, but needs no local binary, driver mount, or NPU allocation
 - Auto-discovering DCGM endpoints
 - Supporting custom endpoints via `--gpu-telemetry` flag
 - Exporting GPU telemetry alongside benchmark results

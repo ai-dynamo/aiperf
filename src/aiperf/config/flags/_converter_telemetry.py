@@ -37,28 +37,25 @@ def _is_localhost_url(url: str) -> bool:
     return hostname.lower() in ("localhost", "127.0.0.1", "::1")
 
 
-def _local_collector_keywords() -> dict[str, Any]:
+def _collector_keywords() -> dict[str, Any]:
     """CLI keyword (plugin name, lowercased) -> ``GPUTelemetryCollectorType``.
 
-    Derived from plugin metadata: any ``gpu_telemetry_collector`` plugin whose
-    metadata declares ``is_local: true`` becomes a valid keyword. Adding a new
-    local collector therefore only requires editing ``plugins.yaml`` — no edits
-    here.
+    Covers local and remote collectors alike (e.g. ``npu_exporter``), so a
+    URL-based backend can be selected on the command line without a YAML file:
+    ``--gpu-telemetry npu_exporter <url>``.
     """
-    from aiperf.plugin import plugins
     from aiperf.plugin.enums import GPUTelemetryCollectorType
 
     return {
         member.lower(): GPUTelemetryCollectorType(member)
         for member in GPUTelemetryCollectorType
-        if plugins.get_gpu_telemetry_collector_metadata(member).is_local
     }
 
 
 def _classify_gpu_telemetry_items(
     items: list[str],
     *,
-    local_keywords: dict[str, Any],
+    all_keywords: dict[str, Any],
     collector_type: Any,
     mode: Any,
 ) -> tuple[Any, Any, list[str], Path | None]:
@@ -67,23 +64,24 @@ def _classify_gpu_telemetry_items(
     Returns the resolved ``(collector_type, mode, urls, metrics_file)``.
     """
     from aiperf.common.enums import GPUTelemetryMode
-    from aiperf.plugin import plugins
 
     urls: list[str] = []
     metrics_file: Path | None = None
+    # Tracks a collector explicitly named on the CLI, so two different collector
+    # keywords (e.g. dcgm + npu_exporter) are rejected instead of silently
+    # letting the last one win.
+    explicit_collector: Any | None = None
 
     for item in items:
         lowered = item.lower()
-        if lowered in local_keywords:
-            selected = local_keywords[lowered]
-            current_is_local = plugins.get_gpu_telemetry_collector_metadata(
-                collector_type
-            ).is_local
-            if current_is_local and collector_type != selected:
+        if lowered in all_keywords:
+            selected = all_keywords[lowered]
+            if explicit_collector is not None and explicit_collector != selected:
                 raise ValueError(
-                    "Conflicting local GPU telemetry collectors: "
-                    f"'{collector_type}' and '{selected}'. Choose exactly one."
+                    "Conflicting GPU telemetry collectors: "
+                    f"'{explicit_collector}' and '{selected}'. Choose exactly one."
                 )
+            explicit_collector = selected
             collector_type = selected
         elif lowered == "dashboard":
             mode = GPUTelemetryMode.REALTIME_DASHBOARD
@@ -95,7 +93,7 @@ def _classify_gpu_telemetry_items(
         elif item.startswith("http") or ":" in item:
             urls.append(_url(item))
         else:
-            valid_kw = ", ".join(f"'{k}'" for k in sorted(local_keywords))
+            valid_kw = ", ".join(f"'{k}'" for k in sorted(all_keywords))
             raise ValueError(
                 f"Invalid GPU telemetry item: {item}. Valid options are: "
                 f"{valid_kw}, 'dashboard', '.csv' file, and URLs."
@@ -152,7 +150,7 @@ def build_gpu_telemetry(cli: CLIConfig) -> dict[str, Any]:
 
     collector_type, mode, urls, metrics_file = _classify_gpu_telemetry_items(
         cli.gpu_telemetry,
-        local_keywords=_local_collector_keywords(),
+        all_keywords=_collector_keywords(),
         collector_type=cli._gpu_telemetry_collector_type,
         mode=cli._gpu_telemetry_mode,
     )

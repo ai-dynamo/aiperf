@@ -20,6 +20,7 @@
 #   - pynvml  : reads the local NVIDIA driver directly (no DCGM container)
 #   - amdsmi  : reads local AMD ROCm GPUs via the ROCm amdsmi bindings
 #   - npu_smi : reads local Huawei Ascend NPUs via the driver's npu-smi CLI
+#   - npu_exporter : scrapes an Ascend npu-exporter Prometheus endpoint (one URL per node)
 #
 # Display modes:
 #   - summary           : aggregate table after the run (default)

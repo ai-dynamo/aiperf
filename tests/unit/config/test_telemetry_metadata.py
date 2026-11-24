@@ -81,7 +81,7 @@ def test_local_collector_discovered_dynamically_from_plugin_metadata() -> None:
             try:
                 with pytest.raises(
                     (ValidationError, ValueError),
-                    match="Conflicting local GPU telemetry collectors",
+                    match="Conflicting GPU telemetry collectors",
                 ):
                     _make_aiperf_config(gpu_telemetry=["pynvml", fake_name])
             finally:

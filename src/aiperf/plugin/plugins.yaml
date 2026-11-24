@@ -1475,6 +1475,13 @@ gpu_telemetry_collector:
       Uses the amdsmi Python library shipped with ROCm.
     metadata:
       is_local: true
+  npu_exporter:
+    class: aiperf.gpu_telemetry.npu_exporter_collector:NpuExporterTelemetryCollector
+    description: |
+      npu-exporter telemetry collector for Huawei Ascend NPUs. Scrapes the Ascend
+      npu-exporter DaemonSet's Prometheus endpoint (npu_chip_info_* families), so it
+      needs no npu-smi binary, driver mount, or NPU allocation inside AIPerf. Each
+      node runs its own exporter, so supply one URL per node.
   npu_smi:
     class: aiperf.gpu_telemetry.npu_smi_collector:NPUSMITelemetryCollector
     description: |

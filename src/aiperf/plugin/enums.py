@@ -155,7 +155,7 @@ PlotType = plugins.create_enum(PluginType.PLOT, "PlotType", module=__name__)
 
 GPUTelemetryCollectorTypeStr: TypeAlias = str
 GPUTelemetryCollectorType = plugins.create_enum(PluginType.GPU_TELEMETRY_COLLECTOR, "GPUTelemetryCollectorType", module=__name__)
-"""Dynamic enum for gpu telemetry collector. Example: GPUTelemetryCollectorType.AMDSMI, GPUTelemetryCollectorType.NPU_SMI, GPUTelemetryCollectorType.PYNVML"""
+"""Dynamic enum for gpu telemetry collector. Example: GPUTelemetryCollectorType.AMDSMI, GPUTelemetryCollectorType.NPU_EXPORTER, GPUTelemetryCollectorType.PYNVML"""
 
 SearchRecipeTypeStr: TypeAlias = str
 SearchRecipeType = plugins.create_enum(PluginType.SEARCH_RECIPE, "SearchRecipeType", module=__name__)

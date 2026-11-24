@@ -2263,7 +2263,7 @@ http_req_chunks_received = trace.response_chunks_count
 ## GPU Power Efficiency Metrics
 
 > [!NOTE]
-> All metrics in this section require `--gpu-telemetry` to be enabled and the underlying collector to expose the relevant signal. They are computed **per vendor**, once per profiling phase, by the `EnergyEfficiencyAnalyzer` — an `analyzer` plugin that joins the GPU-telemetry accumulator (energy/power) to the metrics-accumulator summary (tokens/throughput/latency) via the `SummaryContext` — not by the standard derivation walk. See the [Externally-Injected Derived Metric pattern](dev/patterns.md#externally-injected-derived-metric-pattern) and the `analyzer` plugin category. Each metric exists in an NVIDIA variant (tag prefix `nvidia_`, from `nvidia_power_usage` / `nvidia_energy_consumption`, populated by the DCGM and pynvml collectors), an AMD variant (tag prefix `amd_`, from `amd_power` / `amd_energy_consumption`, populated by the amdsmi collector), and a Huawei Ascend variant (tag prefix `ascend_`, from `ascend_power`, populated by the npu-smi collector). A mixed-vendor run reports each family separately, each summing only its own vendor's devices.
+> All metrics in this section require `--gpu-telemetry` to be enabled and the underlying collector to expose the relevant signal. They are computed **per vendor**, once per profiling phase, by the `EnergyEfficiencyAnalyzer` — an `analyzer` plugin that joins the GPU-telemetry accumulator (energy/power) to the metrics-accumulator summary (tokens/throughput/latency) via the `SummaryContext` — not by the standard derivation walk. See the [Externally-Injected Derived Metric pattern](dev/patterns.md#externally-injected-derived-metric-pattern) and the `analyzer` plugin category. Each metric exists in an NVIDIA variant (tag prefix `nvidia_`, from `nvidia_power_usage` / `nvidia_energy_consumption`, populated by the DCGM and pynvml collectors), an AMD variant (tag prefix `amd_`, from `amd_power` / `amd_energy_consumption`, populated by the amdsmi collector), and a Huawei Ascend variant (tag prefix `ascend_`, from `ascend_power`, populated by the npu-smi or npu-exporter collector). A mixed-vendor run reports each family separately, each summing only its own vendor's devices.
 
 > [!NOTE]
 > Each vendor's metrics render in their own console section — `GPU Power Efficiency (NVIDIA)` (`console_group = MetricConsoleGroup.GPU_POWER_EFFICIENCY_NVIDIA`), `GPU Power Efficiency (AMD)` (`MetricConsoleGroup.GPU_POWER_EFFICIENCY_AMD`), and `GPU Power Efficiency (Ascend)` (`MetricConsoleGroup.GPU_POWER_EFFICIENCY_ASCEND`) — separate from the main metrics table. A section is omitted entirely when no device of that vendor reported.
@@ -2272,7 +2272,7 @@ http_req_chunks_received = trace.response_chunks_count
 
 The `power_integration` fallback is vendor-agnostic: `EnergyEfficiencyAnalyzer._resolve_energy` selects on whether the energy counter reported, not on which vendor asked. It therefore covers AMD GPUs exposing only the power gauge and NVIDIA GPUs without the NVML total-energy counter alike, so a pre-Volta card still reports power efficiency metrics, integrated from power rather than counted, provided no GPU on that platform reported the counter. The choice is fleet-wide, not per GPU: in a mixed-generation fleet one reporting GPU sends the whole platform down the counter branch, and the GPUs without a counter then contribute power but no energy, so `total_gpu_energy` is short by their share while still labelled `dcgm_counter`.
 
-Because the npu-smi collector exposes no energy counter at all, the Ascend family always takes the `power_integration` branch: `ascend_total_gpu_energy` is the measured power gauge integrated over the profiling window, not a counter delta.
+Because neither Ascend collector exposes an energy counter, the Ascend family always takes the `power_integration` branch: `ascend_total_gpu_energy` is the measured power gauge integrated over the profiling window, not a counter delta.
 
 The family is skipped entirely when GPU telemetry is not collected. Each tag is independently omitted when its underlying signal is unavailable (e.g. `nvidia_energy_per_user` only appears for concurrency runs; `nvidia_goodput_per_watt` only when goodput SLOs are configured). NVIDIA tags: `nvidia_energy_delay_product`, `nvidia_performance_per_watt`, `nvidia_output_tps_per_watt`, `nvidia_goodput_per_watt`, `nvidia_average_gpu_power`, `nvidia_total_gpu_energy`, `nvidia_total_gpu_power`, `nvidia_energy_per_total_token`, `nvidia_energy_per_output_token`, `nvidia_energy_per_request`, `nvidia_output_tokens_per_joule`, `nvidia_energy_per_user`. AMD and Ascend tags follow the same pattern with the `amd_` and `ascend_` prefixes.
 
@@ -2287,8 +2287,8 @@ Sum of average GPU power across all reporting GPUs during the profiling phase, i
 # Vendor source fields:
 #   NVIDIA: nvidia_power_usage   (pynvml / DCGM collectors)
 #   AMD:    amd_power             (amdsmi collector)
-#   Ascend: ascend_power          (npu-smi collector)
-#   Ascend: ascend_power          (npu-smi collector)
+#   Ascend: ascend_power          (npu-smi / npu-exporter collectors)
+#   Ascend: ascend_power          (npu-smi / npu-exporter collectors)
 #
 # Per GPU: average of the vendor power gauge samples in the profiling window
 # (warmup excluded). Summed across all GPUs that reported valid samples.

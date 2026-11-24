@@ -1637,7 +1637,7 @@ Seconds between TCP-handshake RTT probes during profiling (default: 1.0s). Only 
 
 #### `--gpu-telemetry` `<list>`
 
-Enable GPU telemetry console display and optionally specify: (1) 'pynvml', 'amdsmi', or 'npu_smi' to collect from the local NVIDIA / AMD / Ascend device instead of DCGM HTTP endpoints, (2) 'dashboard' for realtime dashboard mode, (3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. Examples: --gpu-telemetry pynvml | --gpu-telemetry amdsmi | --gpu-telemetry npu_smi | --gpu-telemetry dashboard node1:9400.
+Enable GPU telemetry console display and optionally specify: (1) 'pynvml', 'amdsmi', or 'npu_smi' to collect from the local NVIDIA / AMD / Ascend device instead of DCGM HTTP endpoints, or 'npu_exporter' to scrape an Ascend npu-exporter endpoint (requires one URL per node), (2) 'dashboard' for realtime dashboard mode, (3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. Examples: --gpu-telemetry pynvml | --gpu-telemetry amdsmi | --gpu-telemetry npu_smi | --gpu-telemetry npu_exporter node1:8082/metrics | --gpu-telemetry dashboard node1:9400.
 
 #### `--no-gpu-telemetry`
 
@@ -3318,7 +3318,7 @@ Seconds between TCP-handshake RTT probes during profiling (default: 1.0s). Only 
 
 #### `--gpu-telemetry` `<list>`
 
-Enable GPU telemetry console display and optionally specify: (1) 'pynvml', 'amdsmi', or 'npu_smi' to collect from the local NVIDIA / AMD / Ascend device instead of DCGM HTTP endpoints, (2) 'dashboard' for realtime dashboard mode, (3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. Examples: --gpu-telemetry pynvml | --gpu-telemetry amdsmi | --gpu-telemetry npu_smi | --gpu-telemetry dashboard node1:9400.
+Enable GPU telemetry console display and optionally specify: (1) 'pynvml', 'amdsmi', or 'npu_smi' to collect from the local NVIDIA / AMD / Ascend device instead of DCGM HTTP endpoints, or 'npu_exporter' to scrape an Ascend npu-exporter endpoint (requires one URL per node), (2) 'dashboard' for realtime dashboard mode, (3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. Examples: --gpu-telemetry pynvml | --gpu-telemetry amdsmi | --gpu-telemetry npu_smi | --gpu-telemetry npu_exporter node1:8082/metrics | --gpu-telemetry dashboard node1:9400.
 
 #### `--no-gpu-telemetry`
 
@@ -4994,7 +4994,7 @@ Seconds between TCP-handshake RTT probes during profiling (default: 1.0s). Only 
 
 #### `--gpu-telemetry` `<list>`
 
-Enable GPU telemetry console display and optionally specify: (1) 'pynvml', 'amdsmi', or 'npu_smi' to collect from the local NVIDIA / AMD / Ascend device instead of DCGM HTTP endpoints, (2) 'dashboard' for realtime dashboard mode, (3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. Examples: --gpu-telemetry pynvml | --gpu-telemetry amdsmi | --gpu-telemetry npu_smi | --gpu-telemetry dashboard node1:9400.
+Enable GPU telemetry console display and optionally specify: (1) 'pynvml', 'amdsmi', or 'npu_smi' to collect from the local NVIDIA / AMD / Ascend device instead of DCGM HTTP endpoints, or 'npu_exporter' to scrape an Ascend npu-exporter endpoint (requires one URL per node), (2) 'dashboard' for realtime dashboard mode, (3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. Examples: --gpu-telemetry pynvml | --gpu-telemetry amdsmi | --gpu-telemetry npu_smi | --gpu-telemetry npu_exporter node1:8082/metrics | --gpu-telemetry dashboard node1:9400.
 
 #### `--no-gpu-telemetry`
 
@@ -7177,7 +7177,7 @@ Seconds between TCP-handshake RTT probes during profiling (default: 1.0s). Only 
 
 #### `--gpu-telemetry` `<list>`
 
-Enable GPU telemetry console display and optionally specify: (1) 'pynvml', 'amdsmi', or 'npu_smi' to collect from the local NVIDIA / AMD / Ascend device instead of DCGM HTTP endpoints, (2) 'dashboard' for realtime dashboard mode, (3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. Examples: --gpu-telemetry pynvml | --gpu-telemetry amdsmi | --gpu-telemetry npu_smi | --gpu-telemetry dashboard node1:9400.
+Enable GPU telemetry console display and optionally specify: (1) 'pynvml', 'amdsmi', or 'npu_smi' to collect from the local NVIDIA / AMD / Ascend device instead of DCGM HTTP endpoints, or 'npu_exporter' to scrape an Ascend npu-exporter endpoint (requires one URL per node), (2) 'dashboard' for realtime dashboard mode, (3) custom DCGM exporter URLs (e.g., http://node1:9401/metrics), (4) custom metrics CSV file (e.g., custom_gpu_metrics.csv). Default: DCGM mode with localhost:9400 and localhost:9401 endpoints. Examples: --gpu-telemetry pynvml | --gpu-telemetry amdsmi | --gpu-telemetry npu_smi | --gpu-telemetry npu_exporter node1:8082/metrics | --gpu-telemetry dashboard node1:9400.
 
 #### `--no-gpu-telemetry`
 
