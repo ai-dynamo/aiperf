@@ -125,8 +125,6 @@ class TestGradingIncorrect:
         ],
     )  # fmt: skip
     async def test_invalid_gold_is_grader_error(self, response: str, gold: str) -> None:
-        # A gold with no number is a dataset problem: reported as a grader
-        # error and never scored correct, even if the prediction matches it.
         result = await _grader().grade(response, gold)
         assert result.correct is False
         assert result.grader_error is True
