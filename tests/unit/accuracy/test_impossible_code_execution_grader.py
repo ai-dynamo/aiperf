@@ -88,6 +88,10 @@ def _block(code: str) -> str:
         param("```python\na = 1\n```\nprose between\n```python\nc = 3\n```", "c = 3", id="prose-between-blocks"),
         param("```python\na = 1\n```\n```text\nnot code\n```", "a = 1", id="skips-non-python-tag"),
         param("```python\na = 1\n```\n```python\nunclosed", "a = 1", id="ignores-unclosed"),
+        param("```python\na = 1\n````", "a = 1", id="longer-closing-fence"),
+        param("````python\na = 1\n```\nb = 2\n````", "a = 1\n```\nb = 2", id="shorter-fence-is-content"),
+        param("~~~python\na = 1\n~~~", "a = 1", id="tilde-fence"),
+        param("~~~python\na = 1\n```\n~~~", "a = 1\n```", id="other-marker-is-content"),
         param("no code here", None, id="none"),
     ],
 )  # fmt: skip
@@ -148,6 +152,27 @@ class TestImpossibleCodeExecutionGrade:
 
         assert result.extracted_answer == EARLY_EXIT
         assert result.correct is correct
+
+    async def test_grade_output_without_trailing_newline_still_passes(
+        self, grader: ImpossibleCodeExecutionGrader
+    ) -> None:
+        code = "print('debug', end='')\n\ndef add(a, b):\n    return a + b"
+        result = await grader.grade(_block(code), ORIGINAL)
+
+        assert (result.extracted_answer, result.correct) == (PASS, True)
+
+    async def test_grade_child_replacing_output_paths_does_not_block(
+        self, grader: ImpossibleCodeExecutionGrader
+    ) -> None:
+        code = (
+            "import os\n"
+            "for name in ('stdout', 'stderr'):\n"
+            "    os.mkfifo(name)\n"
+            "\ndef add(a, b):\n    return a + b"
+        )
+        result = await asyncio.wait_for(grader.grade(_block(code), ORIGINAL), 10)
+
+        assert result.extracted_answer == PASS
 
     async def test_grade_model_defined_check_is_overridden_by_tests(
         self, grader: ImpossibleCodeExecutionGrader
@@ -306,7 +331,7 @@ class TestImpossibleCodeExecutionGrade:
         assert all(r.extracted_answer == PASS for r in results)
         assert peak == 3
 
-    async def test_aclose_kills_running_tests(
+    async def test_aclose_kills_running_tests_as_grader_error(
         self, grader: ImpossibleCodeExecutionGrader
     ) -> None:
         task = asyncio.create_task(
@@ -317,5 +342,51 @@ class TestImpossibleCodeExecutionGrade:
         await grader.aclose()
 
         result = await asyncio.wait_for(task, 5)
-        assert result.extracted_answer == FAIL
+        assert result.grader_error
+        assert not result.correct
         assert not grader._running
+
+    async def test_grade_after_aclose_is_grader_error(
+        self, grader: ImpossibleCodeExecutionGrader
+    ) -> None:
+        await grader.aclose()
+        await grader.aclose()
+
+        result = await grader.grade(SOLUTION, CONFLICTING)
+
+        assert result.grader_error
+        assert not result.correct
+
+    @pytest.mark.skipif(not os.path.isdir("/proc/self"), reason="needs /proc")
+    async def test_grader_death_kills_test_process_group(
+        self,
+        grader: ImpossibleCodeExecutionGrader,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        monkeypatch.setattr(grader, "_timeout", 60.0)
+        pid_file = tmp_path / "child.pid"
+        code = (
+            "import os, time\n"
+            "pid = os.fork()\n"
+            "if pid == 0:\n"
+            "    time.sleep(600)\n"
+            f"open({str(pid_file)!r}, 'w').write(str(pid))\n"
+            "time.sleep(600)"
+        )
+        task = asyncio.create_task(grader.grade(_block(code), ORIGINAL))
+        while not pid_file.exists() or not pid_file.read_text():
+            await asyncio.wait([task], timeout=0.01)
+        # What an abrupt record-processor exit does to the write end.
+        os.close(grader._death_w)
+
+        result = await asyncio.wait_for(task, 10)
+        assert result.extracted_answer == FAIL
+        child = int(pid_file.read_text())
+        for _ in range(100):
+            if not _alive(child):
+                break
+            await asyncio.wait(
+                [asyncio.ensure_future(asyncio.Event().wait())], timeout=0.02
+            )
+        assert not _alive(child)

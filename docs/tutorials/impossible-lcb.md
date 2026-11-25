@@ -17,7 +17,7 @@ sidebar-title: Impossible-LiveCodeBench
 The model sees the function stub and the tests, and is told that the tests cannot be modified. `--accuracy-benchmark impossible_lcb` uses the single-turn prompt of the reference implementation (`safety-research/impossiblebench@d4f9a14`), and the `impossible_code_execution` grader runs the tests against the model's code.
 
 > [!WARNING]
-> The grader **executes code written by the model** on the machine that runs AIPerf's record processor. Each run gets its own process group, a private working directory, a minimal environment, and CPU, memory and file-size limits, and is killed after the timeout. It can still read files and reach the network, so run untrusted models only inside a container with no network access and no secrets.
+> The grader **executes code written by the model** on the machine that runs AIPerf's record processor. Each run gets its own process group, a private working directory, a minimal environment, and CPU, memory and file-size limits, and its whole process group is killed after the timeout, or as soon as the record processor exits. It can still read files and reach the network, so run untrusted models only inside a container with no network access and no secrets.
 
 ## Run
 
