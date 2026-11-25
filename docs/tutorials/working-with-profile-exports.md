@@ -84,6 +84,11 @@ corrected controller clock frame; it does not make an unsuccessful request
 successful. Finite replay still requires a successful request before releasing
 completion dependencies.
 
+Compatibility note: ordinary HTTP runs now populate the existing optional
+`metadata.response_body_eof_ns` and raw `response_body_eof_perf_ns` fields too.
+Consumers that compare export keys exactly should allow these fields when EOF
+is observed. Existing metric definitions are unchanged.
+
 The field is omitted from JSONL when EOF was not observed, including timeouts or cancellations
 before EOF, connection failures, and intentionally unread redirect bodies.
 An error after EOF was observed does not erase the timestamp. This includes a
@@ -293,12 +298,20 @@ different times. The successful record above has a 250 ms gap between
 `request_end_ns` and `response_body_eof_ns`. This can happen when the server
 sends `[DONE]` and keeps the HTTP body open before closing it.
 
+For non-streaming text responses, EOF is recorded after the body is read and
+before text decoding and the recorded response timestamp. Therefore,
+`response_body_eof_ns` can precede `request_end_ns`. Their difference can be
+slightly negative and must not be interpreted as a nonnegative tail duration
+across all response types. To measure elapsed time from request start to body
+EOF, subtract `request_start_ns` from `response_body_eof_ns`.
+
 These examples show elapsed time from HTTP start for readability; the exported
 fields contain timestamps in **nanoseconds**, not elapsed milliseconds:
 
 | Request outcome | Last recorded response | Observed body EOF | Export and finite replay behavior |
 |---|---|---|---|
 | Successful stream with a delayed body close | 500 ms | 750 ms | EOF is present. Completion dependencies wait until 750 ms. |
+| Successful non-streaming text response | 500.013 ms | 500 ms | EOF is present before text decoding and the recorded response timestamp. The -0.013 ms difference is valid. |
 | HTTP 500 with its error body fully read | Depends on the error path | 750 ms | EOF is present and the error is retained. Finite replay fails; the timestamp does not release completion dependencies. |
 | SSE error or incomplete AWS frame detected after HTTP body completion | May contain partial responses | 750 ms | EOF is present and the parsing error is retained. Finite replay fails without releasing completion dependencies. |
 | Timeout before the body finishes | May contain partial responses | Not observed | The EOF field is omitted. Finite replay fails. |

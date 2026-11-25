@@ -526,7 +526,6 @@ class AioHttpClient(AIPerfLoggerMixin):
                 data=payload,
                 on_request_sent=request_sent,
                 first_token_callback=first_token_callback,
-                trace_data=trace_data,
                 record=record,
                 connector=connector,
                 connector_owner=connector_owner,
@@ -544,7 +543,7 @@ class AioHttpClient(AIPerfLoggerMixin):
         try:
             await asyncio.wait_for(request_sent.wait(), timeout=send_timeout)
         except TimeoutError:
-            # Request never got sent - cancel and return error
+            # Unknown-length uploads can reach response EOF without setting request_sent.
             request_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await request_task

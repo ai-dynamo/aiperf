@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import orjson
 import pytest
-from aiohttp import ClientTimeout, web
+from aiohttp import ClientTimeout, FormData, web
 from pytest import param
 
 from aiperf.common.enums import CreditPhase
@@ -466,6 +466,47 @@ async def test_http_body_interrupted_before_eof_has_no_completion_observation(
     callback.assert_not_called()
     if outcome == "cancel":
         assert record.error.type == "RequestCancellationError"
+
+
+@pytest.mark.asyncio
+async def test_send_timeout_unknown_length_upload_retains_observed_eof(
+    aiohttp_client: AioHttpClient,
+) -> None:
+    """A missing send event must not erase EOF from a fully read response."""
+    aiohttp_client.timeout = ClientTimeout(total=0.2)
+    callback = Mock()
+    received_uploads: list[bytes] = []
+
+    async def upload_chunks() -> AsyncIterator[bytes]:
+        yield b"hello"
+
+    async def respond(request: web.Request) -> web.Response:
+        received_uploads.append(await request.read())
+        return web.Response(text="ok")
+
+    form = FormData()
+    form.add_field("file", upload_chunks(), filename="input.bin")
+
+    async with _serve_http(respond) as url:
+        record = await asyncio.wait_for(
+            aiohttp_client.post_request(
+                url,
+                form,
+                {},
+                cancel_after_ns=100_000_000,
+                transport_eof_callback=callback,
+            ),
+            timeout=2,
+        )
+
+    assert len(received_uploads) == 1
+    assert b"hello" in received_uploads[0]
+    assert record.error is not None
+    assert record.error.type == "RequestSendTimeout"
+    assert record.response_body_eof_perf_ns is not None
+    assert record.response_body_eof_perf_ns <= record.end_perf_ns
+    assert record.trace_data.response_bytes_total == len(b"ok")
+    callback.assert_called_once_with(record.response_body_eof_perf_ns)
 
 
 @pytest.mark.asyncio
