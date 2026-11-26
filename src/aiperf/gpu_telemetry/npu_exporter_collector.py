@@ -147,7 +147,7 @@ class NpuExporterTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
         - Same ``ascend_*`` field set as the npu-smi collector
 
     Args:
-        npu_exporter_url: Full metrics URL of one node's exporter, e.g.
+        dcgm_url: Full metrics URL of one node's exporter, e.g.
             ``http://10.233.224.133:8082/metrics``. Each node runs its own
             exporter, so multi-node coverage means one URL per node.
         collection_interval: Interval in seconds between scrapes.
@@ -165,7 +165,7 @@ class NpuExporterTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
 
     def __init__(
         self,
-        npu_exporter_url: str,
+        dcgm_url: str,
         *,
         collection_interval: float = Environment.GPU.COLLECTION_INTERVAL,
         reachability_timeout: float = Environment.GPU.REACHABILITY_TIMEOUT,
@@ -174,7 +174,7 @@ class NpuExporterTelemetryCollector(BaseMetricsCollectorMixin[TelemetryRecord]):
         collector_id: str = "npu_exporter_collector",
     ) -> None:
         super().__init__(
-            endpoint_url=npu_exporter_url,
+            endpoint_url=dcgm_url,
             collection_interval=collection_interval,
             reachability_timeout=reachability_timeout,
             record_callback=record_callback,
