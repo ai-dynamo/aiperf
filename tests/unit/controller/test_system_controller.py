@@ -27,6 +27,7 @@ from aiperf.common.models import (
     ProcessRecordsResult,
     ProfileResults,
 )
+from aiperf.controller.protocols import LocalProcessServiceManagerProtocol
 from aiperf.controller.system_controller import SystemController
 from aiperf.plugin.enums import AccuracyBenchmarkType, ServiceType
 from tests.unit.controller.conftest import MockTestException
@@ -87,6 +88,51 @@ class TestSystemController:
         assert mock_service_manager.wait_for_all_services_registration.called
         assert system_controller._start_profiling_all_services.called
         assert system_controller._profile_configure_all_services.called
+
+    @pytest.mark.asyncio
+    async def test_late_local_services_are_configured_before_profile_start(
+        self, system_controller: SystemController
+    ) -> None:
+        manager = AsyncMock(spec=LocalProcessServiceManagerProtocol)
+        manager.service_id_map = {}
+        manager.service_map = {}
+        system_controller.service_manager = manager
+        live_ids = ["initial"]
+        system_controller._live_service_ids = MagicMock(
+            side_effect=lambda: list(live_ids)
+        )
+
+        async def send_command(
+            command: CommandType, service_ids: list[str], *, timeout: float
+        ) -> list[object]:
+            if service_ids == ["initial"]:
+                live_ids.extend(["worker", "record_processor"])
+            return []
+
+        send = AsyncMock(side_effect=send_command)
+        system_controller._send_control_command_to_all_fail_fast = send
+
+        async def assert_configured_before_start() -> None:
+            assert send.await_count == 2
+            send.assert_any_await(
+                CommandType.PROFILE_CONFIGURE,
+                ["initial"],
+                timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
+            )
+            send.assert_any_await(
+                CommandType.PROFILE_CONFIGURE,
+                ["record_processor", "worker"],
+                timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
+            )
+
+        system_controller._start_profiling_all_services = AsyncMock(
+            side_effect=assert_configured_before_start
+        )
+
+        await system_controller._start_services()
+
+        assert manager.wait_for_all_services_registration.await_count == 2
+        system_controller._start_profiling_all_services.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_dispatchable_pod_wait_uses_configured_grace_period(

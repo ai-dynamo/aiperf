@@ -599,7 +599,22 @@ class SystemController(
         self._raise_if_startup_aborted()
         await self._set_system_state(SystemState.CONFIGURING)
         self.info("AIPerf System is CONFIGURING")
-        await self._profile_configure_all_services()
+        configured_ids = await self._profile_configure_all_services()
+        if isinstance(self.service_manager, LocalProcessServiceManagerProtocol):
+            # WorkerManager can spawn workers and record processors while the
+            # first configure fan-out is in flight. Wait for them before
+            # sending their configure command and starting profiling.
+            await self.service_manager.wait_for_all_services_registration(
+                stop_event=self._stop_requested_event,
+            )
+            late_ids = set(self._live_service_ids()) - configured_ids
+            if late_ids:
+                responses = await self._send_control_command_to_all_fail_fast(
+                    CommandType.PROFILE_CONFIGURE,
+                    sorted(late_ids),
+                    timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
+                )
+                self._parse_responses_for_errors(responses, "Configure Profiling")
         self._raise_if_startup_aborted()
         await self._set_system_state(SystemState.READY)
         self.info("AIPerf System is CONFIGURED")
@@ -775,7 +790,7 @@ class SystemController(
             SystemStateChangedMessage(service_id=self.service_id, state=state)
         )
 
-    async def _profile_configure_all_services(self) -> None:
+    async def _profile_configure_all_services(self) -> set[str]:
         """Configure all services to start profiling.
 
         This is a blocking call that will wait for all services to be configured
@@ -784,19 +799,20 @@ class SystemController(
         """
         self.info("Configuring all services to start profiling")
         begin = time.perf_counter()
+        service_ids = self._live_service_ids()
         responses = await self._send_control_command_to_all_fail_fast(
             CommandType.PROFILE_CONFIGURE,
-            self._live_service_ids(),
+            service_ids,
             timeout=Environment.SERVICE.PROFILE_CONFIGURE_TIMEOUT,
         )
         duration = time.perf_counter() - begin
         self._parse_responses_for_errors(responses, "Configure Profiling")
         self.info(f"All services configured in {duration:.2f} seconds")
-
         if not Environment.HTTP.SSL_VERIFY:
             self.warning(
                 "SSL certificate verification is DISABLED - this is insecure. This should only be used for testing in a trusted environment."
             )
+        return set(service_ids)
 
     async def _start_profiling_all_services(self) -> None:
         """Tell all services to start profiling.

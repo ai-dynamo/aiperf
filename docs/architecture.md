@@ -394,6 +394,11 @@ Registration is deliberately the *second* readiness proof a service gives: it
 runs after the event-bus connection probe succeeds, so a registered service has
 demonstrated both planes are live.
 
+In local-process runs, the Worker Manager can spawn workers and record
+processors during the initial `PROFILE_CONFIGURE` fan-out. The controller waits
+for those processes to register, configures any service that missed that first
+fan-out, and only then sends `PROFILE_START`.
+
 The registration's `instance_id` remains stable across reconnects and changes
 when the service process restarts. The controller uses it to detect optional
 server-metrics history loss promptly, release the failed producer from the
