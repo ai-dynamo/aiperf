@@ -3,6 +3,7 @@
 import orjson
 import pytest
 from pydantic import ValidationError
+from pytest import param
 
 from aiperf.dataset.loader.weka_trace_models import (
     WekaNormalRequest,
@@ -12,7 +13,13 @@ from aiperf.dataset.loader.weka_trace_models import (
 )
 
 
-@pytest.mark.parametrize("from_json", [False, True])
+@pytest.mark.parametrize(
+    "from_json",
+    [
+        param(False, id="python-dict"),
+        param(True, id="json-bytes"),
+    ],
+)  # fmt: skip
 def test_trace_reuses_id_values_without_changing_serialized_data(
     from_json: bool,
 ) -> None:
