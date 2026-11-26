@@ -13,6 +13,7 @@ fails at startup (SPAWN_WORKERS) or silently exports an empty metrics window
 
 from __future__ import annotations
 
+import asyncio
 from functools import partial
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
@@ -70,6 +71,7 @@ def _controller(
     for sid in unregistered or ():
         ServiceRegistry.unregister(sid)
     controller._reaped_service_ids = reaped or set()
+    controller._initial_workers_spawned = asyncio.Event()
     controller._PROFILE_COMPLETE_RELAY_TYPES = (
         SystemController._PROFILE_COMPLETE_RELAY_TYPES
     )
@@ -116,6 +118,7 @@ class TestSpawnWorkersReader:
         controller.service_manager.run_service.assert_awaited_once_with(
             ServiceType.WORKER, 12
         )
+        assert controller._initial_workers_spawned.is_set()
 
     @pytest.mark.asyncio
     async def test_spawn_workers_scales_record_processors_off_the_payload(self) -> None:

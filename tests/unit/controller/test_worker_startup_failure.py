@@ -461,6 +461,7 @@ async def test_a_failure_during_profile_start_cancels_on_the_start_up_task(
     _start_services must run the cancel itself, on that task."""
     tasks: dict[str, asyncio.Task | None] = {}
     system_controller._profile_configure_all_services = AsyncMock()
+    system_controller._initial_workers_spawned.set()
     system_controller._verify_pods_healthy = AsyncMock()
     system_controller._wait_for_dispatchable_worker_pods = AsyncMock()
     system_controller._check_and_trigger_shutdown = AsyncMock()
