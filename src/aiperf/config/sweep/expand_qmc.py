@@ -68,7 +68,10 @@ def expand_qmc_sweep(
     import warnings
 
     from aiperf.config.sweep import SweepVariation
-    from aiperf.config.sweep.expand import _set_nested_value
+    from aiperf.config.sweep.expand import (
+        _promote_prompt_shorthand_means,
+        _set_nested_value,
+    )
 
     if sweep_type == "sobol" and samples & (samples - 1) != 0:
         warnings.warn(
@@ -109,6 +112,7 @@ def expand_qmc_sweep(
         }
         variant = copy.deepcopy(base)
         body = variant.setdefault("benchmark", {})
+        _promote_prompt_shorthand_means(body, values)
         for path, value in values.items():
             # Mirror the grid-sweep convention: dotted paths are body-rooted
             # under `benchmark:`. The single envelope-level escape is
