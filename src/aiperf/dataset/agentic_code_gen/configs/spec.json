@@ -93,7 +93,7 @@
             }
           ],
           "default": null,
-          "description": "Hard lower bound (rejection sampled)",
+          "description": "Hard lower bound (rejection sampled). For inter-turn delays, values below this bound after context scaling are clamped, subject to the global delay maximum.",
           "title": "Min"
         },
         "mu": {
@@ -146,6 +146,12 @@
           "minimum": 0.0,
           "title": "Agentic Fraction",
           "type": "number"
+        },
+        "context_scaling": {
+          "default": true,
+          "description": "Shorten delays as context fills using max(0.2, 1 - 0.8 * previous_input / max_prompt_tokens); disable to keep sampled delays. Delays are clamped to component minima after scaling, with the global max taking precedence. Enabled by default for workload compatibility.",
+          "title": "Context Scaling",
+          "type": "boolean"
         },
         "human_delay": {
           "$ref": "#/$defs/LognormalParams",
@@ -217,7 +223,7 @@
             }
           ],
           "default": null,
-          "description": "Hard lower bound (rejection sampled)",
+          "description": "Hard lower bound (rejection sampled). For inter-turn delays, values below this bound after context scaling are clamped, subject to the global delay maximum.",
           "title": "Min"
         },
         "mu": {
